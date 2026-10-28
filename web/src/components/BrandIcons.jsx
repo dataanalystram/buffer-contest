@@ -1,0 +1,10 @@
+// Minimal geometric network glyphs (drawn for HuhQueue - no third-party icon assets).
+const S = (p) => ({ viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', ...p })
+export const Instagram = (p) => (<svg {...S(p)}><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="0.6" fill="currentColor" /></svg>)
+export const Youtube = (p) => (<svg {...S(p)}><rect x="2" y="5" width="20" height="14" rx="4" /><path d="M10 9l5 3-5 3z" fill="currentColor" /></svg>)
+export const TikTok = (p) => (<svg {...S(p)}><path d="M14 3v11a4 4 0 1 1-4-4" /><path d="M14 3c.5 2.5 2.5 4.5 5 5" /></svg>)
+export const Facebook = (p) => (<svg {...S(p)}><path d="M15 3h-2a4 4 0 0 0-4 4v3H7v3h2v8h3v-8h2.5l.5-3h-3V7a1 1 0 0 1 1-1h2z" /></svg>)
+export const Linkedin = (p) => (<svg {...S(p)}><path d="M7 10v7M7 7v.01M11 17v-4a3 3 0 0 1 6 0v4M11 10v7" /></svg>)
+export const XLogo = (p) => (<svg {...S(p)}><path d="M4 4l16 16M20 4L4 20" /></svg>)
+export const Threads = (p) => (<svg {...S(p)}><path d="M16.5 11.5c-.5-3-3-4-5-3.5S8 11 9.5 13s5 1.5 5.5-1.5c.6-3.5-2-7-6-6.5S3 9 4 14s5 7 9 6.5 6-3 6-5" /></svg>)
+export const Bluesky = (p) => (<svg {...S(p)}><path d="M12 11C10 7 6 4 4 5s0 6 3 7c-3 1-3 4 0 5s5-3 5-6c0 3 2 7 5 6s3-4 0-5c3-1 5-6 3-7s-6 2-8 6z" /></svg>)

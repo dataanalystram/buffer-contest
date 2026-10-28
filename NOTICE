@@ -1,0 +1,82 @@
+HuhQueue
+Copyright (c) 2026 Ram Prasad Somaraju and contributors. Licensed under the MIT License (see LICENSE).
+
+This product includes or adapts work from the following open-source projects. Each entry lists the HuhQueue
+file, the source, its licence and whether code was copied or only the approach was followed.
+
+--------------------------------------------------------------------------------------------------------------
+huhqueue/connectors/linkedin.py  (modified / ported to Python)
+  Source:   coollabsio/shoutrrr - app/Services/Publishing/Connectors/LinkedInConnector.php,
+            LinkedInOrgResolver.php, config/services.php
+            https://github.com/coollabsio/shoutrrr
+  Licence:  Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+  What:     the two-app model (OpenID personal app + separate Community Management API app for pages), the
+            configurable LinkedIn-Version header, commentary escaping that keeps mentions and hashtags,
+            per-image alt text, byte-range video upload with finalize + readiness wait, link previews built
+            from the page's Open Graph tags, and HTTP status -> error-class mapping honouring Retry-After.
+            Re-implemented in Python for HuhQueue's connector contract; changed throughout.
+
+  Ideas only (no code copied): gitroomhq/postiz-app (AGPL-3.0) - LinkedIn document (PDF carousel) posts,
+            first comment via socialActions, and the page picker from organization ACLs were written from
+            LinkedIn's public API docs following the behaviour Postiz exposes.
+
+web/src/components/ImageEditor.jsx  (library dependency, bundled into huhqueue/static/app)
+  Source:   ValentinH/react-easy-crop  https://github.com/ValentinH/react-easy-crop
+  Licence:  MIT
+  What:     the crop / zoom / rotate widget, used as an npm dependency (unmodified). The flip transform and the
+            server-side pixel pipeline (huhqueue/services/image_edit.py, Pillow) are our own.
+
+huhqueue/services/growth.py  CSV bulk upload (Buffer parity)
+  Ideas only: Buffer's public help article on bulk upload (column names and Posting Time format). No code.
+
+huhqueue/static/bio/brands.css, huhqueue/static/bio/icons/*.svg, huhqueue/static/bio/brands.json  (copied)
+  Source:   sethcottle/littlelink @ 3c9162c9f8324d5e002259ed8b4b3cc377b08486 - css/brands.css, images/icons/*.svg,
+            and the brand key / icon / label list read from index.html
+            https://github.com/sethcottle/littlelink
+  Licence:  MIT (full text in huhqueue/static/bio/LICENSE-littlelink.md), Copyright 2019-2024 Seth Cottle
+  What:     93 brand button colour rules and 123 SVG icons, unmodified. brands.json is generated from LittleLink's
+            index.html (modified: data format only). The CSS is inlined per page by huhqueue/services/bio.py.
+            Brand names and logos remain trademarks of their respective owners.
+
+huhqueue/services/bio.py  (ideas only)
+  linkstackorg/linkstack (AGPL-3.0): the block-per-type idea (email, spacer, vCard). No code copied.
+  EddieHubCommunity/BioDrop (MIT, archived): downloadable profile QR code and per-profile custom domain. Written
+            from scratch; QR codes use segno (BSD-3-Clause, https://github.com/heuer/segno) as a library.
+
+huhqueue/static/bio/fonts/*.woff2  (copied, unmodified; renamed)
+  Source:   Fontsource npm packages @fontsource/{inter, poppins, dm-sans, outfit, space-grotesk, playfair-display, lora,
+            jetbrains-mono, caveat, archivo-black} 5.3.0, files/<font>-latin-{400,700}-normal.woff2
+            https://github.com/fontsource/font-files (packaging MIT); the fonts are Google Fonts:
+            Inter (c) 2016 The Inter Project Authors; Poppins (c) 2020 The Poppins Project Authors; DM Sans (c) 2014
+            The DM Sans Project Authors; Outfit (c) 2021 The Outfit Project Authors; Space Grotesk (c) 2020 The Space
+            Grotesk Project Authors; Playfair Display (c) 2017 The Playfair Display Project Authors (Reserved Font Name
+            "Playfair Display"); Lora (c) 2011 The Lora Project Authors (Reserved Font Name "Lora"); JetBrains Mono
+            (c) 2020 The JetBrains Mono Project Authors; Caveat (c) 2014 The Caveat Project Authors; Archivo Black
+            (c) 2017 The Archivo Black Project Authors.
+  Licence:  SIL Open Font License 1.1 (full text in huhqueue/static/bio/fonts/OFL.txt)
+  What:     latin subset, weights 400 and 700 (Archivo Black: 400), served by /bio/fonts/ so public bio pages make no
+            third-party font requests.
+
+huhqueue/services/bio.py  GRADIENTS  (copied colour values)
+  Source:   ghosh/uiGradients @ afb018418e92c3fa4048daa88eb6525a78f5486e - gradients.json
+            https://github.com/ghosh/uiGradients
+  Licence:  MIT, Copyright (c) 2017 Indrashish Ghosh
+  What:     the names and colour stops of 12 gradients (Purple Bliss, Kashmir, Moonlit Asteroid, Royal, Frost, Sea Blue,
+            Celestial, Cosmic Fusion, Sublime Light, Ibiza Sunset, Mango, Lush), unmodified; Mango also seeds the
+            Sunset theme preset. Hex case normalised.
+
+web/src/pages/bio/*  (ideas only)
+  Linktree's admin (linktr.ee/admin): layout of the link editor, add dialog, theme gallery with draft / Save / Cancel.
+            No code or assets copied. Theme presets are HuhQueue's own.
+--------------------------------------------------------------------------------------------------------------
+
+Apache License 2.0 notice for adapted Shoutrrr material:
+
+   Licensed under the Apache License, Version 2.0 (the "License"); you may not use these files except in
+   compliance with the License. You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software distributed under the License is
+   distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and limitations under the License.

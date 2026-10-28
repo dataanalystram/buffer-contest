@@ -1,0 +1,470 @@
+{
+"source": "https://github.com/sethcottle/littlelink @ 3c9162c9f8324d5e002259ed8b4b3cc377b08486 (MIT)",
+"brands": [
+{
+"key": "default",
+"icon": "littlelink",
+"label": "LittleLink"
+},
+{
+"key": "amazon",
+"icon": "amazon",
+"label": "Amazon Wishlist"
+},
+{
+"key": "amazon-music",
+"icon": "amazon-music",
+"label": "Listen on Amazon Music"
+},
+{
+"key": "appstore",
+"icon": "apple",
+"label": "Apple App Store"
+},
+{
+"key": "invites",
+"icon": "apple-invites",
+"label": "Apple Invites"
+},
+{
+"key": "apple-music",
+"icon": "apple-music",
+"label": "Listen on Apple Music"
+},
+{
+"key": "apple-music-alt",
+"icon": "apple-music-alt",
+"label": "Listen on Apple Music"
+},
+{
+"key": "apple-podcasts",
+"icon": "apple-podcasts",
+"label": "Listen on Apple Podcasts"
+},
+{
+"key": "apple-podcasts-alt",
+"icon": "apple-podcasts-alt",
+"label": "Listen on Apple Podcasts"
+},
+{
+"key": "bandcamp",
+"icon": "bandcamp",
+"label": "Bandcamp"
+},
+{
+"key": "behance",
+"icon": "behance",
+"label": "Behance"
+},
+{
+"key": "bluesky",
+"icon": "bluesky",
+"label": "Bluesky"
+},
+{
+"key": "bluesky-alt",
+"icon": "bluesky-alt",
+"label": "Bluesky"
+},
+{
+"key": "coffee",
+"icon": "buy-me-a-coffee",
+"label": "Buy Me A Coffee"
+},
+{
+"key": "cal",
+"icon": "cal",
+"label": "Schedule with Cal.com"
+},
+{
+"key": "calendly",
+"icon": "calendly",
+"label": "Schedule with Calendly"
+},
+{
+"key": "cash-app",
+"icon": "cash-app-dollar",
+"label": "Cash App"
+},
+{
+"key": "dev-to",
+"icon": "dev-to",
+"label": "Dev.to"
+},
+{
+"key": "discogs",
+"icon": "discogs",
+"label": "Discogs"
+},
+{
+"key": "discogs-alt",
+"icon": "discogs-alt",
+"label": "Discogs"
+},
+{
+"key": "discord",
+"icon": "discord",
+"label": "Discord"
+},
+{
+"key": "dribbble",
+"icon": "dribbble",
+"label": "Dribbble"
+},
+{
+"key": "etsy",
+"icon": "etsy",
+"label": "Shop on Etsy"
+},
+{
+"key": "faceb",
+"icon": "facebook",
+"label": "Find us on Facebook"
+},
+{
+"key": "messenger",
+"icon": "messenger",
+"label": "Chat on Messenger"
+},
+{
+"key": "figma",
+"icon": "figma",
+"label": "Figma Community"
+},
+{
+"key": "fiverr",
+"icon": "fiverr",
+"label": "Fiverr Gig"
+},
+{
+"key": "flickr",
+"icon": "flickr",
+"label": "Flickr"
+},
+{
+"key": "github",
+"icon": "github",
+"label": "GitHub"
+},
+{
+"key": "gitlab",
+"icon": "gitlab",
+"label": "GitLab"
+},
+{
+"key": "google-black",
+"icon": "gmail",
+"label": "Gmail"
+},
+{
+"key": "gofundme",
+"icon": "gofundme",
+"label": "GoFundMe"
+},
+{
+"key": "goodreads",
+"icon": "goodreads",
+"label": "Goodreads"
+},
+{
+"key": "playstore",
+"icon": "google-play",
+"label": "Google Play Store"
+},
+{
+"key": "google-scholar",
+"icon": "google-scholar",
+"label": "Google Scholar"
+},
+{
+"key": "hashnode",
+"icon": "hashnode",
+"label": "Hashnode"
+},
+{
+"key": "instagram",
+"icon": "instagram",
+"label": "Instagram"
+},
+{
+"key": "kick",
+"icon": "kick",
+"label": "Kick"
+},
+{
+"key": "kick-alt",
+"icon": "kick-alt",
+"label": "Kick"
+},
+{
+"key": "kickstarter",
+"icon": "kickstarter",
+"label": "Kickstarter"
+},
+{
+"key": "ko-fi",
+"icon": "ko-fi",
+"label": "Support me on Ko-fi"
+},
+{
+"key": "last-fm",
+"icon": "last-fm",
+"label": "Last.fm"
+},
+{
+"key": "letterboxd",
+"icon": "letterboxd",
+"label": "Letterboxd"
+},
+{
+"key": "line",
+"icon": "line",
+"label": "Line"
+},
+{
+"key": "linked",
+"icon": "linkedin",
+"label": "LinkedIn"
+},
+{
+"key": "mailchimp",
+"icon": "mailchimp",
+"label": "Mailchimp"
+},
+{
+"key": "mastodon",
+"icon": "mastodon",
+"label": "Mastodon"
+},
+{
+"key": "matrix",
+"icon": "matrix",
+"label": "Matrix"
+},
+{
+"key": "medium",
+"icon": "medium",
+"label": "Medium"
+},
+{
+"key": "meetup",
+"icon": "meetup",
+"label": "Meetup"
+},
+{
+"key": "meetup-alt",
+"icon": "meetup-alt",
+"label": "Meetup"
+},
+{
+"key": "microsoft",
+"icon": "microsoft",
+"label": "Get it from Microsoft"
+},
+{
+"key": "notion",
+"icon": "notion",
+"label": "Notion"
+},
+{
+"key": "obsidian",
+"icon": "obsidian",
+"label": "Obsidian"
+},
+{
+"key": "onlyfans",
+"icon": "onlyfans",
+"label": "OnlyFans (18+)"
+},
+{
+"key": "patreon",
+"icon": "patreon",
+"label": "Patreon"
+},
+{
+"key": "paypal",
+"icon": "paypal",
+"label": "PayPal"
+},
+{
+"key": "pinterest",
+"icon": "pinterest",
+"label": "Pinterest"
+},
+{
+"key": "product-hunt",
+"icon": "product-hunt",
+"label": "Product Hunt"
+},
+{
+"key": "reddit",
+"icon": "reddit",
+"label": "Reddit"
+},
+{
+"key": "shop",
+"icon": "shop",
+"label": "Buy with Shop"
+},
+{
+"key": "signal",
+"icon": "signal",
+"label": "Signal"
+},
+{
+"key": "signal-alt",
+"icon": "signal-alt",
+"label": "Signal"
+},
+{
+"key": "slack",
+"icon": "slack",
+"label": "Join Slack"
+},
+{
+"key": "snapchat",
+"icon": "snapchat",
+"label": "Snapchat"
+},
+{
+"key": "soundcloud",
+"icon": "soundcloud",
+"label": "SoundCloud"
+},
+{
+"key": "spotify",
+"icon": "spotify",
+"label": "Listen on Spotify"
+},
+{
+"key": "spotify-alt",
+"icon": "spotify-alt",
+"label": "Listen on Spotify"
+},
+{
+"key": "square",
+"icon": "square",
+"label": "Buy with Square"
+},
+{
+"key": "stack-overflow",
+"icon": "stack-overflow",
+"label": "Stack Overflow"
+},
+{
+"key": "steam",
+"icon": "steam",
+"label": "Steam"
+},
+{
+"key": "steam-alt",
+"icon": "steam",
+"label": "Steam"
+},
+{
+"key": "strava",
+"icon": "strava",
+"label": "Strava"
+},
+{
+"key": "substack",
+"icon": "substack",
+"label": "Substack"
+},
+{
+"key": "telegram",
+"icon": "telegram",
+"label": "Telegram"
+},
+{
+"key": "threads",
+"icon": "threads",
+"label": "Threads"
+},
+{
+"key": "threema",
+"icon": "threema",
+"label": "Threema"
+},
+{
+"key": "tiktok",
+"icon": "tiktok",
+"label": "TikTok"
+},
+{
+"key": "trello",
+"icon": "trello",
+"label": "Trello"
+},
+{
+"key": "tumb",
+"icon": "tumblr",
+"label": "Tumblr"
+},
+{
+"key": "twitch",
+"icon": "twitch",
+"label": "Twitch"
+},
+{
+"key": "unsplash",
+"icon": "unsplash",
+"label": "Unsplash"
+},
+{
+"key": "venmo",
+"icon": "venmo",
+"label": "Venmo"
+},
+{
+"key": "vimeo",
+"icon": "vimeo",
+"label": "Vimeo"
+},
+{
+"key": "vsco",
+"icon": "vsco",
+"label": "VSCO"
+},
+{
+"key": "whatsapp",
+"icon": "whatsapp",
+"label": "WhatsApp"
+},
+{
+"key": "wordpress",
+"icon": "wordpress",
+"label": "WordPress"
+},
+{
+"key": "x",
+"icon": "x",
+"label": "Follow on X"
+},
+{
+"key": "yt",
+"icon": "youtube",
+"label": "YouTube"
+},
+{
+"key": "yt-alt",
+"icon": "youtube-alt",
+"label": "YouTube"
+},
+{
+"key": "yt-music",
+"icon": "youtube-music",
+"label": "Listen on YouTube Music"
+},
+{
+"key": "zelle",
+"icon": "zelle",
+"label": "Zelle"
+},
+{
+"key": "zoom",
+"icon": "zoom",
+"label": "Join Zoom Webinar"
+}
+]
+}

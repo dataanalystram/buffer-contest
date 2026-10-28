@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "huhqueue"
+version = "0.1.0"
+description = "HuhQueue - a free, self-hosted, single-user social media scheduler (Instagram + TikTok first, plugin connectors)."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "sqlalchemy>=2.0",
+  "httpx>=0.27",
+  "python-multipart>=0.0.9",
+  "pillow>=10.0",
+  "cryptography>=42.0",
+  "tzdata>=2024.1",
+  "pyotp>=2.9",
+  "qrcode>=7.4",
+  "segno>=1.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "respx>=0.21", "playwright>=1.44", "pytest-playwright>=0.5"]
+
+[project.scripts]
+huhqueue = "huhqueue.cli:main"
+
+# Third-party connectors register here, e.g. in their own package:
+# [project.entry-points."huhqueue.connectors"]
+# linkedin = "huhqueue_linkedin:LinkedInConnector"
+
+[tool.setuptools.packages.find]
+include = ["huhqueue*"]
+
+[tool.setuptools.package-data]
+huhqueue = ["static/*", "static/app/*", "static/app/assets/*", "static/bio/*", "static/bio/icons/*", "migrations/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:playwright"
+filterwarnings = ["ignore::DeprecationWarning"]

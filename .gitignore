@@ -1,0 +1,16 @@
+.env
+*.db
+*.db-journal
+*.sqlite*
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+test-results/
+playwright-report/
+.DS_Store
