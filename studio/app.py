@@ -45,18 +45,20 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return sid, store.session(sid), True
 
     def actor(request: Request, write: bool = False) -> Actor:
+        # A signed-in browser session is the human (writes also need the page's CSRF token).
+        # Without one, an agent authenticates with its bearer token and gets agent rules.
+        sess = store.session(request.cookies.get(COOKIE))
+        if sess and sess["user_id"] and store.user(sess["user_id"]):
+            if write and request.headers.get("x-hq-csrf") != sess["csrf"]:
+                raise ActionError("Missing or wrong CSRF token. Reload the page.", 403)
+            return Actor(sess["user_id"])
         auth = request.headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
             a = studio.resolve_agent(auth[7:].strip())
             if not a:
                 raise ActionError("Invalid or revoked agent token.", 401)
             return a
-        sess = store.session(request.cookies.get(COOKIE))
-        if not sess or not sess["user_id"] or not store.user(sess["user_id"]):
-            raise ActionError("Not connected. Connect your Buffer account first.", 401)
-        if write and request.headers.get("x-hq-csrf") != sess["csrf"]:
-            raise ActionError("Missing or wrong CSRF token. Reload the page.", 403)
-        return Actor(sess["user_id"])
+        raise ActionError("Not connected. Connect your Buffer account first.", 401)
 
     @app.exception_handler(ActionError)
     async def _action_err(_, e: ActionError):

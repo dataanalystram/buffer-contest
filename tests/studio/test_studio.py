@@ -9,6 +9,19 @@ from studio.actions import build_post_input
 from .conftest import CHANNELS, agent_token, connect, mcp_call
 
 
+def bot(human):
+    """A cookie-less client on the same app: how an agent calls the REST API."""
+    from fastapi.testclient import TestClient
+    return TestClient(human.app, base_url="https://hq.test")
+
+
+def test_browser_session_wins_over_bearer(human):
+    tok = agent_token(human)
+    assert human.get("/api/me", headers={"Authorization": f"Bearer {tok}"}).json()["actor"] == "you"
+    assert bot(human).get("/api/me", headers={"Authorization": f"Bearer {tok}"}).json()["actor"] == "agent:Claude"
+    assert bot(human).get("/api/me").status_code == 401
+
+
 # ------------------------------------------------------------------ OAuth + token handling
 def test_login_uses_pkce_s256_state_and_offline_access(client):
     r = client.get("/login", follow_redirects=False)
@@ -167,7 +180,7 @@ def test_review_policy_holds_agent_posts_until_human_approves(human, fake):
     _, res = mcp_call(human, tok, "submit_post", {"confirm_token": pv["confirm_token"]})
     assert res["status"] == "pending_approval" and fake.created == []
     # an agent can't approve its own post through REST
-    r = human.post(f"/api/approvals/{res['approval_id']}/approve", headers={"Authorization": f"Bearer {tok}"}, json={})
+    r = bot(human).post(f"/api/approvals/{res['approval_id']}/approve", headers={"Authorization": f"Bearer {tok}"}, json={})
     assert r.status_code == 403 and fake.created == []
     pend = human.get("/api/approvals").json()
     assert pend[0]["agent_name"] == "Claude"
@@ -190,7 +203,7 @@ def test_kill_switch_and_daily_cap(human, fake):
     res, msg = mcp_call(human, tok, "submit_post", {"confirm_token": pv["confirm_token"]})
     assert res["isError"] and "kill switch" in msg and fake.created == []
     # agents can't flip it back
-    r = human.post("/api/safety/kill", headers={"Authorization": f"Bearer {tok}"}, json={"on": False})
+    r = bot(human).post("/api/safety/kill", headers={"Authorization": f"Bearer {tok}"}, json={"on": False})
     assert r.status_code == 403
     human.post("/api/safety/kill", json={"on": False})
     _, pv = mcp_call(human, tok, "preview_post", {"channel_id": "ch_x", "text": "x", "mode": "queue"})
@@ -228,8 +241,10 @@ def test_ui_rest_and_mcp_send_identical_buffer_calls(human, fake):
     # 2) REST path with an agent bearer token (trusted)
     tok = agent_token(human, "trusted")
     h = {"Authorization": f"Bearer {tok}"}
-    pv = human.post("/api/posts/preview", json=post, headers=h).json()
-    human.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]}, headers=h)
+    agent_rest = bot(human)
+    pv = agent_rest.post("/api/posts/preview", json=post, headers=h).json()
+    assert agent_rest.get("/api/me", headers=h).json()["actor"] == "agent:Claude"
+    agent_rest.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]}, headers=h)
     # 3) MCP path, same token
     _, pv = mcp_call(human, tok, "preview_post", post)
     mcp_call(human, tok, "submit_post", {"confirm_token": pv["confirm_token"]})

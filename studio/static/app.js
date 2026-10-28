@@ -187,10 +187,12 @@ async function loadApprovals() {
 }
 
 // ---------------------------------------------------------------- queue
+let queueReq = 0;
 async function loadQueue() {
-  const box = $("#queue"); box.innerHTML = `<p class="hint">Loading from Buffer…</p>`;
+  const box = $("#queue"), my = ++queueReq; box.innerHTML = `<p class="hint">Loading from Buffer…</p>`;
   try {
     const rows = await api("/api/queue?status=" + $("#queueStatus").value);
+    if (my !== queueReq) return; // a newer request (e.g. filter changed) owns the list
     box.innerHTML = rows.length ? "" : `<div class="empty">Nothing here in Buffer.</div>`;
     for (const p of rows) {
       const ch = S.channels.find((c) => c.id === p.channelId) || {};
