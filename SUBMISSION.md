@@ -3,9 +3,12 @@
 - **App:** https://huhqueue-studio.onrender.com
 - **Code (open source, MIT):** https://github.com/dataanalystram/buffer-contest
 - **Buffer app client ID:** `BFQSCDAPoD-hJ0cmZtncSW-kLqnDwPfQ511K35AcVmj`
-- **Demo video (1:26):** `demo/huhqueue-buffer-commit-demo-16x9.mp4` in the repo (upload link: _add when uploaded_)
+- **Demo video (1:26):** [demo/huhqueue-buffer-commit-demo-16x9.mp4](https://github.com/dataanalystram/buffer-contest/blob/main/demo/huhqueue-buffer-commit-demo-16x9.mp4) ([direct download](https://github.com/dataanalystram/buffer-contest/raw/main/demo/huhqueue-buffer-commit-demo-16x9.mp4)); 9:16 cut on YouTube: https://www.youtube.com/watch?v=iBFgP1GOMlU
 - **What was built in the window vs. before it:** [CONTEST.md](CONTEST.md)
-- **Build-in-public posts:** _add links_
+- **Build-in-public posts:**
+  - LinkedIn (Ram, with the 16:9 demo): https://www.linkedin.com/feed/update/urn:li:activity:7521244269584539648/
+  - Instagram Reel (@huhbyte.ai): https://www.instagram.com/reel/DfC3PW3uiL9/
+  - YouTube Short (@huhbyte): https://www.youtube.com/watch?v=iBFgP1GOMlU
 
 ## Write-up (≈300 words)
 
