@@ -236,6 +236,11 @@ async function loadAudit() {
 
 // ---------------------------------------------------------------- account
 $("#acctBtn").onclick = () => ($("#acctMenu").hidden = !$("#acctMenu").hidden);
+$("#deviceBtn").onclick = async () => {
+  $("#acctMenu").hidden = true;
+  try { const r = await api("/api/device-link", { method: "POST" }); await navigator.clipboard.writeText(r.url).catch(() => {}); toast("One-time link, valid 10 min (copied): " + r.url, 20000); }
+  catch (e) { toast(e.message, 5000); }
+};
 $("#logoutBtn").onclick = async () => { await api("/api/logout", { method: "POST" }); location.href = "/"; };
 $("#disconnectBtn").onclick = async () => { if (!confirm("Disconnect Buffer and delete everything HuhQueue stored for you?")) return; await api("/api/disconnect", { method: "POST" }); location.href = "/"; };
 

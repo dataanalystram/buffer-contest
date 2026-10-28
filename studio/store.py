@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS confirms (
 CREATE TABLE IF NOT EXISTS approvals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, agent_id INTEGER, agent_name TEXT, payload TEXT,
   status TEXT, result TEXT, created REAL, decided REAL);
+CREATE TABLE IF NOT EXISTS device_links (
+  token_hash TEXT PRIMARY KEY, user_id TEXT, expires REAL, used INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, actor TEXT, action TEXT, risk TEXT,
   detail TEXT, ok INTEGER, ts REAL);
@@ -136,7 +138,7 @@ class Store:
         self.x("UPDATE users SET kill_switch=? WHERE id=?", (1 if on else 0, uid))
 
     def delete_user(self, uid: str) -> None:
-        for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit"):
+        for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links"):
             self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
         self.x("DELETE FROM users WHERE id=?", (uid,))
 

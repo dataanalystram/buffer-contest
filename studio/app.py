@@ -5,6 +5,7 @@ Run:  uvicorn studio.app:create_app --factory   (env: BUFFER_CLIENT_ID, BUFFER_C
 from __future__ import annotations
 
 import secrets
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -16,7 +17,7 @@ from . import buffer_api, mcp
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
-from .store import Store
+from .store import Store, sha
 
 STATIC = Path(__file__).parent / "static"
 COOKIE = "hq_sid"
@@ -135,6 +136,31 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         store.new_session(new_sid, secrets.token_urlsafe(24))
         store.update_session(new_sid, user_id=acct["id"])
         store.audit(acct["id"], "you", "connect_buffer", "auth", {"scopes": tokens.get("scope", "")})
+        resp = RedirectResponse("/?connected=1", 302)
+        set_cookie(resp, new_sid)
+        return resp
+
+    # one-time link to open this account on another device (phone, second browser); 10 minutes, single use
+    @app.post("/api/device-link")
+    def device_link(request: Request):
+        a = actor(request, write=True)
+        if a.kind != "human":
+            raise ActionError("Only a signed-in human can create a device link.", 403)
+        tok = secrets.token_urlsafe(32)
+        store.x("INSERT INTO device_links(token_hash,user_id,expires) VALUES(?,?,?)", (sha(tok), a.uid, time.time() + 600))
+        store.audit(a.uid, a.label, "device_link", "auth", {"expires_in": 600})
+        return {"url": f"{s.public_url}/device/{tok}", "expires_in": 600}
+
+    @app.get("/device/{tok}", include_in_schema=False)
+    def device_open(tok: str):
+        rows = store.q("SELECT * FROM device_links WHERE token_hash=?", (sha(tok),))
+        if not rows or rows[0]["used"] or rows[0]["expires"] < time.time():
+            return RedirectResponse("/?error=" + quote("That device link is used or expired. Create a new one."), 302)
+        store.x("UPDATE device_links SET used=1 WHERE token_hash=?", (sha(tok),))
+        new_sid = secrets.token_urlsafe(32)
+        store.new_session(new_sid, secrets.token_urlsafe(24))
+        store.update_session(new_sid, user_id=rows[0]["user_id"])
+        store.audit(rows[0]["user_id"], "you", "device_signed_in", "auth", {})
         resp = RedirectResponse("/?connected=1", 302)
         set_cookie(resp, new_sid)
         return resp

@@ -1,3 +1,4 @@
+[hidden]{display:none!important}
 :root{--ink:#16131f;--mute:#6b6577;--line:#ebe7f2;--bg:#faf9fc;--card:#fff;--lav:#c9acfa;--lav-d:#7c4ddb;--lav-bg:#f4eeff;--ok:#127a4a;--ok-bg:#e6f6ee;--warn:#9a5b00;--warn-bg:#fff4e0;--bad:#b42318;--bad-bg:#fdecea;--r:14px}
 *{box-sizing:border-box}html,body{margin:0}body{font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;color:var(--ink);background:var(--bg)}
 a{color:var(--lav-d)}button,input,select,textarea{font:inherit;color:inherit}

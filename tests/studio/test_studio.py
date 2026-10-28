@@ -280,3 +280,16 @@ def test_clean_title_drops_site_suffix():
     assert drafter.clean_title("Large language model - Wikipedia", "Wikipedia") == "Large language model"
     assert drafter.clean_title("OpenAI ships GPT-6 | The Verge", "The Verge") == "OpenAI ships GPT-6"
     assert drafter.clean_title("No suffix here at all", "x") == "No suffix here at all"
+
+
+def test_device_link_is_single_use(human, app):
+    from fastapi.testclient import TestClient
+    url = human.post("/api/device-link").json()["url"]
+    path = url.replace("https://hq.test", "")
+    other = TestClient(app, base_url="https://hq.test")
+    r = other.get(path, follow_redirects=False)
+    assert r.headers["location"] == "/?connected=1"
+    assert other.get("/api/session").json()["connected"] is True
+    third = TestClient(app, base_url="https://hq.test")
+    assert "error=" in third.get(path, follow_redirects=False).headers["location"]
+    assert third.get("/api/session").json()["connected"] is False
