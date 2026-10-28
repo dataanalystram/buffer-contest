@@ -14,3 +14,10 @@ venv/
 test-results/
 playwright-report/
 .DS_Store
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+studio.db*
+demo/raw/

@@ -1,0 +1,26 @@
+# Render Blueprint for HuhQueue Studio (free web service + free Postgres).
+services:
+  - type: web
+    name: huhqueue-studio
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile.studio
+    healthCheckPath: /healthz
+    envVars:
+      - key: PUBLIC_URL
+        value: https://huhqueue-studio.onrender.com
+      - key: BUFFER_CLIENT_ID
+        sync: false
+      - key: BUFFER_CLIENT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: huhqueue-studio-db
+          property: connectionString
+databases:
+  - name: huhqueue-studio-db
+    plan: free
+    region: frankfurt

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HuhQueue Studio — built on the Buffer API</title>
+<meta name="description" content="Paste a link, get a post for every channel, approve it, and it lands in your Buffer queue. Open source and agent-first: AI agents can draft, but nothing posts until you approve.">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand" data-testid="brand"><span class="mark">hq</span><span class="name">HuhQueue</span><span class="built">built on the Buffer API</span></div>
+  <div class="top-right" id="topRight" hidden>
+    <span class="pill" id="budgetPill" data-testid="api-budget" title="Buffer API requests left for this app">API —</span>
+    <button class="pill" id="killPill" data-testid="kill-pill" title="Agent kill switch">Agents on</button>
+    <div class="acct"><button class="ghost" id="acctBtn" data-testid="account-menu"></button>
+      <div class="menu" id="acctMenu" hidden>
+        <button id="logoutBtn" data-testid="logout">Sign out</button>
+        <button id="disconnectBtn" data-testid="disconnect" class="danger">Disconnect &amp; delete my data</button>
+      </div></div>
+  </div>
+</header>
+
+<main>
+  <section id="landing" data-testid="landing" hidden>
+    <div class="hero">
+      <p class="eyebrow">Open source · agent-first · built on the Buffer API</p>
+      <h1>Paste a link.<br>Get a post for every channel.<br><span class="hl">Approve it, and it's in Buffer.</span></h1>
+      <p class="lede">HuhQueue reads the article, writes a caption that fits each network's limit, and sends what you approve to your Buffer queue. Your AI agents can use it too, over MCP, with guardrails: nothing they write goes out until you say so.</p>
+      <a class="btn big" href="/login" id="connectBtn" data-testid="connect-buffer">Connect your Buffer account</a>
+      <p class="fine" id="configNote" data-testid="config-note" hidden>This server has no Buffer app client configured yet.</p>
+      <p class="fine">Secure OAuth with PKCE. Your Buffer tokens stay on our server, never in your browser. <a href="/privacy">Privacy</a></p>
+    </div>
+    <div class="cards3">
+      <div class="card"><h3>Link → drafts</h3><p>One click turns a news link or blog post into captions for X, LinkedIn, Instagram, Threads, Bluesky and more, each counted the way Buffer counts it.</p></div>
+      <div class="card"><h3>Agents, with a leash</h3><p>Claude, ChatGPT or Cursor can draft and schedule through our MCP server. Posts wait in your Approvals inbox. Daily caps, a kill switch and a full audit log.</p></div>
+      <div class="card"><h3>Your Buffer, as is</h3><p>Channels, queue, drafts and ideas come straight from your Buffer account. HuhQueue adds the writing and the review step on top.</p></div>
+    </div>
+  </section>
+
+  <section id="app" hidden>
+    <nav class="tabs" role="tablist">
+      <button data-tab="studio" data-testid="tab-studio" class="on">Studio</button>
+      <button data-tab="approvals" data-testid="tab-approvals">Approvals <span class="badge" id="apprBadge" data-testid="approvals-badge" hidden>0</span></button>
+      <button data-tab="queue" data-testid="tab-queue">Queue</button>
+      <button data-tab="agents" data-testid="tab-agents">Agents</button>
+      <button data-tab="activity" data-testid="tab-activity">Activity</button>
+    </nav>
+
+    <div class="tab" id="tab-studio">
+      <div class="panel">
+        <label class="lbl" for="urlInput">Paste a link</label>
+        <form class="row" id="draftForm">
+          <input id="urlInput" data-testid="url-input" type="url" placeholder="https://… a news story, blog post or launch page" required>
+          <select id="toneSelect" data-testid="tone-select" title="Tone">
+            <option value="">Natural tone</option><option value="punchy and energetic">Punchy</option>
+            <option value="professional and insightful">Professional</option><option value="friendly and simple, explain like to a friend">Simple</option>
+          </select>
+          <button class="btn" id="draftBtn" data-testid="draft-btn" type="submit">Draft posts</button>
+        </form>
+        <div class="lbl sm">Channels <button class="link" id="refreshCh" data-testid="refresh-channels">refresh</button></div>
+        <div class="chips" id="chips" data-testid="channel-chips"></div>
+      </div>
+      <div id="article" data-testid="article-card" hidden></div>
+      <div class="bulk" id="bulk" hidden>
+        <span>Send all as</span>
+        <select id="bulkMode" data-testid="bulk-mode"></select>
+        <button class="btn" id="sendAll" data-testid="send-all">Send all to Buffer</button>
+        <button class="ghost" id="saveIdea" data-testid="save-idea">Save as Buffer idea</button>
+      </div>
+      <div id="drafts" class="drafts" data-testid="drafts"></div>
+      <div class="empty" id="studioEmpty" data-testid="studio-empty">Paste a link above. You'll get one editable draft per channel, and you decide what goes to Buffer.</div>
+    </div>
+
+    <div class="tab" id="tab-approvals" hidden>
+      <p class="hint">Posts your agents submitted. Nothing here has reached Buffer yet.</p>
+      <div id="approvals" data-testid="approvals-list"></div>
+    </div>
+
+    <div class="tab" id="tab-queue" hidden>
+      <div class="row tight"><select id="queueStatus" data-testid="queue-status"><option value="scheduled">Scheduled</option><option value="draft">Drafts</option><option value="sent">Sent</option></select>
+        <button class="ghost" id="queueReload" data-testid="queue-reload">Reload</button></div>
+      <div id="queue" data-testid="queue-list"></div>
+    </div>
+
+    <div class="tab" id="tab-agents" hidden>
+      <div class="panel kill" id="killPanel">
+        <div><h3>Kill switch</h3><p class="hint">Instantly stops every agent action on your account. You can still post yourself.</p></div>
+        <label class="switch"><input type="checkbox" id="killToggle" data-testid="kill-switch"><span></span></label>
+      </div>
+      <div class="panel">
+        <h3>Connect an agent</h3>
+        <form class="row wrap" id="tokenForm">
+          <input id="tokName" data-testid="token-name" placeholder="Agent name, e.g. Claude" maxlength="40" required>
+          <select id="tokPolicy" data-testid="token-policy">
+            <option value="review">Needs my approval (recommended)</option>
+            <option value="draft">Buffer drafts only</option>
+            <option value="trusted">Trusted: can schedule</option>
+          </select>
+          <label class="inline">Daily cap <input id="tokCap" data-testid="token-cap" type="number" min="1" max="100" value="10"></label>
+          <button class="btn" data-testid="create-token" type="submit">Create agent token</button>
+        </form>
+        <div id="tokenReveal" data-testid="token-reveal" hidden></div>
+        <details class="snips" open><summary>MCP setup</summary>
+          <p class="hint">Claude Code</p><pre id="snipClaude" data-testid="snip-claude"></pre>
+          <p class="hint">Claude Desktop / Cursor (mcp.json)</p><pre id="snipJson" data-testid="snip-json"></pre>
+          <p class="hint">Plain REST works too: the same endpoints the UI uses accept <code>Authorization: Bearer hq_…</code>. <a href="/api/docs" target="_blank">API docs</a></p>
+        </details>
+      </div>
+      <div class="panel"><h3>Agent tokens</h3><div id="tokens" data-testid="token-list"></div></div>
+    </div>
+
+    <div class="tab" id="tab-activity" hidden>
+      <p class="hint">Every action on your account, by you or your agents.</p>
+      <div id="audit" data-testid="audit-list"></div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">HuhQueue is an independent open-source project built on the Buffer API. Not affiliated with or endorsed by Buffer.
+  · <a href="/privacy">Privacy</a> · <a id="repoLink" href="https://github.com/dataanalystram/buffer-contest" target="_blank" rel="noopener">GitHub</a></footer>
+<div id="toast" data-testid="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
