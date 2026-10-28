@@ -70,6 +70,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.middleware("http")
     async def _headers(request: Request, call_next):
         resp = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith(("/static/", "/privacy")):
+            resp.headers["Cache-Control"] = "no-cache"  # always revalidate, so a deploy is picked up at once
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         resp.headers.setdefault("X-Frame-Options", "DENY")
