@@ -94,7 +94,7 @@ $("#draftForm").addEventListener("submit", async (ev) => {
 function renderArticle() {
   const a = S.article, box = $("#article"); box.hidden = !a;
   if (!a) return;
-  box.innerHTML = `<div class="art">${a.image ? `<img src="${esc(a.image)}" alt="">` : ""}<div><h4>${esc(a.title)}</h4><p>${esc(a.site)} · ${esc(a.description).slice(0, 160)}</p></div></div>`;
+  box.innerHTML = `<div class="art">${a.image ? `<img src="${esc(a.image)}" alt="">` : ""}<div><h4>${esc(a.title)}</h4><p>${esc(a.site)}${a.description ? " · " + esc(a.description).slice(0, 160) : ""}</p></div></div>`;
 }
 function modeOptions(sel = "draft") { return MODES.map(([v, l]) => `<option value="${v}" ${v === sel ? "selected" : ""}>${l}</option>`).join(""); }
 
