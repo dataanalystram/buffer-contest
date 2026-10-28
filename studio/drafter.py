@@ -155,8 +155,17 @@ def fetch_article(url: str, http: httpx.Client | None = None, check_host: bool =
     if image:
         image = urljoin(str(r.url), image)
     site = (g("og:site_name") or p.hostname.removeprefix("www.")).strip()
+    title = clean_title(title, site)
     return {"url": str(r.url), "title": title[:300], "description": desc[:600], "image": image,
             "site": site[:80], "paragraphs": m.paras[:8]}
+
+
+def clean_title(title: str, site: str) -> str:
+    """Drop a trailing ' - Site' / ' | Site' that pages append to <title>."""
+    m = re.match(r"^(.{12,}?)\s+[-|–—·:]\s+([^-|–—·]{2,40})$", title)
+    if m and (m.group(2).strip().lower() in (site or "").lower() or len(m.group(2).split()) <= 3):
+        return m.group(1).strip()
+    return title
 
 
 # ---------------------------------------------------------------- writing
@@ -165,7 +174,7 @@ STOP = set("the a an and or of to in on for with from by at is are was were be t
 
 def _hashtags(article: dict, n: int = 3) -> list[str]:
     words = re.findall(r"[A-Za-z][A-Za-z0-9]+", article["title"])
-    tags, seen = [], set()
+    tags, seen = [], set(w.lower() for w in re.findall(r"[A-Za-z0-9]+", article.get("site", "")))
     for w in sorted(words, key=lambda w: (not w[0].isupper(), -len(w))):
         lw = w.lower()
         if lw in STOP or len(w) < 3 or lw in seen:
@@ -220,12 +229,12 @@ def ai_draft(services: list[str], article: dict, base_url: str, api_key: str, mo
         + json.dumps({s: TARGET.get(s, limit_for(s)) for s in services})
         + (f"\nTone: {tone}" if tone else "")
         + "\n\nARTICLE\n" + json.dumps({k: article[k] for k in ("url", "title", "description", "site")} |
-                                     {"text": " ".join(article.get("paragraphs", []))[:2500]})
+                                     {"text": " ".join(article.get("paragraphs", []))[:1200]})
     )
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    client = http or httpx.Client(timeout=25)
+    client = http or httpx.Client(timeout=50)
     r = client.post(base_url + "/chat/completions", headers=headers, json={
-        "model": model or "gpt-4o-mini", "temperature": 0.6,
+        "model": model or "gpt-4o-mini", "max_tokens": 2500,
         "messages": [{"role": "system", "content": "You are a concise social media editor."},
                      {"role": "user", "content": prompt}]})
     r.raise_for_status()

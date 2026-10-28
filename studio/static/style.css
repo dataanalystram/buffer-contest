@@ -55,3 +55,5 @@ table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(-
 #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 18px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);max-width:90vw;z-index:20}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px}@keyframes s{to{transform:rotate(360deg)}}
 @media(max-width:760px){.cards3{grid-template-columns:1fr}h1{font-size:32px}.built{display:none}.row{flex-wrap:wrap}.top{padding:12px 14px}}
+
+td code{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;font-size:12px}table{table-layout:fixed}td:last-child{width:42%}

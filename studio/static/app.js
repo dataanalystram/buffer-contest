@@ -83,7 +83,7 @@ $("#draftForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const url = $("#urlInput").value.trim(); if (!url) return;
   if (!S.selected.size) return toast("Pick at least one channel");
-  const b = $("#draftBtn"); b.disabled = true; b.innerHTML = `<span class="spin"></span>Reading & drafting…`;
+  const b = $("#draftBtn"); b.disabled = true; b.innerHTML = `<span class="spin"></span>Reading the page &amp; writing drafts… (AI can take ~30 s)`;
   try {
     const r = await api("/api/draft", { method: "POST", body: { url, channel_ids: [...S.selected], tone: $("#toneSelect").value } });
     S.article = r.article; S.drafts = r.drafts; renderArticle(); renderDrafts();

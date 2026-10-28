@@ -274,3 +274,9 @@ def test_pages_and_branding(client):
     assert client.get("/privacy").status_code == 200 and "Privacy policy" in client.get("/privacy").text
     assert client.get("/healthz").json()["ok"] is True
     assert client.get("/static/../app.py").status_code == 404
+
+
+def test_clean_title_drops_site_suffix():
+    assert drafter.clean_title("Large language model - Wikipedia", "Wikipedia") == "Large language model"
+    assert drafter.clean_title("OpenAI ships GPT-6 | The Verge", "The Verge") == "OpenAI ships GPT-6"
+    assert drafter.clean_title("No suffix here at all", "x") == "No suffix here at all"
