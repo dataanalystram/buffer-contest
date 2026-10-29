@@ -31,6 +31,7 @@ SEED_POSTS = [  # channel, hours from now (negative = already sent), text, image
     ("demo_bsky", 44, "Reading list for the weekend: open-source schedulers, agent safety, and why limits matter.", ""),
     ("demo_x", -5, "Agents can draft. Humans approve. That's the whole policy.", "approve"),
 ]
+SEED_FEEDS = ["https://www.theverge.com/rss/index.xml", "https://hnrss.org/frontpage"]
 AGENT_POST = ("demo_x", "Claude", "AI agents can now draft your posts, but should they publish them? "
               "Our take: agents write, humans approve. Here's the setup we use. https://example.com/agents-approve")
 
@@ -54,6 +55,8 @@ def create_user(store: Store) -> str:
     store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
             (uid, aid, AGENT_POST[1], json.dumps(payload), "pending", now - 600))
     store.audit(uid, f"agent:{AGENT_POST[1]}", "submit_post", "held", {"channel": "twitter", "mode": "queue"})
+    for url in SEED_FEEDS:
+        store.x("INSERT INTO feeds(user_id,url,created) VALUES(?,?,?)", (uid, url, now))
     return uid
 
 

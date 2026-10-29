@@ -34,7 +34,7 @@ claude mcp add --transport http huhqueue https://huhqueue-studio.onrender.com/mc
   --header "Authorization: Bearer hq_YOUR_TOKEN"
 ```
 
-Tools: `whoami`, `list_channels`, `draft_from_link`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `create_idea`, `get_limits`.
+Tools: `whoami`, `list_channels`, `draft_from_link`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `list_stories`, `create_idea`, `get_limits`.
 The REST API (`/api/docs`) accepts the same bearer token, so UI = API = MCP (a test asserts all three send Buffer the identical `createPost` input).
 
 ## Run it yourself

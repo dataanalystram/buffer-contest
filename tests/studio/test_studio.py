@@ -349,3 +349,40 @@ def test_public_stats_count_real_accounts_only(human, client):
     TestClient(human.app, base_url="https://hq.test").get("/demo", follow_redirects=False)
     st = client.get("/api/stats").json()
     assert st == {"buffer_accounts": 1, "posts_sent_to_buffer": 1, "sample_workspaces_open": 1}
+
+
+RSS = b"""<?xml version="1.0"?><rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>Example News</title>
+<item><title>Old story</title><link>https://news.example.com/old</link><pubDate>Mon, 26 Oct 2026 09:00:00 GMT</pubDate></item>
+<item><title>New &amp; shiny</title><link>https://news.example.com/new</link><description>&lt;p&gt;Big &lt;b&gt;news&lt;/b&gt;&lt;/p&gt;</description>
+<pubDate>Wed, 28 Oct 2026 09:00:00 GMT</pubDate><media:content url="https://news.example.com/a.jpg" medium="image"/></item></channel></rss>"""
+ATOM = b"""<feed xmlns="http://www.w3.org/2005/Atom"><title>Blog</title><entry><title>Atom post</title>
+<link rel="alternate" href="https://blog.example.com/p1"/><updated>2026-10-27T10:00:00Z</updated><summary>Hi</summary></entry></feed>"""
+
+
+def test_radar_parses_rss_and_atom():
+    from studio import radar
+    rss = radar.parse(RSS, "https://news.example.com/feed")
+    assert rss["title"] == "Example News" and len(rss["stories"]) == 2
+    new = next(s for s in rss["stories"] if s["url"].endswith("/new"))
+    assert new["title"] == "New & shiny" and new["summary"] == "Big news" and new["image"] == "https://news.example.com/a.jpg"
+    atom = radar.parse(ATOM, "https://blog.example.com/atom")
+    assert atom["stories"][0]["url"] == "https://blog.example.com/p1" and atom["stories"][0]["published"] > 0
+    import pytest
+    with pytest.raises(drafter.FetchError):
+        radar.parse(b"<html>not a feed", "https://x.example.com")
+
+
+def test_radar_follow_list_and_agent_tool(human, monkeypatch):
+    from studio import radar
+    monkeypatch.setattr(radar, "fetch", lambda url, *a, **k: radar.parse(RSS if "news" in url else ATOM, url))
+    assert human.post("/api/radar/feeds", json={"url": "https://news.example.com/feed"}).json()["stories"] == 2
+    human.post("/api/radar/feeds", json={"url": "https://blog.example.com/atom"})
+    assert human.post("/api/radar/feeds", json={"url": "https://blog.example.com/atom"}).status_code == 400
+    r = human.get("/api/radar").json()
+    assert [s["title"] for s in r["stories"]] == ["New & shiny", "Atom post", "Old story"]
+    tok = agent_token(human)
+    _, stories = mcp_call(human, tok, "list_stories")
+    assert stories["stories"][0]["url"] == "https://news.example.com/new"
+    assert bot(human).post("/api/radar/feeds", json={"url": "https://x.example.com/f"}, headers={"Authorization": f"Bearer {tok}"}).status_code == 403
+    human.delete(f"/api/radar/feeds/{r['feeds'][0]['id']}")
+    assert len(human.get("/api/radar").json()["feeds"]) == 1

@@ -133,6 +133,7 @@
     <nav class="rail" aria-label="Sections">
       <button data-tab="home" data-testid="tab-home" class="on" aria-current="page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Needs you</span><span class="badge hot" id="homeBadge" data-testid="home-badge" hidden>0</span></button>
       <button data-tab="studio" data-testid="tab-studio"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg><span>Write from a link</span></button>
+      <button data-tab="radar" data-testid="tab-radar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19a2 2 0 1 0 0-.01"/><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/></svg><span>News radar</span></button>
       <button data-tab="approvals" data-testid="tab-approvals"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span>Approvals</span><span class="badge" id="apprBadge" data-testid="approvals-badge" hidden>0</span></button>
       <button data-tab="queue" data-testid="tab-queue"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h9"/></svg><span>Buffer queue</span></button>
       <button data-tab="agents" data-testid="tab-agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg><span>Agents</span></button>
@@ -150,8 +151,22 @@
         </form>
         <h2 class="sec">Needs you</h2>
         <ul class="todo" id="todo" data-testid="todo-list"></ul>
+        <h2 class="sec">New in your news radar</h2>
+        <div id="homeStories" class="list" data-testid="home-stories"></div>
         <h2 class="sec">Coming up in Buffer</h2>
         <div id="upcoming" class="list" data-testid="upcoming"></div>
+      </div>
+
+      <div class="tab" id="tab-radar" hidden>
+        <h1 class="page-title">News radar</h1>
+        <p class="intro">Follow the sites you share from. New stories show up here and on your home screen, one click from a post for every channel. Your agents can read them too.</p>
+        <form class="quick" id="feedForm">
+          <label class="sr" for="feedUrl">Feed address</label>
+          <input id="feedUrl" data-testid="feed-url" type="url" placeholder="A site's RSS or Atom feed, like https://www.theverge.com/rss/index.xml" required>
+          <button class="btn2 big" data-testid="feed-add" type="submit">Follow feed</button>
+        </form>
+        <div class="feeds" id="feeds" data-testid="feed-list"></div>
+        <div id="stories" class="list" data-testid="story-list"></div>
       </div>
 
       <div class="tab" id="tab-studio" hidden>
@@ -172,6 +187,7 @@
           </div>
           <div class="chips-head"><span class="label" id="chLbl">Channels</span><button class="link" id="refreshCh" data-testid="refresh-channels" type="button">Refresh from Buffer</button></div>
           <div class="chips" id="chips" data-testid="channel-chips" role="group" aria-labelledby="chLbl"></div>
+          <p class="muted capture">Write posts from any page you're reading: drag <a id="bookmarklet" class="bm" data-testid="bookmarklet" href="#">Post with HuhQueue</a> to your bookmarks bar, then click it on any article.</p>
         </div>
         <div id="article" data-testid="article-card" hidden></div>
         <div class="bulk" id="bulk" hidden>
