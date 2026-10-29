@@ -211,13 +211,24 @@ class BufferClient:
         return self._cached(("channels", uid), CHANNEL_TTL,
                             lambda: self.gql(q, {"o": org_id}, uid=uid)["channels"])
 
+    POST_FIELDS = "id text status dueAt sentAt channelId externalLink assets { type mimeType source thumbnail } error { message }"
+
     def posts(self, uid: str, org_id: str, statuses: list[str], first: int = 30) -> list[dict]:
-        q = """query($i: PostsInput!, $n: Int) { posts(first: $n, input: $i) {
-                 edges { node { id text status dueAt channelId } } } }"""
         i = {"organizationId": org_id, "filter": {"status": statuses},
              "sort": [{"field": "dueAt", "direction": "asc"}]}
-        return self._cached(("posts", uid, tuple(statuses), first), 30,
-                            lambda: [e["node"] for e in self.gql(q, {"i": i, "n": first}, uid=uid)["posts"]["edges"]])
+
+        def fetch():
+            q = """query($i: PostsInput!, $n: Int) { posts(first: $n, input: $i) { edges { node { %s } } } }"""
+            try:
+                data = self.gql(q % self.POST_FIELDS, {"i": i, "n": first}, uid=uid)
+            except NotConnected:
+                raise
+            except BufferError as e:
+                if e.status == 429:
+                    raise
+                data = self.gql(q % "id text status dueAt channelId", {"i": i, "n": first}, uid=uid)  # media fields refused: plain list
+            return [e["node"] for e in data["posts"]["edges"]]
+        return self._cached(("posts", uid, tuple(statuses), first), 30, fetch)
 
     # ---- writes
     def create_post(self, uid: str, inp: dict) -> dict:

@@ -44,6 +44,7 @@ async function boot() {
   const s = await api("/api/session");
   S.csrf = s.csrf; S.session = s;
   if (s.repo) $("#repoLink").href = s.repo; else $("#repoLink").hidden = true;
+  showStats();
   if (!s.connected) {
     $("#landing").hidden = false;
     if (!s.configured) { $("#configNote").hidden = false; $("#connectBtn").classList.add("disabled"); }
@@ -57,6 +58,14 @@ async function boot() {
   budget(); showTab("home");
 }
 
+async function showStats() {
+  try {
+    const st = await api("/api/stats"), n = st.buffer_accounts, m = st.posts_sent_to_buffer;
+    if (!n) return;
+    const txt = `${n.toLocaleString()} Buffer account${n === 1 ? "" : "s"} connected so far, ${m.toLocaleString()} post${m === 1 ? "" : "s"} sent to Buffer.`;
+    for (const el of [$("#landStats"), $("#homeStats")]) { el.textContent = txt; el.hidden = false; }
+  } catch (_) {}
+}
 function setKill(on) {
   const p = $("#killPill"); p.textContent = on ? "Agents paused" : "Agents on"; p.className = "status " + (on ? "off" : "on");
   $("#killToggle").checked = !!on;
@@ -209,9 +218,23 @@ async function loadHome() {
   up.innerHTML = upcoming.length ? "" : `<div class="empty"><b>Nothing scheduled yet</b><span>Posts you send to your Buffer queue show up here.</span></div>`;
   upcoming.slice(0, 4).forEach((p) => up.insertAdjacentHTML("beforeend", postItem(p)));
 }
+// A post as it will look: who posts it, the text, its media. The media and the link open the post where it lives:
+// on the network once sent, otherwise the channel's schedule in Buffer (Buffer has no per-post URL).
 function postItem(p) {
-  const ch = chOf(p.channelId);
-  return `<div class="item svc-${esc(ch.service)}" data-testid="queue-item"><div class="meta">${esc(ch.displayName || ch.name)} on ${esc(netName(ch.service))}, ${esc(p.status)}${p.dueAt ? ", " + new Date(p.dueAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : ""}</div><pre>${esc(p.text)}</pre></div>`;
+  const ch = chOf(p.channelId), demo = S.session?.demo;
+  const when = p.sentAt || p.dueAt, sent = p.status === "sent";
+  const at = when ? new Date(when).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const label = { scheduled: `Scheduled for ${at}`, sent: `Sent ${at}`, draft: "Draft in Buffer", error: "Failed to send" }[p.status] || p.status;
+  const href = demo ? "" : sent && p.externalLink ? p.externalLink : `https://publish.buffer.com/channels/${encodeURIComponent(p.channelId)}/schedule`;
+  const go = sent && p.externalLink ? `View on ${netName(ch.service)}` : "Open in Buffer";
+  const a = (p.assets || [])[0], isVid = a && /video/.test(a.type + a.mimeType), thumb = a && (a.thumbnail || (!isVid && a.source));
+  const media = !a ? "" : `${href ? `<a class="pv-media" href="${esc(href)}" target="_blank" rel="noopener" aria-label="${esc(go)}">` : `<span class="pv-media">`}${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : ""}${isVid ? `<span class="play" aria-hidden="true"></span>` : ""}${(p.assets || []).length > 1 ? `<span class="more">+${p.assets.length - 1}</span>` : ""}${href ? "</a>" : "</span>"}`;
+  return `<article class="item pv svc-${esc(ch.service)}${p.error ? " failed" : ""}" data-testid="queue-item">
+    <div class="pv-body"><div class="dh">${avatar(ch)}<div class="who"><b>${esc(ch.displayName || ch.name)}</b><small>${esc(ch.name ? "@" + ch.name + " on " : "")}${esc(netName(ch.service))}</small></div></div>
+      <pre>${esc(p.text)}</pre>
+      ${p.error ? `<div class="st err">${esc(p.error.message)}</div>` : ""}
+      <div class="pv-foot"><span class="muted">${esc(label)}</span>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener" data-testid="open-post">${esc(go)}</a>` : ""}</div></div>
+    ${media}</article>`;
 }
 
 // ---------------------------------------------------------------- approvals

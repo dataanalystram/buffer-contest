@@ -340,3 +340,12 @@ def test_demo_workspace_never_calls_buffer(client, fake):
     pv = client.post("/api/posts/preview", json={"channel_id": "demo_bsky", "text": "hello", "mode": "draft"}).json()
     assert client.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]}).json()["post"]["status"] == "draft"
     assert fake.calls == [] and fake.token_calls == []
+
+
+def test_public_stats_count_real_accounts_only(human, client):
+    pv = human.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "Hello", "mode": "queue"}).json()
+    human.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]})
+    from fastapi.testclient import TestClient
+    TestClient(human.app, base_url="https://hq.test").get("/demo", follow_redirects=False)
+    st = client.get("/api/stats").json()
+    assert st == {"buffer_accounts": 1, "posts_sent_to_buffer": 1, "sample_workspaces_open": 1}

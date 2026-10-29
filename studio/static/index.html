@@ -45,6 +45,7 @@
           <a class="btn big" href="/demo" id="demoBtn" data-testid="try-demo">Try it without signing in</a>
           <a class="btn2 big" href="/login" id="connectBtn" data-testid="connect-buffer">Connect Buffer</a>
         </div>
+        <p class="fine stats" id="landStats" data-testid="land-stats" hidden></p>
         <p class="fine" id="configNote" data-testid="config-note" hidden>This server has no Buffer app client configured yet.</p>
         <p class="fine">Sign-in uses Buffer's own OAuth. Your Buffer tokens stay encrypted on the server and never reach the browser. <a href="/privacy">Privacy</a></p>
       </div>
@@ -141,6 +142,7 @@
     <div class="pane">
       <div class="tab" id="tab-home">
         <h1 class="page-title" id="homeTitle" data-testid="home-title">Good to see you.</h1>
+        <p class="muted stats" id="homeStats" data-testid="home-stats" hidden></p>
         <form class="quick" id="quickForm">
           <label class="sr" for="quickUrl">Link to write posts from</label>
           <input id="quickUrl" data-testid="quick-url" type="url" placeholder="Paste a link to write a post for every channel" required>

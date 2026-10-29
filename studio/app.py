@@ -98,6 +98,15 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(p)
 
+    # public counters for the landing page and the home screen (real rows only, sample workspaces excluded)
+    @app.get("/api/stats")
+    def stats():
+        users = store.q("SELECT COUNT(*) AS n FROM users WHERE id NOT LIKE ?", (demo.PREFIX + "%",))[0]["n"]
+        sent = store.q("SELECT COUNT(*) AS n FROM audit WHERE ok=1 AND action IN ('submit_post','approve_post') "
+                       "AND risk IN ('public','draft') AND user_id NOT LIKE ?", (demo.PREFIX + "%",))[0]["n"]
+        tries = store.q("SELECT COUNT(*) AS n FROM users WHERE id LIKE ?", (demo.PREFIX + "%",))[0]["n"]
+        return {"buffer_accounts": users, "posts_sent_to_buffer": sent, "sample_workspaces_open": tries}
+
     @app.get("/healthz")
     def health():
         return {"ok": True, "configured": s.configured}
