@@ -166,6 +166,11 @@ Build notes: on this Mac `npm run build` needs `npm install --no-save @rolldown/
 lightningcss-darwin-arm64@<ver> @tailwindcss/oxide-darwin-arm64@<ver>` (lockfile was made on Linux); e2e runs with
 `CHROMIUM_PATH` pointing at an installed Playwright Chromium.
 
+## UI design
+The hosted contest app's UI is `studio/static/` (plain HTML/CSS/JS, no build step). Follow `DESIGN.md` for every UI
+change there: Taste tokens, one accent that means "needs a person", flat hairline cards, motion only in response to an
+action, every control with a `data-testid`.
+
 ## Docs
 `README.md` (status, quick start), `SETUP.md` (developer apps, redirect URIs, compliance callbacks, hosting),
 `docs/CONNECT_INTEGRATIONS.md` (numbered connect steps per network), `docs/CONNECTORS_RESEARCH.md` (tiers, scopes,
