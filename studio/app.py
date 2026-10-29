@@ -266,6 +266,18 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def ideas(request: Request, body: dict = Body(...)):
         return studio.create_idea(actor(request, write=True), body.get("title", ""), body.get("text", ""))
 
+    @app.get("/api/radar")
+    def radar_list(request: Request):
+        return studio.radar(actor(request))
+
+    @app.post("/api/radar/feeds")
+    def radar_add(request: Request, body: dict = Body(...)):
+        return studio.add_feed(actor(request, write=True), body.get("url", ""))
+
+    @app.delete("/api/radar/feeds/{feed_id}")
+    def radar_remove(feed_id: int, request: Request):
+        return studio.remove_feed(actor(request, write=True), feed_id)
+
     @app.get("/api/limits")
     def limits(request: Request):
         return studio.limits(actor(request))

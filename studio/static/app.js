@@ -40,7 +40,8 @@ async function boot() {
   const p = new URLSearchParams(location.search);
   if (p.get("error")) toast("Buffer: " + p.get("error"), 6000);
   if (p.get("connected")) toast("Connected to Buffer");
-  if (p.has("error") || p.has("connected")) history.replaceState({}, "", "/");
+  const shared = p.get("url"); // from the bookmarklet: /?url=<page you were reading>
+  if (p.has("error") || p.has("connected") || shared) history.replaceState({}, "", "/");
   const s = await api("/api/session");
   S.csrf = s.csrf; S.session = s;
   if (s.repo) $("#repoLink").href = s.repo; else $("#repoLink").hidden = true;
@@ -55,7 +56,9 @@ async function boot() {
   setKill(s.user.kill_switch);
   snippets(s.mcp_url);
   await loadChannels();
-  budget(); showTab("home");
+  budget();
+  if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
+  else showTab("home");
 }
 
 async function showStats() {
@@ -66,6 +69,8 @@ async function showStats() {
     for (const el of [$("#landStats"), $("#homeStats")]) { el.textContent = txt; el.hidden = false; }
   } catch (_) {}
 }
+$("#bookmarklet").href = `javascript:location.href='${location.origin}/?url='+encodeURIComponent(location.href)`;
+$("#bookmarklet").onclick = (e) => { e.preventDefault(); toast("Drag this link to your bookmarks bar, then click it on any article."); };
 function setKill(on) {
   const p = $("#killPill"); p.textContent = on ? "Agents paused" : "Agents on"; p.className = "status " + (on ? "off" : "on");
   $("#killToggle").checked = !!on;
@@ -191,7 +196,7 @@ function showTab(name) {
   document.querySelectorAll(".rail button").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   window.scrollTo({ top: 0 });
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
-  ({ home: loadHome, approvals: loadApprovals, queue: loadQueue, agents: loadTokens, activity: loadAudit }[name] || (() => {}))();
+  ({ home: loadHome, radar: loadRadar, approvals: loadApprovals, queue: loadQueue, agents: loadTokens, activity: loadAudit }[name] || (() => {}))();
 }
 
 // ---------------------------------------------------------------- home: what needs you
@@ -217,7 +222,52 @@ async function loadHome() {
   const up = $("#upcoming");
   up.innerHTML = upcoming.length ? "" : `<div class="empty"><b>Nothing scheduled yet</b><span>Posts you send to your Buffer queue show up here.</span></div>`;
   upcoming.slice(0, 4).forEach((p) => up.insertAdjacentHTML("beforeend", postItem(p)));
+  const hs = $("#homeStories");
+  api("/api/radar").then((r) => {
+    hs.innerHTML = r.stories.length ? r.stories.slice(0, 3).map(storyItem).join("")
+      : `<div class="empty"><b>No feeds yet</b><span>Follow the sites you share from in News radar, and new stories land here.</span></div>`;
+    wireStories(hs);
+  }).catch(() => (hs.innerHTML = ""));
 }
+// ---------------------------------------------------------------- news radar
+function storyItem(st) {
+  const ago = st.published ? timeAgo(st.published * 1000) : "";
+  return `<article class="item story" data-testid="story-item">
+    <div class="pv-body"><div class="meta">${esc(st.source)}${ago ? `, ${esc(ago)}` : ""}</div>
+      <a class="story-title" href="${esc(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
+      ${st.summary ? `<p class="muted story-sum">${esc(st.summary)}</p>` : ""}
+      <div class="pv-foot"><span></span><button class="btn2 sm" data-testid="story-write" data-url="${esc(st.url)}">Write posts</button></div></div>
+    ${st.image ? `<span class="pv-media"><img src="${esc(st.image)}" alt="" loading="lazy"></span>` : ""}</article>`;
+}
+function timeAgo(ms) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return "just now"; if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h} h ago`;
+  return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+function wireStories(box) {
+  box.querySelectorAll("[data-testid=story-write]").forEach((b) => (b.onclick = () => { $("#urlInput").value = b.dataset.url; showTab("studio"); $("#draftForm").requestSubmit(); }));
+}
+async function loadRadar() {
+  const box = $("#stories"), fl = $("#feeds");
+  box.innerHTML = `<p class="muted">Checking your feeds…</p>`;
+  try {
+    const r = await api("/api/radar");
+    fl.innerHTML = r.feeds.map((f) => `<span class="feed" data-testid="feed-row"><span>${esc(new URL(f.url).hostname.replace(/^www\./, ""))}</span><button class="link danger" data-testid="feed-remove" data-id="${f.id}" aria-label="Stop following ${esc(f.url)}">Remove</button></span>`).join("");
+    fl.querySelectorAll("[data-testid=feed-remove]").forEach((b) => (b.onclick = async () => { await api(`/api/radar/feeds/${b.dataset.id}`, { method: "DELETE" }); loadRadar(); }));
+    box.innerHTML = (r.errors || []).map((e) => `<div class="st err">${esc(new URL(e.feed).hostname)}: ${esc(e.error)}</div>`).join("")
+      + (r.stories.length ? r.stories.map(storyItem).join("") : `<div class="empty"><b>No stories yet</b><span>Follow a site's feed above. Most news sites and blogs have one at /feed or /rss.</span></div>`);
+    wireStories(box);
+  } catch (e) { box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+}
+$("#feedForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const b = $("[data-testid=feed-add]"); b.disabled = true;
+  try { const f = await api("/api/radar/feeds", { method: "POST", body: { url: $("#feedUrl").value.trim() } }); toast(`Following ${f.title}`); $("#feedUrl").value = ""; loadRadar(); }
+  catch (e) { toast(e.message, 5000); }
+  finally { b.disabled = false; }
+});
+
 // A post as it will look: who posts it, the text, its media. The media and the link open the post where it lives:
 // on the network once sent, otherwise the channel's schedule in Buffer (Buffer has no per-post URL).
 function postItem(p) {
