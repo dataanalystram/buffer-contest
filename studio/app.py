@@ -211,7 +211,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.post("/api/draft")
     def draft(request: Request, body: dict = Body(...)):
-        return studio.draft_from_link(actor(request, write=True), body.get("url", ""), body.get("channel_ids"), body.get("tone", ""))
+        return studio.draft_from_link(actor(request, write=True), body.get("url", ""), body.get("channel_ids"), body.get("tone", ""),
+                                     bool(body.get("thread")))
 
     @app.post("/api/posts/preview")
     def preview(request: Request, body: dict = Body(...)):

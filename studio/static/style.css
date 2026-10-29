@@ -58,3 +58,4 @@ table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(-
 @media(max-width:760px){.cards3{grid-template-columns:1fr}h1{font-size:32px}.built{display:none}.row{flex-wrap:wrap}.top{padding:12px 14px}}
 
 td code{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;font-size:12px}table{table-layout:fixed}td:last-child{width:42%}
+.chk{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--mute);white-space:nowrap;cursor:pointer}

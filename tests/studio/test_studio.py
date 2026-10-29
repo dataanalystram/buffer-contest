@@ -161,6 +161,22 @@ def test_post_input_shapes():
     assert yt["metadata"]["youtube"]["title"] == "Title line" and yt["mode"] == "shareNow"
 
 
+def test_threads_from_link_and_post_input(human, fake):
+    r = human.post("/api/draft", json={"url": "https://news.example.com/ai-launch", "thread": True}).json()
+    x = next(d for d in r["drafts"] if d["service"] == "twitter")
+    parts = drafter.split_thread("twitter", x["text"])
+    assert x["parts"] == len(parts) >= 2 and parts[-1].endswith("https://news.example.com/ai-launch")
+    assert all(drafter.count("twitter", p) <= 280 for p in parts)
+    assert next(d for d in r["drafts"] if d["service"] == "linkedin")["parts"] == 1
+    inp = build_post_input({"id": "ch_x", "service": "twitter"}, "one\n---\ntwo", "https://cdn/a.png", "queue", None)
+    assert inp["text"] == "one" and inp["metadata"]["twitter"]["thread"] == [
+        {"text": "one", "assets": [{"image": {"url": "https://cdn/a.png"}}]}, {"text": "two"}]
+    li = build_post_input({"id": "ch_li", "service": "linkedin"}, "one\n---\ntwo", "", "queue", None)
+    assert li["text"] == "one\n---\ntwo" and "metadata" not in li
+    long = human.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "ok\n---\n" + "x" * 300, "mode": "queue"})
+    assert long.status_code == 400 and "Thread post 2: 300/280" in long.json()["error"]
+
+
 def test_csrf_required_for_browser_writes(client):
     connect(client)
     r = client.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "hi"})

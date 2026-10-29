@@ -66,6 +66,12 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
         inp.update(mode="customScheduled", dueAt=due_at)
     svc = channel["service"]
     meta = dict(REQUIRED_METADATA.get(svc, {}))
+    parts = drafter.split_thread(svc, text)
+    if len(parts) > 1:
+        inp["text"] = parts[0]
+        meta["thread"] = [{"text": p} for p in parts]
+        if inp["assets"]:
+            meta["thread"][0]["assets"] = inp["assets"]
     if svc == "youtube":
         meta["title"] = text.split("\n")[0][:100]
     if meta:
@@ -104,7 +110,8 @@ class Studio:
         return {"buffer_api": self.buffer.budget.snapshot(), "characters": drafter.LIMITS}
 
     # ------------------------------------------------------------ drafting
-    def draft_from_link(self, a: Actor, url: str, channel_ids: list[str] | None = None, tone: str = "") -> dict:
+    def draft_from_link(self, a: Actor, url: str, channel_ids: list[str] | None = None, tone: str = "",
+                        thread: bool = False) -> dict:
         chans = [c for c in self.channels(a) if not c.get("isDisconnected")]
         if channel_ids:
             chans = [c for c in chans if c["id"] in channel_ids]
@@ -115,7 +122,7 @@ class Studio:
         except drafter.FetchError as e:
             raise ActionError(str(e))
         ai = {"base_url": self.s.ai_base_url, "api_key": self.s.ai_api_key, "model": self.s.ai_model}
-        drafts = drafter.draft(chans, article, ai=ai, tone=tone)
+        drafts = drafter.draft(chans, article, ai=ai, tone=tone, thread=thread)
         self.store.audit(a.uid, a.label, "draft_from_link", "read", {"url": article["url"], "channels": len(drafts)})
         return {"article": {k: article[k] for k in ("url", "title", "description", "image", "site")}, "drafts": drafts}
 
@@ -147,9 +154,12 @@ class Studio:
         text = (p.get("text") or "").strip()
         if not text:
             raise ActionError("Post text is empty.")
-        n, lim = drafter.count(ch["service"], text), drafter.limit_for(ch["service"])
-        if n > lim:
-            raise ActionError(f"{n}/{lim} characters: too long for {ch['service']}. Trim it or use Fit.")
+        lim, parts = drafter.limit_for(ch["service"]), drafter.split_thread(ch["service"], text)
+        for i, part in enumerate(parts, 1):
+            n = drafter.count(ch["service"], part)
+            if n > lim:
+                where = f"Thread post {i}: " if len(parts) > 1 else ""
+                raise ActionError(f"{where}{n}/{lim} characters: too long for {ch['service']}. Trim it or use Fit.")
         media = (p.get("media_url") or "").strip()
         if media and not media.startswith("https://"):
             raise ActionError("Media must be a public https:// URL (Buffer fetches it from there).")

@@ -27,6 +27,7 @@ function count(svc, t) {
   return t.length;
 }
 const limitFor = (svc) => LIMITS[svc] || 2000;
+const THREADS = new Set(["twitter", "bluesky", "threads", "mastodon"]);
 
 // ---------------------------------------------------------------- boot
 async function boot() {
@@ -85,7 +86,7 @@ $("#draftForm").addEventListener("submit", async (ev) => {
   if (!S.selected.size) return toast("Pick at least one channel");
   const b = $("#draftBtn"); b.disabled = true; b.innerHTML = `<span class="spin"></span>Reading the page &amp; writing drafts… (AI can take ~30 s)`;
   try {
-    const r = await api("/api/draft", { method: "POST", body: { url, channel_ids: [...S.selected], tone: $("#toneSelect").value } });
+    const r = await api("/api/draft", { method: "POST", body: { url, channel_ids: [...S.selected], tone: $("#toneSelect").value, thread: $("#threadChk").checked } });
     S.article = r.article; S.drafts = r.drafts; renderArticle(); renderDrafts();
   } catch (e) { toast(e.message, 5000); }
   finally { b.disabled = false; b.textContent = "Draft posts"; budget(); }
@@ -115,7 +116,11 @@ function renderDrafts() {
         <button class="btn" data-testid="send-draft">Send to Buffer</button></div>
       <div data-testid="draft-status"></div>`;
     const ta = $("textarea", el), meter = $("[data-testid=draft-count]", el), mode = $("[data-testid=draft-mode]", el), due = $("[data-testid=draft-due]", el);
-    const upd = () => { const n = count(d.service, ta.value), lim = limitFor(d.service); meter.innerHTML = `<span class="${n > lim ? "over" : n > lim * 0.9 ? "near" : ""}">${n} / ${lim}</span>`; };
+    const upd = () => {
+      const lim = limitFor(d.service), parts = THREADS.has(d.service) ? ta.value.split(/\n[ \t]*---[ \t]*\n/).filter((p) => p.trim()) : [ta.value];
+      const n = Math.max(...parts.map((p) => count(d.service, p)), 0);
+      meter.innerHTML = `<span class="${n > lim ? "over" : n > lim * 0.9 ? "near" : ""}">${n} / ${lim}</span>${parts.length > 1 ? ` · thread of ${parts.length}` : ""}`;
+    };
     ta.addEventListener("input", upd); upd();
     mode.addEventListener("change", () => (due.hidden = mode.value !== "schedule"));
     $("[data-testid=send-draft]", el).onclick = () => sendCard(el, d);
