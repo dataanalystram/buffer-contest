@@ -56,6 +56,8 @@ def test_link_to_buffer_draft_and_agent_approval(live):
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
         page = ctx.new_page()
         page.goto(base)
+        page.get_by_test_id("todo-item").first.wait_for()
+        page.get_by_test_id("tab-studio").click()
         page.get_by_test_id("channel-chip").first.wait_for()
         assert page.get_by_test_id("channel-chip").count() == 3
         assert not page.get_by_test_id("landing").is_visible()

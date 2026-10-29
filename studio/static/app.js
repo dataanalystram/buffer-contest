@@ -28,6 +28,12 @@ function count(svc, t) {
 }
 const limitFor = (svc) => LIMITS[svc] || 2000;
 const THREADS = new Set(["twitter", "bluesky", "threads", "mastodon"]);
+const NETWORK = { twitter: "X", linkedin: "LinkedIn", instagram: "Instagram", bluesky: "Bluesky", threads: "Threads", mastodon: "Mastodon", facebook: "Facebook", tiktok: "TikTok", youtube: "YouTube", pinterest: "Pinterest", googlebusiness: "Google Business" };
+const netName = (svc) => NETWORK[svc] || svc;
+const splitThread = (svc, t) => (THREADS.has(svc) ? t.split(/\n[ \t]*---[ \t]*\n/).filter((p) => p.trim()) : [t]);
+const initials = (n) => (n || "?").replace(/[^\p{L}\p{N} ]/gu, "").split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+const avatar = (c) => (c.avatar ? `<img class="av" src="${esc(c.avatar)}" alt="">` : `<span class="av" aria-hidden="true">${esc(initials(c.displayName || c.name))}</span>`);
+const chOf = (id) => S.channels.find((c) => c.id === id) || { id, service: "", name: id };
 
 // ---------------------------------------------------------------- boot
 async function boot() {
@@ -43,12 +49,12 @@ async function boot() {
     if (!s.configured) { $("#configNote").hidden = false; $("#connectBtn").classList.add("disabled"); }
     return;
   }
-  $("#app").hidden = false; $("#topRight").hidden = false;
+  $("#app").hidden = false; $("#topRight").hidden = false; $("#demoBar").hidden = !s.demo;
   $("#acctBtn").textContent = (s.user.name || s.user.email || "Account") + (s.user.organization ? " · " + s.user.organization : "");
   setKill(s.user.kill_switch);
   snippets(s.mcp_url);
   await loadChannels();
-  refreshBadge(); budget();
+  budget(); showTab("home");
 }
 
 function setKill(on) {
@@ -73,8 +79,9 @@ async function loadChannels(refresh = false) {
     const el = document.createElement("button");
     el.type = "button"; el.className = "chip" + (S.selected.has(c.id) ? " on" : "") + (c.isDisconnected ? " dis" : "");
     el.dataset.testid = "channel-chip"; el.setAttribute("data-testid", "channel-chip"); el.dataset.id = c.id;
-    el.innerHTML = `${c.avatar ? `<img src="${esc(c.avatar)}" alt="">` : `<span class="av"></span>`}<span>${esc(c.displayName || c.name)}</span><small>${esc(c.service)}</small>`;
-    el.onclick = () => { if (c.isDisconnected) return toast("Reconnect this channel in Buffer first"); S.selected.has(c.id) ? S.selected.delete(c.id) : S.selected.add(c.id); el.classList.toggle("on"); };
+    el.classList.add("svc-" + c.service); el.setAttribute("aria-pressed", S.selected.has(c.id));
+    el.innerHTML = `${avatar(c)}<span>${esc(c.displayName || c.name)}</span><small>${esc(netName(c.service))}</small>`;
+    el.onclick = () => { if (c.isDisconnected) return toast("Reconnect this channel in Buffer first"); S.selected.has(c.id) ? S.selected.delete(c.id) : S.selected.add(c.id); el.classList.toggle("on"); el.setAttribute("aria-pressed", S.selected.has(c.id)); };
     box.appendChild(el);
   }
 }
@@ -84,12 +91,12 @@ $("#draftForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const url = $("#urlInput").value.trim(); if (!url) return;
   if (!S.selected.size) return toast("Pick at least one channel");
-  const b = $("#draftBtn"); b.disabled = true; b.innerHTML = `<span class="spin"></span>Reading the page &amp; writing drafts… (AI can take ~30 s)`;
+  const b = $("#draftBtn"); b.disabled = true; b.innerHTML = `<span class="spin"></span>Reading the page and writing posts…`;
   try {
     const r = await api("/api/draft", { method: "POST", body: { url, channel_ids: [...S.selected], tone: $("#toneSelect").value, thread: $("#threadChk").checked } });
     S.article = r.article; S.drafts = r.drafts; renderArticle(); renderDrafts();
   } catch (e) { toast(e.message, 5000); }
-  finally { b.disabled = false; b.textContent = "Draft posts"; budget(); }
+  finally { b.disabled = false; b.textContent = "Write posts"; budget(); }
 });
 
 function renderArticle() {
@@ -105,23 +112,32 @@ function renderDrafts() {
   $("#bulkMode").innerHTML = modeOptions("queue").replace('<option value="schedule"', '<option disabled value="schedule"');
   S.drafts.forEach((d, i) => {
     const ch = S.channels.find((c) => c.id === d.channel_id) || {};
-    const el = document.createElement("div"); el.className = "draft"; el.setAttribute("data-testid", "draft-card"); el.dataset.service = d.service;
+    const el = document.createElement("div"); el.className = "draft svc-" + d.service; el.setAttribute("data-testid", "draft-card"); el.dataset.service = d.service;
     el.innerHTML = `
-      <div class="dh">${ch.avatar ? `<img class="av" src="${esc(ch.avatar)}" alt="">` : `<span class="av"></span>`}<b>${esc(d.channel_name)}</b><span class="svc">${esc(d.service)}</span></div>
-      <textarea data-testid="draft-text">${esc(d.text)}</textarea>
-      <div class="meter"><span data-testid="draft-count"></span><span>${d.engine === "ai" ? "AI draft" : "Draft"} · edit freely</span></div>
-      <div class="media"><input data-testid="draft-media" placeholder="Image or video URL (https)" value="${esc(d.media_url)}">${d.media_url ? `<img src="${esc(d.media_url)}" alt="">` : ""}</div>
-      <div class="dact"><select data-testid="draft-mode">${modeOptions(ch.needs_media && !d.media_url ? "draft" : "queue")}</select>
-        <input type="datetime-local" data-testid="draft-due" hidden>
+      <div class="post">
+        <div class="dh">${avatar(ch)}<div class="who"><b>${esc(d.channel_name)}</b><small>${esc(ch.name ? "@" + ch.name : "")}</small></div><span class="net">${esc(netName(d.service))}</span></div>
+        <textarea data-testid="draft-text" aria-label="Post for ${esc(d.channel_name)} on ${esc(netName(d.service))}">${esc(d.text)}</textarea>
+        <ol class="thread" data-testid="thread-preview" hidden></ol>
+        <img class="pic" alt="" hidden>
+      </div>
+      <div class="meter"><span data-testid="draft-count"></span><span>${d.engine === "ai" ? "Written by AI" : "Written from the article"}. Edit freely.</span></div>
+      <div class="media"><input data-testid="draft-media" aria-label="Image or video URL" placeholder="Image or video URL (https)" value="${esc(d.media_url)}"></div>
+      <div class="dact"><select data-testid="draft-mode" aria-label="How to send">${modeOptions(ch.needs_media && !d.media_url ? "draft" : "queue")}</select>
+        <input type="datetime-local" data-testid="draft-due" aria-label="Date and time" hidden>
         <button class="btn" data-testid="send-draft">Send to Buffer</button></div>
       <div data-testid="draft-status"></div>`;
     const ta = $("textarea", el), meter = $("[data-testid=draft-count]", el), mode = $("[data-testid=draft-mode]", el), due = $("[data-testid=draft-due]", el);
+    const thread = $(".thread", el), pic = $(".pic", el), media = $("[data-testid=draft-media]", el);
     const upd = () => {
-      const lim = limitFor(d.service), parts = THREADS.has(d.service) ? ta.value.split(/\n[ \t]*---[ \t]*\n/).filter((p) => p.trim()) : [ta.value];
+      const lim = limitFor(d.service), parts = splitThread(d.service, ta.value);
       const n = Math.max(...parts.map((p) => count(d.service, p)), 0);
-      meter.innerHTML = `<span class="${n > lim ? "over" : n > lim * 0.9 ? "near" : ""}">${n} / ${lim}</span>${parts.length > 1 ? ` · thread of ${parts.length}` : ""}`;
+      meter.innerHTML = `<span class="${n > lim ? "over" : n > lim * 0.9 ? "near" : ""}">${n} / ${lim}${parts.length > 1 ? " in the longest post" : ""}</span>`;
+      thread.hidden = parts.length < 2;
+      thread.innerHTML = parts.length < 2 ? "" : parts.map((p, i) => `<li><span class="n">${i + 1} of ${parts.length}${count(d.service, p) > lim ? ", too long" : ""}</span>${esc(p)}</li>`).join("");
     };
-    ta.addEventListener("input", upd); upd();
+    const updPic = () => { const u = media.value.trim(); pic.hidden = !/^https:\/\/\S+\.(png|jpe?g|gif|webp)(\?|$)/i.test(u) && !(u && u === d.media_url); if (!pic.hidden) pic.src = u; };
+    pic.onerror = () => (pic.hidden = true);
+    ta.addEventListener("input", upd); upd(); media.addEventListener("input", updPic); updPic();
     mode.addEventListener("change", () => (due.hidden = mode.value !== "schedule"));
     $("[data-testid=send-draft]", el).onclick = () => sendCard(el, d);
     box.appendChild(el);
@@ -159,34 +175,67 @@ $("#saveIdea").onclick = async () => {
 $("#refreshCh").onclick = () => loadChannels(true);
 
 // ---------------------------------------------------------------- tabs
-document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+document.querySelectorAll(".rail button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 function showTab(name) {
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll(".rail button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
-  ({ approvals: loadApprovals, queue: loadQueue, agents: loadTokens, activity: loadAudit }[name] || (() => {}))();
+  ({ home: loadHome, approvals: loadApprovals, queue: loadQueue, agents: loadTokens, activity: loadAudit }[name] || (() => {}))();
+}
+
+// ---------------------------------------------------------------- home: what needs you
+$("#quickForm").addEventListener("submit", (ev) => { ev.preventDefault(); $("#urlInput").value = $("#quickUrl").value; showTab("studio"); $("#draftForm").requestSubmit(); });
+async function loadHome() {
+  const name = (S.session.user.name || "").split(" ")[0];
+  $("#homeTitle").textContent = S.session.demo ? "Here's what needs you in the sample workspace." : name ? `Here's what needs you, ${name}.` : "Here's what needs you.";
+  const [appr, upcoming] = await Promise.all([refreshBadge(), api("/api/queue?status=scheduled").catch(() => [])]);
+  const todo = [];
+  if (appr.length) {
+    const who = [...new Set(appr.map((a) => a.agent_name))].join(" and ");
+    todo.push([`<span class="hl">${appr.length} post${appr.length > 1 ? "s" : ""}</span> from ${esc(who)} waiting for your approval`, "Nothing reaches Buffer until you approve it.", "Review", "approvals"]);
+  }
+  const unsent = [...document.querySelectorAll("[data-testid=send-draft]")].filter((b) => !b.disabled).length;
+  if (unsent) todo.push([`<span class="hl">${unsent} draft${unsent > 1 ? "s" : ""}</span> you wrote but haven't sent`, esc(S.article?.title || ""), "Open", "studio"]);
+  const off = S.channels.filter((c) => c.isDisconnected);
+  if (off.length) todo.push([`<span class="hl">${off.length} channel${off.length > 1 ? "s" : ""}</span> disconnected in Buffer`, esc(off.map((c) => c.displayName || c.name).join(", ")) + ". Reconnect in Buffer, then refresh.", "Refresh", "refresh"]);
+  if (S.session.user.kill_switch) todo.push(["Your agents are paused", "The kill switch is on, so agents can't draft or post.", "Agents", "agents"]);
+  const box = $("#todo");
+  box.innerHTML = todo.length ? todo.map(([t, sub, btn, go]) => `<li data-testid="todo-item"><span class="ic"></span><div class="what">${t}<small>${sub}</small></div><button class="ghost" data-testid="todo-go" data-go="${go}">${btn}</button></li>`).join("")
+    : `<li data-testid="todo-item"><span class="ic calm"></span><div class="what">All clear<small>Paste a link above, or connect an agent to draft for you.</small></div></li>`;
+  box.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => (b.dataset.go === "refresh" ? loadChannels(true).then(loadHome) : showTab(b.dataset.go))));
+  const up = $("#upcoming");
+  up.innerHTML = upcoming.length ? "" : `<div class="empty">Nothing scheduled in Buffer yet.</div>`;
+  upcoming.slice(0, 4).forEach((p) => up.insertAdjacentHTML("beforeend", postItem(p)));
+}
+function postItem(p) {
+  const ch = chOf(p.channelId);
+  return `<div class="item svc-${esc(ch.service)}" data-testid="queue-item"><div class="meta">${esc(ch.displayName || ch.name)} on ${esc(netName(ch.service))}, ${esc(p.status)}${p.dueAt ? ", " + new Date(p.dueAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : ""}</div><pre>${esc(p.text)}</pre></div>`;
 }
 
 // ---------------------------------------------------------------- approvals
 async function refreshBadge() {
-  try { const r = await api("/api/approvals"); const b = $("#apprBadge"); b.textContent = r.length; b.hidden = !r.length; return r; } catch (_) { return []; }
+  try {
+    const r = await api("/api/approvals");
+    for (const b of [$("#apprBadge"), $("#homeBadge")]) { b.textContent = r.length; b.hidden = !r.length; }
+    return r;
+  } catch (_) { return []; }
 }
 async function loadApprovals() {
   const box = $("#approvals"), rows = await refreshBadge();
-  if (!rows.length) { box.innerHTML = `<div class="empty">Nothing waiting. When an agent submits a post, it shows up here for you to approve.</div>`; return; }
+  if (!rows.length) { box.innerHTML = `<div class="empty">Nothing waiting. When an agent writes a post, it shows up here for you to approve.</div>`; return; }
   box.innerHTML = "";
   for (const r of rows) {
-    const ch = S.channels.find((c) => c.id === r.payload.channel_id) || { service: "?", name: r.payload.channel_id };
-    const el = document.createElement("div"); el.className = "item"; el.setAttribute("data-testid", "approval-item");
-    el.innerHTML = `<div class="meta"><b>${esc(r.agent_name)}</b> wants to post to <b>${esc(ch.displayName || ch.name)}</b> (${esc(ch.service)}) · ${new Date(r.created * 1000).toLocaleString()}</div>
+    const ch = chOf(r.payload.channel_id);
+    const el = document.createElement("div"); el.className = `item agent svc-${ch.service}`; el.setAttribute("data-testid", "approval-item");
+    el.innerHTML = `<div class="meta"><b>${esc(r.agent_name)}</b> wrote this for <b>${esc(ch.displayName || ch.name)}</b> on ${esc(netName(ch.service))}, ${new Date(r.created * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>
       <textarea data-testid="approval-text">${esc(r.payload.text)}</textarea>
       <div class="dact"><select data-testid="approval-mode">${modeOptions(r.payload.mode === "schedule" ? "queue" : r.payload.mode)}</select>
-      <button class="btn" data-testid="approve">Approve → Buffer</button><button class="ghost" data-testid="reject">Reject</button></div><div data-testid="approval-status"></div>`;
+      <button class="btn" data-testid="approve">Approve and send to Buffer</button><button class="ghost" data-testid="reject">Reject</button></div><div data-testid="approval-status"></div>`;
     $("[data-testid=approve]", el).onclick = async () => {
       try { const res = await api(`/api/approvals/${r.id}/approve`, { method: "POST", body: { text: $("textarea", el).value, mode: $("select", el).value } });
-        $("[data-testid=approval-status]", el).innerHTML = `<div class="st ok">✓ Sent to Buffer (${esc(res.mode)})</div>`; setTimeout(loadApprovals, 1200); }
+        $("[data-testid=approval-status]", el).innerHTML = `<div class="st ok">✓ Sent to Buffer (${esc(res.mode)})</div>`; setTimeout(loadApprovals, 1200); refreshBadge(); }
       catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
     };
-    $("[data-testid=reject]", el).onclick = async () => { await api(`/api/approvals/${r.id}/reject`, { method: "POST" }); loadApprovals(); };
+    $("[data-testid=reject]", el).onclick = async () => { await api(`/api/approvals/${r.id}/reject`, { method: "POST" }); toast("Rejected. Nothing was sent."); loadApprovals(); };
     box.appendChild(el);
   }
 }
@@ -199,9 +248,11 @@ async function loadQueue() {
     const rows = await api("/api/queue?status=" + $("#queueStatus").value);
     if (my !== queueReq) return; // a newer request (e.g. filter changed) owns the list
     box.innerHTML = rows.length ? "" : `<div class="empty">Nothing here in Buffer.</div>`;
+    let day = "";
     for (const p of rows) {
-      const ch = S.channels.find((c) => c.id === p.channelId) || {};
-      box.insertAdjacentHTML("beforeend", `<div class="item" data-testid="queue-item"><div class="meta">${esc(ch.displayName || ch.name || p.channelId)} · ${esc(ch.service || "")} · ${esc(p.status)}${p.dueAt ? " · " + new Date(p.dueAt).toLocaleString() : ""}</div><pre>${esc(p.text)}</pre></div>`);
+      const d = p.dueAt ? new Date(p.dueAt).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }) : "No time set";
+      if (d !== day) { day = d; box.insertAdjacentHTML("beforeend", `<div class="day">${esc(d)}</div>`); }
+      box.insertAdjacentHTML("beforeend", postItem(p));
     }
   } catch (e) { box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
   budget();

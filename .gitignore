@@ -21,3 +21,4 @@ playwright-report/
 secrets/
 studio.db*
 demo/raw/
+.claude/

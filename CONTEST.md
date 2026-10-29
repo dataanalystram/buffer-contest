@@ -34,4 +34,8 @@ All of `studio/`, `tests/studio/`, `Dockerfile.studio`, `render.yaml`, `requirem
 | 28 Oct | Tests: 29 API/unit tests incl. UI = REST = MCP parity (identical `createPost` input from all three) + Playwright e2e; CI runs them on SQLite and Postgres |
 | 28 Oct | Deploy: Render free web service + Render free Postgres (tokens survive restarts), GitHub Actions keep-alive ping every 10 min, gitleaks secret scan before every push |
 
+| 29 Oct | Threads from one link: X, Bluesky, Threads and Mastodon posts written as threads and sent through `metadata.<service>.thread`, each part checked against its limit |
+| 29 Oct | Try-it sample workspace (`/demo`): no sign-in, sample channels and an agent post waiting for approval; runs the real drafting, validation and approval code against an in-memory stand-in for Buffer |
+| 29 Oct | New interface: a "Needs you" home, drafts previewed the way each network shows them, thread previews, mobile layout |
+
 Not used: Buffer analytics/metrics APIs (not available to third-party apps).
