@@ -52,6 +52,8 @@ def load_settings(**overrides) -> Settings:
         ai_api_key=(env("AI_API_KEY") or "").strip(),
         ai_model=(env("AI_MODEL") or "").strip(),
         secure_cookies=env("STUDIO_INSECURE_COOKIES", "") != "1",
+        # Set REPO_URL="" while the repository is private so the footer never links to a 404.
+        repo_url=env("REPO_URL", Settings.repo_url).strip(),
     )
     for k, v in overrides.items():
         setattr(s, k, v)

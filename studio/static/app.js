@@ -43,7 +43,7 @@ async function boot() {
   if (p.has("error") || p.has("connected")) history.replaceState({}, "", "/");
   const s = await api("/api/session");
   S.csrf = s.csrf; S.session = s;
-  $("#repoLink").href = s.repo;
+  if (s.repo) $("#repoLink").href = s.repo; else $("#repoLink").hidden = true;
   if (!s.connected) {
     $("#landing").hidden = false;
     if (!s.configured) { $("#configNote").hidden = false; $("#connectBtn").classList.add("disabled"); }
