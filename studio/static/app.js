@@ -188,7 +188,7 @@ function showTab(name) {
 // ---------------------------------------------------------------- home: what needs you
 $("#quickForm").addEventListener("submit", (ev) => { ev.preventDefault(); $("#urlInput").value = $("#quickUrl").value; showTab("studio"); $("#draftForm").requestSubmit(); });
 async function loadHome() {
-  const name = (S.session.user.name || "").split(" ")[0];
+  const name = S.session.demo ? "" : (S.session.user.name || "").split(" ")[0];
   const [appr, upcoming] = await Promise.all([refreshBadge(), api("/api/queue?status=scheduled").catch(() => [])]);
   $("#homeTitle").textContent = appr.length ? `${appr.length === 1 ? "One post is" : appr.length + " posts are"} waiting for you` : name ? `All clear, ${name}` : "All clear";
   const todo = [];
