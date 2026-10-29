@@ -386,3 +386,19 @@ def test_radar_follow_list_and_agent_tool(human, monkeypatch):
     assert bot(human).post("/api/radar/feeds", json={"url": "https://x.example.com/f"}, headers={"Authorization": f"Bearer {tok}"}).status_code == 403
     human.delete(f"/api/radar/feeds/{r['feeds'][0]['id']}")
     assert len(human.get("/api/radar").json()["feeds"]) == 1
+
+
+def test_plan_limits_warn_and_block_before_buffer_does(human, fake, app):
+    assert human.get("/api/plan").json()["meters"] == []  # Buffer shares nothing: no warnings, nothing breaks
+    fake.plan = {"scheduledPosts": 1, "channels": 3}
+    app.state.buffer._cache.clear()
+    p = human.get("/api/plan").json()
+    assert {m["key"]: m["pct"] for m in p["meters"]} == {"scheduled_posts": 100, "channels": 100}
+    assert len(p["near_limit"]) == 2 and p["upgrade_url"].startswith("https://buffer.com/")
+    fake.daily = {"limit": 3, "scheduled": 2, "sent": 0, "isAtLimit": False}
+    ok = human.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "hi", "mode": "queue"}).json()
+    assert any("last post" in w for w in ok["warnings"])
+    fake.daily = {"limit": 3, "scheduled": 3, "sent": 0, "isAtLimit": True}
+    r = human.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "hi", "mode": "queue"})
+    assert r.status_code == 400 and "3 of 3" in r.json()["error"]
+    assert human.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "hi", "mode": "draft"}).status_code == 200

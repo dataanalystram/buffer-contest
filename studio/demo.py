@@ -99,6 +99,19 @@ class DemoBuffer:
         posts.append(post)
         return post
 
+    # a free-plan-sized sample, so the limit warnings are visible in the sample workspace
+    def org_limits(self, uid: str, org_id: str) -> dict:
+        return {"id": "demo_org", "channelCount": len(CHANNELS), "limits": {"scheduledPosts": 10, "channels": 6}}
+
+    def daily_limits(self, uid: str, channel_ids: list[str], date: str | None = None) -> list[dict]:
+        posts = self._seed(uid)
+        out = []
+        for cid in channel_ids:
+            n = sum(p["channelId"] == cid and p["status"] == "scheduled" for p in posts)
+            limit = 3 if cid == "demo_x" else None
+            out.append({"channelId": cid, "limit": limit, "scheduled": n, "sent": 0, "isAtLimit": bool(limit and n >= limit)})
+        return out
+
     def create_idea(self, uid: str, org_id: str, title: str, text: str) -> dict:
         return {"id": "demo_idea", "content": {"title": title, "text": text}}
 
@@ -129,3 +142,9 @@ class BufferRouter:
 
     def create_idea(self, uid, *a, **k):
         return self._pick(uid).create_idea(uid, *a, **k)
+
+    def org_limits(self, uid, *a, **k):
+        return self._pick(uid).org_limits(uid, *a, **k)
+
+    def daily_limits(self, uid, *a, **k):
+        return self._pick(uid).daily_limits(uid, *a, **k)

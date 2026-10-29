@@ -37,7 +37,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["text"], "properties": {"title": {"type": "string"}, "text": {"type": "string"}}}},
     {"name": "list_stories", "description": "Newest stories from the news feeds your user follows in HuhQueue (news radar). Pass a story's url to draft_from_link to write posts about it.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "get_limits", "description": "Buffer API budget left for this app and per-network character limits.",
+    {"name": "get_limits", "description": "Buffer API budget left for this app, per-network character limits, and how close the Buffer plan is to its limits (scheduled posts, channels, weekly caps).",
      "inputSchema": {"type": "object", "properties": {}}},
 ]
 
@@ -65,7 +65,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "list_stories":
         return studio.radar(actor)
     if name == "get_limits":
-        return studio.limits(actor)
+        return {**studio.limits(actor), "plan": studio.plan(actor)}
     raise ActionError(f"Unknown tool {name}", 404)
 
 

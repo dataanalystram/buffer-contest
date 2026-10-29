@@ -278,6 +278,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def radar_remove(feed_id: int, request: Request):
         return studio.remove_feed(actor(request, write=True), feed_id)
 
+    @app.get("/api/plan")
+    def plan(request: Request):
+        return studio.plan(actor(request))
+
     @app.get("/api/limits")
     def limits(request: Request):
         return studio.limits(actor(request))
