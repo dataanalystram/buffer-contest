@@ -34,6 +34,8 @@ class FakeBuffer:
         self.n = 0
         self.refresh_tokens = {"rt_1"}
         self.fail_429 = 0
+        self.daily = None  # e.g. {"limit": 3, "scheduled": 3, "sent": 0, "isAtLimit": True}
+        self.plan = None   # e.g. {"scheduledPosts": 10, "channels": 3}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         h = {"RateLimit": RL, "RateLimit-Policy": RLP}
@@ -58,6 +60,16 @@ class FakeBuffer:
         if self.fail_429:
             self.fail_429 -= 1
             return httpx.Response(429, headers={**h, "Retry-After": "120"}, json={})
+        if "dailyPostingLimits" in q:
+            if self.daily is None:
+                return httpx.Response(200, headers=h, json={"errors": [{"message": "Cannot query field"}]})
+            return httpx.Response(200, headers=h, json={"data": {"dailyPostingLimits": [
+                dict(self.daily, channelId=c) for c in v["i"]["channelIds"]]}})
+        if "limits {" in q:
+            if self.plan is None:
+                return httpx.Response(200, headers=h, json={"errors": [{"message": "Cannot query field"}]})
+            return httpx.Response(200, headers=h, json={"data": {"account": {"organizations": [
+                {"id": "org_1", "channelCount": 3, "limits": self.plan}]}}})
         if "account" in q and "organizations" in q:
             return httpx.Response(200, headers=h, json={"data": {"account": {"id": "acc_1", "email": "ram@example.com", "name": "Ram",
                                                                               "organizations": [{"id": "org_1", "name": "HuhByte"}]}}})

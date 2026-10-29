@@ -109,6 +109,30 @@ class Studio:
     def limits(self, a: Actor) -> dict:
         return {"buffer_api": self.buffer.budget.snapshot(), "characters": drafter.LIMITS}
 
+    def plan(self, a: Actor) -> dict:
+        """How close this Buffer organization is to its plan's limits, for the warnings and the home screen."""
+        u = self.store.user(a.uid)
+        org = self.buffer.org_limits(a.uid, u["org_id"]) or {}
+        lim = org.get("limits") or {}
+        chans = self.channels(a)
+        meters = []
+        if lim.get("scheduledPosts"):
+            used = len(self.buffer.posts(a.uid, u["org_id"], ["scheduled"], first=100))
+            meters.append({"key": "scheduled_posts", "label": "Scheduled posts", "used": used, "limit": lim["scheduledPosts"]})
+        if lim.get("channels"):
+            meters.append({"key": "channels", "label": "Channels", "used": org.get("channelCount", len(chans)), "limit": lim["channels"]})
+        for c in chans:
+            w = c.get("weeklyPostingLimit") or {}
+            if w.get("limit"):
+                meters.append({"key": f"weekly:{c['id']}", "label": f"{c.get('displayName') or c['name']} ({c['service']}) this week",
+                               "used": (w.get("scheduled") or 0) + (w.get("sent") or 0), "limit": w["limit"]})
+        for m in meters:
+            m["pct"] = round(100 * m["used"] / m["limit"])
+        locked = [c.get("displayName") or c["name"] for c in chans if c.get("isLocked")]
+        near = [m for m in meters if m["pct"] >= 80]
+        return {"meters": meters, "locked_channels": locked, "near_limit": near, "upgrade_url": "https://buffer.com/pricing",
+                "buffer_api": self.buffer.budget.snapshot()}
+
     # ------------------------------------------------------------ drafting
     def draft_from_link(self, a: Actor, url: str, channel_ids: list[str] | None = None, tone: str = "",
                         thread: bool = False) -> dict:
@@ -209,6 +233,20 @@ class Studio:
             if dt <= datetime.now(timezone.utc):
                 raise ActionError("due_at is in the past.")
             due = dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        if ch.get("isLocked") and mode != "draft":
+            raise ActionError(f"{ch.get('displayName') or ch['name']} is locked in Buffer, usually because the plan has more channels "
+                              "than it allows. Save as a draft, or upgrade your Buffer plan.")
+        if mode != "draft":
+            for st in self.buffer.daily_limits(a.uid, [ch["id"]], due):
+                if st.get("limit") is None:
+                    continue
+                n, lim_ = st["scheduled"] + st["sent"], st["limit"]
+                window = "in 24 hours" if ch["service"] == "twitter" else "that day"
+                if st["isAtLimit"]:
+                    raise ActionError(f"{ch.get('displayName') or ch['name']} already has {n} of {lim_} posts {window}, Buffer's daily "
+                                      "limit for this channel. Pick another time, or save it as a draft.")
+                if n + 1 >= lim_:
+                    warnings.append(f"This is the last post Buffer allows on this channel {window} ({n + 1} of {lim_}).")
         if ch.get("isQueuePaused") and mode in ("queue", "next"):
             warnings.append("This channel's queue is paused in Buffer, so it won't go out until you resume it.")
         clean = {"channel_id": ch["id"], "text": text, "media_url": media, "mode": mode, "due_at": due}

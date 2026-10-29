@@ -203,13 +203,54 @@ class BufferClient:
         q = "query { account { id email name organizations { id name } } }"
         return self.gql(q, uid=uid, token=token)["account"]
 
+    def _gql_or(self, rich: str, plain: str | None, variables: dict, uid: str):
+        """Ask for the richer field set; if Buffer refuses it (schema change, plan), fall back instead of breaking."""
+        try:
+            return self.gql(rich, variables, uid=uid)
+        except NotConnected:
+            raise
+        except BufferError as e:
+            if e.status == 429 or plain is None:
+                raise
+            return self.gql(plain, variables, uid=uid)
+
     def channels(self, uid: str, org_id: str, refresh: bool = False) -> list[dict]:
         q = """query($o: OrganizationId!) { channels(input: {organizationId: $o}) {
-                 id name displayName service avatar isDisconnected isQueuePaused } }"""
+                 id name displayName service avatar isDisconnected isQueuePaused %s } }"""
         if refresh:
             self._cache.pop(("channels", uid), None)
-        return self._cached(("channels", uid), CHANNEL_TTL,
-                            lambda: self.gql(q, {"o": org_id}, uid=uid)["channels"])
+        return self._cached(("channels", uid), CHANNEL_TTL, lambda: self._gql_or(
+            q % "isLocked weeklyPostingLimit { limit scheduled sent }", q % "", {"o": org_id}, uid)["channels"])
+
+    def org_limits(self, uid: str, org_id: str) -> dict | None:
+        """The Buffer plan's limits for this organization, or None if Buffer doesn't share them."""
+        q = "query { account { organizations { id channelCount limits { scheduledPosts channels } } } }"
+
+        def fetch():
+            try:
+                orgs = self.gql(q, uid=uid)["account"]["organizations"]
+            except NotConnected:
+                raise
+            except BufferError as e:
+                if e.status == 429:
+                    raise
+                return None
+            return next((o for o in orgs if o["id"] == org_id), orgs[0] if orgs else None)
+        return self._cached(("org", uid), CHANNEL_TTL, fetch)
+
+    def daily_limits(self, uid: str, channel_ids: list[str], date: str | None = None) -> list[dict]:
+        """Buffer's daily posting limit status per channel at the intended time ([] if unavailable)."""
+        q = """query($i: DailyPostingLimitsInput!) { dailyPostingLimits(input: $i) {
+                 channelId isAtLimit limit scheduled sent } }"""
+        i = {"channelIds": channel_ids, **({"date": date} if date else {})}
+        try:
+            return self.gql(q, {"i": i}, uid=uid)["dailyPostingLimits"]
+        except NotConnected:
+            raise
+        except BufferError as e:
+            if e.status == 429:
+                raise
+            return []
 
     POST_FIELDS = "id text status dueAt sentAt channelId externalLink assets { type mimeType source thumbnail } error { message }"
 
@@ -219,14 +260,7 @@ class BufferClient:
 
         def fetch():
             q = """query($i: PostsInput!, $n: Int) { posts(first: $n, input: $i) { edges { node { %s } } } }"""
-            try:
-                data = self.gql(q % self.POST_FIELDS, {"i": i, "n": first}, uid=uid)
-            except NotConnected:
-                raise
-            except BufferError as e:
-                if e.status == 429:
-                    raise
-                data = self.gql(q % "id text status dueAt channelId", {"i": i, "n": first}, uid=uid)  # media fields refused: plain list
+            data = self._gql_or(q % self.POST_FIELDS, q % "id text status dueAt channelId", {"i": i, "n": first}, uid)
             return [e["node"] for e in data["posts"]["edges"]]
         return self._cached(("posts", uid, tuple(statuses), first), 30, fetch)
 

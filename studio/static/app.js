@@ -222,6 +222,7 @@ async function loadHome() {
   const up = $("#upcoming");
   up.innerHTML = upcoming.length ? "" : `<div class="empty"><b>Nothing scheduled yet</b><span>Posts you send to your Buffer queue show up here.</span></div>`;
   upcoming.slice(0, 4).forEach((p) => up.insertAdjacentHTML("beforeend", postItem(p)));
+  loadPlan();
   const hs = $("#homeStories");
   api("/api/radar").then((r) => {
     hs.innerHTML = r.stories.length ? r.stories.slice(0, 3).map(storyItem).join("")
@@ -229,6 +230,29 @@ async function loadHome() {
     wireStories(hs);
   }).catch(() => (hs.innerHTML = ""));
 }
+// ---------------------------------------------------------------- plan limits: warn before Buffer says no
+async function loadPlan() {
+  let p; try { p = await api("/api/plan"); } catch (_) { return; }
+  const box = $("#planBox");
+  const meter = (m) => { const lvl = m.pct >= 100 ? "over" : m.pct >= 80 ? "near" : "";
+    return `<div class="pm" data-testid="plan-meter"><div class="row"><span>${esc(m.label)}</span><span class="${lvl}">${m.used.toLocaleString()} of ${m.limit.toLocaleString()}</span></div><div class="bar ${lvl}" aria-hidden="true"><i style="width:${Math.min(100, m.pct)}%"></i></div></div>`; };
+  box.innerHTML = p.meters.length ? p.meters.map(meter).join("") + (p.locked_channels.length ? `<div class="st err">Locked in Buffer: ${esc(p.locked_channels.join(", "))}. Posts to these channels won't go out until you unlock them.</div>` : "")
+    : `<div class="empty"><b>No plan limits to show</b><span>Buffer didn't share limits for this organization, so HuhQueue checks each channel's daily limit when you send.</span></div>`;
+  const api_ = (p.buffer_api.windows || []).find((w) => w.quota && w.remaining / w.quota < 0.1);
+  const worst = p.near_limit.sort((x, y) => y.pct - x.pct)[0];
+  let msg = "";
+  if (worst) msg = worst.pct >= 100 ? `You've used all ${worst.limit} ${worst.label.toLowerCase()} your Buffer plan allows. New posts won't be accepted until some go out or you upgrade.`
+    : `You've used ${worst.used} of ${worst.limit} ${worst.label.toLowerCase()} on your Buffer plan.`;
+  else if (p.locked_channels.length) msg = `${p.locked_channels.length} channel${p.locked_channels.length > 1 ? "s are" : " is"} locked in Buffer because of your plan.`;
+  const bar = $("#limitBar"), key = "hq_limit_dismissed:" + msg;
+  let dismissed = false; try { dismissed = sessionStorage.getItem(key) === "1"; } catch (_) {}
+  if (msg && !dismissed) { $("#limitText").textContent = msg; $("#limitUpgrade").hidden = false; bar.hidden = false; }
+  else if (api_ && !dismissed) { $("#limitText").textContent = `HuhQueue has ${api_.remaining} Buffer API requests left for the next ${api_.window}. Reading may pause briefly; sending still works.`; $("#limitUpgrade").hidden = true; bar.hidden = false; }
+  else bar.hidden = true;
+  $("#limitUpgrade").href = p.upgrade_url;
+  $("#limitDismiss").onclick = () => { try { sessionStorage.setItem(key, "1"); } catch (_) {} bar.hidden = true; };
+}
+
 // ---------------------------------------------------------------- news radar
 function storyItem(st) {
   const ago = st.published ? timeAgo(st.published * 1000) : "";

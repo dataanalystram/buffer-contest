@@ -294,3 +294,13 @@ a.pv-media:hover img{transform:scale(1.04)}
 .feeds{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 24px}
 .feed{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:999px;padding:4px 6px 4px 12px;font-size:14px}
 .capture{font-size:14px;margin-top:16px}.bm{display:inline-block;border:1px dashed var(--line-strong);border-radius:999px;padding:0 10px;font-weight:600;text-decoration:none;cursor:grab}
+
+/* ---------------- plan limits */
+.limit-bar{display:flex;gap:12px 24px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:12px 24px;background:var(--accent-soft);border-bottom:1px solid var(--accent);font-size:14px;line-height:1.45}
+.limit-act{display:flex;gap:16px;align-items:center}
+.plan{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px 24px;max-width:880px}
+.pm .row{display:flex;justify-content:space-between;gap:8px;font-size:14px;margin-bottom:6px;font-variant-numeric:tabular-nums}
+.pm .bar{height:4px;background:var(--line);border-radius:999px;overflow:hidden}.pm .bar i{display:block;height:100%;background:var(--ink)}
+.pm .bar.near i{background:var(--warn)}.pm .bar.over i{background:var(--bad)}.pm .near{color:var(--warn);font-weight:600}.pm .over{color:var(--bad);font-weight:600}
+.plan .st,.plan .empty{grid-column:1/-1}
+@media (min-width:861px){.limit-bar{position:sticky;top:65px;z-index:4}}

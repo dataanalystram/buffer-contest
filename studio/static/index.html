@@ -34,6 +34,11 @@
 <div class="demo-bar" id="demoBar" data-testid="demo-bar" hidden>
   <span>You're in a sample workspace. Nothing here reaches Buffer.</span> <a href="/login" data-testid="demo-connect">Connect your own Buffer account</a>
 </div>
+<div class="limit-bar" id="limitBar" data-testid="limit-bar" role="status" hidden>
+  <span id="limitText"></span>
+  <span class="limit-act"><a class="btn sm" id="limitUpgrade" data-testid="limit-upgrade" href="https://buffer.com/pricing" target="_blank" rel="noopener">Upgrade your Buffer plan</a>
+  <button class="link" id="limitDismiss" data-testid="limit-dismiss" type="button">Not now</button></span>
+</div>
 
 <main id="main">
   <div id="landing" class="landing" data-testid="landing" hidden>
@@ -151,6 +156,8 @@
         </form>
         <h2 class="sec">Needs you</h2>
         <ul class="todo" id="todo" data-testid="todo-list"></ul>
+        <h2 class="sec">Your Buffer plan</h2>
+        <div id="planBox" class="plan" data-testid="plan-box"></div>
         <h2 class="sec">New in your news radar</h2>
         <div id="homeStories" class="list" data-testid="home-stories"></div>
         <h2 class="sec">Coming up in Buffer</h2>
