@@ -29,6 +29,17 @@ TARGET = {"twitter": 260, "bluesky": 290, "threads": 450, "mastodon": 450, "link
           "instagram": 900, "facebook": 600, "tiktok": 600, "youtube": 900, "pinterest": 450,
           "googlebusiness": 700}
 URL_RE = re.compile(r"https?://\S+")
+# Networks Buffer can post as a thread (metadata.<service>.thread). Parts are separated by a "---" line.
+THREAD_SERVICES = {"twitter", "bluesky", "threads", "mastodon"}
+THREAD_SEP = "\n---\n"
+THREAD_SPLIT = re.compile(r"\n[ \t]*---[ \t]*\n")
+
+
+def split_thread(service: str, text: str) -> list[str]:
+    """Thread parts for a thread-capable network; a single part everywhere else."""
+    if service not in THREAD_SERVICES:
+        return [text]
+    return [p.strip() for p in THREAD_SPLIT.split(text) if p.strip()] or [text]
 
 
 def limit_for(service: str) -> int:
@@ -219,6 +230,23 @@ def rule_draft(service: str, article: dict) -> str:
     return fit(service, text, min(limit_for(service), TARGET.get(service, limit_for(service))))
 
 
+def thread_draft(service: str, article: dict, max_parts: int = 5) -> str:
+    """Hook, then one key sentence per post from the article body, then the link."""
+    lim = min(limit_for(service), TARGET.get(service, limit_for(service)))
+    parts = [fit(service, "\n\n".join(p for p in [article["title"], article["description"]] if p) + " 🧵", lim)]
+    seen = article["description"].lower()
+    for para in article.get("paragraphs", []):
+        if len(parts) >= max_parts - 1:
+            break
+        s = " ".join(re.split(r"(?<=[.!?])\s+", para)[:2])
+        if s.lower()[:80] in seen:
+            continue
+        seen += " " + s.lower()
+        parts.append(fit(service, s, lim))
+    parts.append(fit(service, f"Read the full story: {article['url']}", lim))
+    return THREAD_SEP.join(parts)
+
+
 def ai_draft(services: list[str], article: dict, base_url: str, api_key: str, model: str,
              http: httpx.Client | None = None, tone: str = "") -> dict[str, str]:
     prompt = (
@@ -245,10 +273,12 @@ def ai_draft(services: list[str], article: dict, base_url: str, api_key: str, mo
 
 
 def draft(channels: list[dict], article: dict, *, ai: dict | None = None, http: httpx.Client | None = None,
-          tone: str = "") -> list[dict]:
+          tone: str = "", thread: bool = False) -> list[dict]:
     services = sorted({c["service"] for c in channels})
+    threads = {s: thread_draft(s, article) for s in services if thread and s in THREAD_SERVICES}
+    services = [s for s in services if s not in threads]
     written, engine = {}, "built-in"
-    if ai and ai.get("base_url"):
+    if services and ai and ai.get("base_url"):
         try:
             written = ai_draft(services, article, ai["base_url"], ai.get("api_key", ""), ai.get("model", ""), http, tone)
             engine = "ai"
@@ -257,9 +287,10 @@ def draft(channels: list[dict], article: dict, *, ai: dict | None = None, http: 
     out = []
     for c in channels:
         svc = c["service"]
-        text = written.get(svc) or rule_draft(svc, article)
-        text = fit(svc, text)
+        text = threads.get(svc) or fit(svc, written.get(svc) or rule_draft(svc, article))
+        parts = split_thread(svc, text)
         out.append({"channel_id": c["id"], "service": svc, "channel_name": c.get("displayName") or c.get("name"),
-                    "text": text, "length": count(svc, text), "limit": limit_for(svc),
-                    "media_url": article.get("image") or "", "engine": engine if svc in written else "built-in"})
+                    "text": text, "length": max(count(svc, t) for t in parts), "limit": limit_for(svc),
+                    "parts": len(parts), "media_url": article.get("image") or "",
+                    "engine": engine if svc in written else "built-in"})
     return out

@@ -21,7 +21,8 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "draft_from_link", "description": "Read an article URL and draft one caption per channel, each within that network's Buffer character limit. Nothing is posted.",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {
          "url": {"type": "string"}, "channel_ids": {"type": "array", "items": {"type": "string"}},
-         "tone": {"type": "string"}}}},
+         "tone": {"type": "string"},
+         "thread": {"type": "boolean", "description": "Write X/Bluesky/Threads/Mastodon drafts as a thread; parts are separated by a line containing only ---"}}}},
     {"name": "preview_post", "description": "Validate a post for one channel and get a single-use confirm_token. Show the preview to your user before submitting. mode: draft | queue | next | now | schedule (needs due_at ISO UTC).",
      "inputSchema": {"type": "object", "required": ["channel_id", "text"], "properties": {
          "channel_id": {"type": "string"}, "text": {"type": "string"}, "media_url": {"type": "string"},
@@ -46,7 +47,8 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "list_channels":
         return studio.channels(actor, refresh=bool(args.get("refresh")))
     if name == "draft_from_link":
-        return studio.draft_from_link(actor, args.get("url", ""), args.get("channel_ids"), args.get("tone", ""))
+        return studio.draft_from_link(actor, args.get("url", ""), args.get("channel_ids"), args.get("tone", ""),
+                                     bool(args.get("thread")))
     if name == "preview_post":
         return studio.preview_post(actor, args)
     if name == "submit_post":
