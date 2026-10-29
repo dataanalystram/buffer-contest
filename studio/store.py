@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   status TEXT, result TEXT, created REAL, decided REAL);
 CREATE TABLE IF NOT EXISTS device_links (
   token_hash TEXT PRIMARY KEY, user_id TEXT, expires REAL, used INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS feeds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, url TEXT, created REAL);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, actor TEXT, action TEXT, risk TEXT,
   detail TEXT, ok INTEGER, ts REAL);
@@ -40,7 +42,7 @@ def sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-ID_TABLES = ("agent_tokens", "approvals", "audit")
+ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds")
 
 
 class Store:
@@ -138,7 +140,7 @@ class Store:
         self.x("UPDATE users SET kill_switch=? WHERE id=?", (1 if on else 0, uid))
 
     def delete_user(self, uid: str) -> None:
-        for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links"):
+        for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds"):
             self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
         self.x("DELETE FROM users WHERE id=?", (uid,))
 

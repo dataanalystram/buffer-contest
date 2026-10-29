@@ -36,6 +36,9 @@ All of `studio/`, `tests/studio/`, `Dockerfile.studio`, `render.yaml`, `requirem
 
 | 29 Oct | Threads from one link: X, Bluesky, Threads and Mastodon posts written as threads and sent through `metadata.<service>.thread`, each part checked against its limit |
 | 29 Oct | Try-it sample workspace (`/demo`): no sign-in, sample channels and an agent post waiting for approval; runs the real drafting, validation and approval code against an in-memory stand-in for Buffer |
+| 29 Oct | Post previews on home and queue: image/video thumbnails from `assets`, links to the live post (`externalLink`) or the channel in Buffer; public counter of connected Buffer accounts and posts sent |
+| 29 Oct | News radar: follow RSS/Atom feeds, newest stories on the home screen with one-click "Write posts"; `list_stories` MCP tool so agents can work from the same news |
+| 29 Oct | One-click capture: a bookmarklet that opens any page you're reading in HuhQueue and writes the posts |
 | 29 Oct | New interface: a "Needs you" home, drafts previewed the way each network shows them, thread previews, mobile layout |
 
 Not used: Buffer analytics/metrics APIs (not available to third-party apps).

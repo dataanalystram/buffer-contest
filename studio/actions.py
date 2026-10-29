@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import drafter
+from . import drafter, radar
 from .buffer_api import BufferClient, BufferError
 from .config import Settings
 from .store import Store, sha
@@ -125,6 +125,35 @@ class Studio:
         drafts = drafter.draft(chans, article, ai=ai, tone=tone, thread=thread)
         self.store.audit(a.uid, a.label, "draft_from_link", "read", {"url": article["url"], "channels": len(drafts)})
         return {"article": {k: article[k] for k in ("url", "title", "description", "image", "site")}, "drafts": drafts}
+
+    # ------------------------------------------------------------ news radar
+    def feeds(self, a: Actor) -> list[dict]:
+        return [dict(r) for r in self.store.q("SELECT id,url,created FROM feeds WHERE user_id=? ORDER BY id", (a.uid,))]
+
+    def radar(self, a: Actor) -> dict:
+        return {"feeds": self.feeds(a), **radar.stories(self.feeds(a))}
+
+    def add_feed(self, a: Actor, url: str) -> dict:
+        if a.kind != "human":
+            raise ActionError("Only a human can change which feeds you follow.", 403)
+        url = (url or "").strip()
+        if len(self.feeds(a)) >= radar.MAX_FEEDS:
+            raise ActionError(f"You can follow up to {radar.MAX_FEEDS} feeds. Remove one first.")
+        if any(f["url"] == url for f in self.feeds(a)):
+            raise ActionError("You already follow that feed.")
+        try:
+            feed = radar.fetch(url)
+        except drafter.FetchError as e:
+            raise ActionError(str(e))
+        fid = self.store.x("INSERT INTO feeds(user_id,url,created) VALUES(?,?,?)", (a.uid, url, time.time()))
+        self.store.audit(a.uid, a.label, "follow_feed", "read", {"url": url})
+        return {"id": fid, "url": url, "title": feed["title"], "stories": len(feed["stories"])}
+
+    def remove_feed(self, a: Actor, feed_id: int) -> dict:
+        if a.kind != "human":
+            raise ActionError("Only a human can change which feeds you follow.", 403)
+        self.store.x("DELETE FROM feeds WHERE id=? AND user_id=?", (feed_id, a.uid))
+        return {"removed": feed_id}
 
     # ------------------------------------------------------------ guards
     def _guard_write(self, a: Actor, action: str) -> None:
