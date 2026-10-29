@@ -324,3 +324,19 @@ def test_device_link_is_single_use(human, app):
     third = TestClient(app, base_url="https://hq.test")
     assert "error=" in third.get(path, follow_redirects=False).headers["location"]
     assert third.get("/api/session").json()["connected"] is False
+
+
+def test_demo_workspace_never_calls_buffer(client, fake):
+    r = client.get("/demo", follow_redirects=False)
+    assert r.headers["location"] == "/?demo=1"
+    s = client.get("/api/session").json()
+    assert s["connected"] is True and s["demo"] is True
+    client.headers["X-HQ-CSRF"] = s["csrf"]
+    assert {c["service"] for c in client.get("/api/channels").json()} >= {"twitter", "linkedin", "bluesky"}
+    [appr] = client.get("/api/approvals").json()
+    res = client.post(f"/api/approvals/{appr['id']}/approve", json={}).json()
+    assert res["status"] == "sent_to_buffer"
+    assert any(p["text"] == appr["payload"]["text"] for p in client.get("/api/queue").json())
+    pv = client.post("/api/posts/preview", json={"channel_id": "demo_bsky", "text": "hello", "mode": "draft"}).json()
+    assert client.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]}).json()["post"]["status"] == "draft"
+    assert fake.calls == [] and fake.token_calls == []

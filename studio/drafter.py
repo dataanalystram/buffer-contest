@@ -238,7 +238,8 @@ def thread_draft(service: str, article: dict, max_parts: int = 5) -> str:
     for para in article.get("paragraphs", []):
         if len(parts) >= max_parts - 1:
             break
-        s = " ".join(re.split(r"(?<=[.!?])\s+", para)[:2])
+        sents = re.split(r"(?<=[.!?])\s+", para)
+        s = " ".join(sents[:2]) if count(service, " ".join(sents[:2])) <= lim else sents[0]
         if s.lower()[:80] in seen:
             continue
         seen += " " + s.lower()

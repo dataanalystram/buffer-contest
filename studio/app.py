@@ -13,7 +13,7 @@ import httpx
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import buffer_api, mcp
+from . import buffer_api, demo, mcp
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
@@ -27,7 +27,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     s = settings or load_settings()
     store = Store(s.db_path, s.session_secret)
     buffer = BufferClient(s, store, http=http)
-    studio = Studio(s, store, buffer)
+    studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
     app = FastAPI(title="HuhQueue Studio — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
     app.state.settings, app.state.store, app.state.buffer, app.state.studio = s, store, buffer, studio
 
@@ -78,8 +78,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Content-Security-Policy",
-                                "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; "
-                                "script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+                                "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                                "font-src https://fonts.gstatic.com; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
         return resp
 
     # ------------------------------------------------------------ pages
@@ -144,6 +144,21 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         set_cookie(resp, new_sid)
         return resp
 
+    # try-it workspace: sample channels and an agent post waiting for approval; nothing reaches Buffer
+    # ponytail: no per-IP limit on demo creation; stale demo users are purged after a day on each new demo
+    @app.get("/demo", include_in_schema=False)
+    def demo_start(request: Request):
+        sid = request.cookies.get(COOKIE)
+        if sid:
+            store.drop_session(sid)
+        uid = demo.create_user(store)
+        new_sid = secrets.token_urlsafe(32)
+        store.new_session(new_sid, secrets.token_urlsafe(24), ttl=demo.TTL)
+        store.update_session(new_sid, user_id=uid)
+        resp = RedirectResponse("/?demo=1", 302)
+        set_cookie(resp, new_sid)
+        return resp
+
     # one-time link to open this account on another device (phone, second browser); 10 minutes, single use
     @app.post("/api/device-link")
     def device_link(request: Request):
@@ -194,7 +209,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         connected = bool(sess["user_id"] and store.user(sess["user_id"]) and store.tokens(sess["user_id"]))
         body = {"configured": s.configured, "connected": connected, "csrf": sess["csrf"],
                 "user": studio.me(Actor(sess["user_id"])) if connected else None, "mcp_url": s.public_url + "/mcp",
-                "repo": s.repo_url}
+                "repo": s.repo_url, "demo": connected and demo.is_demo(sess["user_id"])}
         resp = JSONResponse(body)
         if fresh:
             set_cookie(resp, sid)
