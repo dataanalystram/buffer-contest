@@ -23,10 +23,13 @@ CHANNELS = [
     {"id": "demo_bsky", "name": "brightdesk.bsky.social", "displayName": "Bright Desk", "service": "bluesky"},
     {"id": "demo_th", "name": "brightdesk", "displayName": "Bright Desk", "service": "threads"},
 ]
-SEED_POSTS = [
-    ("demo_li", 20, "Small teams ship faster when the review step is a habit, not a meeting. Here is how we run ours."),
-    ("demo_x", 26, "Three tools we stopped paying for this quarter, and what replaced them. https://example.com/stack"),
-    ("demo_bsky", 44, "Reading list for the weekend: open-source schedulers, agent safety, and why limits matter."),
+IMG = "https://picsum.photos/seed/{}/1200/800"
+SEED_POSTS = [  # channel, hours from now (negative = already sent), text, image seed
+    ("demo_li", 20, "Small teams ship faster when the review step is a habit, not a meeting. Here is how we run ours.", "desk"),
+    ("demo_x", 26, "Three tools we stopped paying for this quarter, and what replaced them. https://example.com/stack", ""),
+    ("demo_ig", 30, "Behind the scenes: how one link becomes five posts before lunch. Link in bio.", "studio"),
+    ("demo_bsky", 44, "Reading list for the weekend: open-source schedulers, agent safety, and why limits matter.", ""),
+    ("demo_x", -5, "Agents can draft. Humans approve. That's the whole policy.", "approve"),
 ]
 AGENT_POST = ("demo_x", "Claude", "AI agents can now draft your posts, but should they publish them? "
               "Our take: agents write, humans approve. Here's the setup we use. https://example.com/agents-approve")
@@ -54,6 +57,10 @@ def create_user(store: Store) -> str:
     return uid
 
 
+def _image(url: str) -> dict:
+    return {"type": "image", "mimeType": "image/jpeg", "source": url, "thumbnail": url}
+
+
 class DemoBuffer:
     """Same read/write surface Studio uses on BufferClient, kept in memory per demo user."""
 
@@ -63,9 +70,10 @@ class DemoBuffer:
     def _seed(self, uid: str) -> list[dict]:
         if uid not in self._posts:
             now = datetime.now(timezone.utc)
-            self._posts[uid] = [{"id": f"dp{i}", "text": t, "status": "scheduled", "channelId": ch,
-                                 "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z")}
-                                for i, (ch, h, t) in enumerate(SEED_POSTS)]
+            self._posts[uid] = [{"id": f"dp{i}", "text": t, "status": "sent" if h < 0 else "scheduled", "channelId": ch,
+                                 "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                                 "assets": [_image(IMG.format(img))] if img else [], "externalLink": None}
+                                for i, (ch, h, t, img) in enumerate(SEED_POSTS)]
         return self._posts[uid]
 
     def channels(self, uid: str, org_id: str = "", refresh: bool = False) -> list[dict]:
@@ -81,7 +89,10 @@ class DemoBuffer:
         due = inp.get("dueAt")
         if not due and status == "scheduled":
             due = (datetime.now(timezone.utc) + timedelta(hours=2 + len(posts))).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        post = {"id": f"dp{len(posts)}", "text": inp["text"], "status": status, "dueAt": due, "channelId": inp["channelId"]}
+        assets = [_image(x["image"]["url"]) if "image" in x else {"type": "video", "mimeType": "video/mp4", "source": x["video"]["url"],
+                  "thumbnail": ""} for x in inp.get("assets") or []]
+        post = {"id": f"dp{len(posts)}", "text": inp["text"], "status": status, "dueAt": due, "channelId": inp["channelId"],
+                "assets": assets, "externalLink": None}
         posts.append(post)
         return post
 
