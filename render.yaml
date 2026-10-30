@@ -19,6 +19,12 @@ services:
         generateValue: true
       - key: DATABASE_URL          # Supabase Session pooler URL (IPv4, port 5432)
         sync: false
+      - key: RENDER_WORKER         # github = render Reels on free GitHub Actions
+        value: github
+      - key: GH_REPO
+        value: dataanalystram/buffer-contest
+      - key: GH_DISPATCH_TOKEN     # fine-grained PAT: Actions read/write on this repo only
+        sync: false
       - key: MIGRATE_FROM_URL      # old Render database; copied into Supabase on the first boot, then delete this
         fromDatabase:
           name: huhqueue-studio-db

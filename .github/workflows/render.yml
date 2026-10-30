@@ -6,6 +6,7 @@ on:
       job_id: {description: "render_jobs.id", required: true}
       app: {description: "app base URL", required: true, default: "https://huhqueue-studio.onrender.com"}
       job_token: {description: "single-use token for this job (expires in 30 min)", required: true}
+permissions: {contents: read}
 concurrency: {group: "render-${{ github.event.inputs.job_id }}", cancel-in-progress: false}
 jobs:
   render:
