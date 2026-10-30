@@ -227,3 +227,24 @@ def test_kit_from_html():
     assert k["name"] == "Acme" and k["handle"] == "acme" and k["theme_color"] == "#FF5A1F"
     assert k["logo_candidates"][0] == "https://acme.test/apple.png"
     assert brand.pick_colors(k["theme_color"], [])["accent"] == "#FF5A1F"
+
+
+def test_rendered_text_drops_glyphs_the_font_lacks():
+    from studio import render
+    f = render.font("Anton.ttf", 40)
+    assert render.drawable("AI agents 🚀 ship → faster ✨", f) == "AI agents ship -> faster "
+    assert render.drawable("Café naïve", render.font("Inter-Regular.ttf", 20)) == "Café naïve"
+    # a headline full of emoji renders without tofu and without crashing
+    kit = dict(brand.DEFAULT_KIT, name="Bright Desk")
+    p = brand.visual_params(kit, [])
+    data, meta = render.news_card("🔥🔥 Big news 🧠 today", kit, p)
+    assert data[:2] == b"\xff\xd8"
+
+
+def test_no_my_brand_placeholder(client):
+    kit = client.get("/api/brand").json()["kit"]
+    assert kit["name"] == "Bright Desk"  # the sample workspace's own name, not "My brand"
+    from studio import render
+    p = brand.visual_params(dict(brand.DEFAULT_KIT), [])
+    _, meta = render.news_card("Headline", dict(brand.DEFAULT_KIT, name=""), p)
+    assert meta["has_logo"] is False  # no logo and no name: no wordmark at all

@@ -18,7 +18,7 @@ Rules for every milestone:
 - Give every new UI control a `data-testid`.
 - Every UI call must map to an action in `huhqueue/actions.py`, which also exposes it as an MCP tool. `tests/test_headless.py` enforces this.
 - Merge only when the full suite is green. Never force-push `main`.
-- Credit any copied MIT or Apache code in `NOTICE`. AGPL and GPL projects (Postiz, LinkStack, Socioboard) are for ideas only; don't copy their code.
+- Credit any copied MIT or Apache code in `NOTICE`. Don't copy AGPL or GPL code.
 
 ---
 
@@ -51,7 +51,7 @@ Rules for every milestone:
    - Channels › Bulk edit (timezone, daily limit, pause, days off, UTM, copy posting times from another channel);
    - Notifications › one switch per kind, a pause switch and a "Send test" button.
 5. Add e2e tests `tests/e2e/test_ui_bulk.py` and `tests/e2e/test_ui_settings_bulk.py`.
-6. Docs: in `docs/FEATURE_MATRIX.md`, update row 11 (link in bio) and the bulk and settings rows.
+6. Docs: update the feature list for link in bio, bulk and settings.
 
 **Done when:** the full suite is green, including `test_headless.py`, and the branch is merged.
 
@@ -124,7 +124,7 @@ The InstaBox dev box sleeps after 30 minutes idle, so scheduled posts can be mis
 - Add a `Dockerfile` and `docker-compose.yml` (app, worker, Postgres or SQLite volume).
 - Deploy to an always-on host, such as a small VPS or Fly.io.
 
-## Later (from `docs/OSS_UPGRADE_PLAN.md`)
+## Later
 - Remote MCP over HTTP (SSE/streamable) with token auth.
 - Media checks before scheduling (aspect ratio, duration, size per network).
 - Client review links.

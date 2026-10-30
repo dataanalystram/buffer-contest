@@ -1,4 +1,4 @@
-// Link in bio (Growth › Link in bio): a Linktree-style editor.
+// Link in bio (Growth › Link in bio): a block editor.
 //   Links (autosaves) | Design (draft with undo / redo / cancel / save) | Settings | Analytics, next to a sticky live
 //   phone preview that renders unsaved edits through bio.preview_draft. Every call is a bio.* registry action, so agents
 //   can do the same through REST / MCP / the CLI.
@@ -202,7 +202,7 @@ function BioEditor({ initial, pages, onChanged, onCreate, onImport }) {
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,720px)_1fr]">
         <div className="flex min-w-0 gap-4">
-          {/* Linktree-style icon rail (a row on small screens) */}
+          {/* Icon rail (a row on small screens) */}
           <nav role="tablist" aria-label="Bio editor sections" className="sticky top-2 hidden h-fit flex-col gap-1 md:flex" data-testid="bio-tabs">
             {TABS.map(([k, l, I]) => (
               <button key={k} role="tab" aria-selected={tab === k} data-testid={`bio-tab-${k}`} onClick={() => setQuery({ tab: k })}

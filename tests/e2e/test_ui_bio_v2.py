@@ -1,4 +1,4 @@
-"""End-to-end: Link in bio (Linktree-style editor). Add by pasting a link and from the Add dialog tiles, autosave, the live
+"""End-to-end: Link in bio (block editor). Add by pasting a link and from the Add dialog tiles, autosave, the live
 preview updating without saving, hide toggle, drag and keyboard reorder, design draft (undo / cancel / save), QR from the
 Share popover, a visitor subscribes and the owner sees it, export / duplicate.
 

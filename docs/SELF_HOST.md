@@ -33,9 +33,7 @@ No paid tiers, no feature gates, no limits beyond the networks' own. MIT license
 **Docs**
 - [docs/MILESTONES.md](docs/MILESTONES.md): **next milestones M1–M6 with local setup, tasks, files and done-criteria (start here)**
 - [docs/CONNECT_INTEGRATIONS.md](docs/CONNECT_INTEGRATIONS.md): connect every network, numbered steps
-- [docs/OSS_UPGRADE_PLAN.md](docs/OSS_UPGRADE_PLAN.md): open-source upgrade plan and build list
 - [docs/FBLOGIN_PLAN.md](docs/FBLOGIN_PLAN.md): Instagram via Facebook Login plan
-- [docs/FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md): HuhQueue vs Buffer and competitors
 - [docs/LIVE_TEST_2026-10-26.md](docs/LIVE_TEST_2026-10-26.md): live-test notes
 - [NOTICE](NOTICE): third-party code credits and licences
 
@@ -88,15 +86,13 @@ developer-app keys and click **Connect** on a channel. Step-by-step network setu
   for public or destructive actions, and a deterministic fallback parser when no AI model is set.
 - Scoped API tokens (scopes, tool allow-list, rate limit, require-approval), audit log of every token and UI action.
 
-See [docs/FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md) for the full, code-verified status of every feature and
-[docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.
 
 ## Docs
 
 - [docs/CONNECT_INTEGRATIONS.md](docs/CONNECT_INTEGRATIONS.md): connect LinkedIn (profile + pages), Instagram, YouTube, X, TikTok and import a Buffer CSV, step by step.
 - [SETUP.md](SETUP.md): developer apps, redirect URIs, Meta compliance callbacks, hosting.
 - [docs/CONNECTORS_RESEARCH.md](docs/CONNECTORS_RESEARCH.md): every network's free tier, scopes and limits.
-- [docs/FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md): HuhQueue vs Buffer and competitors, feature by feature.
 - [docs/ROADMAP.md](docs/ROADMAP.md): milestones with acceptance tests.
 - [docs/CMS_PLAN.md](docs/CMS_PLAN.md) and [docs/AI_NATIVE_PLAN.md](docs/AI_NATIVE_PLAN.md): designs behind the roadmap.
 
@@ -124,3 +120,4 @@ Backend: [FastAPI](https://fastapi.tiangolo.com) (MIT), [SQLAlchemy](https://www
 ## Licence
 
 MIT, see [LICENSE](LICENSE).
+

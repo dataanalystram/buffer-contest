@@ -137,7 +137,7 @@ export function fetchFile(href, name) {
   a.remove()
 }
 
-// A big rounded card section, Linktree-style.
+// A big rounded card section.
 export function Panel({ title, action, children, className = '', testid }) {
   return (
     <section data-testid={testid} className={`rounded-3xl border border-lav-200/70 bg-surface p-5 shadow-soft ${className}`}>

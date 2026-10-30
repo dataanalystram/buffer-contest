@@ -16,10 +16,6 @@ huhqueue/connectors/linkedin.py  (modified / ported to Python)
             from the page's Open Graph tags, and HTTP status -> error-class mapping honouring Retry-After.
             Re-implemented in Python for HuhQueue's connector contract; changed throughout.
 
-  Ideas only (no code copied): gitroomhq/postiz-app (AGPL-3.0) - LinkedIn document (PDF carousel) posts,
-            first comment via socialActions, and the page picker from organization ACLs were written from
-            LinkedIn's public API docs following the behaviour Postiz exposes.
-
 web/src/components/ImageEditor.jsx  (library dependency, bundled into huhqueue/static/app)
   Source:   ValentinH/react-easy-crop  https://github.com/ValentinH/react-easy-crop
   Licence:  MIT
@@ -38,10 +34,8 @@ huhqueue/static/bio/brands.css, huhqueue/static/bio/icons/*.svg, huhqueue/static
             index.html (modified: data format only). The CSS is inlined per page by huhqueue/services/bio.py.
             Brand names and logos remain trademarks of their respective owners.
 
-huhqueue/services/bio.py  (ideas only)
-  linkstackorg/linkstack (AGPL-3.0): the block-per-type idea (email, spacer, vCard). No code copied.
-  EddieHubCommunity/BioDrop (MIT, archived): downloadable profile QR code and per-profile custom domain. Written
-            from scratch; QR codes use segno (BSD-3-Clause, https://github.com/heuer/segno) as a library.
+huhqueue/services/bio.py  (library dependency)
+  QR codes use segno (BSD-3-Clause, https://github.com/heuer/segno) as a library.
 
 huhqueue/static/bio/fonts/*.woff2  (copied, unmodified; renamed)
   Source:   Fontsource npm packages @fontsource/{inter, poppins, dm-sans, outfit, space-grotesk, playfair-display, lora,
@@ -65,9 +59,6 @@ huhqueue/services/bio.py  GRADIENTS  (copied colour values)
             Celestial, Cosmic Fusion, Sublime Light, Ibiza Sunset, Mango, Lush), unmodified; Mango also seeds the
             Sunset theme preset. Hex case normalised.
 
-web/src/pages/bio/*  (ideas only)
-  Linktree's admin (linktr.ee/admin): layout of the link editor, add dialog, theme gallery with draft / Save / Cancel.
-            No code or assets copied. Theme presets are HuhQueue's own.
 --------------------------------------------------------------------------------------------------------------
 
 Apache License 2.0 notice for adapted Shoutrrr material:

@@ -22,8 +22,8 @@ Publishing (REST API, header LinkedIn-Version = settings.linkedin_api_version, X
   the image and send content.article.
 
 Design notes: the two-app split, commentary escaping, byte-range video upload, link-preview approach and error
-mapping follow coollabsio/shoutrrr's LinkedInConnector (Apache-2.0); documents and the first comment follow the
-behaviour described for Postiz (AGPL - idea only, no code). See NOTICE.
+mapping follow coollabsio/shoutrrr's LinkedInConnector (Apache-2.0, see NOTICE); documents and the first comment
+are written from LinkedIn's public API docs.
 """
 from __future__ import annotations
 

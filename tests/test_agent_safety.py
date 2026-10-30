@@ -1,4 +1,4 @@
-"""Agent safety layer (OSS_UPGRADE_PLAN item 2): kill switch, per-token caps / expiry / channel scope,
+"""Agent safety layer: kill switch, per-token caps / expiry / channel scope,
 MCP preview + confirm for public actions, audit log filters + CSV export."""
 import csv
 import io

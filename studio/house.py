@@ -53,6 +53,10 @@ class House:
         out = {**brand.DEFAULT_KIT, **k}
         out["colors"] = {**brand.DEFAULT_KIT["colors"], **(k.get("colors") or {})}
         out["end_card"] = {**brand.DEFAULT_KIT["end_card"], **(k.get("end_card") or {})}
+        if not (out.get("name") or "").strip() or out["name"] == "My brand":  # unset: use the workspace's name, else none
+            org = ((self.store.user(a.uid) or {}).get("org_name") or "").strip()
+            org = re.sub(r"\s*\((sample|demo)\)$", "", org, flags=re.I)
+            out["name"] = "" if org.lower() in ("", "my organization", "my organisation", "personal", "default") else org[:60]
         out["logo_url"] = self.media_url(out["logo"]) if out.get("logo") else ""
         out["is_set"] = bool(rows)
         return out

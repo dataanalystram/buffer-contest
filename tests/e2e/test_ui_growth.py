@@ -30,7 +30,7 @@ def test_01_bio_page_click_counted(page, server):
     toast(page, "Page created")
     T(page, "bio-public-url").wait_for()
     assert T(page, "bio-public-url").inner_text().endswith("/bio/huhbyte")
-    # three links (new ones go on top, like Linktree); content autosaves
+    # three links (new ones go on top); content autosaves
     for label, url in [("TikTok", "https://tiktok.com/@huhbyte"), ("YouTube", "https://youtube.com/@huhbyte"), ("Read the news", target)]:
         T(page, "bio-add-open").click()
         T(page, "bio-add-link").click()

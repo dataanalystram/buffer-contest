@@ -1,8 +1,10 @@
 # HuhQueue — built on the Buffer API
 
-**Paste a link. Get a post for every channel. Approve it, and it's in your Buffer queue.**
-An open-source, agent-first content studio. Your AI agents (Claude, ChatGPT, Cursor) can draft and schedule through it too —
-but nothing they write goes out until you approve it.
+**Your brand's editor on top of Buffer. It researches the story, renders it in your brand, learns from every correction, and plans it in Buffer after you approve.**
+Give HuhQueue a topic, a link or your own photo or video. An agent finds and verifies the story, renders on-brand carousels,
+cards and Reels, writes one caption per channel, and checks all of it against your **Style Ledger**, the rules it has learned from
+your corrections. You approve, and the **Planner** shows it in your Buffer queue, ready to drag to a better time. Your own
+Claude or ChatGPT can do all of this over MCP, but nothing they write goes out until you approve it.
 
 **Live:** https://huhqueue-studio.onrender.com · **Buffer Commit entry:** see [CONTEST.md](CONTEST.md) and [SUBMISSION.md](SUBMISSION.md)
 
@@ -40,6 +42,10 @@ the Buffer account you already use.
 
 ## What it does
 
+- **The agent ("Make a post")** — start from a topic, a link or your own photo or video. It searches the news, opens the source, checks other outlets carry it and pulls out the facts, with every step on a timeline you can read. Then it picks a format and writes one caption per channel.
+- **Renderer** — Pillow renders 4:5 carousels and single cards with your colours, font, logo, handle and end card; FFmpeg renders 9:16 Reels (slideshows or your own clips with a logo bug, hook and end card). Text the brand font can't draw (emoji, stray symbols) is left out rather than shown as empty boxes.
+- **Video worker** — on the free hosted plan, Reels render on a GitHub Actions worker (`studio/render_worker.py`, `.github/workflows/render.yml`) that fetches the job with a single-use token and posts the MP4 back; self-hosters render in-process.
+- **Brand kit and Style Ledger** — set colours, font, logo, end card and voice, or import them from your website. Say "logo smaller" or "no hype" once and it becomes a written rule; every render and caption follows the ledger, and the brand check names the exact rule a post breaks. Before/after slider on every revision.
 - **Planner** — one tab for the Buffer queue and the calendar: List, Week and Month views; filter by channel, post type, status and caption text; any timezone (defaults to your browser's); a **No date** sidebar for undated drafts; Buffer's **posting times** on the grid; click an empty slot to schedule there; drag a post or draft to reschedule (Buffer `editPost`, the same `update_post` action REST and MCP use; sent posts are locked). View and filters live in the URL and are remembered.
 - **Connect Buffer** — OAuth 2.0 Authorization Code + PKCE with a private client. Access and rotating refresh tokens stay encrypted on the server; the browser only holds an opaque session cookie.
 - **Link → drafts** — reads the article and writes one caption per channel, counted the way Buffer counts (UTF-16, LinkedIn URLs = 24, Instagram line breaks = 2, X URLs = 23, Bluesky graphemes) and trimmed to fit.
@@ -60,6 +66,7 @@ Everything below was built in the Buffer Commit window; the pre-existing self-ho
 | 30 Oct | Supabase Postgres for the live app, OAuth connector for Claude.ai and ChatGPT, public usage counter |
 | 30 Oct | The agent ("Make a post"): research a topic or link or edit your own photo or video, on-brand carousels, cards and Reels, brand kit with website import, the Style Ledger and brand check, AI engine settings (bring your own key or use your own Claude/ChatGPT) |
 | 30 Oct | Renamed to HuhQueue. **Planner**: one tab replaces Calendar and Buffer queue (List, Week, Month, filters, timezone, No date drafts, posting times, click-to-schedule, drag to reschedule) on new `update_post`, `reschedule_post` and `delete_draft` actions (Buffer `editPost` / `deletePost`) shared by UI, REST and MCP; light and dark screenshots |
+| 30 Oct | Clean renders: no empty-box glyphs for emoji or symbols the brand font lacks, no "My brand" placeholder (the workspace name is used, or no wordmark) |
 
 ## Connect an agent (MCP)
 

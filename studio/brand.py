@@ -18,7 +18,7 @@ FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bo
 BODY_FONTS = {"anton": "Inter-SemiBold.ttf", "poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf"}
 
 DEFAULT_KIT = {
-    "name": "My brand", "handle": "", "website": "",
+    "name": "", "handle": "", "website": "",
     "colors": {"primary": "#111114", "accent": "#C9ACFA", "text": "#FFFFFF"},
     "font": "anton", "logo": "", "end_card": {"on": True, "line": "", "cta": "Follow"},
     "voice": "", "updated": 0,
@@ -123,7 +123,7 @@ def kit_from_html(url: str, html: str) -> dict:
     except Exception:
         pass
     m = p.meta
-    name = (m.get("og:site_name") or p.title.split("|")[0].split(" - ")[0]).strip()[:60] or urlparse(url).hostname or "My brand"
+    name = (m.get("og:site_name") or p.title.split("|")[0].split(" - ")[0]).strip()[:60] or urlparse(url).hostname or ""
     handle = (m.get("twitter:site") or m.get("twitter:creator") or "").lstrip("@").strip()[:40]
     icons = sorted(p.icons, key=lambda t: ("apple-touch" not in t[0], -int((t[1].split("x")[0] or "0") if t[1][:1].isdigit() else 0)))
     logo_candidates = [urljoin(url, h) for _, _, h in icons] + ([urljoin(url, m["og:image"])] if m.get("og:image") else [])

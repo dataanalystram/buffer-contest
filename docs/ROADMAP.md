@@ -2,7 +2,7 @@
 
 Ordered so Ram can start coding in the morning. **Instagram-first items** and features that Buffer and others charge for, which HuhQueue gives **free to everyone**, come first. Each milestone is shippable on its own, has acceptance tests (pytest for the backend, Playwright `data-testid` checks for the UI, following the existing `tests/` style), and touches as few files as possible.
 
-The basis for this order is FEATURE_MATRIX.md (statuses checked against code at `f5a144f`), with CMS_PLAN.md and AI_NATIVE_PLAN.md for the designs.
+The basis for this order is the code-verified feature list (checked at `f5a144f`), with CMS_PLAN.md and AI_NATIVE_PLAN.md for the designs.
 
 **Pricing angle.** Everything below is free and unlimited when self-hosted (the repo is MIT-licensed; no feature gates). A possible cheap hosted tier (e.g. €3–5/month) would charge only for what costs money to run:
 
@@ -61,7 +61,7 @@ These are features Buffer locks or lacks for Instagram.
 
 ## M3: Filter and view parity + saved views + timezone (2 days)
 
-This covers every control in FEATURE_MATRIX §3.
+This covers every Buffer control HuhQueue mirrors.
 
 1. **Shared `<FilterBar>`** with multi-select **channels, status, tags, post type** (image / video / reel / story / carousel / text, read from `options.ig_type` and the media), **campaign** (once M7 lands), **search** and **date range**. Used on Queue, Calendar, Sent, the channel-page tabs, Community and Insights.
 2. **Calendar:**
@@ -89,7 +89,7 @@ This covers every control in FEATURE_MATRIX §3.
 - `test_saved_views_crud` + Playwright: save a view on Queue, reload, click the chip → the same URL filters.
 - Playwright: the calendar status filter hides Sent. The undated drafts tray shows a dateless draft. The timezone switch moves a 19:00 Dublin post to 14:00 New York.
 - `test_insights_period_compare`: the totals and the previous-period totals are both right.
-- Every Buffer control in FEATURE_MATRIX §3 has a matching `data-testid`. A Playwright smoke test asserts each one exists.
+- Every Buffer control HuhQueue mirrors has a matching `data-testid`. A Playwright smoke test asserts each one exists.
 
 ## M4: Media library (2 days)
 
