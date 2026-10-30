@@ -31,8 +31,14 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["confirm_token"], "properties": {"confirm_token": {"type": "string"}}}},
     {"name": "list_approvals", "description": "Your submissions and their status (pending, approved, rejected).",
      "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["pending", "approved", "rejected"]}}}},
-    {"name": "list_queue", "description": "Posts in Buffer by status: scheduled (default), draft or sent.",
+    {"name": "list_queue", "description": "Posts in Buffer by status: scheduled (default), draft or sent. Each has an id for update_post, reschedule_post and delete_draft.",
      "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["scheduled", "draft", "sent"]}}}},
+    {"name": "update_post", "description": "Edit a post already in Buffer: new caption (text), new time (due_at, ISO UTC), or both. This is the same path as dragging a post on the HuhQueue Planner. Sent posts can't change; drafts stay drafts. 'review' and 'draft' tokens may only change drafts.",
+     "inputSchema": {"type": "object", "required": ["post_id"], "properties": {"post_id": {"type": "string"}, "text": {"type": "string"}, "due_at": {"type": "string"}}}},
+    {"name": "reschedule_post", "description": "Move a scheduled post or draft in Buffer to a new time (due_at, ISO UTC). Same as dragging it on the Planner.",
+     "inputSchema": {"type": "object", "required": ["post_id", "due_at"], "properties": {"post_id": {"type": "string"}, "due_at": {"type": "string"}}}},
+    {"name": "delete_draft", "description": "Delete a Buffer draft (drafts only; scheduled and sent posts are refused).",
+     "inputSchema": {"type": "object", "required": ["post_id"], "properties": {"post_id": {"type": "string"}}}},
     {"name": "create_idea", "description": "Save an idea to the Buffer organization's Ideas board (private, not published).",
      "inputSchema": {"type": "object", "required": ["text"], "properties": {"title": {"type": "string"}, "text": {"type": "string"}}}},
     {"name": "list_stories", "description": "Newest stories from the news feeds your user follows in HuhQueue (news radar). Pass a story's url to draft_from_link to write posts about it.",
@@ -56,7 +62,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "schedule_package", "description": "Send one ready package from a run to Buffer (mode draft | queue | next | now | schedule with due_at ISO UTC). Goes through preview and the token's policy: with 'review' it waits in the Approvals inbox.",
      "inputSchema": {"type": "object", "required": ["run_id", "channel_id"], "properties": {"run_id": {"type": "integer"}, "channel_id": {"type": "string"},
          "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"}}}},
-    {"name": "list_calendar", "description": "Everything on the user's calendar: scheduled and sent Buffer posts, agent posts waiting for approval, and ready packages not yet sent.",
+    {"name": "list_calendar", "description": "Everything on the user's Planner: scheduled, sent and draft Buffer posts, agent posts waiting for approval, ready packages not yet sent, and each channel's Buffer posting slots.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "get_limits", "description": "Buffer API budget left for this app, per-network character limits, and how close the Buffer plan is to its limits (scheduled posts, channels, weekly caps).",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -81,6 +87,12 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return [r for r in rows if actor.agent is None or r["agent_id"] == actor.agent["id"]]
     if name == "list_queue":
         return studio.queue(actor, args.get("status") or "scheduled")
+    if name == "update_post":
+        return studio.update_post(actor, args.get("post_id", ""), args.get("text"), args.get("due_at"))
+    if name == "reschedule_post":
+        return studio.reschedule_post(actor, args.get("post_id", ""), args.get("due_at") or "")
+    if name == "delete_draft":
+        return studio.delete_draft(actor, args.get("post_id", ""))
     if name == "create_idea":
         return studio.create_idea(actor, args.get("title", ""), args.get("text", ""))
     if name == "list_stories":

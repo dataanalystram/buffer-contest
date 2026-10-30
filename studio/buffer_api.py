@@ -275,6 +275,43 @@ class BufferClient:
             raise BufferError(r.get("message") or "Buffer rejected the post", 422)
         return r["post"]
 
+    def edit_post(self, uid: str, inp: dict) -> dict:
+        """editPost: only the fields given change (Buffer keeps text, assets and slot when they are omitted)."""
+        q = """mutation($input: EditPostInput!) { editPost(input: $input) {
+                 ... on PostActionSuccess { post { id text status dueAt channelId } }
+                 ... on MutationError { message } } }"""
+        r = self.gql(q, {"input": inp}, uid=uid)["editPost"]
+        self._cache = {k: v for k, v in self._cache.items() if k[0] != "posts"}
+        if "post" not in r:
+            raise BufferError(r.get("message") or "Buffer rejected the change", 422)
+        return r["post"]
+
+    def delete_post(self, uid: str, post_id: str) -> dict:
+        q = """mutation($input: DeletePostInput!) { deletePost(input: $input) {
+                 ... on DeletePostSuccess { id }
+                 ... on MutationError { message } } }"""
+        r = self.gql(q, {"input": {"id": post_id}}, uid=uid)["deletePost"]
+        self._cache = {k: v for k, v in self._cache.items() if k[0] != "posts"}
+        if "id" not in r:
+            raise BufferError(r.get("message") or "Buffer could not delete the post", 422)
+        return {"id": r["id"]}
+
+    def posting_schedules(self, uid: str, org_id: str) -> list[dict]:
+        """Each channel's weekly posting slots (Buffer's queue times) in the channel's timezone; [] if Buffer won't say."""
+        q = """query($o: OrganizationId!) { channels(input: {organizationId: $o}) {
+                 id timezone postingSchedule { day times paused } } }"""
+
+        def fetch():
+            try:
+                return self.gql(q, {"o": org_id}, uid=uid)["channels"]
+            except NotConnected:
+                raise
+            except BufferError as e:
+                if e.status == 429:
+                    raise
+                return []
+        return self._cached(("slots", uid), CHANNEL_TTL, fetch)
+
     def create_idea(self, uid: str, org_id: str, title: str, text: str) -> dict:
         q = """mutation($input: CreateIdeaInput!) { createIdea(input: $input) {
                  ... on Idea { id content { title text } }

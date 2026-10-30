@@ -30,7 +30,16 @@ SEED_POSTS = [  # channel, hours from now (negative = already sent), text, image
     ("demo_ig", 30, "Behind the scenes: how one link becomes five posts before lunch. Link in bio.", "studio"),
     ("demo_bsky", 44, "Reading list for the weekend: open-source schedulers, agent safety, and why limits matter.", ""),
     ("demo_x", -5, "Agents can draft. Humans approve. That's the whole policy.", "approve"),
+    ("demo_li", -28, "What we learned shipping a scheduler in two weeks: cut scope early, test the boring paths.", "ship"),
 ]
+SEED_DRAFTS = [  # channel, hours from now (None = no date yet), text, image seed
+    ("demo_th", None, "Draft: a short thread on why every agent needs a kill switch.", ""),
+    ("demo_ig", None, "Draft: carousel idea, five open models you can run on a laptop.", "laptop"),
+    ("demo_li", 50, "Draft: our posting checklist, the one we actually use every morning.", ""),
+]
+# Buffer queue slots per channel, in the channel's timezone (what the Planner shows as "Posting times")
+SLOTS = {"demo_x": ["09:00", "13:00", "18:30"], "demo_li": ["08:30", "12:00"], "demo_ig": ["11:00", "19:00"],
+         "demo_bsky": ["10:00", "16:00"], "demo_th": ["12:30"]}
 SEED_FEEDS = ["https://www.theverge.com/rss/index.xml", "https://hnrss.org/frontpage"]
 AGENT_POST = ("demo_x", "Claude", "AI agents can now draft your posts, but should they publish them? "
               "Our take: agents write, humans approve. Here's the setup we use. https://example.com/agents-approve")
@@ -77,6 +86,11 @@ class DemoBuffer:
                                  "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                                  "assets": [_image(IMG.format(img))] if img else [], "externalLink": None}
                                 for i, (ch, h, t, img) in enumerate(SEED_POSTS)]
+            n = len(self._posts[uid])
+            self._posts[uid] += [{"id": f"dp{n + i}", "text": t, "status": "draft", "channelId": ch,
+                                  "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z") if h is not None else None,
+                                  "assets": [_image(IMG.format(img))] if img else [], "externalLink": None}
+                                 for i, (ch, h, t, img) in enumerate(SEED_DRAFTS)]
         return self._posts[uid]
 
     def channels(self, uid: str, org_id: str = "", refresh: bool = False) -> list[dict]:
@@ -94,10 +108,33 @@ class DemoBuffer:
             due = (datetime.now(timezone.utc) + timedelta(hours=2 + len(posts))).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         assets = [_image(x["image"]["url"]) if "image" in x else {"type": "video", "mimeType": "video/mp4", "source": x["video"]["url"],
                   "thumbnail": ""} for x in inp.get("assets") or []]
-        post = {"id": f"dp{len(posts)}", "text": inp["text"], "status": status, "dueAt": due, "channelId": inp["channelId"],
+        post = {"id": f"dp{secrets.token_hex(3)}", "text": inp["text"], "status": status, "dueAt": due, "channelId": inp["channelId"],
                 "assets": assets, "externalLink": None}
         posts.append(post)
         return post
+
+    def edit_post(self, uid: str, inp: dict) -> dict:
+        post = next((p for p in self._seed(uid) if p["id"] == inp["id"]), None)
+        if not post:
+            from .buffer_api import BufferError
+            raise BufferError("Post not found", 404)
+        if "text" in inp:
+            post["text"] = inp["text"]
+        if "dueAt" in inp:
+            post["dueAt"] = inp["dueAt"]
+        if inp.get("saveToDraft") is False and post["status"] == "draft":
+            post["status"] = "scheduled"
+        return {k: post[k] for k in ("id", "text", "status", "dueAt", "channelId")}
+
+    def delete_post(self, uid: str, post_id: str) -> dict:
+        posts = self._seed(uid)
+        self._posts[uid] = [p for p in posts if p["id"] != post_id]
+        return {"id": post_id}
+
+    def posting_schedules(self, uid: str, org_id: str) -> list[dict]:
+        days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        return [{"id": cid, "timezone": "Europe/Dublin", "postingSchedule": [{"day": d, "times": times, "paused": d == "sun"} for d in days]}
+                for cid, times in SLOTS.items()]
 
     # a free-plan-sized sample, so the limit warnings are visible in the sample workspace
     def org_limits(self, uid: str, org_id: str) -> dict:
@@ -142,6 +179,15 @@ class BufferRouter:
 
     def create_idea(self, uid, *a, **k):
         return self._pick(uid).create_idea(uid, *a, **k)
+
+    def edit_post(self, uid, *a, **k):
+        return self._pick(uid).edit_post(uid, *a, **k)
+
+    def delete_post(self, uid, *a, **k):
+        return self._pick(uid).delete_post(uid, *a, **k)
+
+    def posting_schedules(self, uid, *a, **k):
+        return self._pick(uid).posting_schedules(uid, *a, **k)
 
     def org_limits(self, uid, *a, **k):
         return self._pick(uid).org_limits(uid, *a, **k)

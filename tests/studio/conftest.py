@@ -30,7 +30,10 @@ RLP = '"100-in-15min";q=100;w=900, "500-in-1day";q=500;w=86400'
 
 class FakeBuffer:
     def __init__(self):
-        self.calls, self.token_calls, self.created, self.ideas = [], [], [], []
+        self.calls, self.token_calls, self.created, self.ideas, self.edits, self.deleted = [], [], [], [], [], []
+        self.posts = [{"id": "p9", "text": "hi", "status": "scheduled", "dueAt": "2026-11-01T09:00:00.000Z", "channelId": "ch_x"},
+                      {"id": "d1", "text": "a draft", "status": "draft", "dueAt": None, "channelId": "ch_li"},
+                      {"id": "s1", "text": "gone out", "status": "sent", "dueAt": "2026-10-20T09:00:00.000Z", "channelId": "ch_x"}]
         self.n = 0
         self.refresh_tokens = {"rt_1"}
         self.fail_429 = 0
@@ -73,6 +76,9 @@ class FakeBuffer:
         if "account" in q and "organizations" in q:
             return httpx.Response(200, headers=h, json={"data": {"account": {"id": "acc_1", "email": "ram@example.com", "name": "Ram",
                                                                               "organizations": [{"id": "org_1", "name": "HuhByte"}]}}})
+        if "postingSchedule" in q:
+            return httpx.Response(200, headers=h, json={"data": {"channels": [
+                {"id": "ch_x", "timezone": "Europe/Dublin", "postingSchedule": [{"day": "mon", "times": ["09:00", "17:00"], "paused": False}]}]}})
         if "channels(" in q:
             return httpx.Response(200, headers=h, json={"data": {"channels": CHANNELS}})
         if "createPost" in q:
@@ -84,9 +90,20 @@ class FakeBuffer:
         if "createIdea" in q:
             self.ideas.append(v["input"])
             return httpx.Response(200, headers=h, json={"data": {"createIdea": {"id": "idea1", "content": v["input"]["content"]}}})
+        if "editPost" in q:
+            self.edits.append(v["input"])
+            node = next((n for n in self.posts if n["id"] == v["input"]["id"]), None)
+            if not node:
+                return httpx.Response(200, headers=h, json={"data": {"editPost": {"message": "Post not found"}}})
+            node.update({k: v["input"][k] for k in ("text", "dueAt") if k in v["input"]})
+            return httpx.Response(200, headers=h, json={"data": {"editPost": {"post": node}}})
+        if "deletePost" in q:
+            self.deleted.append(v["input"]["id"])
+            self.posts = [n for n in self.posts if n["id"] != v["input"]["id"]]
+            return httpx.Response(200, headers=h, json={"data": {"deletePost": {"id": v["input"]["id"]}}})
         if "posts(" in q:
-            return httpx.Response(200, headers=h, json={"data": {"posts": {"edges": [{"node": {"id": "p9", "text": "hi", "status": "scheduled",
-                                                                                               "dueAt": "2026-11-01T09:00:00Z", "channelId": "ch_x"}}]}}})
+            want = set(v["i"]["filter"]["status"])
+            return httpx.Response(200, headers=h, json={"data": {"posts": {"edges": [{"node": n} for n in self.posts if n["status"] in want]}}})
         return httpx.Response(200, headers=h, json={"errors": [{"message": "unknown"}]})
 
 

@@ -262,6 +262,23 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def queue(request: Request, status: str = "scheduled"):
         return studio.queue(actor(request), status)
 
+    # one edit path for posts already in Buffer: the Planner's drag-and-drop, its edit dialog, REST and MCP all land here
+    @app.patch("/api/posts/{post_id}")
+    def post_update(post_id: str, request: Request, body: dict = Body(...)):
+        return studio.update_post(actor(request, write=True), post_id, body.get("text"), body.get("due_at"))
+
+    @app.post("/api/posts/{post_id}/reschedule")
+    def post_reschedule(post_id: str, request: Request, body: dict = Body(...)):
+        return studio.reschedule_post(actor(request, write=True), post_id, body.get("due_at") or "")
+
+    @app.delete("/api/posts/{post_id}")
+    def post_delete(post_id: str, request: Request):
+        return studio.delete_draft(actor(request, write=True), post_id)
+
+    @app.post("/api/approvals/{approval_id}/reschedule")
+    def approval_reschedule(approval_id: int, request: Request, body: dict = Body(...)):
+        return studio.reschedule_approval(actor(request, write=True), approval_id, body.get("due_at") or "")
+
     @app.get("/api/approvals")
     def approvals(request: Request, status: str = "pending"):
         return studio.approvals(actor(request), status)

@@ -195,7 +195,7 @@ class Studio:
             raise ActionError("Agent actions are paused: the kill switch is on in HuhQueue.", 423)
         day = time.time() - 86400
         used = self.store.q("SELECT COUNT(*) n FROM audit WHERE user_id=? AND actor=? AND action IN "
-                            "('submit_post','create_idea') AND ok=1 AND ts>?", (a.uid, a.label, day))[0]["n"]
+                            "('submit_post','create_idea','update_post','delete_draft') AND ok=1 AND ts>?", (a.uid, a.label, day))[0]["n"]
         if used >= int(a.agent["daily_cap"]):
             self.store.audit(a.uid, a.label, action, "blocked", {"reason": "daily cap", "cap": a.agent["daily_cap"]}, ok=False)
             raise ActionError(f"This agent token reached its daily cap of {a.agent['daily_cap']} actions.", 429)
@@ -318,6 +318,92 @@ class Studio:
         self.store.audit(a.uid, a.label, action, risk, {"channel": ch["service"], "mode": clean["mode"], "buffer_post_id": post["id"],
                                                          "status": post.get("status")})
         return {"status": "sent_to_buffer", "post": post, "mode": clean["mode"], "service": ch["service"]}
+
+    # ------------------------------------------------------------ edit, reschedule, delete (Planner drag-and-drop)
+    @staticmethod
+    def _due(value: str | None) -> str:
+        try:
+            dt = datetime.fromisoformat((value or "").replace("Z", "+00:00"))
+        except ValueError:
+            raise ActionError("due_at must be an ISO time, e.g. 2026-11-02T09:00:00Z")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if dt <= datetime.now(timezone.utc):
+            raise ActionError("due_at is in the past. Pick a time from now on.")
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def _find_post(self, a: Actor, post_id: str) -> tuple[dict, dict]:
+        u = self.store.user(a.uid)
+        for status in ("scheduled", "draft", "sent"):
+            for p in self.buffer.posts(a.uid, u["org_id"], [status], first=100):
+                if p.get("id") == post_id:
+                    ch = {c["id"]: c for c in self.channels(a)}.get(p.get("channelId"))
+                    if not ch:
+                        raise ActionError("Unknown post, or this agent token isn't allowed to use its channel.", 404)
+                    return {**p, "status": p.get("status") or status}, ch
+        raise ActionError("No scheduled post or draft with that id in your Buffer organization.", 404)
+
+    def update_post(self, a: Actor, post_id: str, text: str | None = None, due_at: str | None = None) -> dict:
+        """The one edit path for a post already in Buffer: new caption, new time, or both (editPost).
+        Sent posts are history and can't move. Drafts stay drafts. Agents: 'trusted' may edit anything not sent;
+        'review' and 'draft' tokens may only touch drafts, so they can never change what publishes."""
+        if text is None and due_at is None:
+            raise ActionError("Nothing to change: give text, due_at or both.")
+        post, ch = self._find_post(a, post_id)
+        if post["status"] == "sent":
+            raise ActionError("That post was already sent by Buffer, so it can't be edited or moved.", 409)
+        draft = post["status"] == "draft"
+        if a.kind == "agent" and a.agent["policy"] != "trusted" and not draft:
+            raise ActionError("This agent token may only change drafts. Ask a human to move a scheduled post.", 403)
+        self._guard_write(a, "update_post")
+        inp: dict = {"id": post_id}
+        if text is not None:
+            text = text.strip()
+            if not text:
+                raise ActionError("Post text is empty.")
+            lim = drafter.limit_for(ch["service"])
+            for part in drafter.split_thread(ch["service"], text):
+                if drafter.count(ch["service"], part) > lim:
+                    raise ActionError(f"{drafter.count(ch['service'], part)}/{lim} characters: too long for {ch['service']}.")
+            inp["text"] = text
+        if due_at is not None:
+            inp.update(dueAt=self._due(due_at), mode="customScheduled")
+            if draft:
+                inp["saveToDraft"] = True
+        try:
+            out = self.buffer.edit_post(a.uid, inp)
+        except BufferError as e:
+            self.store.audit(a.uid, a.label, "update_post", "draft" if draft else "public",
+                             {"buffer_post_id": post_id, "error": str(e)}, ok=False)
+            raise
+        self.store.audit(a.uid, a.label, "update_post", "draft" if draft else "public",
+                         {"buffer_post_id": post_id, "channel": ch["service"], "due_at": inp.get("dueAt"), "text": "text" in inp})
+        return {"status": "updated", "post": out, "service": ch["service"]}
+
+    def reschedule_post(self, a: Actor, post_id: str, due_at: str) -> dict:
+        return self.update_post(a, post_id, due_at=due_at)
+
+    def delete_draft(self, a: Actor, post_id: str) -> dict:
+        post, ch = self._find_post(a, post_id)
+        if post["status"] != "draft":
+            raise ActionError("Only drafts can be deleted here. Scheduled posts can be moved back to drafts in Buffer.", 409)
+        self._guard_write(a, "delete_draft")
+        self.buffer.delete_post(a.uid, post_id)
+        self.store.audit(a.uid, a.label, "delete_draft", "draft", {"buffer_post_id": post_id, "channel": ch["service"]})
+        return {"status": "deleted", "id": post_id}
+
+    def reschedule_approval(self, a: Actor, approval_id: int, due_at: str) -> dict:
+        """Give an agent post that is still waiting for approval a time; it is scheduled for then once approved."""
+        if a.kind != "human":
+            raise ActionError("Only a signed-in human can change a post that is waiting for approval.", 403)
+        rows = self.store.q("SELECT * FROM approvals WHERE id=? AND user_id=?", (approval_id, a.uid))
+        if not rows or rows[0]["status"] != "pending":
+            raise ActionError("No pending approval with that id.", 404)
+        clean = json.loads(rows[0]["payload"])
+        clean.update(due_at=self._due(due_at), mode="schedule")
+        self.store.x("UPDATE approvals SET payload=? WHERE id=?", (json.dumps(clean), approval_id))
+        self.store.audit(a.uid, a.label, "reschedule_approval", "read", {"approval_id": approval_id, "due_at": clean["due_at"]})
+        return {"status": "pending_approval", "approval_id": approval_id, "due_at": clean["due_at"]}
 
     # ------------------------------------------------------------ approvals (human only)
     def approvals(self, a: Actor, status: str = "pending") -> list[dict]:
