@@ -402,3 +402,29 @@ def test_plan_limits_warn_and_block_before_buffer_does(human, fake, app):
     r = human.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "hi", "mode": "queue"})
     assert r.status_code == 400 and "3 of 3" in r.json()["error"]
     assert human.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "hi", "mode": "draft"}).status_code == 200
+
+
+def test_migrate_from_copies_everything_once(human, app, tmp_path, fake):
+    """Moving databases (Render Postgres -> Supabase): MIGRATE_FROM_URL copies every row into the empty new store,
+    the user stays signed in to Buffer and agent tokens keep working; a second boot copies nothing."""
+    import httpx
+    from fastapi.testclient import TestClient
+    from studio.app import create_app
+    from studio.config import load_settings
+    token = agent_token(human)
+    uid = app.state.store.q("SELECT id FROM users")[0]["id"]
+    app.state.store.x("INSERT INTO feeds(user_id,url,created) VALUES(?,?,?)", (uid, "https://openai.com/news/rss.xml", 1.0))
+    old = app.state.settings
+    new_db = str(tmp_path / "new.db")
+    s = load_settings(client_id="cid", client_secret="sec", public_url="https://hq.test", session_secret=old.session_secret,
+                      db_path=new_db, migrate_from=old.db_path, secure_cookies=False, ai_base_url="")
+    moved = TestClient(create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake))), base_url="https://hq.test")
+    moved.cookies.update(human.cookies)
+    assert moved.get("/api/me").status_code == 200
+    r = moved.get("/api/channels", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    store = moved.app.state.store
+    n_audit = store.q("SELECT COUNT(*) AS n FROM audit")[0]["n"]
+    assert n_audit > 0 and store.q("SELECT COUNT(*) AS n FROM feeds")[0]["n"] == 1
+    assert store.copy_from(app.state.store) == {}  # second boot: target already has data
+    assert moved.get("/healthz").json()["db"] is True

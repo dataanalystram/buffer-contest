@@ -43,6 +43,7 @@ def sha(value: str) -> str:
 
 
 ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds")
+TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit")
 
 
 class Store:
@@ -57,9 +58,13 @@ class Store:
             import psycopg
             from psycopg.rows import dict_row
             self._psycopg, self._dict_row = psycopg, dict_row
-            self._db = psycopg.connect(path, autocommit=True, row_factory=dict_row)
+            self._db = self._connect()
             with self._db.cursor() as c:
                 c.execute(SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY").replace(" REAL", " DOUBLE PRECISION"))
+                # Supabase publishes the public schema through its Data API. Row-level security with no policies
+                # shuts that door; the app connects as the table owner, which RLS does not apply to.
+                for t in TABLES:
+                    c.execute(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
         else:
             self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
             self._db.row_factory = sqlite3.Row
@@ -68,6 +73,10 @@ class Store:
         key = base64.urlsafe_b64encode(hashlib.sha256(("tokens:" + secret).encode()).digest())
         self._fernet = Fernet(key)
 
+    def _connect(self):
+        # prepare_threshold=None: PgBouncer-style poolers (Supabase) can't keep server-side prepared statements.
+        return self._psycopg.connect(self.path, autocommit=True, row_factory=self._dict_row, prepare_threshold=None)
+
     # ---- low level
     def _pg(self, sql: str, args: tuple, fetch: bool):
         sql = sql.replace("?", "%s")
@@ -75,7 +84,7 @@ class Store:
             for attempt in (0, 1):
                 try:
                     if self._db.closed:
-                        self._db = self._psycopg.connect(self.path, autocommit=True, row_factory=self._dict_row)
+                        self._db = self._connect()
                     with self._db.cursor() as c:
                         c.execute(sql, args)
                         return c.fetchall() if fetch else None
@@ -104,6 +113,25 @@ class Store:
         with self._lock:
             cur = self._db.execute(sql, args)
             return cur.lastrowid
+
+    def ping(self) -> bool:
+        return bool(self.q("SELECT 1 AS ok"))
+
+    def copy_from(self, src: "Store") -> dict[str, int]:
+        """One-time move to a new database (e.g. Render Postgres -> Supabase). Copies every row, ids included,
+        and only into an empty store, so running it again on a later boot does nothing."""
+        if self.q("SELECT COUNT(*) AS n FROM users")[0]["n"]:
+            return {}
+        copied = {}
+        for t in TABLES:
+            rows = [dict(r) for r in src.q(f"SELECT * FROM {t}")]
+            for r in rows:
+                cols = ",".join(r)
+                self.x(f"INSERT INTO {t}({cols}) VALUES({','.join('?' * len(r))}) ON CONFLICT DO NOTHING", tuple(r.values()))
+            if self.pg and t in ID_TABLES and rows:
+                self.q(f"SELECT setval(pg_get_serial_sequence('{t}','id'), (SELECT MAX(id) FROM {t})) AS v")
+            copied[t] = len(rows)
+        return copied
 
     # ---- tokens (encrypted)
     def seal(self, data: dict) -> str:
