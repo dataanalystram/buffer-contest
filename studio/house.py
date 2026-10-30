@@ -1,0 +1,880 @@
+"""House Style: the agent, the brand kit, the Style Ledger, media and the calendar, on top of the Studio actions.
+
+One agent, eight visible steps: find -> verify -> structure -> format -> render -> caption -> brand check -> ready.
+Every step is stored with what it did, so the web app shows a timeline and an MCP client gets the same record. A
+correction at any point becomes a ledger rule, and the run re-renders, re-captions and re-checks against it.
+Scheduling still goes through Studio.preview_post/submit_post, so agents keep the approval policy.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import secrets
+import threading
+import time
+import traceback
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+
+import httpx
+
+from . import brand, drafter, llm, render, sources
+from .actions import ActionError, Actor, Studio
+
+STEPS = [("find", "Find the story"), ("verify", "Verify on the source"), ("structure", "Structure the facts"),
+         ("format", "Pick the format"), ("render", "Render on-brand media"), ("caption", "Write captions"),
+         ("check", "Brand check"), ("ready", "Ready to schedule")]
+MEDIA_STEPS = [("upload", "Read your media"), ("format", "Pick the format"), ("render", "Render on-brand media"),
+               ("caption", "Write captions"), ("check", "Brand check"), ("ready", "Ready to schedule")]
+MAX_UPLOAD = 40 * 1024 * 1024
+MAX_IMAGE_FETCH = 8 * 1024 * 1024
+VIDEO_ONLY = {"tiktok", "youtube"}
+_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="house-agent")
+
+
+def _now() -> float:
+    return time.time()
+
+
+class House:
+    def __init__(self, studio: Studio, http: httpx.Client | None = None):
+        self.studio, self.store, self.s = studio, studio.store, studio.s
+        self.http = http
+        self.sync = bool(self.s.extra.get("sync_agent"))
+        self.worker_mode = (os.environ.get("RENDER_WORKER") or self.s.extra.get("render_worker") or "").strip()
+
+    # ================================================================ brand kit
+    def kit(self, a: Actor) -> dict:
+        rows = self.store.q("SELECT kit FROM brand_kits WHERE user_id=?", (a.uid,))
+        k = json.loads(rows[0]["kit"]) if rows else {}
+        out = {**brand.DEFAULT_KIT, **k}
+        out["colors"] = {**brand.DEFAULT_KIT["colors"], **(k.get("colors") or {})}
+        out["end_card"] = {**brand.DEFAULT_KIT["end_card"], **(k.get("end_card") or {})}
+        out["logo_url"] = self.media_url(out["logo"]) if out.get("logo") else ""
+        out["is_set"] = bool(rows)
+        return out
+
+    def save_kit(self, a: Actor, patch: dict) -> dict:
+        cur = self.kit(a)
+        allowed = {"name", "handle", "website", "font", "logo", "voice"}
+        for k in allowed & set(patch):
+            cur[k] = str(patch[k] or "")[:300]
+        if isinstance(patch.get("colors"), dict):
+            for k in ("primary", "accent", "text"):
+                v = str(patch["colors"].get(k) or "")
+                if brand.HEX_RE.fullmatch(v.strip()):
+                    cur["colors"][k] = "#" + v.strip().lstrip("#").upper()
+        if isinstance(patch.get("end_card"), dict):
+            for k in ("on", "line", "cta"):
+                if k in patch["end_card"]:
+                    cur["end_card"][k] = patch["end_card"][k] if k == "on" else str(patch["end_card"][k] or "")[:80]
+        if cur["font"] not in brand.FONTS:
+            cur["font"] = "anton"
+        cur["handle"] = cur["handle"].lstrip("@")
+        cur["updated"] = _now()
+        data = {k: cur[k] for k in brand.DEFAULT_KIT}
+        self.store.x("INSERT INTO brand_kits(user_id,kit,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET kit=excluded.kit,"
+                     " updated=excluded.updated", (a.uid, json.dumps(data), _now()))
+        self.store.audit(a.uid, a.label, "save_brand_kit", "read", {"fields": sorted(set(patch) & (allowed | {"colors", "end_card"}))})
+        return self.kit(a)
+
+    def kit_from_website(self, a: Actor, url: str) -> dict:
+        url = (url or "").strip()
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        p = urlparse(url)
+        if not p.hostname or not drafter._public(p.hostname):
+            raise ActionError("Paste your brand's public website address.")
+        client = self._client()
+        try:
+            r = client.get(url)
+        except httpx.HTTPError as e:
+            raise ActionError(f"Couldn't open {p.hostname} ({e.__class__.__name__}).")
+        info = brand.kit_from_html(str(r.url), r.text)
+        logo_tok, palette = "", []
+        for cand in info["logo_candidates"]:
+            data = self._fetch_bytes(cand, limit=2_000_000)
+            if not data:
+                continue
+            try:
+                palette = brand.palette_from_image(data)
+                logo_tok = self.put_media(a, data, "logo" + (".png" if not cand.lower().endswith((".jpg", ".jpeg")) else ".jpg"),
+                                          kind="logo")
+                break
+            except Exception:
+                continue
+        colors = brand.pick_colors(info["theme_color"], palette)
+        patch = {"name": info["name"], "website": info["website"], "colors": colors}
+        if info["handle"]:
+            patch["handle"] = info["handle"]
+        if logo_tok:
+            patch["logo"] = logo_tok
+        if info["description"] and not self.kit(a).get("voice"):
+            patch["voice"] = info["description"][:200]
+        kit = self.save_kit(a, patch)
+        return {"kit": kit, "found": {"logo": bool(logo_tok), "palette": palette, "theme_color": info["theme_color"],
+                                      "handle": info["handle"]}}
+
+    def preview_kit(self, a: Actor) -> dict:
+        """A sample cover and end card with the current kit and ledger, so brand changes are visible at once."""
+        kit, rules = self.kit(a), self.rules(a)
+        p = brand.visual_params(kit, rules)
+        logo = self._logo_bytes(kit)
+        b1, m1 = render.news_card("Your next post, rendered in your house style", kit, p, logo=logo, ratio="4:5", label="Preview",
+                                  credit="example.com")
+        b2, _ = render.end_card(kit, p, logo=logo, ratio="4:5")
+        self.store.x("DELETE FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
+        t1 = self.put_media(a, b1, "preview.jpg", kind="preview", meta=m1)
+        t2 = self.put_media(a, b2, "preview_end.jpg", kind="preview", meta={"type": "photo"})
+        return {"cover": self.media_url(t1), "end": self.media_url(t2), "check": brand.brand_check("", m1, rules, kit)}
+
+    # ================================================================ ledger
+    def rules(self, a: Actor, include_inactive: bool = False) -> list[dict]:
+        sql = "SELECT * FROM style_rules WHERE user_id=?" + ("" if include_inactive else " AND active=1") + " ORDER BY id"
+        out = []
+        for r in self.store.q(sql, (a.uid,)):
+            d = dict(r)
+            d["check"] = json.loads(d.pop("spec"))
+            d["active"] = bool(d["active"])
+            out.append(d)
+        return out
+
+    def remember(self, a: Actor, correction: str, rules: list[dict] | None = None) -> dict:
+        """A correction in plain words -> ledger rules. Rule writer first; an AI model only when it matched nothing."""
+        correction = (correction or "").strip()[:500]
+        if not correction and not rules:
+            raise ActionError("Say what to change, e.g. “logo smaller, top left” or “never say game-changer”.")
+        found = brand.clean_rules(rules, correction) if rules else brand.parse_correction(correction)
+        engine_used = "rule writer"
+        if not found:
+            eng = llm.resolve(self.store, a.uid, self.s)
+            if eng:
+                try:
+                    data = llm.chat_json(eng, "You turn a social media editor's correction into brand rules. " + brand.RULE_SCHEMA_HINT,
+                                         correction, http=self.http, max_tokens=400)
+                    self._ai_audit(a, eng, "rules")
+                    found = brand.clean_rules(data.get("rules") if isinstance(data, dict) else data, correction)
+                    engine_used = eng["source"]
+                except llm.LLMError:
+                    found = []
+        if not found:
+            return {"added": [], "message": "I couldn't turn that into a rule. Try “logo top left”, “max 2 hashtags”, "
+                                            "“never say X”, “no end card”, “use #FF5A1F as the accent”.", "ledger": self.rules(a)}
+        added = []
+        existing = self.rules(a)
+        for r in found:
+            # a newer rule of the same single-valued type replaces the old one
+            if r["check"]["type"] not in ("banned_words", "require_text"):
+                for old in existing:
+                    if old["check"]["type"] == r["check"]["type"]:
+                        self.store.x("UPDATE style_rules SET active=0 WHERE id=?", (old["id"],))
+            rid = self.store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created) VALUES(?,?,?,?,?,1,?)",
+                               (a.uid, r["kind"], json.dumps(r["check"]), r["rule"], r["source"], _now()))
+            added.append({**r, "id": rid})
+        self.store.audit(a.uid, a.label, "remember_rule", "read", {"rules": [r["rule"] for r in added], "engine": engine_used})
+        return {"added": added, "ledger": self.rules(a), "engine": engine_used}
+
+    def set_rule(self, a: Actor, rule_id: int, active: bool) -> dict:
+        self.store.x("UPDATE style_rules SET active=? WHERE id=? AND user_id=?", (1 if active else 0, rule_id, a.uid))
+        return {"id": rule_id, "active": active}
+
+    def delete_rule(self, a: Actor, rule_id: int) -> dict:
+        if a.kind != "human":
+            raise ActionError("Only a human can delete ledger rules; agents can add them.", 403)
+        self.store.x("DELETE FROM style_rules WHERE id=? AND user_id=?", (rule_id, a.uid))
+        return {"deleted": rule_id}
+
+    def check(self, a: Actor, text: str, media_token: str = "") -> dict:
+        meta = self.media_meta(a, media_token) if media_token else None
+        res = brand.brand_check(text, meta, self.rules(a), self.kit(a))
+        if res["failed"]:
+            for f in res["failed"]:
+                if f["rule_id"]:
+                    self.store.x("UPDATE style_rules SET hits=hits+1 WHERE id=?", (f["rule_id"],))
+        return res
+
+    # ================================================================ media
+    def put_media(self, a: Actor, data: bytes, name: str, kind: str = "upload", meta: dict | None = None) -> str:
+        ext = (name.rsplit(".", 1)[-1] if "." in name else "bin").lower()[:5]
+        mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif",
+                "mp4": "video/mp4", "mov": "video/quicktime", "m4v": "video/mp4", "webm": "video/webm"}.get(ext, "application/octet-stream")
+        tok = secrets.token_urlsafe(18) + "." + ext
+        self.store.x("INSERT INTO media(token,user_id,name,mime,data,size,meta,created) VALUES(?,?,?,?,?,?,?,?)",
+                     (tok, a.uid, name[:80], mime, data, len(data), json.dumps({"kind": kind, **(meta or {})}), _now()))
+        return tok
+
+    def get_media(self, token: str) -> dict | None:
+        rows = self.store.q("SELECT token,user_id,mime,data,size,meta FROM media WHERE token=?", (token,))
+        if not rows:
+            return None
+        d = dict(rows[0])
+        d["data"] = bytes(d["data"])
+        return d
+
+    def media_meta(self, a: Actor, token: str) -> dict | None:
+        rows = self.store.q("SELECT meta FROM media WHERE token=? AND user_id=?", (token, a.uid))
+        return json.loads(rows[0]["meta"]) if rows else None
+
+    def media_url(self, token: str) -> str:
+        return f"{self.s.public_url.rstrip('/')}/m/{token}" if token else ""
+
+    def upload(self, a: Actor, name: str, data_b64: str) -> dict:
+        try:
+            data = base64.b64decode(data_b64.split(",", 1)[-1], validate=False)
+        except Exception:
+            raise ActionError("Couldn't read that file.")
+        if not data or len(data) > MAX_UPLOAD:
+            raise ActionError("Files up to 40 MB.")
+        ext = (name.rsplit(".", 1)[-1] if "." in name else "").lower()
+        if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
+            raise ActionError("Upload a JPG, PNG, WebP photo or an MP4/MOV video.")
+        kind = "video" if ext in ("mp4", "mov", "m4v", "webm") else "photo"
+        tok = self.put_media(a, data, name, kind="upload", meta={"type": kind})
+        self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
+        return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
+
+    def import_url(self, a: Actor, url: str) -> dict:
+        """For agents: fetch a photo or video the user owns from a public URL into House Style."""
+        ext = urlparse(url).path.rsplit(".", 1)[-1].lower() if "." in urlparse(url).path else ""
+        data = self._fetch_bytes(url, MAX_UPLOAD)
+        if not data:
+            raise ActionError("Couldn't download that file (it must be a public https link, up to 40 MB).")
+        if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
+            ext = "mp4" if data[4:8] == b"ftyp" else ("png" if data[:4] == b"\x89PNG" else "jpg")
+        return self.upload(a, "import." + ext, base64.b64encode(data).decode())
+
+    def purge_media(self, days: int = 21) -> int:
+        cutoff = _now() - days * 86400
+        n = self.store.q("SELECT COUNT(*) AS n FROM media WHERE created<? AND meta NOT LIKE ?", (cutoff, '%"logo"%'))[0]["n"]
+        self.store.x("DELETE FROM media WHERE created<? AND meta NOT LIKE ?", (cutoff, '%"logo"%'))
+        return n
+
+    # ================================================================ AI settings
+    def ai_settings(self, a: Actor) -> dict:
+        return llm.public_view(self.store, a.uid, self.s)
+
+    def save_ai(self, a: Actor, body: dict) -> dict:
+        if a.kind != "human":
+            raise ActionError("Only a human can change AI settings.", 403)
+        if body.get("remove"):
+            self.store.x("DELETE FROM ai_settings WHERE user_id=?", (a.uid,))
+            return self.ai_settings(a)
+        prov = body.get("provider") or "custom"
+        pre = llm.PRESETS.get(prov)
+        if not pre:
+            raise ActionError("Unknown provider.")
+        base = (body.get("base_url") or pre["base_url"]).strip().rstrip("/")
+        key = (body.get("api_key") or "").strip()
+        if not base.startswith("https://") or not key:
+            raise ActionError("Add an API key (and an https:// base URL for a custom endpoint).")
+        host = urlparse(base).hostname or ""
+        if not drafter._public(host):
+            raise ActionError("That endpoint isn't a public address.")
+        eng = {"source": "your key", "provider": prov, "base_url": base, "api_key": key,
+               "model": (body.get("model") or pre["model"]).strip(), "style": pre["style"]}
+        try:
+            llm.test_key(eng, http=self.http)
+        except llm.LLMError as e:
+            raise ActionError(f"The key didn't work: {e}")
+        self.store.x("INSERT INTO ai_settings(user_id,data,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data,"
+                     " updated=excluded.updated", (a.uid, self.store.seal({k: eng[k] for k in ("provider", "base_url", "api_key", "model")}), _now()))
+        self.store.audit(a.uid, a.label, "save_ai_key", "safety", {"provider": prov, "model": eng["model"]})
+        return self.ai_settings(a)
+
+    def _ai_audit(self, a: Actor, eng: dict, what: str) -> None:
+        self.store.audit(a.uid, a.label, "ai_call", "read", {"engine": "free" if eng["source"] == "free starter" else "own", "for": what})
+
+    # ================================================================ agent runs
+    def start_run(self, a: Actor, body: dict) -> dict:
+        kind = "media" if body.get("media_token") else "news"
+        if kind == "news" and not ((body.get("query") or "").strip() or (body.get("url") or "").strip()):
+            raise ActionError("Give the agent a topic to research or a link to start from.")
+        if kind == "media" and not self.media_meta(a, body["media_token"]):
+            raise ActionError("Unknown media token. Upload the file first.", 404)
+        chans = [c for c in self.studio.channels(a) if not c.get("isDisconnected")]
+        ids = body.get("channel_ids") or [c["id"] for c in chans]
+        chans = [c for c in chans if c["id"] in ids]
+        if not chans:
+            raise ActionError("Pick at least one connected channel.")
+        steps = [{"key": k, "label": l, "status": "pending", "detail": "", "data": None} for k, l in (MEDIA_STEPS if kind == "media" else STEPS)]
+        inp = {k: body.get(k) for k in ("query", "url", "media_token", "brief", "format", "ratio") if body.get(k)}
+        inp["channels"] = [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]
+        rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
+                           (a.uid, kind, json.dumps(inp), "running", json.dumps(steps), json.dumps({}), _now(), _now()))
+        self.store.audit(a.uid, a.label, "agent_run", "read", {"run": rid, "kind": kind})
+        self._spawn(self._execute, a, rid)
+        return self.run(a, rid)
+
+    def _spawn(self, fn, *args):
+        if self.sync:
+            fn(*args)
+        else:
+            _pool.submit(self._safe, fn, *args)
+
+    def _safe(self, fn, *args):
+        try:
+            fn(*args)
+        except Exception:
+            traceback.print_exc()
+
+    def run(self, a: Actor, rid: int) -> dict:
+        rows = self.store.q("SELECT * FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
+        if not rows:
+            raise ActionError("No such agent run.", 404)
+        d = dict(rows[0])
+        for k in ("input", "steps", "result"):
+            d[k] = json.loads(d[k] or "null")
+        return d
+
+    def runs(self, a: Actor, limit: int = 20) -> list[dict]:
+        out = []
+        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT ?",
+                              (a.uid, limit)):
+            d = dict(r)
+            inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
+            d["title"] = (res.get("story") or {}).get("headline") or inp.get("query") or inp.get("url") or inp.get("brief") or "Your media"
+            d["cover"] = (res.get("media") or [{}])[0].get("url", "") if res.get("media") else ""
+            d["packages"] = len(res.get("packages") or [])
+            out.append(d)
+        return out
+
+    def _save(self, rid: int, steps: list, result: dict, status: str | None = None) -> None:
+        if status:
+            self.store.x("UPDATE agent_runs SET steps=?, result=?, status=?, updated=? WHERE id=?",
+                         (json.dumps(steps), json.dumps(result, default=str), status, _now(), rid))
+        else:
+            self.store.x("UPDATE agent_runs SET steps=?, result=?, updated=? WHERE id=?",
+                         (json.dumps(steps), json.dumps(result, default=str), _now(), rid))
+
+    def _step(self, steps, key, status, detail="", data=None):
+        for s in steps:
+            if s["key"] == key:
+                s["status"], s["detail"] = status, detail[:400]
+                if data is not None:
+                    s["data"] = data
+                s["at"] = _now()
+
+    def _execute(self, a: Actor, rid: int) -> None:
+        run = self.run(a, rid)
+        steps, inp, res = run["steps"], run["input"], run["result"] or {}
+        try:
+            if run["kind"] == "news":
+                self._news(a, rid, steps, inp, res)
+            else:
+                self._media(a, rid, steps, inp, res)
+        except ActionError as e:
+            cur = next((s for s in steps if s["status"] == "running"), None)
+            if cur:
+                self._step(steps, cur["key"], "failed", str(e))
+            self._save(rid, steps, res, "failed")
+        except Exception as e:  # never leave a run spinning
+            traceback.print_exc()
+            cur = next((s for s in steps if s["status"] == "running"), None)
+            if cur:
+                self._step(steps, cur["key"], "failed", f"Unexpected error: {e.__class__.__name__}")
+            self._save(rid, steps, res, "failed")
+
+    # ---------------------------------------------------------------- news pipeline
+    def _news(self, a, rid, steps, inp, res):
+        eng = llm.resolve(self.store, a.uid, self.s)
+        res["engine"] = eng["source"] if eng else "built-in writer"
+        # 1 find
+        self._step(steps, "find", "running", "Searching Bing News, Hacker News and your feeds")
+        self._save(rid, steps, res)
+        if inp.get("url"):
+            leads = [{"title": "", "url": inp["url"].strip(), "source": urlparse(inp["url"]).hostname or "", "via": "your_link",
+                      "published": 0}]
+        else:
+            leads = sources.search(inp["query"], self.studio.feeds(a), http=self.http)
+        if not leads:
+            raise ActionError(f"No recent stories found for “{inp.get('query')}”. Try a broader topic or paste a link.")
+        res["leads"] = leads[:6]
+        self._step(steps, "find", "done", f"{len(leads)} leads; best: {leads[0]['title'] or leads[0]['url']}"[:200], {"leads": leads[:6]})
+        # 2 verify: open the page itself; skip leads that don't open
+        self._step(steps, "verify", "running", "Opening the source pages")
+        self._save(rid, steps, res)
+        article, lead, tried = None, None, []
+        for ld in leads[:5]:
+            url = sources.resolve_google_link(ld["url"], self.http)
+            try:
+                art = drafter.fetch_article(url, self.http)
+            except drafter.FetchError as e:
+                tried.append({"url": url, "error": str(e)})
+                continue
+            if len(" ".join(art.get("paragraphs", []))) < 120 and not art.get("description"):
+                tried.append({"url": url, "error": "page has no readable text"})
+                continue
+            article, lead = art, ld
+            break
+        if not article and inp.get("url"):
+            raise ActionError(f"Your link didn't open for the agent ({tried[0]['error'] if tried else 'no text'}). Some sites block "
+                              "bots; try the same story from another outlet, or search by topic.")
+        if not article:
+            raise ActionError("None of the top stories opened (paywalls or blocked pages). Paste a link you can read.")
+        corroborate = self._corroborate(article)
+        verified = {"url": article["url"], "site": article["site"], "title": article["title"], "image": article.get("image", ""),
+                    "other_outlets": [{"title": c["title"], "source": c["source"], "url": c["url"]} for c in corroborate],
+                    "skipped": tried}
+        res["article"] = {k: article[k] for k in ("url", "title", "description", "image", "site")}
+        res["verification"] = verified
+        conf = "also reported by " + ", ".join(c["source"] for c in corroborate) if corroborate else "single source: check before posting"
+        self._step(steps, "verify", "done", f"Read {article['site']}; {conf}"[:300], verified)
+        # 3 structure
+        self._step(steps, "structure", "running", "Pulling the facts out")
+        self._save(rid, steps, res)
+        story = self._structure(a, eng, article)
+        res["story"] = story
+        self._step(steps, "structure", "done", story["headline"], story)
+        self._after_story(a, rid, steps, inp, res, eng)
+
+    def _corroborate(self, article: dict) -> list[dict]:
+        """Other outlets with the same story: a different site whose headline shares most of the key words."""
+        stop = {"the", "and", "for", "with", "that", "this", "from", "into", "your", "you", "are", "its", "new", "how", "why", "what"}
+        key = {w for w in re.findall(r"[a-z0-9]+", article["title"].lower()) if len(w) > 2 and w not in stop}
+        if len(key) < 2:
+            return []
+        q = " ".join(sorted(key, key=len, reverse=True)[:6])
+        host = (urlparse(article["url"]).hostname or "").removeprefix("www.")
+        out, seen = [], {host}
+        for l in sources.bing_news(q, self.http, 10) + sources.google_news(q, self.http, 8):
+            words = {w for w in re.findall(r"[a-z0-9]+", l["title"].lower()) if len(w) > 2 and w not in stop}
+            src = (urlparse(l["url"]).hostname or "").lower().removeprefix("www.") if "news.google.com" not in l["url"] else (l.get("source") or "").lower()
+            label = (l.get("source") or src).lower().replace(" ", "")
+            if src in seen or label in seen or any(label and label in x.replace(".", "") for x in seen) or not words:
+                continue
+            if len(key & words) / len(key) >= 0.4:
+                seen.update({src, label})
+                out.append(l)
+            if len(out) == 3:
+                break
+        return out
+
+    def _structure(self, a, eng, article) -> dict:
+        text = " ".join(article.get("paragraphs", []))[:3000]
+        if eng:
+            try:
+                d = llm.chat_json(eng, "You are a careful news editor. Use only facts in the article; never invent numbers.",
+                                  "Return JSON {headline (max 12 words, plain, no hype), facts: [3 short facts from the text], "
+                                  "why_it_matters (one sentence), label (1-2 words like 'AI news' or 'Launch')}.\nARTICLE: "
+                                  + json.dumps({"title": article["title"], "description": article.get("description", ""), "text": text}),
+                                  http=self.http, max_tokens=600)
+                self._ai_audit(a, eng, "structure")
+                facts = [str(f)[:160] for f in (d.get("facts") or []) if str(f).strip()][:4]
+                if d.get("headline") and facts:
+                    return {"headline": str(d["headline"])[:120], "facts": facts, "why": str(d.get("why_it_matters") or "")[:200],
+                            "label": str(d.get("label") or "News")[:16], "source": article["site"], "url": article["url"],
+                            "image": article.get("image", ""), "engine": eng["source"]}
+            except llm.LLMError:
+                pass
+        sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", (article.get("description", "") + " " + text)) if 40 < len(s.strip()) < 220]
+        facts, seen = [], set()
+        for s in sents:
+            k = s[:40].lower()
+            if k not in seen:
+                seen.add(k)
+                facts.append(s)
+            if len(facts) == 3:
+                break
+        return {"headline": re.sub(r"^GitHub - [^:]+:\s*", "", article["title"])[:120], "facts": facts or [article.get("description", "")[:160] or article["title"]],
+                "why": "", "label": "News", "source": article["site"], "url": article["url"], "image": article.get("image", ""),
+                "engine": "built-in writer"}
+
+    def _after_story(self, a, rid, steps, inp, res, eng):
+        # 4 format
+        self._step(steps, "format", "running", "")
+        fmt = self._pick_format(inp, res)
+        res["format"] = fmt
+        self._step(steps, "format", "done", fmt["why"], fmt)
+        self._save(rid, steps, res)
+        # 5 render, 6 caption, 7 check, 8 ready
+        self._render_caption_check(a, rid, steps, inp, res, eng)
+
+    def _pick_format(self, inp, res) -> dict:
+        services = {c["service"] for c in inp["channels"]}
+        want = (inp.get("format") or "auto").lower()
+        is_video = (res.get("source_media") or {}).get("type") == "video"
+        if want in ("reel", "carousel", "photo"):
+            f = want
+            why = f"You asked for a {want}."
+        elif is_video or services & VIDEO_ONLY:
+            f, why = "reel", "A video channel is selected" + (" and you gave a video" if is_video else "") + ", so a 9:16 Reel."
+        elif "instagram" in services or "linkedin" in services:
+            f, why = "carousel", "Instagram/LinkedIn reward swipeable carousels: cover, facts, follow card (4:5)."
+        else:
+            f, why = "photo", "One 4:5 card for text-first networks."
+        if res.get("source_media", {}).get("type") == "photo" and want == "auto":
+            f, why = "photo", "Your photo, edited to the brand kit (4:5)."
+        if f == "reel" and not is_video and res.get("story") is None:
+            f, why = "photo", "No story or video to build a Reel from."
+        ratio = inp.get("ratio") or ("9:16" if f == "reel" else "4:5")
+        return {"format": f, "ratio": ratio, "why": why}
+
+    def _render_caption_check(self, a, rid, steps, inp, res, eng, revision: str = ""):
+        kit, rules = self.kit(a), self.rules(a)
+        p = brand.visual_params(kit, rules)
+        logo = self._logo_bytes(kit)
+        fmt = res["format"]
+        story = res.get("story")
+        self._step(steps, "render", "running", "Rendering with your brand kit and ledger")
+        self._save(rid, steps, res)
+        media = []
+        src = res.get("source_media") or {}
+        if src.get("type") == "photo":
+            data = self.get_media(src["token"])["data"]
+            b, m = render.brand_photo(data, kit, p, logo=logo, ratio=fmt["ratio"], caption=inp.get("brief", "")[:120])
+            media.append(self._keep(a, b, "photo.jpg", m))
+        elif story:
+            img = self._fetch_bytes(story.get("image") or "", MAX_IMAGE_FETCH) if story.get("image") else None
+            if fmt["format"] == "photo":
+                b, m = render.news_card(story["headline"], kit, p, image=img, logo=logo, ratio=fmt["ratio"], label=story.get("label", ""),
+                                        credit=story["source"])
+                media.append(self._keep(a, b, "card.jpg", m))
+            else:
+                total = 2 + (1 if p.get("end_card") else 0)
+                ratio = "4:5" if fmt["format"] == "carousel" else "9:16"
+                b, m = render.news_card(story["headline"], kit, p, image=img, logo=logo, ratio=ratio, label=story.get("label", ""),
+                                        credit=story["source"], n=(1, total) if fmt["format"] == "carousel" else None)
+                cover = self._keep(a, b, "cover.jpg", m)
+                b2, m2 = render.fact_slide(story.get("why") and "Why it matters" or "What happened",
+                                           (story["facts"] + ([story["why"]] if story.get("why") else []))[:4], kit, p, logo=logo,
+                                           ratio=ratio, n=(2, total) if fmt["format"] == "carousel" else None)
+                facts = self._keep(a, b2, "facts.jpg", m2)
+                if fmt["format"] == "carousel":
+                    media += [cover, facts]
+                    if p.get("end_card"):
+                        b3, m3 = render.end_card(kit, p, logo=logo, ratio=ratio)
+                        media.append(self._keep(a, b3, "follow.jpg", m3))
+                else:
+                    media.append({**cover, "role": "slide"})
+                    media.append({**facts, "role": "slide"})
+        res["media"] = media
+        if fmt["format"] == "reel":
+            job = self._queue_video(a, rid, kit, p, res, inp)
+            res["render_job"] = job
+            if job["status"] != "done":
+                self._step(steps, "render", "running", job["detail"])
+                self._save(rid, steps, res, "rendering")
+                if job["status"] == "queued":
+                    return  # the worker calls back into finish_video()
+            media = res["media"]
+        self._step(steps, "render", "done", self._render_note(res, p, revision), {"media": res["media"], "params": brand.dumps(
+            {k: p[k] for k in ("logo_position", "logo_scale", "headline_case", "font", "end_card")})})
+        self._caption_check(a, rid, steps, inp, res, eng)
+
+    def _render_note(self, res, p, revision):
+        kinds = [m["type"] for m in res["media"]]
+        what = f"{kinds.count('video')} video" if "video" in kinds else f"{len(kinds)} image" + ("s" if len(kinds) > 1 else "")
+        rules = len(p.get("applied_rules") or [])
+        return (f"Re-rendered after “{revision}”: " if revision else "") + f"{what}, {rules} ledger rule" + ("" if rules == 1 else "s") + " applied"
+
+    def _caption_check(self, a, rid, steps, inp, res, eng):
+        kit, rules = self.kit(a), self.rules(a)
+        self._step(steps, "caption", "running", "Writing one caption per channel")
+        self._save(rid, steps, res)
+        story = res.get("story")
+        article = res.get("article") or {"url": "", "title": inp.get("brief") or kit["name"], "description": inp.get("brief", ""),
+                                         "site": kit["name"], "image": "", "paragraphs": [inp.get("brief", "")]}
+        if story:
+            article = {**article, "description": (story.get("why") or article.get("description", "")),
+                       "paragraphs": story["facts"] + article.get("paragraphs", [])[:3]}
+        chans = inp["channels"]
+        tone = "; ".join(x for x in [kit.get("voice", ""), brand.rules_prompt(rules)] if x)
+        ai = {"base_url": eng["base_url"], "api_key": eng["api_key"], "model": eng["model"]} if eng and eng["style"] == "openai" else None
+        drafts = drafter.draft(chans, article, ai=ai, http=self.http, tone=tone)
+        if ai:
+            self._ai_audit(a, eng, "captions")
+        self._step(steps, "caption", "done", f"{len(drafts)} captions ({drafts[0]['engine'] if drafts else '-'})")
+        # 7 check
+        self._step(steps, "check", "running", "Checking every caption and render against the ledger")
+        self._save(rid, steps, res)
+        main = next((m for m in res["media"] if m["type"] == "video"), None) or (res["media"][0] if res["media"] else None)
+        packages, fails = [], 0
+        for d in drafts:
+            svc = d["service"]
+            text = drafter.fit(svc, brand.apply_text_rules(d["text"], rules))
+            meta = self.media_meta(a, main["token"]) if main else None
+            chk = brand.brand_check(text, meta, rules, kit)
+            fails += len(chk["failed"])
+            urls = self._media_for(svc, res)
+            packages.append({"channel_id": d["channel_id"], "service": svc, "channel_name": d["channel_name"], "text": text,
+                             "length": drafter.count(svc, text), "limit": drafter.limit_for(svc), "media_urls": urls,
+                             "check": chk, "status": "ready"})
+        res["packages"] = packages
+        self._step(steps, "check", "done" if not fails else "warn",
+                   "Every package passes the ledger" if not fails else f"{fails} rule issue(s): see each package", {"failed": fails})
+        self._step(steps, "ready", "done", "Review, then schedule or send to your Buffer queue")
+        self._save(rid, steps, res, "ready")
+
+    def _media_for(self, svc: str, res: dict) -> list[str]:
+        vids = [m["url"] for m in res["media"] if m["type"] == "video"]
+        imgs = [m["url"] for m in res["media"] if m["type"] == "photo" and m.get("role") != "slide"]
+        if svc in VIDEO_ONLY:
+            return vids[:1]
+        if vids:
+            return vids[:1]
+        if svc in ("instagram", "linkedin", "facebook", "threads"):
+            return imgs[:10]
+        if svc in ("twitter", "bluesky", "mastodon"):
+            return imgs[:4] if svc != "bluesky" else imgs[:4]
+        return imgs[:1]
+
+    def _keep(self, a, data: bytes, name: str, meta: dict) -> dict:
+        tok = self.put_media(a, data, name, kind="render", meta=meta)
+        return {"token": tok, "url": self.media_url(tok), "type": meta["type"], "name": name}
+
+    # ---------------------------------------------------------------- media pipeline (a person's own photo/video)
+    def _media(self, a, rid, steps, inp, res):
+        eng = llm.resolve(self.store, a.uid, self.s)
+        res["engine"] = eng["source"] if eng else "built-in writer"
+        self._step(steps, "upload", "running", "")
+        meta = self.media_meta(a, inp["media_token"]) or {}
+        res["source_media"] = {"token": inp["media_token"], "type": meta.get("type", "photo"), "url": self.media_url(inp["media_token"])}
+        self._step(steps, "upload", "done", f"Your {res['source_media']['type']}", res["source_media"])
+        self._after_story(a, rid, steps, inp, res, eng)
+
+    # ---------------------------------------------------------------- video jobs
+    def _queue_video(self, a, rid, kit, p, res, inp) -> dict:
+        src = res.get("source_media") or {}
+        spec = {"kind": "brand_video" if src.get("type") == "video" else "slideshow", "kit": {k: kit[k] for k in brand.DEFAULT_KIT},
+                "params": p, "ratio": "9:16", "hook": (res.get("story") or {}).get("headline") or inp.get("brief", ""),
+                "logo": kit.get("logo") or "", "source": src.get("token", ""),
+                "slides": [m["token"] for m in res["media"] if m.get("role") == "slide"]}
+        jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
+                           (a.uid, rid, json.dumps(spec), "queued", _now(), _now()))
+        mode = self.worker_mode or ("local" if render.have_ffmpeg() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none"))
+        if mode == "local":
+            try:
+                data, meta = self.render_job_local(spec)
+                self.finish_video(jid, data, meta, run_inline=False)
+                res["media"] = [m for m in res["media"] if m.get("role") != "slide"] + [self._job_media(jid)]
+                return {"id": jid, "status": "done", "detail": "Rendered here"}
+            except Exception as e:
+                self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (str(e)[:500], _now(), jid))
+                raise ActionError(f"Video render failed: {str(e)[:200]}")
+        if mode == "github":
+            ok, why = self._dispatch_github(jid)
+            if ok:
+                return {"id": jid, "status": "queued", "detail": "Rendering the video on the free render worker (about a minute)"}
+            self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (why, _now(), jid))
+        # no worker: fall back to the slides as a carousel, and say so
+        res["format"] = {**res["format"], "format": "carousel", "why": res["format"]["why"] + " The video worker isn't available, so "
+                         "I made the carousel instead."}
+        for m in res["media"]:
+            m.pop("role", None)
+        return {"id": jid, "status": "done", "detail": "No video worker: carousel instead"}
+
+    def render_job_local(self, spec: dict) -> tuple[bytes, dict]:
+        logo = self.get_media(spec["logo"])["data"] if spec.get("logo") and self.get_media(spec["logo"]) else None
+        if spec["kind"] == "brand_video":
+            return render.brand_video(self.get_media(spec["source"])["data"], spec["kit"], spec["params"], logo=logo,
+                                      hook=spec.get("hook", ""), ratio=spec.get("ratio", "9:16"))
+        slides = [self.get_media(t)["data"] for t in spec["slides"]]
+        return render.slideshow_reel(slides, spec["kit"], spec["params"], logo=logo, ratio=spec.get("ratio", "9:16"))
+
+    def _dispatch_github(self, jid: int) -> tuple[bool, str]:
+        """Start the free render worker for one job. It gets a single-use job token (only good for this job, 30 minutes),
+        so there is no long-lived shared secret between the app and the worker."""
+        repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
+        token = os.environ.get("GH_DISPATCH_TOKEN", "")
+        jt = self.issue_job_token(jid)
+        try:
+            r = (self.http or httpx.Client(timeout=15)).post(
+                f"https://api.github.com/repos/{repo}/actions/workflows/render.yml/dispatches",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+                json={"ref": os.environ.get("GH_REF", "main"), "inputs": {"job_id": str(jid), "app": self.s.public_url, "job_token": jt}})
+            return (r.status_code == 204, f"GitHub answered {r.status_code}")
+        except httpx.HTTPError as e:
+            return False, e.__class__.__name__
+
+    def issue_job_token(self, jid: int) -> str:
+        from .store import sha
+        jt = "jt_" + secrets.token_urlsafe(24)
+        rows = self.store.q("SELECT spec FROM render_jobs WHERE id=?", (jid,))
+        spec = json.loads(rows[0]["spec"])
+        spec["_job_token"] = {"hash": sha(jt), "expires": _now() + 1800}
+        self.store.x("UPDATE render_jobs SET spec=? WHERE id=?", (json.dumps(spec), jid))
+        return jt
+
+    def job_token_ok(self, jid: int, jt: str) -> bool:
+        import hmac
+        from .store import sha
+        rows = self.store.q("SELECT spec, status FROM render_jobs WHERE id=?", (jid,))
+        if not rows or not jt or rows[0]["status"] != "queued":
+            return False
+        t = json.loads(rows[0]["spec"]).get("_job_token") or {}
+        return bool(t) and t.get("expires", 0) > _now() and hmac.compare_digest(t.get("hash", ""), sha(jt))
+
+    def job_spec(self, jid: int) -> dict | None:
+        rows = self.store.q("SELECT * FROM render_jobs WHERE id=?", (jid,))
+        if not rows:
+            return None
+        spec = json.loads(rows[0]["spec"])
+        spec.pop("_job_token", None)
+        base = self.s.public_url.rstrip("/") + "/m/"
+        return {"id": jid, "status": rows[0]["status"], "spec": spec,
+                "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",
+                         "slides": [base + t for t in spec.get("slides", [])]}}
+
+    def _job_media(self, jid: int) -> dict:
+        tok = self.store.q("SELECT media_token FROM render_jobs WHERE id=?", (jid,))[0]["media_token"]
+        return {"token": tok, "url": self.media_url(tok), "type": "video", "name": "reel.mp4"}
+
+    def finish_video(self, jid: int, data: bytes | None, meta: dict | None, error: str = "", run_inline: bool = True) -> dict:
+        rows = self.store.q("SELECT * FROM render_jobs WHERE id=?", (jid,))
+        if not rows:
+            raise ActionError("No such job.", 404)
+        job = dict(rows[0])
+        a = Actor(job["user_id"])
+        if error or not data:
+            self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (error[:500] or "no output", _now(), jid))
+            if run_inline and job["run_id"]:
+                run = self.run(a, job["run_id"])
+                self._step(run["steps"], "render", "failed", f"Video render failed: {error[:200]}")
+                self._save(job["run_id"], run["steps"], run["result"], "failed")
+            return {"ok": False}
+        tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta or {"type": "video"})
+        self.store.x("UPDATE render_jobs SET status='done', media_token=?, updated=? WHERE id=?", (tok, _now(), jid))
+        if run_inline and job["run_id"]:
+            self._spawn(self._resume_after_video, a, job["run_id"], jid)
+        return {"ok": True, "token": tok}
+
+    def _resume_after_video(self, a, rid, jid):
+        run = self.run(a, rid)
+        steps, res, inp = run["steps"], run["result"], run["input"]
+        res["media"] = [m for m in res["media"] if m.get("role") != "slide"] + [self._job_media(jid)]
+        p = brand.visual_params(self.kit(a), self.rules(a))
+        self._step(steps, "render", "done", self._render_note(res, p, res.get("last_revision", "")), {"media": res["media"]})
+        self._caption_check(a, rid, steps, inp, res, llm.resolve(self.store, a.uid, self.s))
+
+    # ---------------------------------------------------------------- revise: correction -> rule -> re-render
+    def revise(self, a: Actor, rid: int, correction: str) -> dict:
+        run = self.run(a, rid)
+        if run["status"] in ("running", "rendering"):
+            raise ActionError("The agent is still working on this run. Try again in a moment.", 409)
+        if not (run["result"] or {}).get("format"):
+            raise ActionError("This run didn't get far enough to revise. Start a new one.")
+        learned = self.remember(a, correction)
+        steps, res, inp = run["steps"], run["result"], run["input"]
+        before = [m["url"] for m in res.get("media", [])]
+        res.setdefault("revisions", []).append({"correction": correction, "rules": [r["rule"] for r in learned["added"]],
+                                                "before": before, "at": _now()})
+        res["last_revision"] = correction
+        for k in ("render", "caption", "check", "ready"):
+            self._step(steps, k, "pending", "")
+        self._save(rid, steps, res, "running")
+        eng = llm.resolve(self.store, a.uid, self.s)
+
+        def go():
+            try:
+                self._render_caption_check(a, rid, steps, inp, res, eng, revision=correction)
+                r2 = self.run(a, rid)
+                r2["result"]["revisions"][-1]["after"] = [m["url"] for m in r2["result"].get("media", [])]
+                self._save(rid, r2["steps"], r2["result"])
+            except ActionError as e:
+                self._step(steps, "render", "failed", str(e))
+                self._save(rid, steps, res, "failed")
+        self._spawn(go)
+        out = self.run(a, rid)
+        out["learned"] = learned["added"]
+        out["message"] = learned.get("message", "")
+        return out
+
+    def update_package(self, a: Actor, rid: int, channel_id: str, text: str) -> dict:
+        run = self.run(a, rid)
+        res = run["result"]
+        for pk in res.get("packages", []):
+            if pk["channel_id"] == channel_id:
+                main = next((m for m in res["media"] if m["type"] == "video"), None) or (res["media"][0] if res["media"] else None)
+                pk["text"] = text
+                pk["length"] = drafter.count(pk["service"], text)
+                pk["check"] = brand.brand_check(text, self.media_meta(a, main["token"]) if main else None, self.rules(a), self.kit(a))
+                self._save(rid, run["steps"], res)
+                return pk
+        raise ActionError("No package for that channel in this run.", 404)
+
+    def schedule_package(self, a: Actor, rid: int, channel_id: str, mode: str = "queue", due_at: str | None = None) -> dict:
+        """The hand-off: a ready package goes through the same preview -> confirm -> submit path as every post, so an
+        agent token's policy (approval inbox, drafts only) still holds."""
+        run = self.run(a, rid)
+        pk = next((p for p in (run["result"] or {}).get("packages", []) if p["channel_id"] == channel_id), None)
+        if not pk:
+            raise ActionError("No package for that channel in this run.", 404)
+        if pk.get("status") in ("sent_to_buffer", "pending_approval"):
+            raise ActionError("That package was already sent.", 409)
+        prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
+                                            "mode": mode, "due_at": due_at})
+        out = self.studio.submit_post(a, prev["confirm_token"])
+        self.mark_package(a, rid, channel_id, out["status"], {"mode": mode, "due_at": prev["preview"].get("due_at"),
+                                                               "buffer_post_id": (out.get("post") or {}).get("id"),
+                                                               "approval_id": out.get("approval_id")})
+        return {**out, "warnings": prev["warnings"]}
+
+    def mark_package(self, a: Actor, rid: int, channel_id: str, status: str, info: dict) -> None:
+        run = self.run(a, rid)
+        for pk in run["result"].get("packages", []):
+            if pk["channel_id"] == channel_id:
+                pk["status"] = status
+                pk["sent"] = info
+        self._save(rid, run["steps"], run["result"])
+
+    # ================================================================ calendar
+    def calendar(self, a: Actor) -> dict:
+        items = []
+        u = self.store.user(a.uid)
+        chans = {c["id"]: c for c in self.studio.channels(a)}
+        for status in ("scheduled", "sent"):
+            try:
+                posts = self.studio.buffer.posts(a.uid, u["org_id"], [status], first=60)
+            except Exception:
+                posts = []
+            for p in posts:
+                ch = chans.get(p.get("channelId"), {})
+                items.append({"kind": "buffer", "status": status, "when": p.get("dueAt") or p.get("sentAt") or "",
+                              "text": (p.get("text") or "")[:140], "service": ch.get("service", ""),
+                              "channel": ch.get("displayName") or ch.get("name") or "", "id": p.get("id"),
+                              "thumb": ((p.get("assets") or [{}])[0] or {}).get("thumbnail", "") if p.get("assets") else ""})
+        for ap in self.studio.approvals(a, "pending") if a.kind == "human" else []:
+            pl = ap["payload"]
+            ch = chans.get(pl.get("channel_id"), {})
+            items.append({"kind": "approval", "status": "needs approval", "when": pl.get("due_at") or "", "text": pl["text"][:140],
+                          "service": ch.get("service", ""), "channel": ch.get("displayName") or ch.get("name", ""), "id": ap["id"]})
+        for r in self.store.q("SELECT id,result,updated FROM agent_runs WHERE user_id=? AND status='ready' ORDER BY id DESC LIMIT 20", (a.uid,)):
+            res = json.loads(r["result"] or "{}")
+            for pk in res.get("packages", []):
+                if pk.get("status") == "ready":
+                    items.append({"kind": "ready", "status": "ready to post", "when": "", "text": pk["text"][:140],
+                                  "service": pk["service"], "channel": pk["channel_name"], "run_id": r["id"],
+                                  "thumb": (pk.get("media_urls") or [""])[0], "pass": pk["check"]["pass"]})
+        return {"items": items, "now": datetime.now(timezone.utc).isoformat()}
+
+    # ================================================================ helpers
+    def _client(self) -> httpx.Client:
+        return self.http or httpx.Client(timeout=12, follow_redirects=True, headers=sources.UA)
+
+    def _fetch_bytes(self, url: str, limit: int) -> bytes | None:
+        if not url or not url.startswith(("http://", "https://")):
+            return None
+        host = urlparse(url).hostname or ""
+        if not drafter._public(host):
+            return None
+        try:
+            with self._client().stream("GET", url) as r:
+                if r.status_code >= 400:
+                    return None
+                buf = b""
+                for chunk in r.iter_bytes():
+                    buf += chunk
+                    if len(buf) > limit:
+                        return None
+                return buf
+        except httpx.HTTPError:
+            return None
+
+    def _logo_bytes(self, kit: dict) -> bytes | None:
+        if not kit.get("logo"):
+            return None
+        m = self.get_media(kit["logo"])
+        return m["data"] if m else None

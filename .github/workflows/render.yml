@@ -1,0 +1,24 @@
+name: render
+# Free video render worker for House Style. The app dispatches one run per video job.
+on:
+  workflow_dispatch:
+    inputs:
+      job_id: {description: "render_jobs.id", required: true}
+      app: {description: "app base URL", required: true, default: "https://huhqueue-studio.onrender.com"}
+      job_token: {description: "single-use token for this job (expires in 30 min)", required: true}
+permissions: {contents: read}
+concurrency: {group: "render-${{ github.event.inputs.job_id }}", cancel-in-progress: false}
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: echo "::add-mask::${{ github.event.inputs.job_token }}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - run: pip install -q httpx pillow
+      - name: Render job ${{ github.event.inputs.job_id }}
+        env: {JOB_TOKEN: "${{ github.event.inputs.job_token }}"}
+        run: python -m studio.render_worker --job "${{ github.event.inputs.job_id }}" --app "${{ github.event.inputs.app }}"

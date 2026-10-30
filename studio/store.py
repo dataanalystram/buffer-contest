@@ -40,6 +40,21 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 CREATE TABLE IF NOT EXISTS oauth_refresh (
   token_hash TEXT PRIMARY KEY, client_id TEXT, user_id TEXT, agent_id INTEGER, policy TEXT, daily_cap INTEGER,
   expires REAL, used INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS brand_kits (
+  user_id TEXT PRIMARY KEY, kit TEXT, updated REAL);
+CREATE TABLE IF NOT EXISTS style_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, kind TEXT, spec TEXT, rule TEXT, source TEXT,
+  active INTEGER DEFAULT 1, hits INTEGER DEFAULT 0, created REAL);
+CREATE TABLE IF NOT EXISTS media (
+  token TEXT PRIMARY KEY, user_id TEXT, name TEXT, mime TEXT, data BLOB, size INTEGER, meta TEXT, created REAL);
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, kind TEXT, input TEXT, status TEXT, steps TEXT, result TEXT,
+  created REAL, updated REAL);
+CREATE TABLE IF NOT EXISTS render_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, run_id INTEGER, spec TEXT, status TEXT, media_token TEXT,
+  error TEXT, created REAL, updated REAL);
+CREATE TABLE IF NOT EXISTS ai_settings (
+  user_id TEXT PRIMARY KEY, data TEXT, updated REAL);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, actor TEXT, action TEXT, risk TEXT,
   detail TEXT, ok INTEGER, ts REAL);
@@ -50,9 +65,10 @@ def sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds")
+ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs")
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
-          "oauth_clients", "oauth_codes", "oauth_refresh")
+          "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
+          "ai_settings")
 
 
 class Store:
@@ -69,7 +85,7 @@ class Store:
             self._psycopg, self._dict_row = psycopg, dict_row
             self._db = self._connect()
             with self._db.cursor() as c:
-                c.execute(SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY").replace(" REAL", " DOUBLE PRECISION"))
+                c.execute(SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY").replace(" REAL", " DOUBLE PRECISION").replace(" BLOB", " BYTEA"))
                 # Supabase publishes the public schema through its Data API. Row-level security with no policies
                 # shuts that door; the app connects as the table owner, which RLS does not apply to.
                 for t in TABLES:
@@ -178,7 +194,7 @@ class Store:
 
     def delete_user(self, uid: str) -> None:
         for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
-                  "oauth_refresh"):
+                  "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs", "ai_settings"):
             self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
         self.x("DELETE FROM users WHERE id=?", (uid,))
 

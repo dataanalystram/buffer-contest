@@ -13,7 +13,11 @@ import httpx
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import buffer_api, demo, mcp, mcp_oauth
+import base64
+import hmac
+import os
+
+from . import buffer_api, demo, house as house_mod, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
@@ -32,7 +36,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
     app = FastAPI(title="HuhQueue Studio — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
-    app.state.settings, app.state.store, app.state.buffer, app.state.studio = s, store, buffer, studio
+    house = house_mod.House(studio, http=http)
+    studio.house = house
+    app.state.settings, app.state.store, app.state.buffer, app.state.studio, app.state.house = s, store, buffer, studio, house
 
     # ------------------------------------------------------------ helpers
     def set_cookie(resp: Response, sid: str) -> None:
@@ -81,7 +87,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Content-Security-Policy",
-                                "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                                "default-src 'self'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
                                 "font-src https://fonts.gstatic.com; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
         return resp
 
@@ -313,6 +319,116 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/api/audit")
     def audit(request: Request, limit: int = 100):
         return studio.audit(actor(request), min(limit, 500))
+
+    # ------------------------------------------------------------ House Style: media, brand kit, ledger, agent, calendar
+    @app.get("/m/{token}", include_in_schema=False)
+    def media(token: str, request: Request):
+        m = house.get_media(token)
+        if not m:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        data, size = m["data"], m["size"]
+        headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
+        rng = request.headers.get("range", "")
+        if rng.startswith("bytes="):
+            a_, _, b_ = rng[6:].partition("-")
+            start = int(a_) if a_.isdigit() else 0
+            end = min(int(b_) if b_.isdigit() else size - 1, size - 1)
+            if start <= end:
+                return Response(data[start:end + 1], status_code=206, media_type=m["mime"],
+                                headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
+        return Response(data, media_type=m["mime"], headers=headers)
+
+    @app.post("/api/media")
+    def upload(request: Request, body: dict = Body(...)):
+        return house.upload(actor(request, write=True), body.get("name", ""), body.get("data", ""))
+
+    @app.get("/api/brand")
+    def brand_get(request: Request):
+        a = actor(request)
+        return {"kit": house.kit(a), "rules": house.rules(a, include_inactive=True)}
+
+    @app.post("/api/brand")
+    def brand_save(request: Request, body: dict = Body(...)):
+        return house.save_kit(actor(request, write=True), body)
+
+    @app.post("/api/brand/preview")
+    def brand_preview(request: Request):
+        return house.preview_kit(actor(request, write=True))
+
+    @app.post("/api/brand/from-website")
+    def brand_site(request: Request, body: dict = Body(...)):
+        return house.kit_from_website(actor(request, write=True), body.get("url", ""))
+
+    @app.post("/api/ledger")
+    def ledger_add(request: Request, body: dict = Body(...)):
+        return house.remember(actor(request, write=True), body.get("correction", ""))
+
+    @app.post("/api/ledger/{rule_id}")
+    def ledger_toggle(rule_id: int, request: Request, body: dict = Body(...)):
+        return house.set_rule(actor(request, write=True), rule_id, bool(body.get("active")))
+
+    @app.delete("/api/ledger/{rule_id}")
+    def ledger_delete(rule_id: int, request: Request):
+        return house.delete_rule(actor(request, write=True), rule_id)
+
+    @app.post("/api/check")
+    def check(request: Request, body: dict = Body(...)):
+        return house.check(actor(request), body.get("text", ""), body.get("media_token", ""))
+
+    @app.get("/api/ai")
+    def ai_get(request: Request):
+        return house.ai_settings(actor(request))
+
+    @app.post("/api/ai")
+    def ai_save(request: Request, body: dict = Body(...)):
+        return house.save_ai(actor(request, write=True), body)
+
+    @app.post("/api/agent/runs")
+    def run_start(request: Request, body: dict = Body(...)):
+        return house.start_run(actor(request, write=True), body)
+
+    @app.get("/api/agent/runs")
+    def run_list(request: Request):
+        return house.runs(actor(request))
+
+    @app.get("/api/agent/runs/{rid}")
+    def run_get(rid: int, request: Request):
+        return house.run(actor(request), rid)
+
+    @app.post("/api/agent/runs/{rid}/revise")
+    def run_revise(rid: int, request: Request, body: dict = Body(...)):
+        return house.revise(actor(request, write=True), rid, body.get("correction", ""))
+
+    @app.post("/api/agent/runs/{rid}/packages/{channel_id}")
+    def run_pkg(rid: int, channel_id: str, request: Request, body: dict = Body(...)):
+        return house.update_package(actor(request, write=True), rid, channel_id, body.get("text", ""))
+
+    @app.post("/api/agent/runs/{rid}/packages/{channel_id}/schedule")
+    def run_schedule(rid: int, channel_id: str, request: Request, body: dict = Body(default={})):
+        return house.schedule_package(actor(request, write=True), rid, channel_id, body.get("mode") or "queue", body.get("due_at"))
+
+    @app.get("/api/calendar")
+    def calendar(request: Request):
+        return house.calendar(actor(request))
+
+    # render worker (GitHub Actions) callbacks, authenticated with the job's single-use token
+    def worker_ok(request: Request, jid: int) -> bool:
+        return house.job_token_ok(jid, request.headers.get("x-job-token", ""))
+
+    @app.get("/api/worker/jobs/{jid}", include_in_schema=False)
+    def worker_job(jid: int, request: Request):
+        if not worker_ok(request, jid):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        j = house.job_spec(jid)
+        return j or JSONResponse({"error": "not found"}, status_code=404)
+
+    @app.post("/api/worker/jobs/{jid}", include_in_schema=False)
+    async def worker_done(jid: int, request: Request):
+        if not worker_ok(request, jid):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        body = await request.json()
+        data = base64.b64decode(body["data"]) if body.get("data") else None
+        return house.finish_video(jid, data, body.get("meta"), body.get("error", ""))
 
     # ------------------------------------------------------------ MCP
     mcp_oauth.add_mcp_oauth_routes(app, store, studio, s.public_url, lambda r: store.session(r.cookies.get(COOKIE)))

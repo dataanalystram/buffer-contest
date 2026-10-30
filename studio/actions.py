@@ -47,13 +47,19 @@ class Actor:
         return "you" if self.kind == "human" else f"agent:{self.agent['name']}"
 
 
-def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at: str | None) -> dict:
+def _asset(url: str) -> dict:
+    path = url.lower().split("?")[0]
+    return {"video": {"url": url}} if path.endswith(VIDEO_EXT) else {"image": {"url": url}}
+
+
+def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at: str | None,
+                     media_urls: list[str] | None = None) -> dict:
     """Exact CreatePostInput sent to Buffer (shared by every surface; tested for parity)."""
     inp = {"channelId": channel["id"], "text": text, "assets": [], "needsApproval": False,
            "schedulingType": "automatic"}
-    if media_url:
-        path = media_url.lower().split("?")[0]
-        inp["assets"] = [{"video": {"url": media_url}} if path.endswith(VIDEO_EXT) else {"image": {"url": media_url}}]
+    urls = [u for u in (media_urls or []) if u] or ([media_url] if media_url else [])
+    if urls:
+        inp["assets"] = [_asset(u) for u in urls]
     if mode == "draft":
         inp.update(mode="addToQueue", saveToDraft=True)
     elif mode == "queue":
@@ -213,9 +219,11 @@ class Studio:
             if n > lim:
                 where = f"Thread post {i}: " if len(parts) > 1 else ""
                 raise ActionError(f"{where}{n}/{lim} characters: too long for {ch['service']}. Trim it or use Fit.")
-        media = (p.get("media_url") or "").strip()
-        if media and not media.startswith("https://"):
-            raise ActionError("Media must be a public https:// URL (Buffer fetches it from there).")
+        media_urls = [str(u).strip() for u in (p.get("media_urls") or []) if str(u).strip()][:10]
+        media = (p.get("media_url") or (media_urls[0] if media_urls else "")).strip()
+        for u in ([media] if media else []) + media_urls:
+            if not (u.startswith("https://") or (self.s.public_url.startswith("http://") and u.startswith(self.s.public_url))):
+                raise ActionError("Media must be a public https:// URL (Buffer fetches it from there).")
         warnings = []
         if ch["service"] in NEEDS_MEDIA and not media:
             if mode == "draft":
@@ -250,6 +258,8 @@ class Studio:
         if ch.get("isQueuePaused") and mode in ("queue", "next"):
             warnings.append("This channel's queue is paused in Buffer, so it won't go out until you resume it.")
         clean = {"channel_id": ch["id"], "text": text, "media_url": media, "mode": mode, "due_at": due}
+        if len(media_urls) > 1:
+            clean["media_urls"] = media_urls
         return clean, ch, warnings
 
     # ------------------------------------------------------------ preview / submit
@@ -298,7 +308,7 @@ class Studio:
         ch = {c["id"]: c for c in self.channels(Actor(a.uid))}.get(clean["channel_id"])
         if not ch:
             raise ActionError("That channel is no longer in your Buffer organization.", 404)
-        inp = build_post_input(ch, clean["text"], clean["media_url"], clean["mode"], clean.get("due_at"))
+        inp = build_post_input(ch, clean["text"], clean["media_url"], clean["mode"], clean.get("due_at"), clean.get("media_urls"))
         risk = "draft" if clean["mode"] == "draft" else "public"
         try:
             post = self.buffer.create_post(a.uid, inp)

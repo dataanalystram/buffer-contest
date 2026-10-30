@@ -37,6 +37,27 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["text"], "properties": {"title": {"type": "string"}, "text": {"type": "string"}}}},
     {"name": "list_stories", "description": "Newest stories from the news feeds your user follows in HuhQueue (news radar). Pass a story's url to draft_from_link to write posts about it.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "run_agent", "description": "House Style's research agent. Give a topic (query) or a link (url): it finds a recent story, verifies it on the source page, structures the facts, renders on-brand media (carousel, card or 9:16 Reel) with the user's brand kit and Style Ledger, writes one caption per channel and brand-checks everything. Returns a run id; poll get_run until status is ready. Nothing is posted.",
+     "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "url": {"type": "string"},
+         "channel_ids": {"type": "array", "items": {"type": "string"}}, "format": {"type": "string", "enum": ["auto", "carousel", "photo", "reel"]}}}},
+    {"name": "edit_media", "description": "Edit the user's own photo or video (public https URL) to their brand kit: crop to the network frame, logo bug, hook headline, end card, captions, brand check. Returns a run id like run_agent.",
+     "inputSchema": {"type": "object", "required": ["media_url"], "properties": {"media_url": {"type": "string"}, "brief": {"type": "string", "description": "What the post is about; used for the hook and captions"},
+         "channel_ids": {"type": "array", "items": {"type": "string"}}, "format": {"type": "string", "enum": ["auto", "photo", "reel"]}}}},
+    {"name": "get_run", "description": "An agent run: every step with what it did, the rendered media URLs, and one ready package per channel (caption, media, brand check).",
+     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
+    {"name": "revise", "description": "Give a correction in plain words (\"logo smaller, top left\", \"no hype\", \"use #FF5A1F\"). It becomes a permanent Style Ledger rule, then the run re-renders, re-captions and re-checks. Show the user before/after.",
+     "inputSchema": {"type": "object", "required": ["run_id", "correction"], "properties": {"run_id": {"type": "integer"}, "correction": {"type": "string"}}}},
+    {"name": "remember_rule", "description": "Save a brand rule to the Style Ledger without a run (e.g. from the user's feedback on past posts). Every later render and caption follows it.",
+     "inputSchema": {"type": "object", "required": ["correction"], "properties": {"correction": {"type": "string"}}}},
+    {"name": "brand_check", "description": "Check a caption (and optionally a House Style media token) against every Style Ledger rule. Failing results cite the exact rule.",
+     "inputSchema": {"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}, "media_token": {"type": "string"}}}},
+    {"name": "get_brand", "description": "The user's brand kit (name, handle, colors, font, logo, end card, voice) and the Style Ledger rules.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "schedule_package", "description": "Send one ready package from a run to Buffer (mode draft | queue | next | now | schedule with due_at ISO UTC). Goes through preview and the token's policy: with 'review' it waits in the Approvals inbox.",
+     "inputSchema": {"type": "object", "required": ["run_id", "channel_id"], "properties": {"run_id": {"type": "integer"}, "channel_id": {"type": "string"},
+         "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"}}}},
+    {"name": "list_calendar", "description": "Everything on the user's calendar: scheduled and sent Buffer posts, agent posts waiting for approval, and ready packages not yet sent.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "get_limits", "description": "Buffer API budget left for this app, per-network character limits, and how close the Buffer plan is to its limits (scheduled posts, channels, weekly caps).",
      "inputSchema": {"type": "object", "properties": {}}},
 ]
@@ -64,6 +85,27 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return studio.create_idea(actor, args.get("title", ""), args.get("text", ""))
     if name == "list_stories":
         return studio.radar(actor)
+    h = studio.house
+    if name == "run_agent":
+        return h.start_run(actor, {k: args.get(k) for k in ("query", "url", "channel_ids", "format")})
+    if name == "edit_media":
+        up = h.import_url(actor, args.get("media_url", ""))
+        return h.start_run(actor, {"media_token": up["token"], "brief": args.get("brief", ""), "channel_ids": args.get("channel_ids"),
+                                   "format": args.get("format")})
+    if name == "get_run":
+        return h.run(actor, int(args.get("run_id") or 0))
+    if name == "revise":
+        return h.revise(actor, int(args.get("run_id") or 0), args.get("correction", ""))
+    if name == "remember_rule":
+        return h.remember(actor, args.get("correction", ""))
+    if name == "brand_check":
+        return h.check(actor, args.get("text", ""), args.get("media_token", ""))
+    if name == "get_brand":
+        return {"kit": h.kit(actor), "rules": h.rules(actor)}
+    if name == "schedule_package":
+        return h.schedule_package(actor, int(args.get("run_id") or 0), args.get("channel_id", ""), args.get("mode") or "queue", args.get("due_at"))
+    if name == "list_calendar":
+        return h.calendar(actor)
     if name == "get_limits":
         return {**studio.limits(actor), "plan": studio.plan(actor)}
     raise ActionError(f"Unknown tool {name}", 404)
@@ -80,8 +122,8 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
     if method == "initialize":
         return ok({"protocolVersion": msg.get("params", {}).get("protocolVersion") or PROTOCOL,
                    "capabilities": {"tools": {"listChanged": False}},
-                   "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — built on the Buffer API", "version": "1.0.0"},
-                   "instructions": "Draft from links, preview, then submit. Posts wait for human approval unless the token policy says otherwise."})
+                   "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue House Style — brand-aware editor on the Buffer API", "version": "2.0.0"},
+                   "instructions": "House Style edits posts to the user's brand. Typical loop: run_agent (topic or link) or edit_media (their photo/video) -> poll get_run until ready -> show the media and captions -> turn any feedback into revise(run_id, correction), which saves a Style Ledger rule -> schedule_package. Posts wait for human approval unless the token policy says otherwise."})
     if method == "ping":
         return ok({})
     if method == "tools/list":
