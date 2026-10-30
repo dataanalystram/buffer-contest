@@ -284,7 +284,6 @@ a.pv-media:hover img{transform:scale(1.04)}
 .pv.failed{border-color:var(--bad)}
 @media (max-width:600px){.pv-media{width:80px;height:80px}}
 @media (prefers-reduced-motion:reduce){.pv-media img{transition:none}}
-.stats{font-variant-numeric:tabular-nums}#homeStats{margin:-8px 0 24px}
 
 /* ---------------- news radar */
 .story-title{display:block;font-size:16px;font-weight:600;color:var(--ink);text-decoration:none;line-height:1.35}
@@ -304,3 +303,8 @@ a.pv-media:hover img{transform:scale(1.04)}
 .pm .bar.near i{background:var(--warn)}.pm .bar.over i{background:var(--bad)}.pm .near{color:var(--warn);font-weight:600}.pm .over{color:var(--bad);font-weight:600}
 .plan .st,.plan .empty{grid-column:1/-1}
 @media (min-width:861px){.limit-bar{position:sticky;top:65px;z-index:4}}
+.stats{display:flex;flex-wrap:wrap;align-items:center;gap:6px 20px;font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+.stats b{color:var(--ink);font-size:18px;font-weight:600;margin-right:4px}
+.stats .live{width:8px;height:8px;border-radius:999px;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+#homeStats{margin:0 0 24px;padding:12px 16px;border:1px solid var(--line);border-radius:10px;max-width:880px}
+#landStats{margin:8px 0 16px}

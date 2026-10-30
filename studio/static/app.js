@@ -65,8 +65,8 @@ async function showStats() {
   try {
     const st = await api("/api/stats"), n = st.buffer_accounts, m = st.posts_sent_to_buffer;
     if (!n) return;
-    const txt = `${n.toLocaleString()} Buffer account${n === 1 ? "" : "s"} connected so far, ${m.toLocaleString()} post${m === 1 ? "" : "s"} sent to Buffer.`;
-    for (const el of [$("#landStats"), $("#homeStats")]) { el.textContent = txt; el.hidden = false; }
+    const html = `<span class="live" aria-hidden="true"></span><span><b>${n.toLocaleString()}</b> Buffer account${n === 1 ? "" : "s"} connected</span><span><b>${m.toLocaleString()}</b> post${m === 1 ? "" : "s"} sent to Buffer</span><span><b>${(st.sample_workspaces_open || 0).toLocaleString()}</b> trying the sample today</span>`;
+    for (const el of [$("#landStats"), $("#homeStats")]) { el.innerHTML = html; el.hidden = false; }
   } catch (_) {}
 }
 $("#bookmarklet").href = `javascript:location.href='${location.origin}/?url='+encodeURIComponent(location.href)`;
