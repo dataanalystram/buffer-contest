@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
-      - run: pip install -q -r requirements-studio.txt playwright pytest respx pytest-playwright && python -m playwright install --with-deps chromium >/dev/null
+      - run: pip install -q -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt playwright pytest-playwright && python -m playwright install --with-deps chromium >/dev/null
       - name: Start the app (sample workspace, local video render)
         env: {STUDIO_INSECURE_COOKIES: "1", PUBLIC_URL: "http://127.0.0.1:8899", STUDIO_DB: "/tmp/ui.db", RENDER_WORKER: "local"}
         run: nohup python -m uvicorn studio.app:create_app --factory --port 8899 > /tmp/uv.log 2>&1 & sleep 5 && curl -sf http://127.0.0.1:8899/healthz
