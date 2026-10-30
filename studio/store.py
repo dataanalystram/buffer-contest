@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS device_links (
   token_hash TEXT PRIMARY KEY, user_id TEXT, expires REAL, used INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS feeds (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, url TEXT, created REAL);
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id TEXT PRIMARY KEY, client_name TEXT, redirect_uris TEXT, created REAL);
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash TEXT PRIMARY KEY, client_id TEXT, user_id TEXT, redirect_uri TEXT, challenge TEXT, policy TEXT,
+  daily_cap INTEGER, expires REAL, used INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS oauth_refresh (
+  token_hash TEXT PRIMARY KEY, client_id TEXT, user_id TEXT, agent_id INTEGER, policy TEXT, daily_cap INTEGER,
+  expires REAL, used INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, actor TEXT, action TEXT, risk TEXT,
   detail TEXT, ok INTEGER, ts REAL);
@@ -43,7 +51,8 @@ def sha(value: str) -> str:
 
 
 ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds")
-TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit")
+TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
+          "oauth_clients", "oauth_codes", "oauth_refresh")
 
 
 class Store:
@@ -168,7 +177,8 @@ class Store:
         self.x("UPDATE users SET kill_switch=? WHERE id=?", (1 if on else 0, uid))
 
     def delete_user(self, uid: str) -> None:
-        for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds"):
+        for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
+                  "oauth_refresh"):
             self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
         self.x("DELETE FROM users WHERE id=?", (uid,))
 

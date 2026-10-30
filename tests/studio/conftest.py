@@ -102,7 +102,8 @@ def app(tmp_path, fake, monkeypatch):
     if db.startswith("postgres"):
         import psycopg
         with psycopg.connect(db, autocommit=True) as c:
-            c.execute("DROP TABLE IF EXISTS users, sessions, agent_tokens, confirms, approvals, audit, device_links, feeds")
+            c.execute("DROP TABLE IF EXISTS users, sessions, agent_tokens, confirms, approvals, audit, device_links, feeds, "
+                      "oauth_clients, oauth_codes, oauth_refresh")
     s = load_settings(client_id="cid", client_secret="sec", public_url="https://hq.test", session_secret="s" * 64,
                       db_path=db, secure_cookies=False, ai_base_url="")
     return create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
