@@ -29,7 +29,8 @@ REQUIRED_METADATA = {"instagram": {"type": "post", "shouldShareToFeed": True}, "
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
 CONFIRM_TTL = 15 * 60
 PROBE_MAX = 60 * 1024 * 1024  # media preflight downloads at most this much per file
-OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts")
+OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts", "ig_type", "thumbnail_offset_ms")
+THUMB_OFFSET_SERVICES = ("instagram", "tiktok", "pinterest")  # Buffer honours video.metadata.thumbnailOffset here only
 
 
 class ActionError(Exception):
@@ -49,9 +50,14 @@ class Actor:
         return "you" if self.kind == "human" else f"agent:{self.agent['name']}"
 
 
-def _asset(url: str) -> dict:
+def _asset(url: str, thumb_ms: int | None = None) -> dict:
     path = url.lower().split("?")[0]
-    return {"video": {"url": url}} if path.endswith(VIDEO_EXT) else {"image": {"url": url}}
+    if path.endswith(VIDEO_EXT):
+        v = {"url": url}
+        if thumb_ms is not None:
+            v["metadata"] = {"thumbnailOffset": int(thumb_ms)}  # VideoMetadataInput.thumbnailOffset, in ms
+        return {"video": v}
+    return {"image": {"url": url}}
 
 
 def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at: str | None,
@@ -60,9 +66,14 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
     inp = {"channelId": channel["id"], "text": text, "assets": [], "needsApproval": False,
            "schedulingType": "automatic"}
     urls = [u for u in (media_urls or []) if u] or ([media_url] if media_url else [])
+    options = options or {}
+    thumb = options.get("thumbnail_offset_ms") if channel["service"] in THUMB_OFFSET_SERVICES else None
     if urls:
-        inp["assets"] = [_asset(u) for u in urls]
-    if mode == "draft":
+        inp["assets"] = [_asset(u, thumb) for u in urls]
+    if mode == "draft" and due_at:
+        # a draft that already has its time: it sits in the week as a draft and never publishes until a person schedules it
+        inp.update(mode="customScheduled", dueAt=due_at, saveToDraft=True)
+    elif mode == "draft":
         inp.update(mode="addToQueue", saveToDraft=True)
     elif mode == "queue":
         inp["mode"] = "addToQueue"
@@ -74,13 +85,14 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
         inp.update(mode="customScheduled", dueAt=due_at)
     svc = channel["service"]
     meta = dict(REQUIRED_METADATA.get(svc, {}))
+    if svc == "instagram" and options.get("ig_type") in ("reel", "story", "post"):
+        meta["type"] = options["ig_type"]
     parts = drafter.split_thread(svc, text)
     if len(parts) > 1:
         inp["text"] = parts[0]
         meta["thread"] = [{"text": p} for p in parts]
         if inp["assets"]:
             meta["thread"][0]["assets"] = inp["assets"]
-    options = options or {}
     if svc == "youtube":
         meta["title"] = (options.get("title") or text.split("\n")[0])[:100]
         if options.get("category_id"):
@@ -106,7 +118,18 @@ def clean_options(raw) -> dict:
         v = raw.get(k)
         if v in (None, "", False):
             continue
-        out[k] = bool(v) if k == "x_long_posts" else str(v).strip()[:300]
+        if k == "x_long_posts":
+            out[k] = bool(v)
+        elif k == "thumbnail_offset_ms":
+            try:
+                out[k] = max(0, int(v))
+            except (TypeError, ValueError):
+                continue
+        elif k == "ig_type":
+            if str(v) in ("reel", "story", "post"):
+                out[k] = str(v)
+        else:
+            out[k] = str(v).strip()[:300]
     return out
 
 
@@ -134,13 +157,34 @@ class Studio:
         if url.startswith(base) and self.house:
             m = self.house.get_media(url[len(base):].split("?")[0])
             return m["data"] if m else None
+        sbase = self.s.public_url.rstrip("/") + "/sample/"
+        if url.startswith(sbase):
+            from . import takes
+            f = (takes.SAMPLE_DIR / url[len(sbase):].split("?")[0]).resolve()
+            return f.read_bytes() if f.parent == takes.SAMPLE_DIR.resolve() and f.is_file() else None
         if self.media_loader:
             return self.media_loader(url)
         return self.house._fetch_bytes(url, PROBE_MAX) if self.house else None
 
     def _preflight(self, ch: dict, text: str, media_urls: list[str], mode: str, options: dict | None = None,
                    probe: bool = True, creating: bool = True) -> dict:
-        return preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating)
+        return preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating,
+                               known=self._known_probe)
+
+    def _known_probe(self, url: str) -> dict | None:
+        """Facts the video worker already measured with ffprobe for media HuhQueue rendered (the web dyno has no ffprobe)."""
+        base = self.s.public_url.rstrip("/")
+        meta = None
+        if url.startswith(base + "/m/") and self.house:
+            rows = self.store.q("SELECT meta FROM media WHERE token=?", (url[len(base) + 3:].split("?")[0],))
+            meta = json.loads(rows[0]["meta"]) if rows else None
+        elif url.startswith(base + "/sample/"):
+            from . import takes
+            sm = takes.sample_meta() or {}
+            name = url[len(base) + 8:].split("?")[0]
+            meta = next((c["meta"] for c in sm.get("clips", []) if c["file"] == name), None)
+        pr = (meta or {}).get("probe")
+        return dict(pr) if pr and pr.get("probed") else None
 
     @staticmethod
     def _media_list(p: dict) -> list[str]:
@@ -363,6 +407,8 @@ class Studio:
             if dt <= datetime.now(timezone.utc):
                 raise ActionError("due_at is in the past.")
             due = dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        elif mode == "draft" and p.get("due_at"):
+            due = self._due(p["due_at"])  # a dated draft (One take places clips this way); it still never publishes
         if ch.get("isLocked") and mode != "draft":
             raise ActionError(f"{ch.get('displayName') or ch['name']} is locked in Buffer, usually because the plan has more channels "
                               "than it allows. Save as a draft, or upgrade your Buffer plan.")
