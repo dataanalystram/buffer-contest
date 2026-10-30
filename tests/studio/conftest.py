@@ -49,6 +49,7 @@ class FakeBuffer:
         self.daily = None  # e.g. {"limit": 3, "scheduled": 3, "sent": 0, "isAtLimit": True}
         self.plan = None   # e.g. {"scheduledPosts": 10, "channels": 3}
         # media the preflight "downloads" (url -> bytes); anything else counts as unreachable
+        self.reject_message, self.rejected = "", []  # Buffer's typed MutationError: HTTP 200 with createPost.message
         self.media = {"https://cdn.example.com/a.png": image_bytes(1200, 627)}
 
     def load_media(self, url: str):
@@ -95,6 +96,9 @@ class FakeBuffer:
                 {"id": "ch_x", "timezone": "Europe/Dublin", "postingSchedule": [{"day": "mon", "times": ["09:00", "17:00"], "paused": False}]}]}})
         if "channels(" in q:
             return httpx.Response(200, headers=h, json={"data": {"channels": CHANNELS}})
+        if "createPost" in q and self.reject_message:
+            self.rejected.append(v["input"])
+            return httpx.Response(200, headers=h, json={"data": {"createPost": {"message": self.reject_message}}})
         if "createPost" in q:
             inp = v["input"]
             self.created.append(inp)
