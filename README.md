@@ -45,7 +45,7 @@ cp .env.example .env   # BUFFER_CLIENT_ID / BUFFER_CLIENT_SECRET from https://pu
 export $(grep -v '^#' .env | xargs) && uvicorn studio.app:create_app --factory --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem
 ```
 
-Production: `render.yaml` (free web service + free Postgres) or `Dockerfile.studio` anywhere. Set `DATABASE_URL` to Postgres so rotating refresh tokens survive restarts.
+Production: `render.yaml` (free web service) with a free Supabase Postgres, or `Dockerfile.studio` anywhere. Set `DATABASE_URL` to Postgres so rotating refresh tokens survive restarts. Moving databases: see [docs/SUPABASE.md](docs/SUPABASE.md).
 Optional `AI_BASE_URL`/`AI_MODEL`/`AI_API_KEY` point the drafter at any OpenAI-compatible model; the hosted demo uses the free Pollinations endpoint and falls back to the built-in writer.
 
 ## Tests

@@ -1,4 +1,5 @@
-# Render Blueprint for HuhQueue Studio (free web service + free Postgres).
+# Render Blueprint for HuhQueue Studio: free web service; the database is Supabase Postgres (free, does not expire).
+# Render's free Postgres is only kept while we copy it to Supabase (docs/SUPABASE.md); remove it after the move.
 services:
   - type: web
     name: huhqueue-studio
@@ -16,7 +17,9 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
-      - key: DATABASE_URL
+      - key: DATABASE_URL          # Supabase Session pooler URL (IPv4, port 5432)
+        sync: false
+      - key: MIGRATE_FROM_URL      # old Render database; copied into Supabase on the first boot, then delete this
         fromDatabase:
           name: huhqueue-studio-db
           property: connectionString

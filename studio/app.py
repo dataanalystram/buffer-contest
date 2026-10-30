@@ -26,6 +26,9 @@ COOKIE = "hq_sid"
 def create_app(settings: Settings | None = None, http: httpx.Client | None = None) -> FastAPI:
     s = settings or load_settings()
     store = Store(s.db_path, s.session_secret)
+    if s.migrate_from and s.migrate_from != s.db_path:
+        copied = store.copy_from(Store(s.migrate_from, s.session_secret))
+        print(f"migrate: copied {copied or 'nothing (target already has data)'}", flush=True)
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
     app = FastAPI(title="HuhQueue Studio — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
@@ -109,7 +112,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.get("/healthz")
     def health():
-        return {"ok": True, "configured": s.configured}
+        # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
+        return {"ok": True, "configured": s.configured, "db": store.ping()}
 
     # ------------------------------------------------------------ OAuth
     @app.get("/login", include_in_schema=False)

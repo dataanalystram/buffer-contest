@@ -23,6 +23,7 @@ class Settings:
     public_url: str = "https://localhost:8000"
     session_secret: str = ""
     db_path: str = "studio.db"
+    migrate_from: str = ""
     ai_base_url: str = ""
     ai_api_key: str = ""
     ai_model: str = ""
@@ -47,6 +48,8 @@ def load_settings(**overrides) -> Settings:
         public_url=(env("PUBLIC_URL") or env("RENDER_EXTERNAL_URL") or "https://localhost:8000").strip().rstrip("/"),
         session_secret=(env("SESSION_SECRET") or "").strip(),
         db_path=(env("DATABASE_URL") or env("STUDIO_DB") or "studio.db").strip(),
+        # Moving databases: set to the old DATABASE_URL for one deploy; rows are copied into an empty new store on boot.
+        migrate_from=(env("MIGRATE_FROM_URL") or "").strip(),
         # Optional OpenAI-compatible endpoint for caption drafting. Without it the built-in drafter is used.
         ai_base_url=(env("AI_BASE_URL") or "").strip().rstrip("/"),
         ai_api_key=(env("AI_API_KEY") or "").strip(),
