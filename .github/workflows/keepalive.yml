@@ -1,8 +1,10 @@
-# Render's free web services sleep after 15 idle minutes; ping every 10 so judges never hit a cold start.
+# Supabase pg_cron pings /healthz every 10 minutes (docs/SUPABASE.md), which keeps Render awake and Supabase active
+# for free. This is only a backstop: the repo is private, so a 10-minute Actions cron would use more than the 2,000
+# free minutes a month.
 name: keepalive
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "17 */6 * * *"
   workflow_dispatch:
 jobs:
   ping:
