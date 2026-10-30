@@ -1,4 +1,4 @@
-"""Link in bio v2: a self-hosted Linktree / Start Page alternative.
+"""Link in bio v2: a self-hosted link-in-bio page.
 
 * Blocks: link, brand button (93 LittleLink brands with icons), image, YouTube / Spotify embed, spacer / divider,
   email signup, contact card (vCard download), latest posts grid, social icons, heading, text.

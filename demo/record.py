@@ -1,4 +1,4 @@
-"""Record the live HuhQueue Studio demo with Playwright. Usage: python3 record.py <device_link_url>"""
+"""Record the live HuhQueue demo with Playwright. Usage: python3 record.py <device_link_url>"""
 import json, os, sys, time
 sys.path.insert(0, "/tmp")
 from pwh import proxy

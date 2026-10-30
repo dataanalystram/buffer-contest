@@ -1,8 +1,7 @@
-"""Agent safety layer (OSS_UPGRADE_PLAN item 2): global kill switch, per-token daily caps, channel scope,
+"""Agent safety layer: global kill switch, per-token daily caps, channel scope,
 MCP preview + confirm for public actions, and the richer audit trail.
 
-Ideas from Shoutrrr (Apache-2.0, coollabsio/shoutrrr: MCP instructions that make outward-facing actions need an
-explicit `confirm` after a human looks) and Postiz (AGPL, ideas only). The code here is our own.
+Outward-facing actions need an explicit `confirm` after a human looks. The code here is our own.
 
 Everything an agent does arrives as an API-token request, so the checks live in one place (the guard middleware in
 `api/app.py` calls `check_token_request`), and the REST API, the generic action runner and MCP all get them for free.

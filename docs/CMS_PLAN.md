@@ -320,7 +320,7 @@ Data: `contacts`, `segments`, and `comments.contact_id / assignee_id / sentiment
 ### 4.11 Import / export
 
 - Per-resource CSV and JSON with a column-mapping UI and a dry-run preview (row-level errors).
-- **Posts CSV** columns: `caption, channels, when|scheduled_at, timezone, media_urls, first_comment, tags, campaign, ig_type, collaborators, …custom`. This covers Publer/SocialBee-style bulk scheduling (FEATURE_MATRIX #8).
+- **Posts CSV** columns: `caption, channels, when|scheduled_at, timezone, media_urls, first_comment, tags, campaign, ig_type, collaborators, …custom`.
 - **Full workspace backup:** `GET /api/workspaces/{id}/export.zip` contains the JSON of every table plus the media files. `POST /api/workspaces/import` restores it.
   - Secrets (`access_token_enc`, app keys) are excluded unless `include_secrets=1` and the caller is the owner.
 

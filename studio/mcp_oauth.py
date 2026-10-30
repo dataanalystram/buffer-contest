@@ -77,7 +77,7 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
     def protected_resource():
         return {"resource": public_url + "/mcp", "authorization_servers": [public_url],
                 "scopes_supported": ["huhqueue"], "bearer_methods_supported": ["header"],
-                "resource_name": "HuhQueue Studio"}
+                "resource_name": "HuhQueue"}
 
     @app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
     @app.get("/.well-known/oauth-authorization-server/mcp", include_in_schema=False)
@@ -218,7 +218,7 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
 def page(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} — HuhQueue Studio</title><link rel="stylesheet" href="/static/style.css">
+<title>{html.escape(title)} — HuhQueue</title><link rel="stylesheet" href="/static/style.css">
 <style>fieldset{{border:0;padding:0;margin:0;gap:12px}}legend{{font-weight:600;margin-bottom:8px}}
 .opt{{display:flex;gap:8px;align-items:flex-start}}.opt input{{margin-top:4px}}</style></head>
 <body><header class="top"><a class="brand" href="/" style="text-decoration:none;color:inherit"><span class="mark">hq</span>

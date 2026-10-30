@@ -54,9 +54,10 @@ def test_link_to_buffer_draft_and_agent_approval(live):
     try:
         ctx = browser.new_context(viewport={"width": 1280, "height": 900})
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
+        ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())  # hermetic: no fonts or images from the internet
         page = ctx.new_page()
         page.goto(base)
-        page.get_by_test_id("agent-go").wait_for()  # House Style opens on the agent
+        page.get_by_test_id("agent-go").wait_for()  # HuhQueue opens on the agent
         page.get_by_test_id("tab-home").click()
         page.get_by_test_id("todo-item").first.wait_for()
         page.get_by_test_id("tab-studio").click()
@@ -90,5 +91,63 @@ def test_link_to_buffer_draft_and_agent_approval(live):
         assert app.state.store.user("acc_1")["kill_switch"] == 1
         page.get_by_test_id("tab-activity").click()
         page.get_by_test_id("audit-row").first.wait_for()
+    finally:
+        browser.close(); p.stop()
+
+
+def test_planner_views_filters_and_drag_to_reschedule(live):
+    """Planner in the sample workspace: List/Week/Month, channel filter, and dragging a No date draft onto the week."""
+    base, fake, app = live
+    try:
+        p = pw.sync_playwright().start()
+        browser = p.chromium.launch()
+    except Exception as e:
+        pytest.skip(f"chromium unavailable: {e}")
+    try:
+        ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Dublin")
+        ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base + "/demo")
+        page.get_by_test_id("tab-planner").click()
+        assert page.get_by_test_id("tab-planner").get_attribute("aria-current") == "page"
+        for view in ("list", "week", "month"):
+            page.get_by_test_id(f"planner-view-{view}").click()
+            page.get_by_test_id(f"planner-{view}").wait_for()
+            assert f"view={view}" in page.url or view == "week"
+        # filter by one channel in the list
+        page.get_by_test_id("planner-view-list").click()
+        page.get_by_test_id("planner-card").first.wait_for()
+        assert len({c.get_attribute("data-ch") for c in page.get_by_test_id("planner-card").all()}) > 1
+        page.locator("[data-testid=planner-channel][data-ch=demo_x]").click()
+        assert "ch=demo_x" in page.url
+        chans = {c.get_attribute("data-ch") for c in page.get_by_test_id("planner-card").all()}
+        assert chans == {"demo_x"}, chans
+        # filters and view survive a reload (URL + localStorage)
+        page.reload()
+        page.get_by_test_id("planner-list").wait_for()
+        assert page.locator("[data-testid=planner-channel][data-ch=demo_x]").get_attribute("aria-pressed") == "true"
+        page.get_by_test_id("planner-clear").click()
+        # a status filter with no match shows the empty state
+        page.get_by_test_id("planner-search").fill("zzz-nothing-matches")
+        page.get_by_test_id("planner-empty").wait_for()
+        page.get_by_test_id("planner-empty-clear").click()
+        # drag a No date draft onto next week's Wednesday, 14:00
+        page.get_by_test_id("planner-view-week").click()
+        page.get_by_test_id("planner-nodate-toggle").check(force=True)
+        page.get_by_test_id("planner-next").click()
+        page.get_by_test_id("planner-week").wait_for()
+        draft = page.get_by_test_id("planner-nodate-item").first
+        ref = draft.get_attribute("data-ref")
+        cell = page.locator("[data-testid=planner-slot][data-hour='14']").nth(2)
+        day = cell.get_attribute("data-day")
+        draft.drag_to(cell)
+        page.get_by_test_id("toast").get_by_text("Draft moved").wait_for()
+        page.locator(f"[data-testid=planner-slot][data-day='{day}'][data-hour='14'] [data-ref='{ref}']").wait_for()
+        # sent posts are locked
+        assert page.locator("[data-testid=planner-item][data-state=sent][draggable]").count() == 0
+        assert not errors, errors
+        assert not fake.calls  # the sample workspace never reaches Buffer
     finally:
         browser.close(); p.stop()

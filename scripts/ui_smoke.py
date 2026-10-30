@@ -1,4 +1,4 @@
-"""Drive the real web app in Chromium against the sample workspace and save screenshots of every House Style screen.
+"""Drive the real web app in Chromium against the sample workspace and save screenshots of every HuhQueue screen.
 
     python scripts/ui_smoke.py http://127.0.0.1:8899 shots/
 Runs the agent for real (live news search, render, captions, brand check), revises it, sends a package, opens the calendar.
@@ -45,10 +45,11 @@ with sync_playwright() as p:
     pg.screenshot(path=str(out / "05_revised.png"), full_page=True)
     pg.locator("[data-testid=pkg-send]").first.click()
     pg.wait_for_selector("[data-testid=pkg-sent]", timeout=20000)
-    pg.click("[data-testid=tab-calendar]")
-    pg.wait_for_selector("[data-testid=cal-day]", timeout=20000)
+    pg.click("[data-testid=tab-planner]")
+    pg.click("[data-testid=planner-view-month]")
+    pg.wait_for_selector("[data-testid=planner-day]", timeout=20000)
     time.sleep(1)
-    pg.screenshot(path=str(out / "06_calendar.png"), full_page=True)
+    pg.screenshot(path=str(out / "06_planner.png"), full_page=True)
     pg.click("[data-testid=tab-ai]"); time.sleep(1.5)
     pg.screenshot(path=str(out / "07_ai.png"), full_page=True)
     m = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)

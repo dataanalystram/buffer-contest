@@ -141,7 +141,7 @@ huhqueue token --name agent --scopes read,write     # mint a scoped token (shown
 - New columns: add to `models.py` (auto-added on startup); data moves or non-trivial schema changes get a numbered
   migration in `huhqueue/migrations/`.
 - Destructive UI actions use the in-app `Confirm` dialog, never `window.confirm`/`prompt`.
-- Copy third-party code only with credit in `NOTICE` (see docs/OSS_UPGRADE_PLAN.md).
+- Copy third-party code only with credit in `NOTICE`.
 - Commit messages are descriptive, feature-prefixed sentences ("Channel pages: ...", "E2E: ...", "Rebuild web bundle").
 
 ## Status (28 Oct 2026)
@@ -152,7 +152,7 @@ Owner's rule: commit to `main` and test on that live URL (real channels connecte
 On `main`: queue, composer, calendar, ideas, library, contacts, approvals, notifications, command bar; Instagram,
 YouTube, X, TikTok, LinkedIn connectors; reports/insights; growth; teams; channel pages; Buffer CSV import; headless
 layer; plus (27-28 Oct) dynamic OAuth callback URL (follows the URL you sign in on), bulk actions + bulk UI,
-Linktree-style bio editor (`web/src/pages/bio/`, live draft preview, autosave, design drafts), agent safety (kill switch,
+Link-in-bio block editor (`web/src/pages/bio/`, live draft preview, autosave, design drafts), agent safety (kill switch,
 token caps, audit log), AI ideas / alt text / comment insights / channel groups, bring-your-own AI model, reliable
 publishing (`PublishAttempt`, jittered backoff, rate-limit holds, missed-post requeue, heartbeat in `/api/health`),
 Docker (`Dockerfile`, `docker-compose.yml`). ~402 unit tests; e2e green except `test_ui_reports::test_01_views` and
@@ -174,7 +174,7 @@ action, every control with a `data-testid`.
 ## Docs
 `README.md` (status, quick start), `SETUP.md` (developer apps, redirect URIs, compliance callbacks, hosting),
 `docs/CONNECT_INTEGRATIONS.md` (numbered connect steps per network), `docs/CONNECTORS_RESEARCH.md` (tiers, scopes,
-limits), `docs/FEATURE_MATRIX.md` (code-verified status vs Buffer), `docs/ROADMAP.md` (milestones + acceptance tests),
-`docs/CMS_PLAN.md`, `docs/AI_NATIVE_PLAN.md` (registry/risk design), `docs/OSS_UPGRADE_PLAN.md`, `docs/FBLOGIN_PLAN.md`,
+limits), `docs/ROADMAP.md` (milestones + acceptance tests),
+`docs/CMS_PLAN.md`, `docs/AI_NATIVE_PLAN.md` (registry/risk design), `docs/FBLOGIN_PLAN.md`,
 `docs/BUFFER_TEARDOWN.md`, `docs/BUFFER_PRO_FEATURES.md`, `docs/LIVE_TEST_2026-10-26.md`.
 Note: `connectors/base.py` mentions `docs/CONNECTORS.md`, which does not exist.

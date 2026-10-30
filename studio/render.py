@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
@@ -37,11 +38,55 @@ def cover(img: Image.Image, w: int, h: int, cx: float = 0.5, cy: float = 0.4) ->
     return img.crop((x, y, x + w, y + h))
 
 
+# ---- text that the bundled fonts can actually draw (no tofu boxes for emoji or symbols they lack)
+_SUBS = str.maketrans({"\u2192": "->", "\u2190": "<-", "\u2022": "-", "\u2026": "...", "\u00a0": " "})
+_CMAPS: dict[str, set[int] | None] = {}
+
+
+def _cmap(f) -> set[int] | None:
+    path = getattr(f, "path", "")
+    if path not in _CMAPS:
+        try:
+            from fontTools.ttLib import TTFont
+            _CMAPS[path] = set(TTFont(path, lazy=True).getBestCmap() or {})
+        except Exception:  # fontTools missing or unreadable font: fall back to Unicode categories
+            _CMAPS[path] = None
+    return _CMAPS[path]
+
+
+def drawable(text: str, f=None) -> str:
+    """Keep only characters the font has a glyph for; emoji, pictographs and stray symbols are dropped, never boxed."""
+    s = unicodedata.normalize("NFKC", str(text or "")).translate(_SUBS)
+    cm = _cmap(f) if f is not None else None
+    keep = []
+    for ch in s:
+        if ch in " \n":
+            keep.append(ch)
+        elif cm is not None:
+            if ord(ch) in cm:
+                keep.append(ch)
+        elif unicodedata.category(ch) not in ("So", "Sk", "Cs", "Co", "Cn", "Cf", "Mn") and ord(ch) < 0x2E80:
+            keep.append(ch)
+    return re.sub(r"[ \t]{2,}", " ", "".join(keep))
+
+
+def _draw(d, xy, text, **kw):
+    d.text(xy, drawable(text, kw.get("font")), **kw)
+
+
+def _tlen(d, text, **kw):
+    return d.textlength(drawable(text, kw.get("font")), **kw)
+
+
+def _tbox(d, xy, text, **kw):
+    return d.textbbox(xy, drawable(text, kw.get("font")), **kw)
+
+
 def wrap(d: ImageDraw.ImageDraw, text: str, f, maxw: int) -> list[str]:
     lines, cur = [], ""
-    for w in text.split():
+    for w in drawable(text, f).split():
         t = (cur + " " + w).strip()
-        if d.textlength(t, font=f) <= maxw or not cur:
+        if _tlen(d, t, font=f) <= maxw or not cur:
             cur = t
         else:
             lines.append(cur)
@@ -85,16 +130,19 @@ def place_logo(canvas: Image.Image, logo: Image.Image | None, p: dict, kit: dict
         lg = logo.copy()
         lg.thumbnail((target_w, target_w), Image.LANCZOS)
     else:
-        name = (kit.get("name") or "Brand").strip()[:18]
         f = font(FONTS.get(p.get("font"), "Anton.ttf"), max(18, int(target_w * 0.28)))
+        name = drawable((kit.get("name") or "").strip(), f).strip()[:18]
+        if not name:  # no logo and no brand name yet: no placeholder wordmark
+            p["_logo_box"] = None
+            return False
         d0 = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
-        tw = int(d0.textlength(name, font=f))
+        tw = int(_tlen(d0, name, font=f))
         ph = int(f.size * 1.7)
         lg = Image.new("RGBA", (tw + ph, ph), (0, 0, 0, 0))
         dd = ImageDraw.Draw(lg)
         dd.rounded_rectangle((0, 0, lg.width - 1, ph - 1), ph // 2, fill=hex_to_rgb(p["colors"]["accent"]) + (255,))
-        bb = dd.textbbox((0, 0), name, font=f)
-        dd.text(((lg.width - tw) / 2, (ph - (bb[3] - bb[1])) / 2 - bb[1]), name, font=f, fill=hex_to_rgb(p["colors"]["primary"]))
+        bb = _tbox(dd, (0, 0), name, font=f)
+        _draw(dd, ((lg.width - tw) / 2, (ph - (bb[3] - bb[1])) / 2 - bb[1]), name, font=f, fill=hex_to_rgb(p["colors"]["primary"]))
     pos = p.get("logo_position", "tr")
     x = m if pos in ("tl", "bl") else W - m - lg.width
     y = m if pos in ("tl", "tr") else H - m - lg.height
@@ -146,27 +194,27 @@ def news_card(headline: str, kit: dict, p: dict, *, image: bytes | None = None, 
     if label:
         lf = font(BODY_FONTS.get(p.get("font"), "Inter-SemiBold.ttf"), int(W * 0.03))
         lt = label.upper()
-        tw = d.textlength(lt, font=lf)
+        tw = _tlen(d, lt, font=lf)
         d.rounded_rectangle((m, y - int(W * 0.08), m + tw + 36, y - int(W * 0.08) + lf.size + 22), 8, fill=acc)
-        d.text((m + 18, y - int(W * 0.08) + 9), lt, font=lf, fill=prim)
+        _draw(d, (m + 18, y - int(W * 0.08) + 9), lt, font=lf, fill=prim)
     for i, line in enumerate(lines):
         col = acc if i == 0 and len(lines) > 1 else txt
-        d.text((m, y + i * lh), line, font=f, fill=col)
+        _draw(d, (m, y + i * lh), line, font=f, fill=col)
     meta_credit = ""
     if credit and p.get("source_credit", True):
         cf = font(BODY_FONTS.get(p.get("font"), "Inter-Regular.ttf"), int(W * 0.026))
         meta_credit = f"Source: {credit}"
-        d.text((m, H - m - cf.size), meta_credit, font=cf, fill=txt + (200,))
+        _draw(d, (m, H - m - cf.size), meta_credit, font=cf, fill=txt + (200,))
     handle = (kit.get("handle") or "").lstrip("@")
     if handle:
         hf = font(BODY_FONTS.get(p.get("font"), "Inter-SemiBold.ttf"), int(W * 0.026))
         t = "@" + handle
-        d.text((W - m - d.textlength(t, font=hf), H - m - hf.size), t, font=hf, fill=acc)
+        _draw(d, (W - m - _tlen(d, t, font=hf), H - m - hf.size), t, font=hf, fill=acc)
     if n:
         nf = font(BODY_FONTS.get(p.get("font"), "Inter-SemiBold.ttf"), int(W * 0.024))
         t = f"{n[0]}/{n[1]}"
-        x = m if p.get("logo_position") in ("tr", "br") else W - m - d.textlength(t, font=nf)
-        d.text((x, m), t, font=nf, fill=txt)
+        x = m if p.get("logo_position") in ("tr", "br") else W - m - _tlen(d, t, font=nf)
+        _draw(d, (x, m), t, font=nf, fill=txt)
     has_logo = place_logo(canvas, load_logo(logo), p, kit)
     return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), "has_logo": has_logo,
                            "headline": head, "credit": meta_credit}
@@ -184,20 +232,20 @@ def fact_slide(title: str, bullets: list[str], kit: dict, p: dict, *, logo: byte
     y = int(H * 0.2)
     t = shape_headline(title, {**p, "headline_max_words": 8})
     for line in wrap(d, t, tf, W - 2 * m):
-        d.text((m, y), line, font=tf, fill=acc)
+        _draw(d, (m, y), line, font=tf, fill=acc)
         y += int(tf.size * 1.1)
     y += int(H * 0.04)
     for b in bullets[:4]:
         d.ellipse((m, y + bf.size * 0.35, m + bf.size * 0.4, y + bf.size * 0.75), fill=acc)
         for line in wrap(d, b, bf, W - 2 * m - 40):
-            d.text((m + 40, y), line, font=bf, fill=txt)
+            _draw(d, (m + 40, y), line, font=bf, fill=txt)
             y += int(bf.size * 1.35)
         y += int(bf.size * 0.6)
     if n:
         nf = font(BODY_FONTS.get(p.get("font"), "Inter-SemiBold.ttf"), int(W * 0.024))
         tt = f"{n[0]}/{n[1]}"
-        x = m if p.get("logo_position") in ("tr", "br") else W - m - d.textlength(tt, font=nf)
-        d.text((x, m), tt, font=nf, fill=txt)
+        x = m if p.get("logo_position") in ("tr", "br") else W - m - _tlen(d, tt, font=nf)
+        _draw(d, (x, m), tt, font=nf, fill=txt)
     has_logo = place_logo(canvas, load_logo(logo), p, kit)
     return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), "has_logo": has_logo,
                            "headline": t, "credit": "x"}
@@ -211,9 +259,9 @@ def end_card(kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5
     ec = kit.get("end_card") or {}
     big = font(FONTS.get(p.get("font"), "Anton.ttf"), int(W * 0.16))
     cta = (ec.get("cta") or "Follow").strip()[:20]
-    handle = ("@" + kit["handle"].lstrip("@")) if kit.get("handle") else (kit.get("name") or "Your brand")
+    handle = ("@" + kit["handle"].lstrip("@")) if kit.get("handle") else (kit.get("name") or "")
     hf = font(FONTS.get(p.get("font"), "Anton.ttf"), int(W * 0.09))
-    while d.textlength(handle, font=hf) > W * 0.86 and hf.size > 30:
+    while _tlen(d, handle, font=hf) > W * 0.86 and hf.size > 30:
         hf = font(FONTS.get(p.get("font"), "Anton.ttf"), int(hf.size * 0.92))
     lf = font(BODY_FONTS.get(p.get("font"), "Inter-Regular.ttf"), int(W * 0.036))
     lg = load_logo(logo)
@@ -223,13 +271,13 @@ def end_card(kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5
         l2.thumbnail((int(W * 0.22), int(W * 0.22)), Image.LANCZOS)
         canvas.paste(l2, ((W - l2.width) // 2, y - l2.height - 40), l2)
     t = cta.upper() if p.get("headline_case") == "upper" else cta
-    d.text(((W - d.textlength(t, font=big)) / 2, y), t, font=big, fill=txt)
+    _draw(d, ((W - _tlen(d, t, font=big)) / 2, y), t, font=big, fill=txt)
     y += int(big.size * 1.1)
-    d.text(((W - d.textlength(handle, font=hf)) / 2, y), handle, font=hf, fill=acc)
+    _draw(d, ((W - _tlen(d, handle, font=hf)) / 2, y), handle, font=hf, fill=acc)
     y += int(hf.size * 1.4)
     line = (ec.get("line") or "").strip()[:60]
     if line:
-        d.text(((W - d.textlength(line, font=lf)) / 2, y), line, font=lf, fill=txt)
+        _draw(d, ((W - _tlen(d, line, font=lf)) / 2, y), line, font=lf, fill=txt)
     return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), "has_logo": lg is not None,
                            "headline": t, "credit": "x", "end_card": True}
 
@@ -251,7 +299,7 @@ def brand_photo(photo: bytes, kit: dict, p: dict, *, logo: bytes | None = None, 
         lines = wrap(d, head, f, W - 2 * m)[:4]
         y = H - m - int(f.size * 1.08) * len(lines) - int(H * 0.03)
         for i, line in enumerate(lines):
-            d.text((m, y + i * int(f.size * 1.08)), line, font=f, fill=acc if i == 0 and len(lines) > 1 else txt)
+            _draw(d, (m, y + i * int(f.size * 1.08)), line, font=f, fill=acc if i == 0 and len(lines) > 1 else txt)
     has_logo = place_logo(canvas, load_logo(logo), p, kit)
     return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), "has_logo": has_logo,
                            "headline": head, "credit": "own photo"}
@@ -367,7 +415,7 @@ def brand_video(video: bytes, kit: dict, p: dict, *, logo: bytes | None = None, 
             box_h = lh * len(lines) + 40
             d.rounded_rectangle((m, y - 20, W - m, y - 20 + box_h), 24, fill=hex_to_rgb(p["colors"]["primary"]) + (220,))
             for i, line in enumerate(lines):
-                d.text((m + 24, y + i * lh), line, font=f, fill=hex_to_rgb(p["colors"]["accent" if i == 0 else "text"]))
+                _draw(d, (m + 24, y + i * lh), line, font=f, fill=hex_to_rgb(p["colors"]["accent" if i == 0 else "text"]))
             hk.save(tmp / "hook.png")
         vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30[b];"
               f"[b][1:v]overlay=0:0[l]")

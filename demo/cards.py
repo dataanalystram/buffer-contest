@@ -14,7 +14,7 @@ def mark(d, x, y, s):
 def title(path, W=1920, H=1080):
     im = Image.new("RGB", (W, H), BG); d = ImageDraw.Draw(im); s = W / 1920
     mark(d, int(W / 2 - 60 * s), int(H * .22), int(120 * s))
-    center(d, H * .22 + 160 * s, "HuhQueue Studio", font(int(88 * s), True), INK, W)
+    center(d, H * .22 + 160 * s, "HuhQueue", font(int(88 * s), True), INK, W)
     center(d, H * .22 + 280 * s, "built on the Buffer API", font(int(40 * s)), (107, 101, 119), W)
     center(d, H * .22 + 380 * s, "Paste a link → a post for every channel → approve → Buffer queue", font(int(40 * s), True), (124, 77, 219), W)
     center(d, H * .22 + 450 * s, "Open source · agent-first · nothing posts without your OK", font(int(34 * s)), INK, W)

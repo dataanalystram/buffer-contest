@@ -1,12 +1,12 @@
-// House Style front end: the agent, its timeline, before/after, the Style Ledger, the brand kit, the calendar, AI engine.
+// HuhQueue front end: the agent, its timeline, before/after, the Style Ledger, the brand kit, AI engine.
 "use strict";
-const H = { src: "topic", run: null, poll: null, sel: new Set(), month: null, cal: null, ai: null, upload: null };
+const H = { src: "topic", run: null, poll: null, sel: new Set(), ai: null, upload: null };
 const STATUS_ICON = { pending: "", running: '<span class="spin" aria-hidden="true"></span>', done: "✓", warn: "!", failed: "×" };
 const QUICK_FIXES = ["Logo smaller", "Logo top left", "No hashtags", "Less hype", "Headlines in sentence case", "Darker overlay", "No end card"];
 const fmtWhen = (iso) => (iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 const isVid = (u) => /\.(mp4|mov|m4v|webm)(\?|$)/i.test(u || "");
 
-window.HS_TABS = { agent: loadAgent, calendar: loadCalendar, brand: loadBrand, ai: loadAI };
+window.HS_TABS = Object.assign(window.HS_TABS || {}, { agent: loadAgent, brand: loadBrand, ai: loadAI });
 
 // stories anywhere in the app can go straight to the agent
 window.wireStories = function (box) {
@@ -194,43 +194,14 @@ async function loadAgent() {
   try { H.ai = await api("/api/ai"); $("#agEngine").textContent = "Writing with: " + H.ai.engine; } catch (_) {}
 }
 
-// ---------------------------------------------------------------- calendar
+// ---------------------------------------------------------------- Planner badge (the Planner itself lives in planner.js)
+function readyBadgeFrom(c) {
+  const n = c.items.filter((i) => i.kind === "ready").length;
+  const b = $("#readyBadge"); b.hidden = !n; b.textContent = n;
+}
 async function readyBadge() {
-  try { const c = await api("/api/calendar"); H.cal = c; const n = c.items.filter((i) => i.kind === "ready").length;
-    const b = $("#readyBadge"); b.hidden = !n; b.textContent = n; } catch (_) {}
+  try { readyBadgeFrom(await api("/api/calendar")); } catch (_) {}
 }
-async function loadCalendar() {
-  if (!H.month) { const d = new Date(); H.month = new Date(d.getFullYear(), d.getMonth(), 1); }
-  $("#calGrid").innerHTML = `<p class="muted">Loading your calendar…</p>`;
-  try { H.cal = await api("/api/calendar"); } catch (e) { $("#calGrid").innerHTML = `<div class="st err">${esc(e.message)}</div>`; return; }
-  drawCalendar();
-}
-function drawCalendar() {
-  const m = H.month, items = H.cal.items;
-  $("#calTitle").textContent = m.toLocaleString([], { month: "long", year: "numeric" });
-  const ready = items.filter((i) => i.kind === "ready" || (i.kind === "approval" && !i.when));
-  $("#readyLane").innerHTML = ready.length ? `<span class="label">Not on the calendar yet</span><div class="lane">${ready.map((i) => calChip(i, true)).join("")}</div>` : "";
-  const start = new Date(m); start.setDate(1 - ((m.getDay() + 6) % 7)); // Monday first
-  const today = new Date().toDateString();
-  let html = `<div class="cal-dow">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => `<span>${d}</span>`).join("")}</div><div class="cal-days">`;
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start); d.setDate(start.getDate() + i);
-    const day = items.filter((it) => it.when && new Date(it.when).toDateString() === d.toDateString()).sort((a, b) => new Date(a.when) - new Date(b.when));
-    html += `<div class="cal-day ${d.getMonth() !== m.getMonth() ? "out" : ""} ${d.toDateString() === today ? "today" : ""}" data-testid="cal-day"><span class="dn">${d.getDate()}</span>${day.slice(0, 4).map((it) => calChip(it)).join("")}${day.length > 4 ? `<span class="more">+${day.length - 4} more</span>` : ""}</div>`;
-  }
-  $("#calGrid").innerHTML = html + "</div>";
-  document.querySelectorAll("[data-run]").forEach((b) => (b.onclick = async () => { showTab("agent"); const r = await api(`/api/agent/runs/${b.dataset.run}`); showRun(r); }));
-  document.querySelectorAll("[data-appr]").forEach((b) => (b.onclick = () => showTab("approvals")));
-}
-function calChip(i, wide) {
-  const cls = i.kind === "buffer" ? i.status : i.kind;
-  const t = i.when ? new Date(i.when).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
-  const attr = i.run_id ? `data-run="${i.run_id}"` : i.kind === "approval" ? `data-appr="${i.id}"` : "";
-  return `<button class="cc ${cls} ${wide ? "wide" : ""}" ${attr} data-testid="cal-item" title="${esc(i.text)}">${i.thumb && !isVid(i.thumb) ? `<img src="${esc(i.thumb)}" alt="">` : ""}<span><b>${esc(t ? t + " " : "")}${esc(netName(i.service))}</b> ${esc(i.text.slice(0, wide ? 70 : 34))}</span></button>`;
-}
-$("#calPrev").onclick = () => { H.month = new Date(H.month.getFullYear(), H.month.getMonth() - 1, 1); drawCalendar(); };
-$("#calNext").onclick = () => { H.month = new Date(H.month.getFullYear(), H.month.getMonth() + 1, 1); drawCalendar(); };
-$("#calToday").onclick = () => { H.month = null; loadCalendar(); };
 
 // ---------------------------------------------------------------- brand kit + ledger
 async function loadBrand() {
@@ -252,7 +223,7 @@ function drawLedger(rules) {
       <div class="rtxt"><b>${esc(r.rule)}</b><small>From “${esc(r.source)}”${r.hits ? ` · caught ${r.hits} time${r.hits > 1 ? "s" : ""}` : ""}</small></div>
       <label class="switch sm"><input type="checkbox" role="switch" data-act="${r.id}" ${r.active ? "checked" : ""} aria-label="Rule on"><span></span></label>
       <button class="link danger" data-del="${r.id}" aria-label="Delete rule">Delete</button></li>`).join("")}</ul>`
-    : `<div class="empty"><b>No rules yet</b><span>Correct a post (“logo smaller”, “no hype”) and House Style writes the rule here. Or teach one above.</span></div>`;
+    : `<div class="empty"><b>No rules yet</b><span>Correct a post (“logo smaller”, “no hype”) and HuhQueue writes the rule here. Or teach one above.</span></div>`;
   box.querySelectorAll("[data-act]").forEach((c) => (c.onchange = async () => { await api(`/api/ledger/${c.dataset.act}`, { method: "POST", body: { active: c.checked } }); loadBrand(); }));
   box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => { await api(`/api/ledger/${b.dataset.del}`, { method: "DELETE" }); loadBrand(); }));
 }
@@ -285,7 +256,7 @@ $("#kitImport").onclick = async () => {
 async function loadAI() {
   const v = await api("/api/ai"); H.ai = v;
   $("#aiNow").innerHTML = v.own ? `Your agent writes with <b>your ${esc(v.presets[v.own.provider]?.label || v.own.provider)} key</b> (${esc(v.own.model)}, ${esc(v.own.key_hint)}).`
-    : v.free_starter ? `Your agent writes with the <b>free starter model</b> (${v.free_daily} AI calls a day). Add your own key for more, or use House Style from Claude or ChatGPT.`
+    : v.free_starter ? `Your agent writes with the <b>free starter model</b> (${v.free_daily} AI calls a day). Add your own key for more, or use HuhQueue from Claude or ChatGPT.`
     : `Your agent writes with the <b>built-in writer</b> (no AI). Add a key or connect Claude/ChatGPT for richer captions.`;
   $("#aiMcp").textContent = S.session.mcp_url;
   const sel = $("#aiProv");

@@ -219,7 +219,7 @@ def rule_draft(service: str, article: dict) -> str:
         parts += ["What's your take?", u, tags]
         text = "\n\n".join(p for p in parts if p)
     elif service == "instagram":
-        parts = [f"{t} ✨", d, k, f"Source: {article['site']} (link in bio)", tags]
+        parts = [t, d, k, f"Source: {article['site']} (link in bio)", tags]
         text = "\n\n".join(p for p in parts if p)
     elif service == "youtube":
         text = "\n\n".join(p for p in [t, d, k, f"Read more: {u}", tags] if p)
@@ -233,7 +233,7 @@ def rule_draft(service: str, article: dict) -> str:
 def thread_draft(service: str, article: dict, max_parts: int = 5) -> str:
     """Hook, then one key sentence per post from the article body, then the link."""
     lim = min(limit_for(service), TARGET.get(service, limit_for(service)))
-    parts = [fit(service, "\n\n".join(p for p in [article["title"], article["description"]] if p) + " 🧵", lim)]
+    parts = [fit(service, "\n\n".join(p for p in [article["title"], article["description"]] if p), lim)]
     seen = article["description"].lower()
     for para in article.get("paragraphs", []):
         if len(parts) >= max_parts - 1:

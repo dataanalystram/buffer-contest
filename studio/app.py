@@ -1,4 +1,4 @@
-"""HuhQueue Studio — the Buffer Commit edition web app (FastAPI).
+"""HuhQueue — the Buffer Commit edition web app (FastAPI).
 
 Run:  uvicorn studio.app:create_app --factory   (env: BUFFER_CLIENT_ID, BUFFER_CLIENT_SECRET, SESSION_SECRET, PUBLIC_URL)
 """
@@ -35,7 +35,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         print(f"migrate: copied {copied or 'nothing (target already has data)'}", flush=True)
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
-    app = FastAPI(title="HuhQueue Studio — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
+    app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
     house = house_mod.House(studio, http=http)
     studio.house = house
     app.state.settings, app.state.store, app.state.buffer, app.state.studio, app.state.house = s, store, buffer, studio, house
@@ -262,6 +262,23 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def queue(request: Request, status: str = "scheduled"):
         return studio.queue(actor(request), status)
 
+    # one edit path for posts already in Buffer: the Planner's drag-and-drop, its edit dialog, REST and MCP all land here
+    @app.patch("/api/posts/{post_id}")
+    def post_update(post_id: str, request: Request, body: dict = Body(...)):
+        return studio.update_post(actor(request, write=True), post_id, body.get("text"), body.get("due_at"))
+
+    @app.post("/api/posts/{post_id}/reschedule")
+    def post_reschedule(post_id: str, request: Request, body: dict = Body(...)):
+        return studio.reschedule_post(actor(request, write=True), post_id, body.get("due_at") or "")
+
+    @app.delete("/api/posts/{post_id}")
+    def post_delete(post_id: str, request: Request):
+        return studio.delete_draft(actor(request, write=True), post_id)
+
+    @app.post("/api/approvals/{approval_id}/reschedule")
+    def approval_reschedule(approval_id: int, request: Request, body: dict = Body(...)):
+        return studio.reschedule_approval(actor(request, write=True), approval_id, body.get("due_at") or "")
+
     @app.get("/api/approvals")
     def approvals(request: Request, status: str = "pending"):
         return studio.approvals(actor(request), status)
@@ -320,7 +337,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def audit(request: Request, limit: int = 100):
         return studio.audit(actor(request), min(limit, 500))
 
-    # ------------------------------------------------------------ House Style: media, brand kit, ledger, agent, calendar
+    # ------------------------------------------------------------ HuhQueue: media, brand kit, ledger, agent, calendar
     @app.get("/m/{token}", include_in_schema=False)
     def media(token: str, request: Request):
         m = house.get_media(token)

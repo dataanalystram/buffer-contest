@@ -1,4 +1,4 @@
-// HuhQueue Studio front end. Talks only to this server; Buffer tokens never reach the browser.
+// HuhQueue front end. Talks only to this server; Buffer tokens never reach the browser.
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -193,10 +193,16 @@ $("#refreshCh").onclick = () => loadChannels(true);
 // ---------------------------------------------------------------- tabs
 document.querySelectorAll(".rail button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 function showTab(name) {
+  if (name === "calendar" || name === "queue") { // both live in the Planner now
+    if (name === "queue") { try { const s = JSON.parse(localStorage.getItem("hq_planner") || "{}"); s.view = "list"; localStorage.setItem("hq_planner", JSON.stringify(s)); } catch (_) {} }
+    name = "planner";
+  }
+  if (!document.getElementById("tab-" + name)) name = "agent";
+  if (name !== "planner") history.replaceState(null, "", name === "agent" ? "/" + (S.session?.demo ? "?demo=1" : "") : "/?tab=" + name);
   document.querySelectorAll(".rail button").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   window.scrollTo({ top: 0 });
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
-  ({ home: loadHome, radar: loadRadar, approvals: loadApprovals, queue: loadQueue, agents: loadTokens, activity: loadAudit }[name] || (window.HS_TABS || {})[name] || (() => {}))();
+  ({ home: loadHome, radar: loadRadar, approvals: loadApprovals, agents: loadTokens, activity: loadAudit }[name] || (window.HS_TABS || {})[name] || (() => {}))();
 }
 
 // ---------------------------------------------------------------- home: what needs you
@@ -341,25 +347,6 @@ async function loadApprovals() {
     box.appendChild(el);
   }
 }
-
-// ---------------------------------------------------------------- queue
-let queueReq = 0;
-async function loadQueue() {
-  const box = $("#queue"), my = ++queueReq; box.innerHTML = `<p class="muted">Loading from Buffer…</p>`;
-  try {
-    const rows = await api("/api/queue?status=" + $("#queueStatus").value);
-    if (my !== queueReq) return; // a newer request (e.g. filter changed) owns the list
-    box.innerHTML = rows.length ? "" : `<div class="empty"><b>Nothing here</b><span>No posts with this status in Buffer.</span></div>`;
-    let day = "";
-    for (const p of rows) {
-      const d = p.dueAt ? new Date(p.dueAt).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }) : "No time set";
-      if (d !== day) { day = d; box.insertAdjacentHTML("beforeend", `<div class="day">${esc(d)}</div>`); }
-      box.insertAdjacentHTML("beforeend", postItem(p));
-    }
-  } catch (e) { box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
-  budget();
-}
-$("#queueStatus").onchange = loadQueue; $("#queueReload").onclick = loadQueue;
 
 // ---------------------------------------------------------------- agents & safety
 function snippets(url, token = "hq_YOUR_TOKEN") {

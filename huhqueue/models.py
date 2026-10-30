@@ -302,7 +302,7 @@ Media.deleted_at = mapped_column(DateTime, nullable=True)     # type: ignore[att
 ApiToken.expires_at = mapped_column(DateTime, nullable=True)  # type: ignore[attr-defined]
 ApiToken.allowed_origins = mapped_column(JSON, default=list)  # type: ignore[attr-defined]  CORS allow-list (headless)
 ApiToken.user_id = mapped_column(String, nullable=True)       # type: ignore[attr-defined]  token capped by this user's role
-# Agent safety layer (OSS_UPGRADE_PLAN item 2): per-token daily caps, channel scope, MCP auto-confirm; 0 / [] = no limit
+# Agent safety layer: per-token daily caps, channel scope, MCP auto-confirm; 0 / [] = no limit
 ApiToken.max_public_per_day = mapped_column(Integer, default=0)    # type: ignore[attr-defined]
 ApiToken.max_actions_per_day = mapped_column(Integer, default=0)   # type: ignore[attr-defined]
 ApiToken.allowed_channel_ids = mapped_column(JSON, default=list)   # type: ignore[attr-defined]

@@ -1,4 +1,4 @@
-// "+ Add" dialog (Linktree-style): paste a link or search, categories on the left, block tiles, then a list of
+// "+ Add" dialog: paste a link or search, categories on the left, block tiles, then a list of
 // blocks and brand buttons. A pasted URL becomes the matching brand button (or a plain link); YouTube / Spotify links
 // can also be embedded as a player.
 import { AnimatePresence, motion } from 'motion/react'

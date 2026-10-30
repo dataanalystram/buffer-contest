@@ -1,6 +1,6 @@
 # Buffer Commit — what was built, and when
 
-HuhQueue Studio is our entry to **Buffer Commit** (build window 28 Oct – 13 Nov 2026, 23:59 PT).
+HuhQueue is our entry to **Buffer Commit** (build window 28 Oct – 13 Nov 2026, 23:59 PT).
 Judges: please only judge the work listed under "Built during Buffer Commit".
 
 | | |
@@ -41,5 +41,10 @@ All of `studio/`, `tests/studio/`, `Dockerfile.studio`, `render.yaml`, `requirem
 | 29 Oct | Plan-limit guard: reads the organization's plan limits, each channel's weekly cap and lock state, and `dailyPostingLimits` before every send; warns on the last allowed post, stops a post Buffer would refuse, shows usage meters and a banner with an upgrade link at 80% |
 | 29 Oct | One-click capture: a bookmarklet that opens any page you're reading in HuhQueue and writes the posts |
 | 29 Oct | New interface: a "Needs you" home, drafts previewed the way each network shows them, thread previews, mobile layout |
+| 30 Oct | Live app moved to Supabase Postgres (pg_cron keep-alive); MCP OAuth sign-in so Claude.ai and ChatGPT can add HuhQueue as a connector; usage counter on the landing page |
+| 30 Oct | The agent: research a topic or link, or edit your own photo or video; on-brand carousels, cards and Reels; brand kit (with website import); the Style Ledger (every correction becomes a rule) and a brand check that cites the rule; AI engine settings. Details in [docs/HUHQUEUE.md](docs/HUHQUEUE.md) |
+| 30 Oct | Renamed the product to **HuhQueue** everywhere (was "House Style"; Style Ledger stays a feature name) |
+| 30 Oct | **Planner**: one tab replaces Calendar and Buffer queue. List / Week / Month, filters (channels, post type, status, caption search), timezone selector, "No date" drafts sidebar, Buffer posting times (`channels.postingSchedule`), click an empty slot to schedule, drag to reschedule, edit, approve and delete-draft actions, light and dark themes, view and filters kept in the URL. New Buffer calls `editPost` and `deletePost` behind one `update_post` action (also `reschedule_post`, `delete_draft`) shared by UI, REST (`PATCH /api/posts/{id}`, `POST /api/posts/{id}/reschedule`, `DELETE /api/posts/{id}`) and MCP; approvals can carry a time. Tests: `tests/studio/test_planner.py` and a Playwright run that switches views, filters by channel and drags a draft. Screenshots in `docs/screenshots/planner-*.png` |
+| 30 Oct | Rendered slides and burned-in captions drop glyphs the brand font can't draw (emoji, symbols) instead of showing empty boxes; the built-in writer no longer appends decorative emoji; no "My brand" placeholder: an unset kit uses the workspace name, or shows no wordmark. Docs describe HuhQueue on its own merits only |
 
 Not used: Buffer analytics/metrics APIs (not available to third-party apps).

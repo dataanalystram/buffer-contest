@@ -1,4 +1,4 @@
-"""House Style: the agent, the brand kit, the Style Ledger, media and the calendar, on top of the Studio actions.
+"""HuhQueue: the agent, the brand kit, the Style Ledger, media and the calendar, on top of the Studio actions.
 
 One agent, eight visible steps: find -> verify -> structure -> format -> render -> caption -> brand check -> ready.
 Every step is stored with what it did, so the web app shows a timeline and an MCP client gets the same record. A
@@ -53,6 +53,10 @@ class House:
         out = {**brand.DEFAULT_KIT, **k}
         out["colors"] = {**brand.DEFAULT_KIT["colors"], **(k.get("colors") or {})}
         out["end_card"] = {**brand.DEFAULT_KIT["end_card"], **(k.get("end_card") or {})}
+        if not (out.get("name") or "").strip() or out["name"] == "My brand":  # unset: use the workspace's name, else none
+            org = ((self.store.user(a.uid) or {}).get("org_name") or "").strip()
+            org = re.sub(r"\s*\((sample|demo)\)$", "", org, flags=re.I)
+            out["name"] = "" if org.lower() in ("", "my organization", "my organisation", "personal", "default") else org[:60]
         out["logo_url"] = self.media_url(out["logo"]) if out.get("logo") else ""
         out["is_set"] = bool(rows)
         return out
@@ -123,7 +127,7 @@ class House:
         kit, rules = self.kit(a), self.rules(a)
         p = brand.visual_params(kit, rules)
         logo = self._logo_bytes(kit)
-        b1, m1 = render.news_card("Your next post, rendered in your house style", kit, p, logo=logo, ratio="4:5", label="Preview",
+        b1, m1 = render.news_card("Your next post, rendered in your brand style", kit, p, logo=logo, ratio="4:5", label="Preview",
                                   credit="example.com")
         b2, _ = render.end_card(kit, p, logo=logo, ratio="4:5")
         self.store.x("DELETE FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
@@ -237,7 +241,7 @@ class House:
         return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
 
     def import_url(self, a: Actor, url: str) -> dict:
-        """For agents: fetch a photo or video the user owns from a public URL into House Style."""
+        """For agents: fetch a photo or video the user owns from a public URL into HuhQueue."""
         ext = urlparse(url).path.rsplit(".", 1)[-1].lower() if "." in urlparse(url).path else ""
         data = self._fetch_bytes(url, MAX_UPLOAD)
         if not data:
@@ -820,35 +824,69 @@ class House:
                 pk["sent"] = info
         self._save(rid, run["steps"], run["result"])
 
-    # ================================================================ calendar
+    # ================================================================ calendar / Planner
+    @staticmethod
+    def _post_type(assets: list, text: str = "") -> str:
+        if not assets:
+            return "text"
+        kinds = [str((x or {}).get("type") or (x or {}).get("mimeType") or "") for x in assets]
+        if any("video" in k for k in kinds):
+            return "video"
+        return "carousel" if len(assets) > 1 else "image"
+
     def calendar(self, a: Actor) -> dict:
+        """Everything the Planner shows: Buffer posts (scheduled, sent, drafts with or without a date), agent posts waiting
+        for approval, and agent packages ready to post, plus each channel's Buffer posting slots. One shape for every item:
+        ref (what to act on), state (scheduled | sent | approval | ready | draft), when (ISO UTC or ''), draggable."""
         items = []
         u = self.store.user(a.uid)
         chans = {c["id"]: c for c in self.studio.channels(a)}
-        for status in ("scheduled", "sent"):
+        for status in ("scheduled", "sent", "draft"):
             try:
                 posts = self.studio.buffer.posts(a.uid, u["org_id"], [status], first=60)
             except Exception:
                 posts = []
             for p in posts:
                 ch = chans.get(p.get("channelId"), {})
-                items.append({"kind": "buffer", "status": status, "when": p.get("dueAt") or p.get("sentAt") or "",
-                              "text": (p.get("text") or "")[:140], "service": ch.get("service", ""),
-                              "channel": ch.get("displayName") or ch.get("name") or "", "id": p.get("id"),
-                              "thumb": ((p.get("assets") or [{}])[0] or {}).get("thumbnail", "") if p.get("assets") else ""})
+                assets = p.get("assets") or []
+                first = (assets[0] or {}) if assets else {}
+                thumb = first.get("thumbnail") or ("" if "video" in str(first.get("type", "")) else first.get("source", "")) or ""
+                items.append({"kind": "buffer", "status": status, "state": status, "ref": f"buffer:{p.get('id')}",
+                              "when": p.get("dueAt") or p.get("sentAt") or "", "text": (p.get("text") or "")[:280],
+                              "service": ch.get("service", ""), "channel": ch.get("displayName") or ch.get("name") or "",
+                              "channel_id": p.get("channelId", ""), "id": p.get("id"), "thumb": thumb,
+                              "type": self._post_type(assets), "draggable": status != "sent",
+                              "link": p.get("externalLink") or ""})
         for ap in self.studio.approvals(a, "pending") if a.kind == "human" else []:
             pl = ap["payload"]
             ch = chans.get(pl.get("channel_id"), {})
-            items.append({"kind": "approval", "status": "needs approval", "when": pl.get("due_at") or "", "text": pl["text"][:140],
-                          "service": ch.get("service", ""), "channel": ch.get("displayName") or ch.get("name", ""), "id": ap["id"]})
+            media = [m for m in ([pl.get("media_url")] + (pl.get("media_urls") or [])) if m]
+            items.append({"kind": "approval", "status": "needs approval", "state": "approval", "ref": f"approval:{ap['id']}",
+                          "when": pl.get("due_at") or "", "text": pl["text"][:280], "service": ch.get("service", ""),
+                          "channel": ch.get("displayName") or ch.get("name", ""), "channel_id": pl.get("channel_id", ""),
+                          "id": ap["id"], "agent": ap["agent_name"], "thumb": media[0] if media else "",
+                          "type": "video" if media and media[0].lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) else
+                          ("carousel" if len(set(media)) > 1 else "image" if media else "text"), "draggable": True})
         for r in self.store.q("SELECT id,result,updated FROM agent_runs WHERE user_id=? AND status='ready' ORDER BY id DESC LIMIT 20", (a.uid,)):
             res = json.loads(r["result"] or "{}")
             for pk in res.get("packages", []):
                 if pk.get("status") == "ready":
-                    items.append({"kind": "ready", "status": "ready to post", "when": "", "text": pk["text"][:140],
-                                  "service": pk["service"], "channel": pk["channel_name"], "run_id": r["id"],
-                                  "thumb": (pk.get("media_urls") or [""])[0], "pass": pk["check"]["pass"]})
-        return {"items": items, "now": datetime.now(timezone.utc).isoformat()}
+                    media = pk.get("media_urls") or []
+                    vid = any(str(m).lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) for m in media)
+                    items.append({"kind": "ready", "status": "ready to post", "state": "ready",
+                                  "ref": f"ready:{r['id']}:{pk['channel_id']}", "when": "", "text": pk["text"][:280],
+                                  "service": pk["service"], "channel": pk["channel_name"], "channel_id": pk["channel_id"],
+                                  "run_id": r["id"], "id": f"{r['id']}:{pk['channel_id']}",
+                                  "thumb": "" if vid else (media[0] if media else ""),
+                                  "type": "reel" if vid else ("carousel" if len(media) > 1 else "image" if media else "text"),
+                                  "pass": pk["check"]["pass"], "draggable": True})
+        try:
+            slots = [{"channel_id": c["id"], "timezone": c.get("timezone") or "Europe/London",
+                      "schedule": c.get("postingSchedule") or []}
+                     for c in self.studio.buffer.posting_schedules(a.uid, u["org_id"]) if c.get("id") in chans]
+        except Exception:
+            slots = []
+        return {"items": items, "slots": slots, "now": datetime.now(timezone.utc).isoformat()}
 
     # ================================================================ helpers
     def _client(self) -> httpx.Client:

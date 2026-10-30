@@ -226,7 +226,7 @@ def test_mcp_runs_bio_actions(api, channel):
     assert r.get("confirm_token") or r.get("status") in ("preview", "confirm")
 
 
-# ------------------------------------------------------------------ Linktree-style editor (feat/bio-linktree)
+# ------------------------------------------------------------------ block editor
 def test_preview_renders_draft_without_saving(api):
     p = _page(api)
     draft = {"title": "Draft title", "theme": {"preset": "ocean"}, "highlight": "x1",
