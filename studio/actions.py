@@ -159,8 +159,9 @@ class Studio:
             ch = chans.get(cid)
             if not ch:
                 raise ActionError("Unknown channel, or this agent token isn't allowed to use it.", 404)
+            editing = bool(p.get("editing"))  # an edit to a post already in Buffer: fields optional, media unchanged
             results.append(self._preflight(ch, p.get("text") or "", self._media_list(p), (p.get("mode") or "queue"),
-                                           clean_options(p.get("options"))))
+                                           clean_options(p.get("options")), probe=not editing, creating=not editing))
         worst = "error" if any(r["status"] == "error" for r in results) else \
             "warning" if any(r["status"] == "warning" for r in results) else "ok"
         return {"status": worst, "ok": worst == "ok", "channels": results, "rule_pack": preflight.RULE_PACK_VERSION}

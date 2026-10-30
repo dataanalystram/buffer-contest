@@ -12,7 +12,7 @@ from studio import drafter
 from studio.app import create_app
 from studio.config import load_settings
 
-from .conftest import ARTICLE, FakeBuffer
+from .conftest import ARTICLE, FakeBuffer, image_bytes
 
 pw = pytest.importorskip("playwright.sync_api")
 
@@ -29,6 +29,9 @@ def live(tmp_path, monkeypatch):
     s = load_settings(client_id="cid", client_secret="sec", public_url=f"http://127.0.0.1:{port}", session_secret="e" * 64,
                       db_path=str(tmp_path / "e2e.db"), secure_cookies=False, ai_base_url="")
     app = create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
+    app.state.studio.media_loader = fake.load_media  # hermetic: preflight "downloads" media from the fake
+    from studio import preflight
+    preflight._CACHE.clear()
     st = app.state.store
     st.upsert_user("acc_1", "ram@example.com", "Ram", "org_1", "HuhByte",
                    {"access_token": "at_1", "refresh_token": "rt_1", "expires_at": time.time() + 3600})
@@ -149,5 +152,105 @@ def test_planner_views_filters_and_drag_to_reschedule(live):
         assert page.locator("[data-testid=planner-item][data-state=sent][draggable]").count() == 0
         assert not errors, errors
         assert not fake.calls  # the sample workspace never reaches Buffer
+    finally:
+        browser.close(); p.stop()
+
+
+def _browser():
+    try:
+        p = pw.sync_playwright().start()
+        return p, p.chromium.launch()
+    except Exception as e:  # no browser on this machine
+        pytest.skip(f"chromium unavailable: {e}")
+
+
+def test_preflight_panel_blocks_then_fix_it_makes_posts_pass(live):
+    """Composer: red chip blocks the send, Fix it threads the X post and crops the Instagram image, then both go."""
+    base, fake, app = live
+    fake.media["https://cdn.example.com/tall.png"] = image_bytes(900, 2000)
+    p, browser = _browser()
+    try:
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
+        ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base)
+        page.get_by_test_id("tab-studio").click()
+        page.get_by_test_id("url-input").fill("https://news.example.com/ai-launch")
+        page.get_by_test_id("draft-btn").click()
+        page.get_by_test_id("draft-card").first.wait_for()
+        page.get_by_test_id("preflight-strip").wait_for()
+        page.locator("[data-testid=preflight-strip-chip]").nth(2).wait_for()
+        assert page.get_by_test_id("preflight-strip-chip").count() == 3
+        x = page.locator("[data-testid=draft-card][data-service=twitter]")
+        long = " ".join(f"Point {i} about the model launch today." for i in range(20))
+        x.get_by_test_id("draft-text").fill(long)
+        x.locator("[data-testid=preflight-chip][data-status=error]").wait_for()
+        x.get_by_test_id("preflight-finding").first.wait_for()
+        assert "too long for X" in x.get_by_test_id("preflight-findings").inner_text()
+        n = len(fake.created)
+        x.get_by_test_id("draft-mode").select_option("draft")
+        x.get_by_test_id("send-draft").click()
+        x.get_by_test_id("draft-err").wait_for()
+        assert len(fake.created) == n  # blocked before createPost
+        x.get_by_test_id("preflight-fix").click()
+        x.locator("[data-testid=preflight-chip][data-status=ok]").wait_for()
+        assert "---" in x.get_by_test_id("draft-text").input_value()
+        x.get_by_test_id("preflight-undo").wait_for()
+        x.get_by_test_id("send-draft").click()
+        x.get_by_test_id("draft-ok").wait_for()
+        assert "thread" in fake.created[-1]["metadata"]["twitter"]
+        # Instagram: a 9:20 PNG is red (aspect) and amber (PNG); Fix it crops and converts it with Pillow
+        ig = page.locator("[data-testid=draft-card][data-service=instagram]")
+        ig.get_by_test_id("draft-media").fill("https://cdn.example.com/tall.png")
+        ig.locator("[data-testid=preflight-chip][data-status=error]").wait_for()
+        ig.get_by_test_id("preflight-fix").click()
+        ig.locator("[data-testid=preflight-chip][data-status=ok]").wait_for()
+        assert ig.get_by_test_id("draft-media").input_value().startswith(base + "/m/")
+        ig.get_by_test_id("draft-mode").select_option("draft")
+        ig.get_by_test_id("send-draft").click()
+        ig.get_by_test_id("draft-ok").wait_for()
+        # a warning needs the Send anyway box: an image the server can't download
+        li = page.locator("[data-testid=draft-card][data-service=linkedin]")
+        li.get_by_test_id("draft-media").fill("https://cdn.example.com/missing.jpg")
+        li.locator("[data-testid=preflight-chip][data-status=warning]").wait_for()
+        li.get_by_test_id("draft-mode").select_option("draft")
+        li.get_by_test_id("send-draft").click()
+        li.get_by_test_id("draft-err").wait_for()
+        li.get_by_test_id("preflight-override").check()
+        li.get_by_test_id("send-draft").click()
+        li.get_by_test_id("draft-ok").wait_for()
+        assert not errors, errors
+    finally:
+        browser.close(); p.stop()
+
+
+def test_planner_dialog_preflight(live):
+    """Planner new-post dialog in the sample workspace: a too-long X post is blocked until Fix it threads it."""
+    base, fake, app = live
+    p, browser = _browser()
+    try:
+        ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Dublin")
+        ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base + "/demo")
+        page.get_by_test_id("tab-planner").click()
+        page.get_by_test_id("planner-new").click()
+        page.get_by_test_id("planner-dialog-channel").select_option("demo_x")
+        page.get_by_test_id("planner-dialog-text").fill("word " * 80)
+        dlg = page.get_by_test_id("planner-preflight")
+        dlg.locator("[data-testid=preflight-chip][data-status=error]").wait_for()
+        page.get_by_test_id("planner-dialog-save").click()
+        assert "Preflight" in page.get_by_test_id("planner-dialog-error").inner_text()
+        dlg.get_by_test_id("preflight-fix").click()
+        dlg.locator("[data-testid=preflight-chip][data-status=ok]").wait_for()
+        page.get_by_test_id("planner-dialog-save").click()
+        page.get_by_test_id("toast").get_by_text("Scheduled in Buffer").wait_for()
+        assert not errors, errors
+        assert not fake.calls
     finally:
         browser.close(); p.stop()

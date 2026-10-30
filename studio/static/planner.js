@@ -358,11 +358,28 @@ function plDialog(mode, i) {
   $("#plDlgDraft").hidden = !isNew;
   $("#plDlgNote").textContent = i.kind === "approval" ? "It stays in Approvals until you approve it, then goes out at this time." : i.state === "draft" ? "It stays a draft in Buffer, with this time." : "";
   $("#plDlgErr").textContent = "";
+  $("#plDlgPf").hidden = resched || !(isNew || i.kind === "buffer");
+  if (!$("#plDlgPf").hidden) { PL.pf.run(true); } else { $("#plDlgPf").innerHTML = ""; }
   if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
   (resched ? $("#plDlgWhen") : isNew ? $("#plDlgChSel") : $("#plDlgText")).focus();
 }
+// preflight in the dialog: the same server check as the composer, REST and MCP
+PL.pf = pfPanel($("#plDlgPf"), () => {
+  const { mode, i } = PL.edit || {};
+  if (!mode || mode === "reschedule") return null;
+  if (mode === "new") return { channel_id: $("#plDlgChSel").value, text: $("#plDlgText").value, media_url: $("#plDlgMedia").value.trim(), mode: "schedule" };
+  return { channel_id: i.channel_id, text: $("#plDlgText").value, mode: i.state === "draft" ? "draft" : "queue", editing: true };
+}, (r) => { $("#plDlgText").value = r.text; if (PL.edit?.mode === "new") $("#plDlgMedia").value = r.media_url || ""; });
+["#plDlgText", "#plDlgMedia"].forEach((s) => $(s).addEventListener("input", () => PL.pf.run()));
+$("#plDlgChSel").addEventListener("change", () => PL.pf.run(true));
 async function plDialogSave(asDraft) {
   const { mode, i } = PL.edit || {}, err = $("#plDlgErr"), btn = $("#plDlgSave");
+  if (mode === "new" || (mode === "edit" && $("#plDlgText").value !== i.text)) {
+    if (!PL.pf.result) await PL.pf.run(true);
+    const why = PL.pf.blocked();
+    if (why) { err.textContent = why; return; }
+  }
+  const ov = PL.pf.override();
   const whenV = $("#plDlgWhen").value;
   if (!whenV && !asDraft) { err.textContent = "Pick a date and time"; return; }
   const inst = whenV ? fromLocalInput(whenV) : null;
@@ -370,6 +387,7 @@ async function plDialogSave(asDraft) {
   try {
     if (mode === "new") {
       const body = { channel_id: $("#plDlgChSel").value, text: $("#plDlgText").value, media_url: $("#plDlgMedia").value.trim(), mode: asDraft ? "draft" : "schedule" };
+      if (ov) body.override_warnings = true;
       if (!asDraft) body.due_at = inst.toISOString();
       const pv = await api("/api/posts/preview", { method: "POST", body });
       await api("/api/posts/submit", { method: "POST", body: { confirm_token: pv.confirm_token } });
@@ -379,6 +397,7 @@ async function plDialogSave(asDraft) {
       if ($("#plDlgText").value !== i.text) body.text = $("#plDlgText").value;
       if (whenV && (!i.when || Math.abs(inst - new Date(i.when)) >= 60000)) body.due_at = inst.toISOString();
       if (!Object.keys(body).length) { closeDlg(); return; }
+      if (ov) body.override_warnings = true;
       await api(`/api/posts/${encodeURIComponent(i.id)}`, { method: "PATCH", body });
       toast("Saved in Buffer");
     } else {

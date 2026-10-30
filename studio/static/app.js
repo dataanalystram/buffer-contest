@@ -16,12 +16,27 @@ async function api(path, opts = {}) {
 }
 function toast(msg, ms = 3200) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms); }
 
-// Buffer-style character counting (mirrors studio/drafter.py)
+// Buffer-style character counting (mirrors studio/preflight.py count_text; the server is the source of truth)
 const LIMITS = { twitter: 280, linkedin: 3000, instagram: 2196, facebook: 5000, threads: 500, bluesky: 300, mastodon: 500, tiktok: 2200, youtube: 5000, pinterest: 500, googlebusiness: 4000, startPage: 2000 };
-const URL_RE = /https?:\/\/\S+/g;
+const URL_RE = /https?:\/\/[^\s<>"]+/g;
+const SEG = typeof Intl !== "undefined" && Intl.Segmenter ? new Intl.Segmenter() : null;
+const graphemeList = (t) => (SEG ? [...SEG.segment(t)].map((x) => x.segment) : [...t]);
+const X_LIGHT = [[0, 4351], [8192, 8205], [8208, 8223], [8242, 8247]];
+const isEmoji = (g) => /\p{Extended_Pictographic}|\u200d|\ufe0f/u.test(g) && [...g].some((c) => c.codePointAt(0) > 0x22ff);
+function xCount(t) {
+  let n = 0;
+  for (const g of graphemeList(t.normalize("NFC").replace(URL_RE, "\u0000"))) {
+    if (g === "\u0000") { n += 23; continue; }
+    if (isEmoji(g)) { n += 2; continue; }
+    for (const c of g) { const cp = c.codePointAt(0); n += X_LIGHT.some(([a, b]) => cp >= a && cp <= b) ? 1 : 2; }
+  }
+  return n;
+}
 function count(svc, t) {
-  if (svc === "bluesky") return [...t.replace(URL_RE, (u) => { try { return new URL(u).hostname.slice(0, 40) + "x".repeat(16); } catch (_) { return u; } })].length;
-  if (svc === "twitter" || svc === "mastodon") return t.replace(URL_RE, "x".repeat(23)).length;
+  t = t.replace(/\r\n/g, "\n");
+  if (svc === "twitter") return xCount(t);
+  if (svc === "bluesky") return graphemeList(t.replace(URL_RE, (u) => { try { const p = new URL(u); return p.hostname + u.split(p.host)[1].slice(0, 16); } catch (_) { return u; } })).length;
+  if (svc === "mastodon") return t.replace(URL_RE, "x".repeat(23)).replace(/(@[A-Za-z0-9_]+)@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "$1").length;
   if (svc === "linkedin") return t.replace(URL_RE, "x".repeat(24)).length;
   if (svc === "instagram") return t.length + (t.match(/\n/g) || []).length;
   return t.length;
@@ -34,6 +49,76 @@ const splitThread = (svc, t) => (THREADS.has(svc) ? t.split(/\n[ \t]*---[ \t]*\n
 const initials = (n) => (n || "?").replace(/[^\p{L}\p{N} ]/gu, "").split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
 const avatar = (c) => (c.avatar ? `<img class="av" src="${esc(c.avatar)}" alt="">` : `<span class="av" aria-hidden="true">${esc(initials(c.displayName || c.name))}</span>`);
 const chOf = (id) => S.channels.find((c) => c.id === id) || { id, service: "", name: id };
+
+// ---------------------------------------------------------------- preflight ("Never Bounced")
+// One panel used by the composer cards and the Planner dialog. It asks the server (the same check REST and MCP use),
+// shows a green/amber/red chip, the findings with their source, a one-click "Fix it", and a "Send anyway" box for warnings.
+const PF_WORD = { ok: "Ready", warning: "Check", error: "Blocked" };
+const PF_ICON = { ok: "✓", warning: "!", error: "×" };
+function pfChip(r, extra = "") {
+  return `<span class="pf-chip s-${esc(r.status)}" data-testid="preflight-chip" data-status="${esc(r.status)}" ${extra}><b aria-hidden="true">${PF_ICON[r.status]}</b><span class="sr">${PF_WORD[r.status]}: </span>${esc(r.chip)}</span>`;
+}
+function pfPanel(box, getPost, onFix) {
+  const st = { result: null, seq: 0, timer: 0, before: null };
+  box.classList.add("pf"); box.setAttribute("aria-live", "polite");
+  const draw = () => {
+    const r = st.result;
+    if (!r) { box.innerHTML = `<div class="pf-row"><span class="pf-chip s-wait" data-testid="preflight-chip" data-status="checking">Checking…</span></div>`; return; }
+    const fixes = (r.fixes || []).filter((f) => f.id !== "reencode");
+    const items = r.findings.map((f) => `<li class="pf-f l-${esc(f.level)}" data-testid="preflight-finding" data-level="${esc(f.level)}"><span class="pf-lvl">${esc({ error: "Error", warning: "Warning", info: "Note" }[f.level])}</span><span>${esc(f.message)}${f.source ? ` <a href="${esc(f.source.split(" ; ")[0])}" target="_blank" rel="noopener" data-testid="preflight-source">Rule</a>` : ""}</span></li>`).join("");
+    box.innerHTML = `<div class="pf-row">${pfChip(r)}
+        ${fixes.length ? `<button type="button" class="btn2 sm pf-fix" data-testid="preflight-fix" title="${esc(fixes.map((f) => f.label).join(" · "))}">Fix it</button>` : ""}
+        ${st.before ? `<button type="button" class="link" data-testid="preflight-undo">Undo fix</button>` : ""}</div>
+      ${items ? `<ul class="pf-list" data-testid="preflight-findings">${items}</ul>` : ""}
+      ${r.status === "warning" ? `<label class="chk pf-ov" data-testid="preflight-override-label"><input type="checkbox" data-testid="preflight-override"> Send anyway: I've read the warning</label>` : ""}`;
+    const fb = $("[data-testid=preflight-fix]", box);
+    if (fb) fb.onclick = fix;
+    const ub = $("[data-testid=preflight-undo]", box);
+    if (ub) ub.onclick = () => { const b = st.before; st.before = null; onFix({ text: b.text, media_urls: b.media_urls, media_url: b.media_urls[0] || "" }); run(); };
+  };
+  async function run(now = false) {
+    clearTimeout(st.timer);
+    const go = async () => {
+      const post = getPost(); if (!post || !post.channel_id) { box.innerHTML = ""; st.result = null; return; }
+      const my = ++st.seq; st.result = null; draw();
+      try { const r = await api("/api/preflight", { method: "POST", body: post }); if (my === st.seq) { st.result = r.channels[0]; draw(); box.dispatchEvent(new CustomEvent("preflight", { bubbles: true })); } }
+      catch (e) { if (my === st.seq) box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+    };
+    if (now) return go();
+    st.timer = setTimeout(go, 450);
+  }
+  async function fix() {
+    const post = getPost(), b = $("[data-testid=preflight-fix]", box);
+    b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Fixing…`;
+    try {
+      const r = await api("/api/preflight/fix", { method: "POST", body: { ...post, fixes: "all" } });
+      st.before = r.before; onFix(r); st.result = r.preflight; st.seq++; draw();
+      box.dispatchEvent(new CustomEvent("preflight", { bubbles: true }));
+      toast(r.applied.length ? `Fixed for ${r.preflight.network}: ${r.applied.length} change${r.applied.length > 1 ? "s" : ""}` + (r.needs_reencode ? " · the video still needs re-encoding" : "") : "Nothing to fix automatically", 4000);
+    } catch (e) { toast(e.message, 5000); draw(); }
+  }
+  return {
+    run, get result() { return st.result; },
+    override() { const c = $("[data-testid=preflight-override]", box); return !!(c && c.checked); },
+    blocked() { // why sending must wait, or "" when it can go
+      const r = st.result; if (!r) return "Preflight is still checking this post.";
+      if (r.status === "error") return "Preflight found something Buffer would reject. Use Fix it or change the post.";
+      if (r.status === "warning" && !this.override()) return "Preflight has a warning. Fix it, or tick Send anyway.";
+      return "";
+    },
+  };
+}
+function pfStrip() {
+  const strip = $("#pfStrip"); if (!strip) return;
+  const cards = [...document.querySelectorAll("[data-testid=draft-card]")];
+  const rs = cards.map((c) => c._pf && c._pf.result).filter(Boolean);
+  strip.hidden = !cards.length;
+  const n = { ok: 0, warning: 0, error: 0 }; rs.forEach((r) => n[r.status]++);
+  strip.innerHTML = `<span class="pf-sum" data-testid="preflight-summary">Preflight: ${n.ok} ready${n.warning ? `, ${n.warning} to check` : ""}${n.error ? `, ${n.error} blocked` : ""}${rs.length < cards.length ? " (checking…)" : ""}</span>` +
+    cards.map((c, i) => c._pf && c._pf.result ? `<button type="button" class="pf-jump" data-testid="preflight-strip-chip" data-i="${i}" data-service="${esc(c.dataset.service)}" aria-label="Go to the ${esc(netName(c.dataset.service))} post">${pfChip(c._pf.result)}</button>` : "").join("");
+  strip.querySelectorAll(".pf-jump").forEach((b) => (b.onclick = () => { const c = cards[+b.dataset.i]; c.scrollIntoView({ behavior: "smooth", block: "center" }); $("textarea", c).focus({ preventScroll: true }); }));
+}
+document.addEventListener("preflight", pfStrip);
 
 // ---------------------------------------------------------------- boot
 async function boot() {
@@ -136,6 +221,7 @@ function renderDrafts() {
       </div>
       <div class="meter"><div class="bar" aria-hidden="true"><i></i></div><div class="row"><span>${d.engine === "ai" ? "Written by AI" : "Written from the article"}</span><span data-testid="draft-count"></span></div></div>
       <div class="media"><input data-testid="draft-media" type="url" aria-label="Image or video URL" placeholder="Image or video URL (https)" value="${esc(d.media_url)}"></div>
+      <div data-testid="preflight-panel"></div>
       <div class="dact"><select data-testid="draft-mode" aria-label="How to send">${modeOptions(ch.needs_media && !d.media_url ? "draft" : "queue")}</select>
         <input type="datetime-local" data-testid="draft-due" aria-label="Date and time" hidden>
         <button class="btn2" data-testid="send-draft">Send to Buffer</button></div>
@@ -153,11 +239,15 @@ function renderDrafts() {
     };
     const updPic = () => { const u = media.value.trim(); pic.hidden = !/^https:\/\/\S+\.(png|jpe?g|gif|webp)(\?|$)/i.test(u) && !(u && u === d.media_url); if (!pic.hidden) pic.src = u; };
     pic.onerror = () => (pic.hidden = true);
-    ta.addEventListener("input", upd); upd(); media.addEventListener("input", updPic); updPic();
-    mode.addEventListener("change", () => (due.hidden = mode.value !== "schedule"));
+    el._pf = pfPanel($("[data-testid=preflight-panel]", el), () => ({ channel_id: d.channel_id, text: ta.value, media_url: media.value.trim(), mode: mode.value }),
+      (r) => { ta.value = r.text; media.value = r.media_url || ""; upd(); updPic(); });
+    ta.addEventListener("input", () => { upd(); el._pf.run(); }); upd(); media.addEventListener("input", () => { updPic(); el._pf.run(); }); updPic();
+    mode.addEventListener("change", () => { due.hidden = mode.value !== "schedule"; el._pf.run(); });
     $("[data-testid=send-draft]", el).onclick = () => sendCard(el, d);
     box.appendChild(el);
   });
+  document.querySelectorAll("[data-testid=draft-card]").forEach((c) => c._pf.run(true));
+  pfStrip();
 }
 
 async function sendCard(el, d, forcedMode) {
@@ -166,6 +256,12 @@ async function sendCard(el, d, forcedMode) {
   const dueVal = $("[data-testid=draft-due]", el).value;
   const body = { channel_id: d.channel_id, text: $("textarea", el).value, media_url: $("[data-testid=draft-media]", el).value.trim(), mode };
   if (mode === "schedule") { if (!dueVal) { st.innerHTML = `<div class="st err">Pick a date and time</div>`; return false; } body.due_at = new Date(dueVal).toISOString(); }
+  if (el._pf) {
+    if (!el._pf.result) await el._pf.run(true);
+    const why = el._pf.blocked();
+    if (why) { st.innerHTML = `<div class="st err" data-testid="draft-err">${esc(why)}</div>`; return false; }
+    if (el._pf.override()) body.override_warnings = true;
+  }
   btn.disabled = true; btn.innerHTML = `<span class="spin" aria-hidden="true"></span>Sending…`;
   try {
     const pv = await api("/api/posts/preview", { method: "POST", body });
