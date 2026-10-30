@@ -59,6 +59,34 @@ huhqueue/services/bio.py  GRADIENTS  (copied colour values)
             Celestial, Cosmic Fusion, Sublime Light, Ibiza Sunset, Mango, Lush), unmodified; Mango also seeds the
             Sunset theme preset. Hex case normalised.
 
+studio/take.py, studio/takes.py, studio/render_worker.py  One take -> a week (libraries and programs, called; no code copied)
+  The video worker (GitHub Actions take.yml, or a self-hosted machine; requirements-worker.txt) uses, as libraries:
+  - faster-whisper  https://github.com/SYSTRAN/faster-whisper
+      Licence: MIT, Copyright (c) 2023 SYSTRAN. Speech-to-text with word timestamps (`small` model, CPU int8).
+  - Whisper model weights (CTranslate2 conversion "Systran/faster-whisper-small")  https://github.com/openai/whisper
+      Licence: MIT, Copyright (c) 2022 OpenAI. Downloaded at run time, not redistributed.
+  - Silero VAD (the voice activity model bundled inside faster-whisper)  https://github.com/snakers4/silero-vad
+      Licence: MIT, Copyright (c) 2020-present Silero Team. Skips silence before transcription.
+  - PySceneDetect  https://github.com/Breakthrough/PySceneDetect
+      Licence: BSD 3-Clause, Copyright (C) 2014, Brandon Castellano. Scene cuts (ContentDetector) to split shots
+      and snap clip edges.
+  - MediaPipe (Tasks Face Detector) and the BlazeFace short-range model  https://github.com/google-ai-edge/mediapipe
+      Licence: Apache License 2.0, Copyright The MediaPipe Authors. The model file is downloaded at run time from
+      storage.googleapis.com/mediapipe-models; not redistributed. Used for the 9:16 face-tracked reframe.
+  - FFmpeg with libass and libx264  https://ffmpeg.org  (LGPL-2.1+, GPL-2.0+ when built with GPL parts such as x264)
+      Invoked as a separate executable (subprocess) for cutting, cropping, burning in ASS captions and encoding;
+      not linked or bundled. Source: https://ffmpeg.org/download.html
+  The caption styling (ASS with libass), the moment scorer, the crop smoothing, the cover renderer and the slot
+  planner are our own code.
+
+studio/sample_take/*  (sample media, produced by scripts/build_sample_take.py)
+  Source:   "Dr. Fran Chiaramonte, Program Scientist for Physical Sciences ... Light Microscopy Module", NASA Glenn
+            Research Center, images.nasa.gov id GRC-2016-CM-0129.11 (https://images.nasa.gov/details/GRC-2016-CM-0129.11)
+  Licence:  NASA material is generally not subject to copyright in the United States (NASA media usage guidelines,
+            https://www.nasa.gov/nasa-brand-center/images-and-media/). NASA does not endorse HuhQueue.
+  What:     three 9:16 clips, their covers and a poster frame cut from the first three minutes with our pipeline,
+            plus the transcript our worker produced. Fonts in the clips: Anton, Inter (SIL OFL 1.1, studio/fonts).
+
 --------------------------------------------------------------------------------------------------------------
 
 Apache License 2.0 notice for adapted Shoutrrr material:

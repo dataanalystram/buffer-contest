@@ -164,7 +164,8 @@ class Takes:
                           "cover_url": self.sample_url(c["cover"]), "meta": c["meta"], "captions": {}, "placements": [], "sample": True})
         res["clips"] = clips
         layouts = sorted({c["meta"].get("layout") for c in clips})
-        self._step(steps, "reframe", "done", "Face-tracked 9:16 crop" if "track" in layouts else "Centre / blurred-pad layout")
+        self._step(steps, "reframe", "done", "Face-tracked 9:16 crop, full frame with blurred sides where no one is on camera"
+                   if {"track", "mixed"} & set(layouts) else "Full frame with blurred sides (no face on camera)")
         self._step(steps, "captions", "done", "Word-by-word captions in your brand font, clear of the bottom 20%")
         self._step(steps, "covers", "done", "A cover frame at 0.25 s (thumbnailOffset) and an end card on every clip")
         self._save(rid, steps, res)
@@ -624,8 +625,9 @@ class Takes:
         self.store.audit(a.uid, a.label, "place_clips_in_week", "draft", {"take": rid, "placed": okn, "failed": len(results) - okn})
         return {"dry_run": False, "placed": okn, "failed": len(results) - okn, "results": results, "week_of": plan["week_of"],
                 "unplaced": plan.get("unplaced", []),
-                "message": f"{okn} clip post(s) saved as Buffer drafts at your posting times. Nothing is published until you "
-                           "schedule them." if a.kind == "human" else f"{okn} placement(s) submitted under this token's policy."}
+                "message": (f"{okn} clip{'' if okn == 1 else 's'} saved as Buffer drafts at your posting times. Nothing is published "
+                            "until you schedule {}.".format("it" if okn == 1 else "them")) if a.kind == "human"
+                else f"{okn} placement{'' if okn == 1 else 's'} submitted under this token's policy."}
 
 
 def encode(data: bytes) -> str:

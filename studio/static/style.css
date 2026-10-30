@@ -532,7 +532,7 @@ body.pl-dragging .pl-cell,body.pl-dragging .pl-mday{cursor:copy}
 
 /* ---------------------------------------------------------------- One take -> a week */
 .take-form{align-items:end}
-.take-owns{flex-basis:100%;font-size:14px}
+.take-go-row{flex-basis:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .take-head{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin:8px 0 16px}
 .take-head b{font-size:18px;font-weight:600}
 .take-grid{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:32px;align-items:start}
@@ -569,3 +569,6 @@ body.pl-dragging .pl-cell,body.pl-dragging .pl-mday{cursor:copy}
   .pl-chip.s-ghost.landed{animation:land var(--base) ease-out}
   @keyframes land{from{transform:scale(1.08)}to{transform:none}}
 }
+.take-go-row .chk input{width:18px;height:18px;flex:none}
+.ce-words{text-align:left;word-spacing:normal}
+.clip-act .link{white-space:nowrap}

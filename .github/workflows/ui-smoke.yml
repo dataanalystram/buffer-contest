@@ -22,7 +22,7 @@ jobs:
         run: python scripts/ui_smoke.py http://127.0.0.1:8899 shots "${{ github.event.inputs.query || 'OpenAI' }}"
       - name: Browser tests (existing e2e)
         if: always()
-        run: python -m pytest tests/studio/test_e2e_studio.py -q
+        run: python -m pytest tests/studio/test_e2e_studio.py tests/studio/test_take_e2e.py -q
       - if: always()
         run: cp /tmp/uv.log shots/server.log || true
       - uses: actions/upload-artifact@v4

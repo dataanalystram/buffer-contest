@@ -214,8 +214,9 @@ async function spread(out) {
   // ghost items in the Planner, one per placement, in the planned week
   PL.extra = plan.placements.map((p, i) => ({ kind: "ghost", state: "ghost", ref: `ghost:${i}`, when: p.at, text: p.text, service: p.service,
     channel: p.channel_name, channel_id: p.channel_id, id: `ghost:${i}`, thumb: p.cover_url || "", type: "reel", draggable: false, clip_id: p.clip_id, preflight: p.preflight }));
+  if (!PL.tz) plLoadState();
   PL.view = "week"; PL.date = plan.week_of;
-  showTab("planner");
+  showTab("planner");   // loads the Planner (same request path as opening the tab)
   await loadPlanner();
   // keep the earliest landing hour in view
   const zs = PL.extra.map((g) => zoned(new Date(g.when), PL.tz));
