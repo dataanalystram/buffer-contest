@@ -58,7 +58,7 @@ async function boot() {
   await loadChannels();
   budget();
   if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
-  else showTab("home");
+  else showTab(new URLSearchParams(location.search).get("tab") || "agent");
 }
 
 async function showStats() {
@@ -196,7 +196,7 @@ function showTab(name) {
   document.querySelectorAll(".rail button").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   window.scrollTo({ top: 0 });
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
-  ({ home: loadHome, radar: loadRadar, approvals: loadApprovals, queue: loadQueue, agents: loadTokens, activity: loadAudit }[name] || (() => {}))();
+  ({ home: loadHome, radar: loadRadar, approvals: loadApprovals, queue: loadQueue, agents: loadTokens, activity: loadAudit }[name] || (window.HS_TABS || {})[name] || (() => {}))();
 }
 
 // ---------------------------------------------------------------- home: what needs you

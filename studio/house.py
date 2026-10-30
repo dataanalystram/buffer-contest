@@ -118,6 +118,19 @@ class House:
         return {"kit": kit, "found": {"logo": bool(logo_tok), "palette": palette, "theme_color": info["theme_color"],
                                       "handle": info["handle"]}}
 
+    def preview_kit(self, a: Actor) -> dict:
+        """A sample cover and end card with the current kit and ledger, so brand changes are visible at once."""
+        kit, rules = self.kit(a), self.rules(a)
+        p = brand.visual_params(kit, rules)
+        logo = self._logo_bytes(kit)
+        b1, m1 = render.news_card("Your next post, rendered in your house style", kit, p, logo=logo, ratio="4:5", label="Preview",
+                                  credit="example.com")
+        b2, _ = render.end_card(kit, p, logo=logo, ratio="4:5")
+        self.store.x("DELETE FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
+        t1 = self.put_media(a, b1, "preview.jpg", kind="preview", meta=m1)
+        t2 = self.put_media(a, b2, "preview_end.jpg", kind="preview", meta={"type": "photo"})
+        return {"cover": self.media_url(t1), "end": self.media_url(t2), "check": brand.brand_check("", m1, rules, kit)}
+
     # ================================================================ ledger
     def rules(self, a: Actor, include_inactive: bool = False) -> list[dict]:
         sql = "SELECT * FROM style_rules WHERE user_id=?" + ("" if include_inactive else " AND active=1") + " ORDER BY id"

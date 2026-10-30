@@ -1,0 +1,30 @@
+name: ui-smoke
+# Real browser run of the whole House Style loop against the sample workspace; screenshots are uploaded as an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      query: {description: "topic for the agent", required: false, default: "OpenAI"}
+  pull_request:
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - run: pip install -q -r requirements-studio.txt playwright pytest respx pytest-playwright && python -m playwright install --with-deps chromium >/dev/null
+      - name: Start the app (sample workspace, local video render)
+        env: {STUDIO_INSECURE_COOKIES: "1", PUBLIC_URL: "http://127.0.0.1:8899", STUDIO_DB: "/tmp/ui.db", RENDER_WORKER: "local"}
+        run: nohup python -m uvicorn studio.app:create_app --factory --port 8899 > /tmp/uv.log 2>&1 & sleep 5 && curl -sf http://127.0.0.1:8899/healthz
+      - name: Drive the UI
+        run: python scripts/ui_smoke.py http://127.0.0.1:8899 shots "${{ github.event.inputs.query || 'OpenAI' }}"
+      - name: Browser tests (existing e2e)
+        if: always()
+        run: python -m pytest tests/studio/test_e2e_studio.py -q
+      - if: always()
+        run: cp /tmp/uv.log shots/server.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: ui-shots, path: shots, retention-days: 7}

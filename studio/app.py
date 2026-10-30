@@ -351,6 +351,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def brand_save(request: Request, body: dict = Body(...)):
         return house.save_kit(actor(request, write=True), body)
 
+    @app.post("/api/brand/preview")
+    def brand_preview(request: Request):
+        return house.preview_kit(actor(request, write=True))
+
     @app.post("/api/brand/from-website")
     def brand_site(request: Request, body: dict = Body(...)):
         return house.kit_from_website(actor(request, write=True), body.get("url", ""))

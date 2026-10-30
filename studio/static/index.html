@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HuhQueue Studio — built on the Buffer API</title>
-<meta name="description" content="Paste a link, get a post for every channel, approve it, and it lands in your Buffer queue. Open source and agent-first: AI agents can draft, but nothing posts until you approve.">
+<title>HuhQueue House Style — your brand's editor, built on the Buffer API</title>
+<meta name="description" content="An AI editor that learns your brand. It researches the story, renders on-brand carousels and Reels, remembers every correction as a rule, checks each post against your rules, and schedules through Buffer.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,7 +14,7 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
-  <a class="brand" href="/" data-testid="brand"><span class="mark" aria-hidden="true">hq</span><span class="brand-text"><span class="name">HuhQueue Studio</span><span class="built">Built on the Buffer API</span></span></a>
+  <a class="brand" href="/" data-testid="brand"><span class="mark" aria-hidden="true">hq</span><span class="brand-text"><span class="name">House Style</span><span class="built">Built on the Buffer API</span></span></a>
   <nav class="land-nav" id="landNav" aria-label="Main">
     <a href="#how">How it works</a><a href="#agents">For agents</a>
     <a class="btn" href="/login" data-testid="nav-connect">Connect Buffer</a>
@@ -44,8 +44,8 @@
   <div id="landing" class="landing" data-testid="landing" hidden>
     <section class="wrap hero">
       <div class="hero-copy">
-        <h1>Paste a link. Approve the posts. They land in your Buffer queue.</h1>
-        <p class="lede">HuhQueue reads the story and writes one post per channel, counted the way Buffer counts it. Your AI agents can draft here too. Nothing they write goes out until you approve it.</p>
+        <h1>Your brand's editor. It learns from every correction.</h1>
+        <p class="lede">Give it a topic, a link or your own photo or video. It finds and verifies the story, renders a carousel or Reel in your colors, logo and fonts, writes a caption per channel and checks all of it against your Style Ledger. Say “logo smaller” once and it never forgets. Then it lands in Buffer, on your calendar, after you approve.</p>
         <div class="cta">
           <a class="btn big" href="/demo" id="demoBtn" data-testid="try-demo">Try it without signing in</a>
           <a class="btn2 big" href="/login" id="connectBtn" data-testid="connect-buffer">Connect Buffer</a>
@@ -76,11 +76,11 @@
 
     <section class="band" id="how">
       <div class="wrap">
-        <h2 class="h-display">What happens between the link and your queue</h2>
+        <h2 class="h-display">From a topic to your Buffer calendar</h2>
         <div class="points">
-          <div><h3>One post per channel</h3><p>X, LinkedIn, Instagram, Threads, Bluesky and Mastodon each get their own wording and length. Long reads become threads where the network supports them.</p></div>
-          <div><h3>You read it before it ships</h3><p>Each draft is previewed the way its network shows it. Edit in place, then send one or all of them to Buffer as a draft, the next slot or a set time.</p></div>
-          <div><h3>Your Buffer, unchanged</h3><p>Channels, queue and ideas come straight from your Buffer account. HuhQueue adds the writing and the review step, nothing else.</p></div>
+          <div><h3>Research with receipts</h3><p>The agent searches the news, opens the source page, checks other outlets carry it, and pulls out the facts. Every step is on a timeline you can read.</p></div>
+          <div><h3>Rendered in your house style</h3><p>Carousels, single cards and 9:16 Reels in your brand kit: colors, logo, font, handle and end card. Your own photos and clips get the same treatment.</p></div>
+          <div><h3>A ledger that remembers</h3><p>Every correction becomes a written rule. Each render and caption is checked against all of them, and a failed check names the exact rule. Then it goes to Buffer.</p></div>
         </div>
       </div>
     </section>
@@ -109,8 +109,8 @@
     <section class="band inverse" id="agents">
       <div class="wrap split">
         <div class="stack">
-          <h2 class="h-display lg">Agents draft. You decide.</h2>
-          <p class="lede">Claude, ChatGPT or Cursor connect over MCP and write posts for your channels. Their posts wait in your approvals until you read them.</p>
+          <h2 class="h-display lg">Use it here, or from your own Claude or ChatGPT.</h2>
+          <p class="lede">The web app runs the whole loop on its own. Prefer your assistant? Add House Style as a connector and your own subscription does the thinking: research, render, revise, brand check and schedule are all tools.</p>
           <ul class="checks">
             <li>Approval by default, Buffer drafts only, or trusted to schedule. You pick per agent.</li>
             <li>A daily cap on every agent token.</li>
@@ -136,17 +136,117 @@
 
   <div id="app" class="shell" hidden>
     <nav class="rail" aria-label="Sections">
-      <button data-tab="home" data-testid="tab-home" class="on" aria-current="page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Needs you</span><span class="badge hot" id="homeBadge" data-testid="home-badge" hidden>0</span></button>
+      <button data-tab="agent" data-testid="tab-agent"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Make a post</span></button>
+      <button data-tab="calendar" data-testid="tab-calendar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Calendar</span><span class="badge" id="readyBadge" data-testid="ready-badge" hidden>0</span></button>
+      <button data-tab="brand" data-testid="tab-brand"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.7 1.5-1.5 0-.9-.7-1.2-.7-2 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/></svg><span>Brand &amp; ledger</span></button>
+      <button data-tab="home" data-testid="tab-home"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Needs you</span><span class="badge hot" id="homeBadge" data-testid="home-badge" hidden>0</span></button>
       <button data-tab="studio" data-testid="tab-studio"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg><span>Write from a link</span></button>
       <button data-tab="radar" data-testid="tab-radar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19a2 2 0 1 0 0-.01"/><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/></svg><span>News radar</span></button>
       <button data-tab="approvals" data-testid="tab-approvals"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span>Approvals</span><span class="badge" id="apprBadge" data-testid="approvals-badge" hidden>0</span></button>
       <button data-tab="queue" data-testid="tab-queue"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h9"/></svg><span>Buffer queue</span></button>
       <button data-tab="agents" data-testid="tab-agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg><span>Agents</span></button>
+      <button data-tab="ai" data-testid="tab-ai"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></svg><span>AI engine</span></button>
       <button data-tab="activity" data-testid="tab-activity"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg><span>Activity</span></button>
     </nav>
 
     <div class="pane">
-      <div class="tab" id="tab-home">
+      <div class="tab" id="tab-agent">
+        <h1 class="page-title">Make a post</h1>
+        <p class="intro">One agent does the whole job: finds the story, checks it on the source, renders it in your brand, writes a caption per channel and checks every rule you've taught it. You approve what goes to Buffer.</p>
+        <div class="panel compose" id="agentCompose">
+          <div class="seg" role="tablist" aria-label="Start from">
+            <button type="button" role="tab" class="on" data-src="topic" data-testid="src-topic" aria-selected="true">Research a topic</button>
+            <button type="button" role="tab" data-src="link" data-testid="src-link" aria-selected="false">From a link</button>
+            <button type="button" role="tab" data-src="media" data-testid="src-media" aria-selected="false">My photo or video</button>
+          </div>
+          <form id="agentForm" class="agent-form">
+            <div class="field grow" id="fTopic"><label class="label" for="agQuery">Topic</label><input id="agQuery" data-testid="agent-query" placeholder="e.g. OpenAI agents, YC launches this week, Gemini" maxlength="120"></div>
+            <div class="field grow" id="fLink" hidden><label class="label" for="agUrl">Link</label><input id="agUrl" data-testid="agent-url" type="url" placeholder="A news story, launch page or blog post"></div>
+            <div class="field grow" id="fMedia" hidden><label class="label" for="agFile">Photo or video you own</label>
+              <div class="drop" id="drop" data-testid="agent-drop"><input id="agFile" data-testid="agent-file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime"><span id="dropTxt">Drop a JPG, PNG or MP4 here, or choose a file (up to 40 MB)</span></div>
+              <label class="label" for="agBrief">What's it about?</label><input id="agBrief" data-testid="agent-brief" placeholder="One line for the hook and captions" maxlength="140"></div>
+            <div class="field"><label class="label" for="agFormat">Format</label><select id="agFormat" data-testid="agent-format">
+              <option value="auto">Let the agent pick</option><option value="carousel">Carousel (4:5)</option><option value="photo">Single image</option><option value="reel">Reel (9:16 video)</option></select></div>
+            <div><button class="btn big" id="agGo" data-testid="agent-go" type="submit">Make it</button></div>
+          </form>
+          <div class="chips-head"><span class="label" id="agChLbl">Channels</span><span class="muted sm" id="agEngine" data-testid="agent-engine"></span></div>
+          <div class="chips" id="agChips" data-testid="agent-chips" role="group" aria-labelledby="agChLbl"></div>
+        </div>
+        <section id="runView" data-testid="run-view" hidden>
+          <div class="run-grid">
+            <ol class="timeline" id="timeline" data-testid="timeline"></ol>
+            <div class="run-main">
+              <div id="mediaBox" data-testid="run-media"></div>
+              <form class="revise" id="reviseForm" hidden>
+                <label class="label" for="reviseIn">Tell it what to change. It becomes a rule in your Style Ledger.</label>
+                <div class="row"><input id="reviseIn" data-testid="revise-input" placeholder="logo smaller, top left · no hashtags · use #FF5A1F" maxlength="300">
+                  <button class="btn" data-testid="revise-go" type="submit">Fix and remember</button></div>
+                <div class="quickfix" id="quickfix"></div>
+              </form>
+              <div id="learned" data-testid="learned" hidden></div>
+            </div>
+          </div>
+          <h2 class="sec" id="pkgHead" hidden>Ready for Buffer</h2>
+          <div id="packages" class="packages" data-testid="packages"></div>
+        </section>
+        <h2 class="sec">Recent runs</h2>
+        <div id="runList" class="runlist" data-testid="run-list"></div>
+      </div>
+
+      <div class="tab" id="tab-calendar" hidden>
+        <div class="cal-head"><h1 class="page-title" id="calTitle">Calendar</h1>
+          <div class="row tight"><button class="btn2 sm" id="calPrev" data-testid="cal-prev" aria-label="Previous month">‹</button><button class="btn2 sm" id="calToday" data-testid="cal-today">Today</button><button class="btn2 sm" id="calNext" data-testid="cal-next" aria-label="Next month">›</button></div></div>
+        <div class="legend"><span class="lg scheduled">Scheduled in Buffer</span><span class="lg sent">Sent</span><span class="lg approval">Needs approval</span><span class="lg ready">Ready to post</span></div>
+        <div id="readyLane" class="ready-lane" data-testid="ready-lane"></div>
+        <div id="calGrid" class="cal" data-testid="cal-grid"></div>
+      </div>
+
+      <div class="tab" id="tab-brand" hidden>
+        <h1 class="page-title">Brand &amp; Style Ledger</h1>
+        <p class="intro">Your kit is how posts look. The ledger is what House Style has learned from your corrections. Every render and caption follows both, and the brand check cites the rule when something's off.</p>
+        <div class="brand-grid">
+          <form class="panel" id="kitForm">
+            <h2 class="card-title">Brand kit</h2>
+            <div class="row"><input id="kitSite" data-testid="kit-site" placeholder="yourbrand.com" aria-label="Your website"><button class="btn2" type="button" id="kitImport" data-testid="kit-import">Import from website</button></div>
+            <div class="two"><div class="field"><label class="label" for="kitName">Name</label><input id="kitName" data-testid="kit-name" maxlength="60"></div>
+              <div class="field"><label class="label" for="kitHandle">Handle</label><input id="kitHandle" data-testid="kit-handle" placeholder="@yourbrand" maxlength="40"></div></div>
+            <div class="three"><div class="field"><label class="label" for="cPrimary">Ground</label><input type="color" id="cPrimary" data-testid="kit-primary"></div>
+              <div class="field"><label class="label" for="cAccent">Accent</label><input type="color" id="cAccent" data-testid="kit-accent"></div>
+              <div class="field"><label class="label" for="cText">Text</label><input type="color" id="cText" data-testid="kit-text"></div></div>
+            <div class="two"><div class="field"><label class="label" for="kitFont">Headline font</label><select id="kitFont" data-testid="kit-font"><option value="anton">Anton (bold, condensed)</option><option value="poppins">Poppins (round, friendly)</option><option value="inter">Inter (clean, neutral)</option></select></div>
+              <div class="field"><label class="label" for="kitLogo">Logo (PNG with transparency is best)</label><input type="file" id="kitLogo" data-testid="kit-logo" accept="image/png,image/jpeg,image/webp"></div></div>
+            <div class="two"><div class="field"><label class="label" for="ecCta">End card</label><input id="ecCta" data-testid="kit-cta" placeholder="Follow" maxlength="20"></div>
+              <div class="field"><label class="label" for="ecLine">End card line</label><input id="ecLine" data-testid="kit-line" placeholder="AI news made simple" maxlength="60"></div></div>
+            <label class="chk"><input type="checkbox" id="ecOn" data-testid="kit-endcard"> End every video with the end card</label>
+            <div class="field"><label class="label" for="kitVoice">Voice (how you write)</label><textarea id="kitVoice" data-testid="kit-voice" rows="2" maxlength="300" placeholder="Plain, specific, a little dry. No hype."></textarea></div>
+            <div><button class="btn" data-testid="kit-save" type="submit">Save kit</button></div>
+          </form>
+          <div class="panel preview-panel"><h2 class="card-title">How your posts look now</h2><div class="kit-preview" id="kitPreview" data-testid="kit-preview"></div><div id="kitCheck"></div></div>
+        </div>
+        <h2 class="sec">Style Ledger</h2>
+        <form class="quick" id="ruleForm"><label class="sr" for="ruleIn">New rule</label><input id="ruleIn" data-testid="rule-input" placeholder="Teach a rule in plain words: “never say game-changer”, “logo bottom right”, “max 2 hashtags”"><button class="btn2 big" data-testid="rule-add" type="submit">Add rule</button></form>
+        <div id="ledger" data-testid="ledger"></div>
+      </div>
+
+      <div class="tab" id="tab-ai" hidden>
+        <h1 class="page-title">AI engine</h1>
+        <p class="intro">House Style never needs our AI budget. Pick how your agent thinks.</p>
+        <div class="panel"><h2 class="card-title">Right now</h2><p id="aiNow" data-testid="ai-now"></p></div>
+        <div class="engines">
+          <div class="panel"><h2 class="card-title">Use your Claude or ChatGPT</h2>
+            <p class="muted">Add House Style as a connector. Your own subscription does the thinking; House Style supplies the tools (research, render, ledger, brand check, Buffer).</p>
+            <span class="label">Connector URL</span><pre class="code" id="aiMcp" data-testid="ai-mcp"></pre>
+            <p class="muted sm">Claude.ai and ChatGPT sign you in with OAuth. Claude Code: <code>claude mcp add --transport http house-style &lt;URL&gt;</code></p></div>
+          <form class="panel" id="aiForm"><h2 class="card-title">Bring your own API key</h2>
+            <p class="muted">Encrypted on the server, used only for your runs, never shown again.</p>
+            <div class="two"><div class="field"><label class="label" for="aiProv">Provider</label><select id="aiProv" data-testid="ai-provider"></select></div>
+              <div class="field"><label class="label" for="aiModel">Model</label><input id="aiModel" data-testid="ai-model"></div></div>
+            <div class="field" id="aiBaseF" hidden><label class="label" for="aiBase">Base URL</label><input id="aiBase" data-testid="ai-base" placeholder="https://…/v1"></div>
+            <div class="field"><label class="label" for="aiKey">API key</label><input id="aiKey" data-testid="ai-key" type="password" autocomplete="off"></div>
+            <div class="row tight"><button class="btn" data-testid="ai-save" type="submit">Test and save</button><button class="btn2" type="button" id="aiRemove" data-testid="ai-remove" hidden>Remove my key</button></div></form>
+        </div>
+      </div>
+      <div class="tab" id="tab-home" hidden>
         <h1 class="page-title" id="homeTitle" data-testid="home-title">Good to see you.</h1>
         <p class="muted stats" id="homeStats" data-testid="home-stats" hidden></p>
         <form class="quick" id="quickForm">
@@ -265,5 +365,6 @@
   <span class="foot-links"><a href="/privacy">Privacy</a><a id="repoLink" href="https://github.com/dataanalystram/buffer-contest" target="_blank" rel="noopener">Source code</a></span></div></footer>
 <div id="toast" data-testid="toast" role="status" aria-live="polite" hidden></div>
 <script src="/static/app.js"></script>
+<script src="/static/house.js"></script>
 </body>
 </html>
