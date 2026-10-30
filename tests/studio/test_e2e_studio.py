@@ -82,7 +82,7 @@ def test_link_to_buffer_draft_and_agent_approval(live):
         page.get_by_test_id("tab-approvals").click()
         page.get_by_test_id("approval-item").wait_for()
         page.get_by_test_id("approve").click()
-        page.get_by_text("Sent to Buffer", exact=True).first.wait_for()
+        page.get_by_test_id("approval-status").get_by_text("Sent to Buffer").wait_for()
         assert fake.created[-1]["text"] == "Agent post"
         page.get_by_test_id("tab-agents").click()
         page.locator("label.switch").click()
