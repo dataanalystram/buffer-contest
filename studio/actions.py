@@ -222,7 +222,7 @@ class Studio:
         media_urls = [str(u).strip() for u in (p.get("media_urls") or []) if str(u).strip()][:10]
         media = (p.get("media_url") or (media_urls[0] if media_urls else "")).strip()
         for u in ([media] if media else []) + media_urls:
-            if not u.startswith("https://"):
+            if not (u.startswith("https://") or (self.s.public_url.startswith("http://") and u.startswith(self.s.public_url))):
                 raise ActionError("Media must be a public https:// URL (Buffer fetches it from there).")
         warnings = []
         if ch["service"] in NEEDS_MEDIA and not media:

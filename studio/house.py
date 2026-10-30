@@ -441,11 +441,12 @@ class House:
         out, seen = [], {host}
         for l in sources.bing_news(q, self.http, 10) + sources.google_news(q, self.http, 8):
             words = {w for w in re.findall(r"[a-z0-9]+", l["title"].lower()) if len(w) > 2 and w not in stop}
-            src = (l.get("source") or "").lower().removeprefix("www.")
-            if src in seen or not words:
+            src = (urlparse(l["url"]).hostname or "").lower().removeprefix("www.") if "news.google.com" not in l["url"] else (l.get("source") or "").lower()
+            label = (l.get("source") or src).lower().replace(" ", "")
+            if src in seen or label in seen or any(label and label in x.replace(".", "") for x in seen) or not words:
                 continue
             if len(key & words) / len(key) >= 0.4:
-                seen.add(src)
+                seen.update({src, label})
                 out.append(l)
             if len(out) == 3:
                 break
