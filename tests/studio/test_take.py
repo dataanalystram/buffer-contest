@@ -352,6 +352,15 @@ def test_worker_flow_analysis_then_clips_then_drafts_and_survives_a_web_restart(
         assert inp["assets"][0]["video"]["metadata"] == {"thumbnailOffset": 250}
         assert inp["text"].startswith("“")
     assert not any(i.get("mode") in ("shareNow", "shareNext", "addToQueue") and not i.get("saveToDraft") for i in fake.created)
+    # trimming one clip re-renders only that clip on the worker, and its cover hook still quotes the new span
+    c1 = t["clips"][0]
+    r = human.patch(f"/api/takes/{t['id']}/clips/c1", json={"start_ms": int(c1["start"] * 1000) + 6000, "end_ms": int(c1["end"] * 1000)})
+    assert r.status_code == 200 and r.json()["status"] == "rendering"
+    jid3, wf3, inputs3, jt3 = dispatched[-1]
+    spec3 = w.get(f"/api/worker/jobs/{jid3}", headers={"x-job-token": jt3}).json()["spec"]
+    assert [c["id"] for c in spec3["clips"]] == ["c1"] and spec3["clips"][0]["start"] == round(c1["start"] + 6, 2)
+    new = next(c for c in r.json()["clips"] if c["id"] == "c1")
+    assert take.verbatim(new["hook"].rstrip("…"), new["text"])
 
 
 def test_worker_failure_is_reported_on_the_take(human, app, monkeypatch):

@@ -24,6 +24,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+import httpx
+
 from . import brand, demo, drafter, llm, take
 from .actions import CONFIRM_TTL, ActionError, Actor
 from .store import sha
@@ -231,10 +233,7 @@ class Takes:
                     raise take.TakeError("The uploaded video is gone.")
                 src.write_bytes(m["data"])
             else:
-                data = self.h._fetch_bytes(spec["source_url"], int(os.environ.get("HQ_MAX_TAKE_BYTES", str(1500 * 1024 * 1024))))
-                if not data:
-                    raise take.TakeError("Couldn't download that video link (public https, up to 1.5 GB).")
-                src.write_bytes(data)
+                self._download(spec["source_url"], src)
             if spec["kind"] == "take_analyze":
                 analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=MAX_TAKE_SECS)
                 self.on_analysis(jid, analysis, "")
@@ -254,6 +253,26 @@ class Takes:
         finally:
             import shutil
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def _download(self, url: str, dest: Path) -> None:
+        """Stream a linked video to disk (public https host only, size-capped); never held in memory."""
+        limit = int(os.environ.get("HQ_MAX_TAKE_BYTES", str(1500 * 1024 * 1024)))
+        host = urlparse(url).hostname or ""
+        if not url.startswith("https://") or not drafter._public(host):
+            raise take.TakeError("The link must be a public https:// address.")
+        n = 0
+        try:
+            with self.h._client().stream("GET", url) as r:
+                if r.status_code >= 400:
+                    raise take.TakeError(f"Couldn't download that video link (HTTP {r.status_code}).")
+                with open(dest, "wb") as fh:
+                    for chunk in r.iter_bytes(1 << 20):
+                        n += len(chunk)
+                        if n > limit:
+                            raise take.TakeError(f"That video is over {limit // (1024 * 1024)} MB.")
+                        fh.write(chunk)
+        except httpx.HTTPError as e:
+            raise take.TakeError(f"Couldn't download that video link ({e.__class__.__name__}).")
 
     # ------------------------------------------------------------------ callbacks (worker or local)
     def on_analysis(self, jid: int, analysis: dict | None, error: str = "") -> dict:
@@ -486,6 +505,10 @@ class Takes:
             if abs(s - clip["start"]) > 0.04 or abs(e - clip["end"]) > 0.04:
                 clip["start"], clip["end"] = round(s, 2), round(e, 2)
                 clip["text"] = " ".join(w["w"] for w in take.words_in(words, s, e))
+                if body.get("hook") is None and not take.verbatim(clip.get("hook", "").rstrip("…"), clip["text"]):
+                    sents = take.sentences(take.words_in(words, s, e))
+                    if sents:
+                        clip["hook"] = take.best_line(sents, 0, len(sents) - 1)  # the cover keeps quoting the clip
                 rerender = True
                 changed.append("trim")
         if body.get("hook") is not None:
