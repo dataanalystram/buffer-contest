@@ -659,20 +659,26 @@ def fit_text(service: str, text: str, limit: int) -> str:
 
 
 def thread_text(service: str, text: str, limit: int) -> str:
-    """Split into thread parts under the limit, at sentence then word boundaries, numbered n/N."""
-    words = re.split(r"(?<=[.!?])\s+|\s+", " ".join(text.replace("\n---\n", "\n").split()))
+    """Split into numbered thread parts under the limit: whole sentences first, words only for a sentence that is too long."""
+    flat = " ".join(text.replace("\n---\n", "\n").split())
     budget = limit - 6  # room for " 10/12"
+    units: list[str] = []
+    for sent in re.split(r"(?<=[.!?…])\s+", flat):
+        if count_text(service, sent) <= budget:
+            units.append(sent)
+        else:
+            units.extend(sent.split(" "))
     parts, cur = [], ""
-    for w in words:
-        if not w:
+    for u in units:
+        if not u:
             continue
-        cand = (cur + " " + w).strip()
+        cand = (cur + " " + u).strip()
         if count_text(service, cand) <= budget:
             cur = cand
         else:
             if cur:
                 parts.append(cur)
-            cur = w if count_text(service, w) <= budget else fit_text(service, w, budget)
+            cur = u if count_text(service, u) <= budget else fit_text(service, u, budget)
     if cur:
         parts.append(cur)
     if len(parts) > 1:
