@@ -135,20 +135,24 @@ def test_reel_without_worker_falls_back_to_carousel(client):
 def test_github_worker_roundtrip(client, monkeypatch):
     h = client.app.state.house
     h.worker_mode = "github"
-    monkeypatch.setenv("WORKER_SECRET", "s3cret")
-    monkeypatch.setattr(house.House, "_dispatch_github", lambda self, jid: (True, "204"))
+    issued = {}
+    monkeypatch.setattr(house.House, "_dispatch_github", lambda self, jid: (issued.setdefault("t", self.issue_job_token(jid)) and True, "204"))
     r = client.post("/api/agent/runs", json={"query": "x", "format": "reel", "channel_ids": ["demo_ig"]}).json()
     assert r["status"] == "rendering"
     jid = r["result"]["render_job"]["id"]
     assert client.get(f"/api/worker/jobs/{jid}").status_code == 403
-    spec = client.get(f"/api/worker/jobs/{jid}", headers={"x-worker-secret": "s3cret"}).json()
+    assert client.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": "jt_wrong"}).status_code == 403
+    spec = client.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": issued["t"]}).json()
+    assert "_job_token" not in spec["spec"]
     assert spec["spec"]["kind"] == "slideshow" and len(spec["urls"]["slides"]) == 2
     meta = {"type": "video", "width": 1080, "height": 1920, "params": spec["spec"]["params"], "has_logo": True, "has_end_card": True}
-    ok = client.post(f"/api/worker/jobs/{jid}", headers={"x-worker-secret": "s3cret"},
+    ok = client.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": issued["t"]},
                      json={"data": base64.b64encode(b"\x00\x00\x00\x18ftypmp42fake").decode(), "meta": meta}).json()
     assert ok["ok"]
     r2 = client.get(f"/api/agent/runs/{r['id']}").json()
     assert r2["status"] == "ready" and r2["result"]["packages"][0]["media_urls"][0].endswith(".mp4")
+    # the token dies with the job
+    assert client.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": issued["t"]}).status_code == 403
 
 
 def test_failed_step_is_reported_not_spinning(client, monkeypatch):

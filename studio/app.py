@@ -411,21 +411,20 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def calendar(request: Request):
         return house.calendar(actor(request))
 
-    # render worker (GitHub Actions) callbacks, authenticated with the shared WORKER_SECRET
-    def worker_ok(request: Request) -> bool:
-        secret = os.environ.get("WORKER_SECRET", "")
-        return bool(secret) and hmac.compare_digest(request.headers.get("x-worker-secret", ""), secret)
+    # render worker (GitHub Actions) callbacks, authenticated with the job's single-use token
+    def worker_ok(request: Request, jid: int) -> bool:
+        return house.job_token_ok(jid, request.headers.get("x-job-token", ""))
 
     @app.get("/api/worker/jobs/{jid}", include_in_schema=False)
     def worker_job(jid: int, request: Request):
-        if not worker_ok(request):
+        if not worker_ok(request, jid):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         j = house.job_spec(jid)
         return j or JSONResponse({"error": "not found"}, status_code=404)
 
     @app.post("/api/worker/jobs/{jid}", include_in_schema=False)
     async def worker_done(jid: int, request: Request):
-        if not worker_ok(request):
+        if not worker_ok(request, jid):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         body = await request.json()
         data = base64.b64decode(body["data"]) if body.get("data") else None

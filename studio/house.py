@@ -674,22 +674,44 @@ class House:
         return render.slideshow_reel(slides, spec["kit"], spec["params"], logo=logo, ratio=spec.get("ratio", "9:16"))
 
     def _dispatch_github(self, jid: int) -> tuple[bool, str]:
+        """Start the free render worker for one job. It gets a single-use job token (only good for this job, 30 minutes),
+        so there is no long-lived shared secret between the app and the worker."""
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")
+        jt = self.issue_job_token(jid)
         try:
             r = (self.http or httpx.Client(timeout=15)).post(
                 f"https://api.github.com/repos/{repo}/actions/workflows/render.yml/dispatches",
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-                json={"ref": os.environ.get("GH_REF", "main"), "inputs": {"job_id": str(jid), "app": self.s.public_url}})
+                json={"ref": os.environ.get("GH_REF", "main"), "inputs": {"job_id": str(jid), "app": self.s.public_url, "job_token": jt}})
             return (r.status_code == 204, f"GitHub answered {r.status_code}")
         except httpx.HTTPError as e:
             return False, e.__class__.__name__
+
+    def issue_job_token(self, jid: int) -> str:
+        from .store import sha
+        jt = "jt_" + secrets.token_urlsafe(24)
+        rows = self.store.q("SELECT spec FROM render_jobs WHERE id=?", (jid,))
+        spec = json.loads(rows[0]["spec"])
+        spec["_job_token"] = {"hash": sha(jt), "expires": _now() + 1800}
+        self.store.x("UPDATE render_jobs SET spec=? WHERE id=?", (json.dumps(spec), jid))
+        return jt
+
+    def job_token_ok(self, jid: int, jt: str) -> bool:
+        import hmac
+        from .store import sha
+        rows = self.store.q("SELECT spec, status FROM render_jobs WHERE id=?", (jid,))
+        if not rows or not jt or rows[0]["status"] != "queued":
+            return False
+        t = json.loads(rows[0]["spec"]).get("_job_token") or {}
+        return bool(t) and t.get("expires", 0) > _now() and hmac.compare_digest(t.get("hash", ""), sha(jt))
 
     def job_spec(self, jid: int) -> dict | None:
         rows = self.store.q("SELECT * FROM render_jobs WHERE id=?", (jid,))
         if not rows:
             return None
         spec = json.loads(rows[0]["spec"])
+        spec.pop("_job_token", None)
         base = self.s.public_url.rstrip("/") + "/m/"
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
                 "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",

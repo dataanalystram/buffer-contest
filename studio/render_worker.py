@@ -1,6 +1,6 @@
 """Free video render worker. Runs on GitHub Actions (`.github/workflows/render.yml`), dispatched by the app per job:
 
-    WORKER_SECRET=... python -m studio.render_worker --job 12 --app https://huhqueue-studio.onrender.com
+    JOB_TOKEN=jt_... python -m studio.render_worker --job 12 --app https://huhqueue-studio.onrender.com
 
 It reads the job (brand kit, ledger params, media URLs), renders with FFmpeg and posts the MP4 back. The web app's free
 instance never runs FFmpeg itself.
@@ -23,7 +23,7 @@ def main(argv=None) -> int:
     ap.add_argument("--app", required=True)
     args = ap.parse_args(argv)
     base = args.app.rstrip("/")
-    h = {"x-worker-secret": os.environ["WORKER_SECRET"]}
+    h = {"x-job-token": os.environ["JOB_TOKEN"]}
     c = httpx.Client(timeout=120, follow_redirects=True)
     job = c.get(f"{base}/api/worker/jobs/{args.job}", headers=h)
     job.raise_for_status()
