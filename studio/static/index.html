@@ -233,6 +233,7 @@
             <div class="field" id="plDlgCh"><label class="label" for="plDlgChSel">Channel</label><select id="plDlgChSel" data-testid="planner-dialog-channel"></select></div>
             <div class="field" id="plDlgTextF"><label class="label" for="plDlgText">Caption</label><textarea id="plDlgText" data-testid="planner-dialog-text" rows="5" maxlength="5000"></textarea></div>
             <div class="field" id="plDlgMediaF"><label class="label" for="plDlgMedia">Image or video URL (optional)</label><input id="plDlgMedia" data-testid="planner-dialog-media" type="url" placeholder="https://"></div>
+            <div id="plDlgPf" data-testid="planner-preflight"></div>
             <div class="field"><label class="label" for="plDlgWhen">When <span class="muted xs" id="plDlgTz"></span></label><input id="plDlgWhen" data-testid="planner-dialog-when" type="datetime-local"></div>
             <p class="muted xs" id="plDlgNote"></p>
             <p class="st-err" id="plDlgErr" data-testid="planner-dialog-error" role="alert"></p>
@@ -350,6 +351,7 @@
             <button class="btn" id="sendAll" data-testid="send-all">Send all to Buffer</button>
           </span>
         </div>
+        <div class="pf-strip" id="pfStrip" data-testid="preflight-strip" role="group" aria-label="Preflight for each channel" hidden></div>
         <div id="drafts" class="drafts" data-testid="drafts"></div>
         <div class="empty" id="studioEmpty" data-testid="studio-empty"><b>No drafts yet</b><span>Paste a link above. You'll get one post per channel, previewed the way each network shows it. You decide what goes to Buffer.</span></div>
       </div>

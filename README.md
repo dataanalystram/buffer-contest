@@ -47,11 +47,33 @@ the Buffer account you already use.
 - **Video worker** — on the free hosted plan, Reels render on a GitHub Actions worker (`studio/render_worker.py`, `.github/workflows/render.yml`) that fetches the job with a single-use token and posts the MP4 back; self-hosters render in-process.
 - **Brand kit and Style Ledger** — set colours, font, logo, end card and voice, or import them from your website. Say "logo smaller" or "no hype" once and it becomes a written rule; every render and caption follows the ledger, and the brand check names the exact rule a post breaks. Before/after slider on every revision.
 - **Planner** — one tab for the Buffer queue and the calendar: List, Week and Month views; filter by channel, post type, status and caption text; any timezone (defaults to your browser's); a **No date** sidebar for undated drafts; Buffer's **posting times** on the grid; click an empty slot to schedule there; drag a post or draft to reschedule (Buffer `editPost`, the same `update_post` action REST and MCP use; sent posts are locked). View and filters live in the URL and are remembered.
+- **Never Bounced preflight** — every post is checked for every channel before Buffer sees it: text counted the way Buffer counts it, hashtag and mention limits, required fields (YouTube title and category, Pinterest board), media count, type, aspect, size and video specs. Green, amber or red per channel, the rule and its source on each finding, and one-click **Fix it** (thread or trim the caption, crop and convert the image). [More below](#never-bounced-preflight).
 - **Connect Buffer** — OAuth 2.0 Authorization Code + PKCE with a private client. Access and rotating refresh tokens stay encrypted on the server; the browser only holds an opaque session cookie.
 - **Link → drafts** — reads the article and writes one caption per channel, counted the way Buffer counts (UTF-16, LinkedIn URLs = 24, Instagram line breaks = 2, X URLs = 23, Bluesky graphemes) and trimmed to fit.
 - **Send to Buffer** — as a Buffer draft, add to queue, share next, share now or a custom time; image/video by URL; ideas to your Ideas board. Queue and drafts read back from Buffer.
 - **Agents with a leash** — MCP server + REST API per Buffer user. Every write is *preview → single-use confirm token → submit*. Default policy holds agent posts in an **Approvals inbox**; `draft` tokens can only create Buffer drafts; `trusted` tokens can schedule. Daily caps, a one-click **kill switch**, and an **activity log** of every action by you or your agents.
 - **Plays nice with Buffer's limits** — reads `RateLimit` headers (shown live in the header), caches channel lists, backs off on `429` + `Retry-After`.
+
+## Never Bounced preflight
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/preflight-dark.png">
+  <img src="docs/screenshots/preflight-light.png" alt="Composer with a preflight strip: X and Instagram are red (341/280 characters; image 900×2000 outside Instagram's 4:5 to 1.91:1), LinkedIn, Bluesky and Threads are green; each card shows its chip, the finding with a link to the rule, and a Fix it button">
+</picture>
+
+*Preflight in the composer, captured from `/demo`: X is 341/280 and the Instagram image is 9:20, so both are red and blocked. One click on **Fix it** threads the X post and crops the image to 4:5 JPEG ([after](docs/screenshots/preflight-fixed-light.png)).*
+
+A post that Buffer or the network would refuse is caught before `createPost` or `editPost`, on every surface:
+
+- **Where it runs** — the composer cards and the Planner's new-post and edit dialog (a chip per channel, plus a summary strip), the REST API and MCP. The same code (`studio/preflight.py`) runs inside `preview_post`, again right before `createPost` (so a post that waited in Approvals is re-checked), and before every `editPost`.
+- **Red, amber, green** — errors block with no override; warnings (a PNG for Instagram, an image the server couldn't download, a signed link that may expire) block until you tick **Send anyway** (`override_warnings: true`); notes never block.
+- **Counted Buffer's way** — UTF-16 on most networks, Instagram line breaks count 2, LinkedIn URLs 24, Mastodon URLs 23 (and `@user@server` counts `@user`), X's weighted count (URL 23, emoji 2, CJK 2), Bluesky graphemes. Buffer's own examples are unit tests (`𝗛𝗲𝗹𝗹𝗼` = 10 / 5 / 10, family emoji = 8 / 1 / 2). TikTok drops to 2,200 when a video is attached; Mastodon uses the server's limit.
+- **Media** — Pillow reads each image (format, bytes, width × height) and ffprobe reads video (codec, fps, duration, bitrate, audio) and checks them against each network's published specs: Instagram 4:5 to 1.91:1, JPEG, 8 MB, Reels 3 s to 15 min at 23 to 60 fps and up to 25 Mbps; X up to 4 photos or one video; LinkedIn multi-image 2 to 20 images only; Threads carousels up to 20; Bluesky 4 images; TikTok photo and video specs; YouTube Shorts length.
+- **Fix it** — trims or threads the caption under the real count, keeps the first N media the network takes, crops/converts/recompresses images with Pillow (saved as new media with a stable public URL), sets a YouTube title and category, and flags video that needs re-encoding. **Undo fix** puts the original back.
+- **Honest rules** — every limit links the official page it was read on, with the date, in [docs/PREFLIGHT.md](docs/PREFLIGHT.md) (generated from the code; a test fails if they drift). Rules we couldn't verify are listed there and not enforced.
+- **Buffer's HTTP 200 errors** — a refused mutation comes back as HTTP 200 with `createPost.message`; HuhQueue treats it as a failure and shows Buffer's message in the UI, the REST API (422) and MCP, and in the activity log.
+
+API: `POST /api/preflight` (dry run), `POST /api/preflight/fix`, `GET /api/preflight/rules`. MCP: `preflight_post`, `autofix_post`, `list_rules`.
 
 ## What we built during the Commit window (28 Oct to 13 Nov)
 
@@ -67,6 +89,7 @@ Everything below was built in the Buffer Commit window; the pre-existing self-ho
 | 30 Oct | The agent ("Make a post"): research a topic or link or edit your own photo or video, on-brand carousels, cards and Reels, brand kit with website import, the Style Ledger and brand check, AI engine settings (bring your own key or use your own Claude/ChatGPT) |
 | 30 Oct | Renamed to HuhQueue. **Planner**: one tab replaces Calendar and Buffer queue (List, Week, Month, filters, timezone, No date drafts, posting times, click-to-schedule, drag to reschedule) on new `update_post`, `reschedule_post` and `delete_draft` actions (Buffer `editPost` / `deletePost`) shared by UI, REST and MCP; light and dark screenshots |
 | 30 Oct | Clean renders: no empty-box glyphs for emoji or symbols the brand font lacks, no "My brand" placeholder (the workspace name is used, or no wordmark) |
+| 30 Oct | **Never Bounced preflight**: per-network rule pack with cited sources (docs/PREFLIGHT.md), Buffer-exact counting, Pillow/ffprobe media checks, Fix it (thread/trim, crop/convert images), runs before every `createPost` and `editPost`; green/amber/red chips in the composer and Planner; `POST /api/preflight` + MCP `preflight_post`, `autofix_post`, `list_rules`; Buffer's HTTP 200 errors surfaced everywhere |
 
 ## Connect an agent (MCP)
 
@@ -81,7 +104,7 @@ claude mcp add --transport http huhqueue https://huhqueue-studio.onrender.com/mc
   --header "Authorization: Bearer hq_YOUR_TOKEN"
 ```
 
-Tools: `whoami`, `list_channels`, `draft_from_link`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `update_post`, `reschedule_post`, `delete_draft`, `list_calendar`, `list_stories`, `create_idea`, `get_limits`, plus the agent tools `run_agent`, `edit_media`, `get_run`, `revise`, `remember_rule`, `brand_check`, `get_brand`, `schedule_package`.
+Tools: `whoami`, `list_channels`, `draft_from_link`, `preflight_post`, `autofix_post`, `list_rules`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `update_post`, `reschedule_post`, `delete_draft`, `list_calendar`, `list_stories`, `create_idea`, `get_limits`, plus the agent tools `run_agent`, `edit_media`, `get_run`, `revise`, `remember_rule`, `brand_check`, `get_brand`, `schedule_package`.
 The REST API (`/api/docs`) accepts the same bearer token, so UI = API = MCP (a test asserts all three send Buffer the identical `createPost` input).
 
 ## Run it yourself
@@ -99,7 +122,8 @@ Optional `AI_BASE_URL`/`AI_MODEL`/`AI_API_KEY` point the drafter at any OpenAI-c
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt
-python -m pytest tests/studio -q            # API, OAuth, rate limits, safety, parity, Planner + Playwright e2e
+python -m pytest tests/studio -q            # API, OAuth, rate limits, safety, parity, Planner, preflight + Playwright e2e
+python scripts/preflight_shots.py http://127.0.0.1:8899 docs/screenshots  # preflight screenshots, light + dark
 python scripts/readme_shots.py http://127.0.0.1:8899 docs/screenshots   # README screenshots (app running with /demo)
 python scripts/planner_shots.py http://127.0.0.1:8899 docs/screenshots
 STUDIO_TEST_PG=postgresql://... python -m pytest tests/studio -q   # same suite on Postgres

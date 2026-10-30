@@ -505,3 +505,27 @@ body.pl-dragging .pl-cell,body.pl-dragging .pl-mday{cursor:copy}
   .pl-card{flex-wrap:wrap}.pl-thumb{width:48px;height:48px}
 }
 .pl-card.in-side .pl-acts .link{padding:4px 6px}
+
+/* ---------------- preflight ("Never Bounced"): a word and an icon on every state, never colour alone */
+.pf{padding:12px 20px 0;display:flex;flex-direction:column;gap:8px}
+.pf:empty{display:none}
+.pf-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pf-chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:2px 10px;border-radius:999px;border:1px solid var(--line-strong);
+  font-size:12px;font-weight:600;line-height:1.3;font-variant-numeric:tabular-nums;background:var(--raised);color:var(--ink);max-width:100%;overflow-wrap:anywhere}
+.pf-chip b{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:999px;font-size:11px;line-height:1;flex:none;color:var(--paper)}
+.pf-chip.s-ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line));background:color-mix(in srgb,var(--ok) 9%,var(--raised))}.pf-chip.s-ok b{background:var(--ok)}
+.pf-chip.s-warning{border-color:color-mix(in srgb,var(--warn) 55%,var(--line));background:color-mix(in srgb,var(--warn) 11%,var(--raised))}.pf-chip.s-warning b{background:var(--warn)}
+.pf-chip.s-error{border-color:color-mix(in srgb,var(--bad) 55%,var(--line));background:color-mix(in srgb,var(--bad) 9%,var(--raised))}.pf-chip.s-error b{background:var(--bad)}
+.pf-chip.s-wait{color:var(--muted);border-style:dashed}
+.pf-fix{height:28px;padding:0 12px;font-size:12px}
+.pf-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.pf-f{display:grid;grid-template-columns:auto 1fr;gap:8px;font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.pf-f a{font-size:12px;font-weight:600}
+.pf-lvl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+.pf-f.l-error .pf-lvl{color:var(--bad)}.pf-f.l-warning .pf-lvl{color:var(--warn)}.pf-f.l-info .pf-lvl{color:var(--muted)}
+.pf-ov{min-height:32px;font-size:13px;color:var(--warn);font-weight:600}
+.pf-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 16px;padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:var(--sunken)}
+.pf-sum{font-size:13px;font-weight:600;margin-right:4px}
+.pf-jump{border:0;background:none;padding:0;cursor:pointer;border-radius:999px}
+.pf-jump:hover .pf-chip{border-color:var(--ink)}
+.pl-dialog .pf{padding:0}

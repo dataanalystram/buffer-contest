@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import drafter, radar
+from . import drafter, preflight, radar
 from .buffer_api import BufferClient, BufferError
 from .config import Settings
 from .store import Store, sha
@@ -28,6 +28,8 @@ REQUIRED_METADATA = {"instagram": {"type": "post", "shouldShareToFeed": True}, "
                      "googlebusiness": {"type": "whats_new"}}
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
 CONFIRM_TTL = 15 * 60
+PROBE_MAX = 60 * 1024 * 1024  # media preflight downloads at most this much per file
+OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts")
 
 
 class ActionError(Exception):
@@ -53,7 +55,7 @@ def _asset(url: str) -> dict:
 
 
 def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at: str | None,
-                     media_urls: list[str] | None = None) -> dict:
+                     media_urls: list[str] | None = None, options: dict | None = None) -> dict:
     """Exact CreatePostInput sent to Buffer (shared by every surface; tested for parity)."""
     inp = {"channelId": channel["id"], "text": text, "assets": [], "needsApproval": False,
            "schedulingType": "automatic"}
@@ -78,16 +80,142 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
         meta["thread"] = [{"text": p} for p in parts]
         if inp["assets"]:
             meta["thread"][0]["assets"] = inp["assets"]
+    options = options or {}
     if svc == "youtube":
-        meta["title"] = text.split("\n")[0][:100]
+        meta["title"] = (options.get("title") or text.split("\n")[0])[:100]
+        if options.get("category_id"):
+            meta["categoryId"] = str(options["category_id"])
+    if svc == "pinterest":
+        if options.get("board_id"):
+            meta["boardServiceId"] = options["board_id"]
+        if options.get("title"):
+            meta["title"] = options["title"]
+    if svc == "threads" and options.get("topic"):
+        meta["topic"] = options["topic"]
     if meta:
         inp["metadata"] = {"google" if svc == "googlebusiness" else svc: meta}
     return inp
 
 
+def clean_options(raw) -> dict:
+    """Network options a post may carry (YouTube title/category, Pinterest board/title, Threads topic, X long posts)."""
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for k in OPTION_KEYS:
+        v = raw.get(k)
+        if v in (None, "", False):
+            continue
+        out[k] = bool(v) if k == "x_long_posts" else str(v).strip()[:300]
+    return out
+
+
+def preflight_error(results: list[dict], override: bool) -> str | None:
+    """The message that blocks a send: any error, or a warning nobody overrode."""
+    errs = [f"{r['network']}: {f['message']}" for r in results for f in r["findings"] if f["level"] == "error"]
+    if errs:
+        return "Preflight found a problem Buffer would reject: " + " ".join(errs[:3]) + \
+               (" Use Fix it (autofix_post) or change the post." if any(r["fixes"] for r in results) else "")
+    warns = [f"{r['network']}: {f['message']}" for r in results for f in r["findings"] if f["level"] == "warning"]
+    if warns and not override:
+        return "Preflight warning: " + " ".join(warns[:3]) + " Fix it, or send again with override_warnings: true to accept it."
+    return None
+
+
 class Studio:
     def __init__(self, s: Settings, store: Store, buffer: BufferClient):
         self.s, self.store, self.buffer = s, store, buffer
+        self.house = None
+        self.media_loader = None  # tests swap this for a fake; production downloads with House's safe fetch
+
+    # ------------------------------------------------------------ preflight (Never Bounced)
+    def _load_media(self, url: str) -> bytes | None:
+        base = self.s.public_url.rstrip("/") + "/m/"
+        if url.startswith(base) and self.house:
+            m = self.house.get_media(url[len(base):].split("?")[0])
+            return m["data"] if m else None
+        if self.media_loader:
+            return self.media_loader(url)
+        return self.house._fetch_bytes(url, PROBE_MAX) if self.house else None
+
+    def _preflight(self, ch: dict, text: str, media_urls: list[str], mode: str, options: dict | None = None,
+                   probe: bool = True, creating: bool = True) -> dict:
+        return preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating)
+
+    @staticmethod
+    def _media_list(p: dict) -> list[str]:
+        urls = [str(u).strip() for u in (p.get("media_urls") or []) if str(u).strip()][:25]
+        one = (p.get("media_url") or "").strip()
+        return urls or ([one] if one else [])
+
+    def preflight(self, a: Actor, p: dict) -> dict:
+        """Dry run: check one post against every chosen channel's rules. Nothing is saved or sent."""
+        chans = {c["id"]: c for c in self.channels(a)}
+        ids = p.get("channel_ids") or ([p["channel_id"]] if p.get("channel_id") else [])
+        if not ids:
+            raise ActionError("Give channel_id or channel_ids.")
+        results = []
+        for cid in ids[:12]:
+            ch = chans.get(cid)
+            if not ch:
+                raise ActionError("Unknown channel, or this agent token isn't allowed to use it.", 404)
+            editing = bool(p.get("editing"))  # an edit to a post already in Buffer: fields optional, media unchanged
+            results.append(self._preflight(ch, p.get("text") or "", self._media_list(p), (p.get("mode") or "queue"),
+                                           clean_options(p.get("options")), probe=not editing, creating=not editing))
+        worst = "error" if any(r["status"] == "error" for r in results) else \
+            "warning" if any(r["status"] == "warning" for r in results) else "ok"
+        return {"status": worst, "ok": worst == "ok", "channels": results, "rule_pack": preflight.RULE_PACK_VERSION}
+
+    def autofix(self, a: Actor, p: dict) -> dict:
+        """Apply preflight fixes to a post for one channel and return the fixed post with a fresh preflight.
+        Text fixes trim or thread the caption; image fixes crop/convert/recompress with Pillow and store the result as new
+        HuhQueue media. Nothing is sent to Buffer."""
+        chans = {c["id"]: c for c in self.channels(a)}
+        ch = chans.get(p.get("channel_id") or "")
+        if not ch:
+            raise ActionError("Unknown channel, or this agent token isn't allowed to use it.", 404)
+        text, urls, opts, mode = p.get("text") or "", self._media_list(p), clean_options(p.get("options")), p.get("mode") or "queue"
+        before = self._preflight(ch, text, urls, mode, opts)
+        want = p.get("fixes") or "all"
+        ids = [f["id"] for f in before["fixes"]] if want == "all" else [str(x) for x in want]
+        ids = [i for i in ids if i != "reencode"]
+        has_video = any(m.get("kind") == "video" for m in before["media"])
+        text2, opts2, applied = preflight.apply_text_fixes(ch, text, opts, ids, has_video)
+        urls2 = list(urls)
+        for fid in ids:
+            if fid.startswith("keep_first:"):
+                urls2 = urls2[: int(fid.split(":", 1)[1])]
+                applied.append(fid)
+        for fid in ids:
+            if not fid.startswith("image:"):
+                continue
+            i = int(fid.split(":", 1)[1])
+            if i >= len(urls2):
+                continue
+            data = self._load_media(urls2[i])
+            if not data:
+                continue
+            try:
+                out, ext = preflight.fit_image(ch["service"], data)
+            except Exception as e:  # noqa: BLE001
+                raise ActionError(f"Couldn't fix that image: {e}")
+            if not self.house:
+                raise ActionError("Image fixes need HuhQueue media storage.", 500)
+            tok = self.house.put_media(a, out, f"fit-{ch['service']}.{ext}", kind="autofix", meta={"type": "photo", "from": urls2[i]})
+            urls2[i] = self.house.media_url(tok)
+            applied.append(fid)
+        after = self._preflight(ch, text2, urls2, mode, opts2)
+        self.store.audit(a.uid, a.label, "autofix_post", "read", {"channel": ch["service"], "applied": applied,
+                                                                   "before": before["status"], "after": after["status"]})
+        return {"channel_id": ch["id"], "service": ch["service"], "text": text2, "media_urls": urls2,
+                "media_url": urls2[0] if urls2 else "", "options": opts2, "applied": applied,
+                "before": {"text": text, "media_urls": urls, "status": before["status"]}, "preflight": after,
+                "needs_reencode": any(f.get("fix") == "reencode" for f in after["findings"])}
+
+    def preflight_rules(self, a: Actor, service: str | None = None) -> dict:
+        rules = [r for r in preflight.RULES if not service or r["service"] in (service, "*")]
+        return {"rule_pack": preflight.RULE_PACK_VERSION, "checked": preflight.CHECKED, "rules": rules,
+                "unverified": [{"rule": r, "why": w} for r, w in preflight.UNVERIFIED]}
 
     # ------------------------------------------------------------ reads
     def me(self, a: Actor) -> dict:
@@ -200,7 +328,7 @@ class Studio:
             self.store.audit(a.uid, a.label, action, "blocked", {"reason": "daily cap", "cap": a.agent["daily_cap"]}, ok=False)
             raise ActionError(f"This agent token reached its daily cap of {a.agent['daily_cap']} actions.", 429)
 
-    def _validate(self, a: Actor, p: dict) -> tuple[dict, dict, list[str]]:
+    def _validate(self, a: Actor, p: dict) -> tuple[dict, dict, list[str], dict]:
         mode = (p.get("mode") or "draft").strip()
         if mode not in MODES:
             raise ActionError(f"mode must be one of {sorted(MODES)}")
@@ -213,12 +341,6 @@ class Studio:
         text = (p.get("text") or "").strip()
         if not text:
             raise ActionError("Post text is empty.")
-        lim, parts = drafter.limit_for(ch["service"]), drafter.split_thread(ch["service"], text)
-        for i, part in enumerate(parts, 1):
-            n = drafter.count(ch["service"], part)
-            if n > lim:
-                where = f"Thread post {i}: " if len(parts) > 1 else ""
-                raise ActionError(f"{where}{n}/{lim} characters: too long for {ch['service']}. Trim it or use Fit.")
         media_urls = [str(u).strip() for u in (p.get("media_urls") or []) if str(u).strip()][:10]
         media = (p.get("media_url") or (media_urls[0] if media_urls else "")).strip()
         for u in ([media] if media else []) + media_urls:
@@ -257,14 +379,24 @@ class Studio:
                     warnings.append(f"This is the last post Buffer allows on this channel {window} ({n + 1} of {lim_}).")
         if ch.get("isQueuePaused") and mode in ("queue", "next"):
             warnings.append("This channel's queue is paused in Buffer, so it won't go out until you resume it.")
+        opts = clean_options(p.get("options"))
+        override = bool(p.get("override_warnings"))
+        pf = self._preflight(ch, text, media_urls or ([media] if media else []), mode, opts)
+        msg = preflight_error([pf], override)
+        if msg:
+            raise ActionError(msg)
         clean = {"channel_id": ch["id"], "text": text, "media_url": media, "mode": mode, "due_at": due}
         if len(media_urls) > 1:
             clean["media_urls"] = media_urls
-        return clean, ch, warnings
+        if opts:
+            clean["options"] = opts
+        if override and pf["status"] == "warning":
+            clean["override_warnings"] = True
+        return clean, ch, warnings, pf
 
     # ------------------------------------------------------------ preview / submit
     def preview_post(self, a: Actor, p: dict) -> dict:
-        clean, ch, warnings = self._validate(a, p)
+        clean, ch, warnings, pf = self._validate(a, p)
         token = "cf_" + secrets.token_urlsafe(24)
         self.store.x("INSERT INTO confirms(token_hash,user_id,agent_id,payload,expires) VALUES(?,?,?,?,?)",
                      (sha(token), a.uid, a.agent["id"] if a.agent else None, json.dumps(clean), time.time() + CONFIRM_TTL))
@@ -272,7 +404,7 @@ class Studio:
         self.store.audit(a.uid, a.label, "preview_post", "read", {"channel": ch["service"], "mode": clean["mode"]})
         return {"preview": {**clean, "service": ch["service"], "channel_name": ch.get("displayName") or ch["name"],
                             "length": drafter.count(ch["service"], clean["text"]), "limit": drafter.limit_for(ch["service"])},
-                "warnings": warnings, "confirm_token": token, "expires_in": CONFIRM_TTL, "on_submit": what}
+                "warnings": warnings, "preflight": pf, "confirm_token": token, "expires_in": CONFIRM_TTL, "on_submit": what}
 
     def _outcome(self, a: Actor, mode: str) -> str:
         if a.kind == "human":
@@ -308,7 +440,14 @@ class Studio:
         ch = {c["id"]: c for c in self.channels(Actor(a.uid))}.get(clean["channel_id"])
         if not ch:
             raise ActionError("That channel is no longer in your Buffer organization.", 404)
-        inp = build_post_input(ch, clean["text"], clean["media_url"], clean["mode"], clean.get("due_at"), clean.get("media_urls"))
+        urls = clean.get("media_urls") or ([clean["media_url"]] if clean["media_url"] else [])
+        pf = self._preflight(ch, clean["text"], urls, clean["mode"], clean.get("options"))  # re-check right before createPost
+        msg = preflight_error([pf], bool(clean.get("override_warnings")))
+        if msg:
+            self.store.audit(a.uid, a.label, action, "blocked", {"channel": ch["service"], "preflight": pf["status"]}, ok=False)
+            raise ActionError(msg)
+        inp = build_post_input(ch, clean["text"], clean["media_url"], clean["mode"], clean.get("due_at"), clean.get("media_urls"),
+                               clean.get("options"))
         risk = "draft" if clean["mode"] == "draft" else "public"
         try:
             post = self.buffer.create_post(a.uid, inp)
@@ -343,7 +482,8 @@ class Studio:
                     return {**p, "status": p.get("status") or status}, ch
         raise ActionError("No scheduled post or draft with that id in your Buffer organization.", 404)
 
-    def update_post(self, a: Actor, post_id: str, text: str | None = None, due_at: str | None = None) -> dict:
+    def update_post(self, a: Actor, post_id: str, text: str | None = None, due_at: str | None = None,
+                    override_warnings: bool = False) -> dict:
         """The one edit path for a post already in Buffer: new caption, new time, or both (editPost).
         Sent posts are history and can't move. Drafts stay drafts. Agents: 'trusted' may edit anything not sent;
         'review' and 'draft' tokens may only touch drafts, so they can never change what publishes."""
@@ -361,11 +501,17 @@ class Studio:
             text = text.strip()
             if not text:
                 raise ActionError("Post text is empty.")
-            lim = drafter.limit_for(ch["service"])
-            for part in drafter.split_thread(ch["service"], text):
-                if drafter.count(ch["service"], part) > lim:
-                    raise ActionError(f"{drafter.count(ch['service'], part)}/{lim} characters: too long for {ch['service']}.")
             inp["text"] = text
+        # preflight the post as it will be after editPost (assets are unchanged, so media is not re-downloaded)
+        assets = post.get("assets") or []
+        urls = [x.get("source") for x in assets if x.get("source")]
+        kinds = ["video" if (x.get("type") or "").lower() == "video" else "image" for x in assets if x.get("source")]
+        pf = preflight.check(ch, inp.get("text", post.get("text") or ""), urls, "draft" if draft else "queue",
+                             loader=None, probe_media=False, creating=False, media_kinds=kinds)
+        msg = preflight_error([pf], override_warnings)
+        if msg:
+            self.store.audit(a.uid, a.label, "update_post", "blocked", {"buffer_post_id": post_id, "preflight": pf["status"]}, ok=False)
+            raise ActionError(msg)
         if due_at is not None:
             inp.update(dueAt=self._due(due_at), mode="customScheduled")
             if draft:
@@ -380,8 +526,8 @@ class Studio:
                          {"buffer_post_id": post_id, "channel": ch["service"], "due_at": inp.get("dueAt"), "text": "text" in inp})
         return {"status": "updated", "post": out, "service": ch["service"]}
 
-    def reschedule_post(self, a: Actor, post_id: str, due_at: str) -> dict:
-        return self.update_post(a, post_id, due_at=due_at)
+    def reschedule_post(self, a: Actor, post_id: str, due_at: str, override_warnings: bool = False) -> dict:
+        return self.update_post(a, post_id, due_at=due_at, override_warnings=override_warnings)
 
     def delete_draft(self, a: Actor, post_id: str) -> dict:
         post, ch = self._find_post(a, post_id)
@@ -427,7 +573,7 @@ class Studio:
             self.store.audit(a.uid, a.label, "reject_post", "read", {"approval_id": approval_id})
             return {"status": "rejected", "approval_id": approval_id}
         if text is not None or mode:
-            clean, _, _ = self._validate(a, {**clean, **({"text": text} if text is not None else {}), **({"mode": mode} if mode else {})})
+            clean, _, _, _ = self._validate(a, {**clean, **({"text": text} if text is not None else {}), **({"mode": mode} if mode else {})})
         res = self._send(a, clean, action="approve_post")
         self.store.x("UPDATE approvals SET status='approved', result=?, decided=? WHERE id=?",
                      (json.dumps(res), time.time(), approval_id))
