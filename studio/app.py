@@ -13,7 +13,7 @@ import httpx
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
-from . import buffer_api, demo, mcp
+from . import buffer_api, demo, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
@@ -117,13 +117,15 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     # ------------------------------------------------------------ OAuth
     @app.get("/login", include_in_schema=False)
-    def login(request: Request):
+    def login(request: Request, next: str = ""):
         if not s.configured:
             return RedirectResponse("/?error=" + quote("Buffer app client is not configured on this server."), 302)
         sid, sess, fresh = ensure_session(request)
         verifier, challenge = buffer_api.pkce_pair()
         state = secrets.token_urlsafe(24)
-        store.update_session(sid, oauth=store.seal({"state": state, "verifier": verifier}))
+        # only our own consent page may be the place to come back to (no open redirect)
+        back = next if next.startswith("/oauth/authorize?") else ""
+        store.update_session(sid, oauth=store.seal({"state": state, "verifier": verifier, "next": back}))
         resp = RedirectResponse(buffer_api.authorize_url(s, state, challenge), 302)
         set_cookie(resp, sid)
         return resp
@@ -153,7 +155,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         store.new_session(new_sid, secrets.token_urlsafe(24))
         store.update_session(new_sid, user_id=acct["id"])
         store.audit(acct["id"], "you", "connect_buffer", "auth", {"scopes": tokens.get("scope", "")})
-        resp = RedirectResponse("/?connected=1", 302)
+        resp = RedirectResponse(pending.get("next") or "/?connected=1", 302)
         set_cookie(resp, new_sid)
         return resp
 
@@ -313,13 +315,17 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return studio.audit(actor(request), min(limit, 500))
 
     # ------------------------------------------------------------ MCP
+    mcp_oauth.add_mcp_oauth_routes(app, store, studio, s.public_url, lambda r: store.session(r.cookies.get(COOKIE)))
+
     @app.post("/mcp")
     async def mcp_endpoint(request: Request):
         auth = request.headers.get("authorization", "")
         a = studio.resolve_agent(auth[7:].strip()) if auth.lower().startswith("bearer ") else None
         if not a:
+            # resource_metadata lets Claude/ChatGPT discover our OAuth server and sign the person in
+            meta = mcp_oauth.resource_metadata_url(s.public_url)
             return JSONResponse({"error": "Agent token required: Authorization: Bearer hq_..."}, status_code=401,
-                                headers={"WWW-Authenticate": 'Bearer realm="huhqueue"'})
+                                headers={"WWW-Authenticate": f'Bearer realm="huhqueue", resource_metadata="{meta}"'})
         msg = await request.json()
         if isinstance(msg, list):
             out = [r for r in (mcp.handle(studio, a, m) for m in msg) if r]

@@ -27,7 +27,11 @@ the Buffer account you already use.
 
 ## Connect an agent (MCP)
 
-Create a token in **Agents**, then:
+**Claude.ai or ChatGPT:** add a custom connector with the URL `https://huhqueue-studio.onrender.com/mcp`. It signs you in with
+Buffer and asks what the assistant may do (ask first, drafts only, or trusted) and how many posts a day. No token to paste.
+The connection is an ordinary agent token underneath, so it shows on the Agents screen and the kill switch stops it.
+
+**Claude Code / other clients:** create a token in **Agents**, then:
 
 ```bash
 claude mcp add --transport http huhqueue https://huhqueue-studio.onrender.com/mcp \

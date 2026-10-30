@@ -428,3 +428,64 @@ def test_migrate_from_copies_everything_once(human, app, tmp_path, fake):
     assert n_audit > 0 and store.q("SELECT COUNT(*) AS n FROM feeds")[0]["n"] == 1
     assert store.copy_from(app.state.store) == {}  # second boot: target already has data
     assert moved.get("/healthz").json()["db"] is True
+
+
+def test_mcp_oauth_connect_from_claude_or_chatgpt(client, fake):
+    """Claude.ai / ChatGPT flow: 401 points at metadata -> register -> sign in with Buffer -> consent -> PKCE token
+    exchange -> the access token is an ordinary agent token with the chosen policy -> refresh rotates it."""
+    import base64
+    import hashlib
+    from urllib.parse import parse_qs, urlparse
+    r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert r.status_code == 401 and 'resource_metadata="https://hq.test/.well-known/oauth-protected-resource/mcp"' in r.headers["www-authenticate"]
+    prm = client.get("/.well-known/oauth-protected-resource/mcp").json()
+    assert prm["resource"] == "https://hq.test/mcp" and prm["authorization_servers"] == ["https://hq.test"]
+    asm = client.get("/.well-known/oauth-authorization-server").json()
+    assert asm["code_challenge_methods_supported"] == ["S256"]
+    assert client.post("/oauth/register", json={"redirect_uris": ["http://evil.example/cb"]}).status_code == 400
+    cb = "https://claude.ai/api/mcp/auth_callback"
+    reg = client.post("/oauth/register", json={"client_name": "Claude", "redirect_uris": [cb]}).json()
+    verifier = "v" * 64
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    q = {"response_type": "code", "client_id": reg["client_id"], "redirect_uri": cb, "state": "st8",
+         "code_challenge": challenge, "code_challenge_method": "S256"}
+    # not signed in: off to Buffer, and back to the consent page afterwards
+    r = client.get("/oauth/authorize", params=q, follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"].startswith("/login?next=%2Foauth%2Fauthorize%3F")
+    r = client.get(r.headers["location"], follow_redirects=False)
+    state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+    r = client.get(f"/callback?code=abc&state={state}", follow_redirects=False)
+    assert r.headers["location"].startswith("/oauth/authorize?")
+    page = client.get(r.headers["location"]).text
+    assert "Claude" in page and 'data-testid="oauth-allow"' in page
+    csrf = client.get("/api/session").json()["csrf"]
+    form = {**{k: v for k, v in q.items() if k != "response_type"}, "csrf": csrf, "policy": "draft", "daily_cap": "5",
+            "decision": "allow"}
+    assert client.post("/oauth/authorize", data={**form, "csrf": "wrong"}, follow_redirects=False).status_code == 403
+    r = client.post("/oauth/authorize", data=form, follow_redirects=False)
+    back = urlparse(r.headers["location"])
+    assert r.status_code == 302 and back.netloc == "claude.ai" and parse_qs(back.query)["state"] == ["st8"]
+    code = parse_qs(back.query)["code"][0]
+    bad = client.post("/oauth/token", data={"grant_type": "authorization_code", "code": code, "client_id": reg["client_id"],
+                                            "redirect_uri": cb, "code_verifier": "wrong" * 10})
+    assert bad.status_code == 400  # and the code is now burned
+    r = client.post("/oauth/authorize", data=form, follow_redirects=False)
+    code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
+    tok = client.post("/oauth/token", data={"grant_type": "authorization_code", "code": code, "client_id": reg["client_id"],
+                                            "redirect_uri": cb, "code_verifier": verifier}).json()
+    assert tok["access_token"].startswith("hq_") and tok["refresh_token"].startswith("hqr_")
+    again = client.post("/oauth/token", data={"grant_type": "authorization_code", "code": code,
+                                              "client_id": reg["client_id"], "code_verifier": verifier})
+    assert again.status_code == 400  # single use
+    client.cookies.clear()
+    r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "whoami"}},
+                    headers={"Authorization": "Bearer " + tok["access_token"]})
+    assert r.status_code == 200 and '"draft"' in r.json()["result"]["content"][0]["text"]
+    new = client.post("/oauth/token", data={"grant_type": "refresh_token", "refresh_token": tok["refresh_token"],
+                                            "client_id": reg["client_id"]}).json()
+    assert new["access_token"] != tok["access_token"]
+    old = client.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "ping"},
+                      headers={"Authorization": "Bearer " + tok["access_token"]})
+    assert old.status_code == 401  # rotated out
+    assert client.post("/oauth/token", data={"grant_type": "refresh_token", "refresh_token": tok["refresh_token"],
+                                             "client_id": reg["client_id"]}).status_code == 400
