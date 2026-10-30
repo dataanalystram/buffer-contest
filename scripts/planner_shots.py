@@ -41,6 +41,7 @@ with sync_playwright() as p:
             pg.click(f"[data-testid=planner-view-{view}]")
             pg.wait_for_selector(f"[data-testid=planner-{view}], [data-testid=planner-empty]")
             time.sleep(1.2)
+            pg.evaluate("document.getElementById('toast').hidden = true")
             pg.screenshot(path=str(out / f"{prefix}-{view}-{scheme}.png"))
         ctx.close()
     b.close()
