@@ -78,7 +78,7 @@ function plTitle(r) {
 // ---------------------------------------------------------------- data
 async function loadPlanner() {
   if (!PL.tz) plLoadState();
-  plControls();
+  plSaveState(); plControls();
   const my = ++PL.req;
   if (!PL.data) $("#plMain").innerHTML = `<div class="pl-skel" data-testid="planner-loading" aria-busy="true"><span></span><span></span><span></span></div>`;
   try {
@@ -88,7 +88,7 @@ async function loadPlanner() {
     for (const it of d.items) it.z = it.when ? zoned(new Date(it.when), PL.tz) : null;
     if (typeof readyBadgeFrom === "function") readyBadgeFrom(d);
   } catch (e) { $("#plMain").innerHTML = `<div class="st err">${esc(e.message)}</div>`; return; }
-  plDraw();
+  plControls(); plDraw();
 }
 function plVisible() {
   const q = PL.q.trim().toLowerCase();
@@ -101,7 +101,8 @@ function plVisible() {
 // ---------------------------------------------------------------- controls (header, filters, toggles)
 function plControls() {
   document.querySelectorAll("[data-view]").forEach((b) => { const on = b.dataset.view === PL.view; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
-  $("#plType").value = PL.type; $("#plStatus").value = PL.status; $("#plSearch").value = PL.q;
+  $("#plType").value = PL.type; $("#plStatus").value = PL.status;
+  if (document.activeElement !== $("#plSearch")) $("#plSearch").value = PL.q;
   $("#plNoDateT").checked = PL.nodate; $("#plSlotsT").checked = PL.slots;
   const tzSel = $("#plTz");
   if (!tzSel.options.length || tzSel.dataset.for !== PL.tz) {
@@ -119,7 +120,7 @@ function plControls() {
 }
 function plChanged() { plSaveState(); plControls(); plDraw(); }
 function netMark(svc) { return `<span class="net svc-${esc(svc)}" aria-hidden="true">${esc(NET_MARK[svc] || (svc || "?").slice(0, 2))}</span>`; }
-function stateChip(st) { return `<span class="pl-state ${esc(st)}" data-testid="planner-status">${esc(PL_STATES[st] || st)}</span>`; }
+function stateChip(st) { return `<span class="pl-state s-${esc(st)}" data-testid="planner-status">${esc(PL_STATES[st] || st)}</span>`; }
 
 // ---------------------------------------------------------------- draw
 function plDraw() {
@@ -133,7 +134,7 @@ function plDraw() {
   $("#plTitle").textContent = plTitle(r);
   $("#plCount").textContent = `${count} post${count === 1 ? "" : "s"}`;
   $("#plTzNote").textContent = PL.tz.replace(/_/g, " ");
-  const main = $("#plMain");
+  const main = $("#plMain"), keep = $(".pl-week-scroll")?.scrollTop;
   main.dataset.view = PL.view;
   if (PL.view === "list") main.innerHTML = plList(r, byDay);
   else if (PL.view === "week") main.innerHTML = plWeek(r, byDay);
@@ -147,7 +148,8 @@ function plDraw() {
       ${undated.length ? undated.map((i) => plCard(i, "side")).join("") : `<p class="pl-side-empty" data-testid="planner-nodate-empty">Nothing without a date. Drafts you save without a time land here.</p>`}`;
   }
   plWire();
-  if (PL.view === "week") { const sc = $(".pl-week-scroll"); if (sc && !sc.dataset.scrolled) { sc.scrollTop = 7 * ROW_H; sc.dataset.scrolled = "1"; } }
+  const sc = $(".pl-week-scroll");
+  if (sc) sc.scrollTop = keep ?? 7 * ROW_H;
 }
 function plEmpty() {
   return `<div class="pl-empty" data-testid="planner-empty"><svg class="ic lg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
@@ -162,7 +164,7 @@ function plThumb(i) {
 function plWhen(i) { return i.z ? timeLabel(i.z.h, i.z.mi) : "No date"; }
 // a compact chip for the week and month grids
 function plChip(i) {
-  return `<button type="button" class="pl-chip ${esc(i.state)}${i.draggable ? "" : " locked"}" data-testid="planner-item" data-ref="${esc(i.ref)}" data-state="${esc(i.state)}" data-ch="${esc(i.channel_id)}" ${i.draggable ? 'draggable="true"' : ''}
+  return `<button type="button" class="pl-chip s-${esc(i.state)}${i.draggable ? "" : " locked"}" data-testid="planner-item" data-ref="${esc(i.ref)}" data-state="${esc(i.state)}" data-ch="${esc(i.channel_id)}" ${i.draggable ? ' draggable="true"' : ''}
     title="${esc(PL_STATES[i.state] + " · " + (i.channel || "") + " · " + netName(i.service) + "\n" + i.text)}">${netMark(i.service)}<span class="t">${esc(plWhen(i))}</span><span class="c">${esc(i.text || "(media)")}</span></button>`;
 }
 // a full card for the list view and the No date sidebar
@@ -176,9 +178,9 @@ function plCard(i, where) {
     `<button type="button" class="link" data-testid="planner-reschedule" data-act="reschedule" data-ref="${esc(i.ref)}">Schedule</button>`);
   if (i.state === "draft") acts.push(`<button type="button" class="link danger" data-testid="planner-delete" data-act="delete" data-ref="${esc(i.ref)}">Delete draft</button>`);
   if (i.state === "sent" && i.link) acts.push(`<a class="link" href="${esc(i.link)}" target="_blank" rel="noopener" data-testid="planner-view-post">View post</a>`);
-  return `<article class="pl-card ${esc(i.state)}${where === "side" ? " side" : ""}" data-testid="${where === "side" ? "planner-nodate-item" : "planner-card"}" data-ref="${esc(i.ref)}" data-ch="${esc(i.channel_id)}" data-state="${esc(i.state)}" ${i.draggable ? 'draggable="true"' : ""}>
+  return `<article class="pl-card s-${esc(i.state)}${where === "side" ? " in-side" : ""}" data-testid="${where === "side" ? "planner-nodate-item" : "planner-card"}" data-ref="${esc(i.ref)}" data-ch="${esc(i.channel_id)}" data-state="${esc(i.state)}" ${i.draggable ? 'draggable="true"' : ""}>
     <span class="pl-thumb">${plThumb(i)}</span>
-    <div class="pl-card-body"><div class="pl-meta">${netMark(i.service)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
+    <div class="pl-card-body"><div class="pl-meta">${netMark(i.service)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted nw">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
       <p class="pl-cap">${esc(i.text || "(media only)")}</p>
       <div class="pl-foot">${stateChip(i.state)}${i.agent ? `<span class="muted xs">by ${esc(i.agent)}</span>` : ""}<span class="pl-acts">${acts.join("")}</span></div></div></article>`;
 }
@@ -199,7 +201,9 @@ function plSlotMap(days) { // Buffer posting slots per channel, shown in the pla
       const sch = (s.schedule || []).find((x) => x.day === DOW[dowOf(day)]);
       if (!sch || sch.paused) continue;
       for (const tm of sch.times || []) {
-        const [hh, mm] = tm.split(":").map(Number), z = zoned(fromZoned(day, hh, mm, s.timezone), PL.tz);
+        const [hh, mm] = tm.split(":").map(Number), inst = fromZoned(day, hh, mm, s.timezone);
+        if (inst < Date.now()) continue; // only upcoming posting times
+        const z = zoned(inst, PL.tz);
         (m[`${z.ymd}|${z.h}`] ||= []).push({ h: z.h, mi: z.mi, service: chans[s.channel_id]?.service || "", ch: s.channel_id });
       }
     }
@@ -242,7 +246,7 @@ function plMonth(r, byDay) {
 function plFind(ref) { return (PL.data?.items || []).find((i) => i.ref === ref); }
 function plWire() {
   const root = $("#tab-planner");
-  root.querySelectorAll("[data-act]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plAct(b.dataset.act, b.dataset.ref, b); }));
+  root.querySelectorAll("#plMain [data-act], #plNoDate [data-act]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plAct(b.dataset.act, b.dataset.ref, b); }));
   root.querySelectorAll(".pl-chip").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plOpenItem(plFind(b.dataset.ref)); }));
   root.querySelectorAll("[draggable=true]").forEach((el) => {
     el.ondragstart = (e) => { e.dataTransfer.setData("text/plain", el.dataset.ref); e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); document.body.classList.add("pl-dragging"); };
@@ -269,7 +273,7 @@ function plOpenItem(i) {
 async function plAct(act, ref, el) {
   const i = plFind(ref);
   if (act === "new") return plCompose(PL.date || todayYmd(), 9, 0);
-  if (act === "clear") { PL.ch.clear(); PL.type = PL.status = PL.q = ""; return plChanged(); }
+  if (act === "clear") { PL.ch.clear(); PL.type = PL.status = PL.q = ""; $("#plSearch").value = ""; return plChanged(); }
   if (act === "more") return plPopover(el.dataset.day, el);
   if (!i) return;
   if (act === "edit") return plDialog("edit", i);
@@ -341,7 +345,7 @@ function plDialog(mode, i) {
   const dlg = $("#plDialog"); PL.edit = { mode, i };
   const isNew = mode === "new", resched = mode === "reschedule";
   $("#plDlgTitle").textContent = isNew ? "New post" : resched ? (i.kind === "ready" ? "Schedule in Buffer" : "Reschedule") : "Edit post";
-  $("#plDlgCh").hidden = !isNew; $("#plDlgMediaF").hidden = !isNew;
+  $("#plDlgCh").hidden = !isNew; $("#plDlgMediaF").hidden = !isNew; $("#plDlgAgent").hidden = !isNew;
   $("#plDlgTextF").hidden = resched;
   $("#plDlgChSel").innerHTML = S.channels.filter((c) => !c.isDisconnected).map((c) => `<option value="${esc(c.id)}">${esc((c.displayName || c.name) + " · " + netName(c.service))}</option>`).join("");
   if (isNew && i.channel_id) $("#plDlgChSel").value = i.channel_id;
@@ -369,7 +373,7 @@ async function plDialogSave(asDraft) {
       if (!asDraft) body.due_at = inst.toISOString();
       const pv = await api("/api/posts/preview", { method: "POST", body });
       await api("/api/posts/submit", { method: "POST", body: { confirm_token: pv.confirm_token } });
-      toast(asDraft ? "Saved as a draft in Buffer" : "Scheduled in Buffer" + (pv.warnings.length ? " · " + pv.warnings[0] : ""), 4500);
+      toast((asDraft ? "Saved as a draft in Buffer" : "Scheduled in Buffer") + (pv.warnings.length ? " · " + pv.warnings[0] : ""), 4500);
     } else if (mode === "edit") {
       const body = {};
       if ($("#plDlgText").value !== i.text) body.text = $("#plDlgText").value;
@@ -387,7 +391,7 @@ async function plDialogSave(asDraft) {
 function closeDlg() { const d = $("#plDialog"); if (typeof d.close === "function" && d.open) d.close(); else d.removeAttribute("open"); }
 
 // ---------------------------------------------------------------- static wiring
-document.querySelectorAll("#tab-planner [data-view]").forEach((b) => (b.onclick = () => { PL.view = b.dataset.view; const sc = $(".pl-week-scroll"); if (sc) delete sc.dataset.scrolled; plChanged(); }));
+document.querySelectorAll("#tab-planner [data-view]").forEach((b) => (b.onclick = () => { PL.view = b.dataset.view; plChanged(); }));
 $("#plPrev").onclick = () => plShift(-1); $("#plNext").onclick = () => plShift(1);
 $("#plToday").onclick = () => { PL.date = ""; plChanged(); };
 function plShift(n) {
@@ -398,7 +402,7 @@ function plShift(n) {
 }
 $("#plType").onchange = (e) => { PL.type = e.target.value; plChanged(); };
 $("#plStatus").onchange = (e) => { PL.status = e.target.value; plChanged(); };
-let plQT; $("#plSearch").oninput = (e) => { clearTimeout(plQT); plQT = setTimeout(() => { PL.q = e.target.value; plSaveState(); $("#plClear").hidden = !plFiltersActive(); plDraw(); }, 160); };
+let plQT; $("#plSearch").oninput = (e) => { clearTimeout(plQT); plQT = setTimeout(() => { PL.q = e.target.value; plChanged(); }, 160); };
 $("#plTz").onchange = (e) => { PL.tz = e.target.value; for (const it of PL.data?.items || []) it.z = it.when ? zoned(new Date(it.when), PL.tz) : null; plChanged(); };
 $("#plNoDateT").onchange = (e) => { PL.nodate = e.target.checked; plChanged(); };
 $("#plSlotsT").onchange = (e) => { PL.slots = e.target.checked; plChanged(); };
