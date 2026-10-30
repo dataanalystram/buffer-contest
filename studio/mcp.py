@@ -26,7 +26,22 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "preview_post", "description": "Validate a post for one channel and get a single-use confirm_token. Show the preview to your user before submitting. mode: draft | queue | next | now | schedule (needs due_at ISO UTC).",
      "inputSchema": {"type": "object", "required": ["channel_id", "text"], "properties": {
          "channel_id": {"type": "string"}, "text": {"type": "string"}, "media_url": {"type": "string"},
-         "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"}}}},
+         "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"},
+         "media_urls": {"type": "array", "items": {"type": "string"}}, "options": {"type": "object"},
+         "override_warnings": {"type": "boolean", "description": "Accept preflight warnings (errors can't be overridden)"}}}},
+    {"name": "preflight_post", "description": "Dry run (read-only): check a post against every chosen channel's real Buffer and network rules before you preview or submit it: text length counted the way Buffer counts it (UTF-16, Instagram line breaks 2, LinkedIn URLs 24, X weighted, Bluesky graphemes), hashtags/mentions, required fields (YouTube title and category, Pinterest board), media count, type, aspect, size and video specs. Returns per channel status ok | warning | error, findings with the doc they come from, and fix ids for autofix_post.",
+     "inputSchema": {"type": "object", "required": ["text"], "properties": {
+         "channel_id": {"type": "string"}, "channel_ids": {"type": "array", "items": {"type": "string"}}, "text": {"type": "string"},
+         "media_url": {"type": "string"}, "media_urls": {"type": "array", "items": {"type": "string"}},
+         "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]},
+         "options": {"type": "object", "description": "title, category_id (YouTube), board_id (Pinterest), topic (Threads), x_long_posts"}}}},
+    {"name": "autofix_post", "description": "Apply preflight fixes for one channel (fixes: list of fix ids from preflight_post, or omit for all): trim or thread the caption under the network's count, keep the first N media, crop/convert/recompress images to the network's ratio and size (stored as new HuhQueue media). Returns the fixed text, media_urls and options plus a fresh preflight. Nothing is sent to Buffer; pass the result to preview_post.",
+     "inputSchema": {"type": "object", "required": ["channel_id", "text"], "properties": {
+         "channel_id": {"type": "string"}, "text": {"type": "string"}, "media_url": {"type": "string"},
+         "media_urls": {"type": "array", "items": {"type": "string"}}, "mode": {"type": "string"}, "options": {"type": "object"},
+         "fixes": {"type": "array", "items": {"type": "string"}}}}},
+    {"name": "list_rules", "description": "The preflight rule pack: every limit HuhQueue enforces per network, with the official doc URL it was verified against and the date, plus rules that could not be verified (not enforced).",
+     "inputSchema": {"type": "object", "properties": {"network": {"type": "string", "description": "Buffer service name, e.g. instagram"}}}},
     {"name": "submit_post", "description": "Submit exactly what preview_post validated. With the default 'review' policy it waits for a human in HuhQueue's Approvals inbox; 'draft' tokens create Buffer drafts only.",
      "inputSchema": {"type": "object", "required": ["confirm_token"], "properties": {"confirm_token": {"type": "string"}}}},
     {"name": "list_approvals", "description": "Your submissions and their status (pending, approved, rejected).",
@@ -34,7 +49,8 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "list_queue", "description": "Posts in Buffer by status: scheduled (default), draft or sent. Each has an id for update_post, reschedule_post and delete_draft.",
      "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["scheduled", "draft", "sent"]}}}},
     {"name": "update_post", "description": "Edit a post already in Buffer: new caption (text), new time (due_at, ISO UTC), or both. This is the same path as dragging a post on the HuhQueue Planner. Sent posts can't change; drafts stay drafts. 'review' and 'draft' tokens may only change drafts.",
-     "inputSchema": {"type": "object", "required": ["post_id"], "properties": {"post_id": {"type": "string"}, "text": {"type": "string"}, "due_at": {"type": "string"}}}},
+     "inputSchema": {"type": "object", "required": ["post_id"], "properties": {"post_id": {"type": "string"}, "text": {"type": "string"}, "due_at": {"type": "string"},
+         "override_warnings": {"type": "boolean"}}}},
     {"name": "reschedule_post", "description": "Move a scheduled post or draft in Buffer to a new time (due_at, ISO UTC). Same as dragging it on the Planner.",
      "inputSchema": {"type": "object", "required": ["post_id", "due_at"], "properties": {"post_id": {"type": "string"}, "due_at": {"type": "string"}}}},
     {"name": "delete_draft", "description": "Delete a Buffer draft (drafts only; scheduled and sent posts are refused).",
@@ -61,7 +77,8 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "schedule_package", "description": "Send one ready package from a run to Buffer (mode draft | queue | next | now | schedule with due_at ISO UTC). Goes through preview and the token's policy: with 'review' it waits in the Approvals inbox.",
      "inputSchema": {"type": "object", "required": ["run_id", "channel_id"], "properties": {"run_id": {"type": "integer"}, "channel_id": {"type": "string"},
-         "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"}}}},
+         "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"},
+         "override_warnings": {"type": "boolean"}}}},
     {"name": "list_calendar", "description": "Everything on the user's Planner: scheduled, sent and draft Buffer posts, agent posts waiting for approval, ready packages not yet sent, and each channel's Buffer posting slots.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "get_limits", "description": "Buffer API budget left for this app, per-network character limits, and how close the Buffer plan is to its limits (scheduled posts, channels, weekly caps).",
@@ -82,15 +99,21 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return studio.preview_post(actor, args)
     if name == "submit_post":
         return studio.submit_post(actor, args.get("confirm_token", ""))
+    if name == "preflight_post":
+        return studio.preflight(actor, args)
+    if name == "autofix_post":
+        return studio.autofix(actor, args)
+    if name == "list_rules":
+        return studio.preflight_rules(actor, args.get("network") or None)
     if name == "list_approvals":
         rows = studio.approvals(actor, args.get("status") or "pending")
         return [r for r in rows if actor.agent is None or r["agent_id"] == actor.agent["id"]]
     if name == "list_queue":
         return studio.queue(actor, args.get("status") or "scheduled")
     if name == "update_post":
-        return studio.update_post(actor, args.get("post_id", ""), args.get("text"), args.get("due_at"))
+        return studio.update_post(actor, args.get("post_id", ""), args.get("text"), args.get("due_at"), bool(args.get("override_warnings")))
     if name == "reschedule_post":
-        return studio.reschedule_post(actor, args.get("post_id", ""), args.get("due_at") or "")
+        return studio.reschedule_post(actor, args.get("post_id", ""), args.get("due_at") or "", bool(args.get("override_warnings")))
     if name == "delete_draft":
         return studio.delete_draft(actor, args.get("post_id", ""))
     if name == "create_idea":
@@ -115,7 +138,8 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "get_brand":
         return {"kit": h.kit(actor), "rules": h.rules(actor)}
     if name == "schedule_package":
-        return h.schedule_package(actor, int(args.get("run_id") or 0), args.get("channel_id", ""), args.get("mode") or "queue", args.get("due_at"))
+        return h.schedule_package(actor, int(args.get("run_id") or 0), args.get("channel_id", ""), args.get("mode") or "queue", args.get("due_at"),
+                                  bool(args.get("override_warnings")))
     if name == "list_calendar":
         return h.calendar(actor)
     if name == "get_limits":

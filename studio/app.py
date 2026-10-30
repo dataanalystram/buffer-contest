@@ -265,11 +265,26 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # one edit path for posts already in Buffer: the Planner's drag-and-drop, its edit dialog, REST and MCP all land here
     @app.patch("/api/posts/{post_id}")
     def post_update(post_id: str, request: Request, body: dict = Body(...)):
-        return studio.update_post(actor(request, write=True), post_id, body.get("text"), body.get("due_at"))
+        return studio.update_post(actor(request, write=True), post_id, body.get("text"), body.get("due_at"),
+                                  bool(body.get("override_warnings")))
+
+    @app.post("/api/preflight")
+    def preflight_run(request: Request, body: dict = Body(...)):
+        """Dry run: check a post against each channel's Buffer and network rules. Read-only."""
+        return studio.preflight(actor(request), body)
+
+    @app.post("/api/preflight/fix")
+    def preflight_fix(request: Request, body: dict = Body(...)):
+        """Apply preflight fixes (trim/thread text, crop/convert images) and return the fixed post. Nothing is sent."""
+        return studio.autofix(actor(request, write=True), body)
+
+    @app.get("/api/preflight/rules")
+    def preflight_rules(request: Request, service: str = ""):
+        return studio.preflight_rules(actor(request), service or None)
 
     @app.post("/api/posts/{post_id}/reschedule")
     def post_reschedule(post_id: str, request: Request, body: dict = Body(...)):
-        return studio.reschedule_post(actor(request, write=True), post_id, body.get("due_at") or "")
+        return studio.reschedule_post(actor(request, write=True), post_id, body.get("due_at") or "", bool(body.get("override_warnings")))
 
     @app.delete("/api/posts/{post_id}")
     def post_delete(post_id: str, request: Request):
@@ -422,7 +437,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.post("/api/agent/runs/{rid}/packages/{channel_id}/schedule")
     def run_schedule(rid: int, channel_id: str, request: Request, body: dict = Body(default={})):
-        return house.schedule_package(actor(request, write=True), rid, channel_id, body.get("mode") or "queue", body.get("due_at"))
+        return house.schedule_package(actor(request, write=True), rid, channel_id, body.get("mode") or "queue", body.get("due_at"),
+                                      bool(body.get("override_warnings")))
 
     @app.get("/api/calendar")
     def calendar(request: Request):

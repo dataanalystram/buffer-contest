@@ -51,19 +51,9 @@ def utf16(s: str) -> int:
 
 
 def count(service: str, text: str) -> int:
-    """Approximate Buffer's per-network character count."""
-    if service == "bluesky":
-        t = URL_RE.sub(lambda m: (urlparse(m.group()).hostname or "")[:40] + "x" * 16, text)
-        return len(t)
-    if service == "twitter":
-        return utf16(URL_RE.sub("x" * 23, text))
-    if service == "mastodon":
-        return utf16(URL_RE.sub("x" * 23, text))
-    if service == "linkedin":
-        return utf16(URL_RE.sub("x" * 24, text))
-    if service == "instagram":
-        return utf16(text) + text.count("\n")
-    return utf16(text)
+    """Buffer's per-network character count (one implementation, in studio/preflight.py)."""
+    from .preflight import count_text
+    return count_text(service, text)
 
 
 def fit(service: str, text: str, limit: int | None = None) -> str:

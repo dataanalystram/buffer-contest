@@ -799,7 +799,8 @@ class House:
                 return pk
         raise ActionError("No package for that channel in this run.", 404)
 
-    def schedule_package(self, a: Actor, rid: int, channel_id: str, mode: str = "queue", due_at: str | None = None) -> dict:
+    def schedule_package(self, a: Actor, rid: int, channel_id: str, mode: str = "queue", due_at: str | None = None,
+                         override_warnings: bool = False) -> dict:
         """The hand-off: a ready package goes through the same preview -> confirm -> submit path as every post, so an
         agent token's policy (approval inbox, drafts only) still holds."""
         run = self.run(a, rid)
@@ -809,7 +810,8 @@ class House:
         if pk.get("status") in ("sent_to_buffer", "pending_approval"):
             raise ActionError("That package was already sent.", 409)
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
-                                            "mode": mode, "due_at": due_at})
+                                            "mode": mode, "due_at": due_at,
+                                            "override_warnings": override_warnings})
         out = self.studio.submit_post(a, prev["confirm_token"])
         self.mark_package(a, rid, channel_id, out["status"], {"mode": mode, "due_at": prev["preview"].get("due_at"),
                                                                "buffer_post_id": (out.get("post") or {}).get("id"),

@@ -24,6 +24,15 @@ ARTICLE = {"url": "https://news.example.com/ai-launch", "title": "OpenAI launche
            "description": "The new model halves latency and costs less, with the same accuracy on coding benchmarks.",
            "image": "https://news.example.com/hero.jpg", "site": "Example News",
            "paragraphs": ["Developers can switch today in the API, and the company says pricing drops by forty percent for most workloads."]}
+def image_bytes(w: int, h: int, fmt: str = "PNG", color=(240, 90, 30)) -> bytes:
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), color).save(buf, fmt)
+    return buf.getvalue()
+
+
 RL = '"100-in-15min";r=97;t=880, "500-in-1day";r=490;t=86000'
 RLP = '"100-in-15min";q=100;w=900, "500-in-1day";q=500;w=86400'
 
@@ -39,6 +48,11 @@ class FakeBuffer:
         self.fail_429 = 0
         self.daily = None  # e.g. {"limit": 3, "scheduled": 3, "sent": 0, "isAtLimit": True}
         self.plan = None   # e.g. {"scheduledPosts": 10, "channels": 3}
+        # media the preflight "downloads" (url -> bytes); anything else counts as unreachable
+        self.media = {"https://cdn.example.com/a.png": image_bytes(1200, 627)}
+
+    def load_media(self, url: str):
+        return self.media.get(url)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         h = {"RateLimit": RL, "RateLimit-Policy": RLP}
@@ -123,7 +137,9 @@ def app(tmp_path, fake, monkeypatch):
                       "oauth_clients, oauth_codes, oauth_refresh")
     s = load_settings(client_id="cid", client_secret="sec", public_url="https://hq.test", session_secret="s" * 64,
                       db_path=db, secure_cookies=False, ai_base_url="")
-    return create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
+    application = create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
+    application.state.studio.media_loader = fake.load_media
+    return application
 
 
 @pytest.fixture

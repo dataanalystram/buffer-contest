@@ -269,10 +269,11 @@ class BufferClient:
         q = """mutation($input: CreatePostInput!) { createPost(input: $input) {
                  ... on PostActionSuccess { post { id text status dueAt channelId } }
                  ... on MutationError { message } } }"""
-        r = self.gql(q, {"input": inp}, uid=uid)["createPost"]
+        # Buffer answers HTTP 200 even when it refuses: the reason is in createPost.message (a typed MutationError)
+        r = self.gql(q, {"input": inp}, uid=uid).get("createPost") or {}
         self._cache = {k: v for k, v in self._cache.items() if k[0] != "posts"}
-        if "post" not in r:
-            raise BufferError(r.get("message") or "Buffer rejected the post", 422)
+        if not r.get("post"):
+            raise BufferError(r.get("message") or "Buffer rejected the post without saying why", 422)
         return r["post"]
 
     def edit_post(self, uid: str, inp: dict) -> dict:
@@ -280,10 +281,10 @@ class BufferClient:
         q = """mutation($input: EditPostInput!) { editPost(input: $input) {
                  ... on PostActionSuccess { post { id text status dueAt channelId } }
                  ... on MutationError { message } } }"""
-        r = self.gql(q, {"input": inp}, uid=uid)["editPost"]
+        r = self.gql(q, {"input": inp}, uid=uid).get("editPost") or {}
         self._cache = {k: v for k, v in self._cache.items() if k[0] != "posts"}
-        if "post" not in r:
-            raise BufferError(r.get("message") or "Buffer rejected the change", 422)
+        if not r.get("post"):
+            raise BufferError(r.get("message") or "Buffer rejected the change without saying why", 422)
         return r["post"]
 
     def delete_post(self, uid: str, post_id: str) -> dict:
