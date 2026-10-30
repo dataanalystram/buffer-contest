@@ -254,7 +254,7 @@ def split_thread(service: str, text: str) -> list[str]:
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 _CACHE: dict[str, tuple[float, dict]] = {}
-CACHE_TTL = 3600
+CACHE_TTL = 600
 
 
 def kind_of(url: str, probe: dict | None = None) -> str:
@@ -334,9 +334,10 @@ def probe_url(url: str, loader: Callable[[str], bytes | None] | None) -> dict:
         except Exception:  # noqa: BLE001 - unreachable media is reported, never raised
             data = None
     res = probe_bytes(data, urlparse(url).path.lower()) if data else {"kind": "unknown", "unreachable": True}
-    if len(_CACHE) > 256:
-        _CACHE.clear()
-    _CACHE[url] = (time.time(), res)
+    if not res.get("unreachable"):  # never cache a failure: the next check should try again
+        if len(_CACHE) > 256:
+            _CACHE.clear()
+        _CACHE[url] = (time.time(), res)
     return res
 
 

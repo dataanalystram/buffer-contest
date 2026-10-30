@@ -143,6 +143,8 @@ def app(tmp_path, fake, monkeypatch):
                       db_path=db, secure_cookies=False, ai_base_url="")
     application = create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
     application.state.studio.media_loader = fake.load_media
+    from studio import preflight
+    preflight._CACHE.clear()
     return application
 
 
