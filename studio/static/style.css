@@ -504,3 +504,4 @@ body.pl-dragging .pl-cell,body.pl-dragging .pl-mday{cursor:copy}
   .pl-mday{min-height:72px;padding:3px}.pl-mday .pl-chip .c,.pl-mday .pl-chip .t{display:none}.pl-mday .pl-chip{padding:2px;justify-content:center;border-left-width:3px}
   .pl-card{flex-wrap:wrap}.pl-thumb{width:48px;height:48px}
 }
+.pl-card.in-side .pl-acts .link{padding:4px 6px}

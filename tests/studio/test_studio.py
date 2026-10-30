@@ -294,9 +294,10 @@ def test_every_control_has_a_data_testid():
     html = (Path(__file__).parents[2] / "studio/static/index.html").read_text()
     for tag in re.findall(r"<(?:button|input|select|textarea)\b[^>]*>", html):
         assert "data-testid" in tag, tag
-    js = (Path(__file__).parents[2] / "studio/static/app.js").read_text()
-    for tag in re.findall(r"<(?:button|input|select|textarea)\b[^>]*>", js):
-        assert "data-testid" in tag, tag
+    for name in ("app.js", "planner.js"):
+        js = (Path(__file__).parents[2] / "studio/static" / name).read_text()
+        for tag in re.findall(r"<(?:button|input|select|textarea)\b[^>]*>", js):
+            assert "data-testid" in tag, (name, tag)
 
 
 def test_pages_and_branding(client):
