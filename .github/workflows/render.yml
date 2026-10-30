@@ -1,5 +1,5 @@
 name: render
-# Free video render worker for House Style. The app dispatches one run per video job.
+# Free video render worker for HuhQueue. The app dispatches one run per video job.
 on:
   workflow_dispatch:
     inputs:

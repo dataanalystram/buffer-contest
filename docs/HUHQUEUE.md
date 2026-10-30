@@ -1,12 +1,12 @@
 ---
-title: "House Style: research, plan and build notes"
+title: "HuhQueue: research, plan and build notes"
 subtitle: "Buffer Commit 2026 entry (PR #11, branch feat/house-style)"
 date: "30 October 2026"
 ---
 
 # 1. The pitch
 
-**House Style is a brand-aware AI editor for Buffer.** Give it a topic, a link, or your own photos and videos. One agent finds the story, verifies it on the primary source, structures the facts, renders branded cards, carousels and Reels, writes per-channel captions, checks everything against your brand rules, and hands it to Buffer as a draft, a queued post, or a scheduled post.
+**HuhQueue is a brand-aware AI editor for Buffer.** Give it a topic, a link, or your own photos and videos. One agent finds the story, verifies it on the primary source, structures the facts, renders branded cards, carousels and Reels, writes per-channel captions, checks everything against your brand rules, and hands it to Buffer as a draft, a queued post, or a scheduled post.
 
 When you correct it ("never say breakthrough, logo smaller and top left, no hashtags"), the correction becomes a **Style Ledger** rule. Every future caption and every future render obeys it, and the brand check cites the exact rule when something fails.
 
@@ -31,13 +31,13 @@ Deadline: **13 Nov 2026, 11:59 PM PT**. Judging starts 16 Nov 2026.
 
 ## 2.2 Reused from `Huhbyte.ai`
 
-The proven editorial and render pipeline: `hb.py` (Pillow + FFmpeg branded layouts, 4:5 and 9:16, logos, end cards, captions, source credits) and the automation scripts (`news_watch`, `story_bank`, `format_rules`, `pipeline`, `post`). House Style ports these ideas into a multi-tenant, brand-configurable engine.
+The proven editorial and render pipeline: `hb.py` (Pillow + FFmpeg branded layouts, 4:5 and 9:16, logos, end cards, captions, source credits) and the automation scripts (`news_watch`, `story_bank`, `format_rules`, `pipeline`, `post`). HuhQueue ports these ideas into a multi-tenant, brand-configurable engine.
 
 ## 2.3 Competitor: Queue Pilot (`oguzserdar/queue-pilot`, v0.2.0)
 
-Text-first: drafting from voice examples, playbook rules, 31 MCP tools, filling Buffer drafts. **We do not copy it.** House Style differs on:
+Text-first: drafting from voice examples, playbook rules, 31 MCP tools, filling Buffer drafts. **We do not copy it.** HuhQueue differs on:
 
-| Area | Queue Pilot | House Style |
+| Area | Queue Pilot | HuhQueue |
 |---|---|---|
 | Output | Text drafts | Branded images, carousels, Reels + captions |
 | Learning | Static playbook | Corrections become Style Ledger rules that change the next render |
@@ -48,7 +48,7 @@ Text-first: drafting from voice examples, playbook rules, 31 MCP tools, filling 
 ## 2.4 Using people's AI subscriptions (compliance)
 
 - **ChatGPT:** "Sign in with ChatGPT" can let eligible Plus/Pro users spend plan usage in participating apps. Hosted apps may need OpenAI approval, so it is a roadmap item, not a contest dependency.
-- **Claude:** we never route Claude Free/Pro/Max OAuth credentials through House Style. Compliant paths are the MCP connector in Claude.ai, unmodified Claude Code with its own subscription, or the user's own Anthropic API key.
+- **Claude:** we never route Claude Free/Pro/Max OAuth credentials through HuhQueue. Compliant paths are the MCP connector in Claude.ai, unmodified Claude Code with its own subscription, or the user's own Anthropic API key.
 - **Three tiers shipped:** (A) MCP: the user's own assistant does the reasoning, we supply tools; (B) bring-your-own key, encrypted per user (OpenAI, Anthropic, Gemini, Groq, OpenRouter, any OpenAI-compatible); (C) free built-in fallback so judges can run it with nothing.
 
 ## 2.5 Free-tier architecture

@@ -1,4 +1,4 @@
-"""House Style: brand kits, the Style Ledger, and brand_check.
+"""HuhQueue: brand kits, the Style Ledger, and brand_check.
 
 A brand kit is what a brand looks like (colors, fonts, logo, handle, end card). The Style Ledger is what the brand has
 *learned*: every correction a person gives ("logo smaller", "never say game-changer", "max 2 hashtags") becomes a written

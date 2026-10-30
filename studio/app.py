@@ -1,4 +1,4 @@
-"""HuhQueue Studio — the Buffer Commit edition web app (FastAPI).
+"""HuhQueue — the Buffer Commit edition web app (FastAPI).
 
 Run:  uvicorn studio.app:create_app --factory   (env: BUFFER_CLIENT_ID, BUFFER_CLIENT_SECRET, SESSION_SECRET, PUBLIC_URL)
 """
@@ -35,7 +35,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         print(f"migrate: copied {copied or 'nothing (target already has data)'}", flush=True)
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
-    app = FastAPI(title="HuhQueue Studio — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
+    app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
     house = house_mod.House(studio, http=http)
     studio.house = house
     app.state.settings, app.state.store, app.state.buffer, app.state.studio, app.state.house = s, store, buffer, studio, house
@@ -320,7 +320,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def audit(request: Request, limit: int = 100):
         return studio.audit(actor(request), min(limit, 500))
 
-    # ------------------------------------------------------------ House Style: media, brand kit, ledger, agent, calendar
+    # ------------------------------------------------------------ HuhQueue: media, brand kit, ledger, agent, calendar
     @app.get("/m/{token}", include_in_schema=False)
     def media(token: str, request: Request):
         m = house.get_media(token)

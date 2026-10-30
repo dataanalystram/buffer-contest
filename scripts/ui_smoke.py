@@ -1,4 +1,4 @@
-"""Drive the real web app in Chromium against the sample workspace and save screenshots of every House Style screen.
+"""Drive the real web app in Chromium against the sample workspace and save screenshots of every HuhQueue screen.
 
     python scripts/ui_smoke.py http://127.0.0.1:8899 shots/
 Runs the agent for real (live news search, render, captions, brand check), revises it, sends a package, opens the calendar.

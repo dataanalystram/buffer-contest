@@ -56,7 +56,7 @@ def test_link_to_buffer_draft_and_agent_approval(live):
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
         page = ctx.new_page()
         page.goto(base)
-        page.get_by_test_id("agent-go").wait_for()  # House Style opens on the agent
+        page.get_by_test_id("agent-go").wait_for()  # HuhQueue opens on the agent
         page.get_by_test_id("tab-home").click()
         page.get_by_test_id("todo-item").first.wait_for()
         page.get_by_test_id("tab-studio").click()

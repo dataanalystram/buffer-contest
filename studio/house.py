@@ -1,4 +1,4 @@
-"""House Style: the agent, the brand kit, the Style Ledger, media and the calendar, on top of the Studio actions.
+"""HuhQueue: the agent, the brand kit, the Style Ledger, media and the calendar, on top of the Studio actions.
 
 One agent, eight visible steps: find -> verify -> structure -> format -> render -> caption -> brand check -> ready.
 Every step is stored with what it did, so the web app shows a timeline and an MCP client gets the same record. A
@@ -123,7 +123,7 @@ class House:
         kit, rules = self.kit(a), self.rules(a)
         p = brand.visual_params(kit, rules)
         logo = self._logo_bytes(kit)
-        b1, m1 = render.news_card("Your next post, rendered in your house style", kit, p, logo=logo, ratio="4:5", label="Preview",
+        b1, m1 = render.news_card("Your next post, rendered in your brand style", kit, p, logo=logo, ratio="4:5", label="Preview",
                                   credit="example.com")
         b2, _ = render.end_card(kit, p, logo=logo, ratio="4:5")
         self.store.x("DELETE FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
@@ -237,7 +237,7 @@ class House:
         return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
 
     def import_url(self, a: Actor, url: str) -> dict:
-        """For agents: fetch a photo or video the user owns from a public URL into House Style."""
+        """For agents: fetch a photo or video the user owns from a public URL into HuhQueue."""
         ext = urlparse(url).path.rsplit(".", 1)[-1].lower() if "." in urlparse(url).path else ""
         data = self._fetch_bytes(url, MAX_UPLOAD)
         if not data:

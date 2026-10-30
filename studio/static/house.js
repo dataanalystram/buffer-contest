@@ -1,4 +1,4 @@
-// House Style front end: the agent, its timeline, before/after, the Style Ledger, the brand kit, the calendar, AI engine.
+// HuhQueue front end: the agent, its timeline, before/after, the Style Ledger, the brand kit, the calendar, AI engine.
 "use strict";
 const H = { src: "topic", run: null, poll: null, sel: new Set(), month: null, cal: null, ai: null, upload: null };
 const STATUS_ICON = { pending: "", running: '<span class="spin" aria-hidden="true"></span>', done: "✓", warn: "!", failed: "×" };
@@ -252,7 +252,7 @@ function drawLedger(rules) {
       <div class="rtxt"><b>${esc(r.rule)}</b><small>From “${esc(r.source)}”${r.hits ? ` · caught ${r.hits} time${r.hits > 1 ? "s" : ""}` : ""}</small></div>
       <label class="switch sm"><input type="checkbox" role="switch" data-act="${r.id}" ${r.active ? "checked" : ""} aria-label="Rule on"><span></span></label>
       <button class="link danger" data-del="${r.id}" aria-label="Delete rule">Delete</button></li>`).join("")}</ul>`
-    : `<div class="empty"><b>No rules yet</b><span>Correct a post (“logo smaller”, “no hype”) and House Style writes the rule here. Or teach one above.</span></div>`;
+    : `<div class="empty"><b>No rules yet</b><span>Correct a post (“logo smaller”, “no hype”) and HuhQueue writes the rule here. Or teach one above.</span></div>`;
   box.querySelectorAll("[data-act]").forEach((c) => (c.onchange = async () => { await api(`/api/ledger/${c.dataset.act}`, { method: "POST", body: { active: c.checked } }); loadBrand(); }));
   box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => { await api(`/api/ledger/${b.dataset.del}`, { method: "DELETE" }); loadBrand(); }));
 }
@@ -285,7 +285,7 @@ $("#kitImport").onclick = async () => {
 async function loadAI() {
   const v = await api("/api/ai"); H.ai = v;
   $("#aiNow").innerHTML = v.own ? `Your agent writes with <b>your ${esc(v.presets[v.own.provider]?.label || v.own.provider)} key</b> (${esc(v.own.model)}, ${esc(v.own.key_hint)}).`
-    : v.free_starter ? `Your agent writes with the <b>free starter model</b> (${v.free_daily} AI calls a day). Add your own key for more, or use House Style from Claude or ChatGPT.`
+    : v.free_starter ? `Your agent writes with the <b>free starter model</b> (${v.free_daily} AI calls a day). Add your own key for more, or use HuhQueue from Claude or ChatGPT.`
     : `Your agent writes with the <b>built-in writer</b> (no AI). Add a key or connect Claude/ChatGPT for richer captions.`;
   $("#aiMcp").textContent = S.session.mcp_url;
   const sel = $("#aiProv");

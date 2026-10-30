@@ -1,4 +1,4 @@
-# HuhQueue Studio design rules
+# HuhQueue design rules
 
 Read this before changing anything in `studio/static/`. The interface follows the **Taste** design system
 (canvas: https://claude.ai/artifact/Uz9BgwqHswGA8Api1HZJm4). All values live as CSS variables at the top of

@@ -1,4 +1,4 @@
-# Render Blueprint for HuhQueue Studio: free web service; the database is Supabase Postgres (free, does not expire).
+# Render Blueprint for HuhQueue: free web service; the database is Supabase Postgres (free, does not expire).
 # Render's free Postgres is only kept while we copy it to Supabase (docs/SUPABASE.md); remove it after the move.
 services:
   - type: web

@@ -1,4 +1,4 @@
-// HuhQueue Studio front end. Talks only to this server; Buffer tokens never reach the browser.
+// HuhQueue front end. Talks only to this server; Buffer tokens never reach the browser.
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

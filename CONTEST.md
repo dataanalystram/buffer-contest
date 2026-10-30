@@ -1,6 +1,6 @@
 # Buffer Commit — what was built, and when
 
-HuhQueue Studio is our entry to **Buffer Commit** (build window 28 Oct – 13 Nov 2026, 23:59 PT).
+HuhQueue is our entry to **Buffer Commit** (build window 28 Oct – 13 Nov 2026, 23:59 PT).
 Judges: please only judge the work listed under "Built during Buffer Commit".
 
 | | |

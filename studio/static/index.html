@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HuhQueue House Style — your brand's editor, built on the Buffer API</title>
+<title>HuhQueue — your brand's editor, built on the Buffer API</title>
 <meta name="description" content="An AI editor that learns your brand. It researches the story, renders on-brand carousels and Reels, remembers every correction as a rule, checks each post against your rules, and schedules through Buffer.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
@@ -14,7 +14,7 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
-  <a class="brand" href="/" data-testid="brand"><span class="mark" aria-hidden="true">hq</span><span class="brand-text"><span class="name">House Style</span><span class="built">Built on the Buffer API</span></span></a>
+  <a class="brand" href="/" data-testid="brand"><span class="mark" aria-hidden="true">hq</span><span class="brand-text"><span class="name">HuhQueue</span><span class="built">Built on the Buffer API · not affiliated</span></span></a>
   <nav class="land-nav" id="landNav" aria-label="Main">
     <a href="#how">How it works</a><a href="#agents">For agents</a>
     <a class="btn" href="/login" data-testid="nav-connect">Connect Buffer</a>
@@ -79,7 +79,7 @@
         <h2 class="h-display">From a topic to your Buffer calendar</h2>
         <div class="points">
           <div><h3>Research with receipts</h3><p>The agent searches the news, opens the source page, checks other outlets carry it, and pulls out the facts. Every step is on a timeline you can read.</p></div>
-          <div><h3>Rendered in your house style</h3><p>Carousels, single cards and 9:16 Reels in your brand kit: colors, logo, font, handle and end card. Your own photos and clips get the same treatment.</p></div>
+          <div><h3>Rendered in your brand style</h3><p>Carousels, single cards and 9:16 Reels in your brand kit: colors, logo, font, handle and end card. Your own photos and clips get the same treatment.</p></div>
           <div><h3>A ledger that remembers</h3><p>Every correction becomes a written rule. Each render and caption is checked against all of them, and a failed check names the exact rule. Then it goes to Buffer.</p></div>
         </div>
       </div>
@@ -110,7 +110,7 @@
       <div class="wrap split">
         <div class="stack">
           <h2 class="h-display lg">Use it here, or from your own Claude or ChatGPT.</h2>
-          <p class="lede">The web app runs the whole loop on its own. Prefer your assistant? Add House Style as a connector and your own subscription does the thinking: research, render, revise, brand check and schedule are all tools.</p>
+          <p class="lede">The web app runs the whole loop on its own. Prefer your assistant? Add HuhQueue as a connector and your own subscription does the thinking: research, render, revise, brand check and schedule are all tools.</p>
           <ul class="checks">
             <li>Approval by default, Buffer drafts only, or trusted to schedule. You pick per agent.</li>
             <li>A daily cap on every agent token.</li>
@@ -203,7 +203,7 @@
 
       <div class="tab" id="tab-brand" hidden>
         <h1 class="page-title">Brand &amp; Style Ledger</h1>
-        <p class="intro">Your kit is how posts look. The ledger is what House Style has learned from your corrections. Every render and caption follows both, and the brand check cites the rule when something's off.</p>
+        <p class="intro">Your kit is how posts look. The ledger is what HuhQueue has learned from your corrections. Every render and caption follows both, and the brand check cites the rule when something's off.</p>
         <div class="brand-grid">
           <form class="panel" id="kitForm">
             <h2 class="card-title">Brand kit</h2>
@@ -230,13 +230,13 @@
 
       <div class="tab" id="tab-ai" hidden>
         <h1 class="page-title">AI engine</h1>
-        <p class="intro">House Style never needs our AI budget. Pick how your agent thinks.</p>
+        <p class="intro">HuhQueue never needs our AI budget. Pick how your agent thinks.</p>
         <div class="panel"><h2 class="card-title">Right now</h2><p id="aiNow" data-testid="ai-now"></p></div>
         <div class="engines">
           <div class="panel"><h2 class="card-title">Use your Claude or ChatGPT</h2>
-            <p class="muted">Add House Style as a connector. Your own subscription does the thinking; House Style supplies the tools (research, render, ledger, brand check, Buffer).</p>
+            <p class="muted">Add HuhQueue as a connector. Your own subscription does the thinking; HuhQueue supplies the tools (research, render, ledger, brand check, Buffer).</p>
             <span class="label">Connector URL</span><pre class="code" id="aiMcp" data-testid="ai-mcp"></pre>
-            <p class="muted sm">Claude.ai and ChatGPT sign you in with OAuth. Claude Code: <code>claude mcp add --transport http house-style &lt;URL&gt;</code></p></div>
+            <p class="muted sm">Claude.ai and ChatGPT sign you in with OAuth. Claude Code: <code>claude mcp add --transport http huhqueue &lt;URL&gt;</code></p></div>
           <form class="panel" id="aiForm"><h2 class="card-title">Bring your own API key</h2>
             <p class="muted">Encrypted on the server, used only for your runs, never shown again.</p>
             <div class="two"><div class="field"><label class="label" for="aiProv">Provider</label><select id="aiProv" data-testid="ai-provider"></select></div>

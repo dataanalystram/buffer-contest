@@ -1,4 +1,4 @@
-# HuhQueue Studio — built on the Buffer API
+# HuhQueue — built on the Buffer API
 
 **Paste a link. Get a post for every channel. Approve it, and it's in your Buffer queue.**
 An open-source, agent-first content studio. Your AI agents (Claude, ChatGPT, Cursor) can draft and schedule through it too —

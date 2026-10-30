@@ -1,4 +1,4 @@
-# Buffer Commit submission — HuhQueue Studio
+# Buffer Commit submission — HuhQueue
 
 - **App:** https://huhqueue-studio.onrender.com
 - **Code (open source, MIT):** https://github.com/dataanalystram/buffer-contest

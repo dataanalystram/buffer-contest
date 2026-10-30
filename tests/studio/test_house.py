@@ -1,4 +1,4 @@
-"""House Style: ledger, brand check, renders, the agent loop end to end (sample workspace, no network)."""
+"""HuhQueue: ledger, brand check, renders, the agent loop end to end (sample workspace, no network)."""
 import base64
 import io
 import json

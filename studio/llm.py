@@ -2,8 +2,8 @@
 
 Order: the user's own key (bring your own: OpenAI, Anthropic, Gemini, Groq, OpenRouter or any OpenAI-compatible
 endpoint, encrypted at rest) -> the app's free starter model (AI_BASE_URL, e.g. Pollinations) -> no AI (the built-in
-rule writer). People who use House Style from Claude or ChatGPT via MCP need none of this: their own assistant thinks,
-House Style only supplies the tools.
+rule writer). People who use HuhQueue from Claude or ChatGPT via MCP need none of this: their own assistant thinks,
+HuhQueue only supplies the tools.
 """
 from __future__ import annotations
 

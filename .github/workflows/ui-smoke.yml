@@ -1,5 +1,5 @@
 name: ui-smoke
-# Real browser run of the whole House Style loop against the sample workspace; screenshots are uploaded as an artifact.
+# Real browser run of the whole HuhQueue loop against the sample workspace; screenshots are uploaded as an artifact.
 on:
   workflow_dispatch:
     inputs:

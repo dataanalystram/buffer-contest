@@ -1,4 +1,4 @@
-"""HuhQueue Studio configuration (Buffer Commit edition).
+"""HuhQueue configuration (Buffer Commit edition).
 
 Everything comes from the environment so the same image runs locally, in tests and on the host.
 Secrets (BUFFER_CLIENT_SECRET, SESSION_SECRET) are host secrets and never reach the browser.
