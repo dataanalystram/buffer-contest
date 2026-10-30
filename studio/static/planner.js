@@ -1,0 +1,411 @@
+// HuhQueue Planner: one place for the Buffer queue and the calendar. List | Week | Month, filters, a timezone, "No date"
+// drafts, Buffer posting times, click an empty slot to schedule, drag to reschedule. Every move goes through the same
+// actions as REST and MCP: PATCH-style reschedule of Buffer posts (studio.update_post), approvals get a time, ready
+// packages go through preview -> submit. Ported from the HuhQueue calendar (dataanalystram/bufferopensource, MIT).
+"use strict";
+const PL = { view: "week", date: "", ch: new Set(), type: "", status: "", q: "", tz: "", nodate: false, slots: true,
+             data: null, loading: false, req: 0, edit: null };
+const PL_KEY = "hq_planner";
+const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft" };
+const PL_TYPES = { text: "Text", image: "Image", carousel: "Carousel", video: "Video or Reel" };
+const NET_MARK = { twitter: "X", linkedin: "in", instagram: "IG", bluesky: "bs", threads: "@", mastodon: "M", facebook: "f", tiktok: "TT", youtube: "YT", pinterest: "P", googlebusiness: "G" };
+const DOW = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const ROW_H = 52;
+const pad2 = (n) => String(n).padStart(2, "0");
+const localTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (_) { return "UTC"; } };
+
+// ---------------------------------------------------------------- dates in a chosen timezone
+const _fmt = {};
+function zoned(date, tz) {
+  const f = _fmt[tz] || (_fmt[tz] = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }));
+  const o = {}; for (const p of f.formatToParts(date)) o[p.type] = p.value;
+  const z = { y: +o.year, mo: +o.month, d: +o.day, h: +o.hour % 24, mi: +o.minute };
+  z.ymd = `${z.y}-${pad2(z.mo)}-${pad2(z.d)}`;
+  return z;
+}
+function fromZoned(ymd, hh, mm, tz) { // the instant whose wall clock in tz reads ymd hh:mm
+  const [y, mo, d] = ymd.split("-").map(Number);
+  let guess = Date.UTC(y, mo - 1, d, hh, mm);
+  for (let i = 0; i < 2; i++) { const z = zoned(new Date(guess), tz); guess -= Date.UTC(z.y, z.mo - 1, z.d, z.h, z.mi) - Date.UTC(y, mo - 1, d, hh, mm); }
+  return new Date(guess);
+}
+const ymdUTC = (t) => new Date(t).toISOString().slice(0, 10);
+const addDays = (ymd, n) => { const [y, m, d] = ymd.split("-").map(Number); return ymdUTC(Date.UTC(y, m - 1, d + n)); };
+const dowOf = (ymd) => (new Date(ymd + "T12:00:00Z").getUTCDay() + 6) % 7; // 0 = Monday
+const mondayOf = (ymd) => addDays(ymd, -dowOf(ymd));
+const dayLabel = (ymd, o) => new Date(ymd + "T12:00:00Z").toLocaleDateString([], { timeZone: "UTC", ...o });
+const timeLabel = (h, mi) => new Date(Date.UTC(2000, 0, 1, h, mi)).toLocaleTimeString([], { timeZone: "UTC", hour: "numeric", minute: "2-digit" });
+const todayYmd = () => zoned(new Date(), PL.tz).ymd;
+
+// ---------------------------------------------------------------- state <-> URL and localStorage
+function plLoadState() {
+  let saved = {}; try { saved = JSON.parse(localStorage.getItem(PL_KEY) || "{}"); } catch (_) {}
+  const u = new URLSearchParams(location.search), g = (k) => (u.has(k) ? u.get(k) : saved[k]);
+  PL.view = ["list", "week", "month"].includes(g("view")) ? g("view") : "week";
+  PL.date = /^\d{4}-\d{2}-\d{2}$/.test(g("date") || "") ? g("date") : "";
+  PL.ch = new Set(String(g("ch") || "").split(",").filter(Boolean));
+  PL.type = PL_TYPES[g("type")] ? g("type") : "";
+  PL.status = PL_STATES[g("status")] ? g("status") : "";
+  PL.q = g("q") || "";
+  PL.tz = g("tz") || localTz();
+  PL.nodate = String(g("nodate")) === "1";
+  PL.slots = String(g("slots")) !== "0";
+}
+function plSaveState() {
+  const s = { view: PL.view, date: PL.date, ch: [...PL.ch].join(","), type: PL.type, status: PL.status, q: PL.q, tz: PL.tz,
+              nodate: PL.nodate ? "1" : "", slots: PL.slots ? "" : "0" };
+  try { localStorage.setItem(PL_KEY, JSON.stringify(s)); } catch (_) {}
+  const u = new URLSearchParams({ tab: "planner" });
+  for (const [k, v] of Object.entries(s)) if (v && !(k === "tz" && v === localTz())) u.set(k, v);
+  history.replaceState(null, "", "/?" + u.toString());
+}
+const plFiltersActive = () => PL.ch.size || PL.type || PL.status || PL.q;
+
+// ---------------------------------------------------------------- range for the current view
+function plRange() {
+  const anchor = PL.date || todayYmd();
+  if (PL.view === "week") { const s = mondayOf(anchor); return { days: Array.from({ length: 7 }, (_, i) => addDays(s, i)), anchor }; }
+  if (PL.view === "list") { const s = PL.date || todayYmd(); return { days: Array.from({ length: 28 }, (_, i) => addDays(s, i)), anchor }; }
+  const first = anchor.slice(0, 8) + "01", s = mondayOf(first);
+  return { days: Array.from({ length: 42 }, (_, i) => addDays(s, i)), anchor, month: first.slice(0, 7) };
+}
+function plTitle(r) {
+  if (PL.view === "month") return dayLabel(r.month + "-15", { month: "long", year: "numeric" });
+  const a = r.days[0], b = r.days[r.days.length - 1];
+  return `${dayLabel(a, { day: "numeric", month: "short" })} – ${dayLabel(b, { day: "numeric", month: "short", year: "numeric" })}`;
+}
+
+// ---------------------------------------------------------------- data
+async function loadPlanner() {
+  if (!PL.tz) plLoadState();
+  plControls();
+  const my = ++PL.req;
+  if (!PL.data) $("#plMain").innerHTML = `<div class="pl-skel" data-testid="planner-loading" aria-busy="true"><span></span><span></span><span></span></div>`;
+  try {
+    const d = await api("/api/calendar");
+    if (my !== PL.req) return;
+    PL.data = d;
+    for (const it of d.items) it.z = it.when ? zoned(new Date(it.when), PL.tz) : null;
+    if (typeof readyBadgeFrom === "function") readyBadgeFrom(d);
+  } catch (e) { $("#plMain").innerHTML = `<div class="st err">${esc(e.message)}</div>`; return; }
+  plDraw();
+}
+function plVisible() {
+  const q = PL.q.trim().toLowerCase();
+  return (PL.data?.items || []).filter((i) => (!PL.ch.size || PL.ch.has(i.channel_id))
+    && (!PL.type || (PL.type === "video" ? ["video", "reel"].includes(i.type) : i.type === PL.type))
+    && (!PL.status || i.state === PL.status)
+    && (!q || (i.text || "").toLowerCase().includes(q) || (i.channel || "").toLowerCase().includes(q)));
+}
+
+// ---------------------------------------------------------------- controls (header, filters, toggles)
+function plControls() {
+  document.querySelectorAll("[data-view]").forEach((b) => { const on = b.dataset.view === PL.view; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
+  $("#plType").value = PL.type; $("#plStatus").value = PL.status; $("#plSearch").value = PL.q;
+  $("#plNoDateT").checked = PL.nodate; $("#plSlotsT").checked = PL.slots;
+  const tzSel = $("#plTz");
+  if (!tzSel.options.length || tzSel.dataset.for !== PL.tz) {
+    let all = []; try { all = Intl.supportedValuesOf("timeZone"); } catch (_) { all = ["UTC", "Europe/Dublin", "Europe/London", "America/New_York", "America/Los_Angeles", "Asia/Kolkata"]; }
+    const top = [...new Set([localTz(), PL.tz, ...((PL.data?.slots || []).map((s) => s.timezone))])].filter(Boolean);
+    tzSel.innerHTML = `<optgroup label="Suggested">${top.map((z) => `<option value="${esc(z)}">${esc(z.replace(/_/g, " "))}${z === localTz() ? " (this device)" : ""}</option>`).join("")}</optgroup>`
+      + `<optgroup label="All timezones">${all.filter((z) => !top.includes(z)).map((z) => `<option value="${esc(z)}">${esc(z.replace(/_/g, " "))}</option>`).join("")}</optgroup>`;
+    tzSel.dataset.for = PL.tz;
+  }
+  tzSel.value = PL.tz;
+  const box = $("#plChannels");
+  box.innerHTML = S.channels.map((c) => `<button type="button" class="pl-ch${PL.ch.has(c.id) ? " on" : ""}" data-testid="planner-channel" data-ch="${esc(c.id)}" aria-pressed="${PL.ch.has(c.id)}" title="${esc((c.displayName || c.name) + " on " + netName(c.service))}">${netMark(c.service)}<span>${esc(c.displayName || c.name)}</span></button>`).join("");
+  box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => { const id = b.dataset.ch; PL.ch.has(id) ? PL.ch.delete(id) : PL.ch.add(id); plChanged(); }));
+  $("#plClear").hidden = !plFiltersActive();
+}
+function plChanged() { plSaveState(); plControls(); plDraw(); }
+function netMark(svc) { return `<span class="net svc-${esc(svc)}" aria-hidden="true">${esc(NET_MARK[svc] || (svc || "?").slice(0, 2))}</span>`; }
+function stateChip(st) { return `<span class="pl-state ${esc(st)}" data-testid="planner-status">${esc(PL_STATES[st] || st)}</span>`; }
+
+// ---------------------------------------------------------------- draw
+function plDraw() {
+  if (!PL.data) return;
+  const r = plRange(), vis = plVisible();
+  const inRange = new Set(r.days), dated = vis.filter((i) => i.z), undated = vis.filter((i) => !i.z);
+  const byDay = {};
+  for (const i of dated) (byDay[i.z.ymd] ||= []).push(i);
+  for (const k in byDay) byDay[k].sort((a, b) => new Date(a.when) - new Date(b.when));
+  const count = dated.filter((i) => inRange.has(i.z.ymd) && (PL.view !== "month" || i.z.ymd.startsWith(r.month))).length;
+  $("#plTitle").textContent = plTitle(r);
+  $("#plCount").textContent = `${count} post${count === 1 ? "" : "s"}`;
+  $("#plTzNote").textContent = PL.tz.replace(/_/g, " ");
+  const main = $("#plMain");
+  main.dataset.view = PL.view;
+  if (PL.view === "list") main.innerHTML = plList(r, byDay);
+  else if (PL.view === "week") main.innerHTML = plWeek(r, byDay);
+  else main.innerHTML = plMonth(r, byDay);
+  // No date sidebar
+  const side = $("#plNoDate");
+  side.hidden = !PL.nodate; $("#plBody").classList.toggle("with-side", PL.nodate);
+  if (PL.nodate) {
+    side.innerHTML = `<div class="pl-side-head"><b>No date</b><span class="pill sm" data-testid="planner-nodate-count">${undated.length}</span></div>
+      <p class="muted xs">Drag a draft onto the calendar to give it a time.</p>
+      ${undated.length ? undated.map((i) => plCard(i, "side")).join("") : `<p class="pl-side-empty" data-testid="planner-nodate-empty">Nothing without a date. Drafts you save without a time land here.</p>`}`;
+  }
+  plWire();
+  if (PL.view === "week") { const sc = $(".pl-week-scroll"); if (sc && !sc.dataset.scrolled) { sc.scrollTop = 7 * ROW_H; sc.dataset.scrolled = "1"; } }
+}
+function plEmpty() {
+  return `<div class="pl-empty" data-testid="planner-empty"><svg class="ic lg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
+    <b>No posts match these filters</b><span>Try another channel, type or date range, or schedule something new.</span>
+    <div class="row"><button class="btn sm" type="button" data-testid="planner-empty-create" data-act="new">Create post</button>${plFiltersActive() ? `<button class="btn2 sm" type="button" data-testid="planner-empty-clear" data-act="clear">Clear filters</button>` : ""}</div></div>`;
+}
+function plThumb(i) {
+  if (i.thumb) return `<img src="${esc(i.thumb)}" alt="" loading="lazy">`;
+  const g = { video: '<path d="M8 6l10 6-10 6z"/>', reel: '<path d="M8 6l10 6-10 6z"/>', carousel: '<rect x="4" y="6" width="12" height="12" rx="2"/><path d="M19 8v8"/>', image: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 16l5-5 4 4 3-3 4 4"/>' }[i.type] || '<path d="M6 7h12M6 12h12M6 17h7"/>';
+  return `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${g}</svg>`;
+}
+function plWhen(i) { return i.z ? timeLabel(i.z.h, i.z.mi) : "No date"; }
+// a compact chip for the week and month grids
+function plChip(i) {
+  return `<button type="button" class="pl-chip ${esc(i.state)}${i.draggable ? "" : " locked"}" data-testid="planner-item" data-ref="${esc(i.ref)}" data-state="${esc(i.state)}" data-ch="${esc(i.channel_id)}" ${i.draggable ? 'draggable="true"' : ''}
+    title="${esc(PL_STATES[i.state] + " · " + (i.channel || "") + " · " + netName(i.service) + "\n" + i.text)}">${netMark(i.service)}<span class="t">${esc(plWhen(i))}</span><span class="c">${esc(i.text || "(media)")}</span></button>`;
+}
+// a full card for the list view and the No date sidebar
+function plCard(i, where) {
+  const acts = [];
+  if (i.kind === "buffer" && i.state !== "sent") acts.push(`<button type="button" class="link" data-testid="planner-edit" data-act="edit" data-ref="${esc(i.ref)}">Edit</button>`,
+    `<button type="button" class="link" data-testid="planner-reschedule" data-act="reschedule" data-ref="${esc(i.ref)}">Reschedule</button>`);
+  if (i.kind === "approval") acts.push(`<button type="button" class="link" data-testid="planner-reschedule" data-act="reschedule" data-ref="${esc(i.ref)}">${i.when ? "Reschedule" : "Set time"}</button>`,
+    `<button type="button" class="btn accent xs" data-testid="planner-approve" data-act="approve" data-ref="${esc(i.ref)}">Approve</button>`);
+  if (i.kind === "ready") acts.push(`<button type="button" class="link" data-testid="planner-open-run" data-act="run" data-ref="${esc(i.ref)}">Open</button>`,
+    `<button type="button" class="link" data-testid="planner-reschedule" data-act="reschedule" data-ref="${esc(i.ref)}">Schedule</button>`);
+  if (i.state === "draft") acts.push(`<button type="button" class="link danger" data-testid="planner-delete" data-act="delete" data-ref="${esc(i.ref)}">Delete draft</button>`);
+  if (i.state === "sent" && i.link) acts.push(`<a class="link" href="${esc(i.link)}" target="_blank" rel="noopener" data-testid="planner-view-post">View post</a>`);
+  return `<article class="pl-card ${esc(i.state)}${where === "side" ? " side" : ""}" data-testid="${where === "side" ? "planner-nodate-item" : "planner-card"}" data-ref="${esc(i.ref)}" data-ch="${esc(i.channel_id)}" data-state="${esc(i.state)}" ${i.draggable ? 'draggable="true"' : ""}>
+    <span class="pl-thumb">${plThumb(i)}</span>
+    <div class="pl-card-body"><div class="pl-meta">${netMark(i.service)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
+      <p class="pl-cap">${esc(i.text || "(media only)")}</p>
+      <div class="pl-foot">${stateChip(i.state)}${i.agent ? `<span class="muted xs">by ${esc(i.agent)}</span>` : ""}<span class="pl-acts">${acts.join("")}</span></div></div></article>`;
+}
+function plList(r, byDay) {
+  const days = r.days.filter((d) => (byDay[d] || []).length);
+  if (!days.length) return plEmpty();
+  const t = todayYmd();
+  return `<div class="pl-list" data-testid="planner-list">${days.map((d) => `<section class="pl-day" data-day="${d}"><h3><span>${d === t ? "Today" : esc(dayLabel(d, { weekday: "long" }))}</span><span class="muted">${esc(dayLabel(d, { day: "numeric", month: "long" }))}</span><span class="pill sm" data-testid="planner-day-count">${byDay[d].length}</span></h3>
+    <div class="pl-cards" data-testid="planner-list-day" data-day="${d}">${byDay[d].map((i) => plCard(i)).join("")}</div></section>`).join("")}</div>`;
+}
+function plSlotMap(days) { // Buffer posting slots per channel, shown in the planner's timezone: "ymd|hour" -> [{time, service}]
+  const m = {};
+  if (!PL.slots) return m;
+  const chans = Object.fromEntries(S.channels.map((c) => [c.id, c]));
+  for (const s of PL.data.slots || []) {
+    if (PL.ch.size && !PL.ch.has(s.channel_id)) continue;
+    for (const day of [addDays(days[0], -1), ...days, addDays(days[days.length - 1], 1)]) {
+      const sch = (s.schedule || []).find((x) => x.day === DOW[dowOf(day)]);
+      if (!sch || sch.paused) continue;
+      for (const tm of sch.times || []) {
+        const [hh, mm] = tm.split(":").map(Number), z = zoned(fromZoned(day, hh, mm, s.timezone), PL.tz);
+        (m[`${z.ymd}|${z.h}`] ||= []).push({ h: z.h, mi: z.mi, service: chans[s.channel_id]?.service || "", ch: s.channel_id });
+      }
+    }
+  }
+  return m;
+}
+function plWeek(r, byDay) {
+  const t = todayYmd(), now = zoned(new Date(), PL.tz), slots = plSlotMap(r.days);
+  let h = `<div class="pl-week-scroll" data-testid="planner-week"><div class="pl-week" role="grid" aria-label="Week">
+    <div class="pl-corner" aria-hidden="true">${esc(PL.tz.split("/").pop().replace(/_/g, " "))}</div>`;
+  for (const d of r.days) {
+    const n = (byDay[d] || []).length;
+    h += `<div class="pl-wh${d === t ? " today" : ""}" role="columnheader"><span class="dw">${esc(dayLabel(d, { weekday: "short" }))}</span><span class="dn">${+d.slice(8)}</span><span class="dc" data-testid="planner-day-count">${n ? `${n} post${n === 1 ? "" : "s"}` : "&nbsp;"}</span></div>`;
+  }
+  for (let hr = 0; hr < 24; hr++) {
+    h += `<div class="pl-hr" aria-hidden="true">${esc(timeLabel(hr, 0))}</div>`;
+    for (const d of r.days) {
+      const items = (byDay[d] || []).filter((i) => i.z.h === hr), sl = slots[`${d}|${hr}`] || [];
+      const nowLine = d === t && now.h === hr ? `<span class="pl-now" style="top:${(now.mi / 60) * 100}%" aria-hidden="true"></span>` : "";
+      h += `<div class="pl-cell${d === t ? " today" : ""}" role="gridcell" data-testid="planner-slot" data-day="${d}" data-hour="${hr}" aria-label="${esc(dayLabel(d, { weekday: "long", day: "numeric", month: "long" }) + " " + timeLabel(hr, 0))}">${nowLine}`
+        + items.map(plChip).join("")
+        + (items.length ? "" : sl.slice(0, 2).map((s) => `<span class="pl-slotmark" data-testid="planner-posting-time" data-day="${d}" data-hour="${s.h}" data-min="${s.mi}" data-ch="${esc(s.ch)}">${netMark(s.service)}${esc(timeLabel(s.h, s.mi))}</span>`).join(""))
+        + `</div>`;
+    }
+  }
+  return h + `</div></div>`;
+}
+function plMonth(r, byDay) {
+  const t = todayYmd(), MAX = 3;
+  let h = `<div class="pl-month" data-testid="planner-month" role="grid" aria-label="Month"><div class="pl-dow">${DOW.map((d) => `<span>${esc(dayLabel(addDays(mondayOf("2026-01-05"), DOW.indexOf(d)), { weekday: "short" }))}</span>`).join("")}</div><div class="pl-days">`;
+  for (const d of r.days) {
+    const items = byDay[d] || [];
+    h += `<div class="pl-mday${d.startsWith(r.month) ? "" : " out"}${d === t ? " today" : ""}" role="gridcell" data-testid="planner-day" data-day="${d}" aria-label="${esc(dayLabel(d, { weekday: "long", day: "numeric", month: "long" }))}">
+      <span class="dn">${+d.slice(8)}</span>${items.slice(0, MAX).map(plChip).join("")}${items.length > MAX ? `<button type="button" class="pl-more" data-testid="planner-more" data-act="more" data-day="${d}">+${items.length - MAX} more</button>` : ""}</div>`;
+  }
+  return h + `</div></div>`;
+}
+
+// ---------------------------------------------------------------- interactions
+function plFind(ref) { return (PL.data?.items || []).find((i) => i.ref === ref); }
+function plWire() {
+  const root = $("#tab-planner");
+  root.querySelectorAll("[data-act]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plAct(b.dataset.act, b.dataset.ref, b); }));
+  root.querySelectorAll(".pl-chip").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plOpenItem(plFind(b.dataset.ref)); }));
+  root.querySelectorAll("[draggable=true]").forEach((el) => {
+    el.ondragstart = (e) => { e.dataTransfer.setData("text/plain", el.dataset.ref); e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); document.body.classList.add("pl-dragging"); };
+    el.ondragend = () => { el.classList.remove("dragging"); document.body.classList.remove("pl-dragging"); };
+  });
+  root.querySelectorAll("[data-testid=planner-slot],[data-testid=planner-day]").forEach((cell) => {
+    cell.ondragover = (e) => { e.preventDefault(); cell.classList.add("over"); };
+    cell.ondragleave = () => cell.classList.remove("over");
+    cell.ondrop = (e) => { e.preventDefault(); cell.classList.remove("over"); plMove(e.dataTransfer.getData("text/plain"), cell.dataset.day, cell.dataset.hour); };
+    cell.onclick = (e) => {
+      const mark = e.target.closest(".pl-slotmark");
+      if (mark) return plCompose(mark.dataset.day, +mark.dataset.hour, +mark.dataset.min, mark.dataset.ch);
+      if (e.target === cell || e.target.classList.contains("dn")) plCompose(cell.dataset.day, cell.dataset.hour !== undefined ? +cell.dataset.hour : 9, 0);
+    };
+  });
+}
+function plOpenItem(i) {
+  if (!i) return;
+  if (i.kind === "ready") return plAct("run", i.ref);
+  if (i.kind === "approval") return plDialog("reschedule", i);
+  if (i.state === "sent") { if (i.link) window.open(i.link, "_blank", "noopener"); else toast("Sent by Buffer. Sent posts can't be moved."); return; }
+  plDialog("edit", i);
+}
+async function plAct(act, ref, el) {
+  const i = plFind(ref);
+  if (act === "new") return plCompose(PL.date || todayYmd(), 9, 0);
+  if (act === "clear") { PL.ch.clear(); PL.type = PL.status = PL.q = ""; return plChanged(); }
+  if (act === "more") return plPopover(el.dataset.day, el);
+  if (!i) return;
+  if (act === "edit") return plDialog("edit", i);
+  if (act === "reschedule") return plDialog("reschedule", i);
+  if (act === "run") { showTab("agent"); const r = await api(`/api/agent/runs/${i.run_id}`); showRun(r); return; }
+  if (act === "approve") {
+    try { await api(`/api/approvals/${i.id}/approve`, { method: "POST", body: {} }); toast(i.when ? "Approved. Scheduled in Buffer." : "Approved and added to your Buffer queue"); refreshBadge(); loadPlanner(); }
+    catch (e) { toast(e.message, 6000); }
+    return;
+  }
+  if (act === "delete") {
+    if (!confirm("Delete this draft from Buffer? This can't be undone.")) return;
+    try { await api(`/api/posts/${encodeURIComponent(i.id)}`, { method: "DELETE" }); toast("Draft deleted"); loadPlanner(); }
+    catch (e) { toast(e.message, 6000); }
+  }
+}
+// the one move path for drag-and-drop and the reschedule dialog
+async function plReschedule(i, instant) {
+  if (instant <= new Date()) { toast("Pick a time in the future"); return false; }
+  const due_at = instant.toISOString();
+  try {
+    if (i.kind === "buffer") await api(`/api/posts/${encodeURIComponent(i.id)}/reschedule`, { method: "POST", body: { due_at } });
+    else if (i.kind === "approval") await api(`/api/approvals/${i.id}/reschedule`, { method: "POST", body: { due_at } });
+    else if (i.kind === "ready") {
+      const out = await api(`/api/agent/runs/${i.run_id}/packages/${encodeURIComponent(i.channel_id)}/schedule`, { method: "POST", body: { mode: "schedule", due_at } });
+      if (out.status === "pending_approval") { toast("Waiting for approval"); loadPlanner(); return true; }
+    }
+    const z = zoned(instant, PL.tz);
+    toast(`${i.state === "draft" ? "Draft moved" : i.kind === "ready" ? "Scheduled in Buffer" : "Rescheduled"} to ${dayLabel(z.ymd, { weekday: "short", day: "numeric", month: "short" })}, ${timeLabel(z.h, z.mi)}`);
+    loadPlanner(); return true;
+  } catch (e) { toast(e.message, 6000); loadPlanner(); return false; }
+}
+function plMove(ref, day, hour) {
+  const i = plFind(ref);
+  if (!i || !day) return;
+  if (!i.draggable) return toast("Sent posts can't be moved");
+  const hh = hour !== undefined ? +hour : i.z ? i.z.h : 9, mm = i.z ? i.z.mi : 0;
+  // optimistic: show it in the new place straight away
+  const inst = fromZoned(day, hh, mm, PL.tz);
+  if (inst <= new Date()) return toast("Pick a time in the future");
+  i.when = inst.toISOString(); i.z = zoned(inst, PL.tz); plDraw();
+  plReschedule(i, inst);
+}
+function plPopover(day, anchor) {
+  const pop = $("#plPop"), items = plVisible().filter((i) => i.z && i.z.ymd === day).sort((a, b) => new Date(a.when) - new Date(b.when));
+  pop.innerHTML = `<div class="pl-pop-head"><b>${esc(dayLabel(day, { weekday: "long", day: "numeric", month: "long" }))}</b><button type="button" class="link" data-testid="planner-popover-close" aria-label="Close">Close</button></div>
+    <div class="pl-pop-list">${items.map(plChip).join("")}</div>`;
+  const r = anchor.getBoundingClientRect();
+  pop.hidden = false;
+  pop.style.top = Math.min(window.innerHeight - pop.offsetHeight - 12, Math.max(12, r.top - 40)) + "px";
+  pop.style.left = Math.min(window.innerWidth - pop.offsetWidth - 12, Math.max(12, r.left - 40)) + "px";
+  pop.querySelector("[data-testid=planner-popover-close]").onclick = () => (pop.hidden = true);
+  pop.querySelectorAll(".pl-chip").forEach((b) => (b.onclick = () => { pop.hidden = true; plOpenItem(plFind(b.dataset.ref)); }));
+  pop.querySelectorAll("[draggable=true]").forEach((el) => (el.ondragstart = (e) => { e.dataTransfer.setData("text/plain", el.dataset.ref); setTimeout(() => (pop.hidden = true), 0); }));
+  pop.querySelector("[data-testid=planner-popover-close]").focus();
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#plPop").hidden) $("#plPop").hidden = true; });
+document.addEventListener("click", (e) => { const p = $("#plPop"); if (!p.hidden && !p.contains(e.target) && !e.target.closest("[data-act=more]")) p.hidden = true; });
+
+// ---------------------------------------------------------------- dialogs: new post, edit, reschedule
+const toLocalInput = (inst) => { const z = zoned(inst, PL.tz); return `${z.ymd}T${pad2(z.h)}:${pad2(z.mi)}`; };
+const fromLocalInput = (v) => { const [d, t] = v.split("T"); const [h, m] = t.split(":").map(Number); return fromZoned(d, h, m, PL.tz); };
+function plCompose(day, hh, mm, ch) {
+  let inst = fromZoned(day, hh, mm || 0, PL.tz);
+  if (inst <= new Date()) { const n = new Date(Date.now() + 3600e3); n.setMinutes(0, 0, 0); inst = n; }
+  plDialog("new", { when: inst.toISOString(), channel_id: ch || [...PL.ch][0] || "" });
+}
+function plDialog(mode, i) {
+  const dlg = $("#plDialog"); PL.edit = { mode, i };
+  const isNew = mode === "new", resched = mode === "reschedule";
+  $("#plDlgTitle").textContent = isNew ? "New post" : resched ? (i.kind === "ready" ? "Schedule in Buffer" : "Reschedule") : "Edit post";
+  $("#plDlgCh").hidden = !isNew; $("#plDlgMediaF").hidden = !isNew;
+  $("#plDlgTextF").hidden = resched;
+  $("#plDlgChSel").innerHTML = S.channels.filter((c) => !c.isDisconnected).map((c) => `<option value="${esc(c.id)}">${esc((c.displayName || c.name) + " · " + netName(c.service))}</option>`).join("");
+  if (isNew && i.channel_id) $("#plDlgChSel").value = i.channel_id;
+  $("#plDlgText").value = isNew ? "" : i.text || "";
+  $("#plDlgMedia").value = "";
+  const start = i.when ? new Date(i.when) : (() => { const n = new Date(Date.now() + 3600e3); n.setMinutes(0, 0, 0); return n; })();
+  $("#plDlgWhen").value = toLocalInput(start);
+  $("#plDlgTz").textContent = PL.tz.replace(/_/g, " ");
+  $("#plDlgSave").textContent = isNew ? "Schedule in Buffer" : resched ? (i.kind === "ready" ? "Schedule" : "Move") : "Save changes";
+  $("#plDlgDraft").hidden = !isNew;
+  $("#plDlgNote").textContent = i.kind === "approval" ? "It stays in Approvals until you approve it, then goes out at this time." : i.state === "draft" ? "It stays a draft in Buffer, with this time." : "";
+  $("#plDlgErr").textContent = "";
+  if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
+  (resched ? $("#plDlgWhen") : isNew ? $("#plDlgChSel") : $("#plDlgText")).focus();
+}
+async function plDialogSave(asDraft) {
+  const { mode, i } = PL.edit || {}, err = $("#plDlgErr"), btn = $("#plDlgSave");
+  const whenV = $("#plDlgWhen").value;
+  if (!whenV && !asDraft) { err.textContent = "Pick a date and time"; return; }
+  const inst = whenV ? fromLocalInput(whenV) : null;
+  btn.disabled = true; err.textContent = "";
+  try {
+    if (mode === "new") {
+      const body = { channel_id: $("#plDlgChSel").value, text: $("#plDlgText").value, media_url: $("#plDlgMedia").value.trim(), mode: asDraft ? "draft" : "schedule" };
+      if (!asDraft) body.due_at = inst.toISOString();
+      const pv = await api("/api/posts/preview", { method: "POST", body });
+      await api("/api/posts/submit", { method: "POST", body: { confirm_token: pv.confirm_token } });
+      toast(asDraft ? "Saved as a draft in Buffer" : "Scheduled in Buffer" + (pv.warnings.length ? " · " + pv.warnings[0] : ""), 4500);
+    } else if (mode === "edit") {
+      const body = {};
+      if ($("#plDlgText").value !== i.text) body.text = $("#plDlgText").value;
+      if (whenV && (!i.when || Math.abs(inst - new Date(i.when)) >= 60000)) body.due_at = inst.toISOString();
+      if (!Object.keys(body).length) { closeDlg(); return; }
+      await api(`/api/posts/${encodeURIComponent(i.id)}`, { method: "PATCH", body });
+      toast("Saved in Buffer");
+    } else {
+      if (!(await plReschedule(i, inst))) { btn.disabled = false; return; }
+    }
+    closeDlg(); loadPlanner(); budget();
+  } catch (e) { err.textContent = e.message; }
+  finally { btn.disabled = false; }
+}
+function closeDlg() { const d = $("#plDialog"); if (typeof d.close === "function" && d.open) d.close(); else d.removeAttribute("open"); }
+
+// ---------------------------------------------------------------- static wiring
+document.querySelectorAll("#tab-planner [data-view]").forEach((b) => (b.onclick = () => { PL.view = b.dataset.view; const sc = $(".pl-week-scroll"); if (sc) delete sc.dataset.scrolled; plChanged(); }));
+$("#plPrev").onclick = () => plShift(-1); $("#plNext").onclick = () => plShift(1);
+$("#plToday").onclick = () => { PL.date = ""; plChanged(); };
+function plShift(n) {
+  const a = PL.date || todayYmd();
+  if (PL.view === "month") { const [y, m] = a.split("-").map(Number); PL.date = ymdUTC(Date.UTC(y, m - 1 + n, 1)); }
+  else PL.date = addDays(a, (PL.view === "list" ? 28 : 7) * n);
+  plChanged();
+}
+$("#plType").onchange = (e) => { PL.type = e.target.value; plChanged(); };
+$("#plStatus").onchange = (e) => { PL.status = e.target.value; plChanged(); };
+let plQT; $("#plSearch").oninput = (e) => { clearTimeout(plQT); plQT = setTimeout(() => { PL.q = e.target.value; plSaveState(); $("#plClear").hidden = !plFiltersActive(); plDraw(); }, 160); };
+$("#plTz").onchange = (e) => { PL.tz = e.target.value; for (const it of PL.data?.items || []) it.z = it.when ? zoned(new Date(it.when), PL.tz) : null; plChanged(); };
+$("#plNoDateT").onchange = (e) => { PL.nodate = e.target.checked; plChanged(); };
+$("#plSlotsT").onchange = (e) => { PL.slots = e.target.checked; plChanged(); };
+$("#plClear").onclick = () => plAct("clear");
+$("#plNew").onclick = () => plAct("new");
+$("#plDlgForm").addEventListener("submit", (e) => { e.preventDefault(); plDialogSave(false); });
+$("#plDlgDraft").onclick = () => plDialogSave(true);
+$("#plDlgCancel").onclick = closeDlg;
+$("#plDlgAgent").onclick = () => { closeDlg(); showTab("agent"); };
+window.HS_TABS = Object.assign(window.HS_TABS || {}, { planner: loadPlanner });

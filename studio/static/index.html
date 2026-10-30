@@ -137,13 +137,12 @@
   <div id="app" class="shell" hidden>
     <nav class="rail" aria-label="Sections">
       <button data-tab="agent" data-testid="tab-agent"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Make a post</span></button>
-      <button data-tab="calendar" data-testid="tab-calendar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Calendar</span><span class="badge" id="readyBadge" data-testid="ready-badge" hidden>0</span></button>
+      <button data-tab="planner" data-testid="tab-planner"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8 14h3M8 17h6"/></svg><span>Planner</span><span class="badge" id="readyBadge" data-testid="ready-badge" hidden>0</span></button>
       <button data-tab="brand" data-testid="tab-brand"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.7 1.5-1.5 0-.9-.7-1.2-.7-2 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/></svg><span>Brand &amp; ledger</span></button>
       <button data-tab="home" data-testid="tab-home"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Needs you</span><span class="badge hot" id="homeBadge" data-testid="home-badge" hidden>0</span></button>
       <button data-tab="studio" data-testid="tab-studio"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg><span>Write from a link</span></button>
       <button data-tab="radar" data-testid="tab-radar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19a2 2 0 1 0 0-.01"/><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/></svg><span>News radar</span></button>
       <button data-tab="approvals" data-testid="tab-approvals"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span>Approvals</span><span class="badge" id="apprBadge" data-testid="approvals-badge" hidden>0</span></button>
-      <button data-tab="queue" data-testid="tab-queue"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h9"/></svg><span>Buffer queue</span></button>
       <button data-tab="agents" data-testid="tab-agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg><span>Agents</span></button>
       <button data-tab="ai" data-testid="tab-ai"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></svg><span>AI engine</span></button>
       <button data-tab="activity" data-testid="tab-activity"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg><span>Activity</span></button>
@@ -193,12 +192,58 @@
         <div id="runList" class="runlist" data-testid="run-list"></div>
       </div>
 
-      <div class="tab" id="tab-calendar" hidden>
-        <div class="cal-head"><h1 class="page-title" id="calTitle">Calendar</h1>
-          <div class="row tight"><button class="btn2 sm" id="calPrev" data-testid="cal-prev" aria-label="Previous month">‹</button><button class="btn2 sm" id="calToday" data-testid="cal-today">Today</button><button class="btn2 sm" id="calNext" data-testid="cal-next" aria-label="Next month">›</button></div></div>
-        <div class="legend"><span class="lg scheduled">Scheduled in Buffer</span><span class="lg sent">Sent</span><span class="lg approval">Needs approval</span><span class="lg ready">Ready to post</span></div>
-        <div id="readyLane" class="ready-lane" data-testid="ready-lane"></div>
-        <div id="calGrid" class="cal" data-testid="cal-grid"></div>
+      <div class="tab planner" id="tab-planner" data-testid="planner" hidden>
+        <div class="pl-head">
+          <div class="pl-titles"><h1 class="page-title" id="plTitle" data-testid="planner-title">Planner</h1><span class="pill" id="plCount" data-testid="planner-count">0 posts</span></div>
+          <div class="pl-nav">
+            <button class="btn2 sm icon" id="plPrev" data-testid="planner-prev" type="button" aria-label="Previous"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+            <button class="btn2 sm" id="plToday" data-testid="planner-today" type="button">Today</button>
+            <button class="btn2 sm icon" id="plNext" data-testid="planner-next" type="button" aria-label="Next"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+          </div>
+          <div class="seg pl-views" role="tablist" aria-label="Planner view">
+            <button type="button" role="tab" data-view="list" data-testid="planner-view-list">List</button>
+            <button type="button" role="tab" data-view="week" data-testid="planner-view-week">Week</button>
+            <button type="button" role="tab" data-view="month" data-testid="planner-view-month">Month</button>
+          </div>
+          <button class="btn sm pl-new" id="plNew" data-testid="planner-new" type="button"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New post</button>
+        </div>
+        <div class="pl-filters" role="group" aria-label="Filters">
+          <div class="pl-chans" id="plChannels" role="group" aria-label="Channels" data-testid="planner-channels"></div>
+          <div class="pl-frow">
+            <label class="sr" for="plType">Post type</label><select id="plType" data-testid="planner-filter-type"><option value="">All post types</option><option value="text">Text</option><option value="image">Image</option><option value="carousel">Carousel</option><option value="video">Video or Reel</option></select>
+            <label class="sr" for="plStatus">Status</label><select id="plStatus" data-testid="planner-filter-status"><option value="">All statuses</option><option value="scheduled">Scheduled in Buffer</option><option value="sent">Sent</option><option value="approval">Needs approval</option><option value="ready">Ready to post</option><option value="draft">Draft</option></select>
+            <label class="sr" for="plSearch">Search captions</label><input id="plSearch" data-testid="planner-search" type="search" placeholder="Search captions" autocomplete="off">
+            <label class="sr" for="plTz">Timezone</label><select id="plTz" data-testid="planner-tz" title="Timezone"></select>
+            <button class="link" id="plClear" data-testid="planner-clear" type="button" hidden>Clear filters</button>
+            <span class="pl-toggles">
+              <label class="pl-tog"><span class="switch sm on-ink"><input type="checkbox" role="switch" id="plNoDateT" data-testid="planner-nodate-toggle"><span></span></span>No date</label>
+              <label class="pl-tog"><span class="switch sm on-ink"><input type="checkbox" role="switch" id="plSlotsT" data-testid="planner-slots-toggle"><span></span></span>Posting times</label>
+            </span>
+          </div>
+        </div>
+        <div class="pl-body" id="plBody">
+          <div class="pl-main" id="plMain" data-testid="planner-main"></div>
+          <aside class="pl-side" id="plNoDate" data-testid="planner-nodate" aria-label="Posts with no date" hidden></aside>
+        </div>
+        <p class="muted xs pl-foot-note">Times in <span id="plTzNote"></span>. Sent posts are locked; everything else drags. Built on the Buffer API · not affiliated.</p>
+        <div class="pl-pop" id="plPop" data-testid="planner-day-popover" role="dialog" aria-label="Posts that day" hidden></div>
+        <dialog class="pl-dialog" id="plDialog" data-testid="planner-dialog" aria-labelledby="plDlgTitle">
+          <form id="plDlgForm" method="dialog">
+            <h2 class="card-title" id="plDlgTitle">New post</h2>
+            <div class="field" id="plDlgCh"><label class="label" for="plDlgChSel">Channel</label><select id="plDlgChSel" data-testid="planner-dialog-channel"></select></div>
+            <div class="field" id="plDlgTextF"><label class="label" for="plDlgText">Caption</label><textarea id="plDlgText" data-testid="planner-dialog-text" rows="5" maxlength="5000"></textarea></div>
+            <div class="field" id="plDlgMediaF"><label class="label" for="plDlgMedia">Image or video URL (optional)</label><input id="plDlgMedia" data-testid="planner-dialog-media" type="url" placeholder="https://"></div>
+            <div class="field"><label class="label" for="plDlgWhen">When <span class="muted xs" id="plDlgTz"></span></label><input id="plDlgWhen" data-testid="planner-dialog-when" type="datetime-local"></div>
+            <p class="muted xs" id="plDlgNote"></p>
+            <p class="st-err" id="plDlgErr" data-testid="planner-dialog-error" role="alert"></p>
+            <div class="pl-dlg-act">
+              <button class="link" type="button" id="plDlgAgent" data-testid="planner-dialog-agent">Let the agent make it</button>
+              <span class="row"><button class="btn2 sm" type="button" id="plDlgCancel" data-testid="planner-dialog-cancel">Cancel</button>
+              <button class="btn2 sm" type="button" id="plDlgDraft" data-testid="planner-dialog-draft">Save draft</button>
+              <button class="btn sm" type="submit" id="plDlgSave" data-testid="planner-dialog-save">Save</button></span>
+            </div>
+          </form>
+        </dialog>
       </div>
 
       <div class="tab" id="tab-brand" hidden>
@@ -315,13 +360,6 @@
         <div id="approvals" class="list" data-testid="approvals-list"></div>
       </div>
 
-      <div class="tab" id="tab-queue" hidden>
-        <h1 class="page-title">Buffer queue</h1>
-        <div class="row tight"><label class="sr" for="queueStatus">Which posts</label><select id="queueStatus" data-testid="queue-status"><option value="scheduled">Scheduled</option><option value="draft">Drafts</option><option value="sent">Sent</option></select>
-          <button class="btn2" id="queueReload" data-testid="queue-reload">Reload</button></div>
-        <div id="queue" class="list" data-testid="queue-list"></div>
-      </div>
-
       <div class="tab" id="tab-agents" hidden>
         <h1 class="page-title">Agents</h1>
         <p class="intro">AI tools that draft posts for you over MCP or the REST API.</p>
@@ -366,5 +404,6 @@
 <div id="toast" data-testid="toast" role="status" aria-live="polite" hidden></div>
 <script src="/static/app.js"></script>
 <script src="/static/house.js"></script>
+<script src="/static/planner.js"></script>
 </body>
 </html>
