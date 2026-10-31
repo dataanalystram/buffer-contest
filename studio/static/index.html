@@ -34,7 +34,7 @@
 
 <div class="demo-bar" id="demoBar" data-testid="demo-bar" hidden>
   <span class="demo-tag" data-testid="sample-tag">Sample</span>
-  <span class="demo-copy">You're in a sample workspace with made-up channels. Everything works; nothing reaches Buffer.</span>
+  <span class="demo-copy"><span class="long">You're in a sample workspace with made-up channels. Everything works; nothing reaches Buffer.</span><span class="short">Made-up channels. Nothing reaches Buffer.</span></span>
   <span class="demo-acts"><button class="link" type="button" id="tourOpen" data-testid="tour-open">Take the tour</button>
   <a class="btn accent sm" href="/login" data-testid="demo-connect">Connect Buffer to use it for real</a></span>
 </div>
@@ -142,7 +142,7 @@
     <nav class="rail" id="rail" aria-label="Sections">
       <button data-tab="inbox" data-testid="tab-inbox" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Inbox</span><span class="badge hot" id="inboxBadge" data-testid="inbox-badge" hidden>0</span></button>
       <button data-tab="agent" data-testid="tab-agent" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Make a post</span></button>
-      <button data-tab="take" data-testid="tab-take" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M14 10l4-2.5v9L14 14"/><path d="M19.5 4.5v3M21 6h-3"/></svg><span>One take → a week</span></button>
+      <button data-tab="take" data-testid="tab-take" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M14 10l4-2.5v9L14 14"/><path d="M19.5 4.5v3M21 6h-3"/></svg><span>One take<span class="long"> → a week</span></span></button>
       <button data-tab="planner" data-testid="tab-planner" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8 14h3M8 17h6"/></svg><span>Planner</span><span class="badge" id="readyBadge" data-testid="ready-badge" hidden>0</span></button>
       <button type="button" class="rail-more-btn" id="moreBtn" data-testid="nav-more" aria-expanded="false" aria-controls="railMore"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>More</span><span class="badge hot" id="moreBadge" data-testid="more-badge" hidden>0</span></button>
       <div class="rail-more" id="railMore" data-testid="nav-more-sheet" role="group" aria-label="More sections">

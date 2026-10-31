@@ -34,7 +34,7 @@
 .ib-item{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
 .ib-item:last-child{border-bottom:0}
 .ib-item .net{margin-top:2px}
-.ib-what{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ib-what{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:3px}
 .ib-meta{font-size:12px;color:var(--muted)}
 .ib-text{font-size:14px;line-height:1.45;overflow-wrap:anywhere}
 .ib-reason{font-size:13px;line-height:1.45;color:var(--bad);font-weight:600;overflow-wrap:anywhere}.ib-reason.warn{color:var(--warn)}
@@ -77,6 +77,7 @@
 
 /* ---------------------------------------------------------------- desktop: the "More" group is just part of the rail */
 .rail-more{display:contents}
+.demo-copy .short{display:none}
 .rail-more-head,.rail-more-btn,.rail-scrim{display:none}
 .wrap-x{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
 img,video,svg,canvas{max-width:100%}
@@ -92,7 +93,9 @@ pre.code{white-space:pre-wrap;word-break:break-word}
   .chip,.pl-ch,.seg button,[role=tab],.pf-fix,.pf-jump,.pl-slotmark,.pl-more,.pl-chip,.ib-chip,.menu button{min-height:44px}
   .pl-ch,.chip,.ib-chip{padding:0 14px}
   .pf-jump .pf-chip{min-height:44px}
-  .brand{min-height:44px}
+  .brand{min-height:44px;min-width:44px}
+  .btn2.icon,.btn.icon{min-width:44px}
+  .foot-links a,.fine a{display:inline-flex;align-items:center;min-height:44px}
   .rail button{min-height:44px}
   .skip:focus{min-height:44px;display:inline-flex;align-items:center}
   details summary{min-height:44px}
@@ -104,7 +107,10 @@ pre.code{white-space:pre-wrap;word-break:break-word}
   .top{flex-wrap:nowrap;gap:8px;padding:8px 12px}
   .top-right{margin-left:auto;display:flex;align-items:center;gap:4px;min-width:0}
   #acctBtn{max-width:44vw}
-  .demo-bar,.limit-bar{padding:10px 16px;font-size:13px}
+  .demo-bar,.limit-bar{padding:8px 12px;font-size:13px;gap:6px 10px}
+  .demo-bar .demo-copy .long{display:none}.demo-bar .demo-copy .short{display:inline}
+  .demo-copy{flex:1 1 140px}
+  .limit-bar .limit-act{display:flex;gap:4px 8px;align-items:center}
   .limit-bar{position:static}
   .rail{position:fixed;left:0;right:0;bottom:0;z-index:25;flex-direction:row;justify-content:space-around;align-items:stretch;gap:0;max-width:none;
     padding:4px 4px calc(4px + env(safe-area-inset-bottom));background:var(--paper);border:0;border-top:1px solid var(--line);overflow:visible}
@@ -112,6 +118,7 @@ pre.code{white-space:pre-wrap;word-break:break-word}
     font-size:11px;line-height:1.2;text-align:center;border-radius:8px;position:relative}
   .rail > button span:not(.badge),.rail-more-btn span:not(.badge){max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .rail > button .ic,.rail-more-btn .ic{width:20px;height:20px}
+  .rail .long{display:none}
   .rail .badge,.rail .badge.hot{position:absolute;top:4px;left:calc(50% + 6px);margin:0;min-width:18px;height:18px;font-size:11px;padding:0 5px}
   .rail-more-btn{display:flex;align-items:center;border:0;background:none;color:var(--muted);cursor:pointer}
   .rail-more-btn.on{background:var(--accent-soft);color:var(--ink);font-weight:600}

@@ -36,7 +36,8 @@ PROBE = """(minTap) => {
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height) continue;
       const cs = getComputedStyle(el);
-      if (cs.visibility === 'hidden' || el.closest('[hidden]')) continue;
+      if (cs.visibility === 'hidden' || el.closest('[hidden]') || el.matches('.skip')) continue;
+      if (r.bottom < 0 || r.top > innerHeight * 4) continue; // off-screen helpers
       if (el.matches('input[type=checkbox], input[type=radio]') && el.closest('label')) continue; // the label is the target
       if (el.matches('a') && cs.display === 'inline' && el.closest('p, li, small, span')) continue; // links inside a sentence
       if (r.height < minTap - 0.5 || (r.width < minTap - 0.5 && !el.matches('input, select, textarea'))) small.push((el.dataset.testid || el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height));
