@@ -64,6 +64,9 @@
 .demo-copy{flex:1 1 280px;min-width:0}
 .demo-acts{display:flex;gap:8px 16px;align-items:center;flex-wrap:wrap}
 .sample-note{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);padding:2px 8px;border:1px dashed var(--line-strong);border-radius:999px}
+/* under a plain page title the note gets its own line; the subtitle's pull-up (.intro's -12px) would otherwise slide it under the note */
+.tab > .page-title + .sample-note{display:flex;width:fit-content;margin:-12px 0 16px}
+.sample-note + .intro{margin-top:0}
 .tour{position:fixed;z-index:40;width:min(360px,calc(100vw - 24px));background:var(--raised);color:var(--ink);border:1px solid var(--line);border-radius:14px;
   box-shadow:var(--float);padding:18px 18px 14px}
 .tour:focus{outline:none}

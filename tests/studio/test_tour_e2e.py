@@ -78,3 +78,32 @@ def test_tour_keyboard_skip_and_reopen(demo_live, chromium):
         page.get_by_test_id("tour").wait_for(state="detached")
     finally:
         ctx.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_sample_note_never_overlaps_the_page_subtitle(demo_live, chromium, width):
+    """The "Sample data" note sits between each page title and its subtitle; on a phone the subtitle used to slide up
+    under it (seen on Activity)."""
+    base, _ = demo_live
+    ctx = _ctx(chromium, base, width)
+    try:
+        page = ctx.new_page()
+        page.add_init_script("localStorage.setItem('hq_tour_done','1')")
+        page.goto(base + "/demo")
+        page.locator("[data-testid=sample-note]").first.wait_for(state="attached")
+        hits = page.evaluate("""() => {
+          const out = [];
+          document.querySelectorAll('.tab').forEach((t) => {
+            const was = t.hidden; t.hidden = false;
+            const n = t.querySelector('[data-testid=sample-note]'), s = n && n.nextElementSibling;
+            if (n && s) {
+              const a = n.getBoundingClientRect(), b = s.getBoundingClientRect();
+              if (a.height && b.height && a.bottom > b.top + 0.5 && b.bottom > a.top && a.right > b.left + 0.5 && b.right > a.left) out.push(t.id + ': ' + Math.round(a.bottom - b.top) + 'px');
+            }
+            t.hidden = was;
+          });
+          return out;
+        }""")
+        assert not hits, hits
+    finally:
+        ctx.close()
