@@ -18,7 +18,6 @@ import io
 import json
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 import unicodedata
@@ -290,8 +289,9 @@ def ffprobe_bytes(data: bytes) -> dict:
         f.write(data)
         f.flush()
         try:
-            r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", f.name],
-                               capture_output=True, timeout=30, check=False)
+            from . import mediasafe  # protocol + demuxer whitelists: a crafted upload can't open URLs or local files
+            r = mediasafe.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", f.name],
+                              timeout=30, check=False)
             j = json.loads(r.stdout or b"{}")
         except Exception as e:  # noqa: BLE001 - a broken file is a finding, not a crash
             return {"probed": False, "why": f"ffprobe failed: {e}"}

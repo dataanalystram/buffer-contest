@@ -1,6 +1,16 @@
 """SQLite store: users (encrypted Buffer tokens), sessions, agent tokens, approvals, audit log.
 
-Tokens are encrypted at rest with a key derived from SESSION_SECRET and never leave the server.
+Secrets at rest (Buffer OAuth tokens, bring-your-own AI keys, the pending OAuth state) are sealed with a keyring that is
+separate from SESSION_SECRET:
+
+* ``TOKEN_KEY``           the current key; every new seal uses it.
+* ``TOKEN_KEY_PREVIOUS``  comma-separated older keys, still accepted for reading during a rotation.
+* the old key derived from SESSION_SECRET is kept for reading only, so data sealed before TOKEN_KEY existed still opens.
+
+``rotate_keys()`` (run on every boot) re-seals every row that is not already under the current key, so rotating is:
+set the new TOKEN_KEY, move the old value into TOKEN_KEY_PREVIOUS, deploy, then drop TOKEN_KEY_PREVIOUS on a later deploy.
+A row no key can open is left untouched (and counted), never overwritten. Without TOKEN_KEY (old self-hosted installs)
+the SESSION_SECRET-derived key stays current, so nothing breaks.
 """
 from __future__ import annotations
 
@@ -12,7 +22,33 @@ import threading
 import time
 from typing import Any
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
+
+# (table, key column, sealed column): every place a sealed blob is stored
+SEALED = (("users", "id", "tokens"), ("ai_settings", "user_id", "data"), ("sessions", "id_hash", "oauth"))
+
+
+def fernet_key(value: str) -> bytes:
+    """A Fernet key from a configured value: used as is when it already is one, otherwise derived from it."""
+    v = (value or "").strip()
+    try:
+        if len(v) == 44 and len(base64.urlsafe_b64decode(v.encode())) == 32:
+            return v.encode()
+    except ValueError:
+        pass
+    return base64.urlsafe_b64encode(hashlib.sha256(("hq-token-key:" + v).encode()).digest())
+
+
+def legacy_key(session_secret: str) -> bytes:
+    return base64.urlsafe_b64encode(hashlib.sha256(("tokens:" + session_secret).encode()).digest())
+
+
+def keyring(session_secret: str, token_key: str = "", previous: tuple[str, ...] | list[str] = ()) -> tuple[Fernet, MultiFernet, bool]:
+    """(current key, every readable key, dedicated?). Without TOKEN_KEY the SESSION_SECRET-derived key stays current."""
+    prev = [fernet_key(k) for k in previous if k and k.strip()]
+    keys = [fernet_key(token_key), *prev, legacy_key(session_secret)] if token_key else [legacy_key(session_secret), *prev]
+    fs = [Fernet(k) for k in dict.fromkeys(keys)]
+    return fs[0], MultiFernet(fs), bool(token_key)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -75,7 +111,7 @@ class Store:
     """SQLite locally; Postgres when the path is a postgres:// URL (production: survives restarts,
     so rotating Buffer refresh tokens are never lost)."""
 
-    def __init__(self, path: str, secret: str):
+    def __init__(self, path: str, secret: str, token_key: str = "", token_keys_previous: tuple[str, ...] | list[str] = ()):
         self.path = path
         self._lock = threading.RLock()
         self.pg = path.startswith(("postgres://", "postgresql://"))
@@ -95,8 +131,7 @@ class Store:
             self._db.row_factory = sqlite3.Row
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(SCHEMA)
-        key = base64.urlsafe_b64encode(hashlib.sha256(("tokens:" + secret).encode()).digest())
-        self._fernet = Fernet(key)
+        self._current, self._fernet, self.dedicated_key = keyring(secret, token_key, tuple(token_keys_previous))
 
     def _connect(self):
         # prepare_threshold=None: PgBouncer-style poolers (Supabase) can't keep server-side prepared statements.
@@ -169,6 +204,27 @@ class Store:
             return json.loads(self._fernet.decrypt(blob.encode()))
         except (InvalidToken, ValueError):
             return None
+
+    def rotate_keys(self) -> dict[str, int]:
+        """Re-seal every stored blob under the current key (idempotent). Returns counts only, never values."""
+        out = {"resealed": 0, "current": 0, "unreadable": 0}
+        for table, key, col in SEALED:
+            for r in self.q(f"SELECT {key} AS k, {col} AS v FROM {table} WHERE {col} IS NOT NULL AND {col} <> ''"):
+                blob = r["v"]
+                try:
+                    self._current.decrypt(blob.encode())
+                    out["current"] += 1
+                    continue
+                except InvalidToken:
+                    pass
+                try:
+                    new = self._fernet.rotate(blob.encode()).decode()
+                except InvalidToken:
+                    out["unreadable"] += 1
+                    continue
+                self.x(f"UPDATE {table} SET {col}=? WHERE {key}=? AND {col}=?", (new, r["k"], blob))
+                out["resealed"] += 1
+        return out
 
     # ---- users
     def upsert_user(self, uid: str, email: str, name: str, org_id: str, org_name: str, tokens: dict) -> None:

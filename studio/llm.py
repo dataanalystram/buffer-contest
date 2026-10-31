@@ -8,8 +8,10 @@ HuhQueue only supplies the tools.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+from urllib.parse import urlparse
 
 import httpx
 
@@ -24,6 +26,40 @@ PRESETS = {
     "custom": {"label": "Any OpenAI-compatible endpoint", "base_url": "", "model": "", "style": "openai"},
 }
 FREE_DAILY = 40  # free starter calls per user per day
+
+# Each named provider talks only to its own host. A stored engine whose base_url was edited to point anywhere else is
+# refused at call time, not just when the key was saved.
+PROVIDER_HOSTS = {k: frozenset({urlparse(v["base_url"]).hostname}) for k, v in PRESETS.items() if v["base_url"]}
+
+
+def allowed_hosts(engine: dict) -> frozenset[str] | None:
+    """The hosts this engine may call, or None for "any public https host" (a custom endpoint with no operator list).
+    free -> the operator's AI_BASE_URL host only; openai/anthropic/gemini/groq/openrouter -> that provider's API host;
+    custom -> HQ_AI_CUSTOM_HOSTS (comma list) when the operator sets one."""
+    prov = engine.get("provider") or "custom"
+    if prov == "free":
+        base = os.environ.get("AI_BASE_URL") or engine.get("base_url") or ""
+        return frozenset({(urlparse(base).hostname or "").lower()})
+    if prov in PROVIDER_HOSTS:
+        return PROVIDER_HOSTS[prov]
+    extra = {h.strip().lower() for h in os.environ.get("HQ_AI_CUSTOM_HOSTS", "").split(",") if h.strip()}
+    return frozenset(extra) if extra else None
+
+
+def check_engine(engine: dict) -> str:
+    """Re-check the model endpoint on EVERY call: https, the provider's own host, and a public address (the request is
+    then pinned to the vetted IP by netguard). Returns the base URL; LLMError when it isn't allowed."""
+    from . import netguard
+    base = (engine.get("base_url") or "").rstrip("/")
+    https_only = (engine.get("provider") != "free") or base.startswith("https://")
+    try:
+        netguard.check_url(base + "/", https_only=https_only)
+    except netguard.FetchError as e:
+        raise LLMError(f"The AI endpoint isn't allowed: {e}")
+    hosts = allowed_hosts(engine)
+    if hosts is not None and (urlparse(base).hostname or "").lower() not in hosts:
+        raise LLMError("The AI endpoint isn't allowed: that host doesn't belong to the chosen provider.")
+    return base
 
 
 class LLMError(Exception):
@@ -65,23 +101,32 @@ def public_view(store, uid: str, settings) -> dict:
 
 def chat(engine: dict, system: str, user: str, *, http: httpx.Client | None = None, max_tokens: int = 1800,
          want_json: bool = True, timeout: float = 60) -> str:
-    client = http or httpx.Client(timeout=timeout)
+    from . import netguard
+    base = check_engine(engine)  # every call, not only when the key was saved
+    hosts = allowed_hosts(engine)
+    https_only = (engine.get("provider") != "free") or base.startswith("https://")
+
+    def post(url, headers, body):
+        return netguard.safe_post(url, http=http, json=body, headers=headers, timeout=timeout, https_only=https_only,
+                                  allowed_hosts=hosts)
     try:
         if engine.get("style") == "anthropic":
-            r = client.post(engine["base_url"] + "/messages", headers={
+            r = post(base + "/messages", {
                 "x-api-key": engine["api_key"], "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": engine["model"], "max_tokens": max_tokens, "system": system,
-                      "messages": [{"role": "user", "content": user}]})
+                {"model": engine["model"], "max_tokens": max_tokens, "system": system,
+                 "messages": [{"role": "user", "content": user}]})
             if r.status_code >= 400:
                 raise LLMError(f"{engine['provider']} answered HTTP {r.status_code}: {r.text[:200]}")
             return "".join(b.get("text", "") for b in r.json().get("content", []))
         headers = {"Authorization": f"Bearer {engine['api_key']}"} if engine.get("api_key") else {}
         body = {"model": engine["model"], "max_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-        r = client.post(engine["base_url"] + "/chat/completions", headers=headers, json=body)
+        r = post(base + "/chat/completions", headers, body)
         if r.status_code >= 400:
             raise LLMError(f"{engine['provider']} answered HTTP {r.status_code}: {r.text[:200]}")
         return r.json()["choices"][0]["message"]["content"] or ""
+    except netguard.FetchError as e:
+        raise LLMError(f"The AI endpoint isn't allowed: {e}")
     except httpx.HTTPError as e:
         raise LLMError(f"Couldn't reach the AI model ({e.__class__.__name__}).")
 
