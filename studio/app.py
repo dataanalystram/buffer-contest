@@ -83,7 +83,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     # Anonymous and free-sample traffic: a per-IP request rate limit (SECURITY_RULES 3). Real accounts, by cookie or by
     # a real account's agent token, are never slowed here. Media links (/m/) are left alone: Buffer fetches them.
-    rate = limits.RateLimit(per_min=int(os.environ.get("HQ_ANON_RPM", "120")), demo_per_min=int(os.environ.get("HQ_DEMO_PER_MIN", "6")))
+    rate = limits.RateLimit(per_min=int(os.environ.get("HQ_ANON_RPM", "240")), demo_per_min=int(os.environ.get("HQ_DEMO_PER_MIN", "6")))
     app.state.rate = rate
 
     def _real_account(request: Request) -> bool:
