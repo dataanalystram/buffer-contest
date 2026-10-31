@@ -65,7 +65,12 @@ def sample_scan(pg) -> None:
 
 
 def sample_ok(pg) -> bool:
-    return pg.locator("[data-testid=sample-tag]").is_visible()
+    """The SAMPLE tag is visible and inside the viewport (a scrolled page can hide it)."""
+    tag = pg.locator("[data-testid=sample-tag]")
+    if not tag.is_visible():
+        return False
+    box = tag.bounding_box()
+    return bool(box) and box["y"] >= 0 and box["y"] + box["height"] <= pg.viewport_size["height"]
 
 
 def docshots(pg, base: str, scheme: str, dev: str) -> None:
@@ -178,6 +183,8 @@ def main() -> None:
                 assert not ctx.cookies(), "a fresh context must start without cookies"
 
                 def app_shot(name, pg=pg):
+                    pg.evaluate("scrollTo(0, 0); document.querySelectorAll('main, .main, .tab:not([hidden])').forEach((e) => (e.scrollTop = 0))")
+                    pg.wait_for_timeout(150)
                     if not sample_ok(pg):
                         errors.append(f"{name}: no SAMPLE tag on screen")
                     pg.screenshot(path=str(OUT / name))
