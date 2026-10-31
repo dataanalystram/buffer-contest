@@ -167,13 +167,18 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             f"  <url><loc>{s.public_url}{u}</loc><lastmod>{docs_mod.LASTMOD}</lastmod></url>\n" for u in urls) + "</urlset>\n"
         return Response(body, media_type="application/xml")
 
+    @app.get("/docs/search.json", include_in_schema=False)
+    def docs_search():
+        from . import docs as docs_mod
+        return JSONResponse(docs_mod.search_index(), headers={"Cache-Control": "public, max-age=3600"})
+
     @app.get("/docs", include_in_schema=False)
     @app.get("/docs/{slug}", include_in_schema=False)
     def docs_page(slug: str = ""):
         from . import docs as docs_mod
         html = docs_mod.page(slug)
         if html is None:
-            return Response(docs_mod.page("__missing__") or "Not found", status_code=404, media_type="text/html")
+            return Response(docs_mod.missing(), status_code=404, media_type="text/html")
         return Response(html, media_type="text/html")
 
     @app.get("/static/{name:path}", include_in_schema=False)

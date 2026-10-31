@@ -48,8 +48,35 @@ def serve() -> str:
     return f"http://127.0.0.1:{port}"
 
 
+DOCSHOTS = [("composer", "agent"), ("brand", "brand"), ("radar", "radar"), ("inbox", "inbox"), ("planner-week", "planner"), ("take", "take"),
+            ("connect", "connect"), ("activity", "activity")]
+
+
+def docshots(pg, base: str, scheme: str, dev: str) -> None:
+    from PIL import Image
+    d = ROOT / "studio" / "static" / "docs-shots"; d.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp())
+
+    def save(key):
+        pg.evaluate("document.getElementById('toast') && (document.getElementById('toast').hidden = true)")
+        pg.screenshot(path=str(tmp / "s.png"))
+        im = Image.open(tmp / "s.png").convert("RGB")
+        if dev == "desktop":
+            im = im.resize((1200, 750), Image.LANCZOS)
+        im.save(d / f"{key}-{scheme}-{dev}.webp", "WEBP", quality=78, method=6)
+    pg.goto(base + "/", wait_until="networkidle"); pg.wait_for_timeout(1500); save("landing")
+    pg.goto(base + "/demo", wait_until="networkidle"); pg.wait_for_selector("#app:not([hidden])")
+    pg.evaluate("localStorage.setItem('hq_tour_done','1'); window.tourEnd && document.querySelector('.tour') && tourEnd()")
+    for key, tab in DOCSHOTS:
+        if tab == "planner":
+            pg.evaluate("plSetView('week')")
+        else:
+            pg.evaluate(f"showTab('{tab}')")
+        pg.wait_for_timeout(1000); save(key)
+
+
 def want(name: str) -> bool:
-    return "all" in SETS or name in SETS
+    return ("all" in SETS and name not in ("docshots", "og")) or name in SETS
 
 
 def main() -> None:
@@ -107,7 +134,15 @@ def main() -> None:
                         pg.evaluate(f"plSetView('{v}')"); pg.wait_for_timeout(900)
                         pg.evaluate("document.getElementById('toast').hidden = true")
                         pg.screenshot(path=str(OUT / f"planner-{v}-{tag}.png"))
+                if want("docshots") and w in (1440, 390):
+                    docshots(pg, base, scheme, "desktop" if w > 600 else "phone")
                 ctx.close()
+        if want("og"):
+            ctx = b.new_context(viewport={"width": 1200, "height": 630}, color_scheme="light", reduced_motion="reduce")
+            pg = ctx.new_page(); pg.goto(base + "/", wait_until="networkidle")
+            pg.add_style_tag(content=".top nav,.aux,.connect-row,#configNote,.stats,.lede,.bead.end{display:none!important}.hero{min-height:630px;padding:56px 72px}.hero h1{font-size:112px}.wrap{padding:0 72px}")
+            pg.wait_for_timeout(500)
+            pg.screenshot(path=str(ROOT / "studio" / "static" / "brand" / "og.png")); ctx.close()
         b.close()
     print("errors:", errors or "none")
     print("wrote", len(list(OUT.glob("*.png"))), "png in", OUT)
