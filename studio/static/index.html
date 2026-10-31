@@ -66,6 +66,7 @@
         <button data-tab="studio" data-testid="tab-studio"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg><span>Write from a link</span></button>
         <button data-tab="radar" data-testid="tab-radar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19a2 2 0 1 0 0-.01"/><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/></svg><span>News radar</span></button>
         <button data-tab="approvals" data-testid="tab-approvals"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span>Approvals</span><span class="badge" id="apprBadge" data-testid="approvals-badge" hidden>0</span></button>
+        <button data-tab="connect" data-testid="tab-connect"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></svg><span>Connect AI apps</span></button>
         <button data-tab="agents" data-testid="tab-agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg><span>Agents</span></button>
         <button data-tab="ai" data-testid="tab-ai"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></svg><span>AI engine</span></button>
         <button data-tab="activity" data-testid="tab-activity"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg><span>Activity</span></button>
@@ -359,6 +360,18 @@
         <div id="approvals" class="list" data-testid="approvals-list"></div>
       </div>
 
+      <div class="tab" id="tab-connect" data-testid="connect" hidden>
+        <h1 class="page-title">Connect AI apps</h1>
+        <p class="intro">Use HuhQueue from the assistant you already pay for. Every app reaches the same tools at one address, and every post it makes waits in your Inbox until you approve it.</p>
+        <div class="cx-addr panel" data-testid="connect-address">
+          <div><span class="label">Your MCP address</span><code id="cxUrl" data-testid="connect-url"></code></div>
+          <button class="btn sm" type="button" id="cxCopy" data-testid="connect-copy">Copy address</button>
+          <p class="muted sm">Apps that sign in with OAuth (Claude, ChatGPT) only need this address. Others use it with an agent token you create here. <a href="/docs/agents">Read the agent guide</a></p>
+        </div>
+        <div class="cx-grid" id="cxApps" data-testid="connect-apps" aria-busy="true"></div>
+        <p class="muted xs">Tokens follow the rules on the Agents screen: approval by default, a daily cap, and one kill switch for all of them.</p>
+      </div>
+
       <div class="tab" id="tab-agents" hidden>
         <h1 class="page-title">Agents</h1>
         <p class="intro">AI tools that draft posts for you over MCP or the REST API.</p>
@@ -403,11 +416,13 @@
   <span>An independent open-source project built on the Buffer API. Not affiliated with or endorsed by Buffer.</span>
   <span class="foot-links"><a href="/docs">Docs</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a><a id="repoLink" href="https://github.com/dataanalystram/buffer-contest" target="_blank" rel="noopener">Source code</a></span></div></footer>
 <div id="toast" data-testid="toast" role="status" aria-live="polite" hidden></div>
+<script src="/static/oauth-open.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/house.js"></script>
 <script src="/static/planner.js"></script>
 <script src="/static/take.js"></script>
 <script src="/static/tour.js"></script>
+<script src="/static/connect.js"></script>
 <script src="/static/shell.js"></script>
 </body>
 </html>

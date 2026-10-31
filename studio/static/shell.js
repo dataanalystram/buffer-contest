@@ -15,7 +15,7 @@ const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const typing = (el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable;
 const TABS = [["inbox", "Inbox", ["G", "I"]], ["agent", "Make a post", ["G", "M"]], ["take", "One take", ["G", "T"]], ["planner", "Planner", ["G", "P"]],
   ["studio", "Write from a link", ["G", "L"]], ["radar", "News radar", ["G", "R"]], ["brand", "Brand and Style Ledger", ["G", "B"]], ["approvals", "Approvals", ["G", "V"]],
-  ["agents", "Agents and MCP", ["G", "A"]], ["ai", "AI engine", ["G", "E"]], ["activity", "Activity", ["G", "Y"]]];
+  ["connect", "Connect AI apps", ["G", "C"]], ["agents", "Agents and MCP", ["G", "A"]], ["ai", "AI engine", ["G", "E"]], ["activity", "Activity", ["G", "Y"]]];
 const VIEWS = ["week", "month", "day", "list", "board", "grid"];
 const DOCS = [["getting-started", "Getting started"], ["connect-buffer", "Connect Buffer"], ["brand-kit", "Brand kit and templates"], ["sources-agent", "Sources agent"],
   ["inbox", "Inbox"], ["planner", "Planner views"], ["one-take", "One take"], ["agents", "Agents, MCP and API"], ["security", "Security and privacy"], ["faq", "FAQ"]];

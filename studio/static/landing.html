@@ -41,6 +41,7 @@
 ]}
 </script>
 <script src="/static/landing.js" defer></script>
+<script src="/static/oauth-open.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -53,7 +54,7 @@
 <div class="wrap">
   <header class="top">
     <a class="brand" href="/" data-testid="brand"><img class="hb" src="/static/brand/hb-mark-96.png" width="32" height="32" alt=""><span class="bt"><b>HuhQueue</b><small>by HuhByte AI</small></span></a>
-    <nav aria-label="Main"><a href="#chapter">How it works</a><a href="#planner">Planner</a><a href="#agents">For agents</a><a href="/docs" data-testid="nav-docs">Docs</a><a href="/login" data-testid="nav-connect">Connect Buffer</a><a class="btn" href="/demo" data-testid="nav-demo">Try the demo</a></nav>
+    <nav aria-label="Main"><a href="#chapter">How it works</a><a href="#planner">Planner</a><a href="#agents">For agents</a><a href="/docs" data-testid="nav-docs">Docs</a><a class="btn2" href="/login" data-testid="nav-connect">Connect Buffer</a><a class="btn" href="/demo" data-testid="nav-demo">Try the demo</a></nav>
   </header>
 </div>
 <main id="main" data-testid="landing">
@@ -68,7 +69,11 @@
           <input id="u" name="url" type="text" inputmode="url" value="theverge.com/tech/1023763/openai-google-microsoft-ai-scraping-standard-opt-out" spellcheck="false" autocomplete="off" data-testid="hero-url">
           <button class="btn" type="submit" data-testid="try-demo">Make the week</button>
         </form>
-        <p class="aux">Runs in the free sample, with a guided tour. Or <a href="/login" data-testid="connect-buffer" id="connectBtn">connect Buffer</a>. <a href="/docs/getting-started">Read the guide</a>.</p>
+        <p class="aux">Runs in the free sample, with a guided tour. <a href="/docs/getting-started">Read the guide</a>.</p>
+        <div class="connect-row" data-testid="connect-row">
+          <a class="btn2 big" href="/login" id="connectBtn" data-testid="connect-buffer"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>Connect your Buffer account</a>
+          <p>Sign in with Buffer’s own OAuth. Your real channels, real Buffer API calls, and nothing posts until you approve.</p>
+        </div>
         <p class="aux" id="configNote" data-testid="config-note" hidden>This server has no Buffer app client configured yet, so Connect Buffer is off. The sample works.</p>
         <p class="stats" id="landStats" data-testid="land-stats" hidden></p>
       </div>
@@ -235,7 +240,7 @@
     <div class="close">
       <h2 class="h2" id="dmH">Try it on sample channels.</h2>
       <div><p class="sub sub-close">The real drafting, counting and approval code, with a 7-step tour. Nothing reaches Buffer, and the sample is wiped after a day.</p>
-        <div class="cta-row"><a class="btn big" href="/demo" data-testid="try-demo-bottom">Open the demo</a><a class="btn2 big" href="/docs" data-testid="land-docs">Read the docs</a></div></div>
+        <div class="cta-row"><a class="btn big" href="/demo" data-testid="try-demo-bottom">Open the demo</a><a class="btn2 big" href="/login" data-testid="connect-buffer-bottom">Connect Buffer</a><a class="link big-l" href="/docs" data-testid="land-docs">Read the docs</a></div></div>
     </div>
     <div class="faq">
       <h2 id="faqH">Questions</h2>

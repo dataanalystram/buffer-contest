@@ -438,3 +438,21 @@ footer.foot a{min-height:44px;display:inline-flex;align-items:center}
     @keyframes f4{0%,58%{opacity:.18}64%,100%{opacity:1}}
   }
 }
+.js .pin>.wrap{width:100%}
+.piece .st{white-space:normal;height:auto;min-height:22px;padding:2px 6px;line-height:1.25;align-self:flex-start}
+.piece .m.txt{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.piece{min-width:0}
+@media (max-width:760px){.top nav a:not(.btn){display:none}.top nav a[data-testid=nav-docs]{display:inline-flex}.brand .bt small{display:none}}
+.top nav .btn2{min-height:44px}
+.connect-row{margin-top:var(--space-6);display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;padding-top:var(--space-6);border-top:1px solid var(--line)}
+.connect-row p{font-size:var(--fs-ui);color:var(--muted);max-width:40ch;flex:1 1 220px}
+.connect-row .btn2 .ic{width:18px;height:18px}
+.big-l{display:inline-flex;align-items:center;min-height:48px;padding:0 var(--space-2);font-weight:600}
+@media (max-width:760px){.top nav{gap:var(--space-2)}.top nav .btn,.top nav .btn2{padding:0 var(--space-3);font-size:13px}.connect-row .btn2{width:100%}}
+@media (max-width:480px){.top nav a[data-testid=nav-docs]{display:none}.brand .bt b{font-size:15px}}
+dialog.sheet{padding:var(--space-6);border:1px solid var(--line);border-radius:var(--r-sheet);background:var(--raised);color:var(--ink);width:calc(100% - 32px);max-width:520px;box-shadow:var(--e3)}
+dialog.sheet::backdrop{background:var(--scrim)}
+.oauth-sheet h2{font-size:20px;font-weight:600;margin-bottom:var(--space-3)}
+.oauth-acts{display:flex;flex-direction:column;gap:var(--space-2);margin:var(--space-5) 0 var(--space-3)}
+.oauth-acts .btn,.oauth-acts .btn2{min-height:48px;justify-content:center}
+.oauth-hint{font-size:13px;margin-bottom:var(--space-4)}

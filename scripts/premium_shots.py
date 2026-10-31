@@ -67,7 +67,7 @@ def main() -> None:
                 pg.on("pageerror", lambda e: errors.append(f"{scheme} {w}: {e}"))
                 tag = f"{w}-{scheme}"
                 if want("landing"):
-                    pg.goto(base + "/", wait_until="networkidle")
+                    pg.goto(base + "/", wait_until="networkidle"); pg.wait_for_timeout(1600)
                     pg.screenshot(path=str(OUT / f"landing-{tag}.png"))
                     if os.environ.get("SCROLLS"):
                         total = pg.evaluate("document.documentElement.scrollHeight - innerHeight")

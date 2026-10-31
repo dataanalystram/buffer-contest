@@ -144,3 +144,26 @@ dialog.sheet h2{font-size:20px;font-weight:600;margin-bottom:16px}
   .pl-tile-meta{font-size:11px}
 }
 @media (prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important;scroll-behavior:auto!important}}
+
+/* ---------- Connect AI apps */
+.cx-addr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 16px;align-items:center}
+.cx-addr code{display:block;margin-top:6px;font-size:15px;word-break:break-all}
+.cx-addr p{grid-column:1/-1}
+.cx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:16px;margin-bottom:24px}
+.cx-card{border:1px solid var(--line);border-radius:var(--r-tile);background:var(--raised);padding:20px;display:flex;flex-direction:column;gap:14px;box-shadow:var(--e1);min-width:0}
+.cx-card header{display:grid;grid-template-columns:40px minmax(0,1fr);gap:12px;align-items:center}
+.cx-card h2{font-size:17px;font-weight:600}
+.cx-mark{width:40px;height:40px;border-radius:10px;background:var(--ink);color:var(--paper);display:grid;place-items:center;font:600 13px var(--mono)}
+.cx-status{grid-column:1/-1;justify-self:start;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.cx-status:before{content:"";width:7px;height:7px;border-radius:99px;background:var(--subtle)}
+.cx-status.on{color:var(--ink)}.cx-status.on:before{background:var(--ok)}
+.cx-steps{margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:6px}
+.cx-snip{position:relative}
+.cx-snip pre{margin:0;font-size:12px;white-space:pre-wrap;word-break:break-all;padding-right:72px}
+.cx-snip .btn2{position:absolute;top:8px;right:8px}
+.cx-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:auto}
+@media (max-width:600px){.cx-addr{grid-template-columns:minmax(0,1fr)}}
+.oauth-sheet h2{font-size:20px;font-weight:600;margin-bottom:12px}
+.oauth-acts{display:flex;flex-direction:column;gap:8px;margin:20px 0 12px}
+.oauth-acts .btn,.oauth-acts .btn2{min-height:48px}
+.oauth-hint{font-size:13px;margin-bottom:16px}
