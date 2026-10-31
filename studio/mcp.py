@@ -113,6 +113,12 @@ TOOLS: list[dict[str, Any]] = [
 READ_ONLY = {"get_activity", "whoami", "list_channels", "preflight_post", "preview_post", "list_rules", "get_inbox", "list_approvals", "list_queue",
              "list_stories", "get_run", "brand_check", "get_brand", "list_calendar", "list_clips", "get_limits"}
 
+# Brand studio (templates, example brands, recurring slots) and the Sources agent register their tools here
+from . import brand_routes as _brand_routes  # noqa: E402
+
+TOOLS += _brand_routes.TOOLS
+READ_ONLY |= _brand_routes.READ_ONLY
+
 
 def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     args = args or {}
@@ -200,6 +206,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return h.takes.place(actor, int(args.get("take_id") or 0), body)
     if name == "get_limits":
         return {**studio.limits(actor), "plan": studio.plan(actor)}
+    extra = _brand_routes.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
     raise ActionError(f"Unknown tool {name}", 404)
 
 

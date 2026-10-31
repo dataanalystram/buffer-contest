@@ -709,6 +709,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         body = await reqlimits.read_json(request, reqlimits.WORKER_MAX)
         return house.takes.on_clip(jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]), body.get("meta") or {})
 
+    # ------------------------------------------------------------ Brand studio + Sources agent (UI = REST = MCP)
+    from . import brand_routes
+    brand_routes.add_routes(app, house, actor)
+
     # ------------------------------------------------------------ MCP
     mcp_oauth.add_mcp_oauth_routes(app, store, studio, s.public_url, lambda r: store.session(r.cookies.get(COOKIE)))
 

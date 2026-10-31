@@ -26,6 +26,31 @@ MAX_BACKOFF = 5
 CHANNEL_TTL = 300  # seconds; channel lists change rarely, so cache them per user
 
 
+_COUNT = threading.local()
+
+
+class counting:
+    """Count the real Buffer GraphQL requests this thread makes inside the block (the per-action cost the UI shows).
+    ``with buffer_api.counting() as c: ...; c.n``. The sample's in-memory Buffer is not counted: it makes no requests."""
+
+    def __enter__(self):
+        self.prev, self.n = getattr(_COUNT, "c", None), 0
+        _COUNT.c = self
+        return self
+
+    def __exit__(self, *exc):
+        _COUNT.c = self.prev
+        if self.prev is not None:
+            self.prev.n += self.n
+        return False
+
+
+def _counted() -> None:
+    c = getattr(_COUNT, "c", None)
+    if c is not None:
+        c.n += 1
+
+
 class BufferError(Exception):
     status = 502
 
@@ -159,6 +184,7 @@ class BufferClient:
             wait = int(self.budget.blocked_until - time.time()) + 1
             raise BufferError(f"Buffer API rate limit reached; try again in {wait}s", 429, wait)
         bearer = token or self.access_token(uid)
+        _counted()
         r = self.http.post(API_URL, json={"query": query, "variables": variables or {}},
                            headers={"Authorization": f"Bearer {bearer}"})
         self.budget.read(r.headers)

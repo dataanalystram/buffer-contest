@@ -1,0 +1,262 @@
+{
+ "brand": "buffer",
+ "title": "Buffer (concept example)",
+ "label": "Concept example, not affiliated with Buffer",
+ "channels": [
+  "instagram",
+  "linkedin",
+  "twitter",
+  "threads",
+  "bluesky",
+  "facebook",
+  "tiktok",
+  "youtube"
+ ],
+ "images": [
+  {
+   "name": "cover-instagram",
+   "file": "cover-instagram.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "cover-linkedin",
+   "file": "cover-linkedin.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "cover-twitter",
+   "file": "cover-twitter.jpg",
+   "w": 1600,
+   "h": 900
+  },
+  {
+   "name": "cover-threads",
+   "file": "cover-threads.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "cover-bluesky",
+   "file": "cover-bluesky.jpg",
+   "w": 1600,
+   "h": 900
+  },
+  {
+   "name": "cover-facebook",
+   "file": "cover-facebook.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "cover-tiktok",
+   "file": "cover-tiktok.jpg",
+   "w": 1080,
+   "h": 1920
+  },
+  {
+   "name": "cover-youtube",
+   "file": "cover-youtube.jpg",
+   "w": 1080,
+   "h": 1920
+  },
+  {
+   "name": "recap-01",
+   "file": "recap-01.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-02",
+   "file": "recap-02.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-03",
+   "file": "recap-03.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-04",
+   "file": "recap-04.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-05",
+   "file": "recap-05.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-06",
+   "file": "recap-06.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-07",
+   "file": "recap-07.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-08",
+   "file": "recap-08.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-09",
+   "file": "recap-09.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "recap-x-01",
+   "file": "recap-x-01.jpg",
+   "w": 1600,
+   "h": 900
+  },
+  {
+   "name": "recap-x-02",
+   "file": "recap-x-02.jpg",
+   "w": 1600,
+   "h": 900
+  },
+  {
+   "name": "recap-x-03",
+   "file": "recap-x-03.jpg",
+   "w": 1600,
+   "h": 900
+  },
+  {
+   "name": "recap-x-04",
+   "file": "recap-x-04.jpg",
+   "w": 1600,
+   "h": 900
+  },
+  {
+   "name": "launch-01",
+   "file": "launch-01.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "launch-02",
+   "file": "launch-02.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "launch-03",
+   "file": "launch-03.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "launch-04",
+   "file": "launch-04.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "tutorial-01",
+   "file": "tutorial-01.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "tutorial-02",
+   "file": "tutorial-02.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "tutorial-03",
+   "file": "tutorial-03.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "tutorial-04",
+   "file": "tutorial-04.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "tutorial-05",
+   "file": "tutorial-05.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "quote-01",
+   "file": "quote-01.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "quote-02",
+   "file": "quote-02.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "midweek_recap-01",
+   "file": "midweek_recap-01.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "midweek_recap-02",
+   "file": "midweek_recap-02.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "midweek_recap-03",
+   "file": "midweek_recap-03.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "midweek_recap-04",
+   "file": "midweek_recap-04.jpg",
+   "w": 1080,
+   "h": 1350
+  },
+  {
+   "name": "midweek_recap-05",
+   "file": "midweek_recap-05.jpg",
+   "w": 1080,
+   "h": 1350
+  }
+ ],
+ "videos": [
+  {
+   "name": "reel-weekly_recap",
+   "file": "reel-weekly_recap.mp4",
+   "bytes": 414446
+  },
+  {
+   "name": "reel-quote",
+   "file": "reel-quote.mp4",
+   "bytes": 96929
+  }
+ ],
+ "captions": {
+  "instagram": "Making it easier for websites to express AI training preferences\n\nOpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers.\n\nWhy it matters: Rules like this change what products can ship, and where.\n\nSource: OpenAI News (link in bio)\n\n#SocialMedia #CreatorTips #AIPolicy",
+  "linkedin": "Making it easier for websites to express AI training preferences\n\nOpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers.\n\nWhy it matters: Rules like this change what products can ship, and where.\n\nSource: OpenAI News https://openai.com/index/helping-websites-express-ai-training-preferences\n\n#SocialMedia #CreatorTips #AIPolicy",
+  "twitter": "Making it easier for websites to express AI training preferences. OpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers.\n\nhttps://openai.com/index/helping-websites-express-ai-training-preferences #SocialMedia",
+  "threads": "Making it easier for websites to express AI training preferences\n\nOpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers. Rules like this change what products can ship, and where.\n\nhttps://openai.com/index/helping-websites-express-ai-training-preferences\n\n#SocialMedia",
+  "bluesky": "Making it easier for websites to express AI training preferences. OpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers.\n\nhttps://openai.com/index/helping-websites-express-ai-training-preferences",
+  "facebook": "Making it easier for websites to express AI training preferences\n\nOpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers. Rules like this change what products can ship, and where.\n\nhttps://openai.com/index/helping-websites-express-ai-training-preferences\n\n#SocialMedia #CreatorTips",
+  "tiktok": "Making it easier for websites to express AI training preferences\n\nOpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers. Rules like this change what products can ship, and where.\n\nSource: OpenAI News\n\n#SocialMedia #CreatorTips #AIPolicy",
+  "youtube": "Making it easier for websites to express AI training preferences\n\nOpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers. Rules like this change what products can ship, and where.\n\nSource: https://openai.com/index/helping-websites-express-ai-training-preferences\n\n#SocialMedia #CreatorTips #AIPolicy"
+ },
+ "rendered": "2026-10-31T20:00:00+00:00"
+}

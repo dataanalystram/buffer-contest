@@ -253,6 +253,7 @@ def test_app_boot_migrates_and_logs_counts_only(tmp_path, capsys):
 PUBLIC = {  # path -> why it is open to anyone
     "/openapi.json": "API description (open source)", "/api/docs": "Swagger UI", "/docs/oauth2-redirect": "Swagger helper",
     "/": "landing / app shell", "/privacy": "privacy notice", "/static/{name}": "static assets", "/api/stats": "public counters",
+    "/static/examples/{brand}/{name}": "pre-rendered example brand gallery (committed files)",
     "/static/{name:path}": "static assets (nested: fonts, brand, docs shots)", "/app": "app shell; redirects to / when signed out",
     "/terms": "terms of use", "/security": "security page", "/favicon.ico": "favicon", "/og.png": "social preview image",
     "/robots.txt": "crawl rules", "/sitemap.xml": "sitemap", "/docs": "documentation", "/docs/{slug}": "documentation page",

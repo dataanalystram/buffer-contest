@@ -113,7 +113,8 @@ def sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs")
+ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs",
+             "template_slots", "source_runs")  # Brand studio slots and Sources runs (their own schema in brand_studio.py, sources_agent.py)
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
           "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
           "ai_settings")

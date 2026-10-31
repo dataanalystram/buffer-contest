@@ -1,0 +1,206 @@
+{
+ "hits": [
+  {
+   "objectID": "50314654",
+   "title": "Serbia just elected the world's brainiest parliament",
+   "url": "https://www.science.org/content/article/serbia-just-elected-world-s-brainiest-parliament",
+   "author": "input_sh",
+   "points": 737,
+   "num_comments": 427,
+   "created_at": "2026-10-31T10:21:30Z",
+   "created_at_i": 1793442090
+  },
+  {
+   "objectID": "50314699",
+   "title": "Do the math: How we took over ChatGPT accounts",
+   "url": "https://www.parameter.ai/labs/we-found-a-gap-at-openai",
+   "author": "armcat",
+   "points": 279,
+   "num_comments": 130,
+   "created_at": "2026-10-31T10:30:11Z",
+   "created_at_i": 1793442611
+  },
+  {
+   "objectID": "50313661",
+   "title": "Digital minimalism",
+   "url": "https://vitalik.eth.limo/general/2026/10/31/digital_minimalism.html",
+   "author": "wilbertliu",
+   "points": 270,
+   "num_comments": 201,
+   "created_at": "2026-10-31T06:16:36Z",
+   "created_at_i": 1793427396
+  },
+  {
+   "objectID": "50314666",
+   "title": "Molly (Signal fork) has not been updated since 3 months and is vulnerable",
+   "url": "https://piefed.world/post/1503394",
+   "author": "DeepLogin",
+   "points": 265,
+   "num_comments": 158,
+   "created_at": "2026-10-31T10:23:41Z",
+   "created_at_i": 1793442221
+  },
+  {
+   "objectID": "50316531",
+   "title": "Malware uses LLMs to rank victims by how much they're worth",
+   "url": "https://blog.talosintelligence.com/appraisal-by-ai-model-driven-victim-prioritization-in-the-volta-infostealer/",
+   "author": "khalidkhair",
+   "points": 208,
+   "num_comments": 114,
+   "created_at": "2026-10-31T14:29:03Z",
+   "created_at_i": 1793456943
+  },
+  {
+   "objectID": "50314085",
+   "title": "Switch Lowering in GCC",
+   "url": "https://xoranth.net/gcc-switch/",
+   "author": "signa11",
+   "points": 178,
+   "num_comments": 34,
+   "created_at": "2026-10-31T08:02:26Z",
+   "created_at_i": 1793433746
+  },
+  {
+   "objectID": "50260753",
+   "title": "Show HN: Marelleo, an open-source story box I built for my kids using ESP32",
+   "url": "https://zebra.rodeo/en/blog/marelleo/",
+   "author": "foOg",
+   "points": 173,
+   "num_comments": 47,
+   "created_at": "2026-10-27T15:24:36Z",
+   "created_at_i": 1793114676
+  },
+  {
+   "objectID": "50290652",
+   "title": "AI, Lean, and the Future of Formal Verification, with Lean Creator Leo de Moura",
+   "url": "https://thedataexchange.media/leo-de-moura-lean-aws/",
+   "author": "datascientist",
+   "points": 172,
+   "num_comments": 38,
+   "created_at": "2026-10-29T15:29:48Z",
+   "created_at_i": 1793287788
+  },
+  {
+   "objectID": "50261253",
+   "title": "Simple circuits can create complex behaviors",
+   "url": "https://aatishb.com/myriad/lets-build-a-brain/",
+   "author": "aatish",
+   "points": 171,
+   "num_comments": 56,
+   "created_at": "2026-10-27T16:01:06Z",
+   "created_at_i": 1793116866
+  },
+  {
+   "objectID": "50317363",
+   "title": "Casio Watches of the 1980s",
+   "url": "https://www.casio.com/us/watches/50th/Heritage/1980s/",
+   "author": "karagenit",
+   "points": 165,
+   "num_comments": 86,
+   "created_at": "2026-10-31T16:00:48Z",
+   "created_at_i": 1793462448
+  },
+  {
+   "objectID": "50316100",
+   "title": "Jepsen: ParticleDB 1.1.4",
+   "url": "https://jepsen.io/analyses/particledb-1.1.4",
+   "author": "aphyr",
+   "points": 118,
+   "num_comments": 55,
+   "created_at": "2026-10-31T13:39:52Z",
+   "created_at_i": 1793453992
+  },
+  {
+   "objectID": "50318871",
+   "title": "GPT-5.6 Sol can beat Factorio on peaceful mode",
+   "url": "https://ryanmadden.net/gpt-56-beats-factorio/",
+   "author": "ryanmadden",
+   "points": 87,
+   "num_comments": 82,
+   "created_at": "2026-10-31T18:50:34Z",
+   "created_at_i": 1793472634
+  },
+  {
+   "objectID": "50319143",
+   "title": "TCP Use-After-Free: CVE-2026-98432 / CVSS 9.8",
+   "url": "https://atlasum.net/blog/cve-2026-98432-linux-ipv4-tcp-uaf",
+   "author": "oger",
+   "points": 76,
+   "num_comments": 40,
+   "created_at": "2026-10-31T19:16:30Z",
+   "created_at_i": 1793474190
+  },
+  {
+   "objectID": "50317429",
+   "title": "What is a light-day? The milestone Voyager 1 is closing in on",
+   "url": "https://science.nasa.gov/mission/voyager/voyager-1/voyager-1-what-is-a-light-day/",
+   "author": "geox",
+   "points": 67,
+   "num_comments": 34,
+   "created_at": "2026-10-31T16:09:55Z",
+   "created_at_i": 1793462995
+  },
+  {
+   "objectID": "50318401",
+   "title": "The Impact of Generative AI on Critical Thinking: Self-Reported (2025)",
+   "url": "https://dl.acm.org/doi/full/10.1145/3706598.3713778",
+   "author": "the-mitr",
+   "points": 61,
+   "num_comments": 40,
+   "created_at": "2026-10-31T18:02:29Z",
+   "created_at_i": 1793469749
+  },
+  {
+   "objectID": "50271052",
+   "title": "Reading and writing are less symmetric than you (probably) think",
+   "url": "https://fgiesen.wordpress.com/2015/10/25/reading-and-writing-are-less-symmetric-than-you-probably-think/",
+   "author": "luu",
+   "points": 55,
+   "num_comments": 18,
+   "created_at": "2026-10-28T09:38:07Z",
+   "created_at_i": 1793180287
+  },
+  {
+   "objectID": "50318182",
+   "title": "Hackers hijack Egypt highway billboard and Malaysian screens to show porn",
+   "url": "https://www.cairoreport.org/p/egypt-brazil-iraq-billboard-hack",
+   "author": "entryleveljobsc",
+   "points": 42,
+   "num_comments": 46,
+   "created_at": "2026-10-31T17:36:05Z",
+   "created_at_i": 1793468165
+  },
+  {
+   "objectID": "50319061",
+   "title": "The Duty of a Scholar",
+   "url": "https://www.daemonology.net/blog/2026-10-31-The-Duty-of-a-Scholar.html",
+   "author": "gslin",
+   "points": 42,
+   "num_comments": 8,
+   "created_at": "2026-10-31T19:07:36Z",
+   "created_at_i": 1793473656
+  },
+  {
+   "objectID": "50318720",
+   "title": "It's the Memory Latency, Stupid",
+   "url": "https://pivotlake.io/blog/its-the-memory-latency-stupid/",
+   "author": "ntur1337",
+   "points": 36,
+   "num_comments": 6,
+   "created_at": "2026-10-31T18:38:16Z",
+   "created_at_i": 1793471896
+  },
+  {
+   "objectID": "50274186",
+   "title": "Redox: Ring Buffers Project Summary",
+   "url": "https://www.redox-os.org/news/nlnet-rb-summary/",
+   "author": "g0xA52A2A",
+   "points": 34,
+   "num_comments": 4,
+   "created_at": "2026-10-28T14:27:12Z",
+   "created_at_i": 1793197632
+  }
+ ],
+ "recorded": "2026-10-31",
+ "source": "https://hn.algolia.com/api/v1/search?tags=front_page"
+}
