@@ -751,10 +751,23 @@ def _join(parts: list[tuple[Path, float]], tmp: Path, fade: float) -> bytes:
         fc.append(f"[{prev}][{i}:v]xfade=transition=fade:duration={fade}:offset={off:.3f}[x{i}]")
         prev = f"x{i}"
     final = tmp / "out.mp4"
+    try:
+        return _xfade(parts, inputs, fc, prev, final, fade)
+    except RuntimeError:
+        # low memory (the xfade chain holds every input frame): fall back to hard cuts with the concat demuxer
+        listing = tmp / "parts.txt"
+        listing.write_text("\n".join(f"file '{p}'" for p, _ in parts))
+        total = sum(d for _, d in parts)
+        _ff(["-f", "concat", "-safe", "0", "-i", str(listing), "-f", "lavfi", "-t", f"{total:.2f}", "-i", "anullsrc=r=44100:cl=stereo",
+             "-map", "0:v", "-map", "1:a", "-shortest", "-c:v", "copy", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", str(final)])
+        return final.read_bytes()
+
+
+def _xfade(parts, inputs, fc, prev, final, fade) -> bytes:
     total = sum(d for _, d in parts) - fade * (len(parts) - 1)
     cmd = [*inputs, "-f", "lavfi", "-t", f"{total:.2f}", "-i", "anullsrc=r=44100:cl=stereo"]
     cmd += (["-filter_complex", ";".join(fc), "-map", f"[{prev}]"] if fc else ["-map", "0:v"])
-    cmd += ["-map", f"{len(parts)}:a", "-shortest", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p",
+    cmd += ["-map", f"{len(parts)}:a", "-shortest", "-filter_complex_threads", "1", "-threads", "2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", str(final)]
     _ff(cmd)
     return final.read_bytes()

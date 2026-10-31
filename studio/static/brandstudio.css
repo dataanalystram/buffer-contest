@@ -12,7 +12,7 @@
 .bs-label{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--sunken);color:var(--muted);margin:4px 0}
 .bs-grid{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:16px;margin-top:16px;align-items:start}
 @media (max-width:900px){.bs-grid{grid-template-columns:1fr}}
-.bs-kit .field,.sa .field{margin-bottom:14px}.bs-logo{max-height:40px;max-width:160px;background:#111;padding:4px;border-radius:6px}
+.bs-kit .field,.sa .field{margin-bottom:14px}.bs-logo{max-height:40px;max-width:160px;background:repeating-conic-gradient(#ccc 0 25%,#fff 0 50%) 0 0/12px 12px;padding:4px;border-radius:6px}
 .bs-colors{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}.bs-col{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px;color:var(--muted)}
 .bs-col input{width:48px;height:40px;padding:2px;border-radius:6px}
 .bs-styles{display:flex;gap:6px;flex-wrap:wrap}.bs-styles button{height:34px;padding:0 12px;border:1px solid var(--line-strong);border-radius:6px;background:var(--raised);color:var(--ink);cursor:pointer;text-transform:capitalize}
