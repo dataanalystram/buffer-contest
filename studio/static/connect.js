@@ -7,8 +7,8 @@
 const CX = [
   { id: "claude", name: "Claude", mark: "C", match: /claude(?!.*code)/i, auth: "oauth", where: "claude.ai, desktop and mobile",
     steps: ["Open Settings, then Connectors.", "Choose Add custom connector and paste your MCP address.", "Sign in with Buffer when HuhQueue asks, pick what Claude may do, and allow."] },
-  { id: "chatgpt", name: "ChatGPT", mark: "G", match: /chatgpt|openai/i, auth: "oauth", where: "chatgpt.com, on plans with custom connectors",
-    steps: ["Open Settings, then Apps and Connectors, and turn on developer mode under Advanced.", "Create a connector, paste your MCP address and choose OAuth.", "Sign in with Buffer when HuhQueue asks, pick what ChatGPT may do, and allow."] },
+  { id: "chatgpt", name: "ChatGPT", mark: "G", match: /chatgpt|openai/i, auth: "oauth", where: "chatgpt.com on the web, as a custom MCP plugin",
+    steps: ["Go to chatgpt.com/plugins, choose the plus button, then Add custom MCP server.", "Name it HuhQueue, paste your MCP address as the Server URL and choose OAuth. Accept the risk warning, choose Create as a plugin, then install it.", "Sign in with Buffer when HuhQueue asks, pick what ChatGPT may do, and allow. In a chat, type @ and pick HuhQueue."] },
   { id: "grok", name: "Grok", mark: "X", match: /grok|xai/i, auth: "either", where: "grok.com connectors, or the xAI API",
     steps: ["On grok.com, open Connectors, choose New Connector, then Custom, and paste your MCP address.", "Sign in with Buffer when HuhQueue asks, check where it sends you back, pick what Grok may do, and allow.", "On the xAI API instead: create a token below and add an mcp tool to the request's tools (server_url and server_label are required)."],
     snip: (u, t) => `{"type": "mcp", "server_url": "${u}",\n "server_label": "huhqueue",\n "headers": {"Authorization": "Bearer ${t}"}}` },

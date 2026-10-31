@@ -150,7 +150,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
     ("agents", "Agents, MCP and API", "Use HuhQueue from Claude, ChatGPT, Grok, Claude Code, Codex, Cursor or your own code, on a leash.", "connect", """
 <p>Everything the app can do is also a tool for your AI apps over MCP and an endpoint over REST. Open <b>Connect AI apps</b> in the app for per-app steps, your MCP address and when each app last used it.</p>
 <h2 id="oauth">Apps that sign in (Claude, ChatGPT, Grok on grok.com)</h2>
-<p>Add a custom connector and paste your MCP address (on grok.com: Connectors, New Connector, Custom). The app sends you to HuhQueue to sign in with Buffer and choose what it may do. The sign-in screen shows where it will send you back and flags apps it can't verify.</p>
+<p>Add a custom connector and paste your MCP address (in ChatGPT: <a href="https://chatgpt.com/plugins">Plugins</a>, the plus button, <b>Add custom MCP server</b>, OAuth, then install the plugin; on grok.com: Connectors, New Connector, Custom). The app sends you to HuhQueue to sign in with Buffer and choose what it may do. The sign-in screen shows where it will send you back and flags apps it can't verify.</p>
 <h2 id="token">Apps that use a token (Claude Code, Codex, Cursor, the xAI API, scripts)</h2>
 <p>Create a token on <b>Connect AI apps</b> or <b>Agents</b>. It is shown once and stored only as a hash. Claude Code:</p>
 <pre class="code">claude mcp add --transport http huhqueue \\
