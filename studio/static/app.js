@@ -148,6 +148,7 @@ async function boot() {
     return;
   }
   $("#app").hidden = false; $("#topRight").hidden = false; $("#landNav").hidden = true; $("#demoBar").hidden = !s.demo;
+  document.body.classList.add("in-app"); document.body.classList.toggle("is-demo", !!s.demo);
   $("#acctBtn").textContent = (s.user.name || s.user.email || "Account") + (s.user.organization ? " · " + s.user.organization : "");
   setKill(s.user.kill_switch);
   snippets(s.mcp_url);
@@ -299,7 +300,17 @@ $("#saveIdea").onclick = async () => {
 $("#refreshCh").onclick = () => loadChannels(true);
 
 // ---------------------------------------------------------------- tabs
-document.querySelectorAll(".rail button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+document.querySelectorAll(".rail button[data-tab]").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+// phone and tablet: a bottom bar with the four everyday tabs, the rest in a "More" sheet (Esc or Close returns focus)
+function moreSheet(open) {
+  const btn = $("#moreBtn"), rail = $("#rail");
+  rail.classList.toggle("more-open", open); btn.setAttribute("aria-expanded", open); $("#railScrim").hidden = !open;
+  if (open) $("#railMore [data-tab]").focus(); else if (document.activeElement && $("#railMore").contains(document.activeElement)) btn.focus();
+}
+$("#moreBtn").onclick = () => moreSheet(!$("#rail").classList.contains("more-open"));
+$("#moreClose").onclick = () => moreSheet(false);
+$("#railScrim").onclick = () => moreSheet(false);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#rail").classList.contains("more-open")) moreSheet(false); });
 function showTab(name) {
   if (name === "home") name = "inbox"; // the old name, for links people saved
   if (name === "calendar" || name === "queue") { // both live in the Planner now
@@ -308,7 +319,10 @@ function showTab(name) {
   }
   if (!document.getElementById("tab-" + name)) name = "agent";
   if (name !== "planner") history.replaceState(null, "", name === "agent" ? "/" + (S.session?.demo ? "?demo=1" : "") : "/?tab=" + name);
-  document.querySelectorAll(".rail button").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
+  if ($("#rail").classList.contains("more-open")) moreSheet(false);
+  const primary = !!document.querySelector(`.rail [data-tab="${name}"][data-primary]`);
+  $("#moreBtn").classList.toggle("on", !primary);
+  document.querySelectorAll(".rail button[data-tab]").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   window.scrollTo({ top: 0 });
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
   ({ inbox: loadInbox, radar: loadRadar, approvals: loadApprovals, agents: loadTokens, activity: loadAudit }[name] || (window.HS_TABS || {})[name] || (() => {}))();
@@ -397,7 +411,7 @@ async function loadInbox() {
     wireStories(hs);
   }).catch(() => (hs.innerHTML = ""));
 }
-function ibBadge(n) { const b = $("#inboxBadge"); b.textContent = n; b.hidden = !n; const m = $("#moreBadge"); if (m) { m.textContent = n; m.hidden = !n; } }
+function ibBadge(n) { const b = $("#inboxBadge"); b.textContent = n; b.hidden = !n; }
 $("#inboxRefresh").onclick = () => loadInbox();
 $("[data-testid=inbox-kill-open]").onclick = () => showTab("agents");
 // ---------------------------------------------------------------- plan limits: warn before Buffer says no
@@ -485,7 +499,7 @@ function postItem(p) {
 async function refreshBadge() {
   try {
     const r = await api("/api/approvals");
-    const b = $("#apprBadge"); b.textContent = r.length; b.hidden = !r.length;
+    for (const b of [$("#apprBadge"), $("#moreBadge")]) { b.textContent = r.length; b.hidden = !r.length; } // Approvals lives under More on a phone
     return r;
   } catch (_) { return []; }
 }
