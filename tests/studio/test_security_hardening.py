@@ -142,10 +142,11 @@ def test_operator_can_restrict_custom_hosts_and_redirects_are_not_followed(monke
         llm.chat(eng, "s", "u", http=_oa(lambda r: httpx.Response(307, headers={"location": "http://127.0.0.1/"})))
 
 
-def test_saving_a_preset_with_a_foreign_base_url_is_refused(client, monkeypatch):
-    monkeypatch.setattr(netguard, "_host_ok", lambda h: True)
+def test_saving_a_preset_with_a_foreign_base_url_is_refused(human, monkeypatch):
+    from studio import drafter
+    monkeypatch.setattr(drafter, "_public", lambda h: True)
     monkeypatch.setattr(llm, "test_key", lambda eng, http=None: "ok")
-    r = client.post("/api/ai", json={"provider": "openai", "api_key": "sk-x", "base_url": "https://evil.example/v1"})
+    r = human.post("/api/ai", json={"provider": "openai", "api_key": "sk-x", "base_url": "https://evil.example/v1"})
     assert r.status_code == 400 and "provider" in r.json()["error"]
 
 
@@ -314,8 +315,9 @@ def test_sign_in_endpoints_are_rate_limited_per_ip(app):
     assert codes[:3] == [302] * 3 and codes[3] == 429
 
 
-def test_session_cookie_flags(app):
-    r = TestClient(app, base_url="https://hq.test").get("/api/session")
+def test_session_cookie_flags(tmp_path):
+    prod = create_app(load_settings(db_path=str(tmp_path / "c.db"), secure_cookies=True, ai_base_url=""))
+    r = TestClient(prod, base_url="https://hq.test").get("/api/session")
     sc = r.headers["set-cookie"].lower()
     assert "httponly" in sc and "secure" in sc and "samesite=lax" in sc and "path=/" in sc
     assert r.headers["cache-control"] == "no-store"

@@ -49,7 +49,7 @@ def _whitelist(forced: str | None) -> str:
 def _check_input(path: str, forced: str | None) -> None:
     if forced == "lavfi" or path in ("-", "pipe:", "pipe:0"):
         return
-    if "://" in path or (":" in path and path.split(":", 1)[0].lower() in URL_SCHEMES):
+    if "://" in path or (":" in path and path.split(":", 1)[0].split(",", 1)[0].lower() in URL_SCHEMES):
         raise MediaRefused("Only local media files can be processed.")
     try:
         size = Path(path).stat().st_size
