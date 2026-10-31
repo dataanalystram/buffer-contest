@@ -455,14 +455,23 @@ def story_slide(b: Brand, ratio: str, num: int, title: str, body: str, tag: str 
     nw, nh = nb[2] - nb[0], nb[3] - nb[1]
     gap = int(min(W, H) * 0.035)
     x0, maxw = (m + nw + int(W * 0.05), W - 2 * m - nw - int(W * 0.05)) if wide else (m, W - 2 * m)
-    hf, lines = fit_text(d, b.headline(title), b.head, int(min(W, H) * (0.095 if b.upper else 0.075)), maxw, 4)
-    hlh = int(hf.size * (1.02 if b.upper else 1.12))
-    bf = b.body(int(min(W, H) * 0.04))
-    blines = wrap(d, body, bf, maxw)[:4] if body else []
     tf = b.body(int(min(W, H) * 0.028), strong=True)
     tag_h = int(tf.size * 1.25) + 24 + gap if tag else 0
-    text_h = tag_h + hlh * len(lines) + int(hf.size * 0.2) + (gap + int(bf.size * 1.42) * len(blines) if blines else 0)
     top_min = m + int(min(W, H) * 0.14)
+    bottom = H - m - int(min(W, H) * 0.07)  # the footer line stays clear
+    start = int(min(W, H) * (0.095 if b.upper else 0.075))
+    for _ in range(8):  # shrink the headline (then the body) until the block fits above the footer
+        hf, lines = fit_text(d, b.headline(title), b.head, start, maxw, 4)
+        hlh = int(hf.size * (1.02 if b.upper else 1.12))
+        bf = b.body(int(min(W, H) * 0.04 * (start / int(min(W, H) * (0.095 if b.upper else 0.075))) ** 0.5))
+        blines = wrap(d, body, bf, maxw)[:4] if body else []
+        text_h = tag_h + hlh * len(lines) + int(hf.size * 0.2) + (gap + int(bf.size * 1.42) * len(blines) if blines else 0) \
+            + (int(min(W, H) * 0.06) if source else 0)
+        need = text_h + (0 if wide else nh + gap)
+        y_top = top_min if wide else int(H * 0.17)
+        if y_top + need <= bottom or start < 30:
+            break
+        start = int(start * 0.9)
     if wide:
         y = max(top_min, (H - text_h) // 2)
         d.text((m - nb[0], (H - nh) // 2 - nb[1]), num_t, font=nf, fill=_emph(b, style))
@@ -557,13 +566,15 @@ def breaking_card(b: Brand, ratio: str, title: str, source: str, when: str, imag
     else:
         style = b.front_style if b.front_style != "minimal" else "bold"
         im = _ground(W, H, b, style)
+    if photo is None:
+        _watermark(im, b, style)
     d = ImageDraw.Draw(im)
     ink, muted = _ink(b, "glow")
     _logo(im, b, int(W * (0.22 if not wide else 0.15)), (m, m), style)
     kf = b.body(int(min(W, H) * 0.036), strong=True)
     hf, lines = fit_text(d, b.headline(title), b.head, int(min(W, H) * (0.14 if b.upper else 0.1)), W - 2 * m, 4 if not wide else 3)
     lh = int(hf.size * (1.0 if b.upper else 1.1))
-    y = H - m - int(min(W, H) * 0.12) - lh * len(lines)
+    y = H - m - int(min(W, H) * 0.12) - lh * len(lines) - (int(hf.size * 0.2) if b.upper else 0)
     pw, ph = _pill(d, (m, y - int(kf.size * 3)), "BREAKING", kf, b.accent, b.on_accent)
     r = int(kf.size * 0.32)
     cx, cy = m + pw + int(kf.size * 0.9), y - int(kf.size * 3) + ph // 2
@@ -573,9 +584,25 @@ def breaking_card(b: Brand, ratio: str, title: str, source: str, when: str, imag
         d.text((m, y + i * lh), line, font=hf, fill=ink)
     if source:
         sf = b.body(int(min(W, H) * 0.028))
-        d.text((m, y + lh * len(lines) + int(min(W, H) * 0.025)), _clean("Source: " + source, sf), font=sf, fill=muted)
+        d.text((m, y + lh * len(lines) + int(min(W, H) * 0.025) + (int(hf.size * 0.2) if b.upper else 0)), _clean("Source: " + source, sf),
+               font=sf, fill=muted)
     _footer(im, b, n, style, m)
     return im
+
+
+def _watermark(im: Image.Image, b: Brand, style: str) -> None:
+    """A big, faint copy of the brand's mark in the top right: the card reads as this brand even before the logo."""
+    if b.logo is None:
+        return
+    W, H = im.size
+    lg = b.logo
+    mark = lg.crop((0, 0, min(lg.width, lg.height), lg.height)) if lg.width > lg.height * 1.6 else lg  # the symbol of a lockup
+    size = int(min(W, H) * 0.62)
+    mk = mark.copy()
+    mk.thumbnail((size, size), Image.LANCZOS)
+    tint = Image.new("RGBA", mk.size, b.accent + (0,))
+    tint.putalpha(mk.getchannel("A").point(lambda v: int(v * 0.13)))
+    im.paste(tint, (W - mk.width + int(mk.width * 0.18), int(H * 0.06)), tint)
 
 
 def _has(f, ch: str) -> bool:

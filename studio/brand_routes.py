@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 
-from . import brand_examples
+from . import brand_examples, buffer_api, demo_guard
 from .brand_studio import BrandStudio, StudioError, start_ticker
 from .sources_agent import SourceError, SourcesAgent
 
@@ -21,6 +21,16 @@ EXAMPLES_DIR = Path(__file__).parent / "static" / "examples"
 def _err(e: Exception, status: int = 400):
     from .actions import ActionError
     raise ActionError(str(e), status)
+
+
+def counted(fn, a, *args):
+    """Run one action and report what it cost in Buffer API requests (real GraphQL requests on a connected account; the
+    sample's in-memory Buffer makes none)."""
+    with buffer_api.counting() as c:
+        out = fn(a, *args)
+    if isinstance(out, dict):
+        out = {**out, "buffer_cost": {"requests": c.n, "live": not demo_guard.is_demo(a.uid)}}
+    return out
 
 
 def attach(house) -> tuple[BrandStudio, SourcesAgent]:
@@ -36,7 +46,7 @@ def add_routes(app: FastAPI, house, actor) -> None:
 
     def call(fn, *args):
         try:
-            return fn(*args)
+            return counted(fn, *args)
         except (StudioError, SourceError) as e:
             _err(e)
 
@@ -126,15 +136,17 @@ def add_routes(app: FastAPI, house, actor) -> None:
 
 # ==================================================================================================== MCP
 TOOLS: list[dict[str, Any]] = [
-    {"name": "sources_scan", "description": "The Sources agent: read the user's sources (YC launches, Hacker News front page, RSS/Atom lab blogs, and X when the user added their own X API key), dedupe, cluster the same story across sources, and rank each cluster with a lane (postable, idea_bank, low, hidden) and what an agent may do (agent_ok, verify_first, person_only). Returns a run_id and clusters. The sample workspace reads recorded fixtures only. Nothing is posted.",
-     "inputSchema": {"type": "object", "properties": {"sources": {"type": "array", "items": {"type": "string", "enum": ["yc", "hn", "rss", "x"]}}}}},
+    {"name": "sources_scan", "description": "The Sources agent: read the user's sources (YC launches, Hacker News front page, RSS/Atom lab blogs, Product Hunt with the user's free developer token, and X only with the user's own X API key), dedupe, cluster the same story across sources, and rank each cluster with a lane (postable, idea_bank, low, hidden) and what an agent may do (agent_ok, verify_first, person_only). Returns a run_id and clusters. The sample workspace reads recorded fixtures only. Nothing is posted.",
+     "inputSchema": {"type": "object", "properties": {"sources": {"type": "array", "items": {"type": "string", "enum": ["yc", "hn", "rss", "ph", "x"]}}}}},
     {"name": "sources_draft", "description": "Turn clusters from a sources_scan run into one package per channel in the brand: the caption written for the channel (length, hashtag count, format), a breaking-news cover rendered in the brand kit at the channel's frame. dry_run (default true) returns the packages; dry_run false sends each as a Buffer DRAFT through preview/submit (a 'review' token waits in Approvals). Never publishes.",
      "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"},
          "cluster_ids": {"type": "array", "items": {"type": "string"}}, "channel_ids": {"type": "array", "items": {"type": "string"}},
          "dry_run": {"type": "boolean", "default": True}}}},
-    {"name": "sources_settings", "description": "Read (no arguments) or change which sources the agent reads: on {yc, hn, rss, x}, rss (feed URLs, up to 8), x_query, hn_query. The X API key can only be added by a person in the app.",
+    {"name": "sources_settings", "description": "Read (no arguments) or change which sources the agent reads: on {yc, hn, rss, ph, x}, rss (feed URLs, up to 8), x_query, hn_query. The X key and the Product Hunt token can only be added by a person in the app.",
      "inputSchema": {"type": "object", "properties": {"on": {"type": "object"}, "rss": {"type": "array", "items": {"type": "string"}},
          "x_query": {"type": "string"}, "hn_query": {"type": "string"}}}},
+    {"name": "templates_slot_run", "description": "Fire a recurring template slot now: render it from this week's posts and put one Buffer DRAFT per channel at the slot's next time. Never publishes.",
+     "inputSchema": {"type": "object", "required": ["slot_id"], "properties": {"slot_id": {"type": "integer"}}}},
     {"name": "list_templates", "description": "The brand's post templates (weekly recap, mid-week recap, breaking cover, launch carousel, quote/CEO clip, free-way-to tutorial), the channel frames and slide limits, and the front/end card styles.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "render_template", "description": "Render a template in the user's brand for each channel (front card first, end card last). data gives the content (recaps without data are built from the week's sent and scheduled posts). video: true adds a 9:16 Reel where FFmpeg runs. Returns media URLs; pass them to preview_post.",
@@ -158,6 +170,13 @@ def call_tool(studio, actor, name: str, args: dict):
         return NotImplemented
     bs, sa = attach(studio.house)
     try:
+        return counted(lambda a, nm, ag: _tool(bs, sa, a, nm, ag), actor, name, args)
+    except (StudioError, SourceError) as e:
+        _err(e)
+
+
+def _tool(bs, sa, actor, name: str, args: dict):
+    if True:
         if name == "sources_scan":
             return sa.scan(actor, {"sources": args.get("sources")} if args.get("sources") else {})
         if name == "sources_draft":
@@ -167,6 +186,8 @@ def call_tool(studio, actor, name: str, args: dict):
             return sa.save_settings(actor, body) if body else sa.settings(actor)
         if name == "list_templates":
             return bs.list_templates()
+        if name == "templates_slot_run":
+            return bs.run_slot(actor, int(args.get("slot_id") or 0))
         if name == "render_template":
             return bs.render(actor, args)
         if name == "list_brand_examples":
@@ -175,5 +196,3 @@ def call_tool(studio, actor, name: str, args: dict):
             return bs.apply_example(actor, args.get("example_id", ""))
         if name == "schedule_template_slot":
             return bs.add_slot(actor, args) if args.get("template") else {"slots": bs.slots(actor)}
-    except (StudioError, SourceError) as e:
-        _err(e)

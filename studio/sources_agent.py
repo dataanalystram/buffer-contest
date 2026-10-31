@@ -41,6 +41,7 @@ SAMPLE_RSS = {"openai.xml": "https://openai.com/news/rss.xml", "deepmind.xml": "
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS source_settings (user_id TEXT PRIMARY KEY, data TEXT, secret TEXT, updated REAL);
+CREATE TABLE IF NOT EXISTS classifier_usage (day TEXT, user_id TEXT, provider TEXT, n INTEGER, PRIMARY KEY (day, user_id, provider));
 CREATE TABLE IF NOT EXISTS source_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, input TEXT, result TEXT, created REAL);
 """
 
@@ -51,7 +52,7 @@ def ensure(store) -> None:
             stmt = stmt.replace(" REAL", " DOUBLE PRECISION").replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
         store.x(stmt)
     if store.pg:
-        for t in ("source_settings", "source_runs"):
+        for t in ("source_settings", "source_runs", "classifier_usage"):
             store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
 
 
@@ -136,6 +137,40 @@ def parse_x(data: dict) -> list[dict]:
                          links[-1] if links else f"https://x.com/{handle}/status/{t.get('id')}", "", _ts(t.get("created_at")),
                          engagement=(m.get("like_count") or 0) + 2 * (m.get("retweet_count") or 0), post=f"https://x.com/{handle}/status/{t.get('id')}"))
     return out
+
+
+def parse_ph(data: dict) -> list[dict]:
+    out = []
+    for e in (((data or {}).get("data") or {}).get("posts") or {}).get("edges") or []:
+        n = e.get("node") or {}
+        url = n.get("url") or n.get("website") or ""
+        if not n.get("name") or not url.startswith("https://"):
+            continue
+        topics = [t["node"]["name"] for t in ((n.get("topics") or {}).get("edges") or []) if (t.get("node") or {}).get("name")]
+        out.append(_item("ph", "Product Hunt", f"{n['name']}: {n.get('tagline', '')}".strip(": "), url, n.get("tagline", ""),
+                         _ts(n.get("createdAt")), engagement=n.get("votesCount") or 0, company=n["name"], tags=topics))
+    return out
+
+
+def _post(url: str, http, body: dict, headers: dict) -> httpx.Response:
+    """POST to a fixed public API through the safe-fetch helper (netguard.safe_post: host checked on this call, pinned,
+    no redirects, body capped). Older netguard without safe_post: the same checks by hand."""
+    host = (urlparse(url).hostname or "").lower()
+    try:
+        if hasattr(netguard, "safe_post"):
+            return netguard.safe_post(url, http=http, json=body, headers={**UA, **headers}, timeout=15, allowed_hosts={host}, limit=2_000_000)
+        netguard.check_url(url, https_only=True)
+        c = http or netguard.client(15)
+        r = c.post(url, json=body, headers={**UA, **headers}, follow_redirects=False)
+        if r.status_code in netguard.REDIRECTS:
+            raise netguard.FetchError("The API answered with a redirect, which is not followed.")
+        if len(r.content) > 2_000_000:
+            raise netguard.FetchError("The API's answer is too large.")
+        return r
+    except netguard.FetchError as e:
+        raise SourceError(str(e))
+    except httpx.HTTPError as e:
+        raise SourceError(f"{host} didn't answer ({e.__class__.__name__}).")
 
 
 def parse_rss(body: bytes, feed_url: str) -> list[dict]:
@@ -227,7 +262,33 @@ class X(Adapter):
         return parse_x(json.loads((FIXTURES / "x.json").read_text()))
 
 
-ADAPTERS: dict[str, Adapter] = {a.key: a for a in (YC(), HN(), RSS(), X())}
+class ProductHunt(Adapter):
+    key, label, about = "ph", "Product Hunt (free token)", "Today's top launches, through the Product Hunt API with your own free developer token."
+    needs_key = True
+    QUERY = ("query { posts(first: 20, order: VOTES) { edges { node { id name tagline url website votesCount createdAt "
+             "topics(first: 3) { edges { node { name } } } } } } }")
+
+    def live(self, cfg, secret, http):
+        key = (secret or {}).get("ph_token", "")
+        if not key:
+            raise SourceError("Add your free Product Hunt developer token to read Product Hunt.")
+        r = _post("https://api.producthunt.com/v2/api/graphql", http, {"query": self.QUERY}, {"Authorization": f"Bearer {key}"})
+        if r.status_code in (401, 403):
+            raise SourceError("Product Hunt refused the token; check it in your Product Hunt API dashboard.")
+        if r.status_code >= 400:
+            raise SourceError(f"Product Hunt answered HTTP {r.status_code}.")
+        try:
+            return parse_ph(r.json())
+        except ValueError:
+            raise SourceError("Product Hunt didn't return JSON.")
+
+    def sample(self):
+        return parse_ph(json.loads((FIXTURES / "producthunt.json").read_text()))
+
+
+ADAPTERS: dict[str, Adapter] = {a.key: a for a in (YC(), HN(), RSS(), ProductHunt(), X())}
+KEYED = {"x": ("x_bearer", r"[A-Za-z0-9%_\-.=]{20,200}", "X API bearer token"),
+         "ph": ("ph_token", r"[A-Za-z0-9_\-.=]{20,200}", "Product Hunt developer token")}
 
 
 # ================================================================================================ dedupe + clusters
@@ -333,6 +394,84 @@ def judge(it: dict, brand_terms: set[str]) -> dict:
             "sensitive": 0.9 if re.search(r"\b(death|died|suicide|killed|violence|weapons?|abuse|shooting|disaster)\b", txt) else 0.1,
             "allegation": 0.9 if re.search(r"\b(lawsuit|sued|accus|alleg|investigat)\b", txt) else 0.1,
             "format": "carousel" if evergreen or len(re.findall(r"\d", txt)) > 3 else "single_card", "provider": "rules"}
+
+
+# ---- System One judges: Jev first, then SubQ, then the rules (RADAR_CLASSIFIER.md §5). The app's own keys, capped per account
+# per day; the sample never calls them (its scan is deterministic). A failed call is an error, never read as a "no".
+SCHEMA_VERSION = "sources-q-2026-10-31.1"
+JUDGE_CAP = int(os.environ.get("HQ_JUDGE_CAP", "150"))        # judged stories per account per day, across providers
+JUDGE_PER_SCAN = 16
+PROVIDERS = [  # (name, url, model, env key)
+    ("jev", "https://api.typesafe.ai/v1/systemone", "jev-latest", "TYPESAFE_API_KEY"),
+    ("subq", "https://api.subq.ai/v1/systemone", "subq-snap-1.1", "SUBQ_API_KEY"),
+]
+_judged: dict[str, dict] = {}  # ponytail: per-process cache by schema + url
+
+
+def classifier_view() -> dict:
+    live = [n for n, _, _, env in PROVIDERS if os.environ.get(env)]
+    return {"order": live + ["rules"], "cap_per_day": JUDGE_CAP, "configured": bool(live)}
+
+
+def judge_questions(cats: dict) -> dict:
+    return {
+        "about_ai": {"type": "noul", "instructions": "Is `story` about artificial intelligence or machine learning?",
+                     "criteria": {"true": "AI, models or AI products are the main subject", "false": "AI is absent or only mentioned in passing"}},
+        "category": {"type": "choice", "instructions": "What is `story` mainly about?", "criteria": cats},
+        "kind": {"type": "choice", "instructions": "What kind of piece is `story`?",
+                 "criteria": {"news": "Reports one specific thing that happened", "evergreen": "A guide, explainer or tutorial still useful in three months",
+                              "promo": "A company marketing its own product with no outside news angle"}},
+        "relevance": {"type": "score", "instructions": "How relevant is `story` to `brand`?",
+                      "criteria": ["Nothing in it touches what the brand covers", "Loosely related, the audience would not act on it",
+                                   "Clearly about what the brand covers; some of the audience would care", "Exactly what the audience follows the brand for"]},
+        "unconfirmed": {"type": "noul", "instructions": "Does `story` report a rumor, leak, forecast or unconfirmed claim?"},
+        "sensitive": {"type": "noul", "instructions": "Does `story` involve death, violence, weapons, self-harm, abuse or a disaster?"},
+        "allegation": {"type": "noul", "instructions": "Does `story` describe an accusation or lawsuit against a named person or company?"},
+    }
+
+
+CATS = {"model_release": "A new or updated AI model is released or benchmarked", "product_feature": "A product, app or feature launches or changes",
+        "research": "A research paper, technique, dataset or scientific finding", "business_funding": "Funding, deals, revenue or company strategy",
+        "policy_law": "Rules, regulation, lawsuits, standards or copyright", "safety_society": "Harms, safety, jobs, ethics, effects on people",
+        "hardware_infra": "Chips, data centers, energy or compute", "howto_tools": "A tutorial, guide or hands-on note about a tool"}
+
+
+def _use(store, uid: str, provider: str, add: int = 0) -> int:
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if add:
+        store.x("INSERT INTO classifier_usage(day,user_id,provider,n) VALUES(?,?,?,?) ON CONFLICT(day,user_id,provider) DO UPDATE SET "
+                "n=classifier_usage.n+excluded.n", (day, uid, provider, add))
+    return sum(r["n"] for r in store.q("SELECT n FROM classifier_usage WHERE day=? AND user_id=?", (day, uid)))
+
+
+def model_judge(store, uid: str, it: dict, brand_state: dict, http=None) -> dict | None:
+    """One System One request per story (all questions at once), Jev then SubQ; None when neither answers or the
+    account's daily cap is used (the caller keeps the rules answer, marked as such)."""
+    key = hashlib.sha256(f"{SCHEMA_VERSION}|{it['url']}".encode()).hexdigest()
+    if key in _judged:
+        return _judged[key]
+    state = {"brand": brand_state, "story": {"title": it["title"], "source": it["source"], "summary": (it.get("summary") or "")[:600]}}
+    for name, url, model, env in PROVIDERS:
+        k = os.environ.get(env)
+        if not k or _use(store, uid, name) >= JUDGE_CAP:
+            continue
+        try:
+            r = _post(url, http, {"model": model, "state": state, "questions": judge_questions(CATS)}, {"Authorization": f"Bearer {k}"})
+            if r.status_code >= 400:
+                continue
+            ans = r.json().get("answers") or {}
+        except (SourceError, ValueError):
+            continue
+        _use(store, uid, name, 1)
+        nl = lambda q: float((ans.get(q) or {}).get("noul", 0.5))
+        cat = (ans.get("category") or {}).get("choice")
+        out = {"about_ai": nl("about_ai"), "category": cat if cat in CATS else "product_feature",
+               "kind": (ans.get("kind") or {}).get("choice") or "news", "relevance": float((ans.get("relevance") or {}).get("score", 1.5)),
+               "unconfirmed": nl("unconfirmed"), "sensitive": nl("sensitive"), "allegation": nl("allegation"), "provider": name}
+        out["format"] = "carousel" if out["kind"] == "evergreen" else "single_card"
+        _judged[key] = out
+        return out
+    return None
 
 
 def decide(group: list[dict], j: dict, now: float) -> dict:
@@ -478,9 +617,11 @@ class SourcesAgent:
         rows = self.store.q("SELECT data, secret FROM source_settings WHERE user_id=?", (a.uid,))
         cfg = json.loads(rows[0]["data"]) if rows else {}
         sec = self.store.unseal(rows[0]["secret"]) if rows and rows[0]["secret"] else {}
-        on = {k: cfg.get("on", {}).get(k, k != "x") for k in ADAPTERS}
+        on = {k: cfg.get("on", {}).get(k, k not in KEYED) for k in ADAPTERS}
         return {"on": on, "rss": cfg.get("rss") or DEFAULT_RSS, "x_query": cfg.get("x_query", ""), "hn_query": cfg.get("hn_query", ""),
                 "x_key": ("…" + sec["x_bearer"][-4:]) if sec.get("x_bearer") else "",
+                "ph_key": ("…" + sec["ph_token"][-4:]) if sec.get("ph_token") else "",
+                "classifier": classifier_view(),
                 "adapters": [{"key": ad.key, "label": ad.label, "about": ad.about, "needs_key": ad.needs_key} for ad in ADAPTERS.values()],
                 "sample": demo_guard.is_demo(a.uid)}
 
@@ -490,7 +631,7 @@ class SourcesAgent:
         cfg = json.loads(rows[0]["data"]) if rows else {}
         sec = (self.store.unseal(rows[0]["secret"]) if rows and rows[0]["secret"] else {}) or {}
         if isinstance(body.get("on"), dict):
-            cfg["on"] = {k: bool(body["on"].get(k, cfg.get("on", {}).get(k, k != "x"))) for k in ADAPTERS}
+            cfg["on"] = {k: bool(body["on"].get(k, cfg.get("on", {}).get(k, k not in KEYED))) for k in ADAPTERS}
         if isinstance(body.get("rss"), list):
             feeds = []
             for u in body["rss"][:MAX_RSS]:
@@ -504,22 +645,26 @@ class SourcesAgent:
         for k in ("x_query", "hn_query"):
             if k in body:
                 cfg[k] = str(body[k] or "")[:400]
-        if "x_key" in body:
+        for src, (field, pattern, what) in KEYED.items():
+            bk = f"{src}_key"
+            if bk not in body:
+                continue
             if a.kind == "agent":
-                raise SourceError("Only a person can add or remove the X API key.")
-            key = str(body.get("x_key") or "").strip()
-            if key and not re.fullmatch(r"[A-Za-z0-9%_\-.=]{20,200}", key):
-                raise SourceError("That doesn't look like an X API bearer token.")
+                raise SourceError(f"Only a person can add or remove the {what}.")
+            key = str(body.get(bk) or "").strip()
+            if key and not re.fullmatch(pattern, key):
+                raise SourceError(f"That doesn't look like a {what}.")
             if key:
-                sec["x_bearer"] = key
-                cfg.setdefault("on", {})["x"] = True
+                sec[field] = key
+                cfg.setdefault("on", {})[src] = True
             else:
-                sec.pop("x_bearer", None)
+                sec.pop(field, None)
+                cfg.setdefault("on", {})[src] = False
         self.store.x("INSERT INTO source_settings(user_id,data,secret,updated) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
                      "data=excluded.data, secret=excluded.secret, updated=excluded.updated",
                      (a.uid, json.dumps(cfg), self.store.seal(sec) if sec else "", time.time()))
-        self.store.audit(a.uid, a.label, "sources_settings", "read", {"fields": sorted(k for k in body if k != "x_key"),
-                                                                      "x_key": "set" if body.get("x_key") else ("removed" if "x_key" in body else "")})
+        self.store.audit(a.uid, a.label, "sources_settings", "read", {"fields": sorted(k for k in body if not k.endswith("_key")),
+                                                                      "keys": {k: ("set" if body.get(k) else "removed") for k in body if k.endswith("_key")}})
         return self.settings(a)
 
     # ---------------------------------------------------------------- scan
@@ -531,8 +676,8 @@ class SourcesAgent:
         rows = self.store.q("SELECT secret FROM source_settings WHERE user_id=?", (a.uid,))
         secret = (self.store.unseal(rows[0]["secret"]) if rows and rows[0]["secret"] else {}) or {}
         want = [k for k in (body.get("sources") or [k for k, v in cfg["on"].items() if v]) if k in ADAPTERS]
-        if sample and "x" not in want and not body.get("sources"):
-            want.append("x")  # the sample shows what the X adapter looks like (made-up posts, no call)
+        if sample and not body.get("sources"):
+            want += [k for k in KEYED if k not in want]  # the sample shows the keyed adapters too (made-up items, no call)
         if not sample:
             day = time.time() - 86400
             used = self.store.q("SELECT COUNT(*) AS n FROM audit WHERE user_id=? AND action='sources_scan' AND ok=1 AND ts>?", (a.uid, day))[0]["n"]
@@ -555,10 +700,21 @@ class SourcesAgent:
         kit = self.house.kit(a)
         terms = tokens(" ".join([kit.get("voice") or "", " ".join(kit.get("hashtags") or []),
                                  "ai model models tool tools agent agents open launch startup developer"]))
-        clusters = []
-        for g in cluster(unique):
+        groups = cluster(unique)
+        for g in groups:
             g.sort(key=lambda it: -it["engagement"])
-            j = judge(g[0], terms)
+        judged = {id(g): judge(g[0], terms) for g in groups}
+        if not sample and classifier_view()["configured"]:  # the model judges the most promising stories; rules answer the rest
+            top = sorted(groups, key=lambda g: -decide(g, judged[id(g)], now)["score"])[:JUDGE_PER_SCAN]
+            bstate = {"name": kit.get("name") or "", "covers": kit.get("voice") or "AI news and tools", "avoids": ""}
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(4) as ex:
+                for g, mj in zip(top, ex.map(lambda g: model_judge(self.store, a.uid, g[0], bstate, self.http), top)):
+                    if mj:
+                        judged[id(g)] = mj
+        clusters = []
+        for g in groups:
+            j = judged[id(g)]
             dec = decide(g, j, now)
             st = finish_story(story_from(g), j["category"])
             clusters.append({"id": hashlib.sha256("|".join(sorted(it["id"] for it in g)).encode()).hexdigest()[:10],
@@ -568,7 +724,7 @@ class SourcesAgent:
         clusters.sort(key=lambda c: ({"postable": 0, "idea_bank": 1, "low": 2, "hidden": 3}[c["lane"]], -c["score"]))
         result = {"sample": sample, "status": status, "counts": {"fetched": len(items), "unique": len(unique), "clusters": len(clusters)},
                   "topics": _count([c["topic"] for c in clusters if c["lane"] != "hidden"]), "clusters": clusters[:60],
-                  "classifier": "rules (Jev and SubQ answer the same questions when a key is configured)", "at": time.time()}
+                  "classifier": _cls_summary([c["judgments"].get("provider", "rules") for c in clusters]), "at": time.time()}
         rid = self.store.x("INSERT INTO source_runs(user_id,input,result,created) VALUES(?,?,?,?)",
                            (a.uid, json.dumps({"sources": want, "sample": sample}), json.dumps(result), time.time()))
         self.store.audit(a.uid, a.label, "sources_scan", "read", {"run": rid, "sources": want, "sample": sample, "items": len(items)})
@@ -601,41 +757,55 @@ class SourcesAgent:
         if not chans:
             raise SourceError("Pick at least one connected channel.")
         dry = body.get("dry_run", True) is not False
-        if not dry:
-            self.studio._guard_write(a, "sources_draft")
+        self.studio._guard_write(a, "sources_draft")
+        if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
+            raise SourceError(demo_guard.WHY["run"])
         for c in picks:
             if c["agent"] == "person_only" and a.kind == "agent":
                 raise SourceError(f"“{c['story']['headline'][:60]}” touches a sensitive subject, so only a person can draft it.")
         kit = self.house.kit(a)
+        from . import llm
         from .brand_studio import BrandStudio
         bs = BrandStudio(self.house)
         bkit = bs.kit(a)
         rules = self.house.rules(a)
-        eng = None
-        if not dry:
-            from . import llm
-            eng = llm.resolve(self.store, a.uid, self.studio.s)
+        saved = {(p["cluster_id"], p["channel_id"]): p for p in (run.get("drafts") or [])}
+        edits = body.get("texts") or {}  # {cluster_id: {channel_id: text}}: the person's edits to the previewed captions
+        eng = llm.resolve(self.store, a.uid, self.studio.s)  # the person's own AI key first, then the app's capped starter
         out = []
         for c in picks:
             st = c["story"]
-            rewritten = self._rewrite(a, eng, st, kit, [ch["service"] for ch in chans]) if eng else {}
+            need = [ch for ch in chans if (c["id"], ch["id"]) not in saved]
+            rewritten = self._rewrite(a, eng, st, kit, sorted({ch["service"] for ch in need})) if (eng and need) else {}
             covers: dict[str, str] = {}
             for ch in chans:
                 svc = ch["service"]
-                text = rewritten.get(svc) or caption(svc, st, bkit)
-                text = brand.apply_text_rules(text, rules)
-                text = drafter.fit(svc, text)
+                prev = saved.get((c["id"], ch["id"]))
+                text = (edits.get(c["id"]) or {}).get(ch["id"]) or (prev or {}).get("text")
+                if not text:
+                    text = rewritten.get(svc) or caption(svc, st, bkit)
+                    text = brand.apply_text_rules(text, rules)
+                text = drafter.fit(svc, str(text)[:5000])
                 ratio = templates.CHANNELS.get(svc, templates.CHANNELS["instagram"])["ratio"]
+                if prev and prev.get("media_url") and prev.get("ratio") == ratio:
+                    covers.setdefault(ratio, prev["media_url"])
                 if ratio not in covers:
-                    covers[ratio] = bs.render_cover(a, st, ratio, bkit) if not dry else ""
+                    covers[ratio] = bs.render_cover(a, st, ratio, bkit)
                 pkg = {"cluster_id": c["id"], "headline": st["headline"], "channel_id": ch["id"], "service": svc,
                        "channel_name": ch.get("displayName") or ch.get("name"), "format": STYLE.get(svc, STYLE["facebook"])["format"],
                        "ratio": ratio, "text": text, "length": drafter.count(svc, text), "limit": drafter.limit_for(svc),
                        "hashtags": len(brand.HASHTAG_RE.findall(text)), "media_url": covers[ratio], "agent": c["agent"],
+                       "writer": "your edit" if (edits.get(c["id"]) or {}).get(ch["id"]) else ((prev or {}).get("writer")
+                                 or ((eng or {}).get("source", "built-in writer") if rewritten.get(svc) else "built-in writer")),
                        "check": brand.brand_check(text, None, rules, kit)}
                 if not dry:
                     pkg["result"] = self._send(a, pkg)
                 out.append(pkg)
+        res = json.loads(self.store.q("SELECT result FROM source_runs WHERE id=?", (run["run_id"],))[0]["result"])
+        keep = {(p["cluster_id"], p["channel_id"]): p for p in res.get("drafts") or []}
+        keep.update({(p["cluster_id"], p["channel_id"]): {k: v for k, v in p.items() if k != "check"} for p in out})
+        res["drafts"] = list(keep.values())[-60:]
+        self.store.x("UPDATE source_runs SET result=? WHERE id=?", (json.dumps(res), run["run_id"]))
         if not dry:
             self.store.audit(a.uid, a.label, "sources_draft", "draft", {"run": run["run_id"], "clusters": [c["id"] for c in picks],
                                                                           "packages": len(out)})
@@ -671,6 +841,10 @@ class SourcesAgent:
         except Exception:
             return {}
         return {s: str(d.get(s))[:3000] for s in services if isinstance(d, dict) and d.get(s)}
+
+
+def _cls_summary(providers: list[str]) -> dict:
+    return {"order": classifier_view()["order"], "judged_by": {p: providers.count(p) for p in sorted(set(providers))}}
 
 
 def _count(xs: list[str]) -> list[dict]:

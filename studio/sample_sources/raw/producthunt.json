@@ -1,0 +1,5 @@
+{"recorded": "sample", "note": "Made-up launches in the Product Hunt API v2 GraphQL response shape (data.posts.edges[].node). The sample never calls Product Hunt; a real workspace calls https://api.producthunt.com/v2/api/graphql with the user's own free developer token.",
+ "data": {"posts": {"edges": [
+  {"node": {"id": "s1", "name": "Sample Notes AI", "tagline": "Sample: meeting notes that write your follow-up email", "url": "https://example.com/sample/ph-notes", "website": "https://example.com/sample/ph-notes", "votesCount": 412, "createdAt": "2026-10-31T07:01:00Z", "topics": {"edges": [{"node": {"name": "Artificial Intelligence"}}, {"node": {"name": "Productivity"}}]}}},
+  {"node": {"id": "s2", "name": "Sample Clip", "tagline": "Sample: turn a long video into captioned shorts", "url": "https://example.com/sample/ph-clip", "website": "https://example.com/sample/ph-clip", "votesCount": 268, "createdAt": "2026-10-31T07:01:00Z", "topics": {"edges": [{"node": {"name": "Video"}}, {"node": {"name": "Artificial Intelligence"}}]}}}
+ ]}}}
