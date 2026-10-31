@@ -253,6 +253,7 @@ def test_app_boot_migrates_and_logs_counts_only(tmp_path, capsys):
 PUBLIC = {  # path -> why it is open to anyone
     "/openapi.json": "API description (open source)", "/api/docs": "Swagger UI", "/docs/oauth2-redirect": "Swagger helper",
     "/": "landing / app shell", "/privacy": "privacy notice", "/static/{name}": "static assets", "/api/stats": "public counters",
+    "/static/examples/{brand}/{name}": "pre-rendered example brand gallery (committed files)",
     "/security.txt": "security contact", "/.well-known/security.txt": "security contact", "/healthz": "uptime check",
     "/login": "starts Buffer OAuth", "/callback": "Buffer OAuth return (state-checked)", "/demo": "rate-capped sample",
     "/device/{tok}": "single-use device link (the token is the credential)", "/api/logout": "ends the caller's own session",

@@ -22,7 +22,6 @@ import io
 import math
 import re
 import shutil
-import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -710,7 +709,8 @@ def have_ffmpeg() -> bool:
 
 
 def _ff(args: list[str], timeout: int = 240) -> None:
-    r = subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *args], capture_output=True, text=True, timeout=timeout)
+    from . import mediasafe  # protocol + demuxer whitelists before every input, and a time limit
+    r = mediasafe.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *args], timeout=timeout, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg failed (exit {r.returncode}): " + r.stderr[-800:])
 
