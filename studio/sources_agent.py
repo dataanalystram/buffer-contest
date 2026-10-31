@@ -133,7 +133,7 @@ def parse_x(data: dict) -> list[dict]:
         links = re.findall(r"https?://\S+", text)
         m = t.get("public_metrics") or {}
         out.append(_item("x", f"X @{handle}", re.sub(r"https?://\S+", "", text).strip()[:200],
-                         links[-1] if links else f"https://x.com/{handle}/status/{t.get('id')}", text, _ts(t.get("created_at")),
+                         links[-1] if links else f"https://x.com/{handle}/status/{t.get('id')}", "", _ts(t.get("created_at")),
                          engagement=(m.get("like_count") or 0) + 2 * (m.get("retweet_count") or 0), post=f"https://x.com/{handle}/status/{t.get('id')}"))
     return out
 
@@ -343,6 +343,8 @@ def decide(group: list[dict], j: dict, now: float) -> dict:
     pop = min(1.0, max(it["engagement"] for it in group) / 400)
     breadth = min(1.0, (len(group) - 1 + sum(len(it.get("also") or []) for it in group)) / 3)
     score = 0.35 * (j["relevance"] / 3) + 0.25 * fresh + 0.2 * pop + 0.2 * breadth
+    if lead["title"].lower().startswith("sample:"):
+        score -= 0.3  # made-up sample posts never outrank recorded real stories
     if j["about_ai"] < 0.3:
         lane = "hidden" if lead["adapter"] in ("hn", "x") else "low"
     elif j["kind"] == "evergreen":
@@ -368,14 +370,35 @@ STYLE = {  # what each channel wants from a news post: caption target, hashtags,
 }
 
 
+GENERIC = set("introducing introduces announcing meet open models model new our today launch launches launched ai the how why what "
+              "with free faster better first now here build building making make get using use your sample platform platforms".split())
+TOPIC_TAG = {"model_release": "#OpenModels", "product_feature": "#Startups", "research": "#AIResearch", "business_funding": "#Startups",
+             "policy_law": "#AIPolicy", "safety_society": "#AISafety", "hardware_infra": "#AIChips", "howto_tools": "#AITools"}
+WHY = {"model_release": "Another model to weigh up: check the licence, the size and the price before you switch.",
+       "product_feature": "A new tool to try if you have this exact problem.",
+       "research": "Early work, but it shows where the field is heading.",
+       "business_funding": "Follow the money: it shows what investors think comes next.",
+       "policy_law": "Rules like this change what products can ship, and where.",
+       "safety_society": "This is about how AI lands on real people, not just on benchmarks.",
+       "hardware_infra": "Cheaper, faster compute is what makes AI cheaper for everyone.",
+       "howto_tools": "Free, and you can try it today."}
+
+
 def _hashtags(story: dict, kit: dict, n: int) -> list[str]:
+    """The brand's own tags first, then the story's topic tag, then names from the headline (product and company names:
+    capitalised words that aren't the first word or a generic one)."""
     tags = [t if t.startswith("#") else "#" + t for t in (kit.get("hashtags") or [])]
-    words = re.findall(r"[A-Z][A-Za-z0-9]+", story["title"])
-    for w in words:
-        if len(tags) >= n + 2:
-            break
+    if story.get("topic_tag"):
+        tags.append(story["topic_tag"])
+    if story.get("company") and re.fullmatch(r"[A-Za-z0-9]+", story["company"].replace(" ", "")):
+        tags.append("#" + story["company"].replace(" ", ""))
+    words = re.findall(r"[A-Za-z][A-Za-z0-9]+", story.get("headline") or story.get("title") or "")
+    names = [w for i, w in enumerate(words) if w[0].isupper() and w.lower() not in GENERIC and w.lower() not in STOP and len(w) > 2
+             and (i > 0 or any(ch.isupper() for ch in w[1:]) or any(ch.isdigit() for ch in w))]
+    names.sort(key=lambda w: (not (any(ch.isupper() for ch in w[1:]) or any(ch.isdigit() for ch in w)), words.index(w)))
+    for w in names:
         t = "#" + w
-        if w.lower() not in STOP and len(w) > 2 and t.lower() not in {x.lower() for x in tags}:
+        if t.lower() not in {x.lower() for x in tags}:
             tags.append(t)
     return tags[:n]
 
@@ -397,7 +420,7 @@ def caption(service: str, story: dict, kit: dict) -> str:
     tags = " ".join(_hashtags(story, kit, st["hashtags"]))
     via = story.get("source") or ""
     if service == "twitter":
-        body = f"{head}{'.' if not head.endswith(('.', '!', '?')) else ''} {line}".strip()
+        body = f"{head.rstrip('.!?')}. {line or why}".strip()
         text = f"{body}\n\n{url}" + (f" {tags}" if tags else "")
     elif service == "linkedin":
         bullets = "\n".join(f"→ {b}" for b in story.get("facts") or [] if b)
@@ -406,11 +429,11 @@ def caption(service: str, story: dict, kit: dict) -> str:
         bullets = "\n".join(f"• {b}" for b in story.get("facts") or [] if b)
         text = f"{head.upper() if kit.get('font') == 'anton' else head}\n\n{line}\n\n{bullets}\n\nWhy it matters: {why}\n\nSource: {via} (link in bio)\n\n{tags}"
     elif service in ("youtube", "tiktok"):
-        text = f"{head}\n\n{line} {why}\n\n{('Source: ' + url) if service == 'youtube' else 'Source: ' + via}\n\n{tags}"
+        text = f"{head}\n\n{(line + ' ' + why).strip()}\n\n{('Source: ' + url) if service == 'youtube' else 'Source: ' + via}\n\n{tags}"
     elif service == "bluesky":
-        text = f"{head}. {line}\n\n{url}"
+        text = f"{head.rstrip('.!?')}. {line}\n\n{url}"
     else:
-        text = f"{head}\n\n{line} {why}\n\n{url}" + (f"\n\n{tags}" if tags else "")
+        text = f"{head}\n\n{(line + ' ' + why).strip()}\n\n{url}" + (f"\n\n{tags}" if tags else "")
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text
 
@@ -422,13 +445,26 @@ def story_from(group: list[dict]) -> dict:
     line = _sentence(lead.get("summary") or "", 200)
     if line.lower().startswith(title.lower()[:40]):
         line = ""
-    facts = [s for s in re.split(r"(?<=[.!?])\s+", lead.get("summary") or "") if 25 < len(s) < 180][:3]
+    if line and not line.endswith((".", "!", "?")):
+        line += "."
+    tk = tokens(title)
+    facts = [s for s in re.split(r"(?<=[.!?])\s+", lead.get("summary") or "") if 25 < len(s) < 180
+             and len(tokens(s) & tk) < max(2, len(tokens(s)) // 2) and s.rstrip(".!? ") != line.rstrip(".!? ")][:3]
     if lead["adapter"] == "yc":
         facts = [f"{lead.get('company') or 'The company'} is in YC {lead.get('batch') or ''}".strip(), *facts][:3]
         line = line or lead.get("summary", "")
-    why = ("Several sources are covering it." if others else "") or "Worth knowing if you build or use AI tools."
-    return {"headline": title[:110], "line": line, "facts": facts, "why": why, "url": lead.get("company_url") if lead["adapter"] == "yc" and not lead.get("url") else lead["url"],
-            "source": lead["source"], "also": sorted({o["source"] for o in others if o.get("source")})[:4], "image": lead.get("image", "")}
+    return {"headline": title[:110], "line": line, "facts": facts, "why": "", "url": lead.get("company_url") if lead["adapter"] == "yc" and not lead.get("url") else lead["url"],
+            "source": lead["source"], "also": sorted({o["source"] for o in others if o.get("source")})[:4], "image": lead.get("image", ""),
+            "company": lead.get("company", "")}
+
+
+def finish_story(st: dict, category: str) -> dict:
+    """Topic-aware 'why it matters' and topic hashtag (the built-in writer; the brand's AI engine writes its own)."""
+    st["why"] = WHY.get(category, WHY["product_feature"])
+    if st.get("also"):
+        st["why"] += f" Also covered by {', '.join(st['also'][:2])}."
+    st["topic_tag"] = TOPIC_TAG.get(category, "#AI")
+    return st
 
 
 # ================================================================================================ the service
@@ -524,7 +560,7 @@ class SourcesAgent:
             g.sort(key=lambda it: -it["engagement"])
             j = judge(g[0], terms)
             dec = decide(g, j, now)
-            st = story_from(g)
+            st = finish_story(story_from(g), j["category"])
             clusters.append({"id": hashlib.sha256("|".join(sorted(it["id"] for it in g)).encode()).hexdigest()[:10],
                              "topic": TOPIC[j["category"]], "category": j["category"], "judgments": j, **dec, "story": st,
                              "items": [{k: it[k] for k in ("id", "adapter", "source", "title", "url", "published", "engagement")} for it in g],
