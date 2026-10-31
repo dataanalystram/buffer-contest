@@ -380,7 +380,7 @@ def front_card(b: Brand, ratio: str, kicker: str, title: str, sub: str = "", n=N
     lh = int(hf.size * (1.0 if b.upper else 1.1))
     sf = b.body(int(min(W, H) * 0.036))
     sub_lines = wrap(d, sub, sf, maxw)[:3] if sub else []
-    block = lh * len(lines) + (int(sf.size * 1.45) * len(sub_lines) + int(min(W, H) * 0.03) if sub_lines else 0)
+    block = lh * len(lines) + (int(sf.size * 1.45) * len(sub_lines) + int(min(W, H) * 0.03) + int(hf.size * 0.18) if sub_lines else 0)
     y = H - m - int(min(W, H) * 0.09) - block
     if kicker:
         kf = b.body(int(min(W, H) * 0.03), strong=True)
@@ -391,7 +391,7 @@ def front_card(b: Brand, ratio: str, kicker: str, title: str, sub: str = "", n=N
             bb = d.textbbox((m, y + i * lh), line, font=hf)
             d.rectangle((bb[0] - 10, bb[1] + (bb[3] - bb[1]) * 0.45, bb[2] + 10, bb[3] + 8), fill=b.accent)
         d.text((m, y + i * lh), line, font=hf, fill=_emph(b, style) if (emph and style != "minimal") else ink)
-    y += lh * len(lines) + int(min(W, H) * 0.03)
+    y += lh * len(lines) + int(min(W, H) * 0.03) + (int(hf.size * 0.18) if b.upper else 0)
     for s in sub_lines:
         d.text((m, y), s, font=sf, fill=muted)
         y += int(sf.size * 1.45)
@@ -416,13 +416,17 @@ def end_card(b: Brand, ratio: str, n=None) -> Image.Image:
         lh = lg.height
     y = int(H * (0.26 if not wide else 0.16)) + lh + int(min(W, H) * 0.08)
     cf, lines = fit_text(d, b.headline(b.cta), b.head, int(min(W, H) * 0.12), W - 2 * m, 2)
+    if len(lines) == 2 and len(lines[1].split()) == 1 and len(lines[0].split()) > 2:  # no one-word orphan on the CTA
+        ws = lines[0].split()
+        lines = [" ".join(ws[:-1]), ws[-1] + " " + lines[1]]
     for line in lines:
         d.text(((W - d.textlength(line, font=cf)) / 2, y), line, font=cf, fill=ink)
-        y += int(cf.size * 1.05)
+        y += int(cf.size * (1.02 if b.upper else 1.12))
+    y += int(cf.size * 0.25)
     if b.handle:
         hf = b.body(int(min(W, H) * 0.05), strong=True)
         t = "@" + b.handle
-        y += int(min(W, H) * 0.02)
+        y += int(min(W, H) * 0.03)
         pw = d.textlength(t, font=hf) + 56
         _pill(d, (int((W - pw) / 2), y), t, hf, b.accent, b.on_accent, pad=(28, 16))
         y += int(hf.size * 2.3)
@@ -447,25 +451,37 @@ def story_slide(b: Brand, ratio: str, num: int, title: str, body: str, tag: str 
     _logo(im, b, int(W * (0.16 if not wide else 0.11)), (m, m), style)
     nf = b.head(int(min(W, H) * (0.3 if not wide else 0.36)))
     num_t = f"{num:02d}"
+    nb = d.textbbox((0, 0), num_t, font=nf)
+    nw, nh = nb[2] - nb[0], nb[3] - nb[1]
+    gap = int(min(W, H) * 0.035)
+    x0, maxw = (m + nw + int(W * 0.05), W - 2 * m - nw - int(W * 0.05)) if wide else (m, W - 2 * m)
+    hf, lines = fit_text(d, b.headline(title), b.head, int(min(W, H) * (0.095 if b.upper else 0.075)), maxw, 4)
+    hlh = int(hf.size * (1.02 if b.upper else 1.12))
+    bf = b.body(int(min(W, H) * 0.04))
+    blines = wrap(d, body, bf, maxw)[:4] if body else []
+    tf = b.body(int(min(W, H) * 0.028), strong=True)
+    tag_h = int(tf.size * 1.25) + 24 + gap if tag else 0
+    text_h = tag_h + hlh * len(lines) + int(hf.size * 0.2) + (gap + int(bf.size * 1.42) * len(blines) if blines else 0)
+    top_min = m + int(min(W, H) * 0.14)
     if wide:
-        d.text((m, int(H * 0.22)), num_t, font=nf, fill=_emph(b, style))
-        x0, maxw, y = m + int(d.textlength(num_t, font=nf)) + int(W * 0.05), W - 2 * m - int(d.textlength(num_t, font=nf)) - int(W * 0.05), int(H * 0.24)
+        y = max(top_min, (H - text_h) // 2)
+        d.text((m - nb[0], (H - nh) // 2 - nb[1]), num_t, font=nf, fill=_emph(b, style))
     else:
-        d.text((m, int(H * 0.17)), num_t, font=nf, fill=_emph(b, style))
-        x0, maxw, y = m, W - 2 * m, int(H * 0.17) + int(nf.size * 1.12)
+        total = nh + gap + text_h
+        y0 = max(top_min, (H - total) // 2 - int(H * 0.04)) if H / W > 1.5 else int(H * 0.17)
+        d.text((m - nb[0], y0 - nb[1]), num_t, font=nf, fill=_emph(b, style))
+        y = y0 + nh + gap
     if tag:
-        tf = b.body(int(min(W, H) * 0.028), strong=True)
         _, th = _pill(d, (x0, y), tag.upper(), tf, mix(b.bg, b.accent, 0.22) if style != "minimal" else b.accent,
                       b.accent if style != "minimal" else b.on_accent)
-        y += th + int(min(W, H) * 0.035)
-    hf, lines = fit_text(d, b.headline(title), b.head, int(min(W, H) * (0.095 if b.upper else 0.075)), maxw, 4)
+        y += th + gap
     for line in lines:
         d.text((x0, y), line, font=hf, fill=ink)
-        y += int(hf.size * (1.02 if b.upper else 1.12))
-    if body:
-        bf = b.body(int(min(W, H) * 0.04))
-        y += int(min(W, H) * 0.025)
-        for line in wrap(d, body, bf, maxw)[:4]:
+        y += hlh
+    y += int(hf.size * 0.2)
+    if blines:
+        y += gap
+        for line in blines:
             d.text((x0, y), line, font=bf, fill=muted)
             y += int(bf.size * 1.42)
     if source:
@@ -507,7 +523,7 @@ def quote_card(b: Brand, ratio: str, quote: str, speaker: str, role: str = "", n
     d = ImageDraw.Draw(im)
     ink, muted = _ink(b, style)
     _logo(im, b, int(W * (0.18 if not wide else 0.12)), (m, m), style)
-    qf = b.head(int(min(W, H) * 0.42))
+    qf = b.body(int(min(W, H) * 0.4), strong=True)
     d.text((m - int(min(W, H) * 0.01), int(H * (0.12 if not wide else 0.08))), "\u201c" if _has(qf, "\u201c") else '"', font=qf, fill=_emph(b, style))
     y = int(H * (0.36 if not wide else 0.32))
     tf, lines = fit_text(d, quote, lambda s: b.head(s) if not b.upper else b.body(s, strong=True),
