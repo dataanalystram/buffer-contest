@@ -100,7 +100,8 @@ function tourEnd() {
   removeEventListener("resize", tourPlace); removeEventListener("scroll", tourPlace);
   if (TR.el) TR.el.remove(); if (TR.ring) TR.ring.remove();
   TR.el = TR.ring = null;
-  const back = TR.back && document.contains(TR.back) ? TR.back : $("#tourOpen");
+  // back to where focus was, or to "Take the tour" when the tour opened by itself (focus was on the page, not a control)
+  const was = TR.back, back = was && was !== document.body && was !== document.documentElement && document.contains(was) ? was : $("#tourOpen");
   if (back && back.focus) back.focus();
 }
 window.tourStart = tourStart; window.tourEnd = tourEnd;
