@@ -146,7 +146,7 @@ async function boot() {
     return;
   }
   sessionStorage.removeItem("hq_bounced");
-  $("#app").hidden = false; $("#topRight").hidden = false; $("#landNav").hidden = true; $("#demoBar").hidden = !s.demo;
+  $("#app").hidden = false; $("#topRight").hidden = false; $("#demoBar").hidden = !s.demo;
   document.body.classList.add("in-app"); document.body.classList.toggle("is-demo", !!s.demo);
   $("#acctBtn").textContent = (s.user.name || s.user.email || "Account") + (s.user.organization ? " · " + s.user.organization : "");
   setKill(s.user.kill_switch);

@@ -3,24 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HuhQueue — your brand's editor, built on the Buffer API</title>
+<title>HuhQueue by HuhByte AI</title>
 <meta name="description" content="An AI editor that learns your brand. It researches the story, renders on-brand carousels and Reels, remembers every correction as a rule, checks each post against your rules, and schedules through Buffer.">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400&family=Atkinson+Hyperlegible+Next:wght@300;400;600&display=swap">
+<meta name="robots" content="noindex">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/static/brand/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/fonts.css">
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/responsive.css">
+<link rel="stylesheet" href="/static/premium.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
-  <a class="brand" href="/" data-testid="brand"><span class="mark" aria-hidden="true">hq</span><span class="brand-text"><span class="name">HuhQueue</span><span class="built">Built on the Buffer API · not affiliated</span></span></a>
-  <nav class="land-nav" id="landNav" aria-label="Main">
-    <a href="#how">How it works</a><a href="#agents">For agents</a>
-    <a class="btn" href="/login" data-testid="nav-connect">Connect Buffer</a>
-  </nav>
+  <a class="brand" href="/" data-testid="brand"><img class="hb" src="/static/brand/hb-mark-96.png" width="32" height="32" alt=""><span class="brand-text"><span class="name">HuhQueue <span class="by">by HuhByte AI</span></span><span class="built">Built on the Buffer API · not affiliated</span></span></a>
   <div class="top-right" id="topRight" hidden>
+    <button class="hq-cmdk" type="button" id="cmdkBtn" data-testid="cmdk-open" aria-label="Search and commands (Control K)" aria-keyshortcuts="Control+K Meta+K"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><span class="lbl">Search or jump to</span><kbd class="kb">Ctrl K</kbd></button>
+    <div class="acct help"><button class="btn2 sm" type="button" id="helpBtn" data-testid="help-menu" aria-haspopup="true" aria-expanded="false" aria-controls="helpMenu"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7M12 17h.01"/></svg><span class="lbl">Help</span></button>
+      <div class="menu" id="helpMenu" role="menu" hidden>
+        <button type="button" role="menuitem" id="helpTour" data-testid="help-tour">Take the tour</button>
+        <a role="menuitem" href="/docs" data-testid="help-docs">Documentation</a>
+        <a role="menuitem" href="/docs/getting-started" data-testid="help-start">Getting started</a>
+        <button type="button" role="menuitem" id="helpKeys" data-testid="help-keys">Keyboard shortcuts</button>
+        <a role="menuitem" href="/privacy">Privacy</a>
+      </div></div>
     <span class="status" id="budgetPill" data-testid="api-budget" title="Buffer API requests left for this app">API budget</span>
     <button class="status" id="killPill" data-testid="kill-pill" title="Agent kill switch">Agents on</button>
     <div class="acct"><button class="btn2" id="acctBtn" data-testid="account-menu" aria-haspopup="true" aria-expanded="false"></button>
@@ -45,99 +53,6 @@
 </div>
 
 <main id="main">
-  <div id="landing" class="landing" data-testid="landing" hidden>
-    <section class="wrap hero">
-      <div class="hero-copy">
-        <h1>Your brand's editor. It learns from every correction.</h1>
-        <p class="lede">Give it a topic, a link or your own photo or video. It finds and verifies the story, renders a carousel or Reel in your colors, logo and fonts, writes a caption per channel and checks all of it against your Style Ledger. Say “logo smaller” once and it never forgets. Then it lands in Buffer, on your calendar, after you approve.</p>
-        <div class="cta">
-          <a class="btn big" href="/demo" id="demoBtn" data-testid="try-demo">Try it without signing in</a>
-          <a class="btn2 big" href="/login" id="connectBtn" data-testid="connect-buffer">Connect Buffer</a>
-        </div>
-        <p class="fine stats" id="landStats" data-testid="land-stats" hidden></p>
-        <p class="fine" id="configNote" data-testid="config-note" hidden>This server has no Buffer app client configured yet.</p>
-        <p class="fine">Sign-in uses Buffer's own OAuth. Your Buffer tokens stay encrypted on the server and never reach the browser. <a href="/privacy">Privacy</a></p>
-      </div>
-      <figure class="proof" aria-label="Example: one link becomes a post for each channel">
-        <div class="proof-src"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg><span>example.com/2026/10/28/open-models-get-faster</span></div>
-        <article class="proof-post">
-          <header><span class="av" aria-hidden="true">BD</span><b>Bright Desk <span>@brightdesk</span></b><small>X</small></header>
-          <p>Open models just got twice as fast on a laptop. What changed, and why it matters for small teams.</p>
-          <footer><span>Thread, part 1 of 4</span><span>96 / 280</span></footer>
-        </article>
-        <article class="proof-post">
-          <header><span class="av" aria-hidden="true">BD</span><b>Bright Desk</b><small>LinkedIn</small></header>
-          <p>Running a capable model locally used to mean a server bill. This week that changed. Three takeaways for teams that ship every week.</p>
-          <footer><span></span><span>134 / 3,000</span></footer>
-        </article>
-        <article class="proof-post waiting">
-          <header><span class="av" aria-hidden="true">BD</span><b>brightdesk.news</b><small>Instagram</small></header>
-          <p>Faster open models, explained in one slide. Link in bio.</p>
-          <footer><span class="wait">Claude wrote this. Waiting for you.</span><span class="fake-btn" aria-hidden="true">Approve</span></footer>
-        </article>
-      </figure>
-    </section>
-
-    <section class="band" id="how">
-      <div class="wrap">
-        <h2 class="h-display">From a topic to your Buffer calendar</h2>
-        <div class="points">
-          <div><h3>Research with receipts</h3><p>The agent searches the news, opens the source page, checks other outlets carry it, and pulls out the facts. Every step is on a timeline you can read.</p></div>
-          <div><h3>Rendered in your brand style</h3><p>Carousels, single cards and 9:16 Reels in your brand kit: colors, logo, font, handle and end card. Your own photos and clips get the same treatment.</p></div>
-          <div><h3>A ledger that remembers</h3><p>Every correction becomes a written rule. Each render and caption is checked against all of them, and a failed check names the exact rule. Then it goes to Buffer.</p></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="band sunken" aria-labelledby="countH">
-      <div class="wrap split">
-        <div>
-          <h2 class="h-display" id="countH">Counted the way Buffer counts</h2>
-          <p class="muted">A caption that fits in a text box can still be rejected by the network. HuhQueue measures every draft with the same rules Buffer applies, so a post that leaves here is a post that sends.</p>
-        </div>
-        <div class="table-box">
-          <table class="data">
-            <thead><tr><th scope="col">Network</th><th scope="col" class="num">Limit</th><th scope="col">Counted as</th></tr></thead>
-            <tbody>
-              <tr><td>X</td><td class="num">280</td><td class="muted">Any link is 23 characters</td></tr>
-              <tr><td>LinkedIn</td><td class="num">3,000</td><td class="muted">Any link is 24 characters</td></tr>
-              <tr><td>Instagram</td><td class="num">2,196</td><td class="muted">A line break counts twice</td></tr>
-              <tr><td>Bluesky</td><td class="num">300</td><td class="muted">Graphemes, so an emoji is one</td></tr>
-              <tr><td>Threads, Mastodon</td><td class="num">500</td><td class="muted">As Buffer measures it</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <section class="band inverse" id="agents">
-      <div class="wrap split">
-        <div class="stack">
-          <h2 class="h-display lg">Use it here, or from your own Claude or ChatGPT.</h2>
-          <p class="lede">The web app runs the whole loop on its own. Prefer your assistant? Add HuhQueue as a connector and your own subscription does the thinking: research, render, revise, brand check and schedule are all tools.</p>
-          <ul class="checks">
-            <li>Approval by default, Buffer drafts only, or trusted to schedule. You pick per agent.</li>
-            <li>A daily cap on every agent token.</li>
-            <li>One switch that stops every agent at once, and a log of everything they did.</li>
-          </ul>
-        </div>
-        <div class="stack sm">
-          <span class="label">Add it to Claude Code</span>
-          <pre class="code dark">claude mcp add --transport http huhqueue \
-  https://huhqueue-studio.onrender.com/mcp \
-  --header "Authorization: Bearer hq_YOUR_TOKEN"</pre>
-          <span class="soft">Plain REST works too. The endpoints the interface uses accept the same token.</span>
-        </div>
-      </div>
-    </section>
-
-    <section class="wrap closing">
-      <h2 class="h-display lg">See it with sample channels first</h2>
-      <p class="lede">The sample workspace runs the real drafting, counting and approval code. Nothing in it reaches Buffer, and it is deleted after a day.</p>
-      <a class="btn big" href="/demo" data-testid="try-demo-bottom">Open the sample workspace</a>
-    </section>
-  </div>
-
   <div id="app" class="shell" hidden>
     <nav class="rail" id="rail" aria-label="Sections">
       <button data-tab="inbox" data-testid="tab-inbox" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Inbox</span><span class="badge hot" id="inboxBadge" data-testid="inbox-badge" hidden>0</span></button>
@@ -268,9 +183,12 @@
             <button class="btn2 sm icon" id="plNext" data-testid="planner-next" type="button" aria-label="Next"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
           </div>
           <div class="seg pl-views" role="tablist" aria-label="Planner view">
-            <button type="button" role="tab" data-view="list" data-testid="planner-view-list">List</button>
-            <button type="button" role="tab" data-view="week" data-testid="planner-view-week">Week</button>
-            <button type="button" role="tab" data-view="month" data-testid="planner-view-month">Month</button>
+            <button type="button" role="tab" data-view="week" data-testid="planner-view-week" aria-keyshortcuts="1">Week</button>
+            <button type="button" role="tab" data-view="month" data-testid="planner-view-month" aria-keyshortcuts="2">Month</button>
+            <button type="button" role="tab" data-view="day" data-testid="planner-view-day" aria-keyshortcuts="3">Day</button>
+            <button type="button" role="tab" data-view="list" data-testid="planner-view-list" aria-keyshortcuts="4">List</button>
+            <button type="button" role="tab" data-view="board" data-testid="planner-view-board" aria-keyshortcuts="5">Board</button>
+            <button type="button" role="tab" data-view="grid" data-testid="planner-view-grid" aria-keyshortcuts="6">Grid</button>
           </div>
           <button class="btn sm pl-new" id="plNew" data-testid="planner-new" type="button"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New post</button>
         </div>
@@ -480,13 +398,16 @@
   </div>
 </main>
 
-<footer class="foot"><div class="wrap foot-in"><span>HuhQueue is an independent open-source project built on the Buffer API. Not affiliated with or endorsed by Buffer.</span>
-  <span class="foot-links"><a href="/privacy">Privacy</a><a id="repoLink" href="https://github.com/dataanalystram/buffer-contest" target="_blank" rel="noopener">Source code</a></span></div></footer>
+<footer class="foot"><div class="wrap foot-in">
+  <span class="foot-brand"><span>HuhQueue by</span><img class="wm lt" src="/static/brand/hb-wordmark-light.png" width="333" height="64" alt="HuhByte AI"><img class="wm dk" src="/static/brand/hb-wordmark-dark.png" width="333" height="64" alt="HuhByte AI"></span>
+  <span>An independent open-source project built on the Buffer API. Not affiliated with or endorsed by Buffer.</span>
+  <span class="foot-links"><a href="/docs">Docs</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a><a id="repoLink" href="https://github.com/dataanalystram/buffer-contest" target="_blank" rel="noopener">Source code</a></span></div></footer>
 <div id="toast" data-testid="toast" role="status" aria-live="polite" hidden></div>
 <script src="/static/app.js"></script>
 <script src="/static/house.js"></script>
 <script src="/static/planner.js"></script>
 <script src="/static/take.js"></script>
 <script src="/static/tour.js"></script>
+<script src="/static/shell.js"></script>
 </body>
 </html>
