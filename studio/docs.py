@@ -85,13 +85,17 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>Try <b>Try the sample take</b> to see it on a public-domain talk. Upload up to 40 MB, or link to a file you host for longer talks. You confirm you own the video or have the rights to it.</p>"""),
     ("agents", "Agents, MCP and API", "Use HuhQueue from Claude, ChatGPT, Grok, Claude Code, Codex, Cursor or your own code, on a leash.", "connect", """
 <p>Everything the app can do is also a tool for your AI apps over MCP and an endpoint over REST. Open <b>Connect AI apps</b> in the app for per-app steps, your MCP address and when each app last used it.</p>
-<h2 id="oauth">Apps that sign in (Claude, ChatGPT)</h2>
-<p>Add a custom connector and paste your MCP address. The app sends you to HuhQueue to sign in with Buffer and choose what it may do. The sign-in screen shows where it will send you back and flags apps it can't verify.</p>
-<h2 id="token">Apps that use a token (Claude Code, Codex, Cursor, Grok, scripts)</h2>
+<h2 id="oauth">Apps that sign in (Claude, ChatGPT, Grok on grok.com)</h2>
+<p>Add a custom connector and paste your MCP address (on grok.com: Connectors, New Connector, Custom). The app sends you to HuhQueue to sign in with Buffer and choose what it may do. The sign-in screen shows where it will send you back and flags apps it can't verify.</p>
+<h2 id="token">Apps that use a token (Claude Code, Codex, Cursor, the xAI API, scripts)</h2>
 <p>Create a token on <b>Connect AI apps</b> or <b>Agents</b>. It is shown once and stored only as a hash. Claude Code:</p>
 <pre class="code">claude mcp add --transport http huhqueue \\
   https://huhqueue-studio.onrender.com/mcp \\
   --header "Authorization: Bearer hq_YOUR_TOKEN"</pre>
+<p>Codex (the CLI, IDE extension and ChatGPT desktop app share <code>~/.codex/config.toml</code>): export the token as <code>HUHQUEUE_TOKEN</code>, then</p>
+<pre class="code">codex mcp add huhqueue --url https://huhqueue-studio.onrender.com/mcp \
+  --bearer-token-env-var HUHQUEUE_TOKEN</pre>
+<p>The xAI API: add <code>{"type": "mcp", "server_url": "https://huhqueue-studio.onrender.com/mcp", "server_label": "huhqueue", "headers": {"Authorization": "Bearer hq_YOUR_TOKEN"}}</code> to the request's <code>tools</code>.</p>
 <h2 id="leash">The leash</h2>
 <ul><li><b>Policy:</b> needs my approval (default), Buffer drafts only, or schedule without asking.</li><li><b>Daily cap</b> per token.</li><li><b>Kill switch:</b> one switch stops every agent at once. You can still post yourself.</li><li><b>Activity:</b> every action by you or an agent is logged.</li></ul>
 <h2 id="rest">REST</h2>
