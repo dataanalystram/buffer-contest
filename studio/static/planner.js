@@ -345,7 +345,7 @@ function plSetView(v) {
   PL.view = v;
   if ($("#tab-planner").hidden) { plSaveState(); showTab("planner"); } else plChanged();
 }
-window.plSetView = plSetView; window.plAct = (...a) => plAct(...a);
+// plSetView and plAct are top-level functions, so the palette and keys already reach them as window globals
 
 // ---------------------------------------------------------------- interactions
 function plFind(ref) { return [...(PL.data?.items || []), ...PL.extra].find((i) => i.ref === ref); }
