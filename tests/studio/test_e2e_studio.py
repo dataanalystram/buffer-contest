@@ -240,3 +240,35 @@ def test_planner_dialog_preflight(live, chromium):
     finally:
         for c in list(browser.contexts):
             c.close()
+
+
+def test_planner_week_opens_at_its_first_post_after_leaving_and_coming_back(live, chromium):
+    """Week opens scrolled to the week's first post, also when the Planner is opened a second time (a hidden scroller
+    reads scrollTop 0, which used to be kept, so the week opened at 00:00 with every post below the fold)."""
+    base, fake, app = live
+    ctx = chromium.new_context(viewport={"width": 1440, "height": 900}, timezone_id="Europe/Dublin")
+    try:
+        ctx.add_init_script(NO_TOUR)
+        ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+        page = ctx.new_page()
+        page.goto(base + "/demo")
+        page.get_by_test_id("tab-inbox").wait_for()
+        page.goto(base + "/?tab=planner&view=week")  # a deep link draws the week while the app is still hidden
+        for i in range(3):
+            if i:
+                page.get_by_test_id("tab-planner").click()
+                page.get_by_test_id("planner-view-week").click()
+            page.get_by_test_id("planner-week").wait_for()
+            page.wait_for_timeout(300)
+            seen = page.evaluate("""() => {
+              const sc = document.querySelector('.pl-week-scroll');
+              const items = [...sc.querySelectorAll('[data-testid=planner-item]:not([data-kind=ghost])')];
+              if (!items.length) return null;
+              const box = sc.getBoundingClientRect();
+              const top = Math.min(...items.map((i) => i.getBoundingClientRect().top));
+              return top >= box.top && top <= box.bottom;
+            }""")
+            assert seen in (True, None), "the week's first post is outside the visible grid"
+            page.get_by_test_id("tab-inbox").click()
+    finally:
+        ctx.close()
