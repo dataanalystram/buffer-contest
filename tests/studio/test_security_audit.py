@@ -157,9 +157,18 @@ def test_3_worker_workflows_carry_no_token_and_expand_no_input_in_a_command(wf):
     text = (ROOT / ".github" / "workflows" / wf).read_text()
     assert "job_token" not in text and "JOB_TOKEN" not in text and "add-mask" not in text
     assert "id-token: write" in text and "persist-credentials: false" in text
+    block = None  # indentation of the "run:" key while inside a multi-line "run: |" script
     for line in text.splitlines():
-        if line.strip().startswith(("run:", "- run:")):
-            assert "${{" not in line.split("run:", 1)[1], line  # inputs reach commands only through env
+        ind = len(line) - len(line.lstrip())
+        if block is not None and line.strip() and ind <= block:
+            block = None
+        if block is not None:
+            assert "${{" not in line, line  # inside a multi-line script
+        elif line.strip().startswith(("run:", "- run:")):
+            cmd = line.split("run:", 1)[1]
+            assert "${{" not in cmd, line  # inputs reach commands only through env
+            if cmd.strip() in ("|", ">", "|-", ">-"):
+                block = ind + (2 if line.strip().startswith("-") else 0)
 
 
 # ------------------------------------------------------------------ 4. OAuth name spoofing (HQ-OAUTH-CLIENT-NAME-SPOOF)
