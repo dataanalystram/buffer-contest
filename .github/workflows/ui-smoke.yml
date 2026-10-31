@@ -20,9 +20,9 @@ jobs:
         run: nohup python -m uvicorn studio.app:create_app --factory --port 8899 > /tmp/uv.log 2>&1 & sleep 5 && curl -sf http://127.0.0.1:8899/healthz
       - name: Drive the UI
         run: python scripts/ui_smoke.py http://127.0.0.1:8899 shots "${{ github.event.inputs.query || 'OpenAI' }}"
-      - name: Browser tests (existing e2e)
+      - name: Browser tests (e2e, guided tour, responsive)
         if: always()
-        run: python -m pytest tests/studio/test_e2e_studio.py tests/studio/test_take_e2e.py tests/studio/test_browsers.py -q
+        run: python -m pytest tests/studio/test_e2e_studio.py tests/studio/test_take_e2e.py tests/studio/test_browsers.py tests/studio/test_tour_e2e.py tests/studio/test_responsive.py -q
       - if: always()
         run: cp /tmp/uv.log shots/server.log || true
       - uses: actions/upload-artifact@v4
