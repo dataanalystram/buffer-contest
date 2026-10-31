@@ -33,7 +33,7 @@ SIGNIN_IP_DAYS = int(os.environ.get("SIGNIN_IP_DAYS", "30"))
 EXPORT_MAX = 10000
 
 SIGNIN_ACTIONS = {"connect_buffer", "device_signed_in", "device_link", "logout", "disconnect", "signin_failed",
-                  "oauth_consent", "oauth_token_issued", "oauth_token_refreshed"}
+                  "oauth_consent", "oauth_token_issued", "oauth_token_refreshed", "connect_assistant"}
 SYSTEM_ACTIONS = {"buffer_api", "buffer_token_refreshed", "worker_claim", "worker_done", "retention_purge", "demo_cap"}
 
 APPS = {  # id -> label

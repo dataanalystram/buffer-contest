@@ -82,8 +82,14 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         host = redirect_host(redirect_uri or (c["redirect_uris"] or [""])[0])
         return f"{c['client_name']} via {host}" + ("" if verified_host(host) else " (unverified)")
 
-    def mint(uid: str, c: dict, policy: str, cap: int, redirect_uri: str = "") -> dict:
+    def mint(uid: str, c: dict, policy: str, cap: int, redirect_uri: str = "", refreshed: bool = False) -> dict:
+        from . import activity
         tok = studio.create_agent_token(Actor(uid), f"{label(c, redirect_uri)} (connected)", policy, cap, days=ACCESS_DAYS)
+        app = activity.classify_app(c.get("client_name", ""), redirect_host(redirect_uri or (c["redirect_uris"] or [""])[0]))
+        store.x("UPDATE agent_tokens SET client_id=?, app=? WHERE id=?", (c["client_id"], app, tok["id"]))  # attributable writes
+        activity.note(client_id=c["client_id"])
+        store.audit(uid, "you", "oauth_token_refreshed" if refreshed else "oauth_token_issued", "auth",
+                    {"client": activity.clean_text(c.get("client_name"), 80), "app": activity.APPS.get(app, app), "token_id": tok["id"]})
         refresh = "hqr_" + secrets.token_urlsafe(32)
         store.x("INSERT INTO oauth_refresh(token_hash,client_id,user_id,agent_id,policy,daily_cap,expires,used) "
                 "VALUES(?,?,?,?,?,?,?,0)", (sha(refresh), c["client_id"], uid, tok["id"], policy, cap,
@@ -239,6 +245,8 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
             rows = store.q("SELECT * FROM oauth_codes WHERE code_hash=?", (sha(f.get("code", "")),))
             row = dict(rows[0]) if rows else None
             if not row or row["used"] or row["expires"] < time.time() or row["client_id"] != c["client_id"]:
+                if row:
+                    store.audit(row["user_id"], "system", "signin_failed", "auth", {"via": "mcp oauth code", "client": c["client_id"]}, ok=False)
                 return _err("invalid_grant", "Code is unknown, used or expired.")
             store.x("UPDATE oauth_codes SET used=1 WHERE code_hash=?", (row["code_hash"],))
             if f.get("redirect_uri") and f["redirect_uri"] != row["redirect_uri"]:
@@ -252,13 +260,15 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
             rows = store.q("SELECT * FROM oauth_refresh WHERE token_hash=?", (sha(f.get("refresh_token", "")),))
             row = dict(rows[0]) if rows else None
             if not row or row["used"] or row["expires"] < time.time() or row["client_id"] != c["client_id"]:
+                if row:
+                    store.audit(row["user_id"], "system", "signin_failed", "auth", {"via": "mcp oauth refresh", "client": c["client_id"]}, ok=False)
                 return _err("invalid_grant", "Refresh token is unknown, used or expired.")
             old = store.q("SELECT revoked FROM agent_tokens WHERE id=?", (row["agent_id"],))
             if not old or old[0]["revoked"]:
                 return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
             store.x("UPDATE oauth_refresh SET used=1 WHERE token_hash=?", (row["token_hash"],))
             store.x("UPDATE agent_tokens SET revoked=1 WHERE id=?", (row["agent_id"],))
-            return JSONResponse(mint(row["user_id"], c, row["policy"], row["daily_cap"]), headers={"Cache-Control": "no-store"})
+            return JSONResponse(mint(row["user_id"], c, row["policy"], row["daily_cap"], refreshed=True), headers={"Cache-Control": "no-store"})
         return _err("unsupported_grant_type", "Use authorization_code or refresh_token.")
 
 

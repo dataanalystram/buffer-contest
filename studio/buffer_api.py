@@ -162,6 +162,10 @@ class BufferClient:
         r = self.http.post(API_URL, json={"query": query, "variables": variables or {}},
                            headers={"Authorization": f"Bearer {bearer}"})
         self.budget.read(r.headers)
+        if uid:  # every Buffer API call is counted in the account's activity (System tab), never with the token
+            m = re.search(r"\b(query|mutation)\b[^{]*\{\s*(\w+)", query)
+            self.store.audit(uid, "system", "buffer_api", "system",
+                             {"op": f"{m.group(1)} {m.group(2)}" if m else "graphql", "status": r.status_code}, ok=r.status_code < 400)
         if r.status_code == 401:
             if uid and not _retried:
                 tok = self.store.tokens(uid) or {}

@@ -117,18 +117,35 @@ def chat(engine: dict, system: str, user: str, *, http: httpx.Client | None = No
                  "messages": [{"role": "user", "content": user}]})
             if r.status_code >= 400:
                 raise LLMError(f"{engine['provider']} answered HTTP {r.status_code}: {r.text[:200]}")
-            return "".join(b.get("text", "") for b in r.json().get("content", []))
+            j = r.json()
+            u = j.get("usage") or {}
+            _usage(engine, j.get("model"), u.get("input_tokens"), u.get("output_tokens"))
+            return "".join(b.get("text", "") for b in j.get("content", []))
         headers = {"Authorization": f"Bearer {engine['api_key']}"} if engine.get("api_key") else {}
         body = {"model": engine["model"], "max_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
         r = post(base + "/chat/completions", headers, body)
         if r.status_code >= 400:
             raise LLMError(f"{engine['provider']} answered HTTP {r.status_code}: {r.text[:200]}")
-        return r.json()["choices"][0]["message"]["content"] or ""
+        j = r.json()
+        u = j.get("usage") or {}
+        _usage(engine, j.get("model"), u.get("prompt_tokens"), u.get("completion_tokens"))
+        return j["choices"][0]["message"]["content"] or ""
     except netguard.FetchError as e:
         raise LLMError(f"The AI endpoint isn't allowed: {e}")
     except httpx.HTTPError as e:
         raise LLMError(f"Couldn't reach the AI model ({e.__class__.__name__}).")
+
+
+def _usage(engine: dict, answered_model, tin, tout) -> None:
+    """Hand this call's provider, model and token counts to the activity log (the next ai_call row on this thread)."""
+    from . import activity
+    prov = engine.get("provider") or "custom"
+    label = {"free": "free starter"}.get(prov, PRESETS.get(prov, {}).get("label", prov))
+    if engine.get("source") == "your key":
+        label += " (your key)"
+    activity.set_usage(label, str(engine.get("model") or answered_model or ""), tin if isinstance(tin, int) else None,
+                       tout if isinstance(tout, int) else None, engine.get("source", ""))
 
 
 def parse_json(text: str):
