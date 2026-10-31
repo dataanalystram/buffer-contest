@@ -10,6 +10,7 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
 from playwright.sync_api import sync_playwright
 
 base, out = sys.argv[1].rstrip("/"), Path(sys.argv[2])
@@ -17,12 +18,23 @@ out.mkdir(parents=True, exist_ok=True)
 DESK, PHONE = {"width": 1280, "height": 860}, {"width": 390, "height": 844}
 
 
+def _photo(route):
+    try:
+        r = httpx.get(route.request.url, follow_redirects=True, timeout=15)
+        route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "image/jpeg"))
+    except httpx.HTTPError:
+        route.abort()
+
+
 def shot(browser, name, viewport, scheme, tab=None, tour_step=None, init=""):
     ctx = browser.new_context(viewport=viewport, color_scheme=scheme, device_scale_factor=2, timezone_id="Europe/Dublin",
                               has_touch=viewport["width"] < 1024)
     if tour_step is None:
         ctx.add_init_script("localStorage.setItem('hq_tour_done', '1');" + init)
-    ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())  # sample data only, no fonts or images from outside
+    # sample data only: nothing from outside except the sample posts' stock photos (picsum.photos), fetched here and handed
+    # to the page so thumbnails aren't broken on machines where the browser itself has no internet
+    ctx.route(lambda u: not (u.startswith(base) or u.startswith("https://picsum.photos/")), lambda r: r.abort())
+    ctx.route(lambda u: u.startswith("https://picsum.photos/"), _photo)
     try:
         page = ctx.new_page()
         page.goto(base + "/demo")
@@ -42,6 +54,7 @@ def shot(browser, name, viewport, scheme, tab=None, tour_step=None, init=""):
                   .find((x) => !x.querySelector('.pl-agenda-empty')) || document.querySelector('[data-testid=planner-agenda]');
                   const head = d.previousElementSibling || d;
                   window.scrollTo(0, head.getBoundingClientRect().top + scrollY - 76); }""")
+                page.wait_for_function("[...document.images].every((i) => i.complete)", timeout=15000)
                 page.wait_for_timeout(300)
         page.screenshot(path=str(out / name))
         print("wrote", out / name)
