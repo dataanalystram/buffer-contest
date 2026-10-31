@@ -617,7 +617,7 @@ class SourcesAgent:
         rows = self.store.q("SELECT data, secret FROM source_settings WHERE user_id=?", (a.uid,))
         cfg = json.loads(rows[0]["data"]) if rows else {}
         sec = self.store.unseal(rows[0]["secret"]) if rows and rows[0]["secret"] else {}
-        on = {k: cfg.get("on", {}).get(k, k not in KEYED) for k in ADAPTERS}
+        on = {k: cfg.get("on", {}).get(k, k not in KEYED or demo_guard.is_demo(a.uid)) for k in ADAPTERS}
         return {"on": on, "rss": cfg.get("rss") or DEFAULT_RSS, "x_query": cfg.get("x_query", ""), "hn_query": cfg.get("hn_query", ""),
                 "x_key": ("…" + sec["x_bearer"][-4:]) if sec.get("x_bearer") else "",
                 "ph_key": ("…" + sec["ph_token"][-4:]) if sec.get("ph_token") else "",
