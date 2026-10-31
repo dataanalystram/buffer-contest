@@ -73,6 +73,45 @@ SAMPLE_STORIES = [  # News radar when the sample's feeds can't be read (offline,
 ]
 
 
+# Sample Activity rows so every tab of the log has something to show. IPs are from the documentation range (203.0.113.0/24)
+# and user agents are labelled as samples; nothing here came from a real person or client.
+SAMPLE_UA = "Sample browser (Chrome on macOS)"
+SAMPLE_ACTIVITY = [  # (minutes ago, actor, action, category, ok, detail, extra columns)
+    (2880, "you", "connect_buffer", "signin", True, {"scopes": "sample"}, {"surface": "ui", "ip": "203.0.113.24", "ua": SAMPLE_UA}),
+    (1500, "system", "signin_failed", "signin", False, {"via": "agent token", "reason": "revoked or expired", "token_label": "old laptop script"},
+     {"surface": "rest", "ip": "203.0.113.77", "ua": "Sample script (python-httpx)"}),
+    (1440, "you", "oauth_consent", "signin", True, {"client": "Claude", "redirect_host": "claude.ai"},
+     {"surface": "ui", "ip": "203.0.113.24", "ua": SAMPLE_UA, "app": "claude"}),
+    (720, "you", "device_signed_in", "signin", True, {}, {"surface": "ui", "ip": "203.0.113.51", "ua": "Sample browser (Safari on iPhone)"}),
+    (240, "agent:Claude", "create_idea", "agent", True, {"idea_id": "sample1"},
+     {"surface": "mcp", "app": "claude", "token_label": "Claude", "provider": "anthropic", "model": "claude-sonnet-4-5",
+      "tokens_in": 1840, "tokens_out": 260, "cost_usd": 0.00942}),
+    (200, "agent:ChatGPT", "get_posts", "agent", True, {"status": "scheduled"},
+     {"surface": "mcp", "app": "chatgpt", "token_label": "ChatGPT", "provider": "openai", "model": "gpt-4.1-mini",
+      "tokens_in": 950, "tokens_out": 120, "cost_usd": 0.000572}),
+    (150, "agent:Cursor", "preflight", "agent", True, {"channel": "linkedin"}, {"surface": "mcp", "app": "cursor", "token_label": "my editor"}),
+    (90, "you", "ai_call", "agent", True, {"task": "draft captions"},
+     {"surface": "ui", "app": "huhqueue", "provider": "groq", "model": "llama-3.3-70b-versatile", "tokens_in": 1200, "tokens_out": 340,
+      "cost_usd": 0.000977}),
+    (60, "system", "buffer_token_refreshed", "system", True, {}, {"surface": "system"}),
+    (45, "system", "buffer_api", "system", True, {"op": "query channels", "status": 200}, {"surface": "system"}),
+    (44, "system", "buffer_api", "system", True, {"op": "query posts", "status": 200}, {"surface": "system"}),
+    (30, "system", "buffer_api", "system", True, {"op": "mutation createIdea", "status": 200}, {"surface": "system"}),
+    (12, "system", "buffer_api", "system", False, {"op": "mutation createPost", "status": 429}, {"surface": "system"}),
+    (11, "system", "buffer_api", "system", True, {"op": "mutation createPost", "status": 200}, {"surface": "system"}),
+]
+ACTIVITY_COLS = ("surface", "app", "token_label", "provider", "model", "tokens_in", "tokens_out", "cost_usd", "ip", "ua")
+
+
+def seed_activity(store: Store, uid: str, now: float) -> None:
+    for mins, actor, action, cat, ok, detail, extra in SAMPLE_ACTIVITY:
+        store.x(f"INSERT INTO audit(user_id,actor,action,risk,detail,ok,ts,category,{','.join(ACTIVITY_COLS)}) "
+                f"VALUES(?,?,?,?,?,?,?,?{',?' * len(ACTIVITY_COLS)})",
+                (uid, actor, action, "sample", json.dumps({**detail, "sample": True}), 1 if ok else 0, now - mins * 60, cat,
+                 *(extra.get(c, "" if c in ("surface", "app", "token_label", "provider", "model", "ip", "ua") else None)
+                   for c in ACTIVITY_COLS)))
+
+
 def is_sample_url(url: str | None) -> bool:
     return (url or "").strip().startswith("https://example.com/sample/")
 
@@ -95,6 +134,7 @@ def create_user(store: Store) -> str:
     payload = {"channel_id": AGENT_POST[0], "text": AGENT_POST[2], "media_url": "", "mode": "queue", "due_at": None}
     store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
             (uid, aid, AGENT_POST[1], json.dumps(payload), "pending", now - 600))
+    seed_activity(store, uid, now)
     store.audit(uid, f"agent:{AGENT_POST[1]}", "submit_post", "held", {"channel": "twitter", "mode": "queue"})
     for url in SEED_FEEDS:
         store.x("INSERT INTO feeds(user_id,url,created) VALUES(?,?,?)", (uid, url, now))
