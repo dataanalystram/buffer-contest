@@ -48,8 +48,8 @@ async function loadConnect() {
       <header><span class="cx-mark" aria-hidden="true">${esc(a.mark)}</span><div><h2>${esc(a.name)}</h2><p class="muted xs">${esc(a.where)}</p></div>
         <span class="cx-status${mine.length ? " on" : ""}" data-testid="connect-last-used">${esc(status)}</span></header>
       <ol class="cx-steps">${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
-      ${snip ? `<div class="cx-snip"><pre class="code" data-testid="connect-snippet">${esc(snip)}</pre><button class="btn2 sm" type="button" data-copy="${a.id}">Copy</button></div>` : ""}
-      <div class="cx-acts">${a.auth === "oauth" ? `<button class="btn sm" type="button" data-copy-url>Copy MCP address</button>`
+      ${snip ? `<div class="cx-snip"><pre class="code" data-testid="connect-snippet">${esc(snip)}</pre><button class="btn2 sm" type="button" data-copy="${a.id}" data-testid="connect-copy-snippet">Copy</button></div>` : ""}
+      <div class="cx-acts">${a.auth === "oauth" ? `<button class="btn sm" type="button" data-copy-url data-testid="connect-copy-url">Copy MCP address</button>`
         : `<button class="btn sm" type="button" data-make="${a.id}" data-testid="connect-make-token">${made[a.id] ? "Token created" : `Create a token for ${esc(a.name)}`}</button>`}
         ${made[a.id] ? `<span class="muted xs">Shown once. It needs your approval for every post.</span>` : `<span class="muted xs">${a.auth === "oauth" ? "No token to paste: the app signs in." : "Approval by default, 10 posts a day."}</span>`}</div>
     </article>`;

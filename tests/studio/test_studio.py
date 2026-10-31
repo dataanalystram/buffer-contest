@@ -294,7 +294,7 @@ def test_every_control_has_a_data_testid():
     html = (Path(__file__).parents[2] / "studio/static/index.html").read_text()
     for tag in re.findall(r"<(?:button|input|select|textarea)\b[^>]*>", html):
         assert "data-testid" in tag, tag
-    for name in ("app.js", "planner.js"):
+    for name in ("app.js", "planner.js", "connect.js", "shell.js", "oauth-open.js"):
         js = (Path(__file__).parents[2] / "studio/static" / name).read_text()
         for tag in re.findall(r"<(?:button|input|select|textarea)\b[^>]*>", js):
             assert "data-testid" in tag, (name, tag)
