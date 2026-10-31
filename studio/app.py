@@ -118,7 +118,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         if path.startswith(("/api/", "/mcp", "/oauth/", "/demo") + AUTH_PATHS) and not path.startswith("/api/worker/") \
                 and not _real_account(request):
             ip = demo_guard.client_ip(request)
-            wait = rate.hit("ip:" + sha("ip:" + ip), rate.per_min)
+            general = path.startswith(("/api/", "/mcp", "/oauth/", "/demo"))
+            wait = rate.hit("ip:" + sha("ip:" + ip), rate.per_min) if general else 0
             if not wait and path == "/demo":
                 wait = rate.hit("demo:" + sha("ip:" + ip), rate.demo_per_min)
             if not wait and path.startswith(AUTH_PATHS):
