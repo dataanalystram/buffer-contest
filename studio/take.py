@@ -433,7 +433,8 @@ def have(binary: str) -> bool:
 
 
 def run(cmd: list[str], timeout: int = 1800) -> subprocess.CompletedProcess:
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    from . import mediasafe  # protocol + demuxer whitelists before every input (a crafted file can't open URLs or files)
+    r = mediasafe.run(cmd, timeout=timeout, text=True)
     if r.returncode != 0:
         raise TakeError(f"{Path(cmd[0]).name} failed: {r.stderr[-800:]}")
     return r
@@ -456,8 +457,9 @@ def probe(path: str) -> dict:
 
 
 def detect_silences(path: str, noise_db: int = -32, min_s: float = 0.35) -> list[list[float]]:
-    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vn", "-af", f"silencedetect=noise={noise_db}dB:d={min_s}",
-                        "-f", "null", "-"], capture_output=True, text=True, timeout=1800)
+    from . import mediasafe
+    r = mediasafe.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vn", "-af", f"silencedetect=noise={noise_db}dB:d={min_s}",
+                       "-f", "null", "-"], text=True, timeout=1800)
     out, start = [], None
     for line in r.stderr.splitlines():
         m = re.search(r"silence_start: ([\d.]+)", line)
@@ -477,8 +479,9 @@ def detect_scenes(path: str) -> tuple[list[float], str]:
         return [round(s[0].get_seconds(), 2) for s in scenes[1:]], "PySceneDetect"
     except ImportError:
         pass
-    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-an", "-vf", "scale=320:-2,select='gt(scene,0.35)',showinfo",
-                        "-f", "null", "-"], capture_output=True, text=True, timeout=1800)
+    from . import mediasafe
+    r = mediasafe.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-an", "-vf", "scale=320:-2,select='gt(scene,0.35)',showinfo",
+                       "-f", "null", "-"], text=True, timeout=1800)
     return [round(float(m.group(1)), 2) for m in re.finditer(r"pts_time:([\d.]+)", r.stderr)], "ffmpeg scene filter"
 
 
@@ -494,8 +497,9 @@ def transcribe(path: str, model: str = "small") -> tuple[list[dict], str, str]:
         raise TakeError("Transcription runs on the video worker (faster-whisper isn't installed here).")
     import numpy as np
     # decode with ffmpeg ourselves (16 kHz mono float): no dependency on a particular PyAV version
-    pcm = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
-                         capture_output=True, timeout=1800, check=True).stdout
+    from . import mediasafe
+    pcm = mediasafe.run(["ffmpeg", "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
+                        timeout=1800, check=True).stdout
     audio = np.frombuffer(pcm, dtype=np.float32)
     wm = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 2)
     segs, info = wm.transcribe(audio, word_timestamps=True, vad_filter=True, vad_parameters={"min_silence_duration_ms": 400},
@@ -525,8 +529,9 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
     info = probe(path)
     if info["width"] and info["height"]:
         h = int(round(w * info["height"] / info["width"] / 2)) * 2
-    proc = subprocess.Popen(["ffmpeg", "-v", "error", "-i", path, "-vf", f"fps={fps},scale={w}:{h}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-                            stdout=subprocess.PIPE)
+    from . import mediasafe
+    proc = mediasafe.popen(["ffmpeg", "-v", "error", "-i", path, "-vf", f"fps={fps},scale={w}:{h}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                           stdout=subprocess.PIPE)
     out, k, size = [], 0, w * h * 3
     try:
         while True:
@@ -553,6 +558,11 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
 
 def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600) -> dict:
     t0 = time.time()
+    from . import mediasafe
+    try:  # plain video only, before PySceneDetect/MediaPipe (their own decoders) ever open it
+        mediasafe.check_source(path)
+    except mediasafe.MediaRefused as e:
+        raise TakeError(str(e))
     info = probe(path)
     if not info["audio"]:
         raise TakeError("This video has no audio track, so there is nothing to transcribe.")

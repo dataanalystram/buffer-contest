@@ -11,7 +11,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import unicodedata
 from pathlib import Path
@@ -320,15 +319,17 @@ def have_ffmpeg() -> bool:
     return bool(shutil.which("ffmpeg"))
 
 
-def _run(cmd: list[str]) -> None:
-    r = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd: list[str], timeout: float = 900) -> None:
+    from . import mediasafe  # protocol + demuxer whitelists before every input, and a time limit
+    r = mediasafe.run(cmd, timeout=timeout, text=True)
     if r.returncode != 0:
         raise RuntimeError("ffmpeg failed: " + r.stderr[-1500:])
 
 
 def probe(path: str) -> dict:
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height",
-                          "-of", "json", path], capture_output=True, text=True, check=True).stdout
+    from . import mediasafe
+    out = mediasafe.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height",
+                         "-of", "json", path], timeout=120, text=True, check=True).stdout
     j = json.loads(out)
     v = next((s for s in j["streams"] if s["codec_type"] == "video"), {})
     return {"duration": float(j["format"].get("duration", 0)), "width": v.get("width"), "height": v.get("height"),

@@ -302,6 +302,10 @@ class House:
         eng = {"source": "your key", "provider": prov, "base_url": base, "api_key": key,
                "model": (body.get("model") or pre["model"]).strip(), "style": pre["style"]}
         try:
+            llm.check_engine(eng)  # a named provider only talks to its own host; https and public (checked again per call)
+        except llm.LLMError as e:
+            raise ActionError(str(e))
+        try:
             llm.test_key(eng, http=self.http)
         except llm.LLMError as e:
             raise ActionError(f"The key didn't work: {e}")

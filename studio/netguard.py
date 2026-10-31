@@ -11,9 +11,13 @@ Every outbound fetch of a user-influenced URL goes through ``safe_get`` / ``safe
 * metadata host names (metadata.google.internal and friends) are refused by name too;
 * only http and https; the body is read with a byte cap.
 
+* DNS rebinding is closed: on a real network transport every hop is resolved once, every address is vetted, and the
+  connection is made to that vetted IP (the URL's host is kept in the Host header and as the TLS SNI / certificate name),
+  so a DNS answer that flips between the check and the connect can't steer the request inside.
+
 The per-hop host check calls ``drafter._public`` at call time, so tests that pin DNS by monkeypatching it still apply.
-Known limit: the host is resolved again by the HTTP client when it connects, so a DNS answer that flips between the check
-and the connect (rebinding) is not pinned here; redirects, the common case, are.
+Mock transports (tests) are not pinned: they never open a socket, so there is nothing to rebind. Neither is a request an
+operator routes through HTTP(S)_PROXY: the proxy makes the connection and the DNS lookup itself.
 """
 from __future__ import annotations
 
@@ -78,6 +82,67 @@ def public_host(host: str) -> bool:
     return True
 
 
+def _getaddrinfo(host: str):
+    return socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+
+
+def resolve_public(host: str) -> str:
+    """Resolve ``host`` once and return one address to connect to, after vetting EVERY address it resolved to.
+    A literal IP is vetted as is. FetchError if any address is not public (or the name is a metadata alias)."""
+    h = (host or "").strip().strip("[]").rstrip(".").lower()
+    if not h or h in BLOCKED_HOSTS or h.endswith(".internal") or h == "localhost" or h.endswith(".localhost"):
+        raise FetchError("That link points to a private address, so it can't be read.")
+    try:
+        infos = _getaddrinfo(h)
+    except (socket.gaierror, UnicodeError, ValueError, OSError):
+        raise FetchError("That link's host name doesn't resolve.")
+    ips = []
+    for info in infos or []:
+        try:
+            ip = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+        except ValueError:
+            raise FetchError("That link points to a private address, so it can't be read.")
+        if ip_blocked(ip):
+            raise FetchError("That link points to a private address, so it can't be read.")
+        ips.append(ip)
+    if not ips:
+        raise FetchError("That link's host name doesn't resolve.")
+    return str(next((i for i in ips if i.version == 4), ips[0]))
+
+
+def _pinnable(c: httpx.Client, url: str) -> bool:
+    """A client that opens its own sockets for this URL (httpx's network transport), as opposed to a test's MockTransport
+    or an operator-configured HTTP(S)_PROXY, which makes the connection (and the DNS lookup) itself."""
+    t = getattr(c, "_transport", None)
+    if not isinstance(t, httpx.HTTPTransport):
+        return False
+    try:
+        return c._transport_for_url(httpx.URL(url)) is t
+    except Exception:  # noqa: BLE001 - an httpx without this helper: pin anyway
+        return True
+
+
+def pinned_request(c: httpx.Client, method: str, url: str, *, headers: dict | None = None, pin: bool = True,
+                   **kw) -> tuple[httpx.Request, bool]:
+    """Build the request for ``url``. When ``pin`` and the client is a real network client, the URL's host is swapped for
+    the vetted IP from ``resolve_public`` and the original host travels in the Host header and as the TLS SNI (which is
+    also the name the certificate is verified against). Returns (request, pinned)."""
+    if not (pin and _pinnable(c, url)):
+        return c.build_request(method, url, headers=headers, **kw), False
+    p = urlparse(url)
+    ip = resolve_public(p.hostname or "")
+    netloc = (f"[{ip}]" if ":" in ip else ip) + (f":{p.port}" if p.port else "")
+    host_hdr = (f"[{p.hostname}]" if ":" in (p.hostname or "") else (p.hostname or "")) + (f":{p.port}" if p.port else "")
+    hdrs = {**(headers or {}), "Host": host_hdr}
+    ext = {"sni_hostname": p.hostname} if p.scheme == "https" else {}
+    return c.build_request(method, p._replace(netloc=netloc).geturl(), headers=hdrs, extensions=ext, **kw), True
+
+
+def _logical(c: httpx.Client, r: httpx.Response, method: str, url: str, headers: dict | None) -> None:
+    """After a pinned send, make ``response.url`` the URL the caller asked for (not the IP), for redirects and display."""
+    r.request = c.build_request(method, url, headers=headers)
+
+
 def _host_ok(host: str) -> bool:
     from . import drafter  # call time: tests pin DNS through drafter._public
     return drafter._public(host)
@@ -109,7 +174,10 @@ def safe_stream(url: str, *, http: httpx.Client | None = None, check_host: bool 
     try:
         for _ in range(max_hops + 1):
             check_url(url, check_host=check_host, https_only=https_only)
-            r = c.send(c.build_request("GET", url, headers=headers), stream=True, follow_redirects=False)
+            req, pinned = pinned_request(c, "GET", url, headers=headers, pin=check_host)  # connect to the vetted IP
+            r = c.send(req, stream=True, follow_redirects=False)
+            if pinned:
+                _logical(c, r, "GET", url, headers)
             if r.status_code in REDIRECTS and r.headers.get("location"):
                 nxt = urljoin(str(r.url), r.headers["location"])
                 r.close()
@@ -140,3 +208,36 @@ def safe_get(url: str, *, limit: int = 5_000_000, http: httpx.Client | None = No
                 raise FetchError("That page is too large to read.")
         hdrs = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
         return httpx.Response(r.status_code, headers=hdrs, content=bytes(buf), request=r.request)  # body already decoded
+
+
+def safe_post(url: str, *, http: httpx.Client | None = None, json=None, headers: dict | None = None, timeout: float = 60,
+              https_only: bool = True, allowed_hosts: set[str] | frozenset[str] | None = None,
+              limit: int = 5_000_000) -> httpx.Response:
+    """One POST to an outside API (the AI model endpoints): the host is checked on THIS call (optionally against an
+    allowlist), the connection is pinned to the vetted IP, a redirect is never followed, and the body is capped."""
+    check_url(url, https_only=https_only)
+    host = (urlparse(url).hostname or "").lower()
+    if allowed_hosts is not None and host not in allowed_hosts:
+        raise FetchError("That endpoint host is not on the allowed list.")
+    own = http is None
+    c = http or client(timeout, headers)
+    try:
+        req, pinned = pinned_request(c, "POST", url, headers=headers, json=json)
+        r = c.send(req, stream=True, follow_redirects=False)
+        try:
+            if pinned:
+                _logical(c, r, "POST", url, headers)
+            if r.status_code in REDIRECTS:
+                raise FetchError("The endpoint answered with a redirect, which is not followed.")
+            buf = bytearray()
+            for chunk in r.iter_bytes():
+                buf += chunk
+                if len(buf) > limit:
+                    raise FetchError("The endpoint's answer is too large.")
+            hdrs = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
+            return httpx.Response(r.status_code, headers=hdrs, content=bytes(buf), request=r.request)
+        finally:
+            r.close()
+    finally:
+        if own:
+            c.close()
