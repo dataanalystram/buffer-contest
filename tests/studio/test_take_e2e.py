@@ -1,23 +1,21 @@
 """Browser test of One take -> a week in the sample workspace (Playwright): sample take, clip cards, trim/caption editor,
 The Spread onto the Planner (and its reduced-motion version), saving the plan as Buffer drafts. Skips without Chromium."""
 import os
-import socket
-import threading
-import time
 
 import httpx
 import pytest
-import uvicorn
 
 from studio.app import create_app
 from studio.config import load_settings
+
+from .browsers import free_port, serve
 
 pw = pytest.importorskip("playwright.sync_api")
 NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"  # the guided tour has its own test (test_tour_e2e.py)
 
 
 def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
+    return free_port()
 
 
 @pytest.fixture
@@ -26,13 +24,7 @@ def live(tmp_path):
     s = load_settings(client_id="cid", client_secret="sec", public_url=f"http://127.0.0.1:{port}", session_secret="t" * 64,
                       db_path=str(tmp_path / "take.db"), secure_cookies=False, ai_base_url="")
     app = create_app(s, http=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(503))))
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    t = threading.Thread(target=server.run, daemon=True); t.start()
-    for _ in range(50):
-        try:
-            httpx.get(f"http://127.0.0.1:{port}/healthz"); break
-        except httpx.HTTPError:
-            time.sleep(0.1)
+    server = serve(app, port)
     yield f"http://127.0.0.1:{port}"
     server.should_exit = True
 

@@ -27,7 +27,7 @@ def test_sample_inbox_has_every_group_most_urgent_first(client, fake):
     assert g["preflight"]["count"] == 1 and "too long for X" in g["preflight"]["items"][0]["reason"]
     assert g["undated"]["count"] == 2
     assert g["open_slots"]["count"] > 0 and g["open_slots"]["actions"][0]["go"] == "take"
-    assert d["needs_you"] == 1 + 1 + 1 + 2
+    assert d["waiting"] == 1 + 1 + 1 + 2
     for grp in d["groups"]:
         assert grp["summary"] and grp["title"]
     assert not fake.calls  # the sample never calls Buffer
@@ -75,8 +75,14 @@ def test_open_slots_skip_taken_paused_and_past_times():
 
 
 def test_no_needs_you_left_in_the_app():
+    """The screen is called Inbox everywhere: the app, the MCP descriptions, the API field and the docs."""
+    import re
     from pathlib import Path
-    root = Path(__file__).resolve().parents[2] / "studio"
-    for f in list((root / "static").glob("*.*")) + list(root.glob("*.py")):
-        if f.suffix in (".js", ".html", ".css", ".py"):
-            assert "Needs you" not in f.read_text(encoding="utf-8"), f
+    repo = Path(__file__).resolve().parents[2]
+    root = repo / "studio"
+    files = [f for f in list((root / "static").glob("*.*")) + list(root.glob("*.py")) if f.suffix in (".js", ".html", ".css", ".py")]
+    files += [repo / n for n in ("README.md", "CONTEST.md", "DESIGN.md", "SUBMISSION.md", "SETUP.md")] + list((repo / "docs").glob("*.md"))
+    old = re.compile(r"needs[ _-]you\b", re.I)
+    for f in files:
+        if f.exists():
+            assert not old.search(f.read_text(encoding="utf-8")), f

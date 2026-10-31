@@ -154,7 +154,7 @@ async function boot() {
   snippets(s.mcp_url);
   await loadChannels();
   budget();
-  api("/api/inbox").then((d) => ibBadge(d.needs_you)).catch(() => {});
+  api("/api/inbox").then((d) => ibBadge(d.waiting)).catch(() => {});
   if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
   else showTab(new URLSearchParams(location.search).get("tab") || "agent");
 }
@@ -377,11 +377,11 @@ async function loadInbox() {
   let d;
   try { d = await api("/api/inbox"); } catch (e) { box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(e.message)}</div>`; box.removeAttribute("aria-busy"); return; }
   box.removeAttribute("aria-busy");
-  ibBadge(d.needs_you);
+  ibBadge(d.waiting);
   const live = d.groups.filter((g) => g.count > 0), clear = d.groups.filter((g) => !g.count);
   const now = live.filter((g) => g.urgency !== "fyi").reduce((n, g) => n + g.count, 0);
-  $("#inboxTitle").textContent = d.needs_you ? `Inbox · ${d.needs_you}` : "Inbox";
-  $("#inboxSummary").textContent = d.needs_you ? `${d.needs_you} thing${d.needs_you === 1 ? "" : "s"} need${d.needs_you === 1 ? "s" : ""} you, most urgent first.` : "You're all caught up. Nothing needs you right now.";
+  $("#inboxTitle").textContent = d.waiting ? `Inbox · ${d.waiting}` : "Inbox";
+  $("#inboxSummary").textContent = d.waiting ? `${d.waiting} thing${d.waiting === 1 ? "" : "s"} need${d.waiting === 1 ? "s" : ""} you, most urgent first.` : "You're all caught up. Nothing is waiting on you right now.";
   $("#inboxKill").hidden = !d.kill_switch;
   $("#inboxJump").innerHTML = live.map((g) => `<a class="ib-chip u-${g.urgency}" href="#ib-${g.key}" data-testid="inbox-jump-chip" data-group="${g.key}"><span>${esc(g.title)}</span><b>${g.count}</b></a>`).join("");
   box.innerHTML = (live.length ? live.map(ibGroup).join("") : "")

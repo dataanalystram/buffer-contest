@@ -10,7 +10,7 @@ One read (GET /api/inbox, MCP `get_inbox`) that the home screen, an agent and th
   fyi   open_slots   posting times in the next 7 days with nothing in them
   fyi   plan         the Buffer plan's meters at 80% or more, and locked channels
 
-Each group: key, title, urgency, count, summary (one plain sentence), items, actions. `needs_you` counts the items in the
+Each group: key, title, urgency, count, summary (one plain sentence), items, actions. `waiting` counts the items in the
 `now` and `soon` groups: that is the number on the nav badge.
 """
 from __future__ import annotations
@@ -210,5 +210,5 @@ def build(studio, a, now: datetime | None = None) -> dict:
     groups.sort(key=lambda g: URGENCY.index(g["urgency"]))
     needs = sum(g["count"] for g in groups if g["urgency"] in ("now", "soon") and g["key"] != "plan") + \
         sum(1 for g in groups if g["key"] == "plan" and g["urgency"] == "now")
-    return {"needs_you": needs, "groups": groups, "horizon_days": HORIZON_DAYS, "as_of": _iso(now),
+    return {"waiting": needs, "groups": groups, "horizon_days": HORIZON_DAYS, "as_of": _iso(now),
             "kill_switch": bool(studio.me(a).get("kill_switch"))}

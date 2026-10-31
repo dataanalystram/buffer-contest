@@ -40,7 +40,7 @@ All of `studio/`, `tests/studio/`, `Dockerfile.studio`, `render.yaml`, `requirem
 | 29 Oct | News radar: follow RSS/Atom feeds, newest stories on the home screen with one-click "Write posts"; `list_stories` MCP tool so agents can work from the same news |
 | 29 Oct | Plan-limit guard: reads the organization's plan limits, each channel's weekly cap and lock state, and `dailyPostingLimits` before every send; warns on the last allowed post, stops a post Buffer would refuse, shows usage meters and a banner with an upgrade link at 80% |
 | 29 Oct | One-click capture: a bookmarklet that opens any page you're reading in HuhQueue and writes the posts |
-| 29 Oct | New interface: a "Needs you" home, drafts previewed the way each network shows them, thread previews, mobile layout |
+| 29 Oct | New interface: a home screen for what is waiting (now the Inbox), drafts previewed the way each network shows them, thread previews, mobile layout |
 | 30 Oct | Live app moved to Supabase Postgres (pg_cron keep-alive); MCP OAuth sign-in so Claude.ai and ChatGPT can add HuhQueue as a connector; usage counter on the landing page |
 | 30 Oct | The agent: research a topic or link, or edit your own photo or video; on-brand carousels, cards and Reels; brand kit (with website import); the Style Ledger (every correction becomes a rule) and a brand check that cites the rule; AI engine settings. Details in [docs/HUHQUEUE.md](docs/HUHQUEUE.md) |
 | 30 Oct | Renamed the product to **HuhQueue** everywhere (was "House Style"; Style Ledger stays a feature name) |

@@ -23,7 +23,7 @@ every state designed, and motion only when it answers something the person did.
 | Focus ring | `--focus` | #1f5bd6 | #8ab0ff |
 | Status | `--ok` `--warn` `--bad` | teal, amber, red | lighter versions |
 
-**The accent means "a person needs to look at this".** Use it for: the Needs-you badge, the current nav item
+**The accent means "a person needs to look at this".** Use it for: the Inbox badge, the current nav item
 (`--accent-soft` behind `--ink` text), agent posts waiting for approval, the single Approve button, links. Never for
 decoration, section backgrounds or errors. At most one accent-filled button per view.
 
@@ -76,7 +76,7 @@ ease-out, at most 300ms, and switched off under `prefers-reduced-motion`.
 - New drafts deal in one after another (`.deal`, staggered by `--i`).
 - Buttons and chips press down slightly on click.
 - A sent draft settles and fades back; an approved post slides out of the list.
-- The Needs-you badge pops in when something arrives.
+- The Inbox badge pops in when something arrives.
 
 Do not add scroll-triggered fades, gradients, glows, confetti or bouncing.
 

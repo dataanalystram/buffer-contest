@@ -116,7 +116,7 @@ Everything below was built in the Buffer Commit window; the pre-existing self-ho
 |---|---|
 | 28 Oct | Buffer OAuth (PKCE, rotating refresh tokens), GraphQL client with rate-limit handling, link to one caption per channel counted Buffer's way, preview, confirm and send (draft, queue, next, now, custom time), ideas |
 | 28 Oct | Agents with a leash: MCP server and REST API per Buffer user, approval inbox by default, drafts-only and trusted policies, daily caps, kill switch, activity log; Playwright e2e and CI on SQLite and Postgres; Render deploy |
-| 29 Oct | Threads from one link, sample workspace at `/demo`, post previews, news radar, plan-limit guard, bookmarklet, the "Needs you" home |
+| 29 Oct | Threads from one link, sample workspace at `/demo`, post previews, news radar, plan-limit guard, bookmarklet, the home screen for what is waiting (now the Inbox) |
 | 30 Oct | Supabase Postgres for the live app, OAuth connector for Claude.ai and ChatGPT, public usage counter |
 | 30 Oct | The agent ("Make a post"): research a topic or link or edit your own photo or video, on-brand carousels, cards and Reels, brand kit with website import, the Style Ledger and brand check, AI engine settings (bring your own key or use your own Claude/ChatGPT) |
 | 30 Oct | Renamed to HuhQueue. **Planner**: one tab replaces Calendar and Buffer queue (List, Week, Month, filters, timezone, No date drafts, posting times, click-to-schedule, drag to reschedule) on new `update_post`, `reschedule_post` and `delete_draft` actions (Buffer `editPost` / `deletePost`) shared by UI, REST and MCP; light and dark screenshots |
