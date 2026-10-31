@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS template_slots (id INTEGER PRIMARY KEY AUTOINCREMENT,
 EXTRA_KEYS = ("head_font", "body_font", "headline_case", "secondary", "front_card", "end_style", "end_image", "hashtags", "label",
               "example", "channels")
 MAX_SLOTS = 12
+PREVIEWS_PER_MIN = 40  # live preview redraws per workspace per minute (CPU guard; SECURITY_RULES 3)
+_previews: dict[str, list[float]] = {}
 
 
 class StudioError(ValueError):
@@ -190,6 +192,11 @@ class BrandStudio:
             raise StudioError("Unknown template.")
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
             raise StudioError(demo_guard.WHY["run"])
+        now = time.time()
+        hits = [t for t in _previews.get(a.uid, []) if now - t < 60]
+        if len(hits) >= PREVIEWS_PER_MIN:
+            raise StudioError("Too many preview redraws this minute. Pause for a moment.")
+        _previews[a.uid] = hits + [now]
         kit = self.kit(a)
         over = body.get("kit") or {}
         if isinstance(over.get("colors"), dict):
@@ -205,7 +212,7 @@ class BrandStudio:
         b = self.brand_obj(a, kit)
         data = body.get("data") if isinstance(body.get("data"), dict) else None
         ims = templates.slides(tpl, data, b, ratio)
-        w = int(body.get("width") or 360)
+        w = max(120, min(int(body.get("width") or 360), 540))
         out = []
         for im in ims[: int(body.get("max") or 10)]:
             t = im.copy()
