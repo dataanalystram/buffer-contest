@@ -281,7 +281,7 @@ class Studio:
 
     def queue(self, a: Actor, status: str = "scheduled") -> list[dict]:
         u = self.store.user(a.uid)
-        statuses = {"scheduled": ["scheduled"], "draft": ["draft"], "sent": ["sent"]}.get(status, ["scheduled"])
+        statuses = {"scheduled": ["scheduled"], "draft": ["draft"], "sent": ["sent"], "error": ["error"]}.get(status, ["scheduled"])
         return self.buffer.posts(a.uid, u["org_id"], statuses)
 
     def limits(self, a: Actor) -> dict:
@@ -519,7 +519,7 @@ class Studio:
 
     def _find_post(self, a: Actor, post_id: str) -> tuple[dict, dict]:
         u = self.store.user(a.uid)
-        for status in ("scheduled", "draft", "sent"):
+        for status in ("scheduled", "draft", "error", "sent"):  # error: a failed post can be fixed and rescheduled
             for p in self.buffer.posts(a.uid, u["org_id"], [status], first=100):
                 if p.get("id") == post_id:
                     ch = {c["id"]: c for c in self.channels(a)}.get(p.get("channelId"))

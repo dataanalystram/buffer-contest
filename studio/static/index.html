@@ -135,12 +135,13 @@
   </div>
 
   <div id="app" class="shell" hidden>
-    <nav class="rail" aria-label="Sections">
-      <button data-tab="agent" data-testid="tab-agent"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Make a post</span></button>
-      <button data-tab="take" data-testid="tab-take"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M14 10l4-2.5v9L14 14"/><path d="M19.5 4.5v3M21 6h-3"/></svg><span>One take → a week</span></button>
-      <button data-tab="planner" data-testid="tab-planner"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8 14h3M8 17h6"/></svg><span>Planner</span><span class="badge" id="readyBadge" data-testid="ready-badge" hidden>0</span></button>
+    <nav class="rail" id="rail" aria-label="Sections">
+      <button data-tab="inbox" data-testid="tab-inbox" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Inbox</span><span class="badge hot" id="inboxBadge" data-testid="inbox-badge" hidden>0</span></button>
+      <button data-tab="agent" data-testid="tab-agent" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Make a post</span></button>
+      <button data-tab="take" data-testid="tab-take" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M14 10l4-2.5v9L14 14"/><path d="M19.5 4.5v3M21 6h-3"/></svg><span>One take → a week</span></button>
+      <button data-tab="planner" data-testid="tab-planner" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8 14h3M8 17h6"/></svg><span>Planner</span><span class="badge" id="readyBadge" data-testid="ready-badge" hidden>0</span></button>
       <button data-tab="brand" data-testid="tab-brand"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.7 1.5-1.5 0-.9-.7-1.2-.7-2 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/></svg><span>Brand &amp; ledger</span></button>
-      <button data-tab="home" data-testid="tab-home"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Needs you</span><span class="badge hot" id="homeBadge" data-testid="home-badge" hidden>0</span></button>
+
       <button data-tab="studio" data-testid="tab-studio"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg><span>Write from a link</span></button>
       <button data-tab="radar" data-testid="tab-radar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19a2 2 0 1 0 0-.01"/><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/></svg><span>News radar</span></button>
       <button data-tab="approvals" data-testid="tab-approvals"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span>Approvals</span><span class="badge" id="apprBadge" data-testid="approvals-badge" hidden>0</span></button>
@@ -269,7 +270,7 @@
           <div class="pl-chans" id="plChannels" role="group" aria-label="Channels" data-testid="planner-channels"></div>
           <div class="pl-frow">
             <label class="sr" for="plType">Post type</label><select id="plType" data-testid="planner-filter-type"><option value="">All post types</option><option value="text">Text</option><option value="image">Image</option><option value="carousel">Carousel</option><option value="video">Video or Reel</option></select>
-            <label class="sr" for="plStatus">Status</label><select id="plStatus" data-testid="planner-filter-status"><option value="">All statuses</option><option value="scheduled">Scheduled in Buffer</option><option value="sent">Sent</option><option value="approval">Needs approval</option><option value="ready">Ready to post</option><option value="draft">Draft</option></select>
+            <label class="sr" for="plStatus">Status</label><select id="plStatus" data-testid="planner-filter-status"><option value="">All statuses</option><option value="scheduled">Scheduled in Buffer</option><option value="sent">Sent</option><option value="approval">Needs approval</option><option value="failed">Failed in Buffer</option><option value="ready">Ready to post</option><option value="draft">Draft</option></select>
             <label class="sr" for="plSearch">Search captions</label><input id="plSearch" data-testid="planner-search" type="search" placeholder="Search captions" autocomplete="off">
             <label class="sr" for="plTz">Timezone</label><select id="plTz" data-testid="planner-tz" title="Timezone"></select>
             <button class="link" id="plClear" data-testid="planner-clear" type="button" hidden>Clear filters</button>
@@ -355,18 +356,25 @@
             <div class="row tight"><button class="btn" data-testid="ai-save" type="submit">Test and save</button><button class="btn2" type="button" id="aiRemove" data-testid="ai-remove" hidden>Remove my key</button></div></form>
         </div>
       </div>
-      <div class="tab" id="tab-home" hidden>
-        <h1 class="page-title" id="homeTitle" data-testid="home-title">Good to see you.</h1>
-        <p class="muted stats" id="homeStats" data-testid="home-stats" hidden></p>
+      <div class="tab" id="tab-inbox" data-testid="inbox" hidden>
+        <div class="ib-head">
+          <div class="ib-titles">
+            <h1 class="page-title" id="inboxTitle" data-testid="inbox-title" tabindex="-1">Inbox</h1>
+            <p class="muted" id="inboxSummary" data-testid="inbox-summary" aria-live="polite"></p>
+          </div>
+          <button class="btn2 sm" type="button" id="inboxRefresh" data-testid="inbox-refresh">Refresh</button>
+        </div>
+        <nav class="ib-jump" id="inboxJump" data-testid="inbox-jump" aria-label="Inbox groups"></nav>
+        <div class="ib-kill" id="inboxKill" data-testid="inbox-kill" role="status" hidden>
+          <span><b>Your agents are paused.</b> The kill switch is on, so agents can't draft or post.</span>
+          <button class="btn2 sm" type="button" data-testid="inbox-kill-open" data-go="agents">Agents</button>
+        </div>
+        <div id="inboxGroups" class="ib-groups" data-testid="inbox-groups" aria-busy="true"></div>
         <form class="quick" id="quickForm">
-          <label class="sr" for="quickUrl">Link to write posts from</label>
-          <input id="quickUrl" data-testid="quick-url" type="url" placeholder="Paste a link to write a post for every channel" required>
-          <button class="btn big" data-testid="quick-go" type="submit">Write posts</button>
+          <label class="label" for="quickUrl">Write from a link</label>
+          <div class="row"><input id="quickUrl" data-testid="quick-url" type="url" placeholder="Paste a link to write a post for every channel" required>
+          <button class="btn" data-testid="quick-go" type="submit">Write posts</button></div>
         </form>
-        <h2 class="sec">Needs you</h2>
-        <ul class="todo" id="todo" data-testid="todo-list"></ul>
-        <h2 class="sec">Your Buffer plan</h2>
-        <div id="planBox" class="plan" data-testid="plan-box"></div>
         <h2 class="sec">New in your news radar</h2>
         <div id="homeStories" class="list" data-testid="home-stories"></div>
         <h2 class="sec">Coming up in Buffer</h2>

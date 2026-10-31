@@ -4,9 +4,10 @@
 // packages go through preview -> submit. Ported from the HuhQueue calendar (dataanalystram/bufferopensource, MIT).
 "use strict";
 const PL = { view: "week", date: "", ch: new Set(), type: "", status: "", q: "", tz: "", nodate: false, slots: true,
-             data: null, loading: false, req: 0, edit: null, extra: [] };
+             data: null, loading: false, req: 0, edit: null, extra: [], open: "" };
+const plPhone = () => matchMedia("(max-width:600px)").matches; // week and month become an agenda on a phone
 const PL_KEY = "hq_planner";
-const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft", ghost: "Planned clip (not saved yet)" };
+const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft", failed: "Failed in Buffer", ghost: "Planned clip (not saved yet)" };
 const PL_TYPES = { text: "Text", image: "Image", carousel: "Carousel", video: "Video or Reel" };
 const NET_MARK = { twitter: "X", linkedin: "in", instagram: "IG", bluesky: "bs", threads: "@", mastodon: "M", facebook: "f", tiktok: "TT", youtube: "YT", pinterest: "P", googlebusiness: "G" };
 const DOW = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -89,6 +90,19 @@ async function loadPlanner() {
     if (typeof readyBadgeFrom === "function") readyBadgeFrom(d);
   } catch (e) { $("#plMain").innerHTML = `<div class="st err">${esc(e.message)}</div>`; return; }
   plControls(); plDraw();
+  if (PL.open) { // opened from the Inbox: jump to the post's week and open it
+    const i = plFind(PL.open); PL.open = "";
+    if (i) { if (i.z) { PL.date = i.z.ymd; plChanged(); } plOpenItem(i); }
+  }
+}
+// the Inbox's way in: "planner:nodate", "planner:week" or "planner:buffer:<id>"
+function plOpenRef(ref) {
+  if (!PL.tz) plLoadState();
+  if (ref === "nodate") { PL.nodate = true; PL.view = PL.view === "month" ? "week" : PL.view; }
+  else if (ref === "week") { PL.view = "week"; PL.date = ""; }
+  else PL.open = ref;
+  plSaveState();
+  showTab("planner");
 }
 function plVisible() {
   const q = PL.q.trim().toLowerCase();
@@ -138,8 +152,9 @@ function plDraw() {
   const main = $("#plMain"), keep = $(".pl-week-scroll")?.scrollTop;
   main.dataset.view = PL.view;
   if (PL.view === "list") main.innerHTML = plList(r, byDay);
-  else if (PL.view === "week") main.innerHTML = plWeek(r, byDay);
+  else if (PL.view === "week") main.innerHTML = plPhone() ? plAgenda(r, byDay) : plWeek(r, byDay);
   else main.innerHTML = plMonth(r, byDay);
+  main.dataset.phone = plPhone() ? "1" : "";
   // No date sidebar
   const side = $("#plNoDate");
   side.hidden = !PL.nodate; $("#plBody").classList.toggle("with-side", PL.nodate);
@@ -182,7 +197,7 @@ function plCard(i, where) {
   return `<article class="pl-card s-${esc(i.state)}${where === "side" ? " in-side" : ""}" data-testid="${where === "side" ? "planner-nodate-item" : "planner-card"}" data-ref="${esc(i.ref)}" data-ch="${esc(i.channel_id)}" data-state="${esc(i.state)}" ${i.draggable ? 'draggable="true"' : ""}>
     <span class="pl-thumb">${plThumb(i)}</span>
     <div class="pl-card-body"><div class="pl-meta">${netMark(i.service)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted nw">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
-      <p class="pl-cap">${esc(i.text || "(media only)")}</p>
+      <p class="pl-cap">${esc(i.text || "(media only)")}</p>${i.error ? `<p class="pl-err" data-testid="planner-error">${esc(i.error)}</p>` : ""}
       <div class="pl-foot">${stateChip(i.state)}${i.agent ? `<span class="muted xs">by ${esc(i.agent)}</span>` : ""}<span class="pl-acts">${acts.join("")}</span></div></div></article>`;
 }
 function plList(r, byDay) {
@@ -191,6 +206,18 @@ function plList(r, byDay) {
   const t = todayYmd();
   return `<div class="pl-list" data-testid="planner-list">${days.map((d) => `<section class="pl-day" data-day="${d}"><h3><span>${d === t ? "Today" : esc(dayLabel(d, { weekday: "long" }))}</span><span class="muted">${esc(dayLabel(d, { day: "numeric", month: "long" }))}</span><span class="pill sm" data-testid="planner-day-count">${byDay[d].length}</span></h3>
     <div class="pl-cards" data-testid="planner-list-day" data-day="${d}">${byDay[d].map((i) => plCard(i)).join("")}</div></section>`).join("")}</div>`;
+}
+// phone: the week as an agenda, every day listed (empty ones too) with its open posting times as tap-to-create buttons
+function plAgenda(r, byDay) {
+  const t = todayYmd(), slots = plSlotMap(r.days);
+  return `<div class="pl-list pl-agenda" data-testid="planner-agenda">${r.days.map((d) => {
+    const items = byDay[d] || [];
+    const open = Object.entries(slots).filter(([k]) => k.startsWith(d + "|")).flatMap(([, v]) => v)
+      .filter((s) => !items.some((i) => i.channel_id === s.ch && i.z.h === s.h && i.z.mi === s.mi)).sort((a, b) => a.h - b.h || a.mi - b.mi).slice(0, 4);
+    return `<section class="pl-day" data-day="${d}"><h3><span>${d === t ? "Today" : esc(dayLabel(d, { weekday: "long" }))}</span><span class="muted">${esc(dayLabel(d, { day: "numeric", month: "long" }))}</span><span class="pill sm" data-testid="planner-day-count">${items.length}</span></h3>
+      <div class="pl-cards" data-testid="planner-list-day" data-day="${d}">${items.map((i) => plCard(i)).join("")}${items.length ? "" : `<p class="muted sm pl-agenda-empty">Nothing planned.</p>`}</div>
+      ${open.length ? `<div class="pl-open">${open.map((s) => `<button type="button" class="pl-slotmark" data-testid="planner-posting-time" data-day="${d}" data-hour="${s.h}" data-min="${s.mi}" data-ch="${esc(s.ch)}" aria-label="New post at ${esc(timeLabel(s.h, s.mi))}">${netMark(s.service)}${esc(timeLabel(s.h, s.mi))}</button>`).join("")}</div>` : ""}</section>`;
+  }).join("")}</div>`;
 }
 function plSlotMap(days) { // Buffer posting slots per channel, shown in the planner's timezone: "ymd|hour" -> [{time, service}]
   const m = {};
@@ -253,6 +280,7 @@ function plWire() {
     el.ondragstart = (e) => { e.dataTransfer.setData("text/plain", el.dataset.ref); e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); document.body.classList.add("pl-dragging"); };
     el.ondragend = () => { el.classList.remove("dragging"); document.body.classList.remove("pl-dragging"); };
   });
+  root.querySelectorAll(".pl-agenda .pl-slotmark").forEach((b) => (b.onclick = () => plCompose(b.dataset.day, +b.dataset.hour, +b.dataset.min, b.dataset.ch)));
   root.querySelectorAll("[data-testid=planner-slot],[data-testid=planner-day]").forEach((cell) => {
     cell.ondragover = (e) => { e.preventDefault(); cell.classList.add("over"); };
     cell.ondragleave = () => cell.classList.remove("over");
@@ -260,6 +288,7 @@ function plWire() {
     cell.onclick = (e) => {
       const mark = e.target.closest(".pl-slotmark");
       if (mark) return plCompose(mark.dataset.day, +mark.dataset.hour, +mark.dataset.min, mark.dataset.ch);
+      if (plPhone() && cell.dataset.testid === "planner-day") return plPopover(cell.dataset.day, cell);
       if (e.target === cell || e.target.classList.contains("dn")) plCompose(cell.dataset.day, cell.dataset.hour !== undefined ? +cell.dataset.hour : 9, 0);
     };
   });
@@ -434,3 +463,5 @@ $("#plDlgDraft").onclick = () => plDialogSave(true);
 $("#plDlgCancel").onclick = closeDlg;
 $("#plDlgAgent").onclick = () => { closeDlg(); showTab("agent"); };
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { planner: loadPlanner });
+let plWasPhone = plPhone();
+addEventListener("resize", () => { const p = plPhone(); if (p !== plWasPhone) { plWasPhone = p; if (!$("#tab-planner").hidden) plDraw(); } });

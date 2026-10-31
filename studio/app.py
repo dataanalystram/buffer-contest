@@ -17,7 +17,7 @@ import base64
 import hmac
 import os
 
-from . import buffer_api, demo, house as house_mod, mcp, mcp_oauth
+from . import buffer_api, demo, house as house_mod, inbox as inbox_mod, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
@@ -439,6 +439,11 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def run_schedule(rid: int, channel_id: str, request: Request, body: dict = Body(default={})):
         return house.schedule_package(actor(request, write=True), rid, channel_id, body.get("mode") or "queue", body.get("due_at"),
                                       bool(body.get("override_warnings")))
+
+    # Inbox: what needs a person, grouped by urgency (the home screen, the nav badge and MCP get_inbox)
+    @app.get("/api/inbox")
+    def inbox(request: Request):
+        return inbox_mod.build(studio, actor(request))
 
     @app.get("/api/calendar")
     def calendar(request: Request):

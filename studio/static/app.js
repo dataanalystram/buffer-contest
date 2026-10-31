@@ -153,6 +153,7 @@ async function boot() {
   snippets(s.mcp_url);
   await loadChannels();
   budget();
+  api("/api/inbox").then((d) => ibBadge(d.needs_you)).catch(() => {});
   if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
   else showTab(new URLSearchParams(location.search).get("tab") || "agent");
 }
@@ -162,7 +163,7 @@ async function showStats() {
     const st = await api("/api/stats"), n = st.buffer_accounts, m = st.posts_sent_to_buffer;
     if (!n) return;
     const html = `<span class="live" aria-hidden="true"></span><span><b>${n.toLocaleString()}</b> Buffer account${n === 1 ? "" : "s"} connected</span><span><b>${m.toLocaleString()}</b> post${m === 1 ? "" : "s"} sent to Buffer</span><span><b>${(st.sample_workspaces_open || 0).toLocaleString()}</b> trying the sample today</span>`;
-    for (const el of [$("#landStats"), $("#homeStats")]) { el.innerHTML = html; el.hidden = false; }
+    const el = $("#landStats"); el.innerHTML = html; el.hidden = false;
   } catch (_) {}
 }
 $("#bookmarklet").href = `javascript:location.href='${location.origin}/?url='+encodeURIComponent(location.href)`;
@@ -300,6 +301,7 @@ $("#refreshCh").onclick = () => loadChannels(true);
 // ---------------------------------------------------------------- tabs
 document.querySelectorAll(".rail button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 function showTab(name) {
+  if (name === "home") name = "inbox"; // the old name, for links people saved
   if (name === "calendar" || name === "queue") { // both live in the Planner now
     if (name === "queue") { try { const s = JSON.parse(localStorage.getItem("hq_planner") || "{}"); s.view = "list"; localStorage.setItem("hq_planner", JSON.stringify(s)); } catch (_) {} }
     name = "planner";
@@ -309,33 +311,85 @@ function showTab(name) {
   document.querySelectorAll(".rail button").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   window.scrollTo({ top: 0 });
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
-  ({ home: loadHome, radar: loadRadar, approvals: loadApprovals, agents: loadTokens, activity: loadAudit }[name] || (window.HS_TABS || {})[name] || (() => {}))();
+  ({ inbox: loadInbox, radar: loadRadar, approvals: loadApprovals, agents: loadTokens, activity: loadAudit }[name] || (window.HS_TABS || {})[name] || (() => {}))();
 }
 
-// ---------------------------------------------------------------- home: what needs you
+// ---------------------------------------------------------------- Inbox: what needs a person, grouped by urgency
+// One read (/api/inbox, the same as MCP get_inbox). "Now" groups first, then "Soon", then "This week" (fyi). Groups with
+// nothing in them fold into one calm "All clear" line, so the page is short when life is quiet.
 $("#quickForm").addEventListener("submit", (ev) => { ev.preventDefault(); $("#urlInput").value = $("#quickUrl").value; showTab("studio"); $("#draftForm").requestSubmit(); });
-async function loadHome() {
-  const name = S.session.demo ? "" : (S.session.user.name || "").split(" ")[0];
-  const [appr, upcoming] = await Promise.all([refreshBadge(), api("/api/queue?status=scheduled").catch(() => [])]);
-  $("#homeTitle").textContent = appr.length ? `${appr.length === 1 ? "One post is" : appr.length + " posts are"} waiting for you` : name ? `All clear, ${name}` : "All clear";
-  const todo = [];
-  if (appr.length) {
-    const who = [...new Set(appr.map((a) => a.agent_name))].join(" and ");
-    todo.push([`<span class="hl">${appr.length} post${appr.length > 1 ? "s" : ""}</span> from ${esc(who)} waiting for your approval`, "Nothing reaches Buffer until you approve it.", "Review", "approvals"]);
-  }
-  const unsent = [...document.querySelectorAll("[data-testid=send-draft]")].filter((b) => !b.disabled).length;
-  if (unsent) todo.push([`<span class="hl">${unsent} draft${unsent > 1 ? "s" : ""}</span> you wrote but haven't sent`, esc(S.article?.title || ""), "Open", "studio"]);
-  const off = S.channels.filter((c) => c.isDisconnected);
-  if (off.length) todo.push([`<span class="hl">${off.length} channel${off.length > 1 ? "s" : ""}</span> disconnected in Buffer`, esc(off.map((c) => c.displayName || c.name).join(", ")) + ". Reconnect in Buffer, then refresh.", "Refresh", "refresh"]);
-  if (S.session.user.kill_switch) todo.push(["Your agents are paused", "The kill switch is on, so agents can't draft or post.", "Agents", "agents"]);
-  const box = $("#todo");
-  box.innerHTML = todo.length ? todo.map(([t, sub, btn, go]) => `<li data-testid="todo-item"><div class="what"><span>${t}</span><small>${sub}</small></div><button class="${go === "approvals" ? "btn accent sm" : "btn2 sm"}" data-testid="todo-go" data-go="${go}">${btn}</button></li>`).join("")
-    : `<li data-testid="todo-item"><span class="calm-dot" aria-hidden="true"></span><div class="what"><span>Nothing needs you right now</span><small>Paste a link above, or connect an agent to draft for you.</small></div></li>`;
-  box.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => (b.dataset.go === "refresh" ? loadChannels(true).then(loadHome) : showTab(b.dataset.go))));
-  const up = $("#upcoming");
-  up.innerHTML = upcoming.length ? "" : `<div class="empty"><b>Nothing scheduled yet</b><span>Posts you send to your Buffer queue show up here.</span></div>`;
-  upcoming.slice(0, 4).forEach((p) => up.insertAdjacentHTML("beforeend", postItem(p)));
+const IB_URG = { now: "Now", soon: "Soon", fyi: "This week" };
+const IB_ICON = {
+  approvals: '<path d="M5 12l5 5 9-10"/>', channels: '<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M4 4l16 16"/>',
+  failed: '<circle cx="12" cy="12" r="8"/><path d="M12 8v5M12 16h.01"/>', preflight: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
+  undated: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>', open_slots: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M12 13v4M10 15h4"/>',
+  plan: '<path d="M4 19h16M7 16V9M12 16V5M17 16v-4"/>' };
+const ibWhen = (iso) => { if (!iso) return ""; const d = new Date(iso); return d.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); };
+function ibItem(g, it) {
+  const acts = (it.actions || []).map((a) => a.href
+    ? `<a class="btn2 sm" data-testid="inbox-action" data-act="${esc(a.id)}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
+    : `<button type="button" class="${a.id === "approve" || a.id === "fix" ? "btn accent sm" : "btn2 sm"}" data-testid="inbox-action" data-act="${esc(a.id)}" data-go="${esc(a.go || "")}" data-id="${esc(it.id ?? "")}">${esc(a.label)}</button>`).join("");
+  if (g.key === "open_slots") return `<li class="ib-item" data-testid="inbox-item" data-group="${g.key}">${netBadge(it.service)}<div class="ib-what"><b>${esc(it.channel)}</b><small>${it.count} open · next ${esc(ibWhen(it.next))}</small></div></li>`;
+  if (g.key === "plan") return "";
+  const meta = [it.channel, it.agent ? "from " + it.agent : "", ibWhen(it.when)].filter(Boolean).map(esc).join(" · ");
+  return `<li class="ib-item" data-testid="inbox-item" data-group="${g.key}" data-ref="${esc(it.ref || "")}">${netBadge(it.service)}
+    <div class="ib-what"><small class="ib-meta">${meta}</small>${it.text ? `<span class="ib-text">${esc(it.text)}</span>` : ""}
+      ${it.reason ? `<span class="ib-reason${it.status === "warning" ? " warn" : ""}" data-testid="inbox-reason"><b class="sr">${it.status === "warning" ? "Warning" : "Problem"}: </b>${esc(it.reason)}</span>` : ""}</div>
+    ${acts ? `<div class="ib-acts">${acts}</div>` : ""}</li>`;
+}
+function netBadge(svc) { return `<span class="net svc-${esc(svc || "")}" aria-hidden="true">${esc((typeof NET_MARK !== "undefined" && NET_MARK[svc]) || (svc || "?").slice(0, 2))}</span>`; }
+function ibGroup(g) {
+  const acts = (g.actions || []).map((a) => a.href
+    ? `<a class="btn2 sm" data-testid="inbox-group-action" data-act="${esc(a.id)}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
+    : `<button type="button" class="btn2 sm" data-testid="inbox-group-action" data-act="${esc(a.id)}" data-go="${esc(a.go || "")}">${esc(a.label)}</button>`).join("");
+  const more = g.count > (g.items || []).length && g.key !== "plan" && g.key !== "open_slots" ? `<p class="muted sm ib-more">and ${g.count - g.items.length} more</p>` : "";
+  return `<section class="ib-group u-${g.urgency}" id="ib-${g.key}" data-testid="inbox-group" data-group="${g.key}" data-urgency="${g.urgency}" data-count="${g.count}" aria-labelledby="ibh-${g.key}">
+    <header class="ib-gh"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IB_ICON[g.key] || ""}</svg>
+      <h2 id="ibh-${g.key}" tabindex="-1">${esc(g.title)}</h2><span class="ib-count" data-testid="inbox-count" aria-label="${g.count} item${g.count === 1 ? "" : "s"}">${g.count}</span>
+      <span class="ib-urg">${IB_URG[g.urgency]}</span></header>
+    <p class="ib-sum" data-testid="inbox-group-summary">${esc(g.summary)}</p>
+    ${g.key === "plan" ? `<div class="plan" id="planBox" data-testid="plan-box"></div>` : ""}
+    ${(g.items || []).length && g.key !== "plan" ? `<ul class="ib-items">${g.items.map((it) => ibItem(g, it)).join("")}</ul>` : ""}${more}
+    ${acts ? `<div class="ib-gacts">${acts}</div>` : ""}</section>`;
+}
+async function ibGo(go, el) {
+  if (!go) return;
+  if (go.startsWith("planner:")) { if (typeof plOpenRef === "function") return plOpenRef(go.slice(8)); return showTab("planner"); }
+  showTab(go);
+}
+async function loadInbox() {
+  const box = $("#inboxGroups");
+  let d;
+  try { d = await api("/api/inbox"); } catch (e) { box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(e.message)}</div>`; box.removeAttribute("aria-busy"); return; }
+  box.removeAttribute("aria-busy");
+  ibBadge(d.needs_you);
+  const live = d.groups.filter((g) => g.count > 0), clear = d.groups.filter((g) => !g.count);
+  const now = live.filter((g) => g.urgency !== "fyi").reduce((n, g) => n + g.count, 0);
+  $("#inboxTitle").textContent = d.needs_you ? `Inbox · ${d.needs_you}` : "Inbox";
+  $("#inboxSummary").textContent = d.needs_you ? `${d.needs_you} thing${d.needs_you === 1 ? "" : "s"} need${d.needs_you === 1 ? "s" : ""} you, most urgent first.` : "You're all caught up. Nothing needs you right now.";
+  $("#inboxKill").hidden = !d.kill_switch;
+  $("#inboxJump").innerHTML = live.map((g) => `<a class="ib-chip u-${g.urgency}" href="#ib-${g.key}" data-testid="inbox-jump-chip" data-group="${g.key}"><span>${esc(g.title)}</span><b>${g.count}</b></a>`).join("");
+  box.innerHTML = (live.length ? live.map(ibGroup).join("") : "")
+    + (!now ? `<div class="ib-empty" data-testid="inbox-empty"><span class="calm-dot" aria-hidden="true"></span><div><b>All caught up</b><span>No approvals, bounces, warnings or undated drafts. Paste a link below, or let an agent draft for you.</span></div></div>` : "")
+    + (clear.length ? `<details class="ib-clear" data-testid="inbox-clear"><summary data-testid="inbox-clear-toggle">All clear: ${clear.map((g) => esc(g.title.toLowerCase())).join(", ")}</summary><ul>${clear.map((g) => `<li data-testid="inbox-clear-item" data-group="${g.key}"><span class="calm-dot" aria-hidden="true"></span>${esc(g.summary)}</li>`).join("")}</ul></details>` : "");
+  $("#inboxJump").querySelectorAll("a").forEach((a) => (a.onclick = (e) => { e.preventDefault(); const h = $("#ibh-" + a.dataset.group); h.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); h.focus({ preventScroll: true }); }));
+  box.querySelectorAll("button[data-act]").forEach((b) => (b.onclick = async () => {
+    const act = b.dataset.act;
+    if (act === "approve") {
+      b.disabled = true;
+      try { await api(`/api/approvals/${b.dataset.id}/approve`, { method: "POST", body: {} }); toast("Approved. It's in your Buffer queue."); refreshBadge(); loadInbox(); }
+      catch (e) { toast(e.message, 6000); b.disabled = false; }
+      return;
+    }
+    if (act === "refresh") return loadChannels(true).then(loadInbox);
+    ibGo(b.dataset.go, b);
+  }));
   loadPlan();
+  const up = $("#upcoming");
+  api("/api/queue?status=scheduled").then((upcoming) => {
+    up.innerHTML = upcoming.length ? "" : `<div class="empty"><b>Nothing scheduled yet</b><span>Posts you send to your Buffer queue show up here.</span></div>`;
+    upcoming.slice(0, 4).forEach((p) => up.insertAdjacentHTML("beforeend", postItem(p)));
+  }).catch(() => (up.innerHTML = ""));
   const hs = $("#homeStories");
   api("/api/radar").then((r) => {
     hs.innerHTML = r.stories.length ? r.stories.slice(0, 3).map(storyItem).join("")
@@ -343,6 +397,9 @@ async function loadHome() {
     wireStories(hs);
   }).catch(() => (hs.innerHTML = ""));
 }
+function ibBadge(n) { const b = $("#inboxBadge"); b.textContent = n; b.hidden = !n; const m = $("#moreBadge"); if (m) { m.textContent = n; m.hidden = !n; } }
+$("#inboxRefresh").onclick = () => loadInbox();
+$("[data-testid=inbox-kill-open]").onclick = () => showTab("agents");
 // ---------------------------------------------------------------- plan limits: warn before Buffer says no
 async function loadPlan() {
   let p; try { p = await api("/api/plan"); } catch (_) { return; }
@@ -428,7 +485,7 @@ function postItem(p) {
 async function refreshBadge() {
   try {
     const r = await api("/api/approvals");
-    for (const b of [$("#apprBadge"), $("#homeBadge")]) { b.textContent = r.length; b.hidden = !r.length; }
+    const b = $("#apprBadge"); b.textContent = r.length; b.hidden = !r.length;
     return r;
   } catch (_) { return []; }
 }

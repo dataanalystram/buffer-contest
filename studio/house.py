@@ -857,7 +857,7 @@ class House:
         items = []
         u = self.store.user(a.uid)
         chans = {c["id"]: c for c in self.studio.channels(a)}
-        for status in ("scheduled", "sent", "draft"):
+        for status in ("scheduled", "sent", "draft", "error"):
             try:
                 posts = self.studio.buffer.posts(a.uid, u["org_id"], [status], first=60)
             except Exception:
@@ -867,7 +867,8 @@ class House:
                 assets = p.get("assets") or []
                 first = (assets[0] or {}) if assets else {}
                 thumb = first.get("thumbnail") or ("" if "video" in str(first.get("type", "")) else first.get("source", "")) or ""
-                items.append({"kind": "buffer", "status": status, "state": status, "ref": f"buffer:{p.get('id')}",
+                items.append({"kind": "buffer", "status": status, "state": "failed" if status == "error" else status, "ref": f"buffer:{p.get('id')}",
+                              "error": ((p.get("error") or {}).get("message") or "") if status == "error" else "",
                               "when": p.get("dueAt") or p.get("sentAt") or "", "text": (p.get("text") or "")[:280],
                               "service": ch.get("service", ""), "channel": ch.get("displayName") or ch.get("name") or "",
                               "channel_id": p.get("channelId", ""), "id": p.get("id"), "thumb": thumb,

@@ -32,6 +32,12 @@ SEED_POSTS = [  # channel, hours from now (negative = already sent), text, image
     ("demo_x", -5, "Agents can draft. Humans approve. That's the whole policy.", "approve"),
     ("demo_li", -28, "What we learned shipping a scheduler in two weeks: cut scope early, test the boring paths.", "ship"),
 ]
+# what the Inbox shows in the sample: one post Buffer failed to publish, one scheduled post preflight would block
+SEED_FAILED = [("demo_ig", -2, "Five open models you can run on a laptop, ranked by speed.", "laptop",
+                "Instagram rejected the media: the image's aspect ratio is outside 4:5 to 1.91:1.")]
+SEED_LONG = ("demo_x", 52, "Sample: our full weekly roundup, written too long for X on purpose so preflight flags it. "
+             "This week: open models got faster, agents learned to ask before they post, two schedulers shipped approval "
+             "steps, and we finally wrote down the checklist we use every morning before anything goes out.", "")
 SEED_DRAFTS = [  # channel, hours from now (None = no date yet), text, image seed
     ("demo_th", None, "Draft: a short thread on why every agent needs a kill switch.", ""),
     ("demo_ig", None, "Draft: carousel idea, five open models you can run on a laptop.", "laptop"),
@@ -91,6 +97,15 @@ class DemoBuffer:
                                   "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z") if h is not None else None,
                                   "assets": [_image(IMG.format(img))] if img else [], "externalLink": None}
                                  for i, (ch, h, t, img) in enumerate(SEED_DRAFTS)]
+            n = len(self._posts[uid])
+            self._posts[uid] += [{"id": f"dp{n + i}", "text": t, "status": "error", "channelId": ch, "error": {"message": why},
+                                  "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                                  "assets": [_image(IMG.format(img))] if img else [], "externalLink": None}
+                                 for i, (ch, h, t, img, why) in enumerate(SEED_FAILED)]
+            ch, h, t, img = SEED_LONG
+            self._posts[uid].append({"id": f"dp{len(self._posts[uid])}", "text": t, "status": "scheduled", "channelId": ch,
+                                     "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z"), "assets": [],
+                                     "externalLink": None})
         return self._posts[uid]
 
     def channels(self, uid: str, org_id: str = "", refresh: bool = False) -> list[dict]:
@@ -124,6 +139,8 @@ class DemoBuffer:
             post["dueAt"] = inp["dueAt"]
         if inp.get("saveToDraft") is False and post["status"] == "draft":
             post["status"] = "scheduled"
+        if post["status"] == "error" and "dueAt" in inp:  # a failed post given a new time goes back in the queue
+            post["status"], post["error"] = "scheduled", None
         return {k: post[k] for k in ("id", "text", "status", "dueAt", "channelId")}
 
     def delete_post(self, uid: str, post_id: str) -> dict:
