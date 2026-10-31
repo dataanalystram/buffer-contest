@@ -51,8 +51,8 @@ def test_link_to_buffer_draft_and_agent_approval(live, chromium):
         page = ctx.new_page()
         page.goto(base)
         page.get_by_test_id("agent-go").wait_for()  # HuhQueue opens on the agent
-        page.get_by_test_id("tab-home").click()
-        page.get_by_test_id("todo-item").first.wait_for()
+        page.get_by_test_id("tab-inbox").click()
+        page.get_by_test_id("inbox-item").first.wait_for()
         page.get_by_test_id("tab-studio").click()
         page.get_by_test_id("channel-chip").first.wait_for()
         assert page.get_by_test_id("channel-chip").count() == 3
