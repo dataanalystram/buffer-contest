@@ -1,0 +1,177 @@
+/* HuhQueue premium layer (v2, approved prototypes in work/plans/premium_ui/v2): loaded after style.css and responsive.css.
+   Same Taste tokens; adds the type scale, elevation, status tints, the brand lockup, the command palette, the shortcuts
+   sheet, toasts with Undo, skeletons and the three new Planner views (Day, Board, Grid). No new colours: the accent still
+   only marks what is waiting for a person. */
+:root{
+  --t-draft:#f1f2f2;--t-approval:#fbe7f0;--t-ready:#fbf1dc;--t-scheduled:#e9effb;--t-sent:#e4f1f0;--t-failed:#fdecea;
+  --e1:0 1px 0 rgba(26,28,30,.04);--e2:0 1px 2px rgba(26,28,30,.08),0 6px 20px rgba(26,28,30,.10);--e3:0 2px 6px rgba(26,28,30,.10),0 24px 64px rgba(26,28,30,.18);
+  --scrim:rgba(18,19,20,.38);--r-card:10px;--r-tile:14px;--r-sheet:20px;--ease-out:cubic-bezier(.2,.8,.2,1);--slow:320ms;
+}
+@media (prefers-color-scheme:dark){:root{
+  --t-draft:#1f2022;--t-approval:#3d1529;--t-ready:#2e2611;--t-scheduled:#172338;--t-sent:#122a29;--t-failed:#3a1714;
+  --e1:0 1px 0 rgba(0,0,0,.3);--e2:0 1px 2px rgba(0,0,0,.5),0 6px 20px rgba(0,0,0,.55);--e3:0 2px 6px rgba(0,0,0,.5),0 24px 64px rgba(0,0,0,.6);--scrim:rgba(0,0,0,.55);
+}}
+::selection{background:var(--accent-soft);color:var(--ink)}
+html{scrollbar-color:var(--line-strong) transparent}
+body{text-rendering:optimizeLegibility}
+
+/* ---------- brand lockup: HuhQueue by HuhByte AI (the mark on its own dark tile, crisp on light and dark) */
+.brand img.hb{width:32px;height:32px;border-radius:8px;display:block;flex:none}
+.brand .name .by{font-weight:400;color:var(--muted);font-size:14px}
+.wm{display:inline-block;height:16px;width:auto;vertical-align:middle}
+.wm.dk{display:none}
+@media (prefers-color-scheme:dark){.wm.lt{display:none}.wm.dk{display:inline-block}}
+.foot-in{align-items:center}
+.foot-brand{display:inline-flex;align-items:center;gap:8px;color:var(--ink);font-size:13px}
+.foot-links{flex-wrap:wrap}
+.foot-links a{min-height:44px;display:inline-flex;align-items:center}
+
+/* ---------- header: search trigger + Help menu */
+.top{backdrop-filter:saturate(1.2) blur(12px);-webkit-backdrop-filter:saturate(1.2) blur(12px);background:color-mix(in oklab,var(--paper) 88%,transparent)}
+.hq-cmdk{display:inline-flex;align-items:center;gap:10px;height:40px;min-width:44px;padding:0 10px 0 12px;border:1px solid var(--line);border-radius:999px;background:var(--sunken);color:var(--muted);font-size:14px;cursor:pointer;transition:border-color 120ms ease-out,color 120ms ease-out}
+.hq-cmdk:hover{border-color:var(--line-strong);color:var(--ink)}
+.hq-cmdk .lbl{min-width:120px;text-align:left}
+kbd,.kb{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:4px;border:1px solid var(--line);border-bottom-width:2px;background:var(--raised);color:var(--muted);font:12px var(--mono)}
+.help .menu a{display:flex;align-items:center;min-height:40px;padding:0 12px;border-radius:4px;color:var(--ink);text-decoration:none;font-size:14px}
+.help .menu a:hover,.help .menu a:focus-visible{background:var(--sunken)}
+.help .menu button{min-height:40px}
+.help .btn2{gap:6px}
+@media (max-width:860px){.hq-cmdk .lbl,.hq-cmdk .kb,.help .btn2 .lbl{display:none}.help .btn2{width:44px;padding:0}.hq-cmdk{width:44px;height:44px;justify-content:center;padding:0}}
+
+/* ---------- page heads: lighter, larger display type (Taste: one family, weight 300 for display) */
+.page-title{font-size:clamp(30px,3.2vw,44px);line-height:1.05;letter-spacing:-.03em;text-wrap:balance}
+.panel{border-radius:var(--r-tile);box-shadow:var(--e1)}
+.btn,.btn2{transition:opacity 120ms ease-out,background-color 120ms ease-out,transform 120ms ease-out}
+.btn:active,.btn2:active,.link:active{transform:translateY(1px)}
+
+/* ---------- segmented control: one dark indicator per group (no colour change beyond ink) */
+.seg{background:var(--sunken);border-color:var(--line)}
+.seg button{min-height:32px;font-weight:600;transition:background-color 200ms var(--ease-out),color 200ms var(--ease-out)}
+.seg button.on,.seg button[aria-selected=true]{box-shadow:var(--e1)}
+.pl-views{flex-wrap:nowrap;overflow-x:auto;max-width:100%;scrollbar-width:none}
+.pl-views::-webkit-scrollbar{display:none}
+.pl-views button{min-width:56px;padding:6px 12px}
+.pl-nav.off{visibility:hidden}
+
+/* ---------- command palette (native dialog, listbox) */
+dialog.cmdk{padding:0;border:1px solid var(--line);border-radius:var(--r-tile);background:var(--raised);color:var(--ink);width:calc(100% - 32px);max-width:640px;max-height:min(540px,calc(100dvh - 96px));margin:12vh auto auto;box-shadow:var(--e3);overflow:hidden}
+dialog.cmdk::backdrop,dialog.sheet::backdrop{background:var(--scrim)}
+.cmdk .q{display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--line)}
+.cmdk .q .ic{width:18px;height:18px;color:var(--muted)}
+.cmdk .q input{flex:1;border:0!important;height:56px!important;font-size:16px!important;background:none!important;padding:0!important;outline:0!important}
+.cmdk ul{list-style:none;margin:0;padding:8px;overflow:auto;max-height:420px}
+.cmdk .g{font-size:12px;color:var(--muted);padding:12px 12px 4px;font-weight:600}
+.cmdk li[role=option]{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 12px;border-radius:var(--r-card);cursor:pointer;font-size:14px}
+.cmdk li[role=option] .h{color:var(--muted);font-size:13px}
+.cmdk li[role=option] .k{margin-left:auto;display:flex;gap:4px}
+.cmdk li[aria-selected=true]{background:var(--sunken)}
+.cmdk li[aria-selected=true] .ic{color:var(--accent)}
+.cmdk footer{display:flex;gap:16px;flex-wrap:wrap;padding:8px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.cmdk footer span{display:inline-flex;gap:4px;align-items:center}
+.cmdk .none{padding:24px 16px;color:var(--muted);font-size:14px}
+dialog.sheet{padding:24px;border:1px solid var(--line);border-radius:var(--r-sheet);background:var(--raised);color:var(--ink);width:calc(100% - 32px);max-width:560px;box-shadow:var(--e3)}
+dialog.sheet h2{font-size:20px;font-weight:600;margin-bottom:16px}
+.keys{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;align-items:center;font-size:14px;margin:0}
+.keys dt{display:flex;gap:4px}.keys dd{margin:0;color:var(--muted)}
+.sheet-act{margin-top:24px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+@media (prefers-reduced-motion:no-preference){dialog.cmdk[open],dialog.sheet[open]{animation:pop-in 160ms var(--ease-out)}@keyframes pop-in{from{opacity:0;transform:scale(.98) translateY(-4px)}}}
+
+/* ---------- toast: one live region, optional Undo */
+#toast{display:flex;align-items:center;gap:12px;border-radius:var(--r-tile);box-shadow:var(--e2);padding:12px 12px 12px 16px;font-size:14px}
+#toast .toast-undo{border:0;background:none;color:var(--paper);font-weight:600;cursor:pointer;min-height:36px;padding:0 8px;border-radius:6px;text-decoration:underline;text-underline-offset:3px}
+@media (prefers-reduced-motion:no-preference){#toast:not([hidden]){animation:toast-in 200ms var(--ease-out)}@keyframes toast-in{from{opacity:0;transform:translate(-50%,8px)}}}
+
+/* ---------- skeletons and states: loading never shows a blank pane */
+.pl-skel span,.sk{background:linear-gradient(90deg,var(--sunken),color-mix(in oklab,var(--sunken) 60%,var(--paper)),var(--sunken));background-size:200% 100%}
+@media (prefers-reduced-motion:no-preference){.pl-skel span,.sk{animation:shimmer 1.4s linear infinite}@keyframes shimmer{to{background-position:-200% 0}}}
+#inboxGroups[aria-busy=true]:empty{min-height:240px;border-radius:var(--r-tile);background:linear-gradient(var(--sunken) 0 0) 0 0/100% 88px no-repeat,linear-gradient(var(--sunken) 0 0) 0 104px/100% 64px no-repeat,linear-gradient(var(--sunken) 0 0) 0 184px/70% 56px no-repeat}
+.st.err,.state-box.err{border:1px solid var(--bad);border-radius:var(--r-tile);padding:16px 20px;background:var(--t-failed);color:var(--ink)}
+.empty{border-radius:var(--r-tile)}
+
+/* ---------- Inbox (v2): softer groups, status tints, clear primary action */
+.ib-group{border-radius:var(--r-tile);box-shadow:var(--e1)}
+.ib-group.u-now{border-left-width:1px;border-color:var(--line);box-shadow:inset 3px 0 0 var(--accent),var(--e1)}
+.ib-group.u-soon{border-left-width:1px;border-color:var(--line);box-shadow:inset 3px 0 0 var(--warn),var(--e1)}
+.ib-urg{text-transform:none;letter-spacing:0;font-size:12px}
+.ib-chip{min-height:44px}
+
+/* ---------- Planner cards: status tints (colour + word, never colour alone) */
+.pl-card{border-radius:var(--r-card);box-shadow:var(--e1);transition:box-shadow 120ms ease-out}
+.pl-card:hover{box-shadow:var(--e2)}
+.pl-card.s-approval{background:color-mix(in oklab,var(--t-approval) 45%,var(--raised))}
+.pl-card.s-failed{background:color-mix(in oklab,var(--t-failed) 45%,var(--raised))}
+.pl-chip.s-draft{border-style:dashed;border-left-style:solid;border-left-color:var(--line-strong)}
+.pl-chip.s-failed,.pl-card.s-failed{border-left-color:var(--bad)}
+.pl-chip.s-ready,.pl-card.s-ready{border-left-color:var(--warn)}
+.pl-week-scroll{border-radius:var(--r-tile)}
+
+/* Day: one lane per channel */
+.pl-dayv{grid-template-columns:60px repeat(var(--lanes,3),minmax(150px,1fr));min-width:calc(60px + var(--lanes,3) * 150px)}
+.pl-dayv .pl-wh{flex-direction:row;align-items:center;gap:8px;justify-content:flex-start;padding:8px 10px}
+.pl-dayv .pl-wh .dw{font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pl-dayv .pl-wh .dc{margin-left:auto}
+
+/* Board: a column per status */
+.pl-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,1fr);gap:12px;overflow-x:auto;padding-bottom:8px;scroll-snap-type:x proximity}
+.pl-col{background:var(--sunken);border-radius:var(--r-tile);padding:12px;min-height:320px;display:flex;flex-direction:column;gap:10px;scroll-snap-align:start;min-width:0}
+.pl-col h3{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+.pl-col h3 .pill{margin-left:auto}
+.pl-dot{width:8px;height:8px;border-radius:99px;background:var(--subtle);flex:none}
+.pl-dot.s-approval{background:var(--accent)}.pl-dot.s-scheduled{background:var(--focus)}.pl-dot.s-sent{background:var(--ok)}.pl-dot.s-failed{background:var(--bad)}.pl-dot.s-ready{background:var(--warn)}
+.pl-dot.s-draft{background:transparent;border:1.5px dashed var(--line-strong)}
+.pl-col-body{display:flex;flex-direction:column;gap:8px;flex:1;border-radius:var(--r-card);transition:background-color 120ms ease-out}
+.pl-col-body.over{background:var(--accent-soft)}
+.pl-col .pl-card{flex-direction:column;gap:8px}
+.pl-col .pl-card .pl-thumb{display:none}
+.pl-col .pl-meta .nw{display:none}
+.pl-col .pl-cap{-webkit-line-clamp:3;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
+.pl-col-empty{padding:12px 4px}
+
+/* Grid: the Instagram feed preview */
+.pl-grid-wrap{max-width:720px;display:flex;flex-direction:column;gap:12px}
+.pl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.pl-tile{position:relative;aspect-ratio:4/5;border:0;padding:0;background:var(--sunken);border-radius:4px;overflow:hidden;cursor:pointer;color:var(--ink);font:inherit;text-align:left}
+.pl-tile img{width:100%;height:100%;object-fit:cover;display:block}
+.pl-tile.planned{outline:2px dashed var(--line-strong);outline-offset:-2px}
+.pl-tile.planned.s-approval{outline-color:var(--accent)}
+.pl-tile-txt{position:absolute;inset:10px 10px 34px;font-size:13px;line-height:1.35;overflow:hidden}
+.pl-tile-meta{position:absolute;left:6px;bottom:6px;right:6px;font-size:12px;font-weight:600;background:color-mix(in oklab,var(--paper) 88%,transparent);color:var(--ink);padding:3px 6px;border-radius:4px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-tile:hover{filter:brightness(.97)}
+
+@media (max-width:600px){
+  .pl-board{grid-auto-columns:minmax(78vw,1fr)}
+  .pl-grid{gap:2px}
+  .pl-tile-meta{font-size:11px}
+}
+@media (prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important;scroll-behavior:auto!important}}
+
+/* ---------- Connect AI apps */
+.cx-addr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 16px;align-items:center}
+.cx-addr code{display:block;margin-top:6px;font-size:15px;word-break:break-all}
+.cx-addr p{grid-column:1/-1}
+.cx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:16px;margin-bottom:24px}
+.cx-card{border:1px solid var(--line);border-radius:var(--r-tile);background:var(--raised);padding:20px;display:flex;flex-direction:column;gap:14px;box-shadow:var(--e1);min-width:0}
+.cx-card header{display:grid;grid-template-columns:40px minmax(0,1fr);gap:12px;align-items:center}
+.cx-card h2{font-size:17px;font-weight:600}
+.cx-mark{width:40px;height:40px;border-radius:10px;background:var(--ink);color:var(--paper);display:grid;place-items:center;font:600 13px var(--mono)}
+.cx-status{grid-column:1/-1;justify-self:start;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.cx-status:before{content:"";width:7px;height:7px;border-radius:99px;background:var(--subtle)}
+.cx-status.on{color:var(--ink)}.cx-status.on:before{background:var(--ok)}
+.cx-steps{margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:6px}
+.cx-snip{position:relative}
+.cx-snip pre{margin:0;font-size:12px;white-space:pre-wrap;word-break:break-all;padding-right:72px}
+.cx-snip .btn2{position:absolute;top:8px;right:8px}
+.cx-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:auto}
+@media (max-width:600px){.cx-addr{grid-template-columns:minmax(0,1fr)}}
+.oauth-sheet h2{font-size:20px;font-weight:600;margin-bottom:12px}
+.oauth-acts{display:flex;flex-direction:column;gap:8px;margin:20px 0 12px}
+.oauth-acts .btn,.oauth-acts .btn2{min-height:48px}
+.oauth-hint{font-size:13px;margin-bottom:16px}
+.top-right{min-width:0}
+#acctBtn{max-width:clamp(88px,26vw,260px)}
+@media (max-width:1023px){.seg button{min-height:44px}}
+@media (max-width:600px){.top{gap:8px;padding:8px 12px}.top-right{gap:6px;flex:1;justify-content:flex-end}#budgetPill{display:none}.brand .name .by{display:none}}
+.brand{min-height:44px}
+@media (max-width:600px){.pl-mday .pl-chip{min-width:44px}}
+.pl-tile img{position:absolute;inset:0}
+.pl-dayv .pl-wh .dw{text-transform:none;letter-spacing:0;font-size:13px}

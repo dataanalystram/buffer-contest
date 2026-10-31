@@ -5,7 +5,7 @@
 // Wrapped in its own scope: every script on the page shares one global scope, and a top-level `const T` here collided
 // with take.js's `const T`, which made the browser reject this whole file (no auto-open, a dead "Take the tour").
 (() => {
-const FIRST_URL_DEMO = new URLSearchParams(location.search).get("demo") === "1"; // read before boot rewrites the URL
+const FIRST_URL_DEMO = new URLSearchParams(location.search).get("demo") === "1" && !new URLSearchParams(location.search).get("url"); // read before boot rewrites the URL; a link from the landing goes straight to drafting
 const TOUR_KEY = "hq_tour_done";
 const TOUR = [
   { tab: "inbox", target: "#inboxGroups", title: "Your Inbox",
@@ -15,7 +15,7 @@ const TOUR = [
   { tab: "take", target: "[data-testid=take-sample]", title: "One take → a week",
     body: "Try the sample take: one talk becomes three captioned clips. The Spread drops them into the open posting times of your week as drafts." },
   { tab: "planner", target: "#plMain", title: "Planner",
-    body: "List, Week and Month in one place. Drag a post to move it, or a draft from No date onto the week. Preflight checks every change, and Fix it repairs what it can." },
+    body: "Week, Month, Day, List, Board and Grid on the same posts. Drag a post to move it, or a draft from No date onto the week. Preflight checks every change, and Fix it repairs what it can." },
   { tab: "brand", target: "#kitForm", title: "Brand and Style Ledger",
     body: "Import your colors and logo from your website, or set them here. Every correction you give becomes a rule the agent never forgets." },
   { tab: "agents", target: "#tokenForm", title: "Agents and MCP",

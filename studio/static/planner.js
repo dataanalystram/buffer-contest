@@ -1,11 +1,14 @@
-// HuhQueue Planner: one place for the Buffer queue and the calendar. List | Week | Month, filters, a timezone, "No date"
+// HuhQueue Planner: one place for the Buffer queue and the calendar. Week | Month | Day | List | Board | Grid on the same
+// data (one /api/calendar read), filters, a timezone, "No date"
 // drafts, Buffer posting times, click an empty slot to schedule, drag to reschedule. Every move goes through the same
 // actions as REST and MCP: PATCH-style reschedule of Buffer posts (studio.update_post), approvals get a time, ready
 // packages go through preview -> submit. Ported from the HuhQueue calendar (dataanalystram/bufferopensource, MIT).
 "use strict";
 const PL = { view: "week", date: "", ch: new Set(), type: "", status: "", q: "", tz: "", nodate: false, slots: true,
              data: null, loading: false, req: 0, edit: null, extra: [], open: "" };
-const plPhone = () => matchMedia("(max-width:600px)").matches; // week and month become an agenda on a phone
+const plPhone = () => matchMedia("(max-width:600px)").matches; // week and day become an agenda on a phone
+const PL_VIEWS = ["week", "month", "day", "list", "board", "grid"];
+const PL_BOARD = [["draft", "Draft"], ["approval", "Needs approval"], ["ready", "Ready to post"], ["scheduled", "Scheduled in Buffer"], ["sent", "Sent"], ["failed", "Failed in Buffer"]];
 const PL_KEY = "hq_planner";
 const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft", failed: "Failed in Buffer", ghost: "Planned clip (not saved yet)" };
 const PL_TYPES = { text: "Text", image: "Image", carousel: "Carousel", video: "Video or Reel" };
@@ -42,7 +45,7 @@ const todayYmd = () => zoned(new Date(), PL.tz).ymd;
 function plLoadState() {
   let saved = {}; try { saved = JSON.parse(localStorage.getItem(PL_KEY) || "{}"); } catch (_) {}
   const u = new URLSearchParams(location.search), g = (k) => (u.has(k) ? u.get(k) : saved[k]);
-  PL.view = ["list", "week", "month"].includes(g("view")) ? g("view") : "week";
+  PL.view = PL_VIEWS.includes(g("view")) ? g("view") : "week";
   PL.date = /^\d{4}-\d{2}-\d{2}$/.test(g("date") || "") ? g("date") : "";
   PL.ch = new Set(String(g("ch") || "").split(",").filter(Boolean));
   PL.type = PL_TYPES[g("type")] ? g("type") : "";
@@ -66,12 +69,16 @@ const plFiltersActive = () => PL.ch.size || PL.type || PL.status || PL.q;
 function plRange() {
   const anchor = PL.date || todayYmd();
   if (PL.view === "week") { const s = mondayOf(anchor); return { days: Array.from({ length: 7 }, (_, i) => addDays(s, i)), anchor }; }
-  if (PL.view === "list") { const s = PL.date || todayYmd(); return { days: Array.from({ length: 28 }, (_, i) => addDays(s, i)), anchor }; }
+  if (PL.view === "list" || PL.view === "board") { const s = PL.date || todayYmd(); return { days: Array.from({ length: 28 }, (_, i) => addDays(s, i)), anchor }; }
+  if (PL.view === "day") return { days: [anchor], anchor };
+  if (PL.view === "grid") return { days: [], anchor, all: true };
   const first = anchor.slice(0, 8) + "01", s = mondayOf(first);
   return { days: Array.from({ length: 42 }, (_, i) => addDays(s, i)), anchor, month: first.slice(0, 7) };
 }
 function plTitle(r) {
   if (PL.view === "month") return dayLabel(r.month + "-15", { month: "long", year: "numeric" });
+  if (PL.view === "day") return dayLabel(r.days[0], { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  if (PL.view === "grid") return "Feed preview";
   const a = r.days[0], b = r.days[r.days.length - 1];
   return `${dayLabel(a, { day: "numeric", month: "short" })} – ${dayLabel(b, { day: "numeric", month: "short", year: "numeric" })}`;
 }
@@ -145,7 +152,9 @@ function plDraw() {
   const byDay = {};
   for (const i of dated) (byDay[i.z.ymd] ||= []).push(i);
   for (const k in byDay) byDay[k].sort((a, b) => new Date(a.when) - new Date(b.when));
-  const count = dated.filter((i) => i.kind !== "ghost" && inRange.has(i.z.ymd) && (PL.view !== "month" || i.z.ymd.startsWith(r.month))).length;
+  const count = PL.view === "grid" ? plGridItems(vis).length
+    : dated.filter((i) => i.kind !== "ghost" && inRange.has(i.z.ymd) && (PL.view !== "month" || i.z.ymd.startsWith(r.month))).length
+      + (PL.view === "board" ? undated.filter((i) => i.kind !== "ghost").length : 0);
   $("#plTitle").textContent = plTitle(r);
   $("#plCount").textContent = `${count} post${count === 1 ? "" : "s"}`;
   $("#plTzNote").textContent = PL.tz.replace(/_/g, " ");
@@ -153,7 +162,11 @@ function plDraw() {
   main.dataset.view = PL.view;
   if (PL.view === "list") main.innerHTML = plList(r, byDay);
   else if (PL.view === "week") main.innerHTML = plPhone() ? plAgenda(r, byDay) : plWeek(r, byDay);
+  else if (PL.view === "day") main.innerHTML = plPhone() ? plAgenda(r, byDay) : plDay(r, byDay);
+  else if (PL.view === "board") main.innerHTML = plBoard(r, dated, undated);
+  else if (PL.view === "grid") main.innerHTML = plGrid(vis);
   else main.innerHTML = plMonth(r, byDay);
+  $("#tab-planner .pl-nav").classList.toggle("off", PL.view === "grid");
   main.dataset.phone = plPhone() ? "1" : "";
   // No date sidebar
   const side = $("#plNoDate");
@@ -165,7 +178,11 @@ function plDraw() {
   }
   plWire();
   const sc = $(".pl-week-scroll");
-  if (sc) sc.scrollTop = keep ?? 7 * ROW_H;
+  if (sc) {
+    const days = PL.view === "day" ? [r.days[0]] : r.days;  // Day and Week open at the first post of the range
+    const first = Math.min(...days.flatMap((d) => (byDay[d] || []).filter((i) => i.kind !== "ghost").map((i) => i.z.h)), 24);
+    sc.scrollTop = keep ?? (first < 24 ? Math.max(0, first - 1) : 7) * ROW_H;
+  }
 }
 function plEmpty() {
   return `<div class="pl-empty" data-testid="planner-empty"><svg class="ic lg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
@@ -270,12 +287,78 @@ function plMonth(r, byDay) {
   return h + `</div></div>`;
 }
 
+// Day: one lane per channel, the same hour rows as the week (drop on a lane cell to move, click an empty cell to create)
+function plDay(r, byDay) {
+  const d = r.days[0], t = todayYmd(), now = zoned(new Date(), PL.tz), slots = plSlotMap(r.days);
+  const chans = S.channels.filter((c) => !c.isDisconnected && (!PL.ch.size || PL.ch.has(c.id)));
+  if (!chans.length) return plEmpty();
+  const items = byDay[d] || [];
+  let h = `<div class="pl-week-scroll pl-day-scroll" data-testid="planner-day-view"><div class="pl-week pl-dayv" role="grid" aria-label="${esc(dayLabel(d, { weekday: "long", day: "numeric", month: "long" }))}" style="--lanes:${chans.length}">
+    <div class="pl-corner" aria-hidden="true">${esc(PL.tz.split("/").pop().replace(/_/g, " "))}</div>`;
+  for (const c of chans) {
+    const n = items.filter((i) => i.channel_id === c.id).length;
+    h += `<div class="pl-wh${d === t ? " today" : ""}" role="columnheader">${netMark(c.service)}<span class="dw">${esc(c.displayName || c.name)}</span><span class="dc" data-testid="planner-day-count">${n ? `${n} post${n === 1 ? "" : "s"}` : "&nbsp;"}</span></div>`;
+  }
+  for (let hr = 0; hr < 24; hr++) {
+    h += `<div class="pl-hr" aria-hidden="true">${esc(timeLabel(hr, 0))}</div>`;
+    for (const c of chans) {
+      const its = items.filter((i) => i.channel_id === c.id && i.z.h === hr), sl = (slots[`${d}|${hr}`] || []).filter((x) => x.ch === c.id);
+      const nowLine = d === t && now.h === hr ? `<span class="pl-now" style="top:${(now.mi / 60) * 100}%" aria-hidden="true"></span>` : "";
+      h += `<div class="pl-cell${d === t ? " today" : ""}" role="gridcell" data-testid="planner-slot" data-day="${d}" data-hour="${hr}" data-lane="${esc(c.id)}" aria-label="${esc((c.displayName || c.name) + ", " + timeLabel(hr, 0))}">${nowLine}`
+        + its.map(plChip).join("")
+        + (its.length ? "" : sl.slice(0, 1).map((x) => `<span class="pl-slotmark" data-testid="planner-posting-time" data-day="${d}" data-hour="${x.h}" data-min="${x.mi}" data-ch="${esc(x.ch)}">${esc(timeLabel(x.h, x.mi))}</span>`).join(""))
+        + `</div>`;
+    }
+  }
+  return h + `</div></div>`;
+}
+// Board: one column per status. Status is Buffer's, so only a draft, a ready package or a post waiting for approval can be
+// dropped on "Scheduled in Buffer" (it opens the schedule dialog); Sent and Failed are set by Buffer alone.
+function plBoard(r, dated, undated) {
+  const inRange = new Set(r.days), cards = [...dated.filter((i) => inRange.has(i.z.ymd)), ...undated].filter((i) => i.kind !== "ghost");
+  if (!cards.length) return plEmpty();
+  return `<div class="pl-board" data-testid="planner-board">${PL_BOARD.map(([st, name]) => {
+    const col = cards.filter((i) => i.state === st).sort((a, b) => (a.when ? new Date(a.when) : 9e15) - (b.when ? new Date(b.when) : 9e15));
+    return `<section class="pl-col s-${st}" data-testid="planner-board-col" data-col="${st}" aria-label="${esc(name)}, ${col.length}">
+      <h3><span class="pl-dot s-${st}" aria-hidden="true"></span>${esc(name)}<span class="pill sm">${col.length}</span></h3>
+      <div class="pl-col-body" data-drop="${st}">${col.map((i) => plCard(i)).join("") || `<p class="muted xs pl-col-empty">Nothing here.</p>`}</div></section>`;
+  }).join("")}</div>`;
+}
+// Grid: how the Instagram feed will look. Newest first, planned posts dashed with their time, sent posts solid.
+function plGridItems(vis) {
+  const ig = new Set(S.channels.filter((c) => c.service === "instagram").map((c) => c.id));
+  return vis.filter((i) => ig.has(i.channel_id) && i.kind !== "ghost" && i.state !== "failed").sort((a, b) => (b.when ? new Date(b.when) : 9e15) - (a.when ? new Date(a.when) : 9e15));
+}
+function plGrid(vis) {
+  const its = plGridItems(vis);
+  if (!S.channels.some((c) => c.service === "instagram")) return `<div class="pl-empty" data-testid="planner-empty"><b>No Instagram channel</b><span>The grid previews an Instagram feed. Connect one in Buffer, then refresh channels.</span></div>`;
+  if (!its.length) return plEmpty();
+  return `<div class="pl-grid-wrap"><div class="pl-grid" data-testid="planner-grid" role="list" aria-label="Instagram feed preview, newest first">${its.map((i) => `<button type="button" role="listitem" class="pl-tile${i.state === "sent" ? "" : " planned"} s-${esc(i.state)}" data-testid="planner-grid-tile" data-ref="${esc(i.ref)}" aria-label="${esc((PL_STATES[i.state] || i.state) + ", " + plWhenFull(i) + ": " + (i.text || "media"))}">
+      <span class="pl-tile-txt">${esc((i.text || "").slice(0, 90))}</span>${i.thumb ? `<img src="${esc(i.thumb)}" alt="" loading="lazy">` : ""}
+      <span class="pl-tile-meta">${i.state === "sent" ? "Sent" : esc(plWhenFull(i))}</span></button>`).join("")}</div>
+    <p class="muted xs">Dashed tiles are planned; solid tiles are already on the feed. Click a tile to open it.</p></div>`;
+}
+function plWhenFull(i) { return i.z ? `${dayLabel(i.z.ymd, { weekday: "short", day: "numeric", month: "short" })}, ${timeLabel(i.z.h, i.z.mi)}` : "No date"; }
+// for the palette and the 1-6 keys
+function plSetView(v) {
+  if (!PL_VIEWS.includes(v)) return;
+  if (!PL.tz) plLoadState();
+  PL.view = v;
+  if ($("#tab-planner").hidden) { plSaveState(); showTab("planner"); } else plChanged();
+}
+// plSetView and plAct are top-level functions, so the palette and keys already reach them as window globals
+
 // ---------------------------------------------------------------- interactions
 function plFind(ref) { return [...(PL.data?.items || []), ...PL.extra].find((i) => i.ref === ref); }
 function plWire() {
   const root = $("#tab-planner");
   root.querySelectorAll("#plMain [data-act], #plNoDate [data-act]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plAct(b.dataset.act, b.dataset.ref, b); }));
-  root.querySelectorAll(".pl-chip").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plOpenItem(plFind(b.dataset.ref)); }));
+  root.querySelectorAll(".pl-chip,.pl-tile").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plOpenItem(plFind(b.dataset.ref)); }));
+  root.querySelectorAll("[data-drop]").forEach((col) => {
+    col.ondragover = (e) => { e.preventDefault(); col.classList.add("over"); };
+    col.ondragleave = () => col.classList.remove("over");
+    col.ondrop = (e) => { e.preventDefault(); col.classList.remove("over"); plBoardDrop(e.dataTransfer.getData("text/plain"), col.dataset.drop); };
+  });
   root.querySelectorAll("[draggable=true]").forEach((el) => {
     el.ondragstart = (e) => { e.dataTransfer.setData("text/plain", el.dataset.ref); e.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); document.body.classList.add("pl-dragging"); };
     el.ondragend = () => { el.classList.remove("dragging"); document.body.classList.remove("pl-dragging"); };
@@ -289,7 +372,7 @@ function plWire() {
       const mark = e.target.closest(".pl-slotmark");
       if (mark) return plCompose(mark.dataset.day, +mark.dataset.hour, +mark.dataset.min, mark.dataset.ch);
       if (plPhone() && cell.dataset.testid === "planner-day") return plPopover(cell.dataset.day, cell);
-      if (e.target === cell || e.target.classList.contains("dn")) plCompose(cell.dataset.day, cell.dataset.hour !== undefined ? +cell.dataset.hour : 9, 0);
+      if (e.target === cell || e.target.classList.contains("dn")) plCompose(cell.dataset.day, cell.dataset.hour !== undefined ? +cell.dataset.hour : 9, 0, cell.dataset.lane);
     };
   });
 }
@@ -347,6 +430,14 @@ function plMove(ref, day, hour) {
   if (inst <= new Date()) return toast("Pick a time in the future");
   i.when = inst.toISOString(); i.z = zoned(inst, PL.tz); plDraw();
   plReschedule(i, inst);
+}
+function plBoardDrop(ref, col) {
+  const i = plFind(ref);
+  if (!i || i.state === col) return;
+  if (col === "sent" || col === "failed") return toast("Only Buffer marks a post sent or failed");
+  if (col === "scheduled" && ["draft", "ready", "approval"].includes(i.state)) return plDialog(i.kind === "buffer" ? "edit" : "reschedule", i);
+  if (col === "approval") return toast("Agent posts land here by themselves; a post you write goes straight to Buffer");
+  toast("Change it from the card: approve, schedule or edit");
 }
 function plPopover(day, anchor) {
   const pop = $("#plPop"), items = plVisible().filter((i) => i.z && i.z.ymd === day).sort((a, b) => new Date(a.when) - new Date(b.when));
@@ -446,8 +537,9 @@ $("#plPrev").onclick = () => plShift(-1); $("#plNext").onclick = () => plShift(1
 $("#plToday").onclick = () => { PL.date = ""; plChanged(); };
 function plShift(n) {
   const a = PL.date || todayYmd();
+  if (PL.view === "grid") return;
   if (PL.view === "month") { const [y, m] = a.split("-").map(Number); PL.date = ymdUTC(Date.UTC(y, m - 1 + n, 1)); }
-  else PL.date = addDays(a, (PL.view === "list" ? 28 : 7) * n);
+  else PL.date = addDays(a, (PL.view === "list" || PL.view === "board" ? 28 : PL.view === "day" ? 1 : 7) * n);
   plChanged();
 }
 $("#plType").onchange = (e) => { PL.type = e.target.value; plChanged(); };
@@ -465,3 +557,6 @@ $("#plDlgAgent").onclick = () => { closeDlg(); showTab("agent"); };
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { planner: loadPlanner });
 let plWasPhone = plPhone();
 addEventListener("resize", () => { const p = plPhone(); if (p !== plWasPhone) { plWasPhone = p; if (!$("#tab-planner").hidden) plDraw(); } });
+
+// a feed tile whose image can't load shows its caption instead (no inline handlers under the CSP)
+document.addEventListener("error", (e) => { const t = e.target; if (t.tagName === "IMG" && t.closest(".pl-tile")) t.remove(); }, true);

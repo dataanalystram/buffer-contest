@@ -141,13 +141,12 @@ async function boot() {
   const s = await api("/api/session");
   S.csrf = s.csrf; S.session = s;
   if (s.repo) $("#repoLink").href = s.repo; else $("#repoLink").hidden = true;
-  showStats();
-  if (!s.connected) {
-    $("#landing").hidden = false;
-    if (!s.configured) { $("#configNote").hidden = false; $("#connectBtn").classList.add("disabled"); }
+  if (!s.connected) { // the landing page lives at "/" for visitors (served by the server); this page is the app only
+    if (!sessionStorage.getItem("hq_bounced")) { sessionStorage.setItem("hq_bounced", "1"); location.replace("/" + location.search); }
     return;
   }
-  $("#app").hidden = false; $("#topRight").hidden = false; $("#landNav").hidden = true; $("#demoBar").hidden = !s.demo;
+  sessionStorage.removeItem("hq_bounced");
+  $("#app").hidden = false; $("#topRight").hidden = false; $("#demoBar").hidden = !s.demo;
   document.body.classList.add("in-app"); document.body.classList.toggle("is-demo", !!s.demo);
   $("#acctBtn").textContent = (s.user.name || s.user.email || "Account") + (s.user.organization ? " · " + s.user.organization : "");
   setKill(s.user.kill_switch);
@@ -159,14 +158,6 @@ async function boot() {
   else showTab(new URLSearchParams(location.search).get("tab") || "agent");
 }
 
-async function showStats() {
-  try {
-    const st = await api("/api/stats"), n = st.buffer_accounts, m = st.posts_sent_to_buffer;
-    if (!n) return;
-    const html = `<span class="live" aria-hidden="true"></span><span><b>${n.toLocaleString()}</b> Buffer account${n === 1 ? "" : "s"} connected</span><span><b>${m.toLocaleString()}</b> post${m === 1 ? "" : "s"} sent to Buffer</span><span><b>${(st.sample_workspaces_open || 0).toLocaleString()}</b> trying the sample today</span>`;
-    const el = $("#landStats"); el.innerHTML = html; el.hidden = false;
-  } catch (_) {}
-}
 $("#bookmarklet").href = `javascript:location.href='${location.origin}/?url='+encodeURIComponent(location.href)`;
 $("#bookmarklet").onclick = (e) => { e.preventDefault(); toast("Drag this link to your bookmarks bar, then click it on any article."); };
 function setKill(on) {
