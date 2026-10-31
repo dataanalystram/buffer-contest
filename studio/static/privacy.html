@@ -10,7 +10,7 @@
 <ul>
 <li><b>Your Buffer connection.</b> When you connect, Buffer gives this server an access token and a refresh token. They are encrypted at rest on our server and are never sent to your browser. We also store your Buffer account id, name, email and organization name so we can show who is connected.</li>
 <li><b>Session.</b> A random session id in an HttpOnly cookie. No tracking or advertising cookies.</li>
-<li><b>Agent tokens</b> you create (stored only as a SHA-256 hash), posts your agents submitted for approval, and an activity log of actions taken on your account.</li>
+<li><b>Agent tokens</b> you create (stored only as a SHA-256 hash), posts your agents submitted for approval, and an activity log of actions taken on your account. Activity rows are kept for 90 days; the IP address and user agent recorded with a sign-in are cleared after 30 days.</li>
 </ul>
 <h3>What we do with it</h3>
 <p>Only what you ask: read your Buffer organization, channels and posts, and create posts, drafts and ideas in your Buffer account when you (or an agent you authorized, within the rules you set) submit them. We don't sell or share your data, and we don't use Buffer analytics.</p>
