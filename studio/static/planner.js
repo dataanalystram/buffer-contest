@@ -377,7 +377,7 @@ $("#plDlgChSel").addEventListener("change", () => PL.pf.run(true));
 async function plDialogSave(asDraft) {
   const { mode, i } = PL.edit || {}, err = $("#plDlgErr"), btn = $("#plDlgSave");
   if (mode === "new" || (mode === "edit" && $("#plDlgText").value !== i.text)) {
-    if (!PL.pf.result) await PL.pf.run(true);
+    await PL.pf.settle();
     const why = PL.pf.blocked();
     if (why) { err.textContent = why; return; }
   }

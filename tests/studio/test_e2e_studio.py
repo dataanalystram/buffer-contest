@@ -232,7 +232,7 @@ def test_planner_dialog_preflight(live, chromium):
         dlg = page.get_by_test_id("planner-preflight")
         dlg.locator("[data-testid=preflight-chip][data-status=error]").wait_for()
         page.get_by_test_id("planner-dialog-save").click()
-        assert "Preflight" in page.get_by_test_id("planner-dialog-error").inner_text()
+        pw.expect(page.get_by_test_id("planner-dialog-error")).to_contain_text("Preflight")  # set after an await
         dlg.get_by_test_id("preflight-fix").click()
         dlg.locator("[data-testid=preflight-chip][data-status=ok]").wait_for()
         page.get_by_test_id("planner-dialog-save").click()
