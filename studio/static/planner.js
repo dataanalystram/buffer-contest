@@ -184,7 +184,12 @@ function plDraw() {
   if (sc) {
     const days = PL.view === "day" ? [r.days[0]] : r.days;  // Day and Week open at the first post of the range
     const first = Math.min(...days.flatMap((d) => (byDay[d] || []).filter((i) => i.kind !== "ghost").map((i) => i.z.h)), 24);
-    sc.scrollTop = keep ?? (first < 24 ? Math.max(0, first - 1) : 7) * ROW_H;
+    const top = keep ?? (first < 24 ? Math.max(0, first - 1) : 7) * ROW_H;
+    sc.scrollTop = top;
+    if (sc.offsetParent === null && "IntersectionObserver" in window) { // drawn while hidden: scroll once it shows
+      const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { sc.scrollTop = top; io.disconnect(); } });
+      io.observe(sc);
+    }
   }
 }
 function plEmpty() {

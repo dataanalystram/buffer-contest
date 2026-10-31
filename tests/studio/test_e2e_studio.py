@@ -252,9 +252,12 @@ def test_planner_week_opens_at_its_first_post_after_leaving_and_coming_back(live
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
         page = ctx.new_page()
         page.goto(base + "/demo")
-        for _ in range(2):
-            page.get_by_test_id("tab-planner").click()
-            page.get_by_test_id("planner-view-week").click()
+        page.get_by_test_id("tab-inbox").wait_for()
+        page.goto(base + "/?tab=planner&view=week")  # a deep link draws the week while the app is still hidden
+        for i in range(3):
+            if i:
+                page.get_by_test_id("tab-planner").click()
+                page.get_by_test_id("planner-view-week").click()
             page.get_by_test_id("planner-week").wait_for()
             page.wait_for_timeout(300)
             seen = page.evaluate("""() => {
