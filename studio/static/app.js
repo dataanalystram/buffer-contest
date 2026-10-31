@@ -317,7 +317,7 @@ function showTab(name) {
   document.querySelectorAll(".rail button[data-tab]").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   window.scrollTo({ top: 0 });
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
-  ({ inbox: loadInbox, radar: loadRadar, approvals: loadApprovals, agents: loadTokens, activity: loadAudit }[name] || (window.HS_TABS || {})[name] || (() => {}))();
+  ({ inbox: loadInbox, radar: loadRadar, approvals: loadApprovals, agents: loadTokens }[name] || (window.HS_TABS || {})[name] || (() => {}))();
 }
 
 // ---------------------------------------------------------------- Inbox: what needs a person, grouped by urgency
@@ -545,12 +545,7 @@ async function toggleKill(on) { const r = await api("/api/safety/kill", { method
 $("#killToggle").onchange = (e) => toggleKill(e.target.checked);
 $("#killPill").onclick = () => toggleKill(!$("#killToggle").checked);
 
-// ---------------------------------------------------------------- audit
-async function loadAudit() {
-  const rows = await api("/api/audit"), box = $("#audit");
-  if (!rows.length) { box.innerHTML = `<p class="muted">No activity yet.</p>`; return; }
-  box.innerHTML = `<div class="wrap-x"><table class="data"><thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Action</th><th scope="col">Risk</th><th scope="col">Detail</th></tr></thead><tbody>${rows.map((r) => `<tr data-testid="audit-row"><td>${new Date(r.ts * 1000).toLocaleString()}</td><td>${esc(r.actor)}</td><td>${esc(r.action)}</td><td><span class="tag ${r.ok ? esc(r.risk) : "fail"}">${r.ok ? esc(r.risk) : "failed"}</span></td><td><code>${esc(JSON.stringify(r.detail)).slice(0, 160)}</code></td></tr>`).join("")}</tbody></table></div>`;
-}
+// ---------------------------------------------------------------- audit: see activity.js (HS_TABS.activity)
 
 // ---------------------------------------------------------------- account
 $("#acctBtn").onclick = () => { const m = $("#acctMenu"); m.hidden = !m.hidden; $("#acctBtn").setAttribute("aria-expanded", !m.hidden); };

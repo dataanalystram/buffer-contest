@@ -715,7 +715,34 @@ class Studio:
             return None
         row = dict(rows[0])
         self.store.x("UPDATE agent_tokens SET last_used=? WHERE id=?", (time.time(), row["id"]))
+        from . import activity
+        activity.note(agent={k: row.get(k) for k in ("id", "name", "client_id", "client_info", "app")})  # every write is attributable
         return Actor(row["user_id"], "agent", row)
+
+    def note_client(self, a: Actor, client_info: str) -> None:
+        """Remember which MCP client (its clientInfo name/version) is using this token, and which app that is."""
+        if a.kind != "agent" or not client_info:
+            return
+        from . import activity
+        info = activity.clean_text(client_info, 120)
+        app = a.agent.get("app") or activity.classify_app(a.agent.get("name", ""), info)
+        if info != a.agent.get("client_info") or app != a.agent.get("app"):
+            self.store.x("UPDATE agent_tokens SET client_info=?, app=? WHERE id=?", (info, app, a.agent["id"]))
+            a.agent.update(client_info=info, app=app)
+        activity.note(client_info=info, agent={k: a.agent.get(k) for k in ("id", "name", "client_id", "client_info", "app")})
+
+    def activity(self, a: Actor, f: dict) -> dict:
+        """The activity log page (UI, REST and MCP get_activity). Agents get every category but never sign-in IPs."""
+        from . import activity
+        try:
+            out = activity.page(self.store, a.uid, f, show_ip=a.kind == "human")
+            if (f.get("tab") or "all") in ("agent", "all"):
+                out["agents"] = activity.agents(self.store, a.uid, f)
+            if (f.get("tab") or "all") in ("system", "all"):
+                out["buffer"] = activity.buffer_usage(self.store, a.uid, self.buffer.budget.snapshot())
+        except ValueError as e:
+            raise ActionError(str(e))
+        return out
 
     def audit(self, a: Actor, limit: int = 100) -> list[dict]:
         return self.store.audit_rows(a.uid, limit)
