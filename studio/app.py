@@ -26,15 +26,25 @@ from .store import Store, sha
 STATIC = Path(__file__).parent / "static"
 PAGES = ("/", "/app", "/privacy", "/terms", "/security")
 COOKIE = "hq_sid"
+HSTS = "max-age=31536000; includeSubDomains"
+CSP = ("default-src 'self'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; "
+       "style-src 'self' 'unsafe-inline'; font-src 'self'; "  # fonts are self-hosted (studio/static/fonts): no third party
+       "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+# Sign-in and token endpoints: a tighter per-IP limit for everyone who isn't already signed in (guessing, floods)
+AUTH_PATHS = ("/login", "/callback", "/device/", "/oauth/authorize", "/oauth/token", "/oauth/register")
+SECURITY_TXT_EXPIRES = "2027-10-31T00:00:00Z"
 
 
 def create_app(settings: Settings | None = None, http: httpx.Client | None = None) -> FastAPI:
     s = settings or load_settings()
-    store = Store(s.db_path, s.session_secret)
+    store = Store(s.db_path, s.session_secret, s.token_key, s.token_keys_previous)
     if s.migrate_from and s.migrate_from != s.db_path:
-        copied = store.copy_from(Store(s.migrate_from, s.session_secret))
+        copied = store.copy_from(Store(s.migrate_from, s.session_secret, s.token_key, s.token_keys_previous))
         print(f"migrate: copied {copied or 'nothing (target already has data)'}", flush=True)
     demo_guard.ensure(store)
+    # migration: every sealed row moves to the current TOKEN_KEY (the log gets counts only, never values)
+    print(f"token keys: {'dedicated TOKEN_KEY' if store.dedicated_key else 'derived from SESSION_SECRET'}; "
+          f"{store.rotate_keys()}", flush=True)
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
     app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
@@ -77,6 +87,12 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     async def _action_err(_, e: ActionError):
         return JSONResponse({"error": str(e)}, status_code=e.status)
 
+    @app.exception_handler(Exception)
+    async def _any_err(request: Request, e: Exception):
+        # never a stack trace or an exception message to the client; the log keeps the class and the path
+        print(f"error: {e.__class__.__name__} on {request.method} {request.url.path}", flush=True)
+        return JSONResponse({"error": "Something went wrong on our side. Try again in a moment."}, status_code=500)
+
     @app.exception_handler(BufferError)
     async def _buffer_err(_, e: BufferError):
         headers = {"Retry-After": str(e.retry_after)} if e.retry_after else {}
@@ -85,6 +101,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # Anonymous and free-sample traffic: a per-IP request rate limit (SECURITY_RULES 3). Real accounts, by cookie or by
     # a real account's agent token, are never slowed here. Media links (/m/) are left alone: Buffer fetches them.
     rate = reqlimits.RateLimit(per_min=int(os.environ.get("HQ_ANON_RPM", "240")), demo_per_min=int(os.environ.get("HQ_DEMO_PER_MIN", "6")))
+    rate.auth_per_min = int(os.environ.get("HQ_AUTH_PER_MIN", "30"))
     app.state.rate = rate
 
     def _real_account(request: Request) -> bool:
@@ -99,12 +116,15 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.middleware("http")
     async def _rate(request: Request, call_next):
         path = request.url.path
-        if path.startswith(("/api/", "/mcp", "/oauth/", "/demo")) and not path.startswith("/api/worker/") \
+        if path.startswith(("/api/", "/mcp", "/oauth/", "/demo") + AUTH_PATHS) and not path.startswith("/api/worker/") \
                 and not _real_account(request):
             ip = demo_guard.client_ip(request)
-            wait = rate.hit("ip:" + sha("ip:" + ip), rate.per_min)
+            general = path.startswith(("/api/", "/mcp", "/oauth/", "/demo"))
+            wait = rate.hit("ip:" + sha("ip:" + ip), rate.per_min) if general else 0
             if not wait and path == "/demo":
                 wait = rate.hit("demo:" + sha("ip:" + ip), rate.demo_per_min)
+            if not wait and path.startswith(AUTH_PATHS):
+                wait = rate.hit("auth:" + sha("ip:" + ip), rate.auth_per_min)
             if wait:
                 return JSONResponse({"error": "Too many requests from this network. Wait a minute, or connect Buffer."},
                                     status_code=429, headers={"Retry-After": str(int(wait) + 1)})
@@ -115,12 +135,16 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         resp = await call_next(request)
         if request.url.path in PAGES or request.url.path.startswith(("/static/", "/docs")):
             resp.headers["Cache-Control"] = "no-cache"  # always revalidate, so a deploy is picked up at once
+        elif request.url.path.startswith("/api/") and "cache-control" not in resp.headers:
+            resp.headers["Cache-Control"] = "no-store"  # API answers carry CSRF tokens and private data: never cached
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         resp.headers.setdefault("X-Frame-Options", "DENY")
-        resp.headers.setdefault("Content-Security-Policy",
-                                "default-src 'self'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; style-src 'self' 'unsafe-inline'; "
-                                "font-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+        resp.headers.setdefault("Content-Security-Policy", CSP)
+        resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+        if request.url.scheme == "https":  # behind Render's TLS the forwarded scheme is trusted (uvicorn --proxy-headers)
+            resp.headers.setdefault("Strict-Transport-Security", HSTS)
         return resp
 
     # ------------------------------------------------------------ pages
@@ -197,6 +221,17 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                        "AND risk IN ('public','draft') AND user_id NOT LIKE ?", (demo.PREFIX + "%",))[0]["n"]
         tries = store.q("SELECT COUNT(*) AS n FROM users WHERE id LIKE ?", (demo.PREFIX + "%",))[0]["n"]
         return {"buffer_accounts": users, "posts_sent_to_buffer": sent, "sample_workspaces_open": tries}
+
+    @app.get("/.well-known/security.txt", include_in_schema=False)
+    @app.get("/security.txt", include_in_schema=False)
+    def security_txt():
+        repo = (s.repo_url or "https://github.com/dataanalystram/buffer-contest").rstrip("/")
+        body = (f"Contact: {repo}/security/advisories/new\n"
+                f"Expires: {SECURITY_TXT_EXPIRES}\n"
+                "Preferred-Languages: en\n"
+                f"Canonical: {s.public_url}/.well-known/security.txt\n"
+                f"Policy: {repo}/blob/main/docs/SECURITY.md\n")
+        return Response(body, media_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/healthz")
     def health():

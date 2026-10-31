@@ -17,6 +17,8 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
+      - key: TOKEN_KEY             # seals Buffer tokens and AI keys at rest, separate from SESSION_SECRET (docs/SECURITY.md)
+        sync: false
       - key: DATABASE_URL          # Supabase Session pooler URL (IPv4, port 5432)
         sync: false
       - key: RENDER_WORKER         # github = render Reels on free GitHub Actions
