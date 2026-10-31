@@ -167,3 +167,9 @@ dialog.sheet h2{font-size:20px;font-weight:600;margin-bottom:16px}
 .oauth-acts{display:flex;flex-direction:column;gap:8px;margin:20px 0 12px}
 .oauth-acts .btn,.oauth-acts .btn2{min-height:48px}
 .oauth-hint{font-size:13px;margin-bottom:16px}
+.top-right{min-width:0}
+#acctBtn{max-width:clamp(88px,26vw,260px)}
+@media (max-width:1023px){.seg button{min-height:44px}}
+@media (max-width:600px){.top{gap:8px;padding:8px 12px}.top-right{gap:6px;flex:1;justify-content:flex-end}#budgetPill{display:none}.brand .name .by{display:none}}
+.brand{min-height:44px}
+@media (max-width:600px){.pl-mday .pl-chip{min-width:44px}}

@@ -49,3 +49,6 @@
 @media (prefers-color-scheme:dark){.wm.lt{display:none}.wm.dk{display:inline-block}}
 @media (max-width:900px){.lg{grid-template-columns:minmax(0,1fr);gap:28px;padding-top:32px}.lg-toc{position:static}.lg-toc ol{display:flex;flex-wrap:wrap;gap:4px;border:0}.lg-toc a{border:1px solid var(--line);border-radius:999px;min-height:44px}
   .lg-top{padding:8px 16px}.lg-top nav a:not(.btn){display:none}.lg-top .bt small{display:none}}
+.lg-top .brand,.brand{min-height:44px;display:flex;align-items:center}
+.lg-foot a{padding:0 8px;min-width:44px;justify-content:center}
+@media (max-width:1023px){.lg-top .btn{min-height:44px}}

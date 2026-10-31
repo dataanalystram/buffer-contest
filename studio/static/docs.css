@@ -44,3 +44,5 @@ kbd{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 
   .dk-nav{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}.dk-nav a{white-space:nowrap;border:1px solid var(--line);min-height:44px;border-radius:999px}
   .dk-side-cta{display:none}.dk-main{padding-top:24px}.dshots{grid-template-columns:minmax(0,1fr) 120px}}
 @media (max-width:480px){.dshots{grid-template-columns:minmax(0,1fr)}.dshot.phone{max-width:220px}}
+.dk-nav a,.dk-toc a{min-height:44px}
+@media (max-width:1023px){.dk-start a,.dk-side-cta a,.lg-top .btn{min-height:44px}}
