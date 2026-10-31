@@ -158,7 +158,10 @@ function plDraw() {
   $("#plTitle").textContent = plTitle(r);
   $("#plCount").textContent = `${count} post${count === 1 ? "" : "s"}`;
   $("#plTzNote").textContent = PL.tz.replace(/_/g, " ");
-  const main = $("#plMain"), keep = $(".pl-week-scroll")?.scrollTop;
+  const main = $("#plMain"), old = $(".pl-week-scroll"), key = PL.view + "|" + r.days[0];
+  // keep the user's scroll only on a redraw of the same visible week/day; a hidden scroller reads 0 (it opened at 00:00)
+  const keep = old && old.offsetParent !== null && PL.drawKey === key ? old.scrollTop : undefined;
+  PL.drawKey = key;
   main.dataset.view = PL.view;
   if (PL.view === "list") main.innerHTML = plList(r, byDay);
   else if (PL.view === "week") main.innerHTML = plPhone() ? plAgenda(r, byDay) : plWeek(r, byDay);
