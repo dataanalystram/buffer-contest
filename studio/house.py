@@ -676,7 +676,9 @@ class House:
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (a.uid, rid, json.dumps(spec), "queued", _now(), _now()))
         mode = self.worker_mode or ("local" if render.have_ffmpeg() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none"))
-        if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "video"):
+        # the free sample never starts the GitHub worker (SECURITY_RULES 3): it renders on this server under its daily cap,
+        # or shows the bundled sample clip. The cap is checked before any render work starts.
+        if demo_guard.is_demo(a.uid) and (mode != "local" or not demo_guard.take(self.store, a.uid, "video")):
             from . import takes
             clip = self.s.public_url.rstrip("/") + "/sample/" + (takes.sample_meta() or {}).get("clips", [{"file": "clip1.mp4"}])[0]["file"]
             self.store.x("UPDATE render_jobs SET status='done', error=?, updated=? WHERE id=?", ("sample: demo video cap", _now(), jid))
@@ -715,6 +717,9 @@ class House:
     def _dispatch_github(self, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:
         """Start the free render worker for one job. It gets a single-use job token (only good for this job, 30 minutes;
         longer for One take jobs), so there is no long-lived shared secret between the app and the worker."""
+        owner = self.store.q("SELECT user_id FROM render_jobs WHERE id=?", (jid,))
+        if not owner or demo_guard.is_demo(owner[0]["user_id"]):  # belt and braces: sample jobs never reach the worker
+            return False, "sample workspace: no worker runs"
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")
         jt = self.issue_job_token(jid, ttl)

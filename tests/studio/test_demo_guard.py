@@ -142,3 +142,29 @@ def test_research_cap_falls_back_to_the_sample_story(app, fake, monkeypatch):
     assert body["article"]["title"] == demo.SAMPLE_ARTICLE["title"]
     assert "sample" in body
     assert fake.calls == []  # nothing reaches Buffer from the sample
+
+
+def test_sample_never_starts_the_github_worker(app, monkeypatch):
+    """SECURITY_RULES 3: /demo and anonymous traffic never run the worker, whatever the server's worker mode."""
+    monkeypatch.setenv("GH_DISPATCH_TOKEN", "x")
+    _demo(app)
+    h = app.state.house
+    st = app.state.store
+    uid = st.q("SELECT id FROM users WHERE id LIKE ?", (demo_guard.PREFIX + "%",))[0]["id"]
+    dispatched = []
+
+    class NoHttp:
+        def post(self, *a, **k):
+            dispatched.append(a); raise AssertionError("the sample reached GitHub")
+    monkeypatch.setattr(h, "http", NoHttp(), raising=False)
+    jid = st.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
+               (uid, 0, "{}", "queued", 0, 0))
+    ok, why = h._dispatch_github(jid)
+    assert ok is False and "sample" in why and dispatched == []
+    from studio.actions import Actor
+    h.worker_mode = "github"
+    res = {"media": [], "story": {"headline": "x"}}
+    from studio import brand
+    out = h._queue_video(Actor(uid), 0, {k: "" for k in brand.DEFAULT_KIT}, {}, res, {})
+    assert out["status"] == "done" and res["sample"] == demo_guard.WHY["video"] and dispatched == []
+    assert demo_guard.left(st, uid)["video"] == demo_guard.CAPS["video"][0]  # a refused worker run doesn't spend the cap

@@ -36,6 +36,13 @@ def shot(browser, name, viewport, scheme, tab=None, tour_step=None, init=""):
         elif tab:
             page.evaluate("(t) => showTab(t)", tab)
             page.wait_for_timeout(900)
+            if tab == "planner" and viewport["width"] < 600:  # the agenda, from the first day with posts on it
+                page.locator("[data-testid=planner-agenda]").wait_for()
+                page.evaluate("""() => { const d = [...document.querySelectorAll('[data-testid=planner-list-day]')]
+                  .find((x) => !x.querySelector('.pl-agenda-empty')) || document.querySelector('[data-testid=planner-agenda]');
+                  const head = d.previousElementSibling || d;
+                  window.scrollTo(0, head.getBoundingClientRect().top + scrollY - 76); }""")
+                page.wait_for_timeout(300)
         page.screenshot(path=str(out / name))
         print("wrote", out / name)
     finally:
