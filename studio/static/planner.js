@@ -179,7 +179,8 @@ function plDraw() {
   plWire();
   const sc = $(".pl-week-scroll");
   if (sc) {
-    const first = PL.view === "day" ? Math.min(...((byDay[r.days[0]] || []).map((i) => i.z.h)), 24) : 24;
+    const days = PL.view === "day" ? [r.days[0]] : r.days;  // Day and Week open at the first post of the range
+    const first = Math.min(...days.flatMap((d) => (byDay[d] || []).filter((i) => i.kind !== "ghost").map((i) => i.z.h)), 24);
     sc.scrollTop = keep ?? (first < 24 ? Math.max(0, first - 1) : 7) * ROW_H;
   }
 }

@@ -1,10 +1,12 @@
 """Screenshots of the premium UX in the real app (sample workspace, never a real Buffer account).
 
-    python scripts/premium_shots.py OUT_DIR [set ...]        sets: landing, app, planner, docs, legal, all (default all)
+    python scripts/premium_shots.py OUT_DIR [set ...]        sets: landing, app, planner, docs, legal, all (default all); land (the landing's Planner images, 1440 only)
     BASE=https://huhqueue-studio.onrender.com python scripts/premium_shots.py OUT   (shoot a live server instead)
 
 Starts the app in-process on a free port unless BASE is set. Light and dark, 1440 and 390 px. Also used for the docs
-screenshots (python scripts/premium_shots.py studio/static/docs-shots docs)."""
+screenshots (python scripts/premium_shots.py studio/static/docs-shots docs).
+VIA_HTTPX=1 fetches every non-local request with httpx instead of the browser's network (for a sandbox whose proxy only
+Python can use); the pages, cookies and images are the same."""
 import os
 import socket
 import sys
@@ -75,6 +77,58 @@ def docshots(pg, base: str, scheme: str, dev: str) -> None:
         pg.wait_for_timeout(1000); save(key)
 
 
+def via_httpx(ctx) -> None:
+    """Route non-local requests through httpx (VIA_HTTPX=1)."""
+    import httpx
+    client = httpx.Client(follow_redirects=False, timeout=30)
+
+    def handle(route, request):
+        if request.url.startswith(("http://127.0.0.1", "http://localhost", "data:", "blob:")):
+            return route.continue_()
+        try:
+            h = {k: v for k, v in request.all_headers().items() if not k.startswith(":") and k.lower() not in ("host", "content-length", "accept-encoding")}
+            r = client.request(request.method, request.url, headers=h, content=request.post_data_buffer,
+                               follow_redirects=request.resource_type != "document")
+            hdrs = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
+            route.fulfill(status=r.status_code, headers=dict(hdrs), body=r.content)
+            for k, v in hdrs:
+                if k.lower() == "set-cookie":
+                    ctx.add_cookies([_cookie(v, request.url)])
+        except Exception:
+            route.abort()
+    ctx.route("**/*", handle)
+
+
+def _cookie(header: str, url: str) -> dict:
+    name, _, rest = header.partition("=")
+    value = rest.split(";", 1)[0]
+    return {"name": name.strip(), "value": value, "url": url.split("/", 3)[0] + "//" + url.split("/", 3)[2]}
+
+
+def land_shots(pg, base: str, scheme: str) -> None:
+    """studio/static/land/planner-<view>-<scheme>.webp: the Planner panel of the real sample, 1300x757."""
+    from PIL import Image
+    d = ROOT / "studio" / "static" / "land"
+    tmp = Path(tempfile.mkdtemp())
+    pg.goto(base + "/demo", wait_until="networkidle"); pg.wait_for_selector("#app:not([hidden])")
+    pg.evaluate("localStorage.setItem('hq_tour_done','1'); document.querySelector('.tour') && window.tourEnd && tourEnd()")
+    pg.evaluate("showTab('planner')")
+    for v in ("week", "month", "list", "board", "grid"):
+        pg.evaluate(f"plSetView('{v}')"); pg.wait_for_timeout(300)
+        if v == "month":  # the sample's posts sit at the end of this month and through the next
+            pg.evaluate("plShift(1)")
+        pg.wait_for_timeout(1200)
+        pg.evaluate("document.getElementById('toast') && (document.getElementById('toast').hidden = true)")
+        box = pg.locator("#tab-planner").bounding_box()
+        pad = 32
+        w = box["width"] + 2 * pad
+        pg.screenshot(path=str(tmp / "s.png"), clip={"x": box["x"] - pad, "y": box["y"] - pad, "width": w, "height": round(w * 757 / 1300)})
+        if v == "month":
+            pg.evaluate("plShift(-1)")
+        Image.open(tmp / "s.png").convert("RGB").resize((1300, 757), Image.LANCZOS).save(
+            d / f"planner-{v}-{scheme}.webp", "WEBP", quality=80, method=6)
+
+
 def want(name: str) -> bool:
     return ("all" in SETS and name not in ("docshots", "og")) or name in SETS
 
@@ -90,6 +144,8 @@ def main() -> None:
                 h = 900 if w > 600 else 844
                 ctx = b.new_context(viewport={"width": w, "height": h}, color_scheme=scheme, timezone_id="Europe/Dublin", locale="en-IE",
                                     device_scale_factor=1, reduced_motion="no-preference")
+                if os.environ.get("VIA_HTTPX"):
+                    via_httpx(ctx)
                 pg = ctx.new_page()
                 pg.on("pageerror", lambda e: errors.append(f"{scheme} {w}: {e}"))
                 tag = f"{w}-{scheme}"
@@ -134,6 +190,8 @@ def main() -> None:
                         pg.evaluate(f"plSetView('{v}')"); pg.wait_for_timeout(900)
                         pg.evaluate("document.getElementById('toast').hidden = true")
                         pg.screenshot(path=str(OUT / f"planner-{v}-{tag}.png"))
+                if "land" in SETS and w == 1440:
+                    land_shots(pg, base, scheme)
                 if want("docshots") and w in (1440, 390):
                     docshots(pg, base, scheme, "desktop" if w > 600 else "phone")
                 ctx.close()
