@@ -185,7 +185,7 @@ def test_4_consent_shows_the_redirect_host_and_an_unverified_claude_gets_no_trus
     page, tok = _consent(human, "https://attacker.example/cb")
     assert "attacker.example" in page and 'data-testid="oauth-unverified"' in page
     assert 'data-testid="oauth-policy-trusted"' not in page
-    toks = human.get("/api/agent-tokens").json()
+    toks = human.get("/api/safety").json()["tokens"]
     mine = [t for t in toks if "attacker.example" in t["name"]]
     assert mine and mine[0]["policy"] == "review" and "unverified" in mine[0]["name"]  # the form's "trusted" was refused
     page2, _ = _consent(human, "https://claude.ai/api/mcp/auth_callback")
