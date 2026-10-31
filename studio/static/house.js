@@ -248,6 +248,7 @@ $("#kitImport").onclick = async () => {
   const b = $("#kitImport"), url = $("#kitSite").value.trim(); if (!url) return toast("Type your website first");
   b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Reading…`;
   try { const r = await api("/api/brand/from-website", { method: "POST", body: { url } });
+    if (r.sample) { toast(r.note, 6000); loadBrand(); return; }
     toast(`Imported ${r.kit.name}${r.found.logo ? ", logo" : ""}${r.found.palette.length ? ", colors" : ""}${r.found.handle ? ", @" + r.found.handle : ""}`, 5000); loadBrand(); }
   catch (e) { toast(e.message, 5000); } finally { b.disabled = false; b.textContent = "Import from website"; }
 };

@@ -14,6 +14,7 @@ from studio.config import load_settings
 from .conftest import ARTICLE, FakeBuffer, image_bytes
 
 pw = pytest.importorskip("playwright.sync_api")
+NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"  # the guided tour has its own test (test_tour_e2e.py)
 
 
 def _free_port():
@@ -51,6 +52,7 @@ def test_link_to_buffer_draft_and_agent_approval(live, chromium):
     browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        ctx.add_init_script(NO_TOUR)
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())  # hermetic: no fonts or images from the internet
         page = ctx.new_page()
@@ -100,6 +102,7 @@ def test_planner_views_filters_and_drag_to_reschedule(live, chromium):
     browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Dublin")
+        ctx.add_init_script(NO_TOUR)
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
         page = ctx.new_page()
         errors = []
@@ -157,6 +160,7 @@ def test_preflight_panel_blocks_then_fix_it_makes_posts_pass(live, chromium):
     browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        ctx.add_init_script(NO_TOUR)
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
         page = ctx.new_page()
@@ -220,6 +224,7 @@ def test_planner_dialog_preflight(live, chromium):
     browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Dublin")
+        ctx.add_init_script(NO_TOUR)
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
         page = ctx.new_page()
         errors = []

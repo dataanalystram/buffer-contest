@@ -39,6 +39,9 @@ def resolve(store, uid: str, settings) -> dict | None:
         return {"source": "your key", "provider": own.get("provider", "custom"), "base_url": own["base_url"].rstrip("/"),
                 "api_key": own["api_key"], "model": own.get("model") or pre["model"], "style": pre["style"]}
     if settings.ai_base_url:
+        from . import demo_guard
+        if not demo_guard.allowed(store, uid, "ai"):  # free sample: daily AI allowance per workspace and per IP
+            return None
         day = time.time() - 86400
         used = store.q("SELECT COUNT(*) AS n FROM audit WHERE user_id=? AND action='ai_call' AND detail LIKE ? AND ts>?",
                        (uid, '%"free"%', day))[0]["n"]

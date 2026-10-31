@@ -54,6 +54,9 @@ def client_ip(request) -> str:
 def ensure(store: Store) -> None:
     for stmt in [x.strip() for x in SCHEMA.split(";") if x.strip()]:
         store.x(stmt.replace(" REAL", " DOUBLE PRECISION") if store.pg else stmt)
+    if store.pg:  # same as every other table: closed to the hosted database's public data API
+        for t in ("demo_usage", "demo_owners"):
+            store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
 
 
 def is_demo(uid: str | None) -> bool:

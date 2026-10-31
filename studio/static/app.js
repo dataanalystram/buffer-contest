@@ -207,6 +207,7 @@ $("#draftForm").addEventListener("submit", async (ev) => {
   try {
     const r = await api("/api/draft", { method: "POST", body: { url, channel_ids: [...S.selected], tone: $("#toneSelect").value, thread: $("#threadChk").checked } });
     S.article = r.article; S.drafts = r.drafts; renderArticle(); renderDrafts();
+    if (r.sample) toast(r.sample, 6000);
   } catch (e) { toast(e.message, 5000); }
   finally { b.disabled = false; b.textContent = "Write posts"; budget(); }
 });
@@ -544,7 +545,7 @@ $("#tokenForm").addEventListener("submit", async (ev) => {
   try {
     const t = await api("/api/agent-tokens", { method: "POST", body: { name: $("#tokName").value, policy: $("#tokPolicy").value, daily_cap: +$("#tokCap").value } });
     const rv = $("#tokenReveal"); rv.hidden = false;
-    rv.innerHTML = `<b>Copy this token now. It is shown once.</b><code data-testid="token-value">${esc(t.token)}</code><span><button class="btn2 sm" data-testid="copy-token">Copy token</button></span>`;
+    rv.innerHTML = `<b>Copy this token now. It is shown once.</b>${t.sample ? `<span class="sample-note" data-testid="token-sample">Sample token</span><span class="muted sm">${esc(t.note)}</span>` : ""}<code data-testid="token-value">${esc(t.token)}</code><span><button class="btn2 sm" data-testid="copy-token">Copy token</button></span>`;
     $("[data-testid=copy-token]", rv).onclick = () => navigator.clipboard.writeText(t.token).then(() => toast("Copied"));
     snippets(S.session.mcp_url, t.token); loadTokens();
   } catch (e) { toast(e.message, 5000); }

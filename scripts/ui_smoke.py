@@ -15,6 +15,7 @@ errors = []
 with sync_playwright() as p:
     b = p.chromium.launch()
     pg = b.new_page(viewport={"width": 1366, "height": 900}, device_scale_factor=1)
+    pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
     pg.on("console", lambda m: m.type == "error" and errors.append(m.text))
     pg.goto(base + "/")
@@ -64,6 +65,7 @@ with sync_playwright() as p:
     pg.click("[data-testid=tab-ai]"); time.sleep(1.5)
     pg.screenshot(path=str(out / "07_ai.png"), full_page=True)
     m = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
+    m.add_init_script("localStorage.setItem('hq_tour_done', '1')")
     m.goto(base + "/demo"); m.wait_for_selector("[data-testid=agent-go]"); time.sleep(1)
     m.screenshot(path=str(out / "08_mobile.png"), full_page=True)
     b.close()

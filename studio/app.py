@@ -17,7 +17,7 @@ import base64
 import hmac
 import os
 
-from . import buffer_api, demo, house as house_mod, inbox as inbox_mod, mcp, mcp_oauth
+from . import buffer_api, demo, demo_guard, house as house_mod, inbox as inbox_mod, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
@@ -33,6 +33,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     if s.migrate_from and s.migrate_from != s.db_path:
         copied = store.copy_from(Store(s.migrate_from, s.session_secret))
         print(f"migrate: copied {copied or 'nothing (target already has data)'}", flush=True)
+    demo_guard.ensure(store)
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
     app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
@@ -166,13 +167,17 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return resp
 
     # try-it workspace: sample channels and an agent post waiting for approval; nothing reaches Buffer
-    # ponytail: no per-IP limit on demo creation; stale demo users are purged after a day on each new demo
+    # at most CAPS['workspace'] new sample workspaces per IP a day; stale demo users are purged after a day on each new demo
     @app.get("/demo", include_in_schema=False)
     def demo_start(request: Request):
+        ip = demo_guard.client_ip(request)
+        if not demo_guard.workspace_ok(store, ip):
+            return RedirectResponse("/?error=" + quote(demo_guard.WHY["workspace"]), 302)
         sid = request.cookies.get(COOKIE)
         if sid:
             store.drop_session(sid)
         uid = demo.create_user(store)
+        demo_guard.register(store, uid, ip)
         new_sid = secrets.token_urlsafe(32)
         store.new_session(new_sid, secrets.token_urlsafe(24), ttl=demo.TTL)
         store.update_session(new_sid, user_id=uid)
@@ -231,6 +236,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         body = {"configured": s.configured, "connected": connected, "csrf": sess["csrf"],
                 "user": studio.me(Actor(sess["user_id"])) if connected else None, "mcp_url": s.public_url + "/mcp",
                 "repo": s.repo_url, "demo": connected and demo.is_demo(sess["user_id"])}
+        if body["demo"]:
+            body["demo_left"] = demo_guard.left(store, sess["user_id"])  # what the free sample may still spend today
         resp = JSONResponse(body)
         if fresh:
             set_cookie(resp, sid)

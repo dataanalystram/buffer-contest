@@ -51,6 +51,32 @@ AGENT_POST = ("demo_x", "Claude", "AI agents can now draft your posts, but shoul
               "Our take: agents write, humans approve. Here's the setup we use. https://example.com/agents-approve")
 
 
+# What the agent researches in the sample once live research is used up (or for a link it may not open). Made up.
+SAMPLE_ARTICLE = {
+    "url": "https://example.com/sample/open-models-get-faster", "site": "Sample News", "image": "",
+    "title": "Open models now run twice as fast on an ordinary laptop",
+    "description": "A new release of an open-source inference library doubles local speed on the same hardware, with no change to accuracy.",
+    "paragraphs": ["Sample story for the HuhQueue demo. The library's maintainers say the new release roughly doubles the speed of "
+                   "open models on a standard laptop, with the same answers on their published benchmarks.",
+                   "Teams that run small models locally can upgrade without changing their code, and the project says memory use "
+                   "drops by about a third on long prompts.",
+                   "The release is free and open source, and the maintainers expect hosted providers to adopt it within weeks."]}
+SAMPLE_KIT = {"name": "Bright Desk", "website": "https://example.com", "handle": "@brightdesk", "voice": "Plain, warm, a little dry. Short sentences.",
+              "colors": {"ground": "#101418", "accent": "#FF5A1F", "text": "#F4F1EA"}}
+SAMPLE_STORIES = [  # News radar when the sample's feeds can't be read (offline, or a feed is down)
+    {"title": "Sample: open models now run twice as fast on an ordinary laptop", "url": SAMPLE_ARTICLE["url"], "source": "Sample News",
+     "summary": SAMPLE_ARTICLE["description"], "image": "", "published": 0},
+    {"title": "Sample: agents that ask before they post are winning trust", "url": "https://example.com/sample/agents-ask-first",
+     "source": "Sample News", "summary": "Teams report fewer mistakes when an agent drafts and a person approves.", "image": "", "published": 0},
+    {"title": "Sample: the boring checklist behind every good post", "url": "https://example.com/sample/checklist",
+     "source": "Sample News", "summary": "Length, links, alt text and a time that suits the audience.", "image": "", "published": 0},
+]
+
+
+def is_sample_url(url: str | None) -> bool:
+    return (url or "").strip().startswith("https://example.com/sample/")
+
+
 def is_demo(uid: str | None) -> bool:
     return bool(uid) and uid.startswith(PREFIX)
 

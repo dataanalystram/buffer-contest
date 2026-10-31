@@ -13,6 +13,7 @@ from studio.app import create_app
 from studio.config import load_settings
 
 pw = pytest.importorskip("playwright.sync_api")
+NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"  # the guided tour has its own test (test_tour_e2e.py)
 
 
 def _free_port():
@@ -51,6 +52,7 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
     browser = chromium
     scheme = os.environ.get("TAKE_SCHEME", "light")
     ctx = browser.new_context(viewport={"width": 1360, "height": 920}, color_scheme=scheme)
+    ctx.add_init_script(NO_TOUR)
     ctx.route(lambda u: not u.startswith(live), lambda r: r.abort())  # hermetic
     page = ctx.new_page()
     _open_sample(page, live)
@@ -99,6 +101,7 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
 def test_spread_respects_reduced_motion(live, chromium):
     browser = chromium
     ctx = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion="reduce")
+    ctx.add_init_script(NO_TOUR)
     ctx.route(lambda u: not u.startswith(live), lambda r: r.abort())
     page = ctx.new_page()
     _open_sample(page, live)

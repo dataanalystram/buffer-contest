@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import brand, drafter, llm, render, sources
+from . import brand, demo, demo_guard, drafter, llm, render, sources
 from .actions import ActionError, Actor, Studio
 
 STEPS = [("find", "Find the story"), ("verify", "Verify on the source"), ("structure", "Structure the facts"),
@@ -88,6 +88,10 @@ class House:
         return self.kit(a)
 
     def kit_from_website(self, a: Actor, url: str) -> dict:
+        if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "import"):
+            kit = self.save_kit(a, dict(demo.SAMPLE_KIT))
+            return {"kit": kit, "found": {"logo": False, "palette": [], "theme_color": "", "handle": demo.SAMPLE_KIT["handle"]},
+                    "sample": True, "note": demo_guard.WHY["import"]}
         url = (url or "").strip()
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -291,6 +295,8 @@ class House:
         return self.ai_settings(a)
 
     def _ai_audit(self, a: Actor, eng: dict, what: str) -> None:
+        if eng["source"] == "free starter":
+            demo_guard.spend(self.store, a.uid, "ai")
         self.store.audit(a.uid, a.label, "ai_call", "read", {"engine": "free" if eng["source"] == "free starter" else "own", "for": what})
 
     # ================================================================ agent runs
@@ -390,6 +396,22 @@ class House:
     def _news(self, a, rid, steps, inp, res):
         eng = llm.resolve(self.store, a.uid, self.s)
         res["engine"] = eng["source"] if eng else "built-in writer"
+        # the free sample: live research while the daily allowance lasts, then the bundled sample story
+        if demo.is_sample_url(inp.get("url")) or not demo_guard.take(self.store, a.uid, "research"):
+            art = dict(demo.SAMPLE_ARTICLE)
+            res["sample"] = demo_guard.WHY["research"]
+            res["leads"] = [{"title": art["title"], "url": art["url"], "source": art["site"], "via": "sample", "published": 0}]
+            self._step(steps, "find", "done", "Sample story. " + demo_guard.WHY["research"], {"leads": res["leads"]})
+            res["article"] = {k: art[k] for k in ("url", "title", "description", "image", "site")}
+            res["verification"] = {"url": art["url"], "site": art["site"], "title": art["title"], "image": "", "other_outlets": [],
+                                   "skipped": [], "sample": True}
+            self._step(steps, "verify", "done", "Sample story: made up for the demo, so there is nothing to verify", res["verification"])
+            self._step(steps, "structure", "running", "Pulling the facts out")
+            self._save(rid, steps, res)
+            story = self._structure(a, eng, art)
+            res["story"] = story
+            self._step(steps, "structure", "done", story["headline"], story)
+            return self._after_story(a, rid, steps, inp, res, eng)
         # 1 find
         self._step(steps, "find", "running", "Searching Bing News, Hacker News and your feeds")
         self._save(rid, steps, res)
@@ -654,6 +676,13 @@ class House:
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (a.uid, rid, json.dumps(spec), "queued", _now(), _now()))
         mode = self.worker_mode or ("local" if render.have_ffmpeg() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none"))
+        if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "video"):
+            from . import takes
+            clip = self.s.public_url.rstrip("/") + "/sample/" + (takes.sample_meta() or {}).get("clips", [{"file": "clip1.mp4"}])[0]["file"]
+            self.store.x("UPDATE render_jobs SET status='done', error=?, updated=? WHERE id=?", ("sample: demo video cap", _now(), jid))
+            res["media"] = [m for m in res["media"] if m.get("role") != "slide"] + [{"url": clip, "type": "video", "sample": True}]
+            res["sample"] = demo_guard.WHY["video"]
+            return {"id": jid, "status": "done", "detail": demo_guard.WHY["video"]}
         if mode == "local":
             try:
                 data, meta = self.render_job_local(spec)
