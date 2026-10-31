@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import brand, drafter, llm, render, sources
+from . import brand, demo, demo_guard, drafter, llm, render, sources
 from .actions import ActionError, Actor, Studio
 
 STEPS = [("find", "Find the story"), ("verify", "Verify on the source"), ("structure", "Structure the facts"),
@@ -88,6 +88,10 @@ class House:
         return self.kit(a)
 
     def kit_from_website(self, a: Actor, url: str) -> dict:
+        if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "import"):
+            kit = self.save_kit(a, dict(demo.SAMPLE_KIT))
+            return {"kit": kit, "found": {"logo": False, "palette": [], "theme_color": "", "handle": demo.SAMPLE_KIT["handle"]},
+                    "sample": True, "note": demo_guard.WHY["import"]}
         url = (url or "").strip()
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -291,6 +295,8 @@ class House:
         return self.ai_settings(a)
 
     def _ai_audit(self, a: Actor, eng: dict, what: str) -> None:
+        if eng["source"] == "free starter":
+            demo_guard.spend(self.store, a.uid, "ai")
         self.store.audit(a.uid, a.label, "ai_call", "read", {"engine": "free" if eng["source"] == "free starter" else "own", "for": what})
 
     # ================================================================ agent runs
@@ -390,6 +396,22 @@ class House:
     def _news(self, a, rid, steps, inp, res):
         eng = llm.resolve(self.store, a.uid, self.s)
         res["engine"] = eng["source"] if eng else "built-in writer"
+        # the free sample: live research while the daily allowance lasts, then the bundled sample story
+        if demo.is_sample_url(inp.get("url")) or not demo_guard.take(self.store, a.uid, "research"):
+            art = dict(demo.SAMPLE_ARTICLE)
+            res["sample"] = demo_guard.WHY["research"]
+            res["leads"] = [{"title": art["title"], "url": art["url"], "source": art["site"], "via": "sample", "published": 0}]
+            self._step(steps, "find", "done", "Sample story. " + demo_guard.WHY["research"], {"leads": res["leads"]})
+            res["article"] = {k: art[k] for k in ("url", "title", "description", "image", "site")}
+            res["verification"] = {"url": art["url"], "site": art["site"], "title": art["title"], "image": "", "other_outlets": [],
+                                   "skipped": [], "sample": True}
+            self._step(steps, "verify", "done", "Sample story: made up for the demo, so there is nothing to verify", res["verification"])
+            self._step(steps, "structure", "running", "Pulling the facts out")
+            self._save(rid, steps, res)
+            story = self._structure(a, eng, art)
+            res["story"] = story
+            self._step(steps, "structure", "done", story["headline"], story)
+            return self._after_story(a, rid, steps, inp, res, eng)
         # 1 find
         self._step(steps, "find", "running", "Searching Bing News, Hacker News and your feeds")
         self._save(rid, steps, res)
@@ -604,7 +626,7 @@ class House:
         for d in drafts:
             svc = d["service"]
             text = drafter.fit(svc, brand.apply_text_rules(d["text"], rules))
-            meta = self.media_meta(a, main["token"]) if main else None
+            meta = self.media_meta(a, main["token"]) if main and main.get("token") else None  # the sample clip has no token
             chk = brand.brand_check(text, meta, rules, kit)
             fails += len(chk["failed"])
             urls = self._media_for(svc, res)
@@ -654,6 +676,16 @@ class House:
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (a.uid, rid, json.dumps(spec), "queued", _now(), _now()))
         mode = self.worker_mode or ("local" if render.have_ffmpeg() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none"))
+        # the free sample never starts the GitHub worker (SECURITY_RULES 3): it renders on this server under its daily cap,
+        # or shows the bundled sample clip. The cap is checked before any render work starts.
+        if demo_guard.is_demo(a.uid) and ((mode == "github" and not self._worker_allowed(a.uid))
+                                          or (mode == "local" and not demo_guard.take(self.store, a.uid, "video"))):
+            from . import takes
+            clip = self.s.public_url.rstrip("/") + "/sample/" + (takes.sample_meta() or {}).get("clips", [{"file": "clip1.mp4"}])[0]["file"]
+            self.store.x("UPDATE render_jobs SET status='done', error=?, updated=? WHERE id=?", ("sample: demo video cap", _now(), jid))
+            res["media"] = [m for m in res["media"] if m.get("role") != "slide"] + [{"url": clip, "type": "video", "sample": True}]
+            res["sample"] = demo_guard.WHY["video"]
+            return {"id": jid, "status": "done", "detail": demo_guard.WHY["video"]}
         if mode == "local":
             try:
                 data, meta = self.render_job_local(spec)
@@ -683,9 +715,16 @@ class House:
         slides = [self.get_media(t)["data"] for t in spec["slides"]]
         return render.slideshow_reel(slides, spec["kit"], spec["params"], logo=logo, ratio=spec.get("ratio", "9:16"))
 
+    def _worker_allowed(self, uid: str) -> bool:
+        """May this account start the GitHub render worker? Never for the free sample (SECURITY_RULES 3)."""
+        return not demo_guard.is_demo(uid)
+
     def _dispatch_github(self, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:
         """Start the free render worker for one job. It gets a single-use job token (only good for this job, 30 minutes;
         longer for One take jobs), so there is no long-lived shared secret between the app and the worker."""
+        owner = self.store.q("SELECT user_id FROM render_jobs WHERE id=?", (jid,))
+        if not owner or not self._worker_allowed(owner[0]["user_id"]):  # belt and braces: sample jobs never reach the worker
+            return False, "sample workspace: no worker runs"
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")
         jt = self.issue_job_token(jid, ttl)
@@ -857,7 +896,7 @@ class House:
         items = []
         u = self.store.user(a.uid)
         chans = {c["id"]: c for c in self.studio.channels(a)}
-        for status in ("scheduled", "sent", "draft"):
+        for status in ("scheduled", "sent", "draft", "error"):
             try:
                 posts = self.studio.buffer.posts(a.uid, u["org_id"], [status], first=60)
             except Exception:
@@ -867,7 +906,8 @@ class House:
                 assets = p.get("assets") or []
                 first = (assets[0] or {}) if assets else {}
                 thumb = first.get("thumbnail") or ("" if "video" in str(first.get("type", "")) else first.get("source", "")) or ""
-                items.append({"kind": "buffer", "status": status, "state": status, "ref": f"buffer:{p.get('id')}",
+                items.append({"kind": "buffer", "status": status, "state": "failed" if status == "error" else status, "ref": f"buffer:{p.get('id')}",
+                              "error": ((p.get("error") or {}).get("message") or "") if status == "error" else "",
                               "when": p.get("dueAt") or p.get("sentAt") or "", "text": (p.get("text") or "")[:280],
                               "service": ch.get("service", ""), "channel": ch.get("displayName") or ch.get("name") or "",
                               "channel_id": p.get("channelId", ""), "id": p.get("id"), "thumb": thumb,

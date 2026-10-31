@@ -94,6 +94,10 @@ class Takes:
     # ------------------------------------------------------------------ start
     def start(self, a: Actor, body: dict) -> dict:
         """clips_from_video: one long video you own -> moments -> clips. Returns the take (poll get_take/list_clips)."""
+        from . import demo_guard
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("In the sample workspace, One take runs on the bundled sample talk (Try the sample take). "
+                              "Connect Buffer to cut your own videos.", 403)
         if not body.get("owns"):
             raise ActionError("Confirm this is your own video (owns: true). One take only clips videos you own or have the "
                               "rights to.")

@@ -5,4 +5,4 @@ tests/e2e/test_ui_unsplash.py:generic-api-key:56
 tests/test_unsplash.py:generic-api-key:28
 tests/test_unsplash.py:generic-api-key:48
 b33d2a1518dbc3a89920d5d860f9038483df7c20:tests/studio/test_house.py:generic-api-key:211
-tests/studio/test_house.py:generic-api-key:215
+tests/studio/test_house.py:generic-api-key:217

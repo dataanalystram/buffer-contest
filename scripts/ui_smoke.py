@@ -15,6 +15,7 @@ errors = []
 with sync_playwright() as p:
     b = p.chromium.launch()
     pg = b.new_page(viewport={"width": 1366, "height": 900}, device_scale_factor=1)
+    pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
     pg.on("console", lambda m: m.type == "error" and errors.append(m.text))
     pg.goto(base + "/")
@@ -59,11 +60,21 @@ with sync_playwright() as p:
     pg.click("[data-testid=planner-preflight] [data-testid=preflight-fix]")
     pg.wait_for_selector("[data-testid=planner-preflight] [data-testid=preflight-chip][data-status=ok]", timeout=20000)
     pg.screenshot(path=str(out / "06c_preflight_fixed.png"))
+    # three days out: the package above already used the sample X channel's 3-in-24-hours Buffer limit, and the save is
+    # (rightly) refused inside that window. The dialog's error is printed if the toast still doesn't come.
+    pg.eval_on_selector("#plDlgWhen", """e => { const d = new Date(Date.now() + 3 * 864e5); d.setHours(10, 0, 0, 0);
+        const z = (n) => String(n).padStart(2, "0");
+        e.value = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T10:00`; e.dispatchEvent(new Event("input", {bubbles: true})); }""")
     pg.click("[data-testid=planner-dialog-save]")
-    pg.wait_for_selector("[data-testid=toast]:has-text('Scheduled in Buffer')", timeout=20000)
+    try:
+        pg.wait_for_selector("[data-testid=toast]:has-text('Scheduled in Buffer')", timeout=20000)
+    except Exception:
+        print("planner save error:", pg.inner_text("#plDlgErr"))
+        raise
     pg.click("[data-testid=tab-ai]"); time.sleep(1.5)
     pg.screenshot(path=str(out / "07_ai.png"), full_page=True)
     m = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
+    m.add_init_script("localStorage.setItem('hq_tour_done', '1')")
     m.goto(base + "/demo"); m.wait_for_selector("[data-testid=agent-go]"); time.sleep(1)
     m.screenshot(path=str(out / "08_mobile.png"), full_page=True)
     b.close()

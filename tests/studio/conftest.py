@@ -138,8 +138,10 @@ def app(tmp_path, fake, monkeypatch):
     if db.startswith("postgres"):
         import psycopg
         with psycopg.connect(db, autocommit=True) as c:
+            # every table the app creates, so no test sees another's rows (the sample's daily caps count per IP)
             c.execute("DROP TABLE IF EXISTS users, sessions, agent_tokens, confirms, approvals, audit, device_links, feeds, "
-                      "oauth_clients, oauth_codes, oauth_refresh")
+                      "oauth_clients, oauth_codes, oauth_refresh, agent_runs, ai_settings, brand_kits, demo_owners, demo_usage, "
+                      "media, render_jobs, style_rules")
     s = load_settings(client_id="cid", client_secret="sec", public_url="https://hq.test", session_secret="s" * 64,
                       db_path=db, secure_cookies=False, ai_base_url="")
     application = create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
@@ -198,3 +200,20 @@ def close_contexts(chromium):
     yield
     for c in list(chromium.contexts):
         c.close()
+
+
+@pytest.fixture
+def demo_live(tmp_path):
+    """The app on a real port with no Buffer behind it (every Buffer call answers 503 and is recorded), for browser tests
+    of the sample workspace at /demo. Yields (base_url, buffer_calls)."""
+    from .browsers import free_port, serve
+    calls = []
+
+    def nobuffer(r):
+        calls.append(str(r.url)); return httpx.Response(503)
+    port = free_port()
+    s = load_settings(client_id="cid", client_secret="sec", public_url=f"http://127.0.0.1:{port}", session_secret="d" * 64,
+                      db_path=str(tmp_path / "demo.db"), secure_cookies=False, ai_base_url="")
+    server = serve(create_app(s, http=httpx.Client(transport=httpx.MockTransport(nobuffer))), port)
+    yield f"http://127.0.0.1:{port}", calls
+    server.should_exit = True

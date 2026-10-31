@@ -46,8 +46,8 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["confirm_token"], "properties": {"confirm_token": {"type": "string"}}}},
     {"name": "list_approvals", "description": "Your submissions and their status (pending, approved, rejected).",
      "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["pending", "approved", "rejected"]}}}},
-    {"name": "list_queue", "description": "Posts in Buffer by status: scheduled (default), draft or sent. Each has an id for update_post, reschedule_post and delete_draft.",
-     "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["scheduled", "draft", "sent"]}}}},
+    {"name": "list_queue", "description": "Posts in Buffer by status: scheduled (default), draft, sent or error (failed to publish). Each has an id for update_post, reschedule_post and delete_draft.",
+     "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["scheduled", "draft", "sent", "error"]}}}},
     {"name": "update_post", "description": "Edit a post already in Buffer: new caption (text), new time (due_at, ISO UTC), or both. This is the same path as dragging a post on the HuhQueue Planner. Sent posts can't change; drafts stay drafts. 'review' and 'draft' tokens may only change drafts.",
      "inputSchema": {"type": "object", "required": ["post_id"], "properties": {"post_id": {"type": "string"}, "text": {"type": "string"}, "due_at": {"type": "string"},
          "override_warnings": {"type": "boolean"}}}},
@@ -79,6 +79,8 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["run_id", "channel_id"], "properties": {"run_id": {"type": "integer"}, "channel_id": {"type": "string"},
          "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"},
          "override_warnings": {"type": "boolean"}}}},
+    {"name": "get_inbox", "description": "Your user's Inbox: everything waiting for a person, most urgent first. Groups: approvals (agent posts held for a human), failed (Buffer posts in status error, with Buffer's reason), preflight (scheduled posts in the next 7 days that preflight would block or warn about), undated (drafts with no date), open_slots (empty posting times this week), plan (Buffer plan meters at 80%+). Each group has urgency now | soon | fyi, a count, a one-line summary and items with ids you can pass to update_post or reschedule_post. waiting is the Inbox badge count. Read-only.",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_calendar", "description": "Everything on the user's Planner: scheduled, sent and draft Buffer posts, agent posts waiting for approval, ready packages not yet sent, and each channel's Buffer posting slots.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "clips_from_video", "description": "One take -> a week. Turn one long video the user owns (a talk, podcast, tutorial) into 3-7 vertical clips of the best things they actually said: transcript with word timestamps, moments picked on sentence boundaries (hooks are exact quotes, never invented), 9:16 face-tracked reframe, burned-in captions in the brand font, a branded cover frame and end card, preflight per channel. Heavy work runs on the video worker; poll list_clips(take_id) until status is ready. Give url (a direct https link to the video file, not a social media page) or media_url (a HuhQueue upload), and owns: true. sample: true uses the bundled sample talk (sample workspace).",
@@ -121,6 +123,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return studio.autofix(actor, args)
     if name == "list_rules":
         return studio.preflight_rules(actor, args.get("network") or None)
+    if name == "get_inbox":
+        from . import inbox
+        return inbox.build(studio, actor)
     if name == "list_approvals":
         rows = studio.approvals(actor, args.get("status") or "pending")
         return [r for r in rows if actor.agent is None or r["agent_id"] == actor.agent["id"]]

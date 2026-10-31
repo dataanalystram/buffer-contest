@@ -32,6 +32,12 @@ SEED_POSTS = [  # channel, hours from now (negative = already sent), text, image
     ("demo_x", -5, "Agents can draft. Humans approve. That's the whole policy.", "approve"),
     ("demo_li", -28, "What we learned shipping a scheduler in two weeks: cut scope early, test the boring paths.", "ship"),
 ]
+# what the Inbox shows in the sample: one post Buffer failed to publish, one scheduled post preflight would block
+SEED_FAILED = [("demo_ig", -2, "Five open models you can run on a laptop, ranked by speed.", "laptop",
+                "Instagram rejected the media: the image's aspect ratio is outside 4:5 to 1.91:1.")]
+SEED_LONG = ("demo_x", 52, "Sample: our full weekly roundup, written too long for X on purpose so preflight flags it. "
+             "This week: open models got faster, agents learned to ask before they post, two schedulers shipped approval "
+             "steps, and we finally wrote down the checklist we use every morning before anything goes out.", "")
 SEED_DRAFTS = [  # channel, hours from now (None = no date yet), text, image seed
     ("demo_th", None, "Draft: a short thread on why every agent needs a kill switch.", ""),
     ("demo_ig", None, "Draft: carousel idea, five open models you can run on a laptop.", "laptop"),
@@ -43,6 +49,32 @@ SLOTS = {"demo_x": ["09:00", "13:00", "18:30"], "demo_li": ["08:30", "12:00"], "
 SEED_FEEDS = ["https://www.theverge.com/rss/index.xml", "https://hnrss.org/frontpage"]
 AGENT_POST = ("demo_x", "Claude", "AI agents can now draft your posts, but should they publish them? "
               "Our take: agents write, humans approve. Here's the setup we use. https://example.com/agents-approve")
+
+
+# What the agent researches in the sample once live research is used up (or for a link it may not open). Made up.
+SAMPLE_ARTICLE = {
+    "url": "https://example.com/sample/open-models-get-faster", "site": "Sample News", "image": "",
+    "title": "Open models now run twice as fast on an ordinary laptop",
+    "description": "A new release of an open-source inference library doubles local speed on the same hardware, with no change to accuracy.",
+    "paragraphs": ["Sample story for the HuhQueue demo. The library's maintainers say the new release roughly doubles the speed of "
+                   "open models on a standard laptop, with the same answers on their published benchmarks.",
+                   "Teams that run small models locally can upgrade without changing their code, and the project says memory use "
+                   "drops by about a third on long prompts.",
+                   "The release is free and open source, and the maintainers expect hosted providers to adopt it within weeks."]}
+SAMPLE_KIT = {"name": "Bright Desk", "website": "https://example.com", "handle": "@brightdesk", "voice": "Plain, warm, a little dry. Short sentences.",
+              "colors": {"ground": "#101418", "accent": "#FF5A1F", "text": "#F4F1EA"}}
+SAMPLE_STORIES = [  # News radar when the sample's feeds can't be read (offline, or a feed is down)
+    {"title": "Sample: open models now run twice as fast on an ordinary laptop", "url": SAMPLE_ARTICLE["url"], "source": "Sample News",
+     "summary": SAMPLE_ARTICLE["description"], "image": "", "published": 0},
+    {"title": "Sample: agents that ask before they post are winning trust", "url": "https://example.com/sample/agents-ask-first",
+     "source": "Sample News", "summary": "Teams report fewer mistakes when an agent drafts and a person approves.", "image": "", "published": 0},
+    {"title": "Sample: the boring checklist behind every good post", "url": "https://example.com/sample/checklist",
+     "source": "Sample News", "summary": "Length, links, alt text and a time that suits the audience.", "image": "", "published": 0},
+]
+
+
+def is_sample_url(url: str | None) -> bool:
+    return (url or "").strip().startswith("https://example.com/sample/")
 
 
 def is_demo(uid: str | None) -> bool:
@@ -91,6 +123,15 @@ class DemoBuffer:
                                   "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z") if h is not None else None,
                                   "assets": [_image(IMG.format(img))] if img else [], "externalLink": None}
                                  for i, (ch, h, t, img) in enumerate(SEED_DRAFTS)]
+            n = len(self._posts[uid])
+            self._posts[uid] += [{"id": f"dp{n + i}", "text": t, "status": "error", "channelId": ch, "error": {"message": why},
+                                  "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                                  "assets": [_image(IMG.format(img))] if img else [], "externalLink": None}
+                                 for i, (ch, h, t, img, why) in enumerate(SEED_FAILED)]
+            ch, h, t, img = SEED_LONG
+            self._posts[uid].append({"id": f"dp{len(self._posts[uid])}", "text": t, "status": "scheduled", "channelId": ch,
+                                     "dueAt": (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S.000Z"), "assets": [],
+                                     "externalLink": None})
         return self._posts[uid]
 
     def channels(self, uid: str, org_id: str = "", refresh: bool = False) -> list[dict]:
@@ -124,6 +165,8 @@ class DemoBuffer:
             post["dueAt"] = inp["dueAt"]
         if inp.get("saveToDraft") is False and post["status"] == "draft":
             post["status"] = "scheduled"
+        if post["status"] == "error" and "dueAt" in inp:  # a failed post given a new time goes back in the queue
+            post["status"], post["error"] = "scheduled", None
         return {k: post[k] for k in ("id", "text", "status", "dueAt", "channelId")}
 
     def delete_post(self, uid: str, post_id: str) -> dict:
@@ -142,9 +185,20 @@ class DemoBuffer:
 
     def daily_limits(self, uid: str, channel_ids: list[str], date: str | None = None) -> list[dict]:
         posts = self._seed(uid)
+        # Like Buffer: count the posts within 24 hours of the intended time (now when no time is given), not every post
+        # ever scheduled, so a sample X post three days out isn't refused because of today's posts.
+        def _t(s):
+            try:
+                d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+                return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
+        at = _t(date) if date else None
+        at = at or datetime.now(timezone.utc)
         out = []
         for cid in channel_ids:
-            n = sum(p["channelId"] == cid and p["status"] == "scheduled" for p in posts)
+            n = sum(p["channelId"] == cid and p["status"] == "scheduled" and
+                    (lambda d: d is None or abs(d - at) < timedelta(hours=24))(_t(p.get("dueAt"))) for p in posts)
             limit = 3 if cid == "demo_x" else None
             out.append({"channelId": cid, "limit": limit, "scheduled": n, "sent": 0, "isAtLimit": bool(limit and n >= limit)})
         return out

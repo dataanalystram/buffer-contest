@@ -1,11 +1,8 @@
 """Browser test of the Studio UI against a fake Buffer (Playwright). Skips if Chromium can't start."""
-import socket
-import threading
 import time
 
 import httpx
 import pytest
-import uvicorn
 
 from studio import drafter
 from studio.app import create_app
@@ -13,11 +10,14 @@ from studio.config import load_settings
 
 from .conftest import ARTICLE, FakeBuffer, image_bytes
 
+from .browsers import free_port, serve
+
 pw = pytest.importorskip("playwright.sync_api")
+NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"  # the guided tour has its own test (test_tour_e2e.py)
 
 
 def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
+    return free_port()
 
 
 @pytest.fixture
@@ -35,13 +35,7 @@ def live(tmp_path, monkeypatch):
     st.upsert_user("acc_1", "ram@example.com", "Ram", "org_1", "HuhByte",
                    {"access_token": "at_1", "refresh_token": "rt_1", "expires_at": time.time() + 3600})
     st.new_session("sid-e2e", "csrf-e2e"); st.update_session("sid-e2e", user_id="acc_1")
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    t = threading.Thread(target=server.run, daemon=True); t.start()
-    for _ in range(50):
-        try:
-            httpx.get(f"http://127.0.0.1:{port}/healthz"); break
-        except httpx.HTTPError:
-            time.sleep(0.1)
+    server = serve(app, port)
     yield f"http://127.0.0.1:{port}", fake, app
     server.should_exit = True
 
@@ -51,13 +45,14 @@ def test_link_to_buffer_draft_and_agent_approval(live, chromium):
     browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        ctx.add_init_script(NO_TOUR)
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())  # hermetic: no fonts or images from the internet
         page = ctx.new_page()
         page.goto(base)
         page.get_by_test_id("agent-go").wait_for()  # HuhQueue opens on the agent
-        page.get_by_test_id("tab-home").click()
-        page.get_by_test_id("todo-item").first.wait_for()
+        page.get_by_test_id("tab-inbox").click()
+        page.get_by_test_id("inbox-item").first.wait_for()
         page.get_by_test_id("tab-studio").click()
         page.get_by_test_id("channel-chip").first.wait_for()
         assert page.get_by_test_id("channel-chip").count() == 3
@@ -100,6 +95,7 @@ def test_planner_views_filters_and_drag_to_reschedule(live, chromium):
     browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Dublin")
+        ctx.add_init_script(NO_TOUR)
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
         page = ctx.new_page()
         errors = []
@@ -157,6 +153,7 @@ def test_preflight_panel_blocks_then_fix_it_makes_posts_pass(live, chromium):
     browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        ctx.add_init_script(NO_TOUR)
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
         page = ctx.new_page()
@@ -220,6 +217,7 @@ def test_planner_dialog_preflight(live, chromium):
     browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Dublin")
+        ctx.add_init_script(NO_TOUR)
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
         page = ctx.new_page()
         errors = []

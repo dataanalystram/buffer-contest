@@ -20,7 +20,7 @@ Claude or ChatGPT can do all of this over MCP, but nothing they write goes out u
 ## Screenshots
 
 All captured from the running app (sample workspace at `/demo`, nothing reaches Buffer) with
-`scripts/planner_shots.py` and `scripts/readme_shots.py`. Re-run them whenever the interface changes.
+`scripts/planner_shots.py`, `scripts/readme_shots.py` and `scripts/inbox_shots.py`. Re-run them whenever the interface changes.
 
 | | |
 |---|---|
@@ -107,6 +107,25 @@ A post that Buffer or the network would refuse is caught before `createPost` or 
 
 API: `POST /api/preflight` (dry run), `POST /api/preflight/fix`, `GET /api/preflight/rules`. MCP: `preflight_post`, `autofix_post`, `list_rules`.
 
+## Inbox, phones and the free sample
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/inbox-dark.png">
+  <img src="docs/screenshots/inbox-light.png" alt="The Inbox in the sample workspace: Inbox · 5, chips for Approvals waiting, Failed or bounced, Preflight warnings, Drafts with no date, Empty slots this week and Buffer plan, then an agent post from Claude to approve and an Instagram post Buffer couldn't publish with its reason and a Fix and reschedule button">
+</picture>
+
+*The Inbox: everything waiting for a person, most urgent first. The same read is `GET /api/inbox` and MCP `get_inbox`.*
+
+| | | |
+|---|---|---|
+| ![Phone, 390 px: the Inbox with the bottom bar (Inbox with a badge, Make a post, One take, Planner, More)](docs/screenshots/phone-inbox-light.png) | ![Phone, 390 px: the Planner week as an agenda, one day after another with its posts](docs/screenshots/phone-planner-agenda-light.png) | ![Phone, 390 px, dark: step 4 of 7 of the guided tour, the Planner, with Skip tour, Back and Next above the bottom bar](docs/screenshots/tour-phone-dark.png) |
+| **Phone**: a bottom bar and a More sheet; every control is 44 px or more. | **Planner on a phone**: the week becomes an agenda ([dark](docs/screenshots/phone-planner-agenda-dark.png)). | **Guided tour** on the first `/demo` visit: 7 steps, keyboard-driven, skippable ([desktop](docs/screenshots/tour-light.png)). |
+
+The sample workspace at `/demo` needs no sign-in and never calls Buffer. It has daily caps per workspace and per visitor
+IP (hashed) for live research, the free AI writer, website import, new feeds and Reel renders; past a cap the feature
+keeps working on sample data. The sample never starts the video worker, and a sample agent token reaches only the sample
+and expires within a day.
+
 ## What we built during the Commit window (28 Oct to 13 Nov)
 
 Everything below was built in the Buffer Commit window; the pre-existing self-host scheduler is listed separately in
@@ -116,13 +135,14 @@ Everything below was built in the Buffer Commit window; the pre-existing self-ho
 |---|---|
 | 28 Oct | Buffer OAuth (PKCE, rotating refresh tokens), GraphQL client with rate-limit handling, link to one caption per channel counted Buffer's way, preview, confirm and send (draft, queue, next, now, custom time), ideas |
 | 28 Oct | Agents with a leash: MCP server and REST API per Buffer user, approval inbox by default, drafts-only and trusted policies, daily caps, kill switch, activity log; Playwright e2e and CI on SQLite and Postgres; Render deploy |
-| 29 Oct | Threads from one link, sample workspace at `/demo`, post previews, news radar, plan-limit guard, bookmarklet, the "Needs you" home |
+| 29 Oct | Threads from one link, sample workspace at `/demo`, post previews, news radar, plan-limit guard, bookmarklet, the home screen for what is waiting (now the Inbox) |
 | 30 Oct | Supabase Postgres for the live app, OAuth connector for Claude.ai and ChatGPT, public usage counter |
 | 30 Oct | The agent ("Make a post"): research a topic or link or edit your own photo or video, on-brand carousels, cards and Reels, brand kit with website import, the Style Ledger and brand check, AI engine settings (bring your own key or use your own Claude/ChatGPT) |
 | 30 Oct | Renamed to HuhQueue. **Planner**: one tab replaces Calendar and Buffer queue (List, Week, Month, filters, timezone, No date drafts, posting times, click-to-schedule, drag to reschedule) on new `update_post`, `reschedule_post` and `delete_draft` actions (Buffer `editPost` / `deletePost`) shared by UI, REST and MCP; light and dark screenshots |
 | 30 Oct | Clean renders: no empty-box glyphs for emoji or symbols the brand font lacks, no "My brand" placeholder (the workspace name is used, or no wordmark) |
 | 30 Oct | **One take → a week**: one long video you own becomes 3 to 7 captioned 9:16 clips (faster-whisper transcript, verbatim moment mining through the provider abstraction with a deterministic fallback, shot-by-shot MediaPipe reframe, libass brand captions, cover frame + `thumbnailOffset`, end card), preflighted and spread into the week's open Buffer posting slots as dated drafts on the video worker (GitHub Actions `take.yml` or local FFmpeg). The Spread animation on the Planner, trim/hook/caption editor, progress timeline; REST + MCP `clips_from_video`, `list_clips`, `adjust_clip`, `place_clips_in_week`; sample take in `/demo` |
 | 30 Oct | **Never Bounced preflight**: per-network rule pack with cited sources (docs/PREFLIGHT.md), Buffer-exact counting, Pillow/ffprobe media checks, Fix it (thread/trim, crop/convert images), runs before every `createPost` and `editPost`; green/amber/red chips in the composer and Planner; `POST /api/preflight` + MCP `preflight_post`, `autofix_post`, `list_rules`; Buffer's HTTP 200 errors surfaced everywhere |
+| 31 Oct | One take merged after CI went green (root cause: a skipped browser test left the Playwright driver running). **Inbox**: what needs a person by urgency, `GET /api/inbox` + MCP `get_inbox`, fix and reschedule failed posts. **Responsive**: bottom bar and More sheet on phones, 44 px targets, phone Planner agenda, an audit and a test at 360 to 1440 px in light and dark. **Free sample** with a 7-step guided tour and daily caps with sample fallbacks |
 
 ## Connect an agent (MCP)
 
@@ -137,7 +157,7 @@ claude mcp add --transport http huhqueue https://huhqueue-studio.onrender.com/mc
   --header "Authorization: Bearer hq_YOUR_TOKEN"
 ```
 
-Tools: `clips_from_video`, `list_clips`, `adjust_clip`, `place_clips_in_week`, `whoami`, `list_channels`, `draft_from_link`, `preflight_post`, `autofix_post`, `list_rules`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `update_post`, `reschedule_post`, `delete_draft`, `list_calendar`, `list_stories`, `create_idea`, `get_limits`, plus the agent tools `run_agent`, `edit_media`, `get_run`, `revise`, `remember_rule`, `brand_check`, `get_brand`, `schedule_package`.
+Tools: `get_inbox`, `clips_from_video`, `list_clips`, `adjust_clip`, `place_clips_in_week`, `whoami`, `list_channels`, `draft_from_link`, `preflight_post`, `autofix_post`, `list_rules`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `update_post`, `reschedule_post`, `delete_draft`, `list_calendar`, `list_stories`, `create_idea`, `get_limits`, plus the agent tools `run_agent`, `edit_media`, `get_run`, `revise`, `remember_rule`, `brand_check`, `get_brand`, `schedule_package`.
 The REST API (`/api/docs`) accepts the same bearer token, so UI = API = MCP (a test asserts all three send Buffer the identical `createPost` input).
 
 ## Run it yourself
@@ -161,6 +181,8 @@ python scripts/build_sample_take.py talk.mp4   # rebuild the bundled sample take
 python scripts/preflight_shots.py http://127.0.0.1:8899 docs/screenshots  # preflight screenshots, light + dark
 python scripts/readme_shots.py http://127.0.0.1:8899 docs/screenshots   # README screenshots (app running with /demo)
 python scripts/planner_shots.py http://127.0.0.1:8899 docs/screenshots
+python scripts/inbox_shots.py http://127.0.0.1:8899 docs/screenshots    # Inbox, phone bar, phone agenda, tour
+python scripts/responsive_audit.py http://127.0.0.1:8899   # every screen at 360-1440 px, light + dark: sideways scroll, taps < 44 px
 STUDIO_TEST_PG=postgresql://... python -m pytest tests/studio -q   # same suite on Postgres
 scripts/secret_scan.sh                      # gitleaks on full history + working tree (run before every push)
 ```

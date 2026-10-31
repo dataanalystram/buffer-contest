@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import drafter, preflight, radar
+from . import demo, demo_guard, drafter, preflight, radar
 from .buffer_api import BufferClient, BufferError
 from .config import Settings
 from .store import Store, sha
@@ -281,7 +281,7 @@ class Studio:
 
     def queue(self, a: Actor, status: str = "scheduled") -> list[dict]:
         u = self.store.user(a.uid)
-        statuses = {"scheduled": ["scheduled"], "draft": ["draft"], "sent": ["sent"]}.get(status, ["scheduled"])
+        statuses = {"scheduled": ["scheduled"], "draft": ["draft"], "sent": ["sent"], "error": ["error"]}.get(status, ["scheduled"])
         return self.buffer.posts(a.uid, u["org_id"], statuses)
 
     def limits(self, a: Actor) -> dict:
@@ -319,21 +319,36 @@ class Studio:
             chans = [c for c in chans if c["id"] in channel_ids]
         if not chans:
             raise ActionError("No connected Buffer channels selected.")
-        try:
-            article = drafter.fetch_article(url)
-        except drafter.FetchError as e:
-            raise ActionError(str(e))
+        sample = None
+        if demo.is_sample_url(url) or (demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "research")):
+            article, sample = dict(demo.SAMPLE_ARTICLE), demo_guard.WHY["research"].replace("the agent used", "this uses")
+        else:
+            try:
+                article = drafter.fetch_article(url)
+            except drafter.FetchError as e:
+                raise ActionError(str(e))
         ai = {"base_url": self.s.ai_base_url, "api_key": self.s.ai_api_key, "model": self.s.ai_model}
+        if self.s.ai_base_url and demo_guard.is_demo(a.uid):  # the free sample's AI allowance
+            if demo_guard.allowed(self.store, a.uid, "ai"):
+                demo_guard.spend(self.store, a.uid, "ai")
+            else:
+                ai = {"base_url": "", "api_key": "", "model": ""}
         drafts = drafter.draft(chans, article, ai=ai, tone=tone, thread=thread)
         self.store.audit(a.uid, a.label, "draft_from_link", "read", {"url": article["url"], "channels": len(drafts)})
-        return {"article": {k: article[k] for k in ("url", "title", "description", "image", "site")}, "drafts": drafts}
+        out = {"article": {k: article[k] for k in ("url", "title", "description", "image", "site")}, "drafts": drafts}
+        if sample:
+            out["sample"] = sample
+        return out
 
     # ------------------------------------------------------------ news radar
     def feeds(self, a: Actor) -> list[dict]:
         return [dict(r) for r in self.store.q("SELECT id,url,created FROM feeds WHERE user_id=? ORDER BY id", (a.uid,))]
 
     def radar(self, a: Actor) -> dict:
-        return {"feeds": self.feeds(a), **radar.stories(self.feeds(a))}
+        out = {"feeds": self.feeds(a), **radar.stories(self.feeds(a))}
+        if demo_guard.is_demo(a.uid) and not out.get("stories"):  # the sample's feeds couldn't be read: show sample stories
+            out["stories"], out["sample"] = [dict(s) for s in demo.SAMPLE_STORIES], True
+        return out
 
     def add_feed(self, a: Actor, url: str) -> dict:
         if a.kind != "human":
@@ -343,6 +358,8 @@ class Studio:
             raise ActionError(f"You can follow up to {radar.MAX_FEEDS} feeds. Remove one first.")
         if any(f["url"] == url for f in self.feeds(a)):
             raise ActionError("You already follow that feed.")
+        if not demo_guard.take(self.store, a.uid, "feed"):
+            raise ActionError(demo_guard.WHY["feed"], 429)
         try:
             feed = radar.fetch(url)
         except drafter.FetchError as e:
@@ -519,7 +536,7 @@ class Studio:
 
     def _find_post(self, a: Actor, post_id: str) -> tuple[dict, dict]:
         u = self.store.user(a.uid)
-        for status in ("scheduled", "draft", "sent"):
+        for status in ("scheduled", "draft", "error", "sent"):  # error: a failed post can be fixed and rescheduled
             for p in self.buffer.posts(a.uid, u["org_id"], [status], first=100):
                 if p.get("id") == post_id:
                     ch = {c["id"]: c for c in self.channels(a)}.get(p.get("channelId"))
@@ -650,14 +667,21 @@ class Studio:
         if policy not in POLICIES:
             raise ActionError(f"policy must be one of {POLICIES}")
         name = (name or "my agent").strip()[:40]
+        sample = demo.is_demo(a.uid)
+        if sample:  # a sample token only ever reaches the sample workspace, and dies with it
+            days, daily_cap = 1, min(int(daily_cap), 10)
         token = "hq_" + secrets.token_urlsafe(32)
         tid = self.store.x("INSERT INTO agent_tokens(user_id,name,token_hash,policy,daily_cap,channels,created,expires) "
                            "VALUES(?,?,?,?,?,?,?,?)", (a.uid, name, sha(token), policy, max(1, min(int(daily_cap), 100)),
                                                        json.dumps(channels) if channels else None, time.time(),
                                                        time.time() + max(1, min(int(days), 365)) * 86400))
         self.store.audit(a.uid, a.label, "create_agent_token", "safety", {"id": tid, "name": name, "policy": policy})
-        return {"id": tid, "name": name, "policy": policy, "token": token,
-                "note": "Shown once. Paste it into your agent's MCP config."}
+        out = {"id": tid, "name": name, "policy": policy, "token": token,
+               "note": "Shown once. Paste it into your agent's MCP config."}
+        if sample:
+            out.update(sample=True, note="Sample token: it only works with this sample workspace (made-up channels, nothing reaches "
+                                         "Buffer) and expires within a day. Shown once.")
+        return out
 
     def agent_tokens(self, a: Actor) -> list[dict]:
         rows = self.store.q("SELECT id,name,policy,daily_cap,channels,created,expires,revoked,last_used FROM agent_tokens "
