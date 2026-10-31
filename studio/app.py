@@ -17,7 +17,7 @@ import base64
 import hmac
 import os
 
-from . import buffer_api, demo, demo_guard, house as house_mod, inbox as inbox_mod, mcp, mcp_oauth
+from . import buffer_api, demo, demo_guard, house as house_mod, inbox as inbox_mod, limits as reqlimits, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
@@ -67,6 +67,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             a = studio.resolve_agent(auth[7:].strip())
             if not a:
                 raise ActionError("Invalid or revoked agent token.", 401)
+            if write:  # the kill switch stops every agent write, whatever the route (SECURITY_RULES 4)
+                studio.kill_switch_check(a, request.url.path)
             return a
         raise ActionError("Not connected. Connect your Buffer account first.", 401)
 
@@ -78,6 +80,34 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     async def _buffer_err(_, e: BufferError):
         headers = {"Retry-After": str(e.retry_after)} if e.retry_after else {}
         return JSONResponse({"error": str(e), "buffer": True}, status_code=e.status, headers=headers)
+
+    # Anonymous and free-sample traffic: a per-IP request rate limit (SECURITY_RULES 3). Real accounts, by cookie or by
+    # a real account's agent token, are never slowed here. Media links (/m/) are left alone: Buffer fetches them.
+    rate = reqlimits.RateLimit(per_min=int(os.environ.get("HQ_ANON_RPM", "240")), demo_per_min=int(os.environ.get("HQ_DEMO_PER_MIN", "6")))
+    app.state.rate = rate
+
+    def _real_account(request: Request) -> bool:
+        sess = store.session(request.cookies.get(COOKIE))
+        uid = sess.get("user_id") if sess else None
+        if not uid:
+            auth = request.headers.get("authorization", "")
+            ag = studio.resolve_agent(auth[7:].strip()) if auth.lower().startswith("bearer ") else None
+            uid = ag.uid if ag else None
+        return bool(uid) and not demo_guard.is_demo(uid)
+
+    @app.middleware("http")
+    async def _rate(request: Request, call_next):
+        path = request.url.path
+        if path.startswith(("/api/", "/mcp", "/oauth/", "/demo")) and not path.startswith("/api/worker/") \
+                and not _real_account(request):
+            ip = demo_guard.client_ip(request)
+            wait = rate.hit("ip:" + sha("ip:" + ip), rate.per_min)
+            if not wait and path == "/demo":
+                wait = rate.hit("demo:" + sha("ip:" + ip), rate.demo_per_min)
+            if wait:
+                return JSONResponse({"error": "Too many requests from this network. Wait a minute, or connect Buffer."},
+                                    status_code=429, headers={"Retry-After": str(int(wait) + 1)})
+        return await call_next(request)
 
     @app.middleware("http")
     async def _headers(request: Request, call_next):
@@ -378,8 +408,13 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return Response(data, media_type=m["mime"], headers=headers)
 
     @app.post("/api/media")
-    def upload(request: Request, body: dict = Body(...)):
-        return house.upload(actor(request, write=True), body.get("name", ""), body.get("data", ""))
+    async def upload(request: Request):
+        """Authenticate first, then read the body with a cap (Content-Length checked, then counted as it streams), so
+        nothing is buffered or decoded for a caller who isn't allowed in (SECURITY_RULES 6)."""
+        a = actor(request, write=True)
+        cap = reqlimits.DEMO_MEDIA_MAX if demo_guard.is_demo(a.uid) else reqlimits.MEDIA_MAX
+        body = await reqlimits.read_json(request, cap)
+        return house.upload(a, str(body.get("name", "")), str(body.get("data", "")))
 
     @app.get("/api/brand")
     def brand_get(request: Request):
@@ -491,31 +526,38 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(p, headers={"Cache-Control": "public, max-age=86400"})
 
-    # render worker (GitHub Actions) callbacks, authenticated with the job's single-use token
-    def worker_ok(request: Request, jid: int) -> bool:
-        return house.job_token_ok(jid, request.headers.get("x-job-token", ""))
+    # render worker (GitHub Actions) callbacks. The run claims its job once with its GitHub OIDC identity and gets a
+    # token that reads the spec once, posts each of the job's clips once and dies with the result (SECURITY_RULES 2).
+    @app.post("/api/worker/jobs/{jid}/claim", include_in_schema=False)
+    def worker_claim(jid: int, request: Request):
+        auth = request.headers.get("authorization", "")
+        code, body = house.claim_job(jid, auth[7:].strip() if auth.lower().startswith("bearer ") else "")
+        return JSONResponse(body, status_code=code, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/worker/jobs/{jid}", include_in_schema=False)
     def worker_job(jid: int, request: Request):
-        if not worker_ok(request, jid):
+        if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "read"):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         j = house.job_spec(jid)
         return j or JSONResponse({"error": "not found"}, status_code=404)
 
     @app.post("/api/worker/jobs/{jid}", include_in_schema=False)
     async def worker_done(jid: int, request: Request):
-        if not worker_ok(request, jid):
+        if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "write"):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        body = await request.json()
-        data = base64.b64decode(body["data"]) if body.get("data") else None
-        return house.finish_video(jid, data, body.get("meta"), body.get("error", ""), body=body)
+        body = await reqlimits.read_json(request, reqlimits.WORKER_MAX)
+        try:
+            data = base64.b64decode(body["data"]) if body.get("data") else None
+            return house.finish_video(jid, data, body.get("meta"), body.get("error", ""), body=body)
+        finally:
+            house.burn_job_token(jid)
 
     @app.post("/api/worker/jobs/{jid}/clips/{clip_id}", include_in_schema=False)
     async def worker_clip(jid: int, clip_id: str, request: Request):
-        """One take: the worker posts each finished clip (mp4 + cover) as soon as it is rendered."""
-        if not worker_ok(request, jid):
+        """One take: the worker posts each finished clip (mp4 + cover) as soon as it is rendered, once per clip."""
+        if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "clip", clip_id):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        body = await request.json()
+        body = await reqlimits.read_json(request, reqlimits.WORKER_MAX)
         return house.takes.on_clip(jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]), body.get("meta") or {})
 
     # ------------------------------------------------------------ MCP
@@ -541,5 +583,6 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def mcp_get():
         return Response(status_code=405, headers={"Allow": "POST"})
 
+    app.add_middleware(reqlimits.BodyCap)  # every request body capped by path before anything parses it (SECURITY_RULES 6)
     return app
 

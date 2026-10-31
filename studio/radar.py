@@ -88,10 +88,12 @@ def fetch(feed_url: str, http: httpx.Client | None = None, check_host: bool = Tr
         raise FetchError("Paste a feed address that starts with http:// or https://")
     if check_host and not _public(p.hostname):
         raise FetchError("That feed points to a private address, so it can't be read.")
-    client = http or httpx.Client(timeout=10, follow_redirects=True,
-                                  headers={"User-Agent": "Mozilla/5.0 (HuhQueue news radar)"})
-    try:
-        r = client.get(feed_url)
+    from . import netguard
+    try:  # every redirect hop is checked again (SECURITY_RULES 1)
+        r = netguard.safe_get(feed_url, http=http, check_host=check_host, limit=MAX_BYTES, timeout=10,
+                              headers={"User-Agent": "Mozilla/5.0 (HuhQueue news radar)"})
+    except FetchError:
+        raise FetchError("That feed is too large, redirects too often, or points to a private address.")
     except httpx.HTTPError as e:
         raise FetchError(f"Couldn't open that feed ({e.__class__.__name__}).")
     if r.status_code >= 400:

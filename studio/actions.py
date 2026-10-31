@@ -214,6 +214,7 @@ class Studio:
         """Apply preflight fixes to a post for one channel and return the fixed post with a fresh preflight.
         Text fixes trim or thread the caption; image fixes crop/convert/recompress with Pillow and store the result as new
         HuhQueue media. Nothing is sent to Buffer."""
+        self._guard_write(a, "autofix_post")  # SECURITY_RULES 4
         chans = {c["id"]: c for c in self.channels(a)}
         ch = chans.get(p.get("channel_id") or "")
         if not ch:
@@ -314,6 +315,7 @@ class Studio:
     # ------------------------------------------------------------ drafting
     def draft_from_link(self, a: Actor, url: str, channel_ids: list[str] | None = None, tone: str = "",
                         thread: bool = False) -> dict:
+        self._guard_write(a, "draft_from_link")
         chans = [c for c in self.channels(a) if not c.get("isDisconnected")]
         if channel_ids:
             chans = [c for c in chans if c["id"] in channel_ids]
@@ -328,10 +330,8 @@ class Studio:
             except drafter.FetchError as e:
                 raise ActionError(str(e))
         ai = {"base_url": self.s.ai_base_url, "api_key": self.s.ai_api_key, "model": self.s.ai_model}
-        if self.s.ai_base_url and demo_guard.is_demo(a.uid):  # the free sample's AI allowance
-            if demo_guard.allowed(self.store, a.uid, "ai"):
-                demo_guard.spend(self.store, a.uid, "ai")
-            else:
+        if self.s.ai_base_url and demo_guard.is_demo(a.uid):  # the free sample's AI allowance, reserved atomically first
+            if not demo_guard.reserve(self.store, a.uid, "ai"):
                 ai = {"base_url": "", "api_key": "", "model": ""}
         drafts = drafter.draft(chans, article, ai=ai, tone=tone, thread=thread)
         self.store.audit(a.uid, a.label, "draft_from_link", "read", {"url": article["url"], "channels": len(drafts)})
@@ -375,16 +375,30 @@ class Studio:
         return {"removed": feed_id}
 
     # ------------------------------------------------------------ guards
-    def _guard_write(self, a: Actor, action: str) -> None:
+    # Every agent action that does something (SECURITY_RULES 4). The kill switch stops all of them; each one counts
+    # against the token's daily cap (the audit action names they are recorded under).
+    COUNTED = ("submit_post", "create_idea", "update_post", "delete_draft", "agent_run", "clips_from_video", "adjust_clip",
+               "remember_rule", "revise", "draft_from_link", "autofix_post", "place_clips_in_week", "save_brand_kit",
+               "upload_media", "import_media", "brand_from_website", "follow_feed")
+
+    def kill_switch_check(self, a: Actor, action: str) -> None:
+        """The kill switch alone (any agent request that changes something, counted or not)."""
         if a.kind != "agent":
             return
         u = self.store.user(a.uid)
         if u and u.get("kill_switch"):
             self.store.audit(a.uid, a.label, action, "blocked", {"reason": "kill switch on"}, ok=False)
             raise ActionError("Agent actions are paused: the kill switch is on in HuhQueue.", 423)
+
+    def _guard_write(self, a: Actor, action: str) -> None:
+        """Kill switch + the token's daily cap, before an agent action runs."""
+        if a.kind != "agent":
+            return
+        self.kill_switch_check(a, action)
         day = time.time() - 86400
-        used = self.store.q("SELECT COUNT(*) n FROM audit WHERE user_id=? AND actor=? AND action IN "
-                            "('submit_post','create_idea','update_post','delete_draft') AND ok=1 AND ts>?", (a.uid, a.label, day))[0]["n"]
+        marks = ",".join("?" * len(self.COUNTED))
+        used = self.store.q(f"SELECT COUNT(*) n FROM audit WHERE user_id=? AND actor=? AND action IN ({marks}) AND ok=1 AND ts>?",
+                            (a.uid, a.label, *self.COUNTED, day))[0]["n"]
         if used >= int(a.agent["daily_cap"]):
             self.store.audit(a.uid, a.label, action, "blocked", {"reason": "daily cap", "cap": a.agent["daily_cap"]}, ok=False)
             raise ActionError(f"This agent token reached its daily cap of {a.agent['daily_cap']} actions.", 429)

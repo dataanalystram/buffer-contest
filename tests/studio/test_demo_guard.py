@@ -95,6 +95,9 @@ def test_client_ip_prefers_the_first_forwarded_hop():
     assert demo_guard.client_ip(R({})) == "10.0.0.1"
     r = R({}); r.client = None
     assert demo_guard.client_ip(r) == "unknown"
+    # behind Cloudflare (Render) the edge's header wins: a typed X-Forwarded-For can't pick the bucket
+    assert demo_guard.client_ip(R({"cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "1.2.3.4, 203.0.113.9"})) == "203.0.113.9"
+    assert demo_guard.client_ip(R({"true-client-ip": "203.0.113.10", "x-forwarded-for": "1.2.3.4"})) == "203.0.113.10"
 
 
 def test_every_cap_has_a_plain_reason():

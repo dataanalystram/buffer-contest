@@ -220,7 +220,7 @@ def test_kill_switch_and_daily_cap(human, fake):
     assert res["isError"] and "kill switch" in msg and fake.created == []
     # agents can't flip it back
     r = bot(human).post("/api/safety/kill", headers={"Authorization": f"Bearer {tok}"}, json={"on": False})
-    assert r.status_code == 403
+    assert r.status_code in (403, 423)  # human-only (403), or refused while the switch is on (423)
     human.post("/api/safety/kill", json={"on": False})
     _, pv = mcp_call(human, tok, "preview_post", {"channel_id": "ch_x", "text": "x", "mode": "queue"})
     _, ok = mcp_call(human, tok, "submit_post", {"confirm_token": pv["confirm_token"]})

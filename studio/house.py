@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import brand, demo, demo_guard, drafter, llm, render, sources
+from . import brand, demo, demo_guard, drafter, llm, netguard, render, sources
 from .actions import ActionError, Actor, Studio
 
 STEPS = [("find", "Find the story"), ("verify", "Verify on the source"), ("structure", "Structure the facts"),
@@ -64,6 +64,7 @@ class House:
         return out
 
     def save_kit(self, a: Actor, patch: dict) -> dict:
+        self.studio._guard_write(a, "save_brand_kit")  # SECURITY_RULES 4: kill switch + daily cap for agents
         cur = self.kit(a)
         allowed = {"name", "handle", "website", "font", "logo", "voice"}
         for k in allowed & set(patch):
@@ -88,6 +89,7 @@ class House:
         return self.kit(a)
 
     def kit_from_website(self, a: Actor, url: str) -> dict:
+        self.studio._guard_write(a, "brand_from_website")
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "import"):
             kit = self.save_kit(a, dict(demo.SAMPLE_KIT))
             return {"kit": kit, "found": {"logo": False, "palette": [], "theme_color": "", "handle": demo.SAMPLE_KIT["handle"]},
@@ -98,9 +100,10 @@ class House:
         p = urlparse(url)
         if not p.hostname or not drafter._public(p.hostname):
             raise ActionError("Paste your brand's public website address.")
-        client = self._client()
-        try:
-            r = client.get(url)
+        try:  # every redirect hop is checked again (SECURITY_RULES 1)
+            r = netguard.safe_get(url, http=self.http, headers=sources.UA, limit=3_000_000)
+        except netguard.FetchError as e:
+            raise ActionError(str(e))
         except httpx.HTTPError as e:
             raise ActionError(f"Couldn't open {p.hostname} ({e.__class__.__name__}).")
         info = brand.kit_from_html(str(r.url), r.text)
@@ -154,13 +157,14 @@ class House:
 
     def remember(self, a: Actor, correction: str, rules: list[dict] | None = None) -> dict:
         """A correction in plain words -> ledger rules. Rule writer first; an AI model only when it matched nothing."""
+        self.studio._guard_write(a, "remember_rule")
         correction = (correction or "").strip()[:500]
         if not correction and not rules:
             raise ActionError("Say what to change, e.g. “logo smaller, top left” or “never say game-changer”.")
         found = brand.clean_rules(rules, correction) if rules else brand.parse_correction(correction)
         engine_used = "rule writer"
         if not found:
-            eng = llm.resolve(self.store, a.uid, self.s)
+            eng = self._ai_reserve(a, llm.resolve(self.store, a.uid, self.s))
             if eng:
                 try:
                     data = llm.chat_json(eng, "You turn a social media editor's correction into brand rules. " + brand.RULE_SCHEMA_HINT,
@@ -188,6 +192,9 @@ class House:
         return {"added": added, "ledger": self.rules(a), "engine": engine_used}
 
     def set_rule(self, a: Actor, rule_id: int, active: bool) -> dict:
+        if a.kind != "human":  # SECURITY_RULES 4: switching rules on or off is a human decision
+            self.studio.kill_switch_check(a, "set_rule")
+            raise ActionError("Only a human can switch ledger rules on or off; agents can add them.", 403)
         self.store.x("UPDATE style_rules SET active=? WHERE id=? AND user_id=?", (1 if active else 0, rule_id, a.uid))
         return {"id": rule_id, "active": active}
 
@@ -232,11 +239,19 @@ class House:
         return f"{self.s.public_url.rstrip('/')}/m/{token}" if token else ""
 
     def upload(self, a: Actor, name: str, data_b64: str) -> dict:
+        self.studio._guard_write(a, "upload_media")
+        b64 = data_b64.split(",", 1)[-1]
+        demo_user = demo_guard.is_demo(a.uid)
+        cap = demo_guard.DEMO_FILE_MAX if demo_user else MAX_UPLOAD
+        if len(b64) * 3 // 4 > cap + 3:  # the size, from the base64 length, before anything is decoded (SECURITY_RULES 6)
+            raise ActionError(demo_guard.WHY["upload_kb"] if demo_user else "Files up to 40 MB.", 413)
+        if demo_user and not demo_guard.reserve(self.store, a.uid, "upload_kb", max(1, len(b64) * 3 // 4 // 1024)):
+            raise ActionError(demo_guard.WHY["upload_kb"], 429)
         try:
-            data = base64.b64decode(data_b64.split(",", 1)[-1], validate=False)
+            data = base64.b64decode(b64, validate=False)
         except Exception:
             raise ActionError("Couldn't read that file.")
-        if not data or len(data) > MAX_UPLOAD:
+        if not data or len(data) > cap:
             raise ActionError("Files up to 40 MB.")
         ext = (name.rsplit(".", 1)[-1] if "." in name else "").lower()
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
@@ -248,6 +263,7 @@ class House:
 
     def import_url(self, a: Actor, url: str) -> dict:
         """For agents: fetch a photo or video the user owns from a public URL into HuhQueue."""
+        self.studio._guard_write(a, "import_media")
         ext = urlparse(url).path.rsplit(".", 1)[-1].lower() if "." in urlparse(url).path else ""
         data = self._fetch_bytes(url, MAX_UPLOAD)
         if not data:
@@ -294,13 +310,21 @@ class House:
         self.store.audit(a.uid, a.label, "save_ai_key", "safety", {"provider": prov, "model": eng["model"]})
         return self.ai_settings(a)
 
+    def _ai_reserve(self, a: Actor, eng: dict | None) -> dict | None:
+        """The engine for ONE AI call, or None (built-in writer). The free sample's AI allowance is reserved here, before
+        the call, in one atomic step, so parallel calls can't run past the cap (SECURITY_RULES 3)."""
+        if eng and eng["source"] == "free starter" and not demo_guard.reserve(self.store, a.uid, "ai"):
+            return None
+        return eng
+
     def _ai_audit(self, a: Actor, eng: dict, what: str) -> None:
-        if eng["source"] == "free starter":
-            demo_guard.spend(self.store, a.uid, "ai")
         self.store.audit(a.uid, a.label, "ai_call", "read", {"engine": "free" if eng["source"] == "free starter" else "own", "for": what})
 
     # ================================================================ agent runs
     def start_run(self, a: Actor, body: dict) -> dict:
+        self.studio._guard_write(a, "agent_run")
+        if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
+            raise ActionError(demo_guard.WHY["run"], 429)
         kind = "media" if body.get("media_token") else "news"
         if kind == "news" and not ((body.get("query") or "").strip() or (body.get("url") or "").strip()):
             raise ActionError("Give the agent a topic to research or a link to start from.")
@@ -485,6 +509,7 @@ class House:
 
     def _structure(self, a, eng, article) -> dict:
         text = " ".join(article.get("paragraphs", []))[:3000]
+        eng = self._ai_reserve(a, eng)
         if eng:
             try:
                 d = llm.chat_json(eng, "You are a careful news editor. Use only facts in the article; never invent numbers.",
@@ -613,6 +638,8 @@ class House:
                        "paragraphs": story["facts"] + article.get("paragraphs", [])[:3]}
         chans = inp["channels"]
         tone = "; ".join(x for x in [kit.get("voice", ""), brand.rules_prompt(rules)] if x)
+        if eng and eng["style"] == "openai":
+            eng = self._ai_reserve(a, eng)
         ai = {"base_url": eng["base_url"], "api_key": eng["api_key"], "model": eng["model"]} if eng and eng["style"] == "openai" else None
         drafts = drafter.draft(chans, article, ai=ai, http=self.http, tone=tone)
         if ai:
@@ -720,41 +747,116 @@ class House:
         return not demo_guard.is_demo(uid)
 
     def _dispatch_github(self, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:
-        """Start the free render worker for one job. It gets a single-use job token (only good for this job, 30 minutes;
-        longer for One take jobs), so there is no long-lived shared secret between the app and the worker."""
+        """Start the free render worker for one job. No token travels in the dispatch (its inputs show on the run page):
+        the run claims this job once with its GitHub OIDC identity (worker_auth) inside the claim window (30 minutes;
+        longer for One take jobs) and gets a token that only works for this job, in memory only. SECURITY_RULES 2."""
         owner = self.store.q("SELECT user_id FROM render_jobs WHERE id=?", (jid,))
         if not owner or not self._worker_allowed(owner[0]["user_id"]):  # belt and braces: sample jobs never reach the worker
             return False, "sample workspace: no worker runs"
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")
-        jt = self.issue_job_token(jid, ttl)
+        self.open_claim(jid, ttl, workflow)
         try:
             r = (self.http or httpx.Client(timeout=15)).post(
                 f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches",
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
                 json={"ref": os.environ.get("GH_REF", "main"),
-                      "inputs": {"job_id": str(jid), "app": self.s.public_url, "job_token": jt, **(inputs or {})}})
+                      "inputs": {"job_id": str(jid), "app": self.s.public_url, **(inputs or {})}})
             return (r.status_code == 204, f"GitHub answered {r.status_code}")
         except httpx.HTTPError as e:
             return False, e.__class__.__name__
 
+    # ---- the worker's job token: claimed once, read once, each clip once, dead after the result (SECURITY_RULES 2)
+    def _token_state(self, jid: int) -> tuple[str, dict, dict] | None:
+        rows = self.store.q("SELECT spec, status FROM render_jobs WHERE id=?", (jid,))
+        if not rows:
+            return None
+        raw = rows[0]["spec"]
+        spec = json.loads(raw)
+        return raw, spec, {"status": rows[0]["status"]}
+
+    def _cas(self, jid: int, old_raw: str, spec: dict) -> bool:
+        """Write the job spec only if nobody changed it since we read it (one claim, one read, even under races)."""
+        return bool(self.store.q("UPDATE render_jobs SET spec=? WHERE id=? AND spec=? RETURNING id", (json.dumps(spec), jid, old_raw)))
+
+    def open_claim(self, jid: int, ttl: int = 1800, workflow: str = "render.yml") -> None:
+        st = self._token_state(jid)
+        if not st:
+            return
+        _, spec, _ = st
+        spec["_job_token"] = {"claim_until": _now() + ttl, "ttl": ttl, "workflow": workflow}
+        self.store.x("UPDATE render_jobs SET spec=? WHERE id=?", (json.dumps(spec), jid))
+
+    def claim_job(self, jid: int, oidc_jwt: str, jwks: dict | None = None) -> tuple[int, dict]:
+        """The worker trades its GitHub OIDC token for this job's token, once. (status, body)."""
+        from . import worker_auth
+        st = self._token_state(jid)
+        wf = ((st[1].get("_job_token") or {}).get("workflow") if st else None) or "render.yml"
+        cfg = worker_auth.settings()
+        try:
+            worker_auth.verify(oidc_jwt, audience=self.s.public_url, repo=cfg["repo"], workflows=(wf,), ref=cfg["ref"],
+                               jwks=jwks, http=None)
+        except worker_auth.OIDCError as e:
+            return 401, {"error": f"not the worker: {e}"}
+        except httpx.HTTPError:
+            return 503, {"error": "couldn't read GitHub's signing keys"}
+        if not st:
+            return 404, {"error": "no such job"}
+        raw, spec, meta = st
+        t = spec.get("_job_token") or {}
+        if meta["status"] != "queued" or t.get("claimed") or t.get("claim_until", 0) < _now():
+            return 409, {"error": "this job can't be claimed (already claimed, finished or expired)"}
+        jt = "jt_" + secrets.token_urlsafe(24)
+        from .store import sha
+        spec["_job_token"] = {**t, "claimed": True, "hash": sha(jt), "expires": _now() + int(t.get("ttl") or 1800), "read": False, "clips": []}
+        if not self._cas(jid, raw, spec):
+            return 409, {"error": "this job was claimed just now"}
+        return 200, {"job_token": jt}
+
     def issue_job_token(self, jid: int, ttl: int = 1800) -> str:
+        """A token for one job (what a claim hands out; tests and the local worker call it directly)."""
         from .store import sha
         jt = "jt_" + secrets.token_urlsafe(24)
         rows = self.store.q("SELECT spec FROM render_jobs WHERE id=?", (jid,))
         spec = json.loads(rows[0]["spec"])
-        spec["_job_token"] = {"hash": sha(jt), "expires": _now() + ttl}
+        spec["_job_token"] = {"claimed": True, "hash": sha(jt), "expires": _now() + ttl, "read": False, "clips": []}
         self.store.x("UPDATE render_jobs SET spec=? WHERE id=?", (json.dumps(spec), jid))
         return jt
 
-    def job_token_ok(self, jid: int, jt: str) -> bool:
+    def job_token_ok(self, jid: int, jt: str, use: str = "write", clip_id: str = "") -> bool:
+        """use: 'read' (the job spec, once), 'clip' (each of this job's clips, once) or 'write' (the result; the token
+        dies with it because the job leaves 'queued'). Every use is recorded atomically, so a copied token can't replay."""
         import hmac
         from .store import sha
-        rows = self.store.q("SELECT spec, status FROM render_jobs WHERE id=?", (jid,))
-        if not rows or not jt or rows[0]["status"] != "queued":
+        st = self._token_state(jid)
+        if not st or not jt:
             return False
-        t = json.loads(rows[0]["spec"]).get("_job_token") or {}
-        return bool(t) and t.get("expires", 0) > _now() and hmac.compare_digest(t.get("hash", ""), sha(jt))
+        raw, spec, meta = st
+        t = spec.get("_job_token") or {}
+        if meta["status"] != "queued" or not t.get("hash") or t.get("expires", 0) <= _now() or not hmac.compare_digest(t["hash"], sha(jt)):
+            return False
+        if use == "read":
+            if t.get("read"):
+                return False
+            t["read"] = True
+        elif use == "clip":
+            ids = {str(c.get("id")) for c in spec.get("clips") or []}
+            if clip_id not in ids or clip_id in (t.get("clips") or []):
+                return False
+            t["clips"] = list(t.get("clips") or []) + [clip_id]
+        else:
+            return True  # the result write itself moves the job out of 'queued'; burn_job_token makes sure
+        spec["_job_token"] = t
+        return self._cas(jid, raw, spec)
+
+    def burn_job_token(self, jid: int) -> None:
+        st = self._token_state(jid)
+        if not st:
+            return
+        raw, spec, _ = st
+        if (spec.get("_job_token") or {}).get("hash"):
+            spec["_job_token"] = {**spec["_job_token"], "hash": "", "burned": _now()}
+            self._cas(jid, raw, spec)
 
     def job_spec(self, jid: int) -> dict | None:
         rows = self.store.q("SELECT * FROM render_jobs WHERE id=?", (jid,))
@@ -808,6 +910,9 @@ class House:
 
     # ---------------------------------------------------------------- revise: correction -> rule -> re-render
     def revise(self, a: Actor, rid: int, correction: str) -> dict:
+        self.studio._guard_write(a, "revise")
+        if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
+            raise ActionError(demo_guard.WHY["run"], 429)
         run = self.run(a, rid)
         if run["status"] in ("running", "rendering"):
             raise ActionError("The agent is still working on this run. Try again in a moment.", 409)
@@ -945,17 +1050,12 @@ class House:
         return {"items": items, "slots": slots, "now": datetime.now(timezone.utc).isoformat()}
 
     # ================================================================ helpers
-    def _client(self) -> httpx.Client:
-        return self.http or httpx.Client(timeout=12, follow_redirects=True, headers=sources.UA)
-
     def _fetch_bytes(self, url: str, limit: int) -> bytes | None:
+        """Bytes of a public URL (logo, story image, media import, preflight probe), every redirect hop checked."""
         if not url or not url.startswith(("http://", "https://")):
             return None
-        host = urlparse(url).hostname or ""
-        if not drafter._public(host):
-            return None
         try:
-            with self._client().stream("GET", url) as r:
+            with netguard.safe_stream(url, http=self.http, headers=sources.UA) as r:
                 if r.status_code >= 400:
                     return None
                 buf = b""
@@ -964,7 +1064,7 @@ class House:
                     if len(buf) > limit:
                         return None
                 return buf
-        except httpx.HTTPError:
+        except (httpx.HTTPError, netguard.FetchError):
             return None
 
     def _logo_bytes(self, kit: dict) -> bytes | None:

@@ -1,7 +1,10 @@
 """Free video render worker. Runs on GitHub Actions (`.github/workflows/render.yml` for Reels, `take.yml` for One take),
 dispatched by the app per job:
 
-    JOB_TOKEN=jt_... python -m studio.render_worker --job 12 --app https://huhqueue-studio.onrender.com
+    python -m studio.render_worker --job 12 --app https://huhqueue-studio.onrender.com
+
+On GitHub Actions it claims the job once with the run's OIDC identity and keeps the job token in memory only
+(SECURITY_RULES 2). JOB_TOKEN=jt_... in the environment is for a self-hosted worker the operator runs by hand.
 
 It reads the job (brand kit, ledger params, media URLs), does the heavy work (FFmpeg; for One take also faster-whisper,
 PySceneDetect and MediaPipe) and posts the result back. The web app's free instance never runs FFmpeg itself.
@@ -23,7 +26,8 @@ MAX_SOURCE = int(os.environ.get("HQ_MAX_TAKE_BYTES", str(1500 * 1024 * 1024)))
 
 
 def _download(c: httpx.Client, url: str, dest: Path) -> None:
-    with c.stream("GET", url) as r:
+    from . import netguard
+    with netguard.safe_stream(url, http=c, https_only=url.startswith("https://"), timeout=300) as r:  # every hop checked
         r.raise_for_status()
         n = 0
         with open(dest, "wb") as fh:
@@ -61,19 +65,40 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def claim(c: httpx.Client, base: str, jid: int) -> str:
+    """Trade this run's GitHub OIDC token (audience: the app URL) for the job's token, once. Never printed."""
+    from urllib.parse import quote
+    req_url, req_tok = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL"), os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+    if not req_url or not req_tok:
+        raise SystemExit("No JOB_TOKEN and no GitHub OIDC (the workflow needs permissions: id-token: write).")
+    oidc = c.get(f"{req_url}&audience={quote(base, safe='')}", headers={"Authorization": f"bearer {req_tok}"})
+    oidc.raise_for_status()
+    r = c.post(f"{base}/api/worker/jobs/{jid}/claim", headers={"Authorization": f"Bearer {oidc.json()['value']}"})
+    if r.status_code != 200:
+        raise SystemExit(f"claim refused: HTTP {r.status_code} {r.text[:200]}")
+    jt = r.json()["job_token"]
+    print(f"::add-mask::{jt}", flush=True)  # a workflow command on stdout: the runner hides it and masks the value
+    return jt
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--job", required=True, type=int)
     ap.add_argument("--app", required=True)
     args = ap.parse_args(argv)
     base = args.app.rstrip("/")
-    h = {"x-job-token": os.environ["JOB_TOKEN"]}
-    c = httpx.Client(timeout=300, follow_redirects=True)
+    c = httpx.Client(timeout=300, follow_redirects=False)
+    h = {"x-job-token": os.environ.get("JOB_TOKEN") or claim(c, base, args.job)}
     job = c.get(f"{base}/api/worker/jobs/{args.job}", headers=h)
     job.raise_for_status()
     j = job.json()
     spec, urls = j["spec"], j["urls"]
-    get = lambda u: c.get(u).content if u else None  # noqa: E731
+
+    def get(u):
+        if not u:
+            return None
+        from . import netguard
+        return netguard.safe_get(u, http=c, limit=200 * 1024 * 1024, timeout=300).content
     try:
         if str(spec.get("kind", "")).startswith("take_"):
             return take_job(c, base, h, args.job, j)

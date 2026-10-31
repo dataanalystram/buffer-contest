@@ -27,6 +27,22 @@ ACCESS_DAYS = 30
 REFRESH_DAYS = 90
 
 
+# Assistants whose redirect host we know (SECURITY_RULES 5). Any other client is labelled "unverified" on the consent
+# screen, can't be given the "trusted" policy, and its token is named for its redirect host, not only the name it chose.
+KNOWN_HOSTS = ("claude.ai", "claude.com", "anthropic.com", "chatgpt.com", "openai.com")
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+REGISTER_PER_HOUR = 20  # per client IP
+
+
+def redirect_host(uri: str) -> str:
+    return (urlparse(uri).hostname or "").lower()
+
+
+def verified_host(host: str) -> bool:
+    """Known assistant hosts (and their subdomains), or this computer (a local MCP client the person runs)."""
+    return host in LOCAL_HOSTS or any(host == d or host.endswith("." + d) for d in KNOWN_HOSTS)
+
+
 def resource_metadata_url(public_url: str) -> str:
     return public_url + "/.well-known/oauth-protected-resource/mcp"
 
@@ -62,8 +78,12 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         c["redirect_uris"] = json.loads(c["redirect_uris"] or "[]")
         return c
 
-    def mint(uid: str, c: dict, policy: str, cap: int) -> dict:
-        tok = studio.create_agent_token(Actor(uid), f"{c['client_name']} (connected)", policy, cap, days=ACCESS_DAYS)
+    def label(c: dict, redirect_uri: str) -> str:
+        host = redirect_host(redirect_uri or (c["redirect_uris"] or [""])[0])
+        return f"{c['client_name']} via {host}" + ("" if verified_host(host) else " (unverified)")
+
+    def mint(uid: str, c: dict, policy: str, cap: int, redirect_uri: str = "") -> dict:
+        tok = studio.create_agent_token(Actor(uid), f"{label(c, redirect_uri)} (connected)", policy, cap, days=ACCESS_DAYS)
         refresh = "hqr_" + secrets.token_urlsafe(32)
         store.x("INSERT INTO oauth_refresh(token_hash,client_id,user_id,agent_id,policy,daily_cap,expires,used) "
                 "VALUES(?,?,?,?,?,?,?,0)", (sha(refresh), c["client_id"], uid, tok["id"], policy, cap,
@@ -89,8 +109,19 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
                 "scopes_supported": ["huhqueue"]}
 
     # ---------------------------------------------------------------- registration (RFC 7591)
+    reg_hits: dict[str, list[float]] = {}
+
     @app.post("/oauth/register", include_in_schema=False)
     async def register(request: Request):
+        from . import demo_guard
+        ip = sha("ip:" + demo_guard.client_ip(request))
+        now = time.time()
+        hits = [t for t in reg_hits.get(ip, []) if now - t < 3600]
+        if len(hits) >= REGISTER_PER_HOUR:
+            return _err("too_many_requests", "Too many app registrations from this network. Try again later.", 429)
+        reg_hits[ip] = hits + [now]
+        if len(reg_hits) > 5000:
+            reg_hits.clear()
         try:
             meta = await request.json()
         except ValueError:
@@ -136,13 +167,25 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         opts = {"review": "Ask me first: posts wait in Approvals until I approve them",
                 "draft": "Drafts only: posts land as Buffer drafts",
                 "trusted": "Trusted: may schedule straight to my Buffer queue"}
+        host = redirect_host(params.get("redirect_uri", ""))
+        known = verified_host(host)
+        if not known:
+            opts.pop("trusted")  # a name an app picked for itself never earns a token that posts without you
         radios = "".join(
             f'<label class="opt"><input type="radio" name="policy" value="{p}" data-testid="oauth-policy-{p}"'
             f'{" checked" if p == "review" else ""}> {html.escape(opts[p])}</label>' for p in POLICIES if p in opts)
+        badge = ('<span class="badge" data-testid="oauth-verified">Known assistant</span>' if known else
+                 '<span class="badge warn" data-testid="oauth-unverified">Unverified app</span>')
+        warn = "" if known else (
+            f'<p class="warn" data-testid="oauth-unverified-note">HuhQueue can\'t confirm who this app is: the name '
+            f'"{html.escape(c["client_name"])}" is what it calls itself. Only allow it if you started this from '
+            f'<b>{html.escape(host)}</b>. It can\'t be given the Trusted option.</p>')
         body = f"""
-<p><b>{html.escape(c['client_name'])}</b> wants to use HuhQueue for
+<p><b>{html.escape(c['client_name'])}</b> {badge} wants to use HuhQueue for
 <b>{html.escape(u.get('name') or u.get('email') or 'your Buffer account')}</b>
 ({html.escape(u.get('org_name') or 'Buffer')}).</p>
+<p data-testid="oauth-redirect-host">After you choose, you'll be sent to <b>{html.escape(host)}</b>, and that site gets the access.</p>
+{warn}
 <form method="post" action="/oauth/authorize" class="stack" data-testid="oauth-consent">
 <input type="hidden" name="csrf" value="{html.escape(sess['csrf'])}">{hidden}
 <fieldset class="stack"><legend>What it may do</legend>{radios}</fieldset>
@@ -152,7 +195,7 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
 <div class="row"><button class="btn" name="decision" value="allow" data-testid="oauth-allow">Allow</button>
 <button class="btn2" name="decision" value="deny" data-testid="oauth-deny">Cancel</button></div>
 </form>"""
-        return HTMLResponse(page(f"Connect {c['client_name']}", body))
+        return HTMLResponse(page(f"Connect {c['client_name']}" + ("" if known else " (unverified)"), body))
 
     @app.post("/oauth/authorize", include_in_schema=False)
     async def authorize_post(request: Request):
@@ -170,6 +213,8 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         if f.get("decision") != "allow":
             return RedirectResponse(f["redirect_uri"] + sep + urlencode({"error": "access_denied", **state}), 302)
         policy = f.get("policy") if f.get("policy") in POLICIES else "review"
+        if policy == "trusted" and not verified_host(redirect_host(f["redirect_uri"])):
+            policy = "review"  # never trusted for an unverified client, whatever the form says (SECURITY_RULES 5)
         try:
             cap = max(1, min(int(f.get("daily_cap") or 10), 100))
         except ValueError:
@@ -178,7 +223,8 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         store.x("INSERT INTO oauth_codes(code_hash,client_id,user_id,redirect_uri,challenge,policy,daily_cap,expires,used) "
                 "VALUES(?,?,?,?,?,?,?,?,0)", (sha(code), c["client_id"], sess["user_id"], f["redirect_uri"],
                                                f["code_challenge"], policy, cap, time.time() + CODE_TTL))
-        store.audit(sess["user_id"], "you", "connect_assistant", "safety", {"app": c["client_name"], "policy": policy})
+        store.audit(sess["user_id"], "you", "connect_assistant", "safety", {"app": label(c, f["redirect_uri"]), "policy": policy,
+                                                                            "redirect_host": redirect_host(f["redirect_uri"])})
         return RedirectResponse(f["redirect_uri"] + sep + urlencode({"code": code, **state}), 302)
 
     # ---------------------------------------------------------------- token
@@ -200,7 +246,8 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
             digest = base64.urlsafe_b64encode(hashlib.sha256(f.get("code_verifier", "").encode()).digest()).rstrip(b"=")
             if not secrets.compare_digest(digest.decode(), row["challenge"]):
                 return _err("invalid_grant", "PKCE check failed.")
-            return JSONResponse(mint(row["user_id"], c, row["policy"], row["daily_cap"]), headers={"Cache-Control": "no-store"})
+            return JSONResponse(mint(row["user_id"], c, row["policy"], row["daily_cap"], row["redirect_uri"]),
+                                headers={"Cache-Control": "no-store"})
         if grant == "refresh_token":
             rows = store.q("SELECT * FROM oauth_refresh WHERE token_hash=?", (sha(f.get("refresh_token", "")),))
             row = dict(rows[0]) if rows else None
@@ -220,7 +267,9 @@ def page(title: str, body: str) -> str:
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} — HuhQueue</title><link rel="stylesheet" href="/static/style.css">
 <style>fieldset{{border:0;padding:0;margin:0;gap:12px}}legend{{font-weight:600;margin-bottom:8px}}
-.opt{{display:flex;gap:8px;align-items:flex-start}}.opt input{{margin-top:4px}}</style></head>
+.opt{{display:flex;gap:8px;align-items:flex-start}}.opt input{{margin-top:4px}}
+.badge{{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:99px;background:#e6f4ef;color:#0b5d4b;vertical-align:middle}}
+.badge.warn{{background:#fdecea;color:#9b1c1c}}p.warn{{background:#fdecea;color:#7a1313;padding:10px 12px;border-radius:8px}}</style></head>
 <body><header class="top"><a class="brand" href="/" style="text-decoration:none;color:inherit"><span class="mark">hq</span>
 <span class="name">HuhQueue</span><span class="built">built on the Buffer API</span></a></header>
 <main style="max-width:560px" data-testid="oauth-page"><div class="panel stack">
