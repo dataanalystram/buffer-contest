@@ -1,7 +1,7 @@
 """HuhQueue documentation at /docs: server-rendered, crawlable pages with a sidebar, search and fresh screenshots of the
 real app (light and dark, desktop and phone, from scripts/premium_shots.py ... docshots). Content lives here as data so
-the sitemap, the search index and the pages never drift apart. Pages owned by the brand-studio work (Brand kit and
-templates, Sources agent) are short stubs until that work lands."""
+the sitemap, the search index and the pages never drift apart. The Brand kit and Sources agent pages follow
+docs/BRANDS.md and docs/SOURCES_AGENT.md."""
 from __future__ import annotations
 
 import html
@@ -41,18 +41,82 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>Your Buffer tokens are encrypted on the server and never reach the browser. Every Buffer call counts against your Buffer plan's API budget, shown in the header.</p>
 <h2 id="disconnect">Disconnect</h2>
 <p>Account menu, <b>Disconnect and delete my data</b>, removes everything HuhQueue stored for you at once. You can also revoke access from your Buffer account settings.</p>"""),
-    ("brand-kit", "Brand kit and templates", "Colours, fonts, logo, end card and voice, and the Style Ledger that remembers corrections.", "brand", """
-<p class="callout">This page is being expanded with the new brand studio and templates. What is here describes the app today.</p>
-<h2 id="kit">Brand kit</h2>
-<p>Open <b>Brand and ledger</b>. Import your colours and logo from your website, or set the ground, accent and text colours, a headline font, your logo, handle, end card and voice by hand. The preview shows how your posts look now.</p>
+    ("brand-kit", "Brand kit and templates", "Logo, colours, fonts, front and end cards, six templates for every channel, two example brands and the Style Ledger.", "brandstudio", """
+<p>The <b>Brand studio</b> (More, <b>Brand studio</b>) makes one brand look the same on every channel without redesigning anything per network. Set the kit once; every template, cover and Reel follows it.</p>
+<h2 id="first-run">First run</h2>
+<p>Four steps sit at the top of the screen: <b>upload your logo</b>, <b>pick a style</b>, <b>see examples</b>, <b>connect Buffer</b>. The live preview redraws the selected template at the selected channel's frame a moment after each edit, with your unsaved changes laid over the saved kit. Nothing is stored until you save.</p>
+<h2 id="kit">The kit</h2>
+<p>Logo, name, handle, four colours (ground, accent, text, second), a headline font (Anton, Poppins, Inter or Figtree) and a body font, headline case, a <b>front card</b> and an <b>end card</b>. Each card is an image you upload or one of four styles:</p>
+<div class="dk-table"><table><thead><tr><th>Style</th><th>Look</th></tr></thead><tbody>
+<tr><td><code>bold</code></td><td>Solid ground, a thick accent bar, the headline set big</td></tr>
+<tr><td><code>glow</code></td><td>Dark ground with a soft accent glow behind the headline</td></tr>
+<tr><td><code>grid</code></td><td>A fine grid, like an editor's layout sheet</td></tr>
+<tr><td><code>minimal</code></td><td>Light ground, dark text, the accent as a marker-pen highlight</td></tr></tbody></table></div>
+<p>Built-in guards: text that would not read on the ground (contrast under 3:1) falls back to black or white; a dark logo on a dark card, or a light one on a light card, is recoloured to the ink; glyphs a font cannot draw are replaced, never shown as boxes.</p>
+<h2 id="templates">Templates</h2>
+<p>Every template puts your front card first and your end card last.</p>
+<div class="dk-table"><table><thead><tr><th>Template</th><th>What it is</th><th>Video</th></tr></thead><tbody>
+<tr><td>Weekly recap</td><td>"What happened in AI in the last 7 days": one numbered slide per story, built from the week's sent and scheduled Buffer posts (the same story on four channels counts once)</td><td>Reel</td></tr>
+<tr><td>Mid-week recap</td><td>Monday to Wednesday in three stories</td><td>Reel</td></tr>
+<tr><td>Breaking news</td><td>BREAKING pill, time, headline, source and a faint copy of your mark</td><td>No</td></tr>
+<tr><td>Launch carousel</td><td>What it does, the details, why it matters</td><td>Reel</td></tr>
+<tr><td>Quote card</td><td>A quote or CEO card, plus a 9:16 clip with word-by-word captions in your font</td><td>Captioned clip</td></tr>
+<tr><td>Tutorial</td><td>"Free way to do X": a free tool and numbered steps</td><td>Reel</td></tr></tbody></table></div>
+<h2 id="channels">One render, every channel</h2>
+<p>Instagram, LinkedIn, Threads and Facebook get 4:5; X, Bluesky and Mastodon 16:9; YouTube Shorts and TikTok 9:16 (video only). Carousels follow each network's slide cap (X and Bluesky 4, LinkedIn 9, Instagram 10), and when a carousel is cut your end card stays last. Reels are silent on purpose: add licensed music in the network's own app.</p>
+<h2 id="slots">Recurring slots</h2>
+<p>Put a template on a schedule, for example the weekly recap every Monday at 20:00 Europe/Dublin. When the slot fires it renders the template from that week's posts and saves one <b>Buffer draft</b> per channel at the slot time, with the slides attached. A person approves it in Buffer, or in Approvals when an agent set it up. <b>Run now</b> fires a slot at once; the hosted app also checks slots every ten minutes, never for the sample.</p>
+<h2 id="examples">Example brands</h2>
+<p>The sample workspace has two example brands, each with a gallery of pre-rendered slides, covers and Reels. Switch between them from the <b>Example brands</b> row: a brand change is one click, and every channel follows.</p>
+<ul><li><b>HuhByte AI</b>: black ground, lavender accent, Anton headlines, Poppins body; Instagram, YouTube Shorts, X and LinkedIn.</li>
+<li><b>Buffer (concept example, not affiliated with Buffer)</b>: Buffer's public mark and the palette from buffer.com's own colour tokens, with Figtree. Every render carries "Concept example, not affiliated with Buffer". Eight channels, same stories and templates as HuhByte.</li></ul>
+<figure class="dk-ex"><img src="/static/examples/huhbyte/overview-recap.jpg" alt="HuhByte AI weekly recap carousel, front card to end card" loading="lazy" decoding="async"><figcaption>HuhByte AI: the weekly recap carousel.</figcaption></figure>
+<figure class="dk-ex"><img src="/static/examples/buffer/overview-covers.jpg" alt="Buffer concept example: one breaking cover rendered for eight channels" loading="lazy" decoding="async"><figcaption>Buffer concept example: one cover, eight channels.</figcaption></figure>
 <h2 id="ledger">Style Ledger</h2>
-<p>Every correction you give becomes a written rule ("logo bottom right", "max 2 hashtags"). Each render and caption is checked against all of them, and a failed check names the rule. You can add rules in plain words and turn them on or off; only a person can change a rule.</p>"""),
-    ("sources-agent", "Sources agent", "Where stories come from: followed feeds, research and the news radar.", "radar", """
-<p class="callout">This page is being expanded with the new sources agent. What is here describes the app today.</p>
+<p>Every correction you give becomes a written rule ("logo bottom right", "max 2 hashtags"). Each render and caption is checked against all of them, and a failed check names the rule. Add rules in plain words and turn them on or off in <b>Brand and ledger</b>; only a person can change a rule, and agents propose them with <code>remember_rule</code>.</p>
+<h2 id="api">API and MCP</h2>
+<div class="dk-table"><table><thead><tr><th>In the app</th><th>REST</th><th>MCP</th></tr></thead><tbody>
+<tr><td>Load the screen</td><td><code>GET /api/brand-studio</code></td><td><code>get_brand</code>, <code>list_templates</code>, <code>list_brand_examples</code></td></tr>
+<tr><td>Save kit and cards</td><td><code>POST /api/brand-studio</code></td><td>People only</td></tr>
+<tr><td>Live preview</td><td><code>POST /api/brand-studio/preview</code></td><td>-</td></tr>
+<tr><td>Use an example brand</td><td><code>POST /api/brand-studio/examples/{huhbyte,buffer}</code></td><td><code>apply_brand_example</code></td></tr>
+<tr><td>Render for my channels</td><td><code>POST /api/templates/render</code></td><td><code>render_template</code></td></tr>
+<tr><td>Recurring slots</td><td><code>GET/POST /api/templates/slots</code>, <code>POST /api/templates/slots/{id}/run</code></td><td><code>schedule_template_slot</code>, <code>templates_slot_run</code></td></tr></tbody></table></div>
+<p>Every write reports its <code>buffer_cost</code>: the real Buffer requests it made on a connected account. The sample has no Buffer behind it, so it is always 0.</p>
+<h2 id="limits">Limits</h2>
+<p>Slides render in the app with Pillow. Video needs FFmpeg, which the hosted app does not have, so the hosted app renders slides live and shows the pre-rendered example Reels; self-hosted installs render video. The sample's renders count against its daily cap, and it never renders video live.</p>"""),
+    ("sources-agent", "Sources agent", "Scan YC, Hacker News, lab blogs, Product Hunt and X; cluster the news; write it per channel; save Buffer drafts a person approves.", "sources", """
+<p>The <b>Sources agent</b> (More, <b>Sources agent</b>) finds news, writes it in your brand for each channel and saves it to Buffer as <b>drafts</b> a person approves. Nothing it does publishes.</p>
+<h2 id="flow">Scan, pick, write, save</h2>
+<ol><li><b>Scan now</b> reads every source you turned on, removes duplicates (same link or same title) and groups the same story from several sources into one card that says where else it ran.</li>
+<li>Tick the stories you want and the channels to write for.</li>
+<li><b>Write posts</b> shows one post per channel, in that channel's shape, with a breaking cover in your brand. Edit any of them.</li>
+<li><b>Save as Buffer drafts</b> sends exactly what you previewed, with your edits. Each result shows the Buffer request it made.</li></ol>
+<h2 id="sources">Sources (no paid keys)</h2>
+<div class="dk-table"><table><thead><tr><th>Source</th><th>How it reads</th><th>Key</th></tr></thead><tbody>
+<tr><td>YC Launches</td><td>The public launches page</td><td>None</td></tr>
+<tr><td>Hacker News</td><td>The front page, through Algolia's free HN API</td><td>None</td></tr>
+<tr><td>RSS / Atom</td><td>Up to 8 feeds you list (defaults: OpenAI, Google DeepMind, Hugging Face and Google AI blogs)</td><td>None</td></tr>
+<tr><td>Product Hunt</td><td>Today's top launches, API v2</td><td>Your free developer token</td></tr>
+<tr><td>X</td><td>Recent search with your query, API v2</td><td>Your own bearer token. A logged-in X is never scraped</td></tr></tbody></table></div>
+<p>Every live fetch goes through the safe-fetch guard: no automatic redirects, every hop's host re-checked, size caps. Keys are sealed at rest, shown only as their last four characters, and only a person (never an agent token) can add or remove them. Real accounts get 30 live scans a day.</p>
+<h2 id="judging">Judging and deciding</h2>
+<p>The model makes judgments; code makes decisions. Each story is judged once (is it about AI, topic, kind, relevance, unconfirmed, sensitive, an allegation), by Jev first, then SubQ, then deterministic rules past the daily cap, without keys or in the sample. Each card says which one judged it. Code then decides:</p>
+<ul><li><b>Lane</b>: postable, idea bank (evergreen), low, or hidden (off-topic HN or X).</li>
+<li><b>Agent permission</b>: <i>person only</i> for sensitive stories or allegations (an agent may not draft them), <i>verify first</i> for unconfirmed stories or a single X post, otherwise <i>agent OK</i>.</li>
+<li><b>Rank</b>: relevance, freshness over 7 days, engagement and how many sources carry it.</li></ul>
+<h2 id="writing">How posts are written</h2>
+<p>Each channel gets its own shape: X a headline, one line, the link and one tag; LinkedIn a hook, the points, why it matters and the source; Instagram a headline, bullets, "link in bio" and up to 5 tags; YouTube and TikTok title first with the source; Bluesky no tags. Your Style Ledger rules are applied and each caption fits Buffer's character count. The writer is your own AI key when you set one in <b>AI engine</b>, otherwise the app's capped starter model, otherwise the built-in writer. Drafts go through the same preview and submit as everything else, so an agent token's approval rules still hold.</p>
+<h2 id="sample">In the sample</h2>
+<p>The <a href="/demo">demo</a> uses recorded sources from 31 October 2026 (YC Launches, the HN front page and four lab feeds; Product Hunt and X items are made up and titled "Sample:"). It makes no live calls, its clusters are always the same, drafts go to the sample's pretend Buffer, and it shows <b>0 Buffer requests</b>.</p>
 <h2 id="radar">News radar</h2>
-<p>Follow the RSS or Atom feeds of sites you share from. New stories show up in <b>News radar</b> and on your Inbox, one click from a post for every channel. Agents can read them too, with the <code>list_stories</code> tool.</p>
-<h2 id="research">Research</h2>
-<p>When you give the agent a topic, it searches recent news, opens the source page, checks that other outlets carry the story and pulls out the facts, each with its link. Every step is on the run's timeline.</p>"""),
+<p><b>News radar</b> still follows up to 12 RSS or Atom feeds, newest first, one click from a post for every channel; agents read it with <code>list_stories</code>. The Sources agent adds many sources at once, clustering, judging and per-channel drafts on top.</p>
+<h2 id="api">API and MCP</h2>
+<div class="dk-table"><table><thead><tr><th>In the app</th><th>REST</th><th>MCP</th></tr></thead><tbody>
+<tr><td>Settings</td><td><code>GET /api/sources</code>, <code>POST /api/sources/settings</code></td><td><code>sources_settings</code></td></tr>
+<tr><td>Scan now</td><td><code>POST /api/sources/scan</code></td><td><code>sources_scan</code></td></tr>
+<tr><td>A past scan</td><td><code>GET /api/sources/runs/{id}</code></td><td>-</td></tr>
+<tr><td>Write posts, save as Buffer drafts</td><td><code>POST /api/sources/draft</code> (<code>dry_run</code>, <code>cluster_ids</code>, <code>channel_ids</code>, <code>texts</code>)</td><td><code>sources_draft</code></td></tr></tbody></table></div>"""),
     ("inbox", "Inbox", "Everything that needs a person, most urgent first: approvals, failures, preflight warnings and open slots.", "inbox", """
 <p>The Inbox is the first screen after you sign in. It groups what is waiting for you by urgency: <b>Now</b>, <b>Soon</b> and <b>This week</b>. Empty groups fold into one calm line.</p>
 <h2 id="groups">What shows up</h2>
