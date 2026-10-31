@@ -37,7 +37,7 @@
     if (!list || !list.length) return "";
     return `<div class="act-groups" data-testid="act-groups">${list.map((g) => `<button type="button" class="act-group${A.app === g.app ? " on" : ""}" data-app="${esc(g.app)}" data-testid="act-group">
       <h3>${esc(g.label)}</h3><p>${num(g.actions)} actions${g.failed ? ` · ${num(g.failed)} failed` : ""}</p>
-      ${g.models.length ? `<p>${g.models.map((m) => esc(`${m.model || "?"} (${m.provider || "?"}) ×${m.calls}`)).join("<br>")}</p>` : `<p>model not reported by the client</p>`}
+      ${g.models.length ? `<p>${g.models.map((m) => esc(`${m.model || "unknown model"}${m.provider ? ` (${m.provider})` : ""} ×${m.calls}`)).join("<br>")}</p><p class="act-note" data-testid="act-model-note">model reported by the client</p>` : `<p>model not reported by the client</p>`}
       ${g.tokens_in || g.tokens_out ? `<p>${num(g.tokens_in)} tokens in · ${num(g.tokens_out)} out${g.cost_usd != null ? " · " + money(g.cost_usd) : ""}</p>` : ""}
       ${g.agents.length ? `<p>${g.agents.map((t) => esc(t.label || `token ${t.token_id}`)).join(", ")}</p>` : ""}</button>`).join("")}</div>`;
   }

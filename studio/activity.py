@@ -238,9 +238,9 @@ def where(uid: str, f: dict, *, with_tab: bool = True) -> tuple[str, list]:
         sql.append("ok=0")
     q = (f.get("q") or "").strip()[:100]
     if q:
-        like = "%" + q.lower().replace("\\", "").replace("%", "").replace("_", "") + "%"
-        sql.append("(LOWER(action) LIKE ? OR LOWER(actor) LIKE ? OR LOWER(COALESCE(detail,'')) LIKE ? OR LOWER(COALESCE(app,'')) LIKE ?"
-                   " OR LOWER(COALESCE(model,'')) LIKE ? OR LOWER(COALESCE(token_label,'')) LIKE ?)")
+        like = "%" + q.lower().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"  # literal match, no wildcards
+        cols = ("action", "actor", "COALESCE(detail,'')", "COALESCE(app,'')", "COALESCE(model,'')", "COALESCE(token_label,'')")
+        sql.append("(" + " OR ".join(f"LOWER({c}) LIKE ? ESCAPE '!'" for c in cols) + ")")
         args += [like] * 6
     return " AND ".join(sql), args
 

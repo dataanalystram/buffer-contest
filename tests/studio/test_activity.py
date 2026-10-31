@@ -178,6 +178,8 @@ def test_search_date_range_and_tab_counts(human, app):
     _seed(app, me, 2, action="old_thing", ts=time.time() - 10 * 86400)
     p = human.get("/api/activity", params={"q": "special"}).json()
     assert {i["action"] for i in p["items"]} == {"special_thing"}
+    assert {i["action"] for i in human.get("/api/activity", params={"q": "special_thing"}).json()["items"]} == {"special_thing"}
+    assert human.get("/api/activity", params={"q": "special%thing"}).json()["items"] == []  # % and _ are literal
     today = time.strftime("%Y-%m-%d", time.gmtime())
     p = human.get("/api/activity", params={"from": today, "q": "thing"}).json()
     assert {i["action"] for i in p["items"]} == {"special_thing"}

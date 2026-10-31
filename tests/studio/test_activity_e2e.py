@@ -1,5 +1,6 @@
 """Browser flow for the Activity log (Playwright): tabs, cursor pages, agent groups by app and model, search, CSV export."""
 import json
+import os
 import time
 
 import httpx
@@ -13,6 +14,23 @@ from .conftest import FakeBuffer
 
 pw = pytest.importorskip("playwright.sync_api")
 NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"
+
+
+def until(fn, timeout=10.0):
+    """Poll a Python check against the page (the app's CSP has no 'unsafe-eval', so no string wait_for_function)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if fn():
+                return
+        except Exception:  # noqa: BLE001 - the element may be re-rendering
+            pass
+        time.sleep(0.1)
+    raise AssertionError("timed out waiting for the page")
+
+
+def cats(page):
+    return [r.get_attribute("data-category") for r in page.get_by_test_id("audit-row").all()]
 
 
 @pytest.fixture
@@ -60,24 +78,24 @@ def test_activity_tabs_pages_agents_search_and_csv(live, chromium, tmp_path):
         assert page.get_by_test_id("audit-row").count() == 25  # default page size
         first_page = page.get_by_test_id("audit-row").first.inner_text()
         page.get_by_test_id("act-next").click()
-        page.wait_for_function("document.querySelector('[data-testid=act-page]').textContent.startsWith('Page 2')")
+        until(lambda: page.get_by_test_id("act-page").inner_text().startswith("Page 2"))
         assert page.get_by_test_id("audit-row").first.inner_text() != first_page
         page.get_by_test_id("act-prev").click()
-        page.wait_for_function("document.querySelector('[data-testid=act-page]').textContent.startsWith('Page 1')")
+        until(lambda: page.get_by_test_id("act-page").inner_text().startswith("Page 1"))
         page.get_by_test_id("act-limit").select_option("50")
-        page.wait_for_function("document.querySelectorAll('[data-testid=audit-row]').length > 25")
+        until(lambda: page.get_by_test_id("audit-row").count() > 25)
 
         # AI agents: grouped by app, with the model the client reported
         page.get_by_test_id("act-tab-agent").click()
         page.get_by_test_id("act-group").first.wait_for()
         g = page.get_by_test_id("act-group").first.inner_text()
-        assert "Cursor" in g and "claude-sonnet-4-5" in g and "my editor" in g
-        page.wait_for_function("[...document.querySelectorAll('[data-testid=audit-row]')].every(r => r.dataset.category === 'agent')")
+        assert "Cursor" in g and "claude-sonnet-4-5" in g and "my editor" in g and "model reported by the client" in g
+        until(lambda: cats(page) and set(cats(page)) == {"agent"})
         assert "create_idea" in page.get_by_test_id("audit-list").inner_text()
 
         # Sign-ins: the failed attempt with the bad token is not in this account (the token matched nobody)
         page.get_by_test_id("act-tab-signin").click()
-        page.wait_for_function("!document.querySelector('[data-testid=audit-row]') || [...document.querySelectorAll('[data-testid=audit-row]')].every(r => r.dataset.category === 'signin')")
+        until(lambda: page.get_by_test_id("act-tab-signin").get_attribute("aria-selected") == "true" and set(cats(page)) <= {"signin"})
 
         # System & Buffer API: the meter against Buffer's limits
         page.get_by_test_id("act-tab-system").click()
@@ -88,7 +106,7 @@ def test_activity_tabs_pages_agents_search_and_csv(live, chromium, tmp_path):
         page.get_by_test_id("act-tab-all").click()
         page.get_by_test_id("act-q").fill("seeded_07")
         page.get_by_test_id("act-apply").click()
-        page.wait_for_function("document.querySelectorAll('[data-testid=audit-row]').length === 1")
+        until(lambda: page.get_by_test_id("audit-row").count() == 1)
         assert "seeded_07" in page.get_by_test_id("audit-row").first.inner_text()
 
         # CSV export of exactly what is filtered
@@ -96,6 +114,9 @@ def test_activity_tabs_pages_agents_search_and_csv(live, chromium, tmp_path):
             page.get_by_test_id("act-csv").click()
         text = open(dl.value.path(), encoding="utf-8").read()
         assert text.splitlines()[0].startswith("id,time_utc,category") and "seeded_07" in text and "seeded_08" not in text
-        page.screenshot(path=str(tmp_path / "activity.png"))
+        page.get_by_test_id("act-q").fill("")
+        page.get_by_test_id("act-tab-agent").click()
+        page.get_by_test_id("act-group").first.wait_for()
+        page.screenshot(path=os.environ.get("HQ_ACTIVITY_SHOT") or str(tmp_path / "activity.png"), full_page=True)
     finally:
         ctx.close()
