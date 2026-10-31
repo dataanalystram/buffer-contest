@@ -14,3 +14,21 @@
 .act-meter{border:1px solid var(--line-strong);border-radius:12px;padding:12px 14px;margin-bottom:16px;font-size:14px}
 .act-meter b{font-weight:600}
 table.data td.act-who small,table.data td.act-model small{display:block;color:var(--muted);font-size:12px}
+table.act-table td code{word-break:break-word;overflow-wrap:anywhere}
+/* Phones: each row becomes a labelled card instead of a six-column table that scrolls sideways */
+@media (max-width:640px){
+  .act-table-wrap{overflow:visible}
+  table.act-table,table.act-table tbody{display:block;width:100%}
+  table.act-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  table.act-table tr{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;padding:14px 16px;border-bottom:1px solid var(--line-strong)}
+  table.act-table td{display:block;padding:0;border:0;min-width:0}
+  table.act-table td:nth-child(6){grid-column:1/-1}
+  table.act-table td::before{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+  table.act-table td:nth-child(1)::before{content:"When"}
+  table.act-table td:nth-child(2)::before{content:"Who"}
+  table.act-table td:nth-child(3)::before{content:"Action"}
+  table.act-table td:nth-child(4)::before{content:"Model"}
+  table.act-table td:nth-child(5)::before{content:"Result"}
+  table.act-table td:nth-child(6)::before{content:"Detail"}
+  table.act-table td:empty{display:none}
+}
