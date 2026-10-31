@@ -868,7 +868,7 @@ def stories_from_posts(posts: list[dict], start: datetime, end: datetime, limit:
         if dup:
             dup["channels"].add(p.get("service") or p.get("channelId") or "")
             continue
-        title = ss[0][:110]
+        title = ss[0].rstrip(".")[:110]
         body = ss[1][:140] if len(ss) > 1 else ""
         out.append({"title": title, "body": body, "tag": when.strftime("%a"), "when": when.isoformat(), "_k": k,
                     "channels": {p.get("service") or p.get("channelId") or ""}, "status": p.get("status", "")})

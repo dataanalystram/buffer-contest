@@ -146,7 +146,7 @@ def app(tmp_path, fake, monkeypatch):
             # every table the app creates, so no test sees another's rows (the sample's daily caps count per IP)
             c.execute("DROP TABLE IF EXISTS users, sessions, agent_tokens, confirms, approvals, audit, device_links, feeds, "
                       "oauth_clients, oauth_codes, oauth_refresh, agent_runs, ai_settings, brand_kits, demo_owners, demo_usage, "
-                      "media, render_jobs, style_rules")
+                      "media, render_jobs, style_rules, brand_studio, template_slots, source_settings, source_runs, classifier_usage")
     s = load_settings(client_id="cid", client_secret="sec", public_url="https://hq.test", session_secret="s" * 64,
                       db_path=db, secure_cookies=False, ai_base_url="")
     application = create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
