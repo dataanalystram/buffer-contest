@@ -444,6 +444,41 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def calendar(request: Request):
         return house.calendar(actor(request))
 
+    # ------------------------------------------------------------ One take -> a week (UI = REST = MCP)
+    @app.post("/api/takes")
+    def take_start(request: Request, body: dict = Body(...)):
+        """clips_from_video: a long video you own (upload media_token, or a direct https url) -> 3-7 captioned 9:16 clips."""
+        return house.takes.start(actor(request, write=True), body)
+
+    @app.post("/api/takes/sample")
+    def take_sample(request: Request, body: dict = Body(default={})):
+        return house.takes.start_sample(actor(request, write=True), body)
+
+    @app.get("/api/takes")
+    def take_list(request: Request):
+        return house.takes.list(actor(request))
+
+    @app.get("/api/takes/{rid}")
+    def take_get(rid: int, request: Request):
+        return house.takes.get(actor(request), rid)
+
+    @app.patch("/api/takes/{rid}/clips/{clip_id}")
+    def take_adjust(rid: int, clip_id: str, request: Request, body: dict = Body(...)):
+        return house.takes.adjust(actor(request, write=True), rid, clip_id, body)
+
+    @app.post("/api/takes/{rid}/place")
+    def take_place(rid: int, request: Request, body: dict = Body(default={})):
+        """place_clips_in_week: dry_run (default) returns the plan + confirm_token; confirm_token creates Buffer drafts."""
+        return house.takes.place(actor(request, write=True), rid, body)
+
+    @app.get("/sample/{name}", include_in_schema=False)
+    def sample_file(name: str, request: Request):
+        from .takes import SAMPLE_DIR
+        p = (SAMPLE_DIR / name).resolve()
+        if p.parent != SAMPLE_DIR.resolve() or not p.is_file() or p.suffix not in (".mp4", ".jpg"):
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return FileResponse(p, headers={"Cache-Control": "public, max-age=86400"})
+
     # render worker (GitHub Actions) callbacks, authenticated with the job's single-use token
     def worker_ok(request: Request, jid: int) -> bool:
         return house.job_token_ok(jid, request.headers.get("x-job-token", ""))
@@ -461,7 +496,15 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "forbidden"}, status_code=403)
         body = await request.json()
         data = base64.b64decode(body["data"]) if body.get("data") else None
-        return house.finish_video(jid, data, body.get("meta"), body.get("error", ""))
+        return house.finish_video(jid, data, body.get("meta"), body.get("error", ""), body=body)
+
+    @app.post("/api/worker/jobs/{jid}/clips/{clip_id}", include_in_schema=False)
+    async def worker_clip(jid: int, clip_id: str, request: Request):
+        """One take: the worker posts each finished clip (mp4 + cover) as soon as it is rendered."""
+        if not worker_ok(request, jid):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        body = await request.json()
+        return house.takes.on_clip(jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]), body.get("meta") or {})
 
     # ------------------------------------------------------------ MCP
     mcp_oauth.add_mcp_oauth_routes(app, store, studio, s.public_url, lambda r: store.session(r.cookies.get(COOKIE)))

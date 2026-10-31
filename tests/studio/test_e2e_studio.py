@@ -1,5 +1,4 @@
 """Browser test of the Studio UI against a fake Buffer (Playwright). Skips if Chromium can't start."""
-import os
 import socket
 import threading
 import time
@@ -47,13 +46,9 @@ def live(tmp_path, monkeypatch):
     server.should_exit = True
 
 
-def test_link_to_buffer_draft_and_agent_approval(live):
+def test_link_to_buffer_draft_and_agent_approval(live, chromium):
     base, fake, app = live
-    try:
-        p = pw.sync_playwright().start()
-        browser = p.chromium.launch()
-    except Exception as e:  # no browser on this machine
-        pytest.skip(f"chromium unavailable: {e}")
+    browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1280, "height": 900})
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
@@ -95,17 +90,14 @@ def test_link_to_buffer_draft_and_agent_approval(live):
         page.get_by_test_id("tab-activity").click()
         page.get_by_test_id("audit-row").first.wait_for()
     finally:
-        browser.close(); p.stop()
+        for c in list(browser.contexts):
+            c.close()
 
 
-def test_planner_views_filters_and_drag_to_reschedule(live):
+def test_planner_views_filters_and_drag_to_reschedule(live, chromium):
     """Planner in the sample workspace: List/Week/Month, channel filter, and dragging a No date draft onto the week."""
     base, fake, app = live
-    try:
-        p = pw.sync_playwright().start()
-        browser = p.chromium.launch()
-    except Exception as e:
-        pytest.skip(f"chromium unavailable: {e}")
+    browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Dublin")
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
@@ -153,22 +145,16 @@ def test_planner_views_filters_and_drag_to_reschedule(live):
         assert not errors, errors
         assert not fake.calls  # the sample workspace never reaches Buffer
     finally:
-        browser.close(); p.stop()
+        for c in list(browser.contexts):
+            c.close()
 
 
-def _browser():
-    try:
-        p = pw.sync_playwright().start()
-        return p, p.chromium.launch()
-    except Exception as e:  # no browser on this machine
-        pytest.skip(f"chromium unavailable: {e}")
 
-
-def test_preflight_panel_blocks_then_fix_it_makes_posts_pass(live):
+def test_preflight_panel_blocks_then_fix_it_makes_posts_pass(live, chromium):
     """Composer: red chip blocks the send, Fix it threads the X post and crops the Instagram image, then both go."""
     base, fake, app = live
     fake.media["https://cdn.example.com/tall.png"] = image_bytes(900, 2000)
-    p, browser = _browser()
+    browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1280, "height": 900})
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-e2e", "url": base}])
@@ -224,13 +210,14 @@ def test_preflight_panel_blocks_then_fix_it_makes_posts_pass(live):
         li.get_by_test_id("draft-ok").wait_for()
         assert not errors, errors
     finally:
-        browser.close(); p.stop()
+        for c in list(browser.contexts):
+            c.close()
 
 
-def test_planner_dialog_preflight(live):
+def test_planner_dialog_preflight(live, chromium):
     """Planner new-post dialog in the sample workspace: a too-long X post is blocked until Fix it threads it."""
     base, fake, app = live
-    p, browser = _browser()
+    browser = chromium
     try:
         ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Dublin")
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
@@ -245,7 +232,7 @@ def test_planner_dialog_preflight(live):
         dlg = page.get_by_test_id("planner-preflight")
         dlg.locator("[data-testid=preflight-chip][data-status=error]").wait_for()
         page.get_by_test_id("planner-dialog-save").click()
-        assert "Preflight" in page.get_by_test_id("planner-dialog-error").inner_text()
+        pw.expect(page.get_by_test_id("planner-dialog-error")).to_contain_text("Preflight")  # set after an await
         dlg.get_by_test_id("preflight-fix").click()
         dlg.locator("[data-testid=preflight-chip][data-status=ok]").wait_for()
         page.get_by_test_id("planner-dialog-save").click()
@@ -253,4 +240,5 @@ def test_planner_dialog_preflight(live):
         assert not errors, errors
         assert not fake.calls
     finally:
-        browser.close(); p.stop()
+        for c in list(browser.contexts):
+            c.close()

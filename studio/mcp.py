@@ -81,6 +81,22 @@ TOOLS: list[dict[str, Any]] = [
          "override_warnings": {"type": "boolean"}}}},
     {"name": "list_calendar", "description": "Everything on the user's Planner: scheduled, sent and draft Buffer posts, agent posts waiting for approval, ready packages not yet sent, and each channel's Buffer posting slots.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "clips_from_video", "description": "One take -> a week. Turn one long video the user owns (a talk, podcast, tutorial) into 3-7 vertical clips of the best things they actually said: transcript with word timestamps, moments picked on sentence boundaries (hooks are exact quotes, never invented), 9:16 face-tracked reframe, burned-in captions in the brand font, a branded cover frame and end card, preflight per channel. Heavy work runs on the video worker; poll list_clips(take_id) until status is ready. Give url (a direct https link to the video file, not a social media page) or media_url (a HuhQueue upload), and owns: true. sample: true uses the bundled sample talk (sample workspace).",
+     "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}, "media_url": {"type": "string"},
+         "owns": {"type": "boolean", "description": "Must be true: the user owns this video or has the rights to it"},
+         "channel_ids": {"type": "array", "items": {"type": "string"}}, "count": {"type": "integer", "minimum": 1, "maximum": 7},
+         "name": {"type": "string"}, "sample": {"type": "boolean"}}}},
+    {"name": "list_clips", "description": "Without take_id: the user's takes. With take_id: the take's progress steps and its clips (video and cover URLs, start/end in the source, hook, transcript, layout, preflight per channel, the caption per network, and where each clip was placed).",
+     "inputSchema": {"type": "object", "properties": {"take_id": {"type": "integer"}}}},
+    {"name": "adjust_clip", "description": "Edit one clip of a take: trim (start_ms/end_ms in the source video; re-renders on the worker), a new hook for the cover (must be at least 3 words quoted from the clip), or the post caption (caption, optionally for one service). Returns the take.",
+     "inputSchema": {"type": "object", "required": ["take_id", "clip_id"], "properties": {"take_id": {"type": "integer"}, "clip_id": {"type": "string"},
+         "start_ms": {"type": "integer"}, "end_ms": {"type": "integer"}, "hook": {"type": "string"}, "caption": {"type": "string"},
+         "service": {"type": "string", "description": "Network the caption is for (instagram, tiktok, youtube, ...); omit for all"}}}},
+    {"name": "place_clips_in_week", "description": "The Spread: put a take's ready clips into the open Buffer posting slots of a week as DRAFTS (never published). Step 1 (default dry_run): returns the plan (clip, channel, time in the channel's timezone, caption, preflight) and a single-use confirm_token. Show it to the user. Step 2: call again with confirm_token to create the drafts; with a 'review' token each one waits in the Approvals inbox first. week_of: 'next' (default), 'this' or a date in the week.",
+     "inputSchema": {"type": "object", "required": ["take_id"], "properties": {"take_id": {"type": "integer"},
+         "channel_ids": {"type": "array", "items": {"type": "string"}}, "clip_ids": {"type": "array", "items": {"type": "string"}},
+         "week_of": {"type": "string"}, "dry_run": {"type": "boolean", "default": True}, "confirm_token": {"type": "string"},
+         "override_warnings": {"type": "boolean"}}}},
     {"name": "get_limits", "description": "Buffer API budget left for this app, per-network character limits, and how close the Buffer plan is to its limits (scheduled posts, channels, weekly caps).",
      "inputSchema": {"type": "object", "properties": {}}},
 ]
@@ -142,6 +158,27 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
                                   bool(args.get("override_warnings")))
     if name == "list_calendar":
         return h.calendar(actor)
+    if name == "clips_from_video":
+        if args.get("sample"):
+            return h.takes.start_sample(actor, {"channel_ids": args.get("channel_ids")})
+        return h.takes.start(actor, {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name")})
+    if name == "list_clips":
+        if args.get("take_id"):
+            t = h.takes.get(actor, int(args["take_id"]))
+            for c in t["clips"]:
+                c.pop("words", None)
+            return t
+        return {"takes": h.takes.list(actor)}
+    if name == "adjust_clip":
+        t = h.takes.adjust(actor, int(args.get("take_id") or 0), args.get("clip_id", ""),
+                           {k: args[k] for k in ("start_ms", "end_ms", "hook", "caption", "service") if k in args})
+        for c in t["clips"]:
+            c.pop("words", None)
+        return t
+    if name == "place_clips_in_week":
+        body = {k: args[k] for k in ("channel_ids", "clip_ids", "week_of", "confirm_token", "override_warnings") if k in args}
+        body["dry_run"] = args.get("dry_run", True) if not args.get("confirm_token") else None
+        return h.takes.place(actor, int(args.get("take_id") or 0), body)
     if name == "get_limits":
         return {**studio.limits(actor), "plan": studio.plan(actor)}
     raise ActionError(f"Unknown tool {name}", 404)
@@ -159,7 +196,7 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
         return ok({"protocolVersion": msg.get("params", {}).get("protocolVersion") or PROTOCOL,
                    "capabilities": {"tools": {"listChanged": False}},
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
-                   "instructions": "HuhQueue edits posts to the user's brand. Typical loop: run_agent (topic or link) or edit_media (their photo/video) -> poll get_run until ready -> show the media and captions -> turn any feedback into revise(run_id, correction), which saves a Style Ledger rule -> schedule_package. Posts wait for human approval unless the token policy says otherwise."})
+                   "instructions": "HuhQueue edits posts to the user's brand. One take -> a week: clips_from_video -> poll list_clips(take_id) -> adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Typical post loop: run_agent (topic or link) or edit_media (their photo/video) -> poll get_run until ready -> show the media and captions -> turn any feedback into revise(run_id, correction), which saves a Style Ledger rule -> schedule_package. Posts wait for human approval unless the token policy says otherwise."})
     if method == "ping":
         return ok({})
     if method == "tools/list":

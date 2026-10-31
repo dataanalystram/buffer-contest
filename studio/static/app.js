@@ -59,7 +59,9 @@ function pfChip(r, extra = "") {
   return `<span class="pf-chip s-${esc(r.status)}" data-testid="preflight-chip" data-status="${esc(r.status)}" ${extra}><b aria-hidden="true">${PF_ICON[r.status]}</b><span class="sr">${PF_WORD[r.status]}: </span>${esc(r.chip)}</span>`;
 }
 function pfPanel(box, getPost, onFix) {
-  const st = { result: null, seq: 0, timer: 0, before: null };
+  // ack: the warnings the person ticked "Send anyway" for. A re-check with the same warnings keeps the tick; new ones clear it.
+  const st = { result: null, seq: 0, timer: 0, before: null, ack: "", inflight: null };
+  const warnSig = (r) => (r && r.status === "warning" ? r.findings.filter((f) => f.level === "warning").map((f) => f.message).join("|") : "");
   box.classList.add("pf"); box.setAttribute("aria-live", "polite");
   const draw = () => {
     const r = st.result;
@@ -70,7 +72,9 @@ function pfPanel(box, getPost, onFix) {
         ${fixes.length ? `<button type="button" class="btn2 sm pf-fix" data-testid="preflight-fix" title="${esc(fixes.map((f) => f.label).join(" · "))}">Fix it</button>` : ""}
         ${st.before ? `<button type="button" class="link" data-testid="preflight-undo">Undo fix</button>` : ""}</div>
       ${items ? `<ul class="pf-list" data-testid="preflight-findings">${items}</ul>` : ""}
-      ${r.status === "warning" ? `<label class="chk pf-ov" data-testid="preflight-override-label"><input type="checkbox" data-testid="preflight-override"> Send anyway: I've read the warning</label>` : ""}`;
+      ${r.status === "warning" ? `<label class="chk pf-ov" data-testid="preflight-override-label"><input type="checkbox" data-testid="preflight-override"${st.ack && st.ack === warnSig(r) ? " checked" : ""}> Send anyway: I've read the warning</label>` : ""}`;
+    const ov = $("[data-testid=preflight-override]", box);
+    if (ov) ov.onchange = () => { st.ack = ov.checked ? warnSig(st.result) : ""; };
     const fb = $("[data-testid=preflight-fix]", box);
     if (fb) fb.onclick = fix;
     const ub = $("[data-testid=preflight-undo]", box);
@@ -84,8 +88,15 @@ function pfPanel(box, getPost, onFix) {
       try { const r = await api("/api/preflight", { method: "POST", body: post }); if (my === st.seq) { st.result = r.channels[0]; draw(); box.dispatchEvent(new CustomEvent("preflight", { bubbles: true })); } }
       catch (e) { if (my === st.seq) box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
     };
-    if (now) return go();
-    st.timer = setTimeout(go, 450);
+    const track = () => { const p = go(); st.inflight = p; p.finally(() => { if (st.inflight === p) st.inflight = null; }); return p; };
+    if (now) return track();
+    st.timer = setTimeout(() => { st.timer = 0; track(); }, 450);
+  }
+  // Before a send: run a debounced check now and wait for any check in flight, so the send judges the post as it is.
+  async function settle() {
+    if (st.timer) { clearTimeout(st.timer); st.timer = 0; await run(true); }
+    else if (st.inflight) await st.inflight;
+    else if (!st.result) await run(true);
   }
   async function fix() {
     const post = getPost(), b = $("[data-testid=preflight-fix]", box);
@@ -98,8 +109,8 @@ function pfPanel(box, getPost, onFix) {
     } catch (e) { toast(e.message, 5000); draw(); }
   }
   return {
-    run, get result() { return st.result; },
-    override() { const c = $("[data-testid=preflight-override]", box); return !!(c && c.checked); },
+    run, settle, get result() { return st.result; },
+    override() { return !!st.result && st.result.status === "warning" && !!st.ack && st.ack === warnSig(st.result); },
     blocked() { // why sending must wait, or "" when it can go
       const r = st.result; if (!r) return "Preflight is still checking this post.";
       if (r.status === "error") return "Preflight found something Buffer would reject. Use Fix it or change the post.";
@@ -257,7 +268,7 @@ async function sendCard(el, d, forcedMode) {
   const body = { channel_id: d.channel_id, text: $("textarea", el).value, media_url: $("[data-testid=draft-media]", el).value.trim(), mode };
   if (mode === "schedule") { if (!dueVal) { st.innerHTML = `<div class="st err">Pick a date and time</div>`; return false; } body.due_at = new Date(dueVal).toISOString(); }
   if (el._pf) {
-    if (!el._pf.result) await el._pf.run(true);
+    await el._pf.settle();
     const why = el._pf.blocked();
     if (why) { st.innerHTML = `<div class="st err" data-testid="draft-err">${esc(why)}</div>`; return false; }
     if (el._pf.override()) body.override_warnings = true;

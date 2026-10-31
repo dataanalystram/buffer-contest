@@ -4,9 +4,9 @@
 // packages go through preview -> submit. Ported from the HuhQueue calendar (dataanalystram/bufferopensource, MIT).
 "use strict";
 const PL = { view: "week", date: "", ch: new Set(), type: "", status: "", q: "", tz: "", nodate: false, slots: true,
-             data: null, loading: false, req: 0, edit: null };
+             data: null, loading: false, req: 0, edit: null, extra: [] };
 const PL_KEY = "hq_planner";
-const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft" };
+const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft", ghost: "Planned clip (not saved yet)" };
 const PL_TYPES = { text: "Text", image: "Image", carousel: "Carousel", video: "Video or Reel" };
 const NET_MARK = { twitter: "X", linkedin: "in", instagram: "IG", bluesky: "bs", threads: "@", mastodon: "M", facebook: "f", tiktok: "TT", youtube: "YT", pinterest: "P", googlebusiness: "G" };
 const DOW = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -92,7 +92,8 @@ async function loadPlanner() {
 }
 function plVisible() {
   const q = PL.q.trim().toLowerCase();
-  return (PL.data?.items || []).filter((i) => (!PL.ch.size || PL.ch.has(i.channel_id))
+  for (const g of PL.extra) g.z = g.when ? zoned(new Date(g.when), PL.tz) : null; // One take: planned clips (The Spread)
+  return [...(PL.data?.items || []), ...PL.extra].filter((i) => (!PL.ch.size || PL.ch.has(i.channel_id))
     && (!PL.type || (PL.type === "video" ? ["video", "reel"].includes(i.type) : i.type === PL.type))
     && (!PL.status || i.state === PL.status)
     && (!q || (i.text || "").toLowerCase().includes(q) || (i.channel || "").toLowerCase().includes(q)));
@@ -130,7 +131,7 @@ function plDraw() {
   const byDay = {};
   for (const i of dated) (byDay[i.z.ymd] ||= []).push(i);
   for (const k in byDay) byDay[k].sort((a, b) => new Date(a.when) - new Date(b.when));
-  const count = dated.filter((i) => inRange.has(i.z.ymd) && (PL.view !== "month" || i.z.ymd.startsWith(r.month))).length;
+  const count = dated.filter((i) => i.kind !== "ghost" && inRange.has(i.z.ymd) && (PL.view !== "month" || i.z.ymd.startsWith(r.month))).length;
   $("#plTitle").textContent = plTitle(r);
   $("#plCount").textContent = `${count} post${count === 1 ? "" : "s"}`;
   $("#plTzNote").textContent = PL.tz.replace(/_/g, " ");
@@ -243,7 +244,7 @@ function plMonth(r, byDay) {
 }
 
 // ---------------------------------------------------------------- interactions
-function plFind(ref) { return (PL.data?.items || []).find((i) => i.ref === ref); }
+function plFind(ref) { return [...(PL.data?.items || []), ...PL.extra].find((i) => i.ref === ref); }
 function plWire() {
   const root = $("#tab-planner");
   root.querySelectorAll("#plMain [data-act], #plNoDate [data-act]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plAct(b.dataset.act, b.dataset.ref, b); }));
@@ -265,6 +266,7 @@ function plWire() {
 }
 function plOpenItem(i) {
   if (!i) return;
+  if (i.kind === "ghost") return toast("A planned clip. Save the plan below to create it as a Buffer draft.");
   if (i.kind === "ready") return plAct("run", i.ref);
   if (i.kind === "approval") return plDialog("reschedule", i);
   if (i.state === "sent") { if (i.link) window.open(i.link, "_blank", "noopener"); else toast("Sent by Buffer. Sent posts can't be moved."); return; }
@@ -375,7 +377,7 @@ $("#plDlgChSel").addEventListener("change", () => PL.pf.run(true));
 async function plDialogSave(asDraft) {
   const { mode, i } = PL.edit || {}, err = $("#plDlgErr"), btn = $("#plDlgSave");
   if (mode === "new" || (mode === "edit" && $("#plDlgText").value !== i.text)) {
-    if (!PL.pf.result) await PL.pf.run(true);
+    await PL.pf.settle();
     const why = PL.pf.blocked();
     if (why) { err.textContent = why; return; }
   }

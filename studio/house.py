@@ -45,6 +45,8 @@ class House:
         self.http = http
         self.sync = bool(self.s.extra.get("sync_agent"))
         self.worker_mode = (os.environ.get("RENDER_WORKER") or self.s.extra.get("render_worker") or "").strip()
+        from .takes import Takes
+        self.takes = Takes(self)
 
     # ================================================================ brand kit
     def kit(self, a: Actor) -> dict:
@@ -340,6 +342,9 @@ class House:
             d = dict(r)
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
             d["title"] = (res.get("story") or {}).get("headline") or inp.get("query") or inp.get("url") or inp.get("brief") or "Your media"
+            if d["kind"] == "take":
+                d["title"] = "One take: " + (inp.get("name") or "your video")
+                d["cover"] = next((c.get("cover_url") for c in res.get("clips") or [] if c.get("cover_url")), "")
             d["cover"] = (res.get("media") or [{}])[0].get("url", "") if res.get("media") else ""
             d["packages"] = len(res.get("packages") or [])
             out.append(d)
@@ -678,27 +683,28 @@ class House:
         slides = [self.get_media(t)["data"] for t in spec["slides"]]
         return render.slideshow_reel(slides, spec["kit"], spec["params"], logo=logo, ratio=spec.get("ratio", "9:16"))
 
-    def _dispatch_github(self, jid: int) -> tuple[bool, str]:
-        """Start the free render worker for one job. It gets a single-use job token (only good for this job, 30 minutes),
-        so there is no long-lived shared secret between the app and the worker."""
+    def _dispatch_github(self, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:
+        """Start the free render worker for one job. It gets a single-use job token (only good for this job, 30 minutes;
+        longer for One take jobs), so there is no long-lived shared secret between the app and the worker."""
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")
-        jt = self.issue_job_token(jid)
+        jt = self.issue_job_token(jid, ttl)
         try:
             r = (self.http or httpx.Client(timeout=15)).post(
-                f"https://api.github.com/repos/{repo}/actions/workflows/render.yml/dispatches",
+                f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches",
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-                json={"ref": os.environ.get("GH_REF", "main"), "inputs": {"job_id": str(jid), "app": self.s.public_url, "job_token": jt}})
+                json={"ref": os.environ.get("GH_REF", "main"),
+                      "inputs": {"job_id": str(jid), "app": self.s.public_url, "job_token": jt, **(inputs or {})}})
             return (r.status_code == 204, f"GitHub answered {r.status_code}")
         except httpx.HTTPError as e:
             return False, e.__class__.__name__
 
-    def issue_job_token(self, jid: int) -> str:
+    def issue_job_token(self, jid: int, ttl: int = 1800) -> str:
         from .store import sha
         jt = "jt_" + secrets.token_urlsafe(24)
         rows = self.store.q("SELECT spec FROM render_jobs WHERE id=?", (jid,))
         spec = json.loads(rows[0]["spec"])
-        spec["_job_token"] = {"hash": sha(jt), "expires": _now() + 1800}
+        spec["_job_token"] = {"hash": sha(jt), "expires": _now() + ttl}
         self.store.x("UPDATE render_jobs SET spec=? WHERE id=?", (json.dumps(spec), jid))
         return jt
 
@@ -716,6 +722,8 @@ class House:
         if not rows:
             return None
         spec = json.loads(rows[0]["spec"])
+        if str(spec.get("kind", "")).startswith("take_"):
+            return self.takes.job_payload(jid)
         spec.pop("_job_token", None)
         base = self.s.public_url.rstrip("/") + "/m/"
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
@@ -726,11 +734,17 @@ class House:
         tok = self.store.q("SELECT media_token FROM render_jobs WHERE id=?", (jid,))[0]["media_token"]
         return {"token": tok, "url": self.media_url(tok), "type": "video", "name": "reel.mp4"}
 
-    def finish_video(self, jid: int, data: bytes | None, meta: dict | None, error: str = "", run_inline: bool = True) -> dict:
+    def finish_video(self, jid: int, data: bytes | None, meta: dict | None, error: str = "", run_inline: bool = True,
+                     body: dict | None = None) -> dict:
         rows = self.store.q("SELECT * FROM render_jobs WHERE id=?", (jid,))
         if not rows:
             raise ActionError("No such job.", 404)
         job = dict(rows[0])
+        kind = json.loads(job["spec"]).get("kind", "")
+        if kind == "take_analyze":
+            return self.takes.on_analysis(jid, (body or {}).get("analysis"), error)
+        if kind == "take_render":
+            return self.takes.on_render_done(jid, error)
         a = Actor(job["user_id"])
         if error or not data:
             self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (error[:500] or "no output", _now(), jid))

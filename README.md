@@ -42,6 +42,7 @@ the Buffer account you already use.
 
 ## What it does
 
+- **One take → a week** — drop one long video you recorded and get 3 to 7 captioned vertical clips of the best things you already said, each with a branded cover and end card, checked by preflight and spread into the open posting times of your week as Buffer drafts. [More below](#one-take--a-week).
 - **The agent ("Make a post")** — start from a topic, a link or your own photo or video. It searches the news, opens the source, checks other outlets carry it and pulls out the facts, with every step on a timeline you can read. Then it picks a format and writes one caption per channel.
 - **Renderer** — Pillow renders 4:5 carousels and single cards with your colours, font, logo, handle and end card; FFmpeg renders 9:16 Reels (slideshows or your own clips with a logo bug, hook and end card). Text the brand font can't draw (emoji, stray symbols) is left out rather than shown as empty boxes.
 - **Video worker** — on the free hosted plan, Reels render on a GitHub Actions worker (`studio/render_worker.py`, `.github/workflows/render.yml`) that fetches the job with a single-use token and posts the MP4 back; self-hosters render in-process.
@@ -53,6 +54,37 @@ the Buffer account you already use.
 - **Send to Buffer** — as a Buffer draft, add to queue, share next, share now or a custom time; image/video by URL; ideas to your Ideas board. Queue and drafts read back from Buffer.
 - **Agents with a leash** — MCP server + REST API per Buffer user. Every write is *preview → single-use confirm token → submit*. Default policy holds agent posts in an **Approvals inbox**; `draft` tokens can only create Buffer drafts; `trusted` tokens can schedule. Daily caps, a one-click **kill switch**, and an **activity log** of every action by you or your agents.
 - **Plays nice with Buffer's limits** — reads `RateLimit` headers (shown live in the header), caches channel lists, backs off on `429` + `Retry-After`.
+
+## One take → a week
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/take-clips-dark.png">
+  <img src="docs/screenshots/take-clips-light.png" alt="One take: a progress timeline (read, transcribe, find moments, reframe, captions, covers, preflight, ready) next to three 9:16 clips with burned-in captions, each with its hook, where it sits in the talk, its layout and a green Instagram preflight chip, and a Spread into my week button">
+</picture>
+
+*The sample take in `/demo`: a 3-minute talk became three clips. Every step is on the timeline, every clip shows where it came from in the talk and passes preflight.*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/take-spread-dark.png">
+  <img src="docs/screenshots/take-spread-light.png" alt="The Planner's week view after The Spread: three planned clips sit in the 11:00 Instagram posting slots on Monday, Wednesday and Friday, and a bar says 3 clip posts planned across 3 days with Discard plan and Save as Buffer drafts buttons">
+</picture>
+
+*The Spread: the clip cards fly into the open posting times of next week on the Planner. Nothing exists in Buffer until you press **Save as Buffer drafts** ([after](docs/screenshots/take-saved-light.png), [trim and caption editor](docs/screenshots/take-editor-light.png)).*
+
+The principle is **extract, don't invent**: a clip is a span of your own transcript, the hook on its cover is a line you said, and the post caption quotes you.
+
+1. **Your video** — upload (up to 40 MB on the hosted app) or paste a direct link to a file you host (long talks). You tick "this is my video"; pages on social networks are refused.
+2. **Transcribe** — on the video worker, never the web dyno: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) `small` on CPU (int8) with word timestamps and Silero VAD, FFmpeg `silencedetect` for pauses, [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) for cuts, and a face track at 2 fps with [MediaPipe](https://github.com/google-ai-edge/mediapipe)'s Face Detector. Our run on the sample: a 2:59 talk, 411 words in 47 s on a 2-core CPU, 71 s for the whole analysis.
+3. **Find the best moments** — whole sentences, 20 to 60 s, scored by your AI engine through the same provider settings the rest of the app uses (your key, the free starter, or none). Every span the model returns is checked against the transcript: out of range, overlapping or too short is dropped, and a hook that isn't a verbatim quote is replaced by the line you actually said. Without a model, or when it fails, a deterministic scorer picks them (strong opening line, clean ending, pace, little filler). Clip edges snap to a pause or a cut.
+4. **Reframe to 9:16** — shot by shot: where someone is on camera, the window follows their face with a dead zone and short eases (a jump at scene cuts); where no one is, the whole frame sits over a blurred copy of itself. A test keeps the face inside the window on at least 90% of samples.
+5. **Captions** — burned in with libass in your brand font and colours, the word being said in your accent colour, always above the bottom 20% where Instagram and TikTok put their buttons.
+6. **Cover and end card** — the sharpest frame of the moment (faces preferred) with the hook in your brand, as the first half second of the clip; `thumbnailOffset` points at it on Instagram, TikTok and Pinterest (the networks Buffer honours it for). Your end card closes the clip.
+7. **Preflight** — each clip is checked for each channel with the measurements the worker took (codec, size, fps, duration, bitrate), so the web dyno needs no ffprobe.
+8. **The Spread** — reads your Buffer posting times and what's already in the week, then plans one clip per channel per day where it can: never two clips in one slot, never past Buffer's daily limit for a channel, each channel in its own timezone (DST-safe). You see the plan on the Planner first; **Save as Buffer drafts** creates dated drafts (`saveToDraft` + `dueAt`, Instagram `type: reel`). Nothing is ever published. With `prefers-reduced-motion` the plan appears without the flight.
+
+Each clip can be trimmed (click a word to start or end there, or nudge by half a second; it re-renders on the worker), given a new hook (it must be at least three words you said in the clip) or a different caption per network.
+
+API: `POST /api/takes` (upload `media_token` or `url`, `owns: true`), `GET /api/takes/{id}`, `PATCH /api/takes/{id}/clips/{clip_id}`, `POST /api/takes/{id}/place` (dry run by default; then `confirm_token`), `POST /api/takes/sample`. MCP: `clips_from_video`, `list_clips`, `adjust_clip`, `place_clips_in_week` (two steps for agents; a `review` token's drafts wait in Approvals). The worker runs on GitHub Actions (`.github/workflows/take.yml`, `requirements-worker.txt`) with a single-use job token, or in-process wherever FFmpeg is installed. The sample workspace uses a public-domain NASA talk analysed and rendered ahead of time by the same code (`scripts/build_sample_take.py`), and mines, preflights and places it live without Buffer.
 
 ## Never Bounced preflight
 
@@ -89,6 +121,7 @@ Everything below was built in the Buffer Commit window; the pre-existing self-ho
 | 30 Oct | The agent ("Make a post"): research a topic or link or edit your own photo or video, on-brand carousels, cards and Reels, brand kit with website import, the Style Ledger and brand check, AI engine settings (bring your own key or use your own Claude/ChatGPT) |
 | 30 Oct | Renamed to HuhQueue. **Planner**: one tab replaces Calendar and Buffer queue (List, Week, Month, filters, timezone, No date drafts, posting times, click-to-schedule, drag to reschedule) on new `update_post`, `reschedule_post` and `delete_draft` actions (Buffer `editPost` / `deletePost`) shared by UI, REST and MCP; light and dark screenshots |
 | 30 Oct | Clean renders: no empty-box glyphs for emoji or symbols the brand font lacks, no "My brand" placeholder (the workspace name is used, or no wordmark) |
+| 30 Oct | **One take → a week**: one long video you own becomes 3 to 7 captioned 9:16 clips (faster-whisper transcript, verbatim moment mining through the provider abstraction with a deterministic fallback, shot-by-shot MediaPipe reframe, libass brand captions, cover frame + `thumbnailOffset`, end card), preflighted and spread into the week's open Buffer posting slots as dated drafts on the video worker (GitHub Actions `take.yml` or local FFmpeg). The Spread animation on the Planner, trim/hook/caption editor, progress timeline; REST + MCP `clips_from_video`, `list_clips`, `adjust_clip`, `place_clips_in_week`; sample take in `/demo` |
 | 30 Oct | **Never Bounced preflight**: per-network rule pack with cited sources (docs/PREFLIGHT.md), Buffer-exact counting, Pillow/ffprobe media checks, Fix it (thread/trim, crop/convert images), runs before every `createPost` and `editPost`; green/amber/red chips in the composer and Planner; `POST /api/preflight` + MCP `preflight_post`, `autofix_post`, `list_rules`; Buffer's HTTP 200 errors surfaced everywhere |
 
 ## Connect an agent (MCP)
@@ -104,7 +137,7 @@ claude mcp add --transport http huhqueue https://huhqueue-studio.onrender.com/mc
   --header "Authorization: Bearer hq_YOUR_TOKEN"
 ```
 
-Tools: `whoami`, `list_channels`, `draft_from_link`, `preflight_post`, `autofix_post`, `list_rules`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `update_post`, `reschedule_post`, `delete_draft`, `list_calendar`, `list_stories`, `create_idea`, `get_limits`, plus the agent tools `run_agent`, `edit_media`, `get_run`, `revise`, `remember_rule`, `brand_check`, `get_brand`, `schedule_package`.
+Tools: `clips_from_video`, `list_clips`, `adjust_clip`, `place_clips_in_week`, `whoami`, `list_channels`, `draft_from_link`, `preflight_post`, `autofix_post`, `list_rules`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `update_post`, `reschedule_post`, `delete_draft`, `list_calendar`, `list_stories`, `create_idea`, `get_limits`, plus the agent tools `run_agent`, `edit_media`, `get_run`, `revise`, `remember_rule`, `brand_check`, `get_brand`, `schedule_package`.
 The REST API (`/api/docs`) accepts the same bearer token, so UI = API = MCP (a test asserts all three send Buffer the identical `createPost` input).
 
 ## Run it yourself
@@ -122,7 +155,9 @@ Optional `AI_BASE_URL`/`AI_MODEL`/`AI_API_KEY` point the drafter at any OpenAI-c
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt
-python -m pytest tests/studio -q            # API, OAuth, rate limits, safety, parity, Planner, preflight + Playwright e2e
+python -m pytest tests/studio -q            # API, OAuth, rate limits, safety, parity, Planner, preflight, One take + Playwright e2e
+TAKE_SHOTS=docs/screenshots TAKE_SCHEME=dark python -m pytest tests/studio/test_take_e2e.py -k drafts   # One take screenshots
+python scripts/build_sample_take.py talk.mp4   # rebuild the bundled sample take (needs requirements-worker.txt + ffmpeg)
 python scripts/preflight_shots.py http://127.0.0.1:8899 docs/screenshots  # preflight screenshots, light + dark
 python scripts/readme_shots.py http://127.0.0.1:8899 docs/screenshots   # README screenshots (app running with /demo)
 python scripts/planner_shots.py http://127.0.0.1:8899 docs/screenshots

@@ -353,7 +353,7 @@ def _ratio_label(w: int, h: int) -> str:
 
 def check(channel: dict, text: str, media_urls: list[str] | None = None, mode: str = "queue", options: dict | None = None,
           loader: Callable[[str], bytes | None] | None = None, probe_media: bool = True, creating: bool = True,
-          media_kinds: list[str] | None = None) -> dict:
+          media_kinds: list[str] | None = None, known: Callable[[str], dict | None] | None = None) -> dict:
     """Preflight one post for one channel. Pure apart from media probing (loader fetches bytes; None skips probing)."""
     svc = channel.get("service", "")
     net = NETWORK.get(svc, svc)
@@ -362,7 +362,8 @@ def check(channel: dict, text: str, media_urls: list[str] | None = None, mode: s
     draft = mode == "draft"
     findings: list[dict] = []
     fixes: dict[str, str] = {}
-    probes = [probe_url(u, loader) if (probe_media and loader) else {"kind": "unknown", "skipped": True} for u in media_urls]
+    probes = [((known and known(u)) or probe_url(u, loader)) if (probe_media and loader) else {"kind": "unknown", "skipped": True}
+              for u in media_urls]
     kinds = [kind_of(u, p) for u, p in zip(media_urls, probes)]
     if media_kinds and len(media_kinds) == len(kinds):
         kinds = [k if p.get("kind") in ("image", "video") else h for k, p, h in zip(kinds, probes, media_kinds)]

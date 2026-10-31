@@ -17,6 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null   # One take render tests use the real FFmpeg
       - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt
       - name: Studio tests on SQLite
         run: python -m pytest tests/studio -q
