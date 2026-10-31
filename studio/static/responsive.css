@@ -95,7 +95,9 @@ pre.code{white-space:pre-wrap;word-break:break-word}
   .pf-jump .pf-chip{min-height:44px}
   .brand{min-height:44px;min-width:44px}
   .btn2.icon,.btn.icon{min-width:44px}
-  .foot-links a,.fine a{display:inline-flex;align-items:center;min-height:44px}
+  .foot-links a,.fine a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px}
+  .story-title{display:flex;align-items:center;min-height:44px}
+  .bm{display:inline-flex;align-items:center;min-height:44px}
   .rail button{min-height:44px}
   .skip:focus{min-height:44px;display:inline-flex;align-items:center}
   details summary{min-height:44px}
@@ -158,6 +160,7 @@ pre.code{white-space:pre-wrap;word-break:break-word}
   /* the Planner: compact header, the month grid stays a glanceable heat map and a tap opens the day */
   .pl-mday{min-height:52px}
   .pl-head,.pl-bar,.pl-filters{flex-wrap:wrap}
+  .pl-titles{flex-wrap:wrap;gap:4px 10px}
   .pl-filters select,.pl-filters input{flex:1 1 140px;min-width:0}
   table.data{font-size:13px}
   .kit-row,.brand-grid .row{flex-wrap:wrap}
