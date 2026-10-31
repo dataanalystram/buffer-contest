@@ -1,0 +1,348 @@
+{
+ "hits": [
+  {
+   "id": 125714,
+   "title": "ernd: the credit card for the AI stack ",
+   "tagline": "Get faster inference, better access to GPUs, and 4% back on AI ",
+   "slug": "Whe-ernd-the-credit-card-for-the-ai-stack",
+   "created_at": "2026-10-31T19:30:00.165Z",
+   "total_vote_count": 0,
+   "search_path": "https://www.ycombinator.com/launches/Whe-ernd-the-credit-card-for-the-ai-stack",
+   "company": {
+    "name": "ernd",
+    "url": "https://ernd.io/",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/0abccc9bf2a6589b531983e558b31a32246f63fb.png",
+    "tags": [
+     "Fintech",
+     "AI"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Fintech"
+   }
+  },
+  {
+   "id": 125686,
+   "title": "Fleety: The AI dispatcher for plumbing and HVAC companies",
+   "tagline": "Sends the right tech to the right job, and rebuilds the schedule all day.",
+   "slug": "WhC-fleety-the-ai-dispatcher-for-plumbing-and-hvac-companies",
+   "created_at": "2026-10-31T18:00:00.141Z",
+   "total_vote_count": 1,
+   "search_path": "https://www.ycombinator.com/launches/WhC-fleety-the-ai-dispatcher-for-plumbing-and-hvac-companies",
+   "company": {
+    "name": "Fleety",
+    "url": "https://usefleety.com",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/db07ec09ef8192bbc52f5bc207031df3e5646dac.png",
+    "tags": [
+     "SaaS",
+     "B2B",
+     "Home Services",
+     "AI"
+    ],
+    "batch": "Fall 2026",
+    "industry": "B2B"
+   }
+  },
+  {
+   "id": 125579,
+   "title": "Cardinal Square: AI-Native Schools",
+   "tagline": "Personalized education for every student",
+   "slug": "WfT-cardinal-square-ai-native-schools",
+   "created_at": "2026-10-30T23:00:00.081Z",
+   "total_vote_count": 6,
+   "search_path": "https://www.ycombinator.com/launches/WfT-cardinal-square-ai-native-schools",
+   "company": {
+    "name": "Cardinal Square",
+    "url": "https://cardinalsquare.com/",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/87a9ad77df8ff03bf6998f4f2007f263b31dbba5.png",
+    "tags": [
+     "Education",
+     "Consumer",
+     "AI"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Education"
+   }
+  },
+  {
+   "id": 125643,
+   "title": "Hickory: AI-native compliance operating system for banks and fintechs",
+   "tagline": "Replace legacy financial crime software with agent-first fraud and AML workflows",
+   "slug": "WgV-hickory-ai-native-compliance-operating-system-for-banks-and-fintechs",
+   "created_at": "2026-10-30T22:00:00.162Z",
+   "total_vote_count": 3,
+   "search_path": "https://www.ycombinator.com/launches/WgV-hickory-ai-native-compliance-operating-system-for-banks-and-fintechs",
+   "company": {
+    "name": "Hickory & Company",
+    "url": "https://hickory.co",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/99defc038609729a80c544eca98af6bec719647d.png",
+    "tags": [
+     "Fintech",
+     "SaaS",
+     "Compliance"
+    ],
+    "batch": "Fall 2026",
+    "industry": "B2B"
+   }
+  },
+  {
+   "id": 125566,
+   "title": "Shire Intelligence: Giving restaurants software eyes",
+   "tagline": "Shire uses CCTV to run restaurants in real time.",
+   "slug": "WfG-shire-intelligence-giving-restaurants-software-eyes",
+   "created_at": "2026-10-30T21:00:00.081Z",
+   "total_vote_count": 4,
+   "search_path": "https://www.ycombinator.com/launches/WfG-shire-intelligence-giving-restaurants-software-eyes",
+   "company": {
+    "name": "Shire Intelligence",
+    "url": "https://shireintelligence.com/",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/ddb902daa9bf41440f3e332ac02be9ee50de271c.png",
+    "tags": [
+     "Deep Learning",
+     "Food Tech"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Consumer"
+   }
+  },
+  {
+   "id": 125487,
+   "title": "SPM: Batteries are the bottleneck to American Energy Dominance",
+   "tagline": "SPM builds highest performance battery packs and power systems to mobilize energy",
+   "slug": "Wdz-spm-batteries-are-the-bottleneck-to-american-energy-dominance",
+   "created_at": "2026-10-30T20:00:00.106Z",
+   "total_vote_count": 4,
+   "search_path": "https://www.ycombinator.com/launches/Wdz-spm-batteries-are-the-bottleneck-to-american-energy-dominance",
+   "company": {
+    "name": "Super Powers Mobility (SPM)",
+    "url": "https://www.spm.us",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/a5c35648a3ac00d7da1ce27b5b0a62372c6a5f2e.png",
+    "tags": [
+     "Energy Storage",
+     "Unmanned Vehicle",
+     "Manufacturing",
+     "Electric Vehicles",
+     "Electronics"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Industrials"
+   }
+  },
+  {
+   "id": 125459,
+   "title": "Reconero: AI that does police paperwork so officers can keep their communities safe",
+   "tagline": "Reconero automates administrative workflows for law enforcement with AI",
+   "slug": "WdX-reconero-ai-that-does-police-paperwork-so-officers-can-keep-their-communities-safe",
+   "created_at": "2026-10-30T18:00:00.226Z",
+   "total_vote_count": 5,
+   "search_path": "https://www.ycombinator.com/launches/WdX-reconero-ai-that-does-police-paperwork-so-officers-can-keep-their-communities-safe",
+   "company": {
+    "name": "Reconero",
+    "url": "https://reconero.com",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/b80e05ae693ed71f511c4061b98e40ea8c93e882.png",
+    "tags": [
+     "SaaS",
+     "GovTech",
+     "Data Visualization",
+     "AI"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Government"
+   }
+  },
+  {
+   "id": 125458,
+   "title": "Dydema: Personal, programmable brain-computer interfaces",
+   "tagline": "Control your computer with a thought, no surgery required",
+   "slug": "WdW-dydema-personal-programmable-brain-computer-interfaces",
+   "created_at": "2026-10-30T17:00:00.280Z",
+   "total_vote_count": 7,
+   "search_path": "https://www.ycombinator.com/launches/WdW-dydema-personal-programmable-brain-computer-interfaces",
+   "company": {
+    "name": "Dydema",
+    "url": "https://dydema.com/",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/85eacc9eef1101a2060cf6b9873797fd43445325.png",
+    "tags": [
+     "Hardware",
+     "Neurotechnology",
+     "Neuroinformatics",
+     "Consumer",
+     "AI"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Consumer"
+   }
+  },
+  {
+   "id": 124031,
+   "title": "Mirrors: Fix recurring AI agent mistakes with real-time guidance",
+   "tagline": "Stop playing whack-a-mole with your agents",
+   "slug": "WGV-mirrors-fix-recurring-ai-agent-mistakes-with-real-time-guidance",
+   "created_at": "2026-10-30T15:00:00.126Z",
+   "total_vote_count": 17,
+   "search_path": "https://www.ycombinator.com/launches/WGV-mirrors-fix-recurring-ai-agent-mistakes-with-real-time-guidance",
+   "company": {
+    "name": "Mirrors",
+    "url": "https://www.mirrors.dev",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/e98a564b21ba044528e16126406d35b7464044b7.png",
+    "tags": [
+     "AIOps",
+     "Developer Tools",
+     "B2B",
+     "Infrastructure",
+     "AI"
+    ],
+    "batch": "Fall 2026",
+    "industry": "B2B"
+   }
+  },
+  {
+   "id": 125559,
+   "title": "The Subvocal Company: Talk without talking",
+   "tagline": "Glasses that let you talk to your computer without talking out loud",
+   "slug": "Wf9-the-subvocal-company-talk-without-talking",
+   "created_at": "2026-10-30T14:01:10.977Z",
+   "total_vote_count": 10,
+   "search_path": "https://www.ycombinator.com/launches/Wf9-the-subvocal-company-talk-without-talking",
+   "company": {
+    "name": "The Subvocal Company",
+    "url": "https://subvocal.company",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/932b2d47f36f3bce67a23cc2ce77599b9f364edd.png",
+    "tags": [
+     "Hard Tech",
+     "Hardware",
+     "Consumer"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Consumer"
+   }
+  },
+  {
+   "id": 125564,
+   "title": "Axonnic: Muscle-sensing sleeves for robot training",
+   "tagline": "Track finger movement and estimate fingertip force while people work.",
+   "slug": "WfE-axonnic-muscle-sensing-sleeves-for-robot-training",
+   "created_at": "2026-10-30T13:00:00.290Z",
+   "total_vote_count": 83,
+   "search_path": "https://www.ycombinator.com/launches/WfE-axonnic-muscle-sensing-sleeves-for-robot-training",
+   "company": {
+    "name": "Axonnic",
+    "url": "https://www.axonnic.com",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/f269fdfc703083f216ecc708a1d72e1eec821657.png",
+    "tags": [
+     "Neurotechnology",
+     "Robotics",
+     "Data Labeling"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Industrials"
+   }
+  },
+  {
+   "id": 125454,
+   "title": "Composal: A swarm of agents that tests your product like real users",
+   "tagline": " Catch bugs before your users do",
+   "slug": "WdS-composal-a-swarm-of-agents-that-tests-your-product-like-real-users",
+   "created_at": "2026-10-30T01:00:00.123Z",
+   "total_vote_count": 19,
+   "search_path": "https://www.ycombinator.com/launches/WdS-composal-a-swarm-of-agents-that-tests-your-product-like-real-users",
+   "company": {
+    "name": "Composal",
+    "url": "https://composal.com",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/5e1f6f0a97f11c72c78bdc6875df0e065a154770.png",
+    "tags": [
+     "Developer Tools",
+     "DevSecOps",
+     "Cloud Computing",
+     "AI"
+    ],
+    "batch": "Fall 2026",
+    "industry": "B2B"
+   }
+  },
+  {
+   "id": 125445,
+   "title": "Wingman Law: AI-native personal injury law firm where attorneys direct AI agents",
+   "tagline": "Wingman Law: AI-native personal injury law firm",
+   "slug": "WdJ-wingman-law-ai-native-personal-injury-law-firm-where-attorneys-direct-ai-agents",
+   "created_at": "2026-10-30T00:00:00.266Z",
+   "total_vote_count": 4,
+   "search_path": "https://www.ycombinator.com/launches/WdJ-wingman-law-ai-native-personal-injury-law-firm-where-attorneys-direct-ai-agents",
+   "company": {
+    "name": "Wingman Law",
+    "url": "https://www.wingmanlaw.com",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/2127606306fa68c80f746873e01b87bbfb011128.png",
+    "tags": [
+     "Generative AI",
+     "Legal",
+     "LegalTech"
+    ],
+    "batch": "Fall 2026",
+    "industry": "B2B"
+   }
+  },
+  {
+   "id": 125455,
+   "title": "Aviern: Unmanned cargo airplanes for autonomous airports",
+   "tagline": "Fixed-wing drones for regional air freight and defense logistics. 1000lbs carried over 1000 miles under $1000.",
+   "slug": "WdT-aviern-unmanned-cargo-airplanes-for-autonomous-airports",
+   "created_at": "2026-10-29T23:00:00.165Z",
+   "total_vote_count": 187,
+   "search_path": "https://www.ycombinator.com/launches/WdT-aviern-unmanned-cargo-airplanes-for-autonomous-airports",
+   "company": {
+    "name": "Aviern",
+    "url": "https://aviern.com/",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/906b7c01faee6d9632f1f941bfe737812ec7d0b9.png",
+    "tags": [
+     "Airplanes",
+     "Logistics",
+     "Aerospace",
+     "Infrastructure"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Industrials"
+   }
+  },
+  {
+   "id": 125318,
+   "title": "Durable Actors: The perfect primitive for Multiplayer AI and Agent Coordination",
+   "tagline": "OSS alternative to Durable Objects",
+   "slug": "WbG-durable-actors-the-perfect-primitive-for-multiplayer-ai-and-agent-coordination",
+   "created_at": "2026-10-29T19:30:00.301Z",
+   "total_vote_count": 4,
+   "search_path": "https://www.ycombinator.com/launches/WbG-durable-actors-the-perfect-primitive-for-multiplayer-ai-and-agent-coordination",
+   "company": {
+    "name": "Terse",
+    "url": "https://www.useterse.ai/",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/cd6be2cf6a34817d94716dd43cba7de917787b78.png",
+    "tags": [
+     "API",
+     "Infrastructure",
+     "AI"
+    ],
+    "batch": "Fall 2026",
+    "industry": "B2B"
+   }
+  },
+  {
+   "id": 125197,
+   "title": "Capveon \u2014 AI for finding, understanding, and winning government work",
+   "tagline": "AI for finding, understanding, and winning government work for manufacturers and contractors",
+   "slug": "WZJ-capveon-ai-for-finding-understanding-and-winning-government-work",
+   "created_at": "2026-10-29T18:30:00.224Z",
+   "total_vote_count": 8,
+   "search_path": "https://www.ycombinator.com/launches/WZJ-capveon-ai-for-finding-understanding-and-winning-government-work",
+   "company": {
+    "name": "Capveon",
+    "url": "https://capveon.ai",
+    "logo": "https://bookface-images.s3.amazonaws.com/small_logos/55acb7275a696cdf957737bce96b338f2da2d45f.png",
+    "tags": [
+     "GovTech"
+    ],
+    "batch": "Fall 2026",
+    "industry": "Government"
+   }
+  }
+ ],
+ "recorded": "2026-10-31",
+ "source": "https://www.ycombinator.com/launches (Accept: application/json)"
+}

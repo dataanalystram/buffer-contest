@@ -1,0 +1,11 @@
+{"recorded": "sample", "note": "Made-up posts in the X API v2 recent-search response shape (data + includes.users). The sample never calls X; a real workspace calls https://api.x.com/2/tweets/search/recent with the user's own key.",
+ "data": [
+  {"id": "1", "author_id": "u1", "created_at": "2026-10-31T09:12:00.000Z", "text": "Sample: our new open model is live today. Free weights, 128k context, runs on a single GPU. https://example.com/sample/open-model", "public_metrics": {"like_count": 1840, "retweet_count": 410, "reply_count": 96}},
+  {"id": "2", "author_id": "u2", "created_at": "2026-10-31T11:40:00.000Z", "text": "Sample: agents in our app now ask before they post. A kill switch pauses every agent action at once. https://example.com/sample/agents-ask-first", "public_metrics": {"like_count": 620, "retweet_count": 88, "reply_count": 31}},
+  {"id": "3", "author_id": "u3", "created_at": "2026-10-30T16:05:00.000Z", "text": "Sample: free way to caption a podcast: an open speech model, three commands, works offline. Thread below. https://example.com/sample/free-captions", "public_metrics": {"like_count": 2300, "retweet_count": 700, "reply_count": 140}}
+ ],
+ "includes": {"users": [
+  {"id": "u1", "username": "samplelab", "name": "Sample Lab"},
+  {"id": "u2", "username": "sampleapp", "name": "Sample App"},
+  {"id": "u3", "username": "sampledev", "name": "Sample Dev"}
+ ]}}
