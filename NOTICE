@@ -99,3 +99,24 @@ Apache License 2.0 notice for adapted Shoutrrr material:
    Unless required by applicable law or agreed to in writing, software distributed under the License is
    distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and limitations under the License.
+
+--------------------------------------------------------------------------------------------------------------
+studio/fonts/Figtree-ExtraBold.ttf, studio/fonts/Figtree-Medium.ttf  (copied, unmodified; renamed)
+  Source:   Figtree by Erik Kennedy, https://github.com/erikdkennedy/figtree, via the Fontsource CDN
+            (cdn.jsdelivr.net/fontsource/fonts/figtree, latin 800 and 500)
+  Licence:  SIL Open Font License 1.1 (https://openfontlicense.org)
+  What:     headline and body font of the Buffer concept example brand and an option in the Brand studio.
+
+studio/brand_examples/buffer/mark.png  (third-party trademark, used for a labelled concept example)
+  Source:   https://buffer.com/img/logos/buffer-logo.png; palette read from buffer.com's public CSS tokens.
+  What:     the "Buffer (concept example)" brand in the sample workspace. Every render says "Concept example, not
+            affiliated with Buffer". Buffer's name and logo are trademarks of Buffer, Inc.
+
+studio/brand_examples/huhbyte/logo.png  (the owner's own brand)
+  Source:   https://github.com/dataanalystram/Huhbyte.ai code/brand/logo.png
+
+studio/sample_sources/raw/*  (recorded responses, trimmed)
+  Sources:  ycombinator.com/launches, hn.algolia.com (HN Search API), and the public RSS feeds of openai.com,
+            deepmind.google, huggingface.co and blog.google, recorded 31 Oct 2026 for the offline sample. Headlines
+            belong to their publishers. producthunt.json and x.json are made-up sample items in those APIs' shapes.
+  Ideas only (no code): the radar classifier design (Jev / SubQ System One questions) is our own prototype.
