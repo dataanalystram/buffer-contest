@@ -1,0 +1,51 @@
+/* HuhQueue legal and trust pages (privacy, terms, security): one layout, a summary card, a table of contents, data tables.
+   Taste tokens from style.css; this file only lays out long-form reading. */
+.lg-top{display:flex;align-items:center;gap:16px;padding:12px 24px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10;background:color-mix(in oklab,var(--paper) 90%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.lg-top .brand img{width:32px;height:32px;border-radius:8px;display:block}
+.lg-top nav{margin-left:auto;display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.lg-top nav a{display:inline-flex;align-items:center;min-height:44px;padding:0 10px;border-radius:6px;color:var(--muted);text-decoration:none;font-size:14px}
+.lg-top nav a:hover{color:var(--ink);background:var(--sunken)}
+.lg-top nav a[aria-current=page]{color:var(--ink);font-weight:600}
+.lg-top nav .btn{color:var(--paper);margin-left:6px}
+.lg{max-width:1120px;margin:0 auto;padding:48px 24px 96px;display:grid;grid-template-columns:240px minmax(0,1fr);gap:56px}
+.lg-head{grid-column:1/-1;max-width:760px}
+.lg-head .eyebrow{font-size:14px;color:var(--muted);font-weight:600}
+.lg-head h1{font-size:clamp(36px,4.6vw,56px);line-height:1.02;font-weight:300;letter-spacing:-.03em;margin:8px 0 12px}
+.lg-head p{color:var(--muted);font-size:18px;max-width:60ch}
+.lg-meta{display:flex;gap:8px 20px;flex-wrap:wrap;margin-top:16px;font-size:14px;color:var(--muted)}
+.lg-meta b{color:var(--ink);font-weight:600}
+.lg-sum{grid-column:1/-1;border:1px solid var(--line);border-radius:14px;background:var(--sunken);padding:24px 28px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:20px 28px}
+.lg-sum h2{grid-column:1/-1;font-size:14px;font-weight:600;color:var(--muted)}
+.lg-sum div{display:flex;flex-direction:column;gap:4px}
+.lg-sum b{font-size:16px}
+.lg-sum span{font-size:14px;color:var(--muted)}
+.lg-toc{position:sticky;top:96px;align-self:start;font-size:14px}
+.lg-toc h2{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px}
+.lg-toc ol{list-style:none;margin:0;padding:0;border-left:1px solid var(--line)}
+.lg-toc a{display:flex;align-items:center;min-height:36px;padding:0 12px;margin-left:-1px;border-left:2px solid transparent;color:var(--muted);text-decoration:none}
+.lg-toc a:hover{color:var(--ink);border-left-color:var(--line-strong)}
+.lg-body{min-width:0;max-width:760px}
+.lg-body section{padding-top:8px;margin-bottom:40px;scroll-margin-top:88px}
+.lg-body h2{font-size:24px;font-weight:600;letter-spacing:-.01em;margin-bottom:12px}
+.lg-body h3{font-size:17px;font-weight:600;margin:20px 0 6px}
+.lg-body p,.lg-body li{color:var(--ink);line-height:1.65}
+.lg-body p+p{margin-top:12px}
+.lg-body ul{padding-left:20px;margin:8px 0}
+.lg-body li+li{margin-top:6px}
+.lg-body .muted{color:var(--muted)}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;margin:12px 0}
+.lg-body table{width:100%;border-collapse:collapse;font-size:14px;min-width:560px}
+.lg-body th{text-align:left;font-weight:600;color:var(--muted);font-size:13px;background:var(--sunken);padding:10px 14px;border-bottom:1px solid var(--line)}
+.lg-body td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.5}
+.lg-body tr:last-child td{border-bottom:0}
+.lg-body td:first-child{font-weight:600;white-space:nowrap}
+.callout{border-left:3px solid var(--ink);background:var(--sunken);border-radius:0 10px 10px 0;padding:14px 18px;margin:16px 0;font-size:15px}
+.lg-contact{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+.lg-contact a{min-height:44px}
+.lg-foot{border-top:1px solid var(--line);padding:24px;font-size:13px;color:var(--muted);display:flex;gap:8px 20px;flex-wrap:wrap;justify-content:center;align-items:center}
+.lg-foot a{color:var(--muted);min-height:44px;display:inline-flex;align-items:center}
+.lg-foot .wm{height:16px;width:auto}
+.wm.dk{display:none}
+@media (prefers-color-scheme:dark){.wm.lt{display:none}.wm.dk{display:inline-block}}
+@media (max-width:900px){.lg{grid-template-columns:minmax(0,1fr);gap:28px;padding-top:32px}.lg-toc{position:static}.lg-toc ol{display:flex;flex-wrap:wrap;gap:4px;border:0}.lg-toc a{border:1px solid var(--line);border-radius:999px;min-height:44px}
+  .lg-top{padding:8px 16px}.lg-top nav a:not(.btn){display:none}.lg-top .bt small{display:none}}
