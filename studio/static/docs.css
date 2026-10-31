@@ -46,3 +46,10 @@ kbd{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 
 @media (max-width:480px){.dshots{grid-template-columns:minmax(0,1fr)}.dshot.phone{max-width:220px}}
 .dk-nav a,.dk-toc a{min-height:44px}
 @media (max-width:1023px){.dk-start a,.dk-side-cta a,.lg-top .btn{min-height:44px}}
+.dk-table{margin:12px 0 16px;overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+.dk-table table{width:100%;border-collapse:collapse;font-size:14px;line-height:1.5}
+.dk-table th,.dk-table td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--line)}
+.dk-table th{font-weight:600;background:var(--sunken)}.dk-table tr:last-child td{border-bottom:0}
+.dk-table code{white-space:nowrap}
+.dk-ex{margin:16px 0}.dk-ex img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:12px;background:var(--sunken)}
+.dk-ex figcaption{margin-top:6px;font-size:13px;color:var(--muted)}

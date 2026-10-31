@@ -6,7 +6,9 @@
 Starts the app in-process on a free port unless BASE is set. Light and dark, 1440 and 390 px. Also used for the docs
 screenshots (python scripts/premium_shots.py studio/static/docs-shots docs).
 VIA_HTTPX=1 fetches every non-local request with httpx instead of the browser's network (for a sandbox whose proxy only
-Python can use); the pages, cookies and images are the same."""
+Python can use); the pages, cookies and images are the same. DOCSHOT_KEYS=brandstudio,sources limits the docshots set.
+Every app shot first checks the SAMPLE tag is on screen (a shot without it is reported under "errors"), so no real account
+can leak into a screenshot."""
 import os
 import socket
 import sys
@@ -51,7 +53,19 @@ def serve() -> str:
 
 
 DOCSHOTS = [("composer", "agent"), ("brand", "brand"), ("radar", "radar"), ("inbox", "inbox"), ("planner-week", "planner"), ("take", "take"),
-            ("connect", "connect"), ("activity", "activity")]
+            ("connect", "connect"), ("activity", "activity"), ("brandstudio", "brandstudio"), ("sources", "sources")]
+APP_TABS = ("inbox", "agent", "take", "connect", "brandstudio", "sources", "activity")
+
+
+def sample_scan(pg) -> None:
+    """Sources: run the sample scan so the screen shows clusters, not an empty state."""
+    if pg.locator("[data-testid=sa-cluster]").count() == 0:
+        pg.click("[data-testid=sa-scan]")
+        pg.wait_for_selector("[data-testid=sa-cluster]", timeout=60000)
+
+
+def sample_ok(pg) -> bool:
+    return pg.locator("[data-testid=sample-tag]").is_visible()
 
 
 def docshots(pg, base: str, scheme: str, dev: str) -> None:
@@ -66,14 +80,20 @@ def docshots(pg, base: str, scheme: str, dev: str) -> None:
         if dev == "desktop":
             im = im.resize((1200, 750), Image.LANCZOS)
         im.save(d / f"{key}-{scheme}-{dev}.webp", "WEBP", quality=78, method=6)
-    pg.goto(base + "/", wait_until="networkidle"); pg.wait_for_timeout(1500); save("landing")
+    keys = set(filter(None, os.environ.get("DOCSHOT_KEYS", "").split(",")))
+    if not keys or "landing" in keys:
+        pg.goto(base + "/", wait_until="networkidle"); pg.wait_for_timeout(1500); save("landing")
     pg.goto(base + "/demo", wait_until="networkidle"); pg.wait_for_selector("#app:not([hidden])")
     pg.evaluate("localStorage.setItem('hq_tour_done','1'); window.tourEnd && document.querySelector('.tour') && tourEnd()")
     for key, tab in DOCSHOTS:
+        if keys and key not in keys:
+            continue
         if tab == "planner":
             pg.evaluate("plSetView('week')")
         else:
             pg.evaluate(f"showTab('{tab}')")
+            if tab == "sources":
+                pg.wait_for_selector("[data-testid=sa-scan]"); sample_scan(pg)
         pg.wait_for_timeout(1000); save(key)
 
 
@@ -90,10 +110,15 @@ def via_httpx(ctx) -> None:
             r = client.request(request.method, request.url, headers=h, content=request.post_data_buffer,
                                follow_redirects=request.resource_type != "document")
             hdrs = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
-            route.fulfill(status=r.status_code, headers=dict(hdrs), body=r.content)
             for k, v in hdrs:
                 if k.lower() == "set-cookie":
                     ctx.add_cookies([_cookie(v, request.url)])
+            loc = r.headers.get("location")
+            if request.resource_type == "document" and 300 <= r.status_code < 400 and loc:
+                # Chromium does not route the next hop of a fulfilled redirect (/demo -> /?demo=1); hop with a refresh
+                route.fulfill(status=200, content_type="text/html", body=f'<meta http-equiv="refresh" content="0;url={loc}">')
+            else:
+                route.fulfill(status=r.status_code, headers=dict(hdrs), body=r.content)
         except Exception:
             route.abort()
     ctx.route("**/*", handle)
@@ -138,7 +163,9 @@ def main() -> None:
     base = serve()
     errors: list[str] = []
     with sync_playwright() as p:
-        b = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
+        # with VIA_HTTPX the browser's own network is never used: a dead proxy keeps it off the sandbox proxy
+        b = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None,
+                              proxy={"server": "http://127.0.0.1:9"} if os.environ.get("VIA_HTTPX") else None)
         for scheme in SCHEMES:
             for w in WIDTHS:
                 h = 900 if w > 600 else 844
@@ -148,6 +175,12 @@ def main() -> None:
                     via_httpx(ctx)
                 pg = ctx.new_page()
                 pg.on("pageerror", lambda e: errors.append(f"{scheme} {w}: {e}"))
+                assert not ctx.cookies(), "a fresh context must start without cookies"
+
+                def app_shot(name, pg=pg):
+                    if not sample_ok(pg):
+                        errors.append(f"{name}: no SAMPLE tag on screen")
+                    pg.screenshot(path=str(OUT / name))
                 tag = f"{w}-{scheme}"
                 if want("landing"):
                     pg.goto(base + "/", wait_until="networkidle"); pg.wait_for_timeout(1600)
@@ -173,23 +206,28 @@ def main() -> None:
                 if want("app") or want("planner"):
                     pg.goto(base + "/demo", wait_until="networkidle")
                     pg.wait_for_selector("#app:not([hidden])")
+                    if want("app"):  # the guided tour, as a first visit sees it
+                        pg.evaluate("document.querySelector('.tour') || (window.tourStart && tourStart())"); pg.wait_for_timeout(900)
+                        app_shot(f"tour-{tag}.png")
                     pg.evaluate("localStorage.setItem('hq_tour_done','1'); document.querySelector('.tour') && window.tourEnd && tourEnd()")
                 if want("app"):
-                    for tab in ("inbox", "agent", "take", "connect"):
+                    for tab in APP_TABS:
                         pg.evaluate(f"showTab('{tab}')"); pg.wait_for_timeout(900)
+                        if tab == "sources":
+                            sample_scan(pg); pg.wait_for_timeout(400)
                         pg.evaluate("document.getElementById('toast').hidden = true")
-                        pg.screenshot(path=str(OUT / f"{ {'agent': 'composer'}.get(tab, tab)}-{tag}.png"))
+                        app_shot(f"{ {'agent': 'composer'}.get(tab, tab)}-{tag}.png")
                     if os.environ.get("TAKE_RUN"):
                         pg.evaluate("showTab('take')"); pg.click("[data-testid=take-sample]")
                         pg.wait_for_selector("[data-testid=clip-grid] video, [data-testid=clip-grid] img", timeout=60000)
                         pg.wait_for_timeout(800); pg.screenshot(path=str(OUT / f"take-run-{tag}.png"))
                     pg.evaluate("openPalette()"); pg.wait_for_timeout(300)
-                    pg.screenshot(path=str(OUT / f"palette-{tag}.png")); pg.keyboard.press("Escape")
+                    app_shot(f"palette-{tag}.png"); pg.keyboard.press("Escape")
                 if want("planner"):
                     for v in VIEWS:
                         pg.evaluate(f"plSetView('{v}')"); pg.wait_for_timeout(900)
                         pg.evaluate("document.getElementById('toast').hidden = true")
-                        pg.screenshot(path=str(OUT / f"planner-{v}-{tag}.png"))
+                        app_shot(f"planner-{v}-{tag}.png")
                 if "land" in SETS and w == 1440:
                     land_shots(pg, base, scheme)
                 if want("docshots") and w in (1440, 390):
