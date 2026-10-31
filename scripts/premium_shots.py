@@ -119,7 +119,7 @@ def main() -> None:
                     pg.wait_for_selector("#app:not([hidden])")
                     pg.evaluate("localStorage.setItem('hq_tour_done','1'); document.querySelector('.tour') && window.tourEnd && tourEnd()")
                 if want("app"):
-                    for tab in ("inbox", "agent", "take"):
+                    for tab in ("inbox", "agent", "take", "connect"):
                         pg.evaluate(f"showTab('{tab}')"); pg.wait_for_timeout(900)
                         pg.evaluate("document.getElementById('toast').hidden = true")
                         pg.screenshot(path=str(OUT / f"{ {'agent': 'composer'}.get(tab, tab)}-{tag}.png"))

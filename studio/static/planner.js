@@ -178,7 +178,10 @@ function plDraw() {
   }
   plWire();
   const sc = $(".pl-week-scroll");
-  if (sc) sc.scrollTop = keep ?? 7 * ROW_H;
+  if (sc) {
+    const first = PL.view === "day" ? Math.min(...((byDay[r.days[0]] || []).map((i) => i.z.h)), 24) : 24;
+    sc.scrollTop = keep ?? (first < 24 ? Math.max(0, first - 1) : 7) * ROW_H;
+  }
 }
 function plEmpty() {
   return `<div class="pl-empty" data-testid="planner-empty"><svg class="ic lg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
@@ -330,7 +333,7 @@ function plGrid(vis) {
   if (!S.channels.some((c) => c.service === "instagram")) return `<div class="pl-empty" data-testid="planner-empty"><b>No Instagram channel</b><span>The grid previews an Instagram feed. Connect one in Buffer, then refresh channels.</span></div>`;
   if (!its.length) return plEmpty();
   return `<div class="pl-grid-wrap"><div class="pl-grid" data-testid="planner-grid" role="list" aria-label="Instagram feed preview, newest first">${its.map((i) => `<button type="button" role="listitem" class="pl-tile${i.state === "sent" ? "" : " planned"} s-${esc(i.state)}" data-testid="planner-grid-tile" data-ref="${esc(i.ref)}" aria-label="${esc((PL_STATES[i.state] || i.state) + ", " + plWhenFull(i) + ": " + (i.text || "media"))}">
-      ${i.thumb ? `<img src="${esc(i.thumb)}" alt="" loading="lazy">` : `<span class="pl-tile-txt">${esc((i.text || "").slice(0, 90))}</span>`}
+      <span class="pl-tile-txt">${esc((i.text || "").slice(0, 90))}</span>${i.thumb ? `<img src="${esc(i.thumb)}" alt="" loading="lazy">` : ""}
       <span class="pl-tile-meta">${i.state === "sent" ? "Sent" : esc(plWhenFull(i))}</span></button>`).join("")}</div>
     <p class="muted xs">Dashed tiles are planned; solid tiles are already on the feed. Click a tile to open it.</p></div>`;
 }
@@ -553,3 +556,6 @@ $("#plDlgAgent").onclick = () => { closeDlg(); showTab("agent"); };
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { planner: loadPlanner });
 let plWasPhone = plPhone();
 addEventListener("resize", () => { const p = plPhone(); if (p !== plWasPhone) { plWasPhone = p; if (!$("#tab-planner").hidden) plDraw(); } });
+
+// a feed tile whose image can't load shows its caption instead (no inline handlers under the CSP)
+document.addEventListener("error", (e) => { const t = e.target; if (t.tagName === "IMG" && t.closest(".pl-tile")) t.remove(); }, true);
