@@ -3,7 +3,7 @@ desktop widths, light and dark. Reports horizontal overflow (and the elements ca
 
     python scripts/responsive_audit.py http://127.0.0.1:8899 [shots_dir]
 
-Exits 1 if any page scrolls sideways. The same checks run in tests/studio/test_responsive.py."""
+Exits 1 if any page scrolls sideways or has a tap target under 44 px below 1024 px. The same checks run in tests/studio/test_responsive.py."""
 import json
 import os
 import sys
@@ -48,14 +48,24 @@ PROBE = """(minTap) => {
 
 
 def audit(base: str, shots: str | None = None, widths=WIDTHS, schemes=SCHEMES, tabs=TABS, chromium=None) -> list[dict]:
-    out = []
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium or os.environ.get("CHROMIUM_PATH") or None)
-        for scheme in schemes:
-            for w in widths:
-                ctx = browser.new_context(viewport={"width": w, "height": 900 if w > 500 else 780}, color_scheme=scheme,
-                                          timezone_id="Europe/Dublin", has_touch=w < 1024)
-                ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+        try:
+            return audit_with(browser, base, shots, widths, schemes, tabs)
+        finally:
+            browser.close()
+
+
+def audit_with(browser, base: str, shots: str | None = None, widths=WIDTHS, schemes=SCHEMES, tabs=TABS) -> list[dict]:
+    """The same audit on a browser the caller owns (the test suite shares one Chromium per session)."""
+    out = []
+    for scheme in schemes:
+        for w in widths:
+            ctx = browser.new_context(viewport={"width": w, "height": 900 if w > 500 else 780}, color_scheme=scheme,
+                                      timezone_id="Europe/Dublin", has_touch=w < 1024)
+            ctx.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the tour has its own test
+            ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+            try:
                 page = ctx.new_page()
                 page.goto(base + "/")
                 page.wait_for_timeout(300)
@@ -64,18 +74,14 @@ def audit(base: str, shots: str | None = None, widths=WIDTHS, schemes=SCHEMES, t
                     page.screenshot(path=f"{shots}/landing-{w}-{scheme}.png")
                 page.goto(base + "/demo")
                 page.locator("#app:not([hidden])").wait_for()
-                page.evaluate("() => localStorage.setItem('hq_tour_done', '1')")
-                skip = page.get_by_test_id("tour-skip")
-                if skip.count() and skip.is_visible():
-                    skip.click()
                 for t in tabs:
                     page.evaluate("(t) => window.showTab && window.showTab(t)", t)
                     page.wait_for_timeout(450)
                     out.append({"page": t, "width": w, "scheme": scheme, **page.evaluate(PROBE, 44)})
                     if shots:
                         page.screenshot(path=f"{shots}/{t}-{w}-{scheme}.png")
+            finally:
                 ctx.close()
-        browser.close()
     return out
 
 
@@ -85,7 +91,7 @@ if __name__ == "__main__":
     if shots:
         os.makedirs(shots, exist_ok=True)
     rows = audit(base, shots)
-    bad = [r for r in rows if r["over"] > 0]
+    bad = [r for r in rows if r["over"] > 0 or r["small"]]
     for r in rows:
         flag = "OVERFLOW" if r["over"] > 0 else ("small-taps" if r["small"] else "ok")
         print(f"{r['scheme']:5} {r['width']:5} {r['page']:10} {flag:10} over={r['over']} {json.dumps(r['culprits'][:3])} {json.dumps(r['small'][:6])}")

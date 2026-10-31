@@ -198,3 +198,20 @@ def close_contexts(chromium):
     yield
     for c in list(chromium.contexts):
         c.close()
+
+
+@pytest.fixture
+def demo_live(tmp_path):
+    """The app on a real port with no Buffer behind it (every Buffer call answers 503 and is recorded), for browser tests
+    of the sample workspace at /demo. Yields (base_url, buffer_calls)."""
+    from .browsers import free_port, serve
+    calls = []
+
+    def nobuffer(r):
+        calls.append(str(r.url)); return httpx.Response(503)
+    port = free_port()
+    s = load_settings(client_id="cid", client_secret="sec", public_url=f"http://127.0.0.1:{port}", session_secret="d" * 64,
+                      db_path=str(tmp_path / "demo.db"), secure_cookies=False, ai_base_url="")
+    server = serve(create_app(s, http=httpx.Client(transport=httpx.MockTransport(nobuffer))), port)
+    yield f"http://127.0.0.1:{port}", calls
+    server.should_exit = True
