@@ -266,3 +266,16 @@ def test_no_secret_or_token_value_is_ever_logged(client, app, fake, monkeypatch)
     csv_text = client.get("/api/activity/export.csv").text
     for s in secrets_seen:
         assert s not in page and s not in csv_text
+
+
+def test_demo_workspace_has_sample_rows_in_every_activity_tab(client, fake):
+    client.get("/demo", follow_redirects=False)
+    for tab in ("signin", "agent", "system"):
+        items = client.get("/api/activity", params={"tab": tab}).json()["items"]
+        assert items and {i["category"] for i in items} == {tab}, tab
+    agents = client.get("/api/activity", params={"tab": "agent"}).json()
+    assert "claude-sonnet-4-5" in json.dumps(agents)
+    signins = client.get("/api/activity", params={"tab": "signin"}).json()["items"]
+    assert any(not i["ok"] for i in signins)  # a failed sign-in is part of the sample
+    assert all((i.get("ip") or "").startswith("203.0.113.") for i in signins if i.get("ip"))  # documentation range only
+    assert fake.calls == []
