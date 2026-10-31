@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import brand, demo, drafter, llm, take
+from . import brand, demo, drafter, llm, netguard, sources, take
 from .actions import CONFIRM_TTL, ActionError, Actor
 from .store import sha
 
@@ -94,6 +94,7 @@ class Takes:
     # ------------------------------------------------------------------ start
     def start(self, a: Actor, body: dict) -> dict:
         """clips_from_video: one long video you own -> moments -> clips. Returns the take (poll get_take/list_clips)."""
+        self.h.studio._guard_write(a, "clips_from_video")  # SECURITY_RULES 4
         from . import demo_guard
         if demo_guard.is_demo(a.uid):
             raise ActionError("In the sample workspace, One take runs on the bundled sample talk (Try the sample take). "
@@ -141,6 +142,10 @@ class Takes:
     def start_sample(self, a: Actor, body: dict | None = None) -> dict:
         """The sample take: a 3-minute public-domain talk, analysed and rendered ahead of time by the same pipeline.
         Mining, preflight and placement run live. It needs no worker and no Buffer."""
+        self.h.studio._guard_write(a, "clips_from_video")
+        from . import demo_guard
+        if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
+            raise ActionError(demo_guard.WHY["run"], 429)
         sm = sample_meta()
         if not sm:
             raise ActionError("The sample take isn't bundled with this server.", 404)
@@ -261,12 +266,9 @@ class Takes:
     def _download(self, url: str, dest: Path) -> None:
         """Stream a linked video to disk (public https host only, size-capped); never held in memory."""
         limit = int(os.environ.get("HQ_MAX_TAKE_BYTES", str(1500 * 1024 * 1024)))
-        host = urlparse(url).hostname or ""
-        if not url.startswith("https://") or not drafter._public(host):
-            raise take.TakeError("The link must be a public https:// address.")
         n = 0
-        try:
-            with self.h._client().stream("GET", url) as r:
+        try:  # https only, every redirect hop checked again (SECURITY_RULES 1)
+            with netguard.safe_stream(url, http=self.h.http, https_only=True, headers=sources.UA, timeout=60) as r:
                 if r.status_code >= 400:
                     raise take.TakeError(f"Couldn't download that video link (HTTP {r.status_code}).")
                 with open(dest, "wb") as fh:
@@ -275,6 +277,8 @@ class Takes:
                         if n > limit:
                             raise take.TakeError(f"That video is over {limit // (1024 * 1024)} MB.")
                         fh.write(chunk)
+        except netguard.FetchError:
+            raise take.TakeError("The link must be a public https:// address.")
         except httpx.HTTPError as e:
             raise take.TakeError(f"Couldn't download that video link ({e.__class__.__name__}).")
 
@@ -300,7 +304,7 @@ class Takes:
                    f"{len(analysis.get('silences') or [])} pauses")
         self._step(steps, "moments", "running", "Scoring every stretch of the talk")
         self._save(rid, steps, res)
-        eng = llm.resolve(self.store, a.uid, self.s)
+        eng = self.h._ai_reserve(a, llm.resolve(self.store, a.uid, self.s))
         try:
             mined = take.mine_moments(analysis, run["input"].get("count"), eng,
                                       lambda e, sy, us: llm.chat_json(e, sy, us, http=self.h.http, max_tokens=1500))
@@ -481,6 +485,7 @@ class Takes:
 
     # ------------------------------------------------------------------ edit one clip (trim / caption / hook)
     def adjust(self, a: Actor, rid: int, clip_id: str, body: dict) -> dict:
+        self.h.studio._guard_write(a, "adjust_clip")
         run = self._run(a, rid)
         if run["status"] in ("running", "rendering"):
             raise ActionError("This take is still being worked on. Try again when it's ready.", 409)
@@ -590,6 +595,7 @@ class Takes:
                 "slots_open": {k: len(v) for k, v in slots.items()}, "suggested_times": any(s["suggested"] for v in slots.values() for s in v)}
 
     def place(self, a: Actor, rid: int, body: dict) -> dict:
+        self.h.studio._guard_write(a, "place_clips_in_week")
         run = self._run(a, rid)
         if run["status"] != "ready":
             raise ActionError("This take isn't ready yet.", 409)

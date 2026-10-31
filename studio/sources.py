@@ -97,10 +97,10 @@ def resolve_google_link(url: str, http: httpx.Client | None = None) -> str:
     """Google News RSS links are redirects; follow them to the publisher's page when they resolve."""
     if "news.google.com" not in url:
         return url
-    client = http or httpx.Client(timeout=10, follow_redirects=True, headers=UA)
-    try:
-        r = client.get(url)
-        final = str(r.url)
+    from . import netguard
+    try:  # hop by hop, each host checked (SECURITY_RULES 1); only the final address is kept, nothing is read
+        with netguard.safe_stream(url, http=http, headers=UA, timeout=10) as r:
+            final = str(r.url)
         return final if "news.google.com" not in final else url
-    except httpx.HTTPError:
+    except (httpx.HTTPError, netguard.FetchError):
         return url

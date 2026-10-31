@@ -104,8 +104,16 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# Tools that only read. Every other tool changes something, so the kill switch stops it (SECURITY_RULES 4); the ones
+# that act also count against the token's daily cap where they run.
+READ_ONLY = {"whoami", "list_channels", "preflight_post", "list_rules", "get_inbox", "list_approvals", "list_queue",
+             "list_stories", "get_run", "brand_check", "get_brand", "list_calendar", "list_clips", "get_limits"}
+
+
 def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     args = args or {}
+    if name not in READ_ONLY:
+        studio.kill_switch_check(actor, name)
     if name == "whoami":
         return studio.me(actor)
     if name == "list_channels":

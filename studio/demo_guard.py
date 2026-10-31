@@ -24,7 +24,10 @@ CAPS = {
     "feed": (3, 8),        # following a new feed in News radar
     "video": (1, 3),       # Reel renders (the free render worker's minutes)
     "workspace": (None, 20),  # new sample workspaces from one IP
+    "run": (20, 50),       # agent runs, revisions and sample takes (render work on this server)
+    "upload_kb": (25 * 1024, 60 * 1024),  # uploaded bytes (KB) a day; each sample file is also capped at 8 MB
 }
+DEMO_FILE_MAX = 8 * 1024 * 1024
 WHY = {
     "research": "Live research is limited in the free sample, so the agent used the sample story instead.",
     "ai": "The free sample's AI allowance for today is used up, so the built-in writer wrote this.",
@@ -32,6 +35,8 @@ WHY = {
     "feed": "The free sample can follow a few new feeds a day. Connect Buffer to follow as many as you like.",
     "video": "Reel renders are limited in the free sample, so this shows the sample Reel.",
     "workspace": "Too many sample workspaces from this network today. Try again tomorrow, or connect Buffer.",
+    "run": "The free sample has made its agent runs for today. Connect Buffer to keep going.",
+    "upload_kb": "The free sample's uploads for today are used up (or the file is over 8 MB). Connect Buffer to upload more.",
 }
 PREFIX = "demo_"
 
@@ -46,7 +51,13 @@ def _day() -> str:
 
 
 def client_ip(request) -> str:
-    """The visitor's address: the first X-Forwarded-For hop behind Render's proxy, else the socket peer."""
+    """The visitor's address. Render sits behind Cloudflare, which sets CF-Connecting-IP (and True-Client-IP) to the real
+    client and overwrites any value the client sent. X-Forwarded-For is only appended to, so its first hop is whatever
+    the client typed; it is used only when no Cloudflare header is there (local runs, tests), then the socket peer."""
+    for h in ("cf-connecting-ip", "true-client-ip"):
+        v = (request.headers.get(h) or "").strip()
+        if v:
+            return v
     fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
     return fwd or (request.client.host if request.client else "") or "unknown"
 
@@ -101,16 +112,29 @@ def allowed(store: Store, uid: str | None, kind: str) -> bool:
     return all(_count(store, b, kind) < cap for b, cap in _buckets(store, uid, kind))
 
 
-def take(store: Store, uid: str | None, kind: str) -> bool:
-    """Spend one unit if allowed (and count it against every bucket). Returns whether the call may go ahead."""
+def reserve(store: Store, uid: str | None, kind: str, n: int = 1) -> bool:
+    """Atomically spend ``n`` units against every cap, or none: each bucket is raised by one conditional UPDATE that only
+    succeeds while it has room, so parallel calls can't overshoot (the check and the spend are the same statement).
+    Spend this BEFORE the costly call. Real accounts always pass."""
     if not is_demo(uid):
         return True
-    if not allowed(store, uid, kind):
-        store.audit(uid, "you", "demo_cap", "read", {"kind": kind})
-        return False
-    for b, _ in _buckets(store, uid, kind):
-        _bump(store, b, kind)
+    done = []
+    for b, cap in _buckets(store, uid, kind):
+        store.x("INSERT INTO demo_usage(day,bucket,kind,n) VALUES(?,?,?,0) ON CONFLICT(day,bucket,kind) DO NOTHING", (_day(), b, kind))
+        ok = store.q("UPDATE demo_usage SET n=n+? WHERE day=? AND bucket=? AND kind=? AND n+?<=? RETURNING n",
+                     (n, _day(), b, kind, n, cap))
+        if not ok:
+            for b2 in done:  # give back what this call took from the other buckets
+                store.x("UPDATE demo_usage SET n=n-? WHERE day=? AND bucket=? AND kind=?", (n, _day(), b2, kind))
+            store.audit(uid, "you", "demo_cap", "read", {"kind": kind})
+            return False
+        done.append(b)
     return True
+
+
+def take(store: Store, uid: str | None, kind: str) -> bool:
+    """Spend one unit if allowed (and count it against every bucket). Returns whether the call may go ahead."""
+    return reserve(store, uid, kind, 1)
 
 
 def spend(store: Store, uid: str | None, kind: str) -> None:

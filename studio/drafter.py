@@ -9,14 +9,14 @@
 from __future__ import annotations
 
 import html
-import ipaddress
 import json
 import re
-import socket
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import httpx
+
+from .netguard import FetchError  # one error type for every fetch
 
 # Post-text limits Buffer validates against, per channel service.
 LIMITS = {
@@ -112,20 +112,11 @@ class _Meta(HTMLParser):
             self._buf.append(data)
 
 
-class FetchError(ValueError):
-    pass
-
 
 def _public(host: str) -> bool:
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
-            return False
-    return True
+    """True only for a host whose every address is public (see netguard.public_host for the ranges refused)."""
+    from . import netguard
+    return netguard.public_host(host)
 
 
 def fetch_article(url: str, http: httpx.Client | None = None, check_host: bool = True) -> dict:
@@ -133,12 +124,10 @@ def fetch_article(url: str, http: httpx.Client | None = None, check_host: bool =
     p = urlparse(url)
     if p.scheme not in ("http", "https") or not p.hostname:
         raise FetchError("Paste a full link that starts with http:// or https://")
-    if check_host and not _public(p.hostname):
-        raise FetchError("That link points to a private address, so it can't be read.")
-    client = http or httpx.Client(timeout=10, follow_redirects=True,
-                                  headers={"User-Agent": "Mozilla/5.0 (HuhQueue link preview)"})
-    try:
-        r = client.get(url)
+    from . import netguard
+    try:  # every redirect hop is checked again (SECURITY_RULES 1); never auto-follows
+        r = netguard.safe_get(url, http=http, check_host=check_host, limit=4_000_000, timeout=10,
+                              headers={"User-Agent": "Mozilla/5.0 (HuhQueue link preview)"})
     except httpx.HTTPError as e:
         raise FetchError(f"Couldn't open that link ({e.__class__.__name__}).")
     if r.status_code >= 400:
