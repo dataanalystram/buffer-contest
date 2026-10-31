@@ -626,7 +626,7 @@ class House:
         for d in drafts:
             svc = d["service"]
             text = drafter.fit(svc, brand.apply_text_rules(d["text"], rules))
-            meta = self.media_meta(a, main["token"]) if main else None
+            meta = self.media_meta(a, main["token"]) if main and main.get("token") else None  # the sample clip has no token
             chk = brand.brand_check(text, meta, rules, kit)
             fails += len(chk["failed"])
             urls = self._media_for(svc, res)
@@ -678,7 +678,8 @@ class House:
         mode = self.worker_mode or ("local" if render.have_ffmpeg() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none"))
         # the free sample never starts the GitHub worker (SECURITY_RULES 3): it renders on this server under its daily cap,
         # or shows the bundled sample clip. The cap is checked before any render work starts.
-        if demo_guard.is_demo(a.uid) and (mode != "local" or not demo_guard.take(self.store, a.uid, "video")):
+        if demo_guard.is_demo(a.uid) and ((mode == "github" and not self._worker_allowed(a.uid))
+                                          or (mode == "local" and not demo_guard.take(self.store, a.uid, "video"))):
             from . import takes
             clip = self.s.public_url.rstrip("/") + "/sample/" + (takes.sample_meta() or {}).get("clips", [{"file": "clip1.mp4"}])[0]["file"]
             self.store.x("UPDATE render_jobs SET status='done', error=?, updated=? WHERE id=?", ("sample: demo video cap", _now(), jid))
@@ -714,11 +715,15 @@ class House:
         slides = [self.get_media(t)["data"] for t in spec["slides"]]
         return render.slideshow_reel(slides, spec["kit"], spec["params"], logo=logo, ratio=spec.get("ratio", "9:16"))
 
+    def _worker_allowed(self, uid: str) -> bool:
+        """May this account start the GitHub render worker? Never for the free sample (SECURITY_RULES 3)."""
+        return not demo_guard.is_demo(uid)
+
     def _dispatch_github(self, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:
         """Start the free render worker for one job. It gets a single-use job token (only good for this job, 30 minutes;
         longer for One take jobs), so there is no long-lived shared secret between the app and the worker."""
         owner = self.store.q("SELECT user_id FROM render_jobs WHERE id=?", (jid,))
-        if not owner or demo_guard.is_demo(owner[0]["user_id"]):  # belt and braces: sample jobs never reach the worker
+        if not owner or not self._worker_allowed(owner[0]["user_id"]):  # belt and braces: sample jobs never reach the worker
             return False, "sample workspace: no worker runs"
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")

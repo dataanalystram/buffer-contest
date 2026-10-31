@@ -136,6 +136,8 @@ def test_github_worker_roundtrip(client, monkeypatch):
     h = client.app.state.house
     h.worker_mode = "github"
     issued = {}
+    # the worker protocol itself, on the sample's channels: the sample's own "no worker runs" rule is tested in test_demo_guard
+    monkeypatch.setattr(house.House, "_worker_allowed", lambda self, uid: True)
     monkeypatch.setattr(house.House, "_dispatch_github", lambda self, jid: (issued.setdefault("t", self.issue_job_token(jid)) and True, "204"))
     r = client.post("/api/agent/runs", json={"query": "x", "format": "reel", "channel_ids": ["demo_ig"]}).json()
     assert r["status"] == "rendering"
