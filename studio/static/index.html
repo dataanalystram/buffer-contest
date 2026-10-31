@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400&family=Atkinson+Hyperlegible+Next:wght@300;400;600&display=swap">
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/responsive.css">
+<link rel="stylesheet" href="/static/activity.css">
 <link rel="stylesheet" href="/static/brandstudio.css">
 </head>
 <body>
@@ -474,8 +475,24 @@
 
       <div class="tab" id="tab-activity" hidden>
         <h1 class="page-title">Activity</h1>
-        <p class="intro">Every action on your account, by you or your agents.</p>
+        <p class="intro">Every action on your account: your sign-ins, each AI agent and the model it used, and every Buffer API call. Kept <span id="actRetention">90</span> days; secrets are never logged.</p>
+        <div class="seg act-tabs" role="tablist" aria-label="Activity type" data-testid="act-tabs">
+          <button type="button" role="tab" class="on" aria-selected="true" data-act-tab="all" data-testid="act-tab-all">All <small data-count="all"></small></button>
+          <button type="button" role="tab" aria-selected="false" data-act-tab="signin" data-testid="act-tab-signin">Sign-ins <small data-count="signin"></small></button>
+          <button type="button" role="tab" aria-selected="false" data-act-tab="agent" data-testid="act-tab-agent">AI agents <small data-count="agent"></small></button>
+          <button type="button" role="tab" aria-selected="false" data-act-tab="system" data-testid="act-tab-system">System &amp; Buffer API <small data-count="system"></small></button>
+        </div>
+        <form class="row act-filters" id="actFilters" data-testid="act-filters">
+          <div class="field grow"><label class="label" for="actQ">Search</label><input id="actQ" data-testid="act-q" type="search" placeholder="Action, agent, model, detail…" maxlength="100"></div>
+          <div class="field"><label class="label" for="actFrom">From</label><input id="actFrom" data-testid="act-from" type="date"></div>
+          <div class="field"><label class="label" for="actTo">To</label><input id="actTo" data-testid="act-to" type="date"></div>
+          <div class="field"><label class="label" for="actLimit">Per page</label><select id="actLimit" data-testid="act-limit"><option>25</option><option>50</option><option>100</option></select></div>
+          <div class="field"><label class="label" for="actFailed">Show</label><select id="actFailed" data-testid="act-failed"><option value="">Everything</option><option value="1">Failed only</option></select></div>
+          <div class="field act-actions"><span class="label">&nbsp;</span><span class="row tight"><button class="btn2 sm" type="submit" data-testid="act-apply">Apply</button><a class="btn2 sm" id="actCsv" data-testid="act-csv" href="/api/activity/export.csv" download>Export CSV</a></span></div>
+        </form>
+        <div id="actSummary" data-testid="act-summary"></div>
         <div id="audit" data-testid="audit-list"></div>
+        <div class="row act-pager"><button class="btn2 sm" type="button" id="actPrev" data-testid="act-prev" disabled>Newer</button><span class="muted sm" id="actPage" data-testid="act-page"></span><button class="btn2 sm" type="button" id="actNext" data-testid="act-next" disabled>Older</button></div>
       </div>
     </div>
   </div>
@@ -489,6 +506,7 @@
 <script src="/static/planner.js"></script>
 <script src="/static/take.js"></script>
 <script src="/static/tour.js"></script>
+<script src="/static/activity.js"></script>
 <script src="/static/brandstudio.js"></script>
 </body>
 </html>

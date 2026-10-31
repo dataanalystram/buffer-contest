@@ -14,6 +14,10 @@ from .buffer_api import BufferError
 PROTOCOL = "2025-06-18"
 
 TOOLS: list[dict[str, Any]] = [
+    {"name": "get_activity", "description": "The account's activity log, newest first, paginated by cursor. tab: all | signin (human sign-ins, OAuth connects, failed sign-ins) | agent (AI agent actions and model calls, with app, token label, client id, provider, model, tokens, cost) | system (Buffer API calls and housekeeping) | human. Filters: q (search), from/to (YYYY-MM-DD, UTC), app, model, failed. limit 25, 50 or 100; pass next_cursor back as cursor for the next page. Agents never see sign-in IP addresses.",
+     "inputSchema": {"type": "object", "properties": {"tab": {"type": "string", "enum": ["all", "signin", "agent", "system", "human"]},
+         "q": {"type": "string"}, "from": {"type": "string"}, "to": {"type": "string"}, "app": {"type": "string"}, "model": {"type": "string"},
+         "failed": {"type": "boolean"}, "limit": {"type": "integer", "enum": [25, 50, 100]}, "cursor": {"type": "string"}}}},
     {"name": "whoami", "description": "The Buffer account and organization this token acts for, its policy, and whether the kill switch is on.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_channels", "description": "Buffer channels you may post to, with each network's character limit and media needs.",
@@ -106,7 +110,7 @@ TOOLS: list[dict[str, Any]] = [
 
 # Tools that only read. Every other tool changes something, so the kill switch stops it (SECURITY_RULES 4); the ones
 # that act also count against the token's daily cap where they run.
-READ_ONLY = {"whoami", "list_channels", "preflight_post", "preview_post", "list_rules", "get_inbox", "list_approvals", "list_queue",
+READ_ONLY = {"get_activity", "whoami", "list_channels", "preflight_post", "preview_post", "list_rules", "get_inbox", "list_approvals", "list_queue",
              "list_stories", "get_run", "brand_check", "get_brand", "list_calendar", "list_clips", "get_limits"}
 
 # Brand studio (templates, example brands, recurring slots) and the Sources agent register their tools here
@@ -122,6 +126,8 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         studio.kill_switch_check(actor, name)
     if name == "whoami":
         return studio.me(actor)
+    if name == "get_activity":
+        return studio.activity(actor, args)
     if name == "list_channels":
         return studio.channels(actor, refresh=bool(args.get("refresh")))
     if name == "draft_from_link":
@@ -215,6 +221,8 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
         return {"jsonrpc": "2.0", "id": mid, "result": result}
 
     if method == "initialize":
+        ci = (msg.get("params") or {}).get("clientInfo") or {}
+        studio.note_client(actor, f"{ci.get('name', '')} {ci.get('version', '')}".strip())
         return ok({"protocolVersion": msg.get("params", {}).get("protocolVersion") or PROTOCOL,
                    "capabilities": {"tools": {"listChanged": False}},
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
@@ -225,6 +233,10 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
         return ok({"tools": TOOLS})
     if method == "tools/call":
         p = msg.get("params") or {}
+        meta = p.get("_meta") or {}
+        if isinstance(meta, dict) and (meta.get("model") or meta.get("huhqueue/model")):
+            from . import activity
+            activity.note(model_hint=str(meta.get("model") or meta.get("huhqueue/model"))[:80])
         try:
             result = call_tool(studio, actor, p.get("name", ""), p.get("arguments") or {})
             return ok({"content": [{"type": "text", "text": json.dumps(result, indent=1, default=str)}],

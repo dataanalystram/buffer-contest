@@ -10,13 +10,14 @@ from pathlib import Path
 from urllib.parse import quote
 
 import httpx
-from fastapi import Body, FastAPI, Request
+from fastapi import Body, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 import base64
 import hmac
 import os
 
+from . import activity as activity_mod
 from . import buffer_api, demo, demo_guard, house as house_mod, inbox as inbox_mod, limits as reqlimits, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
@@ -44,6 +45,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # migration: every sealed row moves to the current TOKEN_KEY (the log gets counts only, never values)
     print(f"token keys: {'dedicated TOKEN_KEY' if store.dedicated_key else 'derived from SESSION_SECRET'}; "
           f"{store.rotate_keys()}", flush=True)
+    print(f"activity retention: {activity_mod.RETENTION_DAYS} days; {activity_mod.purge(store)}", flush=True)
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
     app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
@@ -64,6 +66,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         store.new_session(sid, secrets.token_urlsafe(24))
         return sid, store.session(sid), True
 
+    def failed_token(tok: str, request: Request) -> None:
+        """A rejected agent token is a failed sign-in. It is logged for the owner when the token was theirs (revoked or
+        expired), with IP and user agent; an unknown token is logged without an owner. The token itself never is."""
+        rows = store.q("SELECT user_id, name FROM agent_tokens WHERE token_hash=?", (sha(tok),)) if tok else []
+        store.audit(rows[0]["user_id"] if rows else "", "system", "signin_failed", "auth",
+                    {"via": "agent token", "reason": "revoked or expired" if rows else "unknown token",
+                     "token_label": rows[0]["name"] if rows else "", "path": request.url.path}, ok=False)
+
     def actor(request: Request, write: bool = False) -> Actor:
         # A signed-in browser session is the human (writes also need the page's CSRF token).
         # Without one, an agent authenticates with its bearer token and gets agent rules.
@@ -76,6 +86,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         if auth.lower().startswith("bearer "):
             a = studio.resolve_agent(auth[7:].strip())
             if not a:
+                failed_token(auth[7:].strip(), request)
                 raise ActionError("Invalid or revoked agent token.", 401)
             if write:  # the kill switch stops every agent write, whatever the route (SECURITY_RULES 4)
                 studio.kill_switch_check(a, request.url.path)
@@ -146,6 +157,20 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             resp.headers.setdefault("Strict-Transport-Security", HSTS)
         return resp
 
+    @app.middleware("http")
+    async def _activity_ctx(request: Request, call_next):
+        # who is asking, for the activity log: surface, IP and user agent (kept only on sign-in rows), and an optional
+        # model hint an agent may send (X-Agent-Model, or _meta.model on an MCP tools/call)
+        path = request.url.path
+        bearer = request.headers.get("authorization", "").lower().startswith("bearer ")
+        tok = activity_mod.begin(surface="mcp" if path.startswith("/mcp") else ("rest" if bearer else "ui"),
+                                 ip=demo_guard.client_ip(request), ua=request.headers.get("user-agent", ""),
+                                 model_hint=(request.headers.get("x-agent-model") or "")[:80] or None)
+        try:
+            return await call_next(request)
+        finally:
+            activity_mod.end(tok)
+
     # ------------------------------------------------------------ pages
     @app.get("/", include_in_schema=False)
     def index():
@@ -207,15 +232,21 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         sid = request.cookies.get(COOKIE)
         sess = store.session(sid)
         if error:
+            store.audit((sess or {}).get("user_id") or "", "system", "signin_failed", "auth",
+                        {"via": "buffer oauth", "reason": (error or "")[:60]}, ok=False)
             return RedirectResponse("/?error=" + quote(error_description or error), 302)
         pending = store.unseal(sess["oauth"]) if sess else None
         if not pending or not state or not secrets.compare_digest(state, pending["state"]):
+            store.audit((sess or {}).get("user_id") or "", "system", "signin_failed", "auth",
+                        {"via": "buffer oauth", "reason": "state mismatch or expired"}, ok=False)
             return RedirectResponse("/?error=" + quote("Sign-in expired or didn't start here. Try Connect again."), 302)
         store.update_session(sid, oauth=None)
         try:
             tokens = buffer_api.exchange_code(s, buffer.http, code, pending["verifier"])
             acct = buffer.account(token=tokens["access_token"])
         except BufferError as e:
+            store.audit((sess or {}).get("user_id") or "", "system", "signin_failed", "auth",
+                        {"via": "buffer oauth", "reason": "code exchange failed"}, ok=False)
             return RedirectResponse("/?error=" + quote(str(e)), 302)
         orgs = acct.get("organizations") or [{}]
         store.upsert_user(acct["id"], acct.get("email") or "", acct.get("name") or "", orgs[0].get("id", ""),
@@ -265,6 +296,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def device_open(tok: str):
         rows = store.q("SELECT * FROM device_links WHERE token_hash=?", (sha(tok),))
         if not rows or rows[0]["used"] or rows[0]["expires"] < time.time():
+            store.audit(rows[0]["user_id"] if rows else "", "system", "signin_failed", "auth",
+                        {"via": "device link", "reason": "used or expired" if rows else "unknown link"}, ok=False)
             return RedirectResponse("/?error=" + quote("That device link is used or expired. Create a new one."), 302)
         store.x("UPDATE device_links SET used=1 WHERE token_hash=?", (sha(tok),))
         new_sid = secrets.token_urlsafe(32)
@@ -279,6 +312,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def logout(request: Request):
         sid = request.cookies.get(COOKIE)
         if sid:
+            sess = store.session(sid)
+            if sess and sess.get("user_id"):
+                store.audit(sess["user_id"], "you", "logout", "auth", {})
             store.drop_session(sid)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(COOKIE, path="/")
@@ -419,6 +455,28 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.delete("/api/agent-tokens/{token_id}")
     def revoke(token_id: int, request: Request):
         return studio.revoke_agent_token(actor(request, write=True), token_id)
+
+    @app.get("/api/activity")
+    def activity_page(request: Request, tab: str = "all", q: str = "", limit: int = 25, cursor: str = "",
+                      app_: str = Query("", alias="app"), model: str = "", failed: bool = False,
+                      from_: str = Query("", alias="from"), to: str = ""):
+        """Activity log, newest first, cursor-paginated (limit 25 | 50 | 100; pass next_cursor back as cursor)."""
+        return studio.activity(actor(request), {"tab": tab, "q": q, "limit": limit, "cursor": cursor, "app": app_, "model": model,
+                                                "failed": failed, "from": from_, "to": to})
+
+    @app.get("/api/activity/export.csv")
+    def activity_csv(request: Request, tab: str = "all", q: str = "", app_: str = Query("", alias="app"), model: str = "",
+                     failed: bool = False, from_: str = Query("", alias="from"), to: str = ""):
+        a = actor(request)
+        f = {"tab": tab, "q": q, "app": app_, "model": model, "failed": failed, "from": from_, "to": to}
+        try:
+            body = activity_mod.export_csv(store, a.uid, f, show_ip=a.kind == "human")
+        except ValueError as e:
+            raise ActionError(str(e))
+        store.audit(a.uid, a.label, "export_activity", "read", {"tab": tab})
+        name = f"huhqueue-activity-{tab}-{time.strftime('%Y%m%d')}.csv"
+        return Response(body, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
     @app.get("/api/audit")
     def audit(request: Request, limit: int = 100):
@@ -607,6 +665,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         auth = request.headers.get("authorization", "")
         a = studio.resolve_agent(auth[7:].strip()) if auth.lower().startswith("bearer ") else None
         if not a:
+            if auth.lower().startswith("bearer ") and auth[7:].strip():
+                failed_token(auth[7:].strip(), request)
             # resource_metadata lets Claude/ChatGPT discover our OAuth server and sign the person in
             meta = mcp_oauth.resource_metadata_url(s.public_url)
             return JSONResponse({"error": "Agent token required: Authorization: Bearer hq_..."}, status_code=401,

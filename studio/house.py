@@ -322,7 +322,8 @@ class House:
         return eng
 
     def _ai_audit(self, a: Actor, eng: dict, what: str) -> None:
-        self.store.audit(a.uid, a.label, "ai_call", "read", {"engine": "free" if eng["source"] == "free starter" else "own", "for": what})
+        self.store.audit(a.uid, a.label, "ai_call", "read", {"engine": "free" if eng["source"] == "free starter" else "own", "for": what,
+                                                             "provider": eng.get("provider"), "model": eng.get("model")})
 
     # ================================================================ agent runs
     def start_run(self, a: Actor, body: dict) -> dict:

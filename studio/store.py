@@ -97,6 +97,18 @@ CREATE TABLE IF NOT EXISTS audit (
 """
 
 
+# Columns added after the first release: added in place on boot (SQLite and Postgres), never dropped.
+ADDED_COLUMNS = {
+    "audit": (("category", "TEXT"), ("surface", "TEXT"), ("app", "TEXT"), ("client_id", "TEXT"), ("token_id", "INTEGER"),
+              ("token_label", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"), ("tokens_in", "INTEGER"),
+              ("tokens_out", "INTEGER"), ("cost_usd", "REAL"), ("ip", "TEXT"), ("ua", "TEXT")),
+    "agent_tokens": (("client_id", "TEXT"), ("client_info", "TEXT"), ("app", "TEXT")),
+}
+INDEXES = ("CREATE INDEX IF NOT EXISTS audit_user_id ON audit(user_id, id)",
+           "CREATE INDEX IF NOT EXISTS audit_user_cat ON audit(user_id, category, id)",
+           "CREATE INDEX IF NOT EXISTS audit_ts ON audit(ts)")
+
+
 def sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -133,6 +145,21 @@ class Store:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(SCHEMA)
         self._current, self._fernet, self.dedicated_key = keyring(secret, token_key, tuple(token_keys_previous))
+        self._add_columns()
+
+    def _add_columns(self) -> None:
+        for table, cols in ADDED_COLUMNS.items():
+            if self.pg:
+                for name, typ in cols:
+                    typ = typ.replace("REAL", "DOUBLE PRECISION")
+                    self.x(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {typ}")
+            else:
+                have = {r["name"] for r in self.q(f"PRAGMA table_info({table})")}
+                for name, typ in cols:
+                    if name not in have:
+                        self.x(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
+        for ix in INDEXES:
+            self.x(ix)
 
     def _connect(self):
         # prepare_threshold=None: PgBouncer-style poolers (Supabase) can't keep server-side prepared statements.
@@ -277,12 +304,19 @@ class Store:
 
     # ---- audit
     def audit(self, uid: str, actor: str, action: str, risk: str, detail: dict, ok: bool = True) -> None:
-        self.x("INSERT INTO audit(user_id,actor,action,risk,detail,ok,ts) VALUES(?,?,?,?,?,?,?)",
-               (uid, actor, action, risk, json.dumps(detail)[:4000], 1 if ok else 0, time.time()))
+        """One activity row: categorised and attributed from the request context, with every secret scrubbed first."""
+        from . import activity
+        detail = activity.scrub(detail or {})
+        e = activity.enrich(uid, actor, action, risk, detail)
+        cols = ("category", "surface", "app", "client_id", "token_id", "token_label", "provider", "model", "tokens_in",
+                "tokens_out", "cost_usd", "ip", "ua")
+        self.x(f"INSERT INTO audit(user_id,actor,action,risk,detail,ok,ts,{','.join(cols)}) VALUES(?,?,?,?,?,?,?{',?' * len(cols)})",
+               (uid or "", activity.clean_text(actor, 120), action, risk, json.dumps(detail)[:4000], 1 if ok else 0, time.time(),
+                *(e[c] for c in cols)))
 
     def audit_rows(self, uid: str, limit: int = 100) -> list[dict]:
         out = []
-        for r in self.q("SELECT * FROM audit WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid, limit)):
+        for r in self.q("SELECT * FROM audit WHERE user_id=? AND action<>'buffer_api' ORDER BY id DESC LIMIT ?", (uid, limit)):
             d = dict(r)
             d["detail"] = json.loads(d["detail"] or "{}")
             d["ok"] = bool(d["ok"])
