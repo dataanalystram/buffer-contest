@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HuhQueue: one link to a week of on-brand posts in Buffer</title>
+<meta name="description" content="Paste a link. HuhQueue researches it, makes carousels, Reels and captions in your brand, checks every channel and plans your Buffer week. Nothing posts until you approve.">
+<link rel="canonical" href="https://huhqueue-studio.onrender.com/">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121314" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="HuhQueue by HuhByte AI">
+<meta property="og:title" content="HuhQueue: paste one link, approve one week">
+<meta property="og:description" content="Research with receipts, on-brand carousels and Reels, Never Bounced preflight and a Planner, on the Buffer API. Nothing posts until you approve.">
+<meta property="og:url" content="https://huhqueue-studio.onrender.com/">
+<meta property="og:image" content="https://huhqueue-studio.onrender.com/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="HuhQueue by HuhByte AI. Paste one link. Approve one week.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="HuhQueue: paste one link, approve one week">
+<meta name="twitter:description" content="One link becomes a researched carousel, a Reel and captions per channel, planned into your Buffer week.">
+<meta name="twitter:image" content="https://huhqueue-studio.onrender.com/og.png">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/static/brand/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+<link rel="preload" href="/static/fonts/AtkinsonHyperlegibleNext-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/fonts.css">
+<link rel="stylesheet" href="/static/landing.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"HuhQueue","alternateName":"HuhQueue by HuhByte AI","applicationCategory":"BusinessApplication","operatingSystem":"Web","url":"https://huhqueue-studio.onrender.com/","image":"https://huhqueue-studio.onrender.com/og.png","description":"Turns one link or one long video into researched, on-brand carousels, Reels and captions, checks each post for every channel and plans them into your Buffer week. Nothing posts until you approve.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD","description":"Free sample workspace, no sign-up"},"publisher":{"@type":"Organization","name":"HuhByte AI","logo":"https://huhqueue-studio.onrender.com/static/brand/hb-mark-512.png"},"license":"https://opensource.org/licenses/MIT","sameAs":["https://github.com/dataanalystram/buffer-contest"],"featureList":["Research with receipts","On-brand carousels and Reels","Style Ledger","One take to a week of clips","Never Bounced preflight with Fix it","Planner: week, month, day, list, board and grid","Approval inbox","Agents over MCP and REST","News radar"]}
+</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Does HuhQueue post without me?","acceptedAnswer":{"@type":"Answer","text":"No. Posts made by HuhQueue or by an agent wait in your Inbox until you approve them. You can give a trusted agent permission to queue posts, with a daily cap and a kill switch."}},
+{"@type":"Question","name":"Is HuhQueue made by Buffer?","acceptedAnswer":{"@type":"Answer","text":"No. HuhQueue is built on the Buffer API and is not affiliated with Buffer. You sign in with Buffer’s own sign-in and your posts go out through your Buffer account."}},
+{"@type":"Question","name":"Which channels does it work with?","acceptedAnswer":{"@type":"Answer","text":"The channels you have connected in Buffer. Preflight checks each post against the rules of its network, such as X, LinkedIn, Instagram, Threads, Bluesky, Mastodon, TikTok, YouTube and Pinterest."}},
+{"@type":"Question","name":"Can my AI agent use HuhQueue?","acceptedAnswer":{"@type":"Answer","text":"Yes. Claude, ChatGPT or your own script can use the same tools over MCP or REST. Agent posts wait for approval by default."}},
+{"@type":"Question","name":"What happens to my data when I disconnect?","acceptedAnswer":{"@type":"Answer","text":"Disconnect and delete removes your account row, your encrypted Buffer tokens, your brand kit, rules, agent tokens and drafts from HuhQueue. Buffer tokens are encrypted on the server and never reach the browser."}}
+]}
+</script>
+<script src="/static/landing.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<svg width="0" height="0" class="sr" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/></symbol>
+</svg>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/" data-testid="brand"><img class="hb" src="/static/brand/hb-mark-96.png" width="32" height="32" alt=""><span class="bt"><b>HuhQueue</b><small>by HuhByte AI</small></span></a>
+    <nav aria-label="Main"><a href="#chapter">How it works</a><a href="#planner">Planner</a><a href="#agents">For agents</a><a href="/docs" data-testid="nav-docs">Docs</a><a href="/login" data-testid="nav-connect">Connect Buffer</a><a class="btn" href="/demo" data-testid="nav-demo">Try the demo</a></nav>
+  </header>
+</div>
+<main id="main" data-testid="landing">
+  <section class="hero wrap" aria-labelledby="h1">
+    <h1 id="h1"><span>Paste one link.</span><span>Approve one week.</span></h1>
+    <div class="row">
+      <div>
+        <p class="lede">HuhQueue reads the story, makes the posts in your brand, checks them for every channel and plans them into your Buffer week. Nothing posts until you approve.</p>
+        <form class="paste" action="/demo" method="get" id="paste" aria-label="Make posts from a link" data-testid="hero-paste">
+          <svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>
+          <label class="sr" for="u">Link to a story</label>
+          <input id="u" name="url" type="text" inputmode="url" value="theverge.com/tech/1023763/openai-google-microsoft-ai-scraping-standard-opt-out" spellcheck="false" autocomplete="off" data-testid="hero-url">
+          <button class="btn" type="submit" data-testid="try-demo">Make the week</button>
+        </form>
+        <p class="aux">Runs in the free sample, with a guided tour. Or <a href="/login" data-testid="connect-buffer" id="connectBtn">connect Buffer</a>. <a href="/docs/getting-started">Read the guide</a>.</p>
+        <p class="aux" id="configNote" data-testid="config-note" hidden>This server has no Buffer app client configured yet, so Connect Buffer is off. The sample works.</p>
+        <p class="stats" id="landStats" data-testid="land-stats" hidden></p>
+      </div>
+    </div>
+    <svg class="thread" id="thread" aria-hidden="true"><path id="threadP" pathLength="1" d=""/></svg>
+    <div class="beads" id="beads" role="list" aria-label="What the link becomes">
+      <div class="bead" role="listitem"><span class="ok"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span><span>Receipt<small>4 facts, linked</small></span></div>
+      <div class="bead" role="listitem"><span class="t kit" aria-hidden="true"></span><span>Carousel<small>5 slides</small></span></div>
+      <div class="bead" role="listitem"><span class="t r kit alt" aria-hidden="true"></span><span>Reel<small>0:38, captioned</small></span></div>
+      <div class="bead end" role="listitem"><span class="ok appr"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span><span>3 posts<small>wait for approval</small></span></div>
+    </div>
+  </section>
+
+  <section class="chapter" id="chapter" aria-labelledby="chH">
+    <div class="pin">
+      <div class="wrap">
+        <h2 id="chH">From one link to an approved week.</h2>
+        <ol class="steps" aria-label="The four steps"><li><b>The link</b></li><li><b>The receipt</b></li><li><b>The posts</b></li><li><b>The week</b></li></ol>
+      </div>
+      <div class="trackbox">
+      <div class="track" id="track">
+        <span class="tline" aria-hidden="true"></span>
+        <article class="station s1" aria-labelledby="s1h">
+          <h3 id="s1h">The link</h3><p>A link, a topic, or the bookmarklet on any page you are reading.</p>
+          <div class="lcard"><span class="fav" aria-hidden="true">V</span><div><b>Publishers get one opt-out for every big AI crawler</b><span>theverge.com/tech/1023763/openai-google-microsoft-ai-scraping-standard-opt-out</span></div>
+            <p class="bm">From any page: <em>Post with HuhQueue</em></p></div>
+        </article>
+        <article class="station s2" aria-labelledby="s2h">
+          <h3 id="s2h">The receipt</h3><p>It reads before it writes, and shows you what it read.</p>
+          <ul class="rcpt" aria-label="Research receipt">
+            <li><span class="ok"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span><span>Opened the source</span><small>theverge.com</small></li>
+            <li><span class="ok"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span><span>Checked it against a second outlet</span><small>2 sources</small></li>
+            <li><span class="ok"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span><span>4 facts, each with its link</span><small>cited</small></li>
+            <li><span class="ok"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span><span>Brand check against your Style Ledger</span><small>2 rules</small></li>
+          </ul>
+        </article>
+        <article class="station s3" aria-labelledby="s3h">
+          <h3 id="s3h">The posts</h3><p>A carousel and a Reel in your colours, fonts and logo, and a caption fitted to each channel.</p>
+          <div class="made">
+            <div class="car" aria-label="Carousel, 3 of 5 slides shown"><div class="slide"><small>Bright Desk</small><b>Opt out of AI scraping <em>in 3 steps</em></b><span class="pg">1/5</span></div><div class="slide" aria-hidden="true"><small>Step 1</small><b>Add one line to robots.txt</b><span class="pg">2/5</span></div><div class="slide" aria-hidden="true"><small>Step 2</small><b>Tag your feeds</b><span class="pg">3/5</span></div></div>
+            <div class="reel" aria-label="Reel, 38 seconds, captions burned in above the bottom fifth"><span class="tag">Reel, 0:38</span><span class="bar" aria-hidden="true"></span><p class="cap">Publishers can now <mark>opt out</mark> of every big AI crawler</p><span class="safe" aria-hidden="true"><span>kept clear</span></span></div>
+            <ul class="caps" data-caps></ul>
+          </div>
+        </article>
+        <article class="station s4" aria-labelledby="s4h">
+          <h3 id="s4h">The week</h3><p>Each piece takes an open posting time next week, then waits for you.</p>
+          <div class="wk" data-week aria-label="Next week, with three planned posts waiting for approval"></div>
+          <div class="verdict"><p>3 posts planned, waiting for you.</p><span class="fake" aria-hidden="true">Approve week</span></div>
+        </article>
+      </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="beat wrap" id="take" aria-labelledby="takeH">
+    <div class="take">
+      <div class="copy">
+        <h2 class="h2" id="takeH">One long video. A week of clips.</h2>
+        <p class="sub">Upload a talk you own. It finds the moments, reframes them to 9:16 and captions them in your font.</p>
+        <ol class="flow" aria-label="What One take does">
+          <li><b>Transcribes with word timings</b><span>faster-whisper</span></li>
+          <li><b>Finds 3 to 7 moments</b><span>on sentence ends</span></li>
+          <li><b>Reframes around the speaker</b><span>face tracked</span></li>
+          <li><b>Burns captions above the bottom fifth</b><span>your font</span></li>
+          <li><b>Adds a cover and an end card</b><span>your kit</span></li>
+        </ol>
+        <p class="fact">Our sample: a <b>2:59</b> talk, <b>411</b> words transcribed in <b>47 s</b> on a 2-core CPU.</p>
+      </div>
+      <figure data-reveal><div class="shot"><picture><source media="(prefers-color-scheme: dark)" srcset="/static/land/take-dark.webp"><img src="/static/land/take.webp" width="670" height="740" loading="lazy" decoding="async" alt="One take in the app: three 9:16 clips cut from a NASA talk, each with burned-in captions, its timing, an Instagram preflight pass, and Trim and caption buttons"></picture></div>
+        <figcaption><b>Captured from the app.</b> Clips from a public-domain NASA talk, picked by the built-in scorer.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="beat wrap bt-line" id="preflight" aria-labelledby="pfH">
+    <h2 class="h2" id="pfH">Never bounced by Buffer.</h2>
+    <p class="sub">Every post is counted the way Buffer counts it, per channel. Fix it repairs what would fail.</p>
+    <div class="pf">
+      <div class="xcard" id="xcard" aria-live="polite">
+        <header><span class="cav" aria-hidden="true">B<i>X</i></span><div><b>Bright Desk</b><span>@brightdesk on X</span></div></header>
+        <div id="xparts"></div>
+        <div class="acts"><p id="xnote"></p><button class="btn sm" type="button" id="xfix" data-testid="land-fix">Fix it</button></div>
+      </div>
+      <figure data-reveal><div class="shot"><picture><source media="(prefers-color-scheme: dark)" srcset="/static/land/preflight-dark.webp"><img src="/static/land/preflight.webp" width="1140" height="800" loading="lazy" decoding="async" alt="Preflight in the composer: X is 341 of 280 characters and the Instagram image is the wrong shape, both flagged with Fix it; LinkedIn, Bluesky and Threads pass"></picture></div>
+        <figcaption><b>The real composer.</b> Red chips block the send until they are fixed or you choose to send anyway.</figcaption></figure>
+    </div>
+    <ul class="rules" aria-label="How posts are counted">
+      <li><b>23</b><span>characters for any URL on X</span></li>
+      <li><b>24</b><span>characters for any URL on LinkedIn</span></li>
+      <li><b>2</b><span>characters per line break on Instagram</span></li>
+      <li><b>Graphemes</b><span>on Bluesky, so emoji count once</span></li>
+    </ul>
+  </section>
+
+  <section class="beat pl" id="planner" aria-labelledby="plH">
+    <div class="wrap">
+      <div class="plhead">
+        <div><h2 class="h2" id="plH">Plan the week your way.</h2><p class="sub">Week, month, day, list, board or a feed preview per channel. Drag a post to move it.</p></div>
+        <div class="seg" id="plseg" role="radiogroup" aria-label="Planner view">
+          <button type="button" role="radio" aria-checked="true" data-v="week">Week</button>
+          <button type="button" role="radio" aria-checked="false" data-v="month">Month</button>
+          <button type="button" role="radio" aria-checked="false" data-v="list">List</button>
+          <button type="button" role="radio" aria-checked="false" data-v="board">Board</button>
+          <button type="button" role="radio" aria-checked="false" data-v="grid">Grid</button>
+        </div>
+      </div>
+      <figure class="plview" data-reveal><div class="shot"><picture id="plpic"><source media="(prefers-color-scheme: dark)" srcset="/static/land/planner-week-dark.webp"><img src="/static/land/planner-week-light.webp" width="1300" height="820" loading="lazy" decoding="async" alt="The Planner week: seven days of posts as status cards with channel marks, a now line, and open posting times" id="plimg"></picture></div>
+        <figcaption id="plcap"><b>Week.</b> Every post a card with its channel, media and status. Open posting times show as dashed slots.</figcaption></figure>
+      <p class="more"><a href="/docs/planner">How the Planner views work</a></p>
+    </div>
+  </section>
+
+  <section class="beat wrap" id="approve" aria-labelledby="apH">
+    <div class="ap">
+      <figure data-reveal><div class="shot"><picture><source media="(prefers-color-scheme: dark)" srcset="/static/land/inbox-dark.webp"><img src="/static/land/inbox-light.webp" width="1230" height="887" loading="lazy" decoding="async" alt="The Inbox: approvals waiting, a post from Claude with Review all, and a failed post with Buffer’s own reason"></picture></div>
+        <figcaption><b>Captured from the app.</b> The Inbox groups what needs a person, most urgent first.</figcaption></figure>
+      <div>
+        <h2 class="h2" id="apH">Nothing posts until you say so.</h2>
+        <ul>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><div><b>Agent posts wait for you</b><span>Approval is the default for every agent.</span></div></li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div><b>Failures say why</b><span>Buffer’s own reason, with Fix and reschedule.</span></div></li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><div><b>Approve once</b><span>It goes to Buffer at the time you planned.</span></div></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="beat inverse" id="agents" aria-labelledby="agH">
+    <div class="wrap agents">
+      <div>
+        <h2 class="h2" id="agH">Bring your own agent.</h2>
+        <p class="sub">Claude, ChatGPT or a script, on a leash.</p>
+        <ul class="leash">
+          <li><b>Approval</b><span>Agent posts wait in your Inbox by default.</span></li>
+          <li><b>Daily cap</b><span>Each agent token has its own limit.</span></li>
+          <li><b>Kill switch</b><span>One switch stops every agent at once.</span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="codew"><span class="codename">Claude Code</span><button class="copy-b" type="button" id="copyB" data-testid="copy-mcp">Copy</button>
+<pre class="code" id="mcp" aria-label="Command to add HuhQueue to Claude Code">claude mcp add --transport http huhqueue \
+  https://huhqueue-studio.onrender.com/mcp \
+  --header "Authorization: Bearer hq_YOUR_TOKEN"</pre></div>
+        <div class="parity" aria-label="Three ways in"><span>The app</span><span>Your code, over REST</span><span>Your agent, over MCP</span></div>
+        <p class="parity-note">All three send identical <code>createPost</code> input to Buffer, and a test checks it. Claude.ai and ChatGPT connect with OAuth. <a href="/docs/agents">Read the agent guide</a> or the <a href="/api/docs">API reference</a>.</p>
+        <p class="sr" role="status" id="copyS"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="beat wrap" id="radar" aria-labelledby="rdH">
+    <h2 class="h2" id="rdH">Never miss the story.</h2>
+    <p class="sub">Follow any feed. The newest stories wait with one click to write the posts.</p>
+    <ul class="rd" aria-label="Stories from followed feeds, 29 and 30 October 2026">
+      <li><span class="src">The Verge AI<time datetime="2026-10-30">30 Oct</time></span><a class="t" href="https://www.theverge.com/tech/1023763/openai-google-microsoft-ai-scraping-standard-opt-out">The biggest names in AI are backing a new way to opt out of scraping</a><span class="who"><b>Check first</b>a claim to verify</span><a class="btn2 sm" href="/demo">Write posts</a></li>
+      <li><span class="src">Hugging Face blog<time datetime="2026-10-29">29 Oct</time></span><a class="t" href="https://huggingface.co/blog/mistral-large4">Welcome Le Chonk: Mistral Large 4 on Hugging Face</a><span class="who"><b>Agent can write it</b>first-party launch</span><a class="btn2 sm" href="/demo">Write posts</a></li>
+      <li><span class="src">The Verge AI<time datetime="2026-10-30">30 Oct</time></span><a class="t" href="https://www.theverge.com/tech/1023974/apple-intelligence-china-ios-27-3">Apple Intelligence is finally coming to China with iOS 27.3</a><span class="who"><b>Agent can write it</b>news</span><a class="btn2 sm" href="/demo">Write posts</a></li>
+      <li><span class="src">Simon Willison<time datetime="2026-10-29">29 Oct</time></span><a class="t" href="https://simonwillison.net/2026/Oct/29/api-credits/">API credits benefit for eligible ChatGPT subscriptions</a><span class="who"><b>Agent can write it</b>explainer</span><a class="btn2 sm" href="/demo">Write posts</a></li>
+      <li><span class="src">The Verge AI<time datetime="2026-10-30">30 Oct</time></span><a class="t" href="https://www.theverge.com/ai-artificial-intelligence/1023188/pope-leo-disarm-ai">Pope Leo calls for the disarmament of AI: ‘Machines are tools, not persons’</a><span class="who"><b>A person writes this</b>sensitive</span><a class="btn2 sm" href="/demo">Write posts</a></li>
+    </ul>
+    <p class="note">Sorting by brand fit, as shown in the third column, is planned. Following feeds and Write posts work today.</p>
+  </section>
+
+  <section class="beat wrap bt-line" id="demo" aria-labelledby="dmH">
+    <div class="close">
+      <h2 class="h2" id="dmH">Try it on sample channels.</h2>
+      <div><p class="sub sub-close">The real drafting, counting and approval code, with a 7-step tour. Nothing reaches Buffer, and the sample is wiped after a day.</p>
+        <div class="cta-row"><a class="btn big" href="/demo" data-testid="try-demo-bottom">Open the demo</a><a class="btn2 big" href="/docs" data-testid="land-docs">Read the docs</a></div></div>
+    </div>
+    <div class="faq">
+      <h2 id="faqH">Questions</h2>
+      <div>
+        <details name="faq" open><summary>Does HuhQueue post without me?</summary><p>No. Posts made by HuhQueue or by an agent wait in your Inbox until you approve them. You can give a trusted agent permission to queue posts, with a daily cap and a kill switch.</p></details>
+        <details name="faq"><summary>Is HuhQueue made by Buffer?</summary><p>No. HuhQueue is built on the Buffer API and is not affiliated with Buffer. You sign in with Buffer’s own sign-in and your posts go out through your Buffer account.</p></details>
+        <details name="faq"><summary>Which channels does it work with?</summary><p>The channels you have connected in Buffer. Preflight checks each post against the rules of its network, such as X, LinkedIn, Instagram, Threads, Bluesky, Mastodon, TikTok, YouTube and Pinterest.</p></details>
+        <details name="faq"><summary>Can my AI agent use HuhQueue?</summary><p>Yes. Claude, ChatGPT or your own script can use the same tools over MCP or REST. Agent posts wait for approval by default.</p></details>
+        <details name="faq"><summary>What happens to my data when I disconnect?</summary><p>Disconnect and delete removes your account row, your encrypted Buffer tokens, your brand kit, rules, agent tokens and drafts from HuhQueue. Buffer tokens are encrypted on the server and never reach the browser.</p></details>
+      </div>
+    </div>
+  </section>
+</main>
+<footer class="foot"><div class="wrap">
+  <a class="hbf" href="https://github.com/dataanalystram/Huhbyte.ai" rel="noopener" aria-label="HuhQueue by HuhByte AI"><span>HuhQueue by</span><img class="wm lt" src="/static/brand/hb-wordmark-light.png" width="333" height="64" alt="HuhByte AI"><img class="wm dk" src="/static/brand/hb-wordmark-dark.png" width="333" height="64" alt="HuhByte AI"></a>
+  <span>Built on the Buffer API, not affiliated with Buffer. Open source, MIT.</span><span class="sp"></span>
+  <a href="/docs">Docs</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a><a href="/api/docs">API</a><a href="https://github.com/dataanalystram/buffer-contest" id="repoLink">GitHub</a>
+</div></footer>
+</body>
+</html>
