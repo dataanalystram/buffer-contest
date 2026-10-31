@@ -180,3 +180,21 @@ def mcp_call(client, token, name, args=None, mid=1):
     assert r.status_code == 200, r.text
     res = r.json()["result"]
     return res, (json.loads(res["content"][0]["text"]) if not res["isError"] else res["content"][0]["text"])
+
+
+@pytest.fixture(scope="session")
+def chromium():
+    """A Chromium shared by every Studio browser test (skips cleanly when none is installed)."""
+    pw = pytest.importorskip("playwright.sync_api")
+    from .browsers import launch_or_skip
+    p, browser = launch_or_skip(pw.sync_playwright)
+    yield browser
+    browser.close()
+    p.stop()
+
+
+@pytest.fixture
+def close_contexts(chromium):
+    yield
+    for c in list(chromium.contexts):
+        c.close()
