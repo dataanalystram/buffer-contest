@@ -59,7 +59,7 @@
     document.querySelectorAll("[data-testid=act-group]").forEach((b) => (b.onclick = () => { A.app = A.app === b.dataset.app ? "" : b.dataset.app; reset(); }));
     const box = $("#audit");
     if (!r.items.length) box.innerHTML = `<p class="muted" data-testid="act-empty">No activity matches.</p>`;
-    else box.innerHTML = `<div class="wrap-x"><table class="data"><thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Action</th><th scope="col">Model</th><th scope="col">Result</th><th scope="col">Detail</th></tr></thead><tbody>${r.items.map((x) => `<tr data-testid="audit-row" data-category="${esc(x.category)}"><td>${fmtTime(x.ts)}</td>${who(x)}<td>${esc(x.action)}</td>${model(x)}<td><span class="tag ${x.ok ? esc(x.risk) : "fail"}">${x.ok ? esc(x.risk) : "failed"}</span></td><td><code>${esc(JSON.stringify(x.detail)).slice(0, 160)}</code></td></tr>`).join("")}</tbody></table></div>`;
+    else box.innerHTML = `<div class="wrap-x act-table-wrap"><table class="data act-table"><thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Action</th><th scope="col">Model</th><th scope="col">Result</th><th scope="col">Detail</th></tr></thead><tbody>${r.items.map((x) => `<tr data-testid="audit-row" data-category="${esc(x.category)}"><td>${fmtTime(x.ts)}</td>${who(x)}<td>${esc(x.action)}</td>${model(x)}<td><span class="tag ${x.ok ? esc(x.risk) : "fail"}">${x.ok ? esc(x.risk) : "failed"}</span></td><td><code>${esc(JSON.stringify(x.detail)).slice(0, 160)}</code></td></tr>`).join("")}</tbody></table></div>`;
     A.next = r.next_cursor;
     $("#actNext").disabled = !A.next;
     $("#actPrev").disabled = A.at === 0;

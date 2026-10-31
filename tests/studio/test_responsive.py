@@ -17,7 +17,7 @@ _spec.loader.exec_module(ra)
 def test_no_sideways_scroll_and_44px_taps(demo_live, chromium, width, scheme):
     base, buffer_calls = demo_live
     rows = ra.audit_with(chromium, base, widths=[width], schemes=[scheme])
-    assert {r["page"] for r in rows} == {"landing", *ra.TABS}
+    assert {r["page"] for r in rows} == {"landing", *ra.TABS, *ra.EXTRA}
     over = [f"{r['page']}: {r['over']} px too wide ({', '.join(r['culprits'][:3])})" for r in rows if r["over"] > 0]
     assert not over, f"{width} px {scheme}: " + "; ".join(over)
     if width < 1024:

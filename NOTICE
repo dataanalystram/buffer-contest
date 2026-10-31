@@ -120,3 +120,19 @@ studio/sample_sources/raw/*  (recorded responses, trimmed)
             deepmind.google, huggingface.co and blog.google, recorded 31 Oct 2026 for the offline sample. Headlines
             belong to their publishers. producthunt.json and x.json are made-up sample items in those APIs' shapes.
   Ideas only (no code): the radar classifier design (Jev / SubQ System One questions) is our own prototype.
+
+Premium UX (31 Oct 2026): studio/static/landing.*, premium.css, shell.js, connect.js, oauth-open.js, docs.*, legal.css
+  Written from scratch in vanilla HTML/CSS/JS on the Taste tokens (DESIGN.md). Patterns only: no code, images, video,
+  prompt text or brand assets were copied from any source. Studied for patterns: public pages of linear.app,
+  vercel.com, stripe.com, arc.net, raycast.com and apple.com; the public index of motionsites.ai (no assets or
+  prompts used; its terms forbid redistribution); and 21st.dev component pages (MIT-licensed shadcn/ui, Origin UI,
+  Klyv-UI, Kokonut UI and others, for the segmented control, sortable table, command palette and calendar view
+  patterns only). Full list with URLs and licences: docs/UI_CREDITS.md.
+
+studio/static/fonts/*.woff2  (copied, unmodified; renamed)
+  Source:   Atkinson Hyperlegible Next and Atkinson Hyperlegible Mono, Braille Institute, via Google Fonts
+  Licence:  SIL Open Font License 1.1 (https://openfontlicense.org)
+
+studio/static/brand/*, studio/static/favicon.ico  (derived)
+  Source:   the HuhByte AI logo, dataanalystram/Huhbyte.ai code/brand/logo.png (the project owner's own brand),
+            processed by scripts/brand_assets.py (mark on a dark tile; a light-paper wordmark variant).

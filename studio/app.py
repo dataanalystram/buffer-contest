@@ -25,10 +25,11 @@ from .config import Settings, load_settings
 from .store import Store, sha
 
 STATIC = Path(__file__).parent / "static"
+PAGES = ("/", "/app", "/privacy", "/terms", "/security")
 COOKIE = "hq_sid"
 HSTS = "max-age=31536000; includeSubDomains"
 CSP = ("default-src 'self'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; "
-       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+       "style-src 'self' 'unsafe-inline'; font-src 'self'; "  # fonts are self-hosted (studio/static/fonts): no third party
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 # Sign-in and token endpoints: a tighter per-IP limit for everyone who isn't already signed in (guessing, floods)
 AUTH_PATHS = ("/login", "/callback", "/device/", "/oauth/authorize", "/oauth/token", "/oauth/register")
@@ -143,7 +144,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.middleware("http")
     async def _headers(request: Request, call_next):
         resp = await call_next(request)
-        if request.url.path == "/" or request.url.path.startswith(("/static/", "/privacy")):
+        if request.url.path in PAGES or request.url.path.startswith(("/static/", "/docs")):
             resp.headers["Cache-Control"] = "no-cache"  # always revalidate, so a deploy is picked up at once
         elif request.url.path.startswith("/api/") and "cache-control" not in resp.headers:
             resp.headers["Cache-Control"] = "no-store"  # API answers carry CSRF tokens and private data: never cached
@@ -172,18 +173,68 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             activity_mod.end(tok)
 
     # ------------------------------------------------------------ pages
+    # "/" is the landing page for visitors (crawlable, no app JS) and the app for a connected browser. Both read the same
+    # rule as /api/session's "connected", so the landing never bounces a connected browser and the app never shows signed out.
+    def _connected(request: Request) -> bool:
+        sess = store.session(request.cookies.get(COOKIE))
+        return bool(sess and sess["user_id"] and store.user(sess["user_id"]) and store.tokens(sess["user_id"]))
+
     @app.get("/", include_in_schema=False)
-    def index():
-        return FileResponse(STATIC / "index.html")
+    def index(request: Request):
+        return FileResponse(STATIC / ("index.html" if _connected(request) else "landing.html"))
 
-    @app.get("/privacy", include_in_schema=False)
-    def privacy():
-        return FileResponse(STATIC / "privacy.html")
+    @app.get("/app", include_in_schema=False)
+    def app_page(request: Request):
+        return RedirectResponse("/", 302) if not _connected(request) else FileResponse(STATIC / "index.html")
 
-    @app.get("/static/{name}", include_in_schema=False)
+    for _path, _file in (("/privacy", "privacy.html"), ("/terms", "terms.html"), ("/security", "security.html")):
+        def _legal(_f=_file):
+            return FileResponse(STATIC / _f)
+        app.add_api_route(_path, _legal, methods=["GET"], include_in_schema=False)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        return FileResponse(STATIC / "favicon.ico", headers={"Cache-Control": "public, max-age=604800"})
+
+    @app.get("/og.png", include_in_schema=False)
+    def og_image():
+        return FileResponse(STATIC / "brand" / "og.png", headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/robots.txt", include_in_schema=False)
+    def robots():
+        body = ("User-agent: *\nAllow: /\nAllow: /docs\nAllow: /privacy\nAllow: /terms\nAllow: /security\nAllow: /api/docs\n"
+                "Disallow: /api/\nDisallow: /mcp\nDisallow: /callback\nDisallow: /login\nDisallow: /demo\nDisallow: /device/\n"
+                "Disallow: /oauth/\nDisallow: /m/\n"
+                f"Sitemap: {s.public_url}/sitemap.xml\n")
+        return Response(body, media_type="text/plain")
+
+    @app.get("/sitemap.xml", include_in_schema=False)
+    def sitemap():
+        from . import docs as docs_mod
+        urls = ["/", *[f"/docs/{d}" if d else "/docs" for d in docs_mod.slugs()], "/privacy", "/terms", "/security", "/api/docs"]
+        body = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "".join(
+            f"  <url><loc>{s.public_url}{u}</loc><lastmod>{docs_mod.LASTMOD}</lastmod></url>\n" for u in urls) + "</urlset>\n"
+        return Response(body, media_type="application/xml")
+
+    @app.get("/docs/search.json", include_in_schema=False)
+    def docs_search():
+        from . import docs as docs_mod
+        return JSONResponse(docs_mod.search_index(), headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/docs", include_in_schema=False)
+    @app.get("/docs/{slug}", include_in_schema=False)
+    def docs_page(slug: str = ""):
+        from . import docs as docs_mod
+        html = docs_mod.page(slug)
+        if html is None:
+            return Response(docs_mod.missing(), status_code=404, media_type="text/html")
+        return Response(html, media_type="text/html")
+
+    @app.get("/static/{name:path}", include_in_schema=False)
     def static(name: str):
+        root = STATIC.resolve()
         p = (STATIC / name).resolve()
-        if p.parent != STATIC.resolve() or not p.is_file():
+        if root not in p.parents or not p.is_file() or p.parent.name == "src":
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(p)
 
@@ -265,7 +316,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # try-it workspace: sample channels and an agent post waiting for approval; nothing reaches Buffer
     # at most CAPS['workspace'] new sample workspaces per IP a day; stale demo users are purged after a day on each new demo
     @app.get("/demo", include_in_schema=False)
-    def demo_start(request: Request):
+    def demo_start(request: Request, url: str = ""):
         ip = demo_guard.client_ip(request)
         if not demo_guard.workspace_ok(store, ip):
             return RedirectResponse("/?error=" + quote(demo_guard.WHY["workspace"]), 302)
@@ -277,7 +328,12 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         new_sid = secrets.token_urlsafe(32)
         store.new_session(new_sid, secrets.token_urlsafe(24), ttl=demo.TTL)
         store.update_session(new_sid, user_id=uid)
-        resp = RedirectResponse("/?demo=1", 302)
+        # the landing's link field: carry the link into the sample, where research is capped (demo_guard) like any draft
+        link = url.strip()[:2000]
+        if link and not link.lower().startswith(("http://", "https://")):
+            link = "https://" + link
+        ok = bool(link) and " " not in link and "." in link.split("/")[2] if link.count("/") >= 2 else False
+        resp = RedirectResponse("/?demo=1" + ("&url=" + quote(link, safe="") if ok else ""), 302)
         set_cookie(resp, new_sid)
         return resp
 
