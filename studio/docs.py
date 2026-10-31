@@ -25,7 +25,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <li>Watch the timeline: it opens the source, checks it against other outlets, renders the media in your brand and writes a caption per channel.</li>
 <li>Say what to change ("logo smaller", "no hashtags"). Each correction becomes a rule in your Style Ledger.</li></ol>
 <h2 id="plan">4. Plan and approve</h2>
-<p>Ready posts land in the <a href="/docs/planner">Planner</a> and anything that needs you shows in the <a href="/docs/inbox">Inbox</a>. Approve, and it goes to Buffer at its time.</p>
+<p>Ready posts land in the <a href="/docs/planner">Planner</a> and anything waiting for a person shows in the <a href="/docs/inbox">Inbox</a>. Approve, and it goes to Buffer at its time.</p>
 <h2 id="keys">Keyboard</h2>
 <p>Press <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>⌘</kbd> <kbd>K</kbd> on a Mac) anywhere in the app to jump to a screen, a Planner view or a doc. Press <kbd>?</kbd> for every shortcut. <b>Help</b> in the header opens the tour and these docs from any screen.</p>"""),
     ("connect-buffer", "Connect Buffer", "Sign in with Buffer's own OAuth, including from a phone, and what HuhQueue can do with it.", "landing", """
@@ -54,7 +54,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="research">Research</h2>
 <p>When you give the agent a topic, it searches recent news, opens the source page, checks that other outlets carry the story and pulls out the facts, each with its link. Every step is on the run's timeline.</p>"""),
     ("inbox", "Inbox", "Everything that needs a person, most urgent first: approvals, failures, preflight warnings and open slots.", "inbox", """
-<p>The Inbox is the first screen after you sign in. It groups what needs you by urgency: <b>Now</b>, <b>Soon</b> and <b>This week</b>. Empty groups fold into one calm line.</p>
+<p>The Inbox is the first screen after you sign in. It groups what is waiting for you by urgency: <b>Now</b>, <b>Soon</b> and <b>This week</b>. Empty groups fold into one calm line.</p>
 <h2 id="groups">What shows up</h2>
 <ul><li><b>Approvals:</b> posts your agents wrote, waiting for you. Approve and they go to Buffer at their time.</li>
 <li><b>Failed in Buffer:</b> with Buffer's own reason and a way to fix and reschedule.</li>
