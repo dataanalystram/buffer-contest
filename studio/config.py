@@ -1,7 +1,7 @@
 """HuhQueue configuration (Buffer Commit edition).
 
 Everything comes from the environment so the same image runs locally, in tests and on the host.
-Secrets (BUFFER_CLIENT_SECRET, SESSION_SECRET) are host secrets and never reach the browser.
+Secrets (BUFFER_CLIENT_SECRET, SESSION_SECRET, TOKEN_KEY) are host secrets and never reach the browser.
 """
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ class Settings:
     ai_base_url: str = ""
     ai_api_key: str = ""
     ai_model: str = ""
+    token_key: str = ""                    # TOKEN_KEY: seals tokens at rest, separate from SESSION_SECRET
+    token_keys_previous: tuple = ()        # TOKEN_KEY_PREVIOUS: older keys still read during a rotation
     secure_cookies: bool = True
     repo_url: str = "https://github.com/dataanalystram/buffer-contest"
     extra: dict = field(default_factory=dict)
@@ -54,6 +56,8 @@ def load_settings(**overrides) -> Settings:
         ai_base_url=(env("AI_BASE_URL") or "").strip().rstrip("/"),
         ai_api_key=(env("AI_API_KEY") or "").strip(),
         ai_model=(env("AI_MODEL") or "").strip(),
+        token_key=(env("TOKEN_KEY") or "").strip(),
+        token_keys_previous=tuple(k.strip() for k in (env("TOKEN_KEY_PREVIOUS") or "").split(",") if k.strip()),
         secure_cookies=env("STUDIO_INSECURE_COOKIES", "") != "1",
         # Set REPO_URL="" while the repository is private so the footer never links to a 404.
         repo_url=env("REPO_URL", Settings.repo_url).strip(),

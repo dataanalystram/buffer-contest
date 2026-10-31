@@ -29,11 +29,14 @@ COOKIE = "hq_sid"
 
 def create_app(settings: Settings | None = None, http: httpx.Client | None = None) -> FastAPI:
     s = settings or load_settings()
-    store = Store(s.db_path, s.session_secret)
+    store = Store(s.db_path, s.session_secret, s.token_key, s.token_keys_previous)
     if s.migrate_from and s.migrate_from != s.db_path:
-        copied = store.copy_from(Store(s.migrate_from, s.session_secret))
+        copied = store.copy_from(Store(s.migrate_from, s.session_secret, s.token_key, s.token_keys_previous))
         print(f"migrate: copied {copied or 'nothing (target already has data)'}", flush=True)
     demo_guard.ensure(store)
+    # migration: every sealed row moves to the current TOKEN_KEY (the log gets counts only, never values)
+    print(f"token keys: {'dedicated TOKEN_KEY' if store.dedicated_key else 'derived from SESSION_SECRET'}; "
+          f"{store.rotate_keys()}", flush=True)
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
     app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
