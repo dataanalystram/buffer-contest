@@ -685,7 +685,7 @@ def have_ffmpeg() -> bool:
 def _ff(args: list[str], timeout: int = 240) -> None:
     r = subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *args], capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
-        raise RuntimeError("ffmpeg failed: " + r.stderr[-800:])
+        raise RuntimeError(f"ffmpeg failed (exit {r.returncode}): " + r.stderr[-800:])
 
 
 def reel(frames: list[Image.Image], secs: float = 2.6, end_secs: float = 2.2, fade: float = 0.3) -> bytes:
@@ -707,7 +707,7 @@ def reel(frames: list[Image.Image], secs: float = 2.6, end_secs: float = 2.2, fa
             vf = (f"scale={int(W * 1.05) // 2 * 2}:{int(H * 1.05) // 2 * 2},"
                   f"crop=w='{W * 1.05:.0f}-{W * 0.05:.0f}*n/{nfr}':h='{H * 1.05:.0f}-{H * 0.05:.0f}*n/{nfr}':x='(in_w-out_w)/2':y='(in_h-out_h)/2',"
                   f"scale={W}:{H},setsar=1,fps=30,format=yuv420p")
-            _ff(["-loop", "1", "-t", f"{dur}", "-i", str(src), "-vf", vf, "-frames:v", str(nfr), "-c:v", "libx264", "-preset", "veryfast",
+            _ff(["-loop", "1", "-t", f"{dur}", "-i", str(src), "-vf", vf, "-frames:v", str(nfr), "-c:v", "libx264", "-preset", "veryfast", "-threads", "2",
                  "-crf", "23", "-an", str(out)])
             parts.append((out, dur))
         return _join(parts, tmp, fade)
