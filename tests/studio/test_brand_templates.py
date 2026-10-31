@@ -139,3 +139,15 @@ def test_mcp_tools_render_and_apply_examples(human):
     assert r["channels"][0]["slides"]
     res, _ = mcp_call(human, tok, "list_templates")
     assert not res["isError"]
+
+
+def test_slot_ticker_skips_accounts_whose_kill_switch_is_on(app, human):
+    """The ticker (HQ_SLOT_TICK=1) acts without a person, so the kill switch stops it too (SECURITY_RULES 4)."""
+    s = human.post("/api/templates/slots", json={"template": "quote", "weekday": "mon", "time": "09:00", "tz": "Europe/Dublin",
+                                                  "channel_ids": ["ch_x"]}).json()
+    store, bs = app.state.store, app.state.house.brand_studio
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (1.0, s["id"]))
+    uid = store.q("SELECT user_id FROM template_slots WHERE id=?", (s["id"],))[0]["user_id"]
+    assert (uid, s["id"]) in bs.due_slots()
+    store.set_kill(uid, True)
+    assert (uid, s["id"]) not in bs.due_slots()

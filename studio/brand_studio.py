@@ -387,7 +387,10 @@ class BrandStudio:
 
     def due_slots(self, now: float | None = None) -> list[tuple[str, int]]:
         now = now or time.time()
-        return [(r["user_id"], r["id"]) for r in self.store.q("SELECT user_id, id FROM template_slots WHERE active=1 AND next_fire<=?", (now,))
+        # never the sample, and never an account whose kill switch is on: the ticker acts without a person (SECURITY_RULES 4)
+        return [(r["user_id"], r["id"]) for r in self.store.q(
+                    "SELECT s.user_id, s.id FROM template_slots s JOIN users u ON u.id = s.user_id "
+                    "WHERE s.active=1 AND s.next_fire<=? AND COALESCE(u.kill_switch, 0) = 0", (now,))
                 if not demo_guard.is_demo(r["user_id"])]
 
 
