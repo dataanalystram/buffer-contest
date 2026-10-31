@@ -33,10 +33,6 @@ def cap_for(path: str) -> int:
     return DEFAULT_MAX
 
 
-class _TooLarge(Exception):
-    pass
-
-
 async def _send_413(send, cap: int) -> None:
     body = json.dumps({"error": f"Request too large (over {cap // MB or 1} MB)."}).encode()
     await send({"type": "http.response.start", "status": 413,
@@ -58,28 +54,36 @@ class BodyCap:
                 return await _send_413(send, cap)
         except ValueError:
             return await _send_413(send, cap)
-        seen, started = 0, False
+        # Raising out of ``receive`` would surface as an ExceptionGroup from Starlette's task groups, so instead the body
+        # is cut off at the cap (the app sees an ended, empty chunk) and whatever the app answers is swapped for a 413.
+        seen, started, over, sent413 = 0, False, False, False
 
         async def rcv():
-            nonlocal seen
+            nonlocal seen, over
+            if over:
+                return {"type": "http.request", "body": b"", "more_body": False}
             m = await receive()
             if m.get("type") == "http.request":
                 seen += len(m.get("body") or b"")
                 if seen > cap:
-                    raise _TooLarge()
+                    over = True
+                    return {"type": "http.request", "body": b"", "more_body": False}
             return m
 
         async def snd(m):
-            nonlocal started
+            nonlocal started, sent413
+            if over and not started:
+                if not sent413:
+                    sent413 = True
+                    await _send_413(send, cap)
+                return  # drop the app's own answer to the cut-off body
             if m.get("type") == "http.response.start":
                 started = True
             await send(m)
 
-        try:
-            await self.app(scope, rcv, snd)
-        except _TooLarge:
-            if not started:
-                await _send_413(send, cap)
+        await self.app(scope, rcv, snd)
+        if over and not started and not sent413:
+            await _send_413(send, cap)
 
 
 async def read_body(request, cap: int) -> bytes:

@@ -17,7 +17,7 @@ import base64
 import hmac
 import os
 
-from . import buffer_api, demo, demo_guard, house as house_mod, inbox as inbox_mod, limits, mcp, mcp_oauth
+from . import buffer_api, demo, demo_guard, house as house_mod, inbox as inbox_mod, limits as reqlimits, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
@@ -83,7 +83,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     # Anonymous and free-sample traffic: a per-IP request rate limit (SECURITY_RULES 3). Real accounts, by cookie or by
     # a real account's agent token, are never slowed here. Media links (/m/) are left alone: Buffer fetches them.
-    rate = limits.RateLimit(per_min=int(os.environ.get("HQ_ANON_RPM", "240")), demo_per_min=int(os.environ.get("HQ_DEMO_PER_MIN", "6")))
+    rate = reqlimits.RateLimit(per_min=int(os.environ.get("HQ_ANON_RPM", "240")), demo_per_min=int(os.environ.get("HQ_DEMO_PER_MIN", "6")))
     app.state.rate = rate
 
     def _real_account(request: Request) -> bool:
@@ -412,8 +412,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         """Authenticate first, then read the body with a cap (Content-Length checked, then counted as it streams), so
         nothing is buffered or decoded for a caller who isn't allowed in (SECURITY_RULES 6)."""
         a = actor(request, write=True)
-        cap = limits.DEMO_MEDIA_MAX if demo_guard.is_demo(a.uid) else limits.MEDIA_MAX
-        body = await limits.read_json(request, cap)
+        cap = reqlimits.DEMO_MEDIA_MAX if demo_guard.is_demo(a.uid) else reqlimits.MEDIA_MAX
+        body = await reqlimits.read_json(request, cap)
         return house.upload(a, str(body.get("name", "")), str(body.get("data", "")))
 
     @app.get("/api/brand")
@@ -545,7 +545,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     async def worker_done(jid: int, request: Request):
         if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "write"):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        body = await limits.read_json(request, limits.WORKER_MAX)
+        body = await reqlimits.read_json(request, reqlimits.WORKER_MAX)
         try:
             data = base64.b64decode(body["data"]) if body.get("data") else None
             return house.finish_video(jid, data, body.get("meta"), body.get("error", ""), body=body)
@@ -557,7 +557,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         """One take: the worker posts each finished clip (mp4 + cover) as soon as it is rendered, once per clip."""
         if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "clip", clip_id):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        body = await limits.read_json(request, limits.WORKER_MAX)
+        body = await reqlimits.read_json(request, reqlimits.WORKER_MAX)
         return house.takes.on_clip(jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]), body.get("meta") or {})
 
     # ------------------------------------------------------------ MCP
@@ -583,6 +583,6 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def mcp_get():
         return Response(status_code=405, headers={"Allow": "POST"})
 
-    app.add_middleware(limits.BodyCap)  # every request body capped by path before anything parses it (SECURITY_RULES 6)
+    app.add_middleware(reqlimits.BodyCap)  # every request body capped by path before anything parses it (SECURITY_RULES 6)
     return app
 
