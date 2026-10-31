@@ -33,11 +33,17 @@ function tourStart() {
   TR.el.setAttribute("aria-labelledby", "tourTitle"); TR.el.setAttribute("aria-describedby", "tourBody"); TR.el.dataset.testid = "tour";
   TR.ring = document.createElement("div"); TR.ring.className = "tour-ring"; TR.ring.setAttribute("aria-hidden", "true");
   document.body.append(TR.ring, TR.el);
-  TR.el.addEventListener("keydown", tourKeys);
+  document.addEventListener("keydown", tourKeys, true);
   addEventListener("resize", tourPlace); addEventListener("scroll", tourPlace, { passive: true });
   tourShow(0);
 }
+// One listener on the document while the tour is open. Rebuilding the card on each step drops focus to <body> for a moment,
+// and a key pressed in that moment used to be lost (keys were heard only inside the card); CI's slower runners hit it.
+// Keys typed into a field elsewhere on the page are left alone.
 function tourKeys(e) {
+  if (!TR.el) return;
+  const t = e.target;
+  if (!(t === document.body || t === document.documentElement || TR.el.contains(t))) return;
   if (e.key === "Escape") { e.preventDefault(); tourEnd(); }
   else if (e.key === "ArrowRight" || (e.key === "Enter" && e.target === TR.el)) { e.preventDefault(); tourNext(); }
   else if (e.key === "ArrowLeft") { e.preventDefault(); if (TR.i) tourShow(TR.i - 1); }
@@ -60,7 +66,8 @@ function tourShow(i) {
   const on = (id, fn) => { const b = TR.el.querySelector(`[data-testid=${id}]`); if (b) b.onclick = fn; };
   on("tour-skip", tourEnd); on("tour-done", tourEnd); on("tour-next", tourNext); on("tour-back", () => tourShow(TR.i - 1));
   TR.el.tabIndex = -1;
-  setTimeout(() => { tourPlace(true); (TR.el.querySelector("[data-testid=tour-next]") || TR.el.querySelector("[data-testid=tour-done]")).focus({ preventScroll: true }); }, 60);
+  (TR.el.querySelector("[data-testid=tour-next]") || TR.el.querySelector("[data-testid=tour-done]")).focus({ preventScroll: true }); // at once: no gap where a key is lost
+  setTimeout(() => tourPlace(true), 60); // place after the tab has laid out
 }
 function tourTarget() {
   const st = TOUR[TR.i];
@@ -89,6 +96,7 @@ function tourPlace(scroll) {
 }
 function tourEnd() {
   try { localStorage.setItem(TOUR_KEY, "1"); } catch (_) {}
+  document.removeEventListener("keydown", tourKeys, true);
   removeEventListener("resize", tourPlace); removeEventListener("scroll", tourPlace);
   if (TR.el) TR.el.remove(); if (TR.ring) TR.ring.remove();
   TR.el = TR.ring = null;

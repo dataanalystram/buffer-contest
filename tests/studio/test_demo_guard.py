@@ -168,3 +168,18 @@ def test_sample_never_starts_the_github_worker(app, monkeypatch):
     out = h._queue_video(Actor(uid), 0, {k: "" for k in brand.DEFAULT_KIT}, {}, res, {})
     assert out["status"] == "done" and res["sample"] == demo_guard.WHY["video"] and dispatched == []
     assert demo_guard.left(st, uid)["video"] == demo_guard.CAPS["video"][0]  # a refused worker run doesn't spend the cap
+
+
+def test_sample_x_limit_counts_only_the_24_hours_around_the_post():
+    """The sample X channel allows 3 posts in 24 hours around the intended time, like Buffer; a post days out is fine."""
+    from datetime import datetime, timedelta, timezone
+    b = demo.DemoBuffer()
+    uid = "demo_limit"
+    now = datetime.now(timezone.utc)
+    for k in range(3):
+        b._seed(uid).append({"id": f"lim{k}", "text": "x", "status": "scheduled", "channelId": "demo_x",
+                             "dueAt": (now + timedelta(hours=1 + k)).isoformat(), "assets": []})
+    assert b.daily_limits(uid, ["demo_x"])[0]["isAtLimit"]
+    later = (now + timedelta(days=4)).isoformat()
+    st = b.daily_limits(uid, ["demo_x"], later)[0]
+    assert not st["isAtLimit"] and st["scheduled"] < 3

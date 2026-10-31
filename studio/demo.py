@@ -185,9 +185,20 @@ class DemoBuffer:
 
     def daily_limits(self, uid: str, channel_ids: list[str], date: str | None = None) -> list[dict]:
         posts = self._seed(uid)
+        # Like Buffer: count the posts within 24 hours of the intended time (now when no time is given), not every post
+        # ever scheduled, so a sample X post three days out isn't refused because of today's posts.
+        def _t(s):
+            try:
+                d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+                return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
+        at = _t(date) if date else None
+        at = at or datetime.now(timezone.utc)
         out = []
         for cid in channel_ids:
-            n = sum(p["channelId"] == cid and p["status"] == "scheduled" for p in posts)
+            n = sum(p["channelId"] == cid and p["status"] == "scheduled" and
+                    (lambda d: d is None or abs(d - at) < timedelta(hours=24))(_t(p.get("dueAt"))) for p in posts)
             limit = 3 if cid == "demo_x" else None
             out.append({"channelId": cid, "limit": limit, "scheduled": n, "sent": 0, "isAtLimit": bool(limit and n >= limit)})
         return out
