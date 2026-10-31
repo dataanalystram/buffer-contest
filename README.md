@@ -12,7 +12,7 @@ Claude or ChatGPT can do all of this over MCP, but nothing they write goes out u
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/planner-week-dark.png">
-  <img src="docs/screenshots/planner-week-light.png" alt="HuhQueue Planner, week view: posts from five Buffer channels on an hourly grid, dashed Buffer posting times, and a No date sidebar with drafts and an agent post waiting for approval">
+  <img src="docs/screenshots/planner-week-light.png" alt="HuhQueue Planner, week view: posts from five Buffer channels on an hourly grid opened at the week's first post, with the Week, Month, Day, List, Board and Grid switch">
 </picture>
 
 *The Planner, week view: your Buffer queue and calendar in one place. Drag any post or undated draft to a new time; sent posts stay locked.*
@@ -20,14 +20,21 @@ Claude or ChatGPT can do all of this over MCP, but nothing they write goes out u
 ## Screenshots
 
 All captured from the running app (sample workspace at `/demo`, nothing reaches Buffer) with
-`scripts/planner_shots.py`, `scripts/readme_shots.py` and `scripts/inbox_shots.py`. Re-run them whenever the interface changes.
+`scripts/premium_shots.py` (landing, Planner views, ⌘K, Connect AI apps), `scripts/planner_shots.py`, `scripts/readme_shots.py`
+and `scripts/inbox_shots.py`. Re-run them whenever the interface changes.
 
 | | |
 |---|---|
 | ![Planner week view in light mode, hourly grid with posts and Buffer posting times](docs/screenshots/planner-week-light.png) | ![Planner week view in dark mode](docs/screenshots/planner-week-dark.png) |
 | **Planner, Week** (light). Click an empty slot to schedule there; dashed chips are Buffer's posting times. | **Planner, Week** (dark). Same view, black-and-white dark theme. |
-| ![Planner list view: the Buffer queue grouped by day with thumbnails, channel, time, caption and status, plus edit and reschedule actions](docs/screenshots/planner-list-light.png) | ![Planner month view: a month grid with posts per day and a No date drafts sidebar](docs/screenshots/planner-month-dark.png) |
+| ![Planner list view: the Buffer queue grouped by day with thumbnails, channel, time, caption and status, plus edit and reschedule actions](docs/screenshots/planner-list-light.png) | ![Planner month view: a month grid with posts per day](docs/screenshots/planner-month-dark.png) |
 | **Planner, List**: the Buffer queue by day, with edit, reschedule, approve and delete-draft actions. | **Planner, Month** (dark): "+N more" opens the whole day. |
+| ![Planner day view: one lane per channel with the day's posts, opened at the first post](docs/screenshots/planner-day-light.png) | ![Planner board view: a column per status, Draft, Needs approval, Ready to post, Scheduled in Buffer and Sent](docs/screenshots/planner-board-dark.png) |
+| **Planner, Day**: a lane per channel, opened at the first post. | **Planner, Board** (dark): a column per status; drag a card to move it along. |
+| ![Planner grid view: an Instagram feed preview with planned tiles dashed and posted tiles solid](docs/screenshots/planner-grid-light.png) | ![The Ctrl/Cmd K command palette over the app: go to any screen, run a command or open a doc](docs/screenshots/palette-light.png) |
+| **Planner, Grid**: preview your Instagram feed before it goes out. Keys 1 to 6 switch views. | **⌘K / Ctrl K**: jump to any screen, run a command or open a doc. |
+| ![Connect AI apps: one MCP address, then per-app cards for Claude, ChatGPT, Grok, Claude Code, Codex, Cursor and any MCP client, each with steps, a snippet and when it was last used](docs/screenshots/connect-ai-light.png) | ![The landing page for visitors: Paste one link. Approve one week., with a link box, Connect your Buffer account and Try the demo](docs/screenshots/landing-light.png) |
+| **Connect AI apps**: Claude, ChatGPT and Grok sign in; Claude Code, Codex, Cursor and scripts get a token per app. | **Landing** at `/` for visitors; the app opens once you sign in, and `/demo` opens the sample with a tour. |
 | ![Make a post: the agent edited the user's own photo, with its finished step timeline and the branded image](docs/screenshots/agent-run.png) | ![Ready for Buffer: one package per channel with caption, media, character count and a passing brand check](docs/screenshots/agent-packages.png) |
 | **Make a post**: the agent reads your photo (or researches a topic or link), renders it in your brand and shows every step. | **Ready for Buffer**: one caption per channel, counted Buffer's way and checked against your rules. |
 | ![Brand kit editor with colours, font and end card, a live preview, and the Style Ledger listing four learned rules](docs/screenshots/brand-ledger.png) | ![Approvals: a post written by the Claude agent waiting for a human, with Reject and Approve and send to Buffer](docs/screenshots/approvals.png) |
