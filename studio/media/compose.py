@@ -137,12 +137,13 @@ def pick_clip(words: list[dict], duration: float, lo: float = 20.0, hi: float = 
         ms = []
     if ms:
         m = ms[0]
-        s, e = float(m.get("start", 0)), float(m.get("end", hi))
-        if e - s > hi:
-            e = s + hi
+        s, e = float(m["s"]), float(m["e"])  # take.heuristic_moments: {"a","b","s","e","score","hook","why"}
+        if e - s > hi:  # end on the last sentence that finishes inside the limit, never mid-sentence
+            ends = [x["e"] for x in sents if s < x["e"] <= s + hi]
+            e = max(ends) if ends and max(ends) - s >= lo else s + hi
         if e - s < lo:
             e = min(duration, s + lo)
-        return max(0.0, s - 0.15), min(duration, e + 0.25), m.get("hook") or m.get("title") or "best moment"
+        return max(0.0, s - 0.15), min(duration, e + 0.25), m.get("hook") or "best moment"
     return 0.0, min(duration, hi), "opening"
 
 
