@@ -44,19 +44,26 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
     tmp = Path(tempfile.mkdtemp(prefix="hq_worker_"))
     src = tmp / "source.mp4"
     try:
-        _download(c, urls["source"], src)
+        from .takes import fetch_platform, render_spec_clip, reuse_captions
+        if spec.get("platform_url"):  # a YouTube / Vimeo / X post: single-extractor yt-dlp, size-capped, vetted
+            fetch_platform(spec["platform_url"], src)
+        else:
+            _download(c, urls["source"], src)
         if spec["kind"] == "take_analyze":
-            analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=float(os.environ.get("HQ_MAX_TAKE_SECS", "1800")))
+            tr = reuse_captions(str(src), spec)  # existing captions first; Whisper only when there are none
+            print("captions:", f"reused {tr['source']} ({tr['count']} words)" if tr else "none, transcribing")
+            analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=float(os.environ.get("HQ_MAX_TAKE_SECS", "1800")),
+                                    transcript=tr)
             r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"analysis": analysis})
             print("analysis posted:", r.status_code, r.text[:200])
             return 0 if r.status_code == 200 else 1
         logo = c.get(urls["logo"]).content if urls.get("logo") else None
+        from urllib.parse import quote
         for clip in spec["clips"]:
-            data, cover, meta = take.render_clip(str(src), clip, clip["words"], clip["faces"], spec.get("scenes") or [], spec["src"],
-                                                 spec["kit"], spec["params"], logo=logo)
-            r = c.post(f"{base}/api/worker/jobs/{jid}/clips/{clip['id']}", headers=h,
-                       json={"data": base64.b64encode(data).decode(), "cover": base64.b64encode(cover).decode(), "meta": meta})
-            print(f"clip {clip['id']}: {len(data)} bytes, {meta['layout']}: {r.status_code}")
+            for cid, data, cover, meta in render_spec_clip(str(src), spec, clip, logo):
+                r = c.post(f"{base}/api/worker/jobs/{jid}/clips/{quote(cid, safe='')}", headers=h,
+                           json={"data": base64.b64encode(data).decode(), "cover": base64.b64encode(cover).decode(), "meta": meta})
+                print(f"clip {cid}: {len(data)} bytes, {meta['layout']}: {r.status_code}")
         r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"meta": {"clips": len(spec["clips"])}})
         print("render done:", r.status_code)
         return 0 if r.status_code == 200 else 1

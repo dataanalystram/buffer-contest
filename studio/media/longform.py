@@ -197,9 +197,13 @@ def hook_title(sents: list[dict], a: int, b: int, max_words: int = 9) -> str:
     t = FILLER_RX.sub("", best).strip(" ,;:-")
     t = REPEAT_RX.sub(r"\1", t)
     t = LEAD_IN_RX.sub("", t).strip(" ,;:-")
+    t = re.sub(r"(\w)-{1,2}(this|that|which|and|but|so|it|we|they)\b", r"\1 — \2", t)  # "NASA--this" -> a clause break
     words = t.split()
-    if len(words) > max_words:
-        t = " ".join(words[:max_words]).rstrip(",;:-") + "…"
+    if len(words) > max_words + 2:  # a whole line that is just a little long reads better than a cut one
+        # cut at the first clause break that leaves a real line (4+ words); else on a word boundary with an ellipsis
+        cut = next((i + 1 for i, w in enumerate(words[:max_words]) if i >= 3 and (w.endswith((",", ";", ":")) or
+                                                                                 (i + 1 < len(words) and words[i + 1] in ("—", "-")))), None)
+        t = " ".join(words[:cut]).rstrip(",;:") if cut else " ".join(words[:max_words]).rstrip(",;:-") + "…"
     return (t[:1].upper() + t[1:]) if t else take.best_line(sents, a, b, 60)
 
 
