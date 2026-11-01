@@ -123,6 +123,10 @@ def sentences(words: list[dict], pause: float = 0.6, max_words: int = 34) -> lis
 
 # ====================================================================== scoring + reasons
 FILLER_RX = re.compile(r"\b(?:um+|uh+|erm|uhm|hmm|you know|i mean|sort of|kind of)\b[,.]?\s*", re.I)
+LEAD_IN_RX = re.compile(  # throat-clearing before the point: dropped from the on-screen hook (the words stay in the clip)
+    r"^(?:(?:so|and|but|well|okay|ok|now|yeah|right|basically|first of all|first|second(?:ly)?|also|anyway|"
+    r"i think|i mean|you know|i(?:'d| would) like to (?:mention|say|point out|talk about|share)|i want to (?:mention|say|point out)|"
+    r"let me (?:tell you|say)|(?:our |the |my )?(?:next |first |last )?question is|it's worth (?:mentioning|noting)|the fact)(?:\s+that)?[,]?\s+)+", re.I)
 REPEAT_RX = re.compile(r"\b(\w+(?:\s+\w+){0,4})(?:\s+\1\b)+", re.I)
 
 
@@ -192,7 +196,7 @@ def hook_title(sents: list[dict], a: int, b: int, max_words: int = 9) -> str:
             best, best_sc = t, sc
     t = FILLER_RX.sub("", best).strip(" ,;:-")
     t = REPEAT_RX.sub(r"\1", t)
-    t = re.sub(r"^(?:(?:so|and|but|well|okay|ok|now|yeah|right)[,]?\s+)+", "", t, flags=re.I)
+    t = LEAD_IN_RX.sub("", t).strip(" ,;:-")
     words = t.split()
     if len(words) > max_words:
         t = " ".join(words[:max_words]).rstrip(",;:-") + "…"

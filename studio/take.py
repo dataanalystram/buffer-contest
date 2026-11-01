@@ -556,7 +556,9 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
     return out, "MediaPipe Face Detector (BlazeFace)"
 
 
-def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600) -> dict:
+def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, transcript: dict | None = None) -> dict:
+    """transcript: captions that already exist (studio.media.subtitles.resolve_transcript: an uploaded .srt/.vtt, the
+    platform's track, a caption stream in the file). When it has words, Whisper is skipped entirely."""
     t0 = time.time()
     from . import mediasafe
     try:  # plain video only, before PySceneDetect/MediaPipe (their own decoders) ever open it
@@ -574,7 +576,11 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600) 
     silences = detect_silences(path)
     timings["silences"] = round(time.time() - t, 1)
     t = time.time()
-    words, lang, provider = transcribe(path, model)
+    if transcript and transcript.get("words"):
+        words, lang = transcript["words"], transcript.get("language") or ""
+        provider = f"reused captions: {transcript.get('detail') or transcript.get('source')} (no Whisper run)"
+    else:
+        words, lang, provider = transcribe(path, model)
     timings["transcribe"] = round(time.time() - t, 1)
     log(f"transcribe: {len(words)} words in {timings['transcribe']}s ({provider})")
     t = time.time()
@@ -584,7 +590,14 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600) 
     faces, face_how = face_track(path, info["duration"])
     timings["faces"] = round(time.time() - t, 1)
     log(f"scenes: {len(scenes)} ({scene_how}); faces: {len(faces)} samples ({face_how})")
+    try:  # subtitles already burned into the picture: renders crop them off instead of stacking a second layer
+        from .media.compose import detect_burned_subs
+        burned = detect_burned_subs(path, info["duration"])
+    except Exception:  # noqa: BLE001
+        burned = False
     return {"probe": {k: info[k] for k in ("duration", "width", "height", "audio", "codec")}, "words": words, "language": lang,
+            "transcript_source": (transcript or {}).get("source") if transcript and transcript.get("words") else "whisper",
+            "burned_subs": burned, "face_detector": not face_how.startswith("none"),
             "silences": silences, "scenes": scenes, "faces": faces,
             "providers": {"stt": provider, "scenes": scene_how, "faces": face_how, "vad": "Silero VAD (inside faster-whisper)"
                           if "faster-whisper" in provider else "ffmpeg silencedetect"},
