@@ -64,7 +64,7 @@ def test_brand_video_renderer_never_draws_a_request(monkeypatch):
     def run(*a, **k):
         raise Stop
     monkeypatch.setattr(render, "_run", run)
-    kit = {"name": "HuhByte", "colors": {}, "font": "Anton"}
+    kit = {"name": "", "colors": {}, "font": "Anton"}
     with pytest.raises(Stop):
         render.brand_video(MP4, kit, {"end_card": False}, hook=BURNED)
     assert drawn == []  # the request became no headline at all (full-frame layout), never the request
