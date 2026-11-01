@@ -37,7 +37,7 @@ def serve(app, port: int, timeout: float = 30.0):
     end = time.time() + timeout
     while time.time() < end:
         try:
-            if httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=2).status_code == 200:
+            if httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=2, trust_env=False).status_code == 200:
                 return server
         except httpx.HTTPError:
             pass

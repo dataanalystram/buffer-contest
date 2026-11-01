@@ -14,8 +14,11 @@ const kbd = (k) => (k || []).map((x) => `<kbd>${x}</kbd>`).join("");
 const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const typing = (el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable;
 const TABS = [["inbox", "Inbox", ["G", "I"]], ["agent", "Make a post", ["G", "M"]], ["take", "One take", ["G", "T"]], ["planner", "Planner", ["G", "P"]],
-  ["studio", "Write from a link", ["G", "L"]], ["radar", "News radar", ["G", "R"]], ["brand", "Brand and Style Ledger", ["G", "B"]], ["approvals", "Approvals", ["G", "V"]],
-  ["connect", "Connect AI apps", ["G", "C"]], ["agents", "Agents and MCP", ["G", "A"]], ["ai", "AI engine", ["G", "E"]], ["activity", "Activity", ["G", "Y"]]];
+  ["news", "News", ["G", "N"]], ["brand", "Brand", ["G", "B"]], ["apps", "AI apps", ["G", "A"]], ["activity", "Activity", ["G", "Y"]], ["settings", "Settings", ["G", "S"]]];
+// jobs that live inside a screen, findable by their old names too
+const SUBS = [["inbox", "", "Approvals", "approve agent posts"], ["agent", "quick", "Quick text posts", "write from a link"], ["news", "scan", "Story scan", "sources agent"],
+  ["news", "sources", "News sources", "follow a feed"], ["brand", "templates", "Brand templates", "examples, recurring slots"], ["brand", "ledger", "Style Ledger", "rules from corrections"],
+  ["settings", "", "AI engine", "your own model key"]];
 const VIEWS = ["week", "month", "day", "list", "board", "grid"];
 const DOCS = [["getting-started", "Getting started"], ["connect-buffer", "Connect Buffer"], ["brand-kit", "Brand kit and templates"], ["sources-agent", "Sources agent"],
   ["inbox", "Inbox"], ["planner", "Planner views"], ["one-take", "One take"], ["agents", "Agents, MCP and API"], ["security", "Security and privacy"], ["faq", "FAQ"]];
@@ -49,9 +52,10 @@ const dlg = document.getElementById("cmdk"), q = document.getElementById("cmdkQ"
 function cmds() {
   const out = [];
   for (const [t, name, keys] of TABS) if (hasTab(t)) out.push({ g: "Go to", i: I.go, label: name, keys, run: () => showTab(t) });
+  for (const [t, sub, name, hint] of SUBS) if (hasTab(t)) out.push({ g: "Go to", i: I.go, label: name, hint, run: () => showTab(t, sub) });
   VIEWS.forEach((v, n) => out.push({ g: "Planner views", i: I.cal, label: `Planner: ${v[0].toUpperCase() + v.slice(1)}`, keys: [String(n + 1)], run: () => window.plSetView ? plSetView(v) : showTab("planner") }));
   out.push({ g: "Do", i: I.plus, label: "New post", hint: "in the Planner", keys: ["N"], run: () => { showTab("planner"); setTimeout(() => window.plAct && plAct("new"), 50); } });
-  out.push({ g: "Do", i: I.link, label: "Write posts from a link", hint: "paste any article", run: () => { showTab("studio"); setTimeout(() => document.getElementById("urlInput")?.focus(), 50); } });
+  out.push({ g: "Do", i: I.link, label: "Write posts from a link", hint: "paste any article", run: () => { showTab("agent", "quick"); setTimeout(() => document.getElementById("urlInput")?.focus(), 50); } });
   if (hasTab("take")) out.push({ g: "Do", i: I.go, label: "Try the sample take", hint: "one talk, three clips", run: () => { showTab("take"); setTimeout(() => document.getElementById("tkSample")?.click(), 50); } });
   out.push({ g: "Do", i: I.bolt, label: "Pause or resume every agent", hint: "kill switch", run: () => document.getElementById("killPill")?.click() });
   out.push({ g: "Help", i: I.flag, label: "Take the tour", run: () => window.tourStart && tourStart() });

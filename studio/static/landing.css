@@ -459,3 +459,52 @@ dialog.sheet::backdrop{background:var(--scrim)}
 .brand{min-height:44px}
 footer.foot a{padding:0 6px;min-width:44px;justify-content:center}
 .top nav a:not(.btn):not(.btn2){min-width:44px;padding:0 6px;justify-content:center}footer.foot a{min-width:48px!important}
+
+/* ---------------------------------------------------------------- v3: the hero stage (real output) and the render wall */
+.facts{list-style:none;display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-5);margin-top:var(--space-5);padding:0;font-size:14px;color:var(--muted)}
+.facts li{display:flex;align-items:center;gap:var(--space-2)}
+.facts li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.stage{position:relative;margin:0;min-height:520px;display:grid;place-items:center}
+.fan{position:relative;width:min(300px,62%);aspect-ratio:4/5}
+.fan img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:14px;box-shadow:var(--e2);border:1px solid rgba(0,0,0,.06)}
+.fan .f3{transform:translateX(-30%) rotate(-9deg) scale(.9)}
+.fan .f2{transform:translateX(-15%) rotate(-4deg) scale(.95)}
+.phone{position:absolute;right:2%;bottom:6%;width:min(168px,34%);aspect-ratio:9/16;border-radius:24px;padding:6px;background:#0d0d0f;box-shadow:var(--e2)}
+.phone video{width:100%;height:100%;object-fit:cover;border-radius:18px;display:block;background:#000}
+.chipa{position:absolute;left:0;bottom:10%;display:flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-3) var(--space-2) var(--space-2);border-radius:var(--r-tile);background:var(--raised);border:1px solid var(--line);box-shadow:var(--e2);font-size:13px}
+.chipa .ok{width:28px;height:28px;border-radius:99px;display:grid;place-items:center;background:var(--t-approval);color:var(--accent-ink);font-weight:700}
+.chipa b{display:block}.chipa small{color:var(--muted)}
+.stage figcaption{position:absolute;left:0;right:0;bottom:-8px;text-align:center;font-size:12px;color:var(--muted)}
+@media (prefers-reduced-motion:no-preference){
+  .fan img{transition:transform 900ms var(--ease-out)}
+  .fan .f1{animation:fanIn 900ms var(--ease-out) 150ms both}
+  .fan .f2{animation:fanIn2 900ms var(--ease-out) 300ms both}
+  .fan .f3{animation:fanIn3 900ms var(--ease-out) 450ms both}
+  .stage:hover .f3{transform:translateX(-46%) rotate(-12deg) scale(.9)}
+  .stage:hover .f2{transform:translateX(-23%) rotate(-6deg) scale(.95)}
+  .phone{animation:rise 900ms var(--ease-out) 600ms both}
+  .chipa{animation:rise 700ms var(--ease-out) 1100ms both}
+}
+@keyframes fanIn{from{opacity:0;transform:translateY(24px)}}
+@keyframes fanIn2{from{opacity:0;transform:translateY(24px)}}
+@keyframes fanIn3{from{opacity:0;transform:translateY(24px)}}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}}
+@media (max-width:900px){.stage{min-height:420px;margin-top:var(--space-6)}.chipa{left:4%}}
+@media (max-width:480px){.stage{min-height:360px}.fan{width:58%}.phone{width:36%;right:0}}
+
+.made-wall{padding:var(--space-16) 0 var(--space-12);overflow:hidden}
+.mw-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-8);align-items:end;margin-bottom:var(--space-8)}
+.mw-head .sub{margin:0}
+.mw-row{overflow:hidden;margin-bottom:var(--space-4);-webkit-mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent);mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)}
+.mw-track{display:flex;width:max-content}
+.mw-set{display:flex;gap:var(--space-4);padding-right:var(--space-4)}
+.mw-set img{width:200px;height:250px;object-fit:cover;border-radius:12px;border:1px solid var(--line);flex:none}
+.mw-note{font-size:13px;color:var(--muted);margin-top:var(--space-4)}
+@media (prefers-reduced-motion:no-preference){
+  .mw-track{animation:marquee 60s linear infinite}
+  .mw-row.rev .mw-track{animation-direction:reverse;animation-duration:70s}
+  .mw-row:hover .mw-track{animation-play-state:paused}
+}
+@media (prefers-reduced-motion:reduce){.mw-row{overflow-x:auto}}
+@keyframes marquee{to{transform:translateX(-50%)}}
+@media (max-width:760px){.mw-head{grid-template-columns:minmax(0,1fr);gap:var(--space-3)}.mw-set img{width:150px;height:188px}}

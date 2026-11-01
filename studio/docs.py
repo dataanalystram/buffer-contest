@@ -1,6 +1,6 @@
 """HuhQueue documentation at /docs: server-rendered, crawlable pages with a sidebar, search and fresh screenshots of the
 real app (light and dark, desktop and phone, from scripts/premium_shots.py ... docshots). Content lives here as data so
-the sitemap, the search index and the pages never drift apart. The Brand kit and Sources agent pages follow
+the sitemap, the search index and the pages never drift apart. The Brand and News pages follow
 docs/BRANDS.md and docs/SOURCES_AGENT.md."""
 from __future__ import annotations
 
@@ -20,12 +20,26 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="connect">2. Connect your Buffer account</h2>
 <p>Choose <b>Connect Buffer</b> on the home page or in the sample bar. You sign in on Buffer's own page; HuhQueue never sees your password. See <a href="/docs/connect-buffer">Connect Buffer</a>.</p>
 <h2 id="make">3. Make a post</h2>
-<ol><li>Open <b>Make a post</b> and choose <b>Research a topic</b>, <b>From a link</b> or <b>My photo or video</b>.</li>
+<ol><li>Open <b>Make a post</b>, stay on <b>With the agent</b> and choose <b>Research a topic</b>, <b>From a link</b> or <b>My photo or video</b>.</li>
 <li>Pick the channels and a format, or let the agent pick, then choose <b>Make it</b>.</li>
 <li>Watch the timeline: it opens the source, checks it against other outlets, renders the media in your brand and writes a caption per channel.</li>
 <li>Say what to change ("logo smaller", "no hashtags"). Each correction becomes a rule in your Style Ledger.</li></ol>
+<p>For a fast text-only post from a link, switch to <b>Quick text posts</b> on the same screen.</p>
 <h2 id="plan">4. Plan and approve</h2>
-<p>Ready posts land in the <a href="/docs/planner">Planner</a> and anything waiting for a person shows in the <a href="/docs/inbox">Inbox</a>. Approve, and it goes to Buffer at its time.</p>
+<p>Ready posts land in the <a href="/docs/planner">Planner</a>, and anything waiting for a person shows in the <a href="/docs/inbox">Inbox</a> under <b>Waiting for your approval</b>. Approve, and it goes to Buffer at its time.</p>
+<h2 id="screens">The nine screens</h2>
+<p>One job, one place. On a computer the side rail lists all nine; on a phone the bottom bar holds the everyday four and <b>Menu</b> holds the rest.</p>
+<div class="dk-table"><table><thead><tr><th>Screen</th><th>What it is for</th></tr></thead><tbody>
+<tr><td><b>Inbox</b></td><td>Your day: posts waiting for your approval, today's queue, what needs attention, agent activity and posts recommended for you</td></tr>
+<tr><td><b>Make a post</b></td><td>With the agent, or <b>Quick text posts</b> from a link</td></tr>
+<tr><td><b>One take</b></td><td>One long video into a week of clips</td></tr>
+<tr><td><b>Planner</b></td><td>Week, Month, Day, List, Board and Grid</td></tr>
+<tr><td><b>News</b></td><td><b>For you</b>, <b>Story scan</b> and the <b>Sources</b> you follow</td></tr>
+<tr><td><b>Brand</b></td><td>Your <b>Kit</b>, <b>Templates</b> and the <b>Style Ledger</b></td></tr>
+<tr><td><b>AI apps</b></td><td>Connect Claude, ChatGPT, Grok, Cursor, Codex or Claude Code; tokens and the kill switch</td></tr>
+<tr><td><b>Activity</b></td><td>Everything you and your agents did</td></tr>
+<tr><td><b>Settings</b></td><td>Setup, connected channels, AI engine and your account</td></tr></tbody></table></div>
+<p>Old links still work: Approvals opens the Inbox, Write from a link opens Quick text posts, Brand studio opens Brand, and so on.</p>
 <h2 id="keys">Keyboard</h2>
 <p>Press <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>⌘</kbd> <kbd>K</kbd> on a Mac) anywhere in the app to jump to a screen, a Planner view or a doc. Press <kbd>?</kbd> for every shortcut. <b>Help</b> in the header opens the tour and these docs from any screen.</p>"""),
     ("connect-buffer", "Connect Buffer", "Sign in with Buffer's own OAuth, including from a phone, and what HuhQueue can do with it.", "landing", """
@@ -33,18 +47,18 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="how">How to connect</h2>
 <ol><li>Choose <b>Connect Buffer</b> next to <b>Try the demo</b> at the top of the home page, or <b>Connect your Buffer account</b> under the link field.</li>
 <li>Buffer's sign-in page opens as a full page. Sign in and allow HuhQueue.</li>
-<li>You come back to your Inbox, with your channels loaded from Buffer.</li></ol>
+<li>You come back to your Inbox, with your channels loaded from Buffer. A short setup asks what you post, which channels to use and your website for the brand kit; skip it any time and reopen it from <b>Settings</b>, <b>Setup</b>.</li></ol>
 <h2 id="phone">On a phone</h2>
 <p>Buffer's sign-in can fail inside the browser built into apps like Instagram, Facebook, TikTok, X or LinkedIn. If you open HuhQueue from one of those, <b>Connect Buffer</b> shows a short sheet that opens the sign-in in Chrome or Safari, or copies the link. Sign-in is never shown inside a frame.</p>
 <h2 id="what">What HuhQueue can do</h2>
 <ul><li>Read your organization, channels, posting times and posts.</li><li>Create posts, drafts and ideas when you, or an agent within your rules, submit them.</li><li>Edit, reschedule or delete posts you change in the Planner.</li></ul>
 <p>Your Buffer tokens are encrypted on the server and never reach the browser. Every Buffer call counts against your Buffer plan's API budget, shown in the header.</p>
 <h2 id="disconnect">Disconnect</h2>
-<p>Account menu, <b>Disconnect and delete my data</b>, removes everything HuhQueue stored for you at once. You can also revoke access from your Buffer account settings.</p>"""),
-    ("brand-kit", "Brand kit and templates", "Logo, colours, fonts, front and end cards, six templates for every channel, two example brands and the Style Ledger.", "brandstudio", """
-<p>The <b>Brand studio</b> (More, <b>Brand studio</b>) makes one brand look the same on every channel without redesigning anything per network. Set the kit once; every template, cover and Reel follows it.</p>
+<p><b>Settings</b>, <b>Account</b> (or the account menu), <b>Disconnect and delete my data</b>, removes everything HuhQueue stored for you at once. You can also revoke access from your Buffer account settings.</p>"""),
+    ("brand-kit", "Brand: kit, templates and Style Ledger", "Logo, colours, fonts, front and end cards, six templates for every channel, two example brands and the Style Ledger.", "brandstudio", """
+<p><b>Brand</b> makes one brand look the same on every channel without redesigning anything per network. Set the kit once; every template, cover and Reel follows it. It has three tabs: <b>Kit</b> (website import, logo, colours, fonts, voice, front and end cards), <b>Templates</b> (templates, examples and recurring slots) and <b>Style Ledger</b>. There is one kit: every tab and every render reads the same one.</p>
 <h2 id="first-run">First run</h2>
-<p>Four steps sit at the top of the screen: <b>upload your logo</b>, <b>pick a style</b>, <b>see examples</b>, <b>connect Buffer</b>. The live preview redraws the selected template at the selected channel's frame a moment after each edit, with your unsaved changes laid over the saved kit. Nothing is stored until you save.</p>
+<p>Four steps sit at the top of the <b>Kit</b> tab: <b>upload your logo</b>, <b>pick a style</b>, <b>see examples</b>, <b>connect Buffer</b>. The live preview redraws the selected template at the selected channel's frame a moment after each edit, with your unsaved changes laid over the saved kit. Nothing is stored until you save.</p>
 <h2 id="kit">The kit</h2>
 <p>Logo, name, handle, four colours (ground, accent, text, second), a headline font (Anton, Poppins, Inter or Figtree) and a body font, headline case, a <b>front card</b> and an <b>end card</b>. Each card is an image you upload or one of four styles:</p>
 <div class="dk-table"><table><thead><tr><th>Style</th><th>Look</th></tr></thead><tbody>
@@ -54,7 +68,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <tr><td><code>minimal</code></td><td>Light ground, dark text, the accent as a marker-pen highlight</td></tr></tbody></table></div>
 <p>Built-in guards: text that would not read on the ground (contrast under 3:1) falls back to black or white; a dark logo on a dark card, or a light one on a light card, is recoloured to the ink; glyphs a font cannot draw are replaced, never shown as boxes.</p>
 <h2 id="templates">Templates</h2>
-<p>Every template puts your front card first and your end card last.</p>
+<p>On the <b>Templates</b> tab. Every template puts your front card first and your end card last.</p>
 <div class="dk-table"><table><thead><tr><th>Template</th><th>What it is</th><th>Video</th></tr></thead><tbody>
 <tr><td>Weekly recap</td><td>"What happened in AI in the last 7 days": one numbered slide per story, built from the week's sent and scheduled Buffer posts (the same story on four channels counts once)</td><td>Reel</td></tr>
 <tr><td>Mid-week recap</td><td>Monday to Wednesday in three stories</td><td>Reel</td></tr>
@@ -65,7 +79,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="channels">One render, every channel</h2>
 <p>Instagram, LinkedIn, Threads and Facebook get 4:5; X, Bluesky and Mastodon 16:9; YouTube Shorts and TikTok 9:16 (video only). Carousels follow each network's slide cap (X and Bluesky 4, LinkedIn 9, Instagram 10), and when a carousel is cut your end card stays last. Reels are silent on purpose: add licensed music in the network's own app.</p>
 <h2 id="slots">Recurring slots</h2>
-<p>Put a template on a schedule, for example the weekly recap every Monday at 20:00 Europe/Dublin. When the slot fires it renders the template from that week's posts and saves one <b>Buffer draft</b> per channel at the slot time, with the slides attached. A person approves it in Buffer, or in Approvals when an agent set it up. <b>Run now</b> fires a slot at once; the hosted app also checks slots every ten minutes, never for the sample.</p>
+<p>Put a template on a schedule, for example the weekly recap every Monday at 20:00 Europe/Dublin. When the slot fires it renders the template from that week's posts and saves one <b>Buffer draft</b> per channel at the slot time, with the slides attached. A person approves it in Buffer, or in the Inbox under <b>Waiting for your approval</b> when an agent set it up. <b>Run now</b> fires a slot at once; the hosted app also checks slots every ten minutes, never for the sample.</p>
 <h2 id="examples">Example brands</h2>
 <p>The sample workspace has two example brands, each with a gallery of pre-rendered slides, covers and Reels. Switch between them from the <b>Example brands</b> row: a brand change is one click, and every channel follows.</p>
 <ul><li><b>HuhByte AI</b>: black ground, lavender accent, Anton headlines, Poppins body; Instagram, YouTube Shorts, X and LinkedIn.</li>
@@ -73,7 +87,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <figure class="dk-ex"><img src="/static/examples/huhbyte/overview-recap.jpg" alt="HuhByte AI weekly recap carousel, front card to end card" loading="lazy" decoding="async"><figcaption>HuhByte AI: the weekly recap carousel.</figcaption></figure>
 <figure class="dk-ex"><img src="/static/examples/buffer/overview-covers.jpg" alt="Buffer concept example: one breaking cover rendered for eight channels" loading="lazy" decoding="async"><figcaption>Buffer concept example: one cover, eight channels.</figcaption></figure>
 <h2 id="ledger">Style Ledger</h2>
-<p>Every correction you give becomes a written rule ("logo bottom right", "max 2 hashtags"). Each render and caption is checked against all of them, and a failed check names the rule. Add rules in plain words and turn them on or off in <b>Brand and ledger</b>; only a person can change a rule, and agents propose them with <code>remember_rule</code>.</p>
+<p>Every correction you give becomes a written rule ("logo bottom right", "max 2 hashtags"). Each render and caption is checked against all of them, and a failed check names the rule. Add rules in plain words and turn them on or off in <b>Brand</b>, <b>Style Ledger</b>; only a person can change a rule, and agents propose them with <code>remember_rule</code>.</p>
 <h2 id="api">API and MCP</h2>
 <div class="dk-table"><table><thead><tr><th>In the app</th><th>REST</th><th>MCP</th></tr></thead><tbody>
 <tr><td>Load the screen</td><td><code>GET /api/brand-studio</code></td><td><code>get_brand</code>, <code>list_templates</code>, <code>list_brand_examples</code></td></tr>
@@ -85,8 +99,8 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>Every write reports its <code>buffer_cost</code>: the real Buffer requests it made on a connected account. The sample has no Buffer behind it, so it is always 0.</p>
 <h2 id="limits">Limits</h2>
 <p>Slides render in the app with Pillow. Video needs FFmpeg, which the hosted app does not have, so the hosted app renders slides live and shows the pre-rendered example Reels; self-hosted installs render video. The sample's renders count against its daily cap, and it never renders video live.</p>"""),
-    ("sources-agent", "Sources agent", "Scan YC, Hacker News, lab blogs, Product Hunt and X; cluster the news; write it per channel; save Buffer drafts a person approves.", "sources", """
-<p>The <b>Sources agent</b> (More, <b>Sources agent</b>) finds news, writes it in your brand for each channel and saves it to Buffer as <b>drafts</b> a person approves. Nothing it does publishes.</p>
+    ("sources-agent", "News: For you, Story scan and Sources", "Scan YC, Hacker News, lab blogs, Product Hunt and X; cluster the news; write it per channel; save Buffer drafts a person approves.", "sources", """
+<p><b>News</b> is where stories come from. <b>For you</b> is a card feed from the feeds you follow; <b>Story scan</b> finds news across many sources at once, writes it in your brand for each channel and saves it to Buffer as <b>drafts</b> a person approves. Nothing it does publishes.</p>
 <h2 id="flow">Scan, pick, write, save</h2>
 <ol><li><b>Scan now</b> reads every source you turned on, removes duplicates (same link or same title) and groups the same story from several sources into one card that says where else it ran.</li>
 <li>Tick the stories you want and the channels to write for.</li>
@@ -106,22 +120,27 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <li><b>Agent permission</b>: <i>person only</i> for sensitive stories or allegations (an agent may not draft them), <i>verify first</i> for unconfirmed stories or a single X post, otherwise <i>agent OK</i>.</li>
 <li><b>Rank</b>: relevance, freshness over 7 days, engagement and how many sources carry it.</li></ul>
 <h2 id="writing">How posts are written</h2>
-<p>Each channel gets its own shape: X a headline, one line, the link and one tag; LinkedIn a hook, the points, why it matters and the source; Instagram a headline, bullets, "link in bio" and up to 5 tags; YouTube and TikTok title first with the source; Bluesky no tags. Your Style Ledger rules are applied and each caption fits Buffer's character count. The writer is your own AI key when you set one in <b>AI engine</b>, otherwise the app's capped starter model, otherwise the built-in writer. Drafts go through the same preview and submit as everything else, so an agent token's approval rules still hold.</p>
+<p>Each channel gets its own shape: X a headline, one line, the link and one tag; LinkedIn a hook, the points, why it matters and the source; Instagram a headline, bullets, "link in bio" and up to 5 tags; YouTube and TikTok title first with the source; Bluesky no tags. Your Style Ledger rules are applied and each caption fits Buffer's character count. The writer is your own AI key when you set one in <b>Settings</b>, <b>AI engine</b>, otherwise the app's capped starter model, otherwise the built-in writer. Drafts go through the same preview and submit as everything else, so an agent token's approval rules still hold.</p>
 <h2 id="sample">In the sample</h2>
 <p>The <a href="/demo">demo</a> uses recorded sources from 31 October 2026 (YC Launches, the HN front page and four lab feeds; Product Hunt and X items are made up and titled "Sample:"). It makes no live calls, its clusters are always the same, drafts go to the sample's pretend Buffer, and it shows <b>0 Buffer requests</b>.</p>
-<h2 id="radar">News radar</h2>
-<p><b>News radar</b> still follows up to 12 RSS or Atom feeds, newest first, one click from a post for every channel; agents read it with <code>list_stories</code>. The Sources agent adds many sources at once, clustering, judging and per-channel drafts on top.</p>
+<h2 id="radar">For you and Sources</h2>
+<p><b>For you</b> shows the newest stories from the RSS or Atom feeds you follow (up to 12), each a card with the site's icon, the headline, one line on why it matters and <b>Make post</b>; agents read it with <code>list_stories</code>. <b>Sources</b> is the one feed list both For you and Story scan read. Story scan adds many sources at once, clustering, judging and per-channel drafts on top.</p>
 <h2 id="api">API and MCP</h2>
 <div class="dk-table"><table><thead><tr><th>In the app</th><th>REST</th><th>MCP</th></tr></thead><tbody>
 <tr><td>Settings</td><td><code>GET /api/sources</code>, <code>POST /api/sources/settings</code></td><td><code>sources_settings</code></td></tr>
 <tr><td>Scan now</td><td><code>POST /api/sources/scan</code></td><td><code>sources_scan</code></td></tr>
 <tr><td>A past scan</td><td><code>GET /api/sources/runs/{id}</code></td><td>-</td></tr>
 <tr><td>Write posts, save as Buffer drafts</td><td><code>POST /api/sources/draft</code> (<code>dry_run</code>, <code>cluster_ids</code>, <code>channel_ids</code>, <code>texts</code>)</td><td><code>sources_draft</code></td></tr></tbody></table></div>"""),
-    ("inbox", "Inbox", "Everything that needs a person, most urgent first: approvals, failures, preflight warnings and open slots.", "inbox", """
-<p>The Inbox is the first screen after you sign in. It groups what is waiting for you by urgency: <b>Now</b>, <b>Soon</b> and <b>This week</b>. Empty groups fold into one calm line.</p>
-<h2 id="groups">What shows up</h2>
-<ul><li><b>Approvals:</b> posts your agents wrote, waiting for you. Approve and they go to Buffer at their time.</li>
-<li><b>Failed in Buffer:</b> with Buffer's own reason and a way to fix and reschedule.</li>
+    ("inbox", "Inbox", "Your day on one screen: posts to approve, today's queue, what needs attention, agent activity and posts recommended for you.", "inbox", """
+<p>The Inbox is the first screen after you sign in: a dashboard of your day. From the top:</p>
+<ul><li><b>Stats</b>: posts scheduled, posts awaiting approval, failed posts and the Buffer requests you have left.</li>
+<li><b>Waiting for your approval</b>: posts your agents wrote, as cards with each channel's media and the app that wrote it. Approve and they go to Buffer at their time. This is the only place approvals live.</li>
+<li><b>Today's queue</b>: what Buffer sends in the next 24 hours, in order (<b>Coming up</b> when nothing is due today).</li>
+<li><b>Needs attention</b>: grouped by urgency, <b>Now</b>, <b>Soon</b> and <b>This week</b>.</li>
+<li><b>Agent activity</b>: what each AI app did, with its logo.</li>
+<li><b>Recommended for you</b>: stories worth a post, from News.</li></ul>
+<h2 id="groups">What needs attention</h2>
+<ul><li><b>Failed in Buffer:</b> with Buffer's own reason and a way to fix and reschedule.</li>
 <li><b>Preflight warnings:</b> a post that would bounce, with <b>Fix it</b>.</li>
 <li><b>Channels to reconnect</b>, <b>drafts with no date</b> and <b>open posting times</b> this week.</li></ul>
 <p>The same view is the <code>get_inbox</code> tool for agents. When the kill switch is on, the Inbox says so at the top.</p>"""),
@@ -147,12 +166,12 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="spread">The Spread</h2>
 <p>Choose <b>Spread into my week</b>. The clips appear on the Planner in your open posting times as a plan first; <b>Save as Buffer drafts</b> creates them. You can trim each clip by half a second and edit its hook and caption.</p>
 <p>Try <b>Try the sample take</b> to see it on a public-domain talk. Upload up to 40 MB, or link to a file you host for longer talks. You confirm you own the video or have the rights to it.</p>"""),
-    ("agents", "Agents, MCP and API", "Use HuhQueue from Claude, ChatGPT, Grok, Claude Code, Codex, Cursor or your own code, on a leash.", "connect", """
-<p>Everything the app can do is also a tool for your AI apps over MCP and an endpoint over REST. Open <b>Connect AI apps</b> in the app for per-app steps, your MCP address and when each app last used it.</p>
+    ("agents", "AI apps, MCP and API", "Use HuhQueue from Claude, ChatGPT, Grok, Claude Code, Codex, Cursor or your own code, on a leash.", "connect", """
+<p>Everything the app can do is also a tool for your AI apps over MCP and an endpoint over REST. Open <b>AI apps</b> in the app for per-app steps, your MCP address and when each app last used it.</p>
 <h2 id="oauth">Apps that sign in (Claude, ChatGPT, Grok on grok.com)</h2>
 <p>Add a custom connector and paste your MCP address (in ChatGPT: <a href="https://chatgpt.com/plugins">Plugins</a>, the plus button, <b>Add custom MCP server</b>, OAuth, then install the plugin; on grok.com: Connectors, New Connector, Custom). The app sends you to HuhQueue to sign in with Buffer and choose what it may do. The sign-in screen shows where it will send you back and flags apps it can't verify.</p>
 <h2 id="token">Apps that use a token (Claude Code, Codex, Cursor, the xAI API, scripts)</h2>
-<p>Create a token on <b>Connect AI apps</b> or <b>Agents</b>. It is shown once and stored only as a hash. Claude Code:</p>
+<p>Create a token on <b>AI apps</b>. It is shown once and stored only as a hash. Claude Code:</p>
 <pre class="code">claude mcp add --transport http huhqueue \\
   https://huhqueue-studio.onrender.com/mcp \\
   --header "Authorization: Bearer hq_YOUR_TOKEN"</pre>
@@ -161,7 +180,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
   --bearer-token-env-var HUHQUEUE_TOKEN</pre>
 <p>The xAI API: add <code>{"type": "mcp", "server_url": "https://huhqueue-studio.onrender.com/mcp", "server_label": "huhqueue", "headers": {"Authorization": "Bearer hq_YOUR_TOKEN"}}</code> to the request's <code>tools</code>.</p>
 <h2 id="leash">The leash</h2>
-<ul><li><b>Policy:</b> needs my approval (default), Buffer drafts only, or schedule without asking.</li><li><b>Daily cap</b> per token.</li><li><b>Kill switch:</b> one switch stops every agent at once. You can still post yourself.</li><li><b>Activity:</b> every action by you or an agent is logged.</li></ul>
+<ul><li><b>Policy:</b> needs my approval (default), Buffer drafts only, or schedule without asking.</li><li><b>Daily cap</b> per token.</li><li><b>Kill switch:</b> <b>Pause all agents</b> on AI apps stops every agent at once. You can still post yourself.</li><li><b>Activity:</b> every action by you or an agent is logged.</li></ul>
 <h2 id="rest">REST</h2>
 <p>The endpoints the interface uses accept the same token as <code>Authorization: Bearer hq_…</code>. The reference is at <a href="/api/docs">/api/docs</a>.</p>"""),
     ("security", "Security and privacy", "How your Buffer connection, data and agents are protected, and how to delete everything.", "activity", """
@@ -170,7 +189,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="activity">See what happened</h2>
 <p><b>Activity</b> lists every action on your account, by you or your agents, with the time.</p>
 <h2 id="delete">Delete everything</h2>
-<p>Account menu, <b>Disconnect and delete my data</b>.</p>"""),
+<p><b>Settings</b>, <b>Account</b> (or the account menu), <b>Disconnect and delete my data</b>.</p>"""),
     ("faq", "FAQ", "Short answers to what people ask first.", None, """
 <h2 id="post">Does HuhQueue post without me?</h2><p>No. Posts made by HuhQueue or an agent wait in your Inbox until you approve them, unless you give an agent permission to schedule, with a daily cap and a kill switch.</p>
 <h2 id="buffer">Is HuhQueue made by Buffer?</h2><p>No. It is an independent, open-source app built on the Buffer API, not affiliated with Buffer.</p>

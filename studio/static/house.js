@@ -6,15 +6,7 @@ const QUICK_FIXES = ["Logo smaller", "Logo top left", "No hashtags", "Less hype"
 const fmtWhen = (iso) => (iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 const isVid = (u) => /\.(mp4|mov|m4v|webm)(\?|$)/i.test(u || "");
 
-window.HS_TABS = Object.assign(window.HS_TABS || {}, { agent: loadAgent, brand: loadBrand, ai: loadAI });
-
-// stories anywhere in the app can go straight to the agent
-window.wireStories = function (box) {
-  box.querySelectorAll("[data-testid=story-write]").forEach((b) => {
-    b.textContent = "Make a post";
-    b.onclick = () => { showTab("agent"); setSrc("topic"); $("#agQuery").value = "Post this on all my channels " + b.dataset.url; countPrompt(); $("#agentForm").requestSubmit(); };
-  });
-};
+window.HS_TABS = Object.assign(window.HS_TABS || {}, { agent: loadAgent, ai: loadAI });
 
 // ---------------------------------------------------------------- agent composer
 function setSrc(src) {
@@ -28,7 +20,7 @@ document.querySelectorAll(".seg [data-src]").forEach((b) => (b.onclick = () => s
 
 function agentChips() {
   const box = $("#agChips");
-  if (!H.sel.size) S.channels.filter((c) => !c.isDisconnected).forEach((c) => H.sel.add(c.id));
+  if (!H.sel.size) defaultChannels().forEach((c) => H.sel.add(c.id));
   box.innerHTML = "";
   for (const c of S.channels) {
     const el = document.createElement("button");
@@ -246,20 +238,10 @@ async function readyBadge() {
   try { readyBadgeFrom(await api("/api/calendar")); } catch (_) {}
 }
 
-// ---------------------------------------------------------------- brand kit + ledger
-async function loadBrand() {
-  const r = await api("/api/brand"), k = r.kit;
-  $("#kitSite").value = k.website || ""; $("#kitName").value = k.name || ""; $("#kitHandle").value = k.handle ? "@" + k.handle : "";
-  $("#cPrimary").value = k.colors.primary.toLowerCase(); $("#cAccent").value = k.colors.accent.toLowerCase(); $("#cText").value = k.colors.text.toLowerCase();
-  $("#kitFont").value = k.font; $("#ecCta").value = k.end_card.cta || ""; $("#ecLine").value = k.end_card.line || ""; $("#ecOn").checked = !!k.end_card.on;
-  $("#kitVoice").value = k.voice || "";
-  drawLedger(r.rules); preview();
-}
-async function preview() {
-  try { const p = await api("/api/brand/preview", { method: "POST" });
-    $("#kitPreview").innerHTML = `<img src="${esc(p.cover)}" alt="Sample cover"><img src="${esc(p.end)}" alt="Sample end card">`;
-    $("#kitCheck").innerHTML = checkList(p.check); } catch (e) { $("#kitPreview").innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
-}
+// ---------------------------------------------------------------- Style Ledger + brand check (the kit itself: brandstudio.js)
+window.loadLedger = async function () { try { drawLedger((await api("/api/brand")).rules); } catch (e) { $("#ledger").innerHTML = `<div class="st err">${esc(e.message)}</div>`; } };
+// the brand check of the sample cover against the ledger, shown under the kit's live preview
+window.brandCheck = async function (box) { try { const p = await api("/api/brand/preview", { method: "POST" }); box.innerHTML = checkList(p.check); } catch (_) { box.innerHTML = ""; } };
 function drawLedger(rules) {
   const box = $("#ledger");
   box.innerHTML = rules.length ? `<ul class="rules">${rules.map((r) => `<li class="${r.active ? "" : "off"}" data-testid="rule-row"><span class="tag ${r.kind}">${r.kind === "visual" ? "Look" : "Words"}</span>
@@ -267,42 +249,21 @@ function drawLedger(rules) {
       <label class="switch sm"><input type="checkbox" role="switch" data-act="${r.id}" ${r.active ? "checked" : ""} aria-label="Rule on"><span></span></label>
       <button class="link danger" data-del="${r.id}" aria-label="Delete rule">Delete</button></li>`).join("")}</ul>`
     : `<div class="empty"><b>No rules yet</b><span>Correct a post (“logo smaller”, “no hype”) and HuhQueue writes the rule here. Or teach one above.</span></div>`;
-  box.querySelectorAll("[data-act]").forEach((c) => (c.onchange = async () => { await api(`/api/ledger/${c.dataset.act}`, { method: "POST", body: { active: c.checked } }); loadBrand(); }));
-  box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => { await api(`/api/ledger/${b.dataset.del}`, { method: "DELETE" }); loadBrand(); }));
+  box.querySelectorAll("[data-act]").forEach((c) => (c.onchange = async () => { await api(`/api/ledger/${c.dataset.act}`, { method: "POST", body: { active: c.checked } }); loadLedger(); }));
+  box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => { await api(`/api/ledger/${b.dataset.del}`, { method: "DELETE" }); loadLedger(); }));
 }
 $("#ruleForm").addEventListener("submit", async (ev) => {
   ev.preventDefault(); const v = $("#ruleIn").value.trim(); if (!v) return;
   try { const r = await api("/api/ledger", { method: "POST", body: { correction: v } });
     toast(r.added.length ? "Learned: " + r.added.map((x) => x.rule).join(" · ") : r.message, 5000);
-    if (r.added.length) $("#ruleIn").value = ""; drawLedger(r.ledger); preview(); } catch (e) { toast(e.message, 5000); }
+    if (r.added.length) $("#ruleIn").value = ""; drawLedger(r.ledger); } catch (e) { toast(e.message, 5000); }
 });
-$("#kitForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const body = { name: $("#kitName").value, handle: $("#kitHandle").value, website: $("#kitSite").value, font: $("#kitFont").value, voice: $("#kitVoice").value,
-    colors: { primary: $("#cPrimary").value, accent: $("#cAccent").value, text: $("#cText").value },
-    end_card: { on: $("#ecOn").checked, cta: $("#ecCta").value, line: $("#ecLine").value } };
-  try {
-    const f = $("#kitLogo").files[0];
-    if (f) { const up = await api("/api/media", { method: "POST", body: { name: f.name, data: await readB64(f) } }); body.logo = up.token; }
-    await api("/api/brand", { method: "POST", body }); toast("Kit saved"); $("#kitLogo").value = ""; preview();
-  } catch (e) { toast(e.message, 5000); }
-});
-$("#kitImport").onclick = async () => {
-  const b = $("#kitImport"), url = $("#kitSite").value.trim(); if (!url) return toast("Type your website first");
-  b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Reading…`;
-  try { const r = await api("/api/brand/from-website", { method: "POST", body: { url } });
-    if (r.sample) { toast(r.note, 6000); loadBrand(); return; }
-    toast(`Imported ${r.kit.name}${r.found.logo ? ", logo" : ""}${r.found.palette.length ? ", colors" : ""}${r.found.handle ? ", @" + r.found.handle : ""}`, 5000); loadBrand(); }
-  catch (e) { toast(e.message, 5000); } finally { b.disabled = false; b.textContent = "Import from website"; }
-};
-
 // ---------------------------------------------------------------- AI engine
 async function loadAI() {
   const v = await api("/api/ai"); H.ai = v;
   $("#aiNow").innerHTML = v.own ? `Your agent writes with <b>your ${esc(v.presets[v.own.provider]?.label || v.own.provider)} key</b> (${esc(v.own.model)}, ${esc(v.own.key_hint)}).`
     : v.free_starter ? `Your agent writes with the <b>free starter model</b> (${v.free_daily} AI calls a day). Add your own key for more, or use HuhQueue from Claude or ChatGPT.`
     : `Your agent writes with the <b>built-in writer</b> (no AI). Add a key or connect Claude/ChatGPT for richer captions.`;
-  $("#aiMcp").textContent = S.session.mcp_url;
   const sel = $("#aiProv");
   sel.innerHTML = Object.entries(v.presets).map(([k, p]) => `<option value="${k}">${esc(p.label)}</option>`).join("");
   sel.value = v.own?.provider || "openai";
