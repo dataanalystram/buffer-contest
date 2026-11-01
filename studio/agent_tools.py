@@ -120,6 +120,7 @@ def safe_headline(headline: str, prompt: str = "", fallbacks: tuple | list = ())
     Refuses (falls through to the next candidate) anything with a URL, request wording, or a long run copied from the
     prompt."""
     pw = re.findall(r"[a-z0-9$€£₹.%]+", (prompt or "").lower())
+    own = " ".join(re.findall(r"[a-z0-9$€£₹.%]+", intake.describe(prompt or "").lower()))  # their words about the content
     for cand in [headline, *fallbacks]:
         h = _URLISH.sub(" ", str(cand or ""))
         h = re.sub(r"\s+", " ", h).strip(" -–—:;,.\"'“”")
@@ -128,8 +129,8 @@ def safe_headline(headline: str, prompt: str = "", fallbacks: tuple | list = ())
         if prompt and any(m.group(0).lower() in prompt.lower() for m in _ORDERS.finditer(h)):
             continue  # the request's own wording ("search it", "post on all channels") is not a headline
         hw = re.findall(r"[a-z0-9$€£₹.%]+", h.lower())
-        if pw and len(hw) >= 8 and " ".join(hw[:8]) in " ".join(pw):
-            continue  # a long verbatim run of the prompt: their words, not a headline
+        if pw and len(hw) >= 8 and " ".join(hw[:8]) in " ".join(pw) and " ".join(hw[:8]) not in own:
+            continue  # a long verbatim run of the request itself (its instructions), not words about the content
         return h[:120]
     return ""
 
