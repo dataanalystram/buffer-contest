@@ -259,6 +259,9 @@ class Takes:
         j = self._job(jid)
         spec = dict(j["spec"])
         spec.pop("_job_token", None)
+        if spec.get("platform_url"):  # the operator's YouTube fallback flag travels with the job (studio.media.yt_fallback)
+            from .media import yt_fallback
+            spec["yt_fallback"] = yt_fallback.config()
         base = self.s.public_url.rstrip("/") + "/m/"
         return {"id": jid, "status": j["status"], "spec": spec,
                 "urls": {"source": spec.get("source_url") or (base + spec["source"] if spec.get("source") else ""),

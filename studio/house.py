@@ -1028,6 +1028,9 @@ class House:
         spec.pop("_job_token", None)
         from .headline import spec_hook
         spec_hook(spec, self._run_prompt(rows[0]["run_id"]))  # jobs queued before the guard existed are cleaned here too
+        if spec.get("candidate"):  # a found platform video: the operator's YouTube fallback flag travels with the job
+            from .media import yt_fallback
+            spec["yt_fallback"] = yt_fallback.config()
         base = self.s.public_url.rstrip("/") + "/m/"
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
                 "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",

@@ -137,6 +137,8 @@ def main(argv=None) -> int:
     spec, urls = j["spec"], j["urls"]
     from .headline import spec_hook
     spec_hook(spec)  # the worker cleans the hook itself too: the app's guard is not the only one (owner P0, 1 Nov 2026)
+    from .media import yt_fallback
+    yt_fallback.apply(spec.get("yt_fallback"))  # the app's opt-in YouTube route (HQ_YT_FALLBACK), for this job only
 
     def get(u):
         if not u:
