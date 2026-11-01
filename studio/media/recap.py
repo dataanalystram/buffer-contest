@@ -180,6 +180,8 @@ def plan(stories: list[dict], find=None, video: bool = True) -> dict:
         if not media and st.get("image"):
             media = {"kind": "image", "url": st["image"], "official": False, "credit": f"Image: {st.get('source') or 'the publisher'}",
                      "candidate": {"url": st["image"], "kind": "image"}}
+        if media and not media["official"] and _first_party(st, media):
+            media["official"] = True
         seg = {"i": i + 1, "headline": headline(st["title"]), "url": st["url"], "source": st.get("source") or "",
                "outlets": st.get("outlets") or [], "media": media}
         if media and not media["official"]:
@@ -192,6 +194,19 @@ def plan(stories: list[dict], find=None, video: bool = True) -> dict:
                            "; ".join(f"#{a['i']} {a['headline']} ({a['credit']})" for a in ask) +
                            ". I'll credit each on screen and in the caption. OK to use them, or should I use title cards instead?")
     return out
+
+
+def _first_party(st: dict, media: dict) -> bool:
+    """The story IS the company's own post (Google's blog about Gemini) and the media came from that page or the
+    company's own domain: official, so no rights question (still credited)."""
+    who = company(st.get("title") or "")
+    host = (urlparse(st.get("url") or "").hostname or "").lower()
+    if not who or who not in host:
+        return False
+    c = media.get("candidate") or {}
+    mhost = (urlparse(media.get("url") or "").hostname or "").lower()
+    own_cdn = {"google": ("googleapis.com", "gstatic.com", "googleusercontent.com", "youtube.com", "ytimg.com")}.get(who, ())
+    return (c.get("source_page") or "").startswith(st.get("url") or "\0") or who in mhost or mhost.endswith(own_cdn)
 
 
 def apply_rights(p: dict, confirmed: bool | list[int]) -> dict:
@@ -241,6 +256,30 @@ class RecapLayout:
         credit = (seg.get("media") or {}).get("credit") or (f"Source: {seg['source']}" if seg.get("source") else "")
         if credit:
             boxes["credit"] = _credit_chip(d, credit, l, top + ph + 14, r - l)
+        im.save(path)
+        return boxes
+
+    def plate(self, path: str, w: int, h: int, brand: dict, seg: dict) -> dict:
+        """A story with no usable video or image: a quiet brand panel naming who reported it."""
+        from PIL import Image, ImageDraw
+
+        from .compose import _rgb, _text_block
+        bg, ac = _rgb(brand["bg"]), _rgb(brand["accent"])
+        im = Image.new("RGB", (w, h), bg)
+        d = ImageDraw.Draw(im)
+        for y in range(h):  # a soft accent glow from the bottom
+            k = max(0.0, (y - h * 0.35) / (h * 0.65)) * 0.22
+            d.line((0, y, w, y), fill=tuple(int(bg[i] * (1 - k) + ac[i] * k) for i in range(3)))
+        d.rounded_rectangle((2, 2, w - 3, h - 3), 28, outline=(60, 60, 68), width=2)
+        outlets = [o for o in seg.get("outlets") or [] if o] or ([seg["source"]] if seg.get("source") else [])
+        who = outlets[0] if outlets else "the news"
+        more = f" + {len(outlets) - 1} more" if len(outlets) > 1 else ""
+        m = int(w * 0.08)
+        boxes = {}
+        boxes["label"], _ = _text_block(d, "REPORTED BY", "Inter-SemiBold.ttf", (m, int(h * 0.30), w - m, int(h * 0.38)),
+                                        max_size=34, min_size=16, max_lines=1, fill=brand.get("muted", "#A0A0A8"))
+        boxes["who"], _ = _text_block(d, who + more, brand["head_font"], (m, int(h * 0.40), w - m, int(h * 0.62)), max_size=96,
+                                      min_size=28, max_lines=2, fill=brand["accent"])
         im.save(path)
         return boxes
 
@@ -310,9 +349,11 @@ def _segment(seg: dict, media_path: str | None, secs: float, W: int, H: int, bra
         src = (f"[0:v]scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},setsar=1,scale={pw * 112 // 100 // 2 * 2}:-2,"
                f"zoompan=z='min(1+0.0010*on,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={fr}:s={pw}x{ph}:fps={FPS}[pv]")
         audio = []
-    else:
-        args = ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", f"color=c=0x{brand['accent'].lstrip('#')}@0.18:s={pw}x{ph}:r={FPS}"]
-        src = "[0:v]format=yuv420p[pv]"
+    else:  # no usable media: the layout's plate (who reported it), held still
+        plate = str(wd / f"plate_{tag}.png")
+        boxes["plate"] = lay.plate(plate, pw, ph, brand, seg)
+        args = ["-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.3f}", "-i", plate]
+        src = "[0:v]format=yuv420p,setsar=1[pv]"
         audio = []
     fc = (f"{src};color=c=0x{bg}:s={W}x{H}:r={FPS}:d={dur:.3f}[bgc];[bgc][pv]overlay={x0}:{y0}:shortest=1[b];"
           f"[b][1:v]overlay=0:0,format=yuv420p,setsar=1[v]")
@@ -343,6 +384,25 @@ def _concat(parts: list[str], out: str) -> str:
     return out
 
 
+def usable(path: str | None, kind: str | None) -> bool:
+    """A fetched file is what it claims to be (an error page saved as .png is not): images open in Pillow and are at
+    least 200 px; videos probe with a duration."""
+    if not path or not Path(path).is_file() or Path(path).stat().st_size < 1024:
+        return False
+    try:
+        if kind == "image":
+            from PIL import Image
+            with Image.open(path) as im:
+                im.verify()
+            with Image.open(path) as im:
+                return min(im.size) >= 200
+        from . import ff
+        pr = ff.probe(path)
+        return bool(pr.get("width")) and (pr.get("duration") or 0) > 0.5
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def compose(p: dict, media: dict[int, str | None], out_dir: str, brand: dict | None = None, layout: str | None = None,
             reel: bool = True, slides: bool = True, reel_secs: float = REEL_STORY_SECS, slide_max: float = SLIDE_MAX) -> dict:
     """Render the recap. ``media`` maps story number -> local file (video or image) or None. Returns
@@ -361,6 +421,11 @@ def compose(p: dict, media: dict[int, str | None], out_dir: str, brand: dict | N
     wd = Path(tempfile.mkdtemp(prefix="hq_recap_"))
     segs = p["segments"]
     n = len(segs)
+    media = {i: (m if usable(m, (next((s for s in segs if s["i"] == i), {}).get("media") or {}).get("kind")) else None)
+             for i, m in media.items()}
+    for s in segs:  # media that didn't arrive (or isn't real media) -> the story's title card, and no stale credit
+        if not media.get(s["i"]) and s.get("media"):
+            s["media"] = None
     result: dict = {"slides": [], "reel": None, "layout": lay.name, "boxes": {}}
     try:
         still = None

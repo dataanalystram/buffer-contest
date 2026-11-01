@@ -151,6 +151,9 @@ def words_from_cues(cues: list[dict]) -> list[dict]:
 def _monotonic(words: list[dict]) -> list[dict]:
     out: list[dict] = []
     for w in words:
+        if out and not re.search(r"[\w$%€£]", w["w"]):  # a lone "." or "—" belongs to the word before it
+            out[-1] = {**out[-1], "w": out[-1]["w"] + (w["w"] if w["w"] in ".,!?;:…" else ""), "e": max(out[-1]["e"], w["e"])}
+            continue
         if out and w["s"] < out[-1]["s"]:
             w = {**w, "s": out[-1]["e"], "e": max(w["e"], out[-1]["e"] + 0.05)}
         out.append(w)
