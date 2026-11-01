@@ -71,7 +71,11 @@ def parse(prompt: str, connected: list[dict] | None = None) -> dict:
     """Everything the agent needs to plan, from the prompt alone."""
     raw = (prompt or "").strip()[:MAX_PROMPT]
     found = urls(raw)
-    t = URL_RE.sub(" ", raw).lower()  # words in a link ("x.com", "/status/") are not instructions
+    rules = standing_rules(raw)
+    t = URL_RE.sub(" ", raw)  # words in a link ("x.com", "/status/") are not instructions
+    for r in rules:  # nor are the words of a standing rule ("end every VIDEO with ..." doesn't ask for a video)
+        t = t.replace(r, " ")
+    t = t.lower()
     connected = connected or []
     chan_ids, chan_why = _channels(t, connected)
     fmt = "auto"
@@ -86,7 +90,6 @@ def parse(prompt: str, connected: list[dict] | None = None) -> dict:
     if m:
         secs = max(5, min(180, int(m.group(1))))
     tone = next((k for k, pat in TONES.items() if re.search(pat, t)), "")
-    rules = standing_rules(raw)
     topic = URL_RE.sub(" ", raw)
     for r in rules:
         topic = topic.replace(r, " ")
