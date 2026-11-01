@@ -92,6 +92,9 @@ class Brain:
         meta = self.h.media_meta(a, tok) if tok else None
         if tok and meta is None:
             raise ActionError("Unknown media token. Upload the file first.", 404)
+        split = self._split_request(a, body, prompt, parsed, chans, tok, meta)
+        if split is not None:
+            return split
         inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
                "brief": str(body.get("brief") or "")[:1000],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
@@ -110,6 +113,35 @@ class Brain:
         else:
             self.h._save(rid, [], res, "ready")
         return self.h.run(a, rid)
+
+    def _split_request(self, a: Actor, body: dict, prompt: str, parsed: dict, chans: list[dict], tok: str, meta: dict | None):
+        """"split this into 5 shorts <link>" / "find the best moments of this video": a long video becomes several
+        Opus-style clips the person picks from. That is One take's job (studio/takes.py, style opus): the run returned
+        is a take (kind 'take'). None when the prompt isn't a split request on a video."""
+        from .media import longform
+        from .media.find import oembed, platform_of
+        sp = longform.parse_request(prompt)
+        if not sp["split"] or body.get("brain") == "external":
+            return None
+        url = next((u for u in parsed.get("urls") or [] if platform_of(u)), "")
+        own_file = bool(tok) and (meta or {}).get("type") == "video"
+        if not (url or own_file):
+            return None
+        owns = own_file or bool(body.get("owns"))
+        credit = str(body.get("credit") or "").strip()
+        if url and not credit:
+            o = oembed(url, http=self.h.http) or {}
+            who, where = o.get("author") or "", o.get("provider") or "the web"
+            credit = f"Video: {who + ' on ' if who else ''}{where}"
+        if not owns and not body.get("rights_confirmed"):
+            raise ActionError(f"Rights: this splits someone else's video ({credit}) into clips. I'll credit it on screen and in "
+                              "every caption. Confirm you have the right to repost it (or that it's fair commentary) and I'll "
+                              "start (rights_confirmed: true).", 409)
+        return self.h.takes.start(a, {"prompt": prompt, "count": sp["n"], "style": "opus", "owns": owns,
+                                      "rights_confirmed": bool(body.get("rights_confirmed")), "credit": credit,
+                                      "media_token": tok if own_file else "", "url": "" if own_file else url,
+                                      "name": str(body.get("media_name") or "")[:80], "captions": body.get("captions") or "",
+                                      "channel_ids": [c["id"] for c in chans]})
 
     def tool(self, a: Actor, rid: int, name: str, args: dict) -> dict:
         """One tool on one run, for REST and MCP (a person's own assistant as the brain)."""

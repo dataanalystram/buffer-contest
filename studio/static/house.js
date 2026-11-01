@@ -82,7 +82,9 @@ $("#agentForm").addEventListener("submit", async (ev) => {
       b.innerHTML = `<span class="spin" aria-hidden="true"></span>Uploading…`;
       body.media_token = await uploadFile(H.upload); body.media_name = H.upload.name;
     } else if (H.attach) { body.media_token = H.attach.media_token; body.media_name = H.attach.name; }
-    const run = await api("/api/agent/runs", { method: "POST", body });
+    const run = await startRun(body);
+    if (!run) return;
+    if (run.kind === "take") { toast("Splitting the video into clips. Pick the ones you want when they're ready.", 5000); if (window.openTake) window.openTake(run.id); return; }
     showRun(run); watch(run.id);
   } catch (e) { toast(e.message, 5000); }
   finally { b.disabled = false; b.textContent = "Make it"; }
@@ -358,3 +360,33 @@ $("#aiForm").addEventListener("submit", async (ev) => {
   catch (e) { toast(e.message, 6000); } finally { b.disabled = false; b.textContent = "Test and save"; }
 });
 $("#aiRemove").onclick = async () => { await api("/api/ai", { method: "POST", body: { remove: true } }); toast("Key removed"); loadAI(); };
+
+// "split this into 5 shorts <link>": a long video becomes Opus-style clips (a One take run). Someone else's video needs
+// the person's word that they may repost it: asked inline under the composer, once, then the same request goes again.
+async function startRun(body) {
+  try { return await api("/api/agent/runs", { method: "POST", body }); }
+  catch (e) {
+    if (e.status !== 409 || !/^Rights:/.test(e.message)) throw e;
+    const ok = await askRights(e.message.replace(/^Rights:\s*/, ""));
+    if (!ok) return null;
+    return api("/api/agent/runs", { method: "POST", body: { ...body, rights_confirmed: true } });
+  }
+}
+function askRights(text) {
+  return new Promise((resolve) => {
+    let box = document.getElementById("agRights");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "agRights"; box.className = "card rights-ask"; box.setAttribute("role", "group"); box.setAttribute("data-testid", "agent-rights");
+      $("#agGo").closest("form").appendChild(box);
+    }
+    box.hidden = false;
+    box.innerHTML = `<p class="sm" data-testid="agent-rights-text">${esc(text)}</p>
+      <div class="row"><button type="button" class="btn primary sm" data-testid="agent-rights-yes">I have the right to use it</button>
+      <button type="button" class="btn ghost sm" data-testid="agent-rights-no">Cancel</button></div>`;
+    const done = (v) => { box.hidden = true; resolve(v); };
+    box.querySelector("[data-testid=agent-rights-yes]").onclick = () => done(true);
+    box.querySelector("[data-testid=agent-rights-no]").onclick = () => done(false);
+    box.querySelector("[data-testid=agent-rights-yes]").focus();
+  });
+}
