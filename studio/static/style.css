@@ -587,3 +587,11 @@ body.pl-dragging .pl-cell,body.pl-dragging .pl-mday{cursor:copy}
 .hq-modes button:hover{color:var(--ink)}
 .hq-modes button.on{background:var(--raised);color:var(--ink);box-shadow:0 0 0 1px var(--line-strong)}
 .hq-modes button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+/* horizontal strips (strip.js): edge buttons, drag cursor, no mandatory snap fighting a wheel or a trackpad */
+.hq-strip-wrap{position:relative;min-width:0;max-width:100%}
+.hq-strip-btn{position:absolute;top:50%;transform:translateY(-50%);z-index:2;width:36px;height:36px;border-radius:999px;border:1px solid var(--line-strong);background:var(--raised);color:var(--ink);font-size:22px;line-height:1;display:none;place-items:center;cursor:pointer;box-shadow:var(--float)}
+.hq-strip-btn.l{left:-6px}.hq-strip-btn.r{right:-6px}
+.hq-strip-wrap.can-l .hq-strip-btn.l,.hq-strip-wrap.can-r .hq-strip-btn.r{display:grid}
+@media (pointer:coarse){.hq-strip-wrap .hq-strip-btn{width:44px;height:44px}}
+.hq-dragging{cursor:grabbing;user-select:none;scroll-snap-type:none!important;scroll-behavior:auto}
+.strip,.bs-strip{scroll-snap-type:x proximity}

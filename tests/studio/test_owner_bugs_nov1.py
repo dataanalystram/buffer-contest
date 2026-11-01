@@ -188,6 +188,56 @@ def test_e2e_theme_toggle_persists(live, chromium, close_contexts, w):
     page.reload(); page.get_by_test_id("theme-toggle").wait_for()
     assert page.evaluate("document.documentElement.dataset.theme") == "dark"
     page.goto(base_of(live) + "/?tab=settings")
-    page.get_by_test_id("theme-light").click()
+    page.get_by_test_id("appearance-light").click()
     assert page.evaluate("document.documentElement.dataset.theme") == "light" and bg() == light
-    assert page.get_by_test_id("theme-light").get_attribute("aria-checked") == "true"
+    assert page.get_by_test_id("appearance-light").get_attribute("aria-checked") == "true"
+
+
+# ---------------------------------------------------------------- video theme picker + every sideways strip (owner, 1 Nov)
+@pytest.mark.parametrize("w", [1440, 390])
+def test_e2e_theme_picker_collapsed_then_wrapped_grid(live, chromium, close_contexts, w):
+    ctx, page = _page(live, chromium, w=w, h=844 if w == 390 else 900)
+    page.goto(base_of(live) + "/?tab=agent")
+    sm = page.get_by_test_id("theme-summary")
+    sm.wait_for()
+    assert "Let the agent choose" in sm.inner_text() and sm.get_attribute("aria-expanded") == "false"
+    assert not page.get_by_test_id("theme-picker").is_visible()  # collapsed by default
+    sm.click()
+    grid = page.get_by_test_id("theme-picker")
+    grid.locator(".hqt-card").nth(3).wait_for()
+    n = grid.locator(".hqt-card").count()
+    assert n >= 10
+    # wrapped: nothing hides to the right, every card is inside the grid's box
+    assert grid.evaluate("g => g.scrollWidth <= g.clientWidth + 1")
+    gb = grid.bounding_box()
+    last = grid.locator(".hqt-card").nth(n - 1).bounding_box()
+    assert last["x"] + last["width"] <= gb["x"] + gb["width"] + 1
+    grid.locator(".hqt-card").nth(2).click()  # picking closes it and the row names the theme
+    assert sm.get_attribute("aria-expanded") == "false"
+    assert "Let the agent choose" not in sm.inner_text()
+    assert page.evaluate("localStorage.getItem('hq_theme')")
+
+
+def test_e2e_sideways_strips_scroll_with_wheel_drag_keys_and_buttons(live, chromium, close_contexts):
+    ctx, page = _page(live, chromium, w=1440)
+    page.goto(base_of(live) + "/?tab=agent")
+    page.get_by_test_id("theme-summary").wait_for()
+    page.evaluate("""() => { const s = document.createElement('div'); s.className = 'strip'; s.id = 'tstrip';
+      s.style.cssText = 'width:300px;height:120px'; s.innerHTML = Array.from({length: 12}, (_, i) => `<img alt="" style="height:100px;width:140px" src="data:,">`).join('');
+      document.querySelector('#tab-agent').prepend(s); }""")
+    page.wait_for_function("document.getElementById('tstrip').dataset.stripWired === '1'")
+    left = lambda: page.evaluate("document.getElementById('tstrip').scrollLeft")  # noqa: E731
+    box = page.locator("#tstrip").bounding_box()
+    page.mouse.move(box["x"] + 150, box["y"] + 60)
+    page.mouse.wheel(0, 200)  # a plain vertical wheel moves the strip sideways
+    page.wait_for_timeout(100)
+    assert left() > 0
+    page.evaluate("document.getElementById('tstrip').scrollLeft = 0")
+    page.mouse.down(); page.mouse.move(box["x"] + 20, box["y"] + 60, steps=5); page.mouse.up()  # drag
+    assert left() > 50
+    page.evaluate("document.getElementById('tstrip').scrollLeft = 0")
+    page.locator("#tstrip").focus(); page.keyboard.press("End"); page.wait_for_timeout(600)
+    assert left() > 500
+    page.evaluate("document.getElementById('tstrip').scrollLeft = 0"); page.wait_for_timeout(100)
+    page.locator("[data-testid=strip-next]").first.click(); page.wait_for_timeout(600)
+    assert left() > 100
