@@ -34,8 +34,15 @@ SPECS = [
                                                        "facts": {"type": "array", "items": S}, "why": S}}},
     {"name": "render_cover", "description": "Render the cover card (4:5) in the brand for text-first channels.", "input_schema": {"type": "object", "properties": {"channel_ids": IDS}}},
     {"name": "render_carousel", "description": "Render a carousel (4:5): cover, the post card or facts, end card last.", "input_schema": {"type": "object", "properties": {"channel_ids": IDS}}},
-    {"name": "render_reel", "description": "Render a 9:16 Reel: the headline on every frame, the source clip if there is one, the end card last. seconds sets a target length.",
-     "input_schema": {"type": "object", "properties": {"channel_ids": IDS, "seconds": {"type": "integer"}, "captions": {"type": "boolean"}}}},
+    {"name": "render_reel", "description": "Render a 9:16 Reel: the headline on every frame, the source clip if there is one, the end card last. seconds sets a target length. "
+                                       "style edits the real video with the media pipeline (studio.media): opus = auto-picked best moment with big word captions "
+                                       "(short punchy explainers), news = HuhByte layout with the full video in a panel and a facts card, minimal = calm "
+                                       "tutorial look, hype = fast one-word captions. It uses the clip from the link or the video find_media found. "
+                                       "Someone else's video needs rights_confirmed: if the result says needs_confirmation, finish and ask the person the question.",
+     "input_schema": {"type": "object", "properties": {"channel_ids": IDS, "seconds": {"type": "integer"}, "captions": {"type": "boolean"},
+                                                       "style": {"type": "string", "enum": ["opus", "news", "minimal", "hype"]},
+                                                       "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
+                                                       "rights_confirmed": {"type": "boolean", "description": "The person confirmed they may repost this video (with credit)"}}}},
     {"name": "add_end_card", "description": "Set the end card line for every future video (a Style Ledger rule), e.g. 'Follow @huhbyte'.",
      "input_schema": {"type": "object", "required": ["text"], "properties": {"text": S}}},
     {"name": "edit_brand", "description": "Change the brand kit from plain words: 'make the logo smaller', 'use #FF5A1F', 'switch font to Poppins'. Records a ledger rule.",
@@ -49,8 +56,11 @@ SPECS = [
      "input_schema": {"type": "object", "properties": {"channel_ids": IDS}}},
     {"name": "remember_rule", "description": "Turn a standing instruction into a Style Ledger rule that applies to every future post ('end every video with Follow @x', 'never say game-changer').",
      "input_schema": {"type": "object", "required": ["correction"], "properties": {"correction": S}}},
-    {"name": "find_media", "description": "Find launch videos / images for the story (adapter to studio.media when installed).",
-     "input_schema": {"type": "object", "properties": {"query": S}}},
+    {"name": "find_media", "description": "Find the REAL launch / demo video for the story on any platform (X, YouTube, Vimeo, Loom, YC launch pages, HN, GitHub, the company's own site). "
+                                      "Returns the best video, the best one the worker can fetch (with its credit line) and images. Call before render_reel with a style.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "A link or the story; omit to use the person's link"}}}},
+    {"name": "generate_images", "description": "No usable video or photo: make n images for the story (the configured image model, else on-brand cards), labelled as AI-generated. A styled render_reel then uses them.",
+     "input_schema": {"type": "object", "properties": {"prompt": S, "n": {"type": "integer"}}}},
     {"name": "finish", "description": "Stop: everything the person asked for is rendered, captioned and checked. message: one or two sentences for the person.",
      "input_schema": {"type": "object", "required": ["message"], "properties": {"message": S}}},
 ]
@@ -60,8 +70,8 @@ LABELS = {"read_url": "Read your link", "x_oembed": "Read the X post", "search_n
           "render_cover": "Render the cover", "render_carousel": "Render the carousel", "render_reel": "Render the Reel",
           "add_end_card": "Set the end card", "edit_brand": "Update your brand kit", "edit_channel_media": "Re-render one channel",
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
-          "find_media": "Find media", "check": "Check everything", "finish": "Done"}
-WRITES = {"render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media", "write_captions",
+          "find_media": "Find media", "generate_images": "Make images", "check": "Check everything", "finish": "Done"}
+WRITES = {"generate_images", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media", "write_captions",
           "save_buffer_drafts", "remember_rule"}
 
 
@@ -176,19 +186,45 @@ class Tools:
         return {"leads": [{"title": l["title"], "url": l["url"], "source": l.get("source")} for l in leads[:6]]}
 
     def t_find_media(self, query: str = "") -> dict:
-        try:  # hq-media-research's studio.media package (docs/MEDIA_PIPELINE.md); an adapter until that branch lands
-            from .media import find_launch_video  # type: ignore
-        except Exception:
-            return {"found": [], "note": "The media finder isn't installed on this server yet; I used the source's own media."}
-        run = self.state()
-        q = query or (run["result"].get("story") or {}).get("headline") or ""
+        """studio.media.tools.media_find (docs/MEDIA_PIPELINE.md): the source cascade, every fetch through netguard."""
         try:
-            got = find_launch_video(q, http=self.h.http)
-        except Exception as e:
+            from .media import tools as media_tools
+        except Exception:  # noqa: BLE001
+            return {"found": [], "note": "The media finder isn't installed on this server; I used the source's own media."}
+        run = self.state()
+        res = run["result"]
+        q = query or run["input"]["intake"].get("source_url") or (res.get("story") or {}).get("headline") or ""
+        if not q:
+            raise ActionError("Read a source first (read_url or search_news), or give find_media a link.")
+        try:
+            got = media_tools.media_find(q, http=self.h.http)
+        except Exception as e:  # noqa: BLE001
             return {"found": [], "note": f"Media finder failed ({e.__class__.__name__})."}
-        run["result"]["found_media"] = got[:5] if isinstance(got, list) else []
+        res["found_media"] = got
         self.save(run)
-        return {"found": run["result"]["found_media"]}
+        bv, bd = got.get("best_video"), got.get("best_downloadable")
+        return {"best_video": bv, "best_downloadable": bd, "images": got.get("images", [])[:3], "note": got.get("note", ""),
+                "needs_rights_confirmation": bool(bd and not bd.get("official"))}
+
+    def t_generate_images(self, prompt: str = "", n: int = 3) -> dict:
+        from .media import imagegen
+        import tempfile
+        run = self.state()
+        st = self._story(run)
+        kit = self._ctx()[0]
+        from .media.worker import brand_from_kit
+        with tempfile.TemporaryDirectory(prefix="hq_gen_") as d:
+            imgs = imagegen.generate_images(prompt or st["headline"], d, n=max(1, min(int(n or 3), 4)), ratio="9:16",
+                                            headline=st["headline"], brand=brand_from_kit(kit), http=self.h.http)
+            out = []
+            for im in imgs:
+                with open(im["path"], "rb") as fh:
+                    tok = self.h.put_media(self.a, fh.read(), "generated.jpg", kind="render", meta={"type": "photo", "credit": im["credit"]})
+                out.append({"token": tok, "url": self.h.media_url(tok), "type": "photo", "credit": im["credit"], "provider": im["provider"]})
+        run = self.state()
+        run["result"]["generated_images"] = out
+        self.save(run)
+        return {"images": [m["url"] for m in out], "providers": sorted({m["provider"] for m in out}), "credit": out[0]["credit"] if out else ""}
 
     # ---------------------------------------------------------------- facts
     def t_extract_facts(self, headline: str = "", facts: list | None = None, why: str = "") -> dict:
@@ -353,9 +389,21 @@ class Tools:
         self.save(run)
         return {"channels": ids, "format": "carousel", "media": [m["url"] for m in media], "clipped": self._clipped(media)}
 
-    def t_render_reel(self, channel_ids: list | None = None, seconds: int | None = None, captions: bool | None = None) -> dict:
+    def t_render_reel(self, channel_ids: list | None = None, seconds: int | None = None, captions: bool | None = None,
+                      style: str | None = None, music: str | None = None, rights_confirmed: bool | None = None) -> dict:
         run = self.state()
         ids = [c["id"] for c in self.channels(run, channel_ids)]
+        if style:
+            media, note, ask = self._media_reel(run, style, seconds=seconds, music=music, rights_confirmed=bool(rights_confirmed))
+            run = self.state()
+            fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
+            self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": True, "style": style, "note": note})
+            self.save(run)
+            out = {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note, "style": style,
+                   "clipped": self._clipped([m for m in media if m["type"] == "photo"])}
+            if ask:
+                out.update(needs_confirmation=True, question=ask)
+            return out
         media, note = self._reel(run, seconds=seconds, captions=bool(captions))
         run = self.state()
         fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
@@ -403,6 +451,10 @@ class Tools:
         spec = {"kind": "brand_video" if clip_tok else "slideshow", "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": p,
                 "ratio": "9:16", "hook": st["headline"], "logo": kit.get("logo") or "", "source": clip_tok,
                 "slides": [m["token"] for m in frames], "total": seconds}
+        return self._video_job(run, spec, frames, note_extra)
+
+    def _video_job(self, run, spec: dict, frames: list[dict], note_extra: str = "") -> tuple[list[dict], str]:
+        """Queue one video render (local FFmpeg off the hosted app, else the GitHub render worker) and wait for it."""
         mode = self.h.video_mode()  # never "local" on the hosted app (512 MB): Reels go to the GitHub render worker there
         if self.demo:
             mode = "local" if self.h.local_video_ok() and demo_guard.take(self.store, self.a.uid, "video") else "none"
@@ -433,6 +485,55 @@ class Tools:
                 return frames or self._slides_45(run, carousel=True), f"The video render failed ({(row['error'] or '')[:120]}); slides instead."
         self.store.x("UPDATE render_jobs SET status='failed', error='timed out', updated=? WHERE id=?", (time.time(), jid))
         return frames or self._slides_45(run, carousel=True), "The video worker took too long; slides instead. Reply “redo the reel” to try again."
+
+    def _media_reel(self, run, style: str, seconds=None, music=None, rights_confirmed=False) -> tuple[list[dict], str, str]:
+        """A styled Reel from the real video via studio.media (worker kind ``media_render``). Returns (media, note, question):
+        a third-party video without the person's OK is not rendered; the question asks for it (docs/MEDIA_PIPELINE.md, Risks)."""
+        from .media import styles as media_styles
+        sid = media_styles.resolve(style)
+        if sid not in media_styles.STYLE_PRESETS:
+            raise ActionError(f"Unknown style {style}. Pick opus, news, minimal or hype.")
+        kit = self._ctx()[0]
+        st = self._story(run)
+        res = run["result"]
+        src = res.get("source") or {}
+        clip_tok = res.get("clip_token") or ""
+        if not clip_tok:
+            vid = next((m for m in src.get("media") or [] if m["type"] == "video"), None)
+            if vid:
+                data = self.h._fetch_bytes(vid["url"], reader.MAX_MEDIA)
+                if data:
+                    clip_tok = self.h.put_media(self.a, data, "source.mp4", kind="upload", meta={"type": "video"})
+                    res["clip_token"] = clip_tok
+                    self.save(run)
+        found = res.get("found_media") if isinstance(res.get("found_media"), dict) else {}
+        cand = None if clip_tok else found.get("best_downloadable")
+        gen = res.get("generated_images") or []
+        if not clip_tok and not cand and not gen:
+            media, note = self._reel(run, seconds=seconds)
+            return media, note + " No video to edit, so the styled edit wasn't used (find_media or generate_images first).", ""
+        handle = ((src.get("post") or {}).get("handle") or "").lstrip("@")
+        credit = (f"Video: @{handle} on X" if clip_tok and handle else
+                  (cand or {}).get("credit") or (f"Video: {st.get('source')}" if clip_tok and st.get("source") else "")) if (clip_tok or cand) else gen[0]["credit"]
+        official = bool(cand and cand.get("official"))
+        if (clip_tok or cand) and not (official or rights_confirmed):
+            ask = (f"This Reel uses someone else's video ({credit or 'no credit found'}). I'll credit it on screen and in the caption. "
+                   "Do you have the right to repost it (or is it fair commentary)?")
+            res["rights_question"] = ask
+            self.save(run)
+            frames = self._reel_frames(run)
+            return frames or self._slides_45(run, carousel=True), "Slides for now: the video needs your OK first. " + ask, ask
+        res.pop("rights_question", None)
+        spec = {"kind": "media_render", "style": sid, "ratio": "9:16", "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
+                "credit": credit, "names": [n for n in (st.get("company"), (cand or {}).get("company")) if n], "music": music or "auto",
+                "official": official, "rights_confirmed": bool(rights_confirmed or official),
+                "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "logo": kit.get("logo") or "", "source": clip_tok, "candidate": cand,
+                "slides": [] if (clip_tok or cand) else [m["token"] for m in gen], "image_prompt": st["headline"]}
+        if seconds and sid not in ("opus", "hype"):
+            spec["clip"] = [0, float(seconds)]
+        frames = [] if (clip_tok or cand) else gen
+        media, note = self._video_job(run, spec, frames, f" Style: {sid}.")
+        return media, note, ""
 
     # ---------------------------------------------------------------- edits
     def t_add_end_card(self, text: str) -> dict:
