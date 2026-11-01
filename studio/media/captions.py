@@ -268,8 +268,9 @@ def build_ass(words: list[dict], style: str = "opus", *, W: int = 1080, H: int =
                 if j == i and bb:  # the spoken word on an accent block, ink text (Caption News keyword block)
                     eff = ("{\\c" + ass_color(on_acc) + "\\3c" + ass_color(accent) + f"\\bord{bb}\\shad0"
                            + ("\\fscx118\\fscy118\\t(0,90,\\fscx100\\fscy100)" if st.pop else "") + "}")
-                    parts.append(sep + eff + t2 + "{\\c" + ass_color(text) + "\\3c" + ass_color(outline) + f"\\bord{ol}"
-                                 + "\\fscx100\\fscy100}")
+                    pad = "\\h" if sep != "\\N" and j else ""
+                    parts.append(sep + pad + eff + t2 + "{\\c" + ass_color(text) + "\\3c" + ass_color(outline) + f"\\bord{ol}"
+                                 + "\\fscx100\\fscy100}" + ("\\h" if j + 1 < len(toks) and line_of[j + 1] == line_of[j] else ""))
                 elif j == i:
                     eff = ("{\\c" + ass_color(accent) + ("\\fscx118\\fscy118\\t(0,90,\\fscx100\\fscy100)" if st.pop else "") + "}")
                     parts.append(sep + eff + t2 + "{\\c" + ass_color(text) + "\\fscx100\\fscy100}")

@@ -426,6 +426,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
 
         still = Image.open(frame_at(source, c0 + min(D * 0.3, 4.0), str(wd / "still.png"))) if source else Image.open(images[0])
         lsw, lsh = (int(1000 * cfg["gate"][0] / cfg["gate"][1]), 1000) if cfg.get("gate") else (sw, sh)
+        if cfg.get("tall_aspect") and H / W > 1.6:  # vertical is its own layout: a square crop fills the stage
+            lsw, lsh = cfg["tall_aspect"]
         L = layout(cfg["layout"], W, H, lsw, lsh, brand, hook, caps_on)
         if cfg.get("chrome"):
             ov, boxes = theme_cards.overlay(cfg, W, H, brand, hook, credit, L, acc)

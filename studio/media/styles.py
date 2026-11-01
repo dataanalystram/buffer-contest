@@ -137,7 +137,7 @@ THEMES: dict[str, dict] = {
         "cover_secs": 1.2, "transition": "fade", "music": "cinematic",
         "fonts": {"head_font": "DMSerifDisplay-Regular.ttf", "bold_font": "DMSerifDisplay-Regular.ttf"}},
     "dark_keynote": {
-        "label": "Dark Tech Keynote", "base": "minimal", "fill": "stage", "source": LEMO.format("dark-keynote"),
+        "label": "Dark Tech Keynote", "base": "minimal", "tall_aspect": (1, 1), "fill": "stage", "source": LEMO.format("dark-keynote"),
         "about": "A software launch keynote: near-black stage with a soft top light and a hairline grid, the product video in a "
                  "hairline frame, one accent colour, clean white captions, a one-line title card.",
         "best_for": ["software launches", "SaaS and AI product reveals", "keynote moments"],
@@ -148,7 +148,7 @@ THEMES: dict[str, dict] = {
         "cover_secs": 1.0, "transition": "fade", "music": "cinematic",
         "fonts": {"head_font": "Inter-Bold.ttf", "bold_font": "Inter-SemiBold.ttf", "body_font": "Inter-Regular.ttf"}},
     "glass_studio": {
-        "label": "Glass Product Studio", "base": "minimal", "fill": "stage", "source": LEMO.format("glass-product"),
+        "label": "Glass Product Studio", "base": "minimal", "tall_aspect": (1, 1), "fill": "stage", "source": LEMO.format("glass-product"),
         "about": "A dark-field product studio: the video on a black stage with a reflective floor, a strip-light sweep that "
                  "travels across the frame, cool highlights, no grain. Hardware and gadget reveals.",
         "best_for": ["consumer hardware", "gadget launches", "beauty and design products"],
@@ -159,7 +159,7 @@ THEMES: dict[str, dict] = {
         "captions": "keynote", "card": "studio", "chrome": "studio", "cover_secs": 1.0, "transition": "fade", "music": "cinematic",
         "fonts": {"head_font": "Inter-Bold.ttf", "bold_font": "Inter-SemiBold.ttf", "body_font": "Inter-Regular.ttf"}},
     "swiss": {
-        "label": "Swiss Motion", "base": "minimal", "fill": "stage", "source": LEMO.format("swiss-motion"),
+        "label": "Swiss Motion", "base": "minimal", "tall_aspect": (1, 1), "fill": "stage", "source": LEMO.format("swiss-motion"),
         "about": "International Typographic Style: a light page on a modular grid, flush-left Inter in ink, one red signal "
                  "square, the video set into the grid, captions in ink with the spoken word in red. No gradients, no grain.",
         "best_for": ["design and brand news", "B2B and dev tools", "LinkedIn"],
@@ -204,7 +204,7 @@ THEMES: dict[str, dict] = {
         "fx": ["misreg", "grain:9"], "captions": "riso", "card": "riso", "chrome": "riso", "cover_secs": 1.0,
         "transition": "cut", "music": "pulse", "fonts": {"head_font": "Anton.ttf", "bold_font": "Figtree-ExtraBold.ttf"}},
     "hologram_hud": {
-        "label": "Sci-fi Hologram HUD", "base": "minimal", "fill": "stage", "source": LEMO.format("hologram-hud"),
+        "label": "Sci-fi Hologram HUD", "base": "minimal", "tall_aspect": (1, 1), "fill": "stage", "source": LEMO.format("hologram-hud"),
         "about": "A spec walkthrough in a hologram HUD: cyan-tinted footage with scanlines inside target brackets, a dot-grid "
                  "stage, mono labels and tick rulers, monospace captions with a glow, a glitch into the footage.",
         "best_for": ["hardware and chips", "robots and spec walkthroughs", "AI model benchmarks"],
@@ -225,7 +225,7 @@ THEMES: dict[str, dict] = {
         "palette": None, "grade": "eq=contrast=1.02", "fx": [], "captions": "minimal", "card": "window", "chrome": "window",
         "cover_secs": 1.0, "transition": "fade", "music": "cinematic"},
     "investigation": {
-        "label": "Visual Investigation", "base": "minimal", "fill": "stage", "source": LEMO.format("visual-investigation"),
+        "label": "Visual Investigation", "base": "minimal", "tall_aspect": (1, 1), "fill": "stage", "source": LEMO.format("visual-investigation"),
         "about": "A cold investigation desk: greyscale high-contrast footage with grain on a dark desk, an exhibit label and a "
                  "running timecode on the evidence, hairline frames, amber highlights on the spoken word.",
         "best_for": ["fact-checks", "leaks, lawsuits and incidents", "\"what really happened\" explainers"],
@@ -247,7 +247,7 @@ THEMES: dict[str, dict] = {
         "fx": ["grain:3", "vignette", "clock"], "captions": "count", "card": "countdown", "chrome": "clock",
         "cover_secs": 1.0, "transition": "flash", "music": "pulse", "fonts": {"bold_font": "IBMPlexMono-SemiBold.ttf"}},
     "crt": {
-        "label": "Amber CRT Terminal", "base": "minimal", "fill": "stage", "source": LEMO.format("ascii-crt"),
+        "label": "Amber CRT Terminal", "base": "minimal", "tall_aspect": (1, 1), "fill": "stage", "source": LEMO.format("ascii-crt"),
         "about": "A monochrome terminal: the footage glowing in amber phosphor with scanlines and a curved glass, a status "
                  "line, VT323 captions with a glow, a blinking-cursor title card. Dev tools and hacker stories.",
         "best_for": ["GitHub repos and dev tools", "open source", "security and hacker stories"],
