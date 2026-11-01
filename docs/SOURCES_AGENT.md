@@ -83,3 +83,38 @@ Product Hunt application Redirect URI: `https://huhqueue-studio.onrender.com/int
 card. With them set, `/integrations/producthunt/connect` runs the OAuth code flow with a single-use state cookie and the
 callback exchanges the code (`POST https://api.producthunt.com/v2/oauth/token`) and stores the token for that person; a code
 without our state is never exchanged.
+
+## App-level research keys (nothing for users to add)
+
+Research keys belong to HuhQueue, not to each person (judges never sign in to Product Hunt or X). `studio/appkeys.py`:
+
+- **Product Hunt**: with `PH_CLIENT_ID`/`PH_CLIENT_SECRET` on the server, an app token from Product Hunt's OAuth
+  `client_credentials` grant (`POST https://api.producthunt.com/v2/oauth/token`) is cached in memory until it expires.
+  Today's launches are read once for everyone and cached for 20 minutes; live fetches are rate-limited globally (one per
+  2 minutes). Without the env keys, or when the API errors, the public feed `https://www.producthunt.com/feed` is read
+  instead. A person's own developer token (Settings → Integrations) is an optional override.
+  **Product Hunt's API is for non-commercial use by default.** That is fine for the contest; get Product Hunt's
+  permission before any commercial launch.
+- **X**: no key needed (below). `X_BEARER_TOKEN`, if ever set, and a person's own bearer are optional overrides for media.
+
+Settings → Integrations shows each app-level status ("Product Hunt: Connected by HuhQueue ✓", "X: works without a key
+(public embeds)") and every callback/redirect URL with a Copy button: the Product Hunt Redirect URI (`PH_REDIRECT_URI` when
+set), the Buffer Callback URL (`/callback`), the MCP server URL (`/mcp`) and MCP OAuth discovery.
+
+## The free X reader (`studio/xreader.py`)
+
+One public post a person links, read without an X API key, through a cascade (each layer behind netguard, results
+cached globally for 20 minutes per post, live lookups capped at 60 per 15 minutes):
+
+1. **oEmbed** `publish.x.com/oembed` (X's official embed): author and words.
+2. **Syndication** `cdn.syndication.twimg.com/tweet-result?id=…&token=…`: the public endpoint X's own embeds use, as read
+   by Vercel's MIT-licensed react-tweet (token computed exactly like react-tweet's `getToken`): created_at, photos, video
+   variants + poster, quoted post.
+3. **FxTwitter** `api.fxtwitter.com/status/<id>` (MIT FixTweet project): full text of long posts and media URLs when
+   the syndication answer has none.
+4. **yt-dlp** on the render worker downloads the video with only its Twitter extractor (guest token), from the post URL
+   kept on each video as `source_page` (`studio/media/download.py`).
+
+**Caveats.** Layers 2-3 are unofficial public endpoints: they can change or break without notice. X's Terms restrict
+scraping; HuhQueue only reads the single public post a person links, on demand, and never crawls, searches or
+bulk-collects X. `scripts/x_reader_smoke.py` checks each layer live on one public post and prints status only.
