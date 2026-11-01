@@ -56,7 +56,7 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
     ``urls`` is the job's URL map from the app (source / slides). Returns (mp4 bytes, meta)."""
     urls = urls or {}
     style = styles.resolve(spec.get("style") or "huhbyte_news")
-    if style not in styles.STYLE_PRESETS:
+    if not styles.known(style):
         raise JobError(f"Unknown style {spec.get('style')!r}.")
     ratio = spec.get("ratio") or "9:16"
     tmp = Path(tempfile.mkdtemp(prefix="hq_media_job_"))
@@ -94,7 +94,7 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
             credit = credit or gen["images"][0]["credit"]
 
         words_path = None
-        if source_path and style in CAPTION_STYLES:
+        if source_path and (style in CAPTION_STYLES or style in styles.THEMES):
             try:  # captions and the opus/hype clip picker need the transcript; a failure only turns captions off
                 tr = tools.media_transcribe(source_path, names=spec.get("names"), run_dir=str(tmp))
                 words_path = tr["words_path"] if tr.get("words") else None
@@ -103,7 +103,8 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
         r = tools.media_render(style, spec.get("hook") or "", source_path=source_path, images=images, ratios=[ratio],
                                facts=spec.get("facts"), credit=credit, words_path=words_path, names=spec.get("names"),
                                clip=spec.get("clip"), music=spec.get("music") or "auto", brand=brand, official=official,
-                               rights_confirmed=bool(spec.get("rights_confirmed")), run_dir=str(tmp))
+                               rights_confirmed=bool(spec.get("rights_confirmed")), run_dir=str(tmp),
+                               brand_colors=bool(spec.get("brand_colors")))
         if r.get("needs_confirmation"):
             raise JobError("Rights not confirmed: " + r["question"])
         if r.get("error"):
