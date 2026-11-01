@@ -135,10 +135,10 @@ class FakeBuffer:
 @pytest.fixture(autouse=True)
 def _fresh_app_keys():
     """App-level research keys cache tokens and results globally (studio/appkeys.py): start every test clean."""
-    from studio import appkeys
-    appkeys.reset()
+    from studio import appkeys, xreader
+    appkeys.reset(); xreader.reset()
     yield
-    appkeys.reset()
+    appkeys.reset(); xreader.reset()
 
 
 @pytest.fixture

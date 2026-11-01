@@ -65,7 +65,7 @@ def catalog(public_url: str) -> dict[str, dict]:
                          "On the application page choose Create Token, copy the Developer Token and paste it here."],
                "redirect_uri": cb, "source": "ph"},
         "x": {"field": "x_bearer", "pattern": r"[A-Za-z0-9%_\-.=]{20,200}", "name": "X / Twitter", "what": "API bearer token",
-              "unlocks": "Your own X API key reads the X source in News and post media with your quota. Optional when HuhQueue's X lookup is on.",
+              "unlocks": "Optional: your own X API key adds the X search source in News and reads post media through the official API.",
               "get_url": "https://developer.x.com/en/portal/dashboard",
               "steps": ["Open the X developer portal and pick (or create) a project and app.",
                         "Under Keys and tokens, generate the Bearer Token.",
@@ -180,9 +180,9 @@ class Integrations:
         return {"ph": {"on": st["ph"]["app"], "label": "Connected by HuhQueue ✓" if st["ph"]["app"] else "Shared by HuhQueue ✓ (public feed)",
                        "detail": "Everyone gets today's launches from HuhQueue's own Product Hunt app, refreshed every 20 minutes. Nothing to do."
                        if st["ph"]["app"] else "Everyone gets today's launches from Product Hunt's public feed, refreshed every 20 minutes. Nothing to do."},
-                "x": {"on": st["x"]["app"], "label": "Connected by HuhQueue ✓" if st["x"]["app"] else "",
-                      "detail": "Photos and videos of pasted X posts come through HuhQueue's own X key (shared, cached). Post text always comes from X's public embed."
-                      if st["x"]["app"] else "Post text comes from X's public embed. Add your own key to also get a post's photo or video."},
+                "x": {"on": True, "label": "Works without a key (public embeds) ✓",
+                      "detail": "X: works without a key (public embeds). HuhQueue reads the one public post you link (words, photos and video) "
+                      "and caches it. Your own X API key is optional: it adds the X source in News."},
                 "yt": {"on": bool(os.environ.get("YOUTUBE_API_KEY")), "label": "Connected by HuhQueue ✓" if os.environ.get("YOUTUBE_API_KEY") else "",
                        "detail": "Find media searches YouTube with HuhQueue's key." if os.environ.get("YOUTUBE_API_KEY")
                        else "Find media works without it; a key adds YouTube search."}}

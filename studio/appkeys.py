@@ -10,9 +10,9 @@ Product Hunt
     commercial launch (docs/SOURCES_AGENT.md).
 
 X
-    X_BEARER_TOKEN (Render env), when set, is used server-side for media lookup only (the photo/video of a pasted X post);
-    the public oEmbed stays the default for the words. Results are cached per post and live lookups are rate-limited
-    globally. A person's own bearer token is an optional override.
+    No key needed: studio/xreader.py reads a linked public post for free (oEmbed, the syndication endpoint react-tweet
+    uses, FxTwitter), cached and rate-limited globally. X_BEARER_TOKEN (Render env) is only an OPTIONAL override for
+    media when the free layers found none; a person's own bearer token is likewise optional.
 
 Key values never leave this module: nothing here logs them, returns them to a client, or puts them in an error message.
 Every call goes through netguard (pinned host, no redirects, bytes capped). SECURITY_RULES 1-2.
@@ -171,4 +171,4 @@ def x_media_shared(status_id: str, http=None) -> list:
 # ================================================================================================ status (no values)
 def status() -> dict:
     return {"ph": {"app": ph_configured(), "mode": _ph_cache.get("mode") or ("api" if ph_configured() else "feed")},
-            "x": {"app": bool(x_app_bearer())}}
+            "x": {"app": bool(x_app_bearer()), "free": True}}

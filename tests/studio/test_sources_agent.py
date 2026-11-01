@@ -79,11 +79,12 @@ def test_live_fetches_go_through_netguard(monkeypatch):
     monkeypatch.setattr(netguard, "safe_get", real)
 
 
-def test_keyed_sources_refuse_without_a_key():
+def test_x_refuses_without_a_key_and_product_hunt_uses_the_shared_read(monkeypatch):
     with pytest.raises(S.SourceError, match="never scrapes"):
         S.X().live({}, {}, None)
-    with pytest.raises(S.SourceError, match="Product Hunt"):
-        S.ProductHunt().live({}, {}, None)
+    from studio import appkeys
+    monkeypatch.setattr(appkeys, "ph_shared", lambda http, q: ([{"title": "shared"}], "feed"))
+    assert S.ProductHunt().live({}, {}, None) == [{"title": "shared"}]  # no key: HuhQueue's app-level read for everyone
 
 
 # ---------------------------------------------------------------- through the app
