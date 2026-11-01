@@ -55,10 +55,19 @@ $1.3M") continues the same run and touches only what it names.
 
 ### Tools (`studio/agent_tools.py`): one implementation for the brain, REST and MCP
 `read_url`, `x_oembed`, `search_news`, `extract_facts`, `render_cover`, `render_carousel`, `render_reel`,
-`add_end_card`, `edit_brand`, `edit_channel_media`, `write_captions`, `remember_rule`, `find_media`, `check`,
-`save_buffer_drafts`, `finish`. REST: `POST /api/agent/runs`, `/api/agent/runs/{id}/messages`,
+`add_end_card`, `edit_brand`, `edit_channel_media`, `write_captions`, `remember_rule`, `find_media`, `generate_images`,
+`check`, `save_buffer_drafts`, `finish`. REST: `POST /api/agent/runs`, `/api/agent/runs/{id}/messages`,
 `/api/agent/runs/{id}/tools/{name}`. MCP: `make_post` (with `brain=external` a person's own ChatGPT/Claude drives the
 `post_*` tools step by step), `reply_post`, `edit_brand`, `get_brain` (`studio/agent_routes.py`).
+
+### Media pipeline (`studio.media`, docs/MEDIA_PIPELINE.md)
+`find_media` runs `studio.media.tools.media_find` (the real launch video for the person's link: X, YouTube, YC, HN,
+GitHub, the company site). `render_reel` with `style` (`opus` | `news` | `minimal` | `hype`) queues a `media_render`
+job: the GitHub render worker (or local FFmpeg off the hosted app) fetches the clip, transcribes it, and edits it with
+`studio.media.worker.render_job` (captions, credit, music, end card). Someone else's video is not rendered until the
+person confirms the rights: the tool returns `needs_confirmation` and the question, and the next call passes
+`rights_confirmed: true`. `generate_images` covers stories with no media. The fixed (no-AI) planner uses a style only
+when the person names one ("opus clip", "hype style", "minimal look", "news layout").
 
 ### Formats per channel
 Video-only channels (YouTube, TikTok) get a 9:16 Reel; Instagram, LinkedIn and Facebook a 4:5 carousel unless the person

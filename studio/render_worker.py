@@ -103,7 +103,10 @@ def main(argv=None) -> int:
         if str(spec.get("kind", "")).startswith("take_"):
             return take_job(c, base, h, args.job, j)
         logo = get(urls.get("logo"))
-        if spec["kind"] == "template_video":  # a Brand studio template's Reel, in the person's own brand
+        if spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
+            from .media.worker import render_job
+            data, meta = render_job(spec, get, urls=urls, logo=logo)
+        elif spec["kind"] == "template_video":  # a Brand studio template's Reel, in the person's own brand
             from . import templates
             b = templates.Brand(spec["kit"], logo, get(urls.get("front")), get(urls.get("end")))
             data, meta = templates.video(spec["template"], spec.get("data"), b, spec.get("ratio", "9:16")), {"type": "video", "template": spec["template"]}
