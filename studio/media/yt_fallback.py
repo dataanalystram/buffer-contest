@@ -61,9 +61,12 @@ def apply(cfg: dict | None) -> None:
 def pick_formats(info: dict, max_height: int = 720) -> tuple[dict | None, dict | None]:
     """The best H.264 video-only stream at or under max_height and the best AAC audio from /api/v1/videos (pure)."""
     by_itag: dict[str, dict] = {}
-    for f in info.get("adaptiveFormats") or []:
-        if f.get("url"):
-            by_itag.setdefault(str(f.get("itag")), f)  # the first of each itag is the original-language track
+    fmts = [f for f in info.get("adaptiveFormats") or [] if f.get("url")]
+    # a video with auto-dubbed audio lists one itag-140 per language; xtags=acont=original marks the speaker's own voice
+    fmts.sort(key=lambda f: 0 if "acont%3Doriginal" in f["url"] or "acont=original" in f["url"] else
+              (2 if "acont%3Ddubbed" in f["url"] or "acont=dubbed" in f["url"] else 1))
+    for f in fmts:
+        by_itag.setdefault(str(f.get("itag")), f)
     video = None
     for h in sorted((h for h in VIDEO_ITAGS if h <= max_height), reverse=True):
         video = next((by_itag[i] for i in VIDEO_ITAGS[h] if i in by_itag), None)

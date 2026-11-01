@@ -80,6 +80,8 @@ def main() -> int:
             "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "128k", str(win)])
         t = time.time()
         words, lang, how = take.transcribe(str(win), args.model)
+        if lang != "en":  # the source must carry the speakers' own (English) audio, never an auto-dub track
+            raise SystemExit(f"moment {k}: transcript language is {lang!r}, expected 'en' (wrong audio track in the source?)")
         timings["transcribe"] += time.time() - t
         sents = longform.sentences(words)
         a, b = snap(sents, ms - w0, me - w0)

@@ -23,6 +23,15 @@ def test_pick_formats_caps_height_and_keeps_first_audio():
     assert yt_fallback.pick_formats({"adaptiveFormats": []}) == (None, None)
 
 
+def test_original_audio_beats_auto_dubs():
+    info = {"adaptiveFormats": [
+        {"itag": "140", "url": "https://i.example/vp?xtags=acont%3Ddubbed-auto%3Alang%3Dar", "clen": "2"},
+        {"itag": "140", "url": "https://i.example/vp?xtags=acont%3Doriginal%3Alang%3Den-US", "clen": "1"},
+        {"itag": "136", "url": "https://i.example/vp?itag=136", "clen": "5"}]}
+    _, a = yt_fallback.pick_formats(info)
+    assert "original" in a["url"]
+
+
 def test_flag_off_by_default_and_config_travels(monkeypatch):
     monkeypatch.delenv("HQ_YT_FALLBACK", raising=False)
     monkeypatch.delenv("HQ_INVIDIOUS_INSTANCES", raising=False)
