@@ -488,6 +488,21 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def ideas(request: Request, body: dict = Body(...)):
         return studio.create_idea(actor(request, write=True), body.get("title", ""), body.get("text", ""))
 
+    @app.get("/api/thumb")
+    def story_thumb(request: Request, url: str = "", img: str = ""):
+        """A story's picture, read and re-encoded server-side (studio/thumbs.py); 404 -> the page shows the favicon."""
+        from . import thumbs
+        a = actor(request)
+        if not thumbs.allow(a.uid, demo_guard.is_demo(a.uid)):
+            return JSONResponse({"error": "Too many thumbnails at once. They load again in a minute."}, status_code=429)
+        try:
+            data = thumbs.get(url, img, http=house.http)
+        except thumbs.ThumbError as e:
+            return JSONResponse({"error": str(e)}, status_code=e.status)
+        if not data:
+            return JSONResponse({"error": "no image"}, status_code=404, headers={"Cache-Control": "private, max-age=3600"})
+        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
+
     @app.get("/api/radar")
     def radar_list(request: Request):
         return studio.radar(actor(request))
