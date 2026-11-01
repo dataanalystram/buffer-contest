@@ -111,8 +111,7 @@ class Brain:
         theme = theme if theme == "auto" or media_styles.known(theme) else "auto"
         inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
                "theme": theme, "brand_colors": bool(body.get("brand_colors")),
-               "brief": str(body.get("brief") or "")[:1000],
-               "theme": str(body.get("theme") or "")[:40],
+               "brief": str(body.get("brief") or "")[:1000],  # theme: validated above (unknown -> auto); a gallery pick wins
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
         res = {"thread": [{"role": "user", "text": prompt or "(your file)", "at": _now()}], "plan": [], "brain": {}}
         if tok:
