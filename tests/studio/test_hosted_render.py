@@ -71,3 +71,17 @@ def test_template_reel_still_rendering_shows_no_canned_clip(human, app, monkeypa
     monkeypatch.setattr(house_mod.House, "_dispatch_github", lambda self, jid, workflow="render.yml", inputs=None, ttl=1800: (False, "GitHub answered 401"))
     r = human.post("/api/templates/render", json={"template": "quote", "services": ["instagram"], "video": True}).json()
     assert r["video"] is None and r["video_job"]["status"] == "failed" and "401" in r["video_job"]["note"]
+
+
+def test_template_reels_on_the_worker_are_capped_per_day(human, app, monkeypatch):
+    h = app.state.house
+    h.worker_mode = "github"
+    monkeypatch.setenv("HQ_TEMPLATE_VIDEO_DAILY", "2")
+    monkeypatch.setenv("HQ_TEMPLATE_VIDEO_WAIT", "0")
+    started = []
+    monkeypatch.setattr(house_mod.House, "_dispatch_github",
+                        lambda self, jid, workflow="render.yml", inputs=None, ttl=1800: (started.append(jid), (True, "204"))[1])
+    for _ in range(3):
+        r = human.post("/api/templates/render", json={"template": "quote", "services": ["instagram"], "video": True}).json()
+    assert len(started) == 2  # the third never reaches GitHub
+    assert r["video"] is None and r["video_job"]["status"] == "capped"

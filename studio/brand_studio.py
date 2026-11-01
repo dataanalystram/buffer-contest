@@ -309,6 +309,11 @@ class BrandStudio:
                 "kit": {k: v for k, v in kit.items() if k != "_ledger"}, "logo": kit.get("logo") or "",
                 "front": (kit.get("front_card") or {}).get("image") or "", "end": (kit.get("end_card") or {}).get("image") or ""}
         now = time.time()
+        cap = int(os.environ.get("HQ_TEMPLATE_VIDEO_DAILY", "6"))  # each one is a GitHub Actions run (SECURITY_RULES 3, 4)
+        recent = [r for r in self.store.q("SELECT spec FROM render_jobs WHERE user_id=? AND created>?", (a.uid, now - 86400))
+                  if '"template_video"' in (r["spec"] or "")]
+        if len(recent) >= cap:
+            return None, {"status": "capped", "note": f"Template Reels are limited to {cap} a day; the slides above are ready."}
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (a.uid, None, json.dumps(spec), "queued", now, now))
         ok, why = self.house._dispatch_github(jid)
