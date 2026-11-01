@@ -23,9 +23,14 @@ WORKER_MAX = 240 * MB                # the video worker's clip/reel results (bas
 FORM_MAX = 64 * 1024                 # OAuth forms
 
 
+LIBRARY_MAX = 101 * MB               # /api/library/upload: one raw file (100 MB cap, checked again with the quota)
+
+
 def cap_for(path: str) -> int:
     if path == "/api/media":
         return MEDIA_MAX
+    if path == "/api/library/upload":
+        return LIBRARY_MAX
     if path.startswith("/api/worker/"):
         return WORKER_MAX
     if path.startswith("/oauth/"):

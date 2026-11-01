@@ -50,6 +50,8 @@ class House:
         self.takes = Takes(self)
         from .agent_brain import Brain
         self.brain = Brain(self)
+        from .library import Library
+        self.library = Library(self)
 
     # ================================================================ brand kit
     def kit(self, a: Actor) -> dict:
@@ -229,19 +231,19 @@ class House:
     def get_media(self, token: str) -> dict | None:
         rows = self.store.q("SELECT token,user_id,mime,data,size,meta FROM media WHERE token=?", (token,))
         if not rows:
-            return None
+            return self.library.blob(token)  # an uploaded Library file works as a media token everywhere
         d = dict(rows[0])
         d["data"] = bytes(d["data"])
         return d
 
     def media_meta(self, a: Actor, token: str) -> dict | None:
         rows = self.store.q("SELECT meta FROM media WHERE token=? AND user_id=?", (token, a.uid))
-        return json.loads(rows[0]["meta"]) if rows else None
+        return json.loads(rows[0]["meta"]) if rows else self.library.meta(a, token)
 
     def media_url(self, token: str) -> str:
         return f"{self.s.public_url.rstrip('/')}/m/{token}" if token else ""
 
-    def upload(self, a: Actor, name: str, data_b64: str) -> dict:
+    def upload(self, a: Actor, name: str, data_b64: str, source: str = "upload") -> dict:
         self.studio._guard_write(a, "upload_media")
         b64 = data_b64.split(",", 1)[-1]
         demo_user = demo_guard.is_demo(a.uid)
@@ -260,6 +262,12 @@ class House:
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             raise ActionError("Upload a JPG, PNG, WebP photo or an MP4/MOV video.")
         kind = "video" if ext in ("mp4", "mov", "m4v", "webm") else "photo"
+        if not demo_user:  # a real account's uploads are kept in its Library (studio/library.py), type sniffed from the bytes
+            item = self.library.save_bytes(a, data, name, "take" if source == "take" else "upload")
+            kind = "video" if item["kind"] == "video" else "photo"
+            self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
+            return {"token": item["media_token"], "url": self.media_url(item["media_token"]), "type": kind, "bytes": len(data),
+                    "library_id": item["id"]}
         tok = self.put_media(a, data, name, kind="upload", meta={"type": kind})
         self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
         return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
@@ -277,8 +285,9 @@ class House:
 
     def purge_media(self, days: int = 21) -> int:
         cutoff = _now() - days * 86400
-        n = self.store.q("SELECT COUNT(*) AS n FROM media WHERE created<? AND meta NOT LIKE ?", (cutoff, '%"logo"%'))[0]["n"]
-        self.store.x("DELETE FROM media WHERE created<? AND meta NOT LIKE ?", (cutoff, '%"logo"%'))
+        keep = "token NOT IN (SELECT token FROM library_media)"  # Library items are kept until the person deletes them
+        n = self.store.q(f"SELECT COUNT(*) AS n FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))[0]["n"]
+        self.store.x(f"DELETE FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))
         return n
 
     # ================================================================ AI settings

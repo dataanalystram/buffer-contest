@@ -339,6 +339,16 @@ class Library:
         off = start - first * CHUNK
         return data[off:(end - first * CHUNK + 1) if end is not None else None]
 
+    def _iter(self, iid: int):
+        """Every chunk in order, one database read at a time (a whole-file answer never holds the file in memory)."""
+        n = 0
+        while True:
+            rows = self.store.q("SELECT data FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
+            if not rows:
+                return
+            yield bytes(rows[0]["data"])
+            n += 1
+
     def file(self, a: Actor, iid, i: int = 0) -> dict:
         """What GET /api/library/{id}/file serves: (mime, size, reader)."""
         d = self._row(a, iid)
@@ -346,7 +356,8 @@ class Library:
 
     def _file_of(self, d: dict, i: int = 0) -> dict:
         if d["storage"] == "chunks":
-            return {"mime": d["mime"], "size": int(d["size"] or 0), "read": lambda s, e: self._read(d["id"], s, e), "name": d["name"]}
+            return {"mime": d["mime"], "size": int(d["size"] or 0), "read": lambda s, e: self._read(d["id"], s, e), "name": d["name"],
+                    "iter": lambda: self._iter(d["id"])}
         toks = d["meta"].get("tokens") or [d["token"]]
         tok = toks[max(0, min(int(i or 0), len(toks) - 1))]
         m = self.store.q("SELECT mime, data, size FROM media WHERE token=?", (tok,))
@@ -453,7 +464,7 @@ def parse_range(header: str, size: int) -> tuple[int, int] | None:
 
 def add_routes(app, house, actor) -> None:
     from fastapi import Body, Request
-    from fastapi.responses import JSONResponse, Response
+    from fastapi.responses import Response, StreamingResponse
 
     lib = house.library
 
@@ -467,6 +478,8 @@ def add_routes(app, house, actor) -> None:
             s, e = rng
             e = min(e, s + 8 * MB - 1)  # one range answer reads at most 8 MB (players ask again for the rest)
             return Response(f["read"](s, e), status_code=206, media_type=f["mime"], headers={**headers, "Content-Range": f"bytes {s}-{e}/{size}"})
+        if f.get("iter"):
+            return StreamingResponse(f["iter"](), media_type=f["mime"], headers={**headers, "Content-Length": str(size)})
         return Response(f["read"](0, None), media_type=f["mime"], headers=headers)
 
     @app.get("/api/library")
@@ -504,4 +517,3 @@ def add_routes(app, house, actor) -> None:
         return lib.use(actor(request, write=True), iid, body or {})
 
     app.state.library_serve = serve
-    _ = JSONResponse  # imported for parity with the other route modules

@@ -542,6 +542,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # ------------------------------------------------------------ HuhQueue: media, brand kit, ledger, agent, calendar
     @app.get("/m/{token}", include_in_schema=False)
     def media(token: str, request: Request):
+        lib_item = house.library.by_token(token)
+        if lib_item:  # an uploaded Library file: read only the chunks a range asks for
+            return app.state.library_serve(house.library._file_of(lib_item), request, "public, max-age=86400")
         m = house.get_media(token)
         if not m:
             return JSONResponse({"error": "not found"}, status_code=404)
@@ -564,7 +567,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         a = actor(request, write=True)
         cap = reqlimits.DEMO_MEDIA_MAX if demo_guard.is_demo(a.uid) else reqlimits.MEDIA_MAX
         body = await reqlimits.read_json(request, cap)
-        return house.upload(a, str(body.get("name", "")), str(body.get("data", "")))
+        return house.upload(a, str(body.get("name", "")), str(body.get("data", "")), str(body.get("source", "upload")))
 
     @app.get("/api/brand")
     def brand_get(request: Request):
@@ -731,6 +734,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     brand_routes.add_routes(app, house, actor)
     from . import agent_routes  # agent brain, natural-language edits, onboarding, recommendations (UI = REST = MCP)
     agent_routes.add_routes(app, house, actor)
+    from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)
+    library_mod.add_routes(app, house, actor)
 
     # ------------------------------------------------------------ MCP
     mcp_oauth.add_mcp_oauth_routes(app, store, studio, s.public_url, lambda r: store.session(r.cookies.get(COOKIE)))
