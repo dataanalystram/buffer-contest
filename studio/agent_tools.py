@@ -109,8 +109,9 @@ CHANNEL_STYLE = {
 
 
 _URLISH = re.compile(r"https?://\S+|\b(?:www\.)?[\w-]+\.(?:com|ai|io|co|org|net|dev|app|be)/\S*|\b(?:x|twitter)\.com\b|/status/\d+", re.I)
-_ORDERS = re.compile(r"\b(?:search (?:it|for|online)|research|look (?:it )?up|post (?:it |this )?on|all (?:my |the )?channels|you can|"
-                     r"can you|please|make (?:a|me|it)|have a|reel post|instagram reel|insta(?:gram)? post|do that|online)\b", re.I)
+_ORDERS = re.compile(r"\b(?:search(?: it| for| online)?|research|look (?:it )?up|post (?:it |this )?on|all (?:my |the )?channels|you can|"
+                     r"can you|please|make (?:a|me|it)|have a|reel post|inst?a?g?ram reel|insta(?:gram)? post|do that|online|"
+                     r"every ?where|my channels)\b", re.I)
 
 
 def safe_headline(headline: str, prompt: str = "", fallbacks: tuple | list = ()) -> str:
@@ -122,8 +123,10 @@ def safe_headline(headline: str, prompt: str = "", fallbacks: tuple | list = ())
     for cand in [headline, *fallbacks]:
         h = _URLISH.sub(" ", str(cand or ""))
         h = re.sub(r"\s+", " ", h).strip(" -–—:;,.\"'“”")
-        if len(re.findall(r"\w{2,}", h)) < 2 or _ORDERS.search(h):
+        if len(re.findall(r"\w{2,}", h)) < 2:
             continue
+        if prompt and any(m.group(0).lower() in prompt.lower() for m in _ORDERS.finditer(h)):
+            continue  # the request's own wording ("search it", "post on all channels") is not a headline
         hw = re.findall(r"[a-z0-9$€£₹.%]+", h.lower())
         if pw and len(hw) >= 8 and " ".join(hw[:8]) in " ".join(pw):
             continue  # a long verbatim run of the prompt: their words, not a headline
