@@ -326,7 +326,7 @@ _DESC = {
     "POST /api/logout": "Sign this browser out", "GET /api/me": "The Buffer account and organization you are signed in as",
     "GET /api/session": "Whether this browser is connected, plus the CSRF token for writes",
     "GET /api/calendar": "Planner data: scheduled, sent, draft and waiting posts plus each channel's posting times",
-    "GET /api/channels": "Your Buffer channels with each network's limits", "GET /api/inbox": "The Inbox: what needs you, most urgent first",
+    "GET /api/channels": "Your Buffer channels with each network's limits", "GET /api/inbox": "The Inbox: approvals, failures and warnings, most urgent first",
     "GET /api/queue": "Posts in your Buffer queue", "POST /api/check": "Check a caption (and media) against your brand kit and Style Ledger rules",
     "POST /api/draft": "Read a link and draft one caption per channel (nothing is posted)", "POST /api/ideas": "Save an idea (title and text) to Buffer",
     "POST /api/media": "Upload an image or video (multipart; size checked before parsing)",
