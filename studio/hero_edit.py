@@ -133,15 +133,63 @@ def cutout(im: Image.Image, tol: int = 38, pad: int = 8) -> Image.Image | None:
         return None
     diff = ImageChops.difference(rgb, Image.new("RGB", rgb.size, mean)).convert("L")
     mask = diff.point(lambda v: 255 if v > tol else 0).filter(ImageFilter.MedianFilter(5))
-    box = mask.getbbox()
+    box = _main_object(mask)
     if not box or (box[2] - box[0]) * (box[3] - box[1]) < 0.04 * W * H:
         return None
     box = (max(0, box[0] - pad), max(0, box[1] - pad), min(W, box[2] + pad), min(H, box[3] + pad))
     # the object's own rectangle: keep everything inside the box solid, feather only the stage around it
     obj = rgb.crop(box).convert("RGBA")
-    m = mask.crop(box).filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(2))
+    # a tighter key inside the box (the soft glow around a product on a white stage is not the product), holes filled
+    # (a chip or a white logo on the product is the stage colour but inside the object), then a 1 px choke + feather
+    m = diff.crop(box).point(lambda v: 255 if v > max(tol, 70) else 0).filter(ImageFilter.MedianFilter(5))
+    m = _fill_holes(m).filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(1.2))
+    tight = m.point(lambda v: 255 if v > 128 else 0).getbbox()
     obj.putalpha(m)
-    return obj
+    return obj.crop(tight) if tight else obj
+
+
+def _fill_holes(m: Image.Image) -> Image.Image:
+    """Everything not reachable from the border through background becomes object."""
+    pad = Image.new("L", (m.width + 2, m.height + 2), 0)
+    pad.paste(m, (1, 1))
+    ImageDraw.floodfill(pad, (0, 0), 128)
+    return pad.crop((1, 1, m.width + 1, m.height + 1)).point(lambda v: 0 if v == 128 else 255)
+
+
+def _main_object(mask: Image.Image, size: int = 240) -> tuple[int, int, int, int] | None:
+    """The bounding box of the biggest solid blob in a stage mask: a product, not the lines of text printed next to it
+    (text lines are many thin, wide blobs). Connected components on a small copy, pure Python."""
+    W, H = mask.size
+    sw = size
+    sh = max(1, int(H * size / W))
+    sm = mask.resize((sw, sh), Image.BILINEAR).point(lambda v: 255 if v > 100 else 0).filter(ImageFilter.MinFilter(3))
+    px = sm.load()
+    seen = bytearray(sw * sh)
+    best, bbox = 0.0, None
+    for y0 in range(sh):
+        for x0 in range(sw):
+            if not px[x0, y0] or seen[y0 * sw + x0]:
+                continue
+            stack, n = [(x0, y0)], 0
+            seen[y0 * sw + x0] = 1
+            a0, b0, a1, b1 = x0, y0, x0, y0
+            while stack:
+                x, y = stack.pop()
+                n += 1
+                a0, b0, a1, b1 = min(a0, x), min(b0, y), max(a1, x), max(b1, y)
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if 0 <= nx < sw and 0 <= ny < sh and px[nx, ny] and not seen[ny * sw + nx]:
+                        seen[ny * sw + nx] = 1
+                        stack.append((nx, ny))
+            bw, bh = a1 - a0 + 1, b1 - b0 + 1
+            fill = n / (bw * bh)
+            score = n * fill * (0.3 if bw / bh > 4 else 1.0)  # a solid object beats a long thin line of text
+            if score > best:
+                best, bbox = score, (a0, b0, a1 + 1, b1 + 1)
+    if not bbox:
+        return None
+    fx, fy = W / sw, H / sh
+    return int(bbox[0] * fx), int(bbox[1] * fy), int(bbox[2] * fx), int(bbox[3] * fy)
 
 
 def rounded(im: Image.Image, r: int) -> Image.Image:
@@ -201,7 +249,7 @@ def avatar_row(photos: list[Image.Image], d: int, overlap: int = 26, ring: int =
 # ---------------------------------------------------------------------------------------------------- the recipe
 def premium_hero(w: int, h: int, *, scene: Image.Image | None = None, product: Image.Image | None = None,
                  founders: list[Image.Image] | None = None, ground=BLACK, kind: str = "auto", tilt: float = -6.0,
-                 fade_from: float | None = 0.62, product_y: float = 0.11, product_scale: float = 0.62,
+                 fade_from: float | None = 0.62, product_y: float = 0.12, product_scale: float = 0.56,
                  face: tuple | None = None) -> tuple[Image.Image, dict]:
     """The whole edit -> (hero image w x h, report of the steps it took). scene: the brand's own art or a photo;
     product: a product / card shot (cut out of its stage when it has one). With only a product image and no scene, the
@@ -228,7 +276,7 @@ def premium_hero(w: int, h: int, *, scene: Image.Image | None = None, product: I
         pw = int(w * product_scale)
         r = int(pw * 0.06) if kind in ("auto", "card") and 1.4 < obj.width / max(1, obj.height) < 1.9 else 0
         p, sh = product_shot(obj, pw, tilt=tilt, radius=r)
-        x = (w - p.width) // 2 + int(w * 0.04)
+        x = (w - p.width) // 2 + int(w * 0.03)
         y = int(h * product_y)
         canvas.alpha_composite(Image.new("RGBA", sh.size, (0, 0, 0, 0)), (0, 0))
         shadow = Image.new("RGBA", sh.size, (0, 0, 0, 255))
