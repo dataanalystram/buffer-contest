@@ -1,0 +1,25 @@
+name: longform-probe
+# TEMPORARY (feat/longform-clips): can a GitHub runner fetch the two test videos + their captions? Removed before merge.
+on:
+  push:
+    branches: [feat/longform-clips]
+    paths: [".github/workflows/longform-probe.yml", "scripts/longform_live.py"]
+permissions: {contents: read}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: pip install -q -U "yt-dlp>=2026.10.26"
+      - name: metadata + captions + small video
+        run: |
+          mkdir out && cd out
+          for v in QJf0H64BnFo u_bqAJdTAw4; do
+            for c in default web_embedded tv_simply android_vr mweb; do
+              echo "== $v $c"
+              if timeout 120 yt-dlp --extractor-args "youtube:player_client=$c" --no-playlist --write-subs --write-auto-subs --sub-langs "en.*" --sub-format vtt -f "b[height<=360]/b" -o "$v.%(ext)s" "https://www.youtube.com/watch?v=$v"; then echo "OK $v $c"; break; fi
+            done
+          done
+          ls -la
+      - uses: actions/upload-artifact@v4
+        with: {name: probe, path: out, retention-days: 3}
