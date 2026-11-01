@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 
 import base64
 import hmac
+import json
 import os
 
 from . import activity as activity_mod
@@ -632,13 +633,29 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                                       bool(body.get("override_warnings")))
 
     # Inbox: what needs a person, grouped by urgency (the home screen, the nav badge and MCP get_inbox)
+    def etagged(request: Request, data, ignore: tuple = ("now",)):
+        """Buffer reads are cached server-side per account (buffer_api.POSTS_TTL); an ETag lets the browser skip the body
+        too when nothing changed. ?refresh=1 (the Refresh buttons) re-reads Buffer once."""
+        import hashlib
+        body = {k: v for k, v in data.items() if k not in ignore} if isinstance(data, dict) else data
+        tag = '"' + hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:20] + '"'
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers={"ETag": tag})
+        return JSONResponse(data, headers={"ETag": tag, "Cache-Control": "private, no-cache"})
+
     @app.get("/api/inbox")
-    def inbox(request: Request):
-        return inbox_mod.build(studio, actor(request))
+    def inbox(request: Request, refresh: int = 0):
+        a = actor(request)
+        if refresh:
+            studio.buffer.refresh(a.uid)
+        return etagged(request, inbox_mod.build(studio, a))
 
     @app.get("/api/calendar")
-    def calendar(request: Request):
-        return house.calendar(actor(request))
+    def calendar(request: Request, refresh: int = 0):
+        a = actor(request)
+        if refresh:
+            studio.buffer.refresh(a.uid)
+        return etagged(request, house.calendar(a))
 
     # ------------------------------------------------------------ One take -> a week (UI = REST = MCP)
     @app.post("/api/takes")
@@ -712,6 +729,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # ------------------------------------------------------------ Brand studio + Sources agent (UI = REST = MCP)
     from . import brand_routes
     brand_routes.add_routes(app, house, actor)
+    from . import agent_routes  # agent brain, natural-language edits, onboarding, recommendations (UI = REST = MCP)
+    agent_routes.add_routes(app, house, actor)
 
     # ------------------------------------------------------------ MCP
     mcp_oauth.add_mcp_oauth_routes(app, store, studio, s.public_url, lambda r: store.session(r.cookies.get(COOKIE)))

@@ -32,6 +32,7 @@ MEDIA_STEPS = [("upload", "Read your media"), ("format", "Pick the format"), ("r
 MAX_UPLOAD = 40 * 1024 * 1024
 MAX_IMAGE_FETCH = 8 * 1024 * 1024
 VIDEO_ONLY = {"tiktok", "youtube"}
+STALE_RUN = int(os.environ.get("HQ_RUN_STALE", "900"))  # a run silent this long (seconds) is reported as stopped
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="house-agent")
 
 
@@ -47,6 +48,8 @@ class House:
         self.worker_mode = (os.environ.get("RENDER_WORKER") or self.s.extra.get("render_worker") or "").strip()
         from .takes import Takes
         self.takes = Takes(self)
+        from .agent_brain import Brain
+        self.brain = Brain(self)
 
     # ================================================================ brand kit
     def kit(self, a: Actor) -> dict:
@@ -327,6 +330,11 @@ class House:
 
     # ================================================================ agent runs
     def start_run(self, a: Actor, body: dict) -> dict:
+        from . import intake
+        q = str(body.get("query") or "")
+        if body.get("prompt") or body.get("brain") or intake.urls(q) or len(q) > 300:
+            # one prompt box: prose + links go to the agent brain (a pasted link is THE source, never a search)
+            return self.brain.start(a, body)
         self.studio._guard_write(a, "agent_run")
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
             raise ActionError(demo_guard.WHY["run"], 429)
@@ -368,7 +376,21 @@ class House:
         d = dict(rows[0])
         for k in ("input", "steps", "result"):
             d[k] = json.loads(d[k] or "null")
+        if d["status"] in ("running", "rendering") and d["updated"] < _now() - STALE_RUN and not self._busy(rid):
+            # the worker died, the server restarted mid-run or a callback never came: say so instead of spinning forever
+            why = "The agent stopped before finishing (the server restarted or a step timed out). Reply or press Retry to continue."
+            for s in d["steps"]:
+                if s["status"] in ("running", "pending"):
+                    s["status"], s["detail"] = "failed", why
+                    break
+            (d["result"] or {}).setdefault("thread", []).append({"role": "agent", "text": why, "at": _now()})
+            d["status"] = "failed"
+            self._save(rid, d["steps"], d["result"], "failed")
         return d
+
+    def _busy(self, rid: int) -> bool:
+        from . import agent_brain
+        return rid in agent_brain._running
 
     def runs(self, a: Actor, limit: int = 20) -> list[dict]:
         out = []
@@ -745,7 +767,7 @@ class House:
             return render.brand_video(self.get_media(spec["source"])["data"], spec["kit"], spec["params"], logo=logo,
                                       hook=spec.get("hook", ""), ratio=spec.get("ratio", "9:16"))
         slides = [self.get_media(t)["data"] for t in spec["slides"]]
-        return render.slideshow_reel(slides, spec["kit"], spec["params"], logo=logo, ratio=spec.get("ratio", "9:16"))
+        return render.slideshow_reel(slides, spec["kit"], spec["params"], logo=logo, ratio=spec.get("ratio", "9:16"), total=spec.get("total"))
 
     def _worker_allowed(self, uid: str) -> bool:
         """May this account start the GitHub render worker? Never for the free sample (SECURITY_RULES 3)."""
@@ -894,18 +916,33 @@ class House:
         a = Actor(job["user_id"])
         if error or not data:
             self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (error[:500] or "no output", _now(), jid))
-            if run_inline and job["run_id"]:
+            if run_inline and job["run_id"] and self._run_kind(job["run_id"]) != "agent":
                 run = self.run(a, job["run_id"])
                 self._step(run["steps"], "render", "failed", f"Video render failed: {error[:200]}")
                 self._save(job["run_id"], run["steps"], run["result"], "failed")
             return {"ok": False}
         tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta or {"type": "video"})
         self.store.x("UPDATE render_jobs SET status='done', media_token=?, updated=? WHERE id=?", (tok, _now(), jid))
-        if run_inline and job["run_id"]:
+        if run_inline and job["run_id"] and self._run_kind(job["run_id"]) != "agent":  # the agent brain waits on its own job
             self._spawn(self._resume_after_video, a, job["run_id"], jid)
         return {"ok": True, "token": tok}
 
+    def _run_kind(self, rid: int) -> str:
+        rows = self.store.q("SELECT kind FROM agent_runs WHERE id=?", (rid,))
+        return rows[0]["kind"] if rows else ""
+
     def _resume_after_video(self, a, rid, jid):
+        try:
+            self._resume_inner(a, rid, jid)
+        except Exception as e:  # the "hangs at Write captions" bug: an error here used to leave the run 'rendering' forever
+            traceback.print_exc()
+            run = self.run(a, rid)
+            cur = next((s for s in run["steps"] if s["status"] == "running"), None)
+            if cur:
+                self._step(run["steps"], cur["key"], "failed", f"{e.__class__.__name__}: {str(e)[:200]}")
+            self._save(rid, run["steps"], run["result"], "failed")
+
+    def _resume_inner(self, a, rid, jid):
         run = self.run(a, rid)
         steps, res, inp = run["steps"], run["result"], run["input"]
         res["media"] = [m for m in res["media"] if m.get("role") != "slide"] + [self._job_media(jid)]

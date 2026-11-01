@@ -89,6 +89,10 @@ def cost(model: str, source: str, tokens_in: int | None, tokens_out: int | None)
     if source == "free starter":
         return 0.0
     p = PRICES.get((model or "").lower())
+    if not p and "claude" in (model or "").lower():  # dated Claude ids price by family (budget.PRICES)
+        from . import budget
+        f = budget.PRICES[budget.family(model)]
+        p = (f[0], f[1])
     if not p or tokens_in is None or tokens_out is None:
         return None
     return round((tokens_in * p[0] + tokens_out * p[1]) / 1_000_000, 6)

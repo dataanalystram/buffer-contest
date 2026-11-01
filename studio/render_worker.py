@@ -108,7 +108,7 @@ def main(argv=None) -> int:
                                             ratio=spec.get("ratio", "9:16"))
         else:
             data, meta = render.slideshow_reel([get(u) for u in urls["slides"]], spec["kit"], spec["params"], logo=logo,
-                                               ratio=spec.get("ratio", "9:16"))
+                                               ratio=spec.get("ratio", "9:16"), total=spec.get("total"))
         r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h, json={"data": base64.b64encode(data).decode(), "meta": meta})
         print("posted", len(data), "bytes:", r.status_code, r.text[:200])
         return 0 if r.status_code == 200 else 1
