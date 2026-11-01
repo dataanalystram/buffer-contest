@@ -182,7 +182,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="leash">The leash</h2>
 <ul><li><b>Policy:</b> needs my approval (default), Buffer drafts only, or schedule without asking.</li><li><b>Daily cap</b> per token.</li><li><b>Kill switch:</b> <b>Pause all agents</b> on AI apps stops every agent at once. You can still post yourself.</li><li><b>Activity:</b> every action by you or an agent is logged.</li></ul>
 <h2 id="rest">REST</h2>
-<p>The endpoints the interface uses accept the same token as <code>Authorization: Bearer hq_…</code>. The reference is at <a href="/api/docs">/api/docs</a>.</p>"""),
+<p>The endpoints the interface uses accept the same token as <code>Authorization: Bearer hq_…</code>. The reference is at <a href="/docs/api">/docs/api</a>.</p>"""),
     ("security", "Security and privacy", "How your Buffer connection, data and agents are protected, and how to delete everything.", "activity", """
 <p>The short version: Buffer tokens are encrypted at rest and never reach the browser, the site loads only its own scripts, agents work on a leash, and one button deletes your data.</p>
 <ul><li><a href="/privacy">Privacy policy</a>: what we store, why, for how long, and subprocessors.</li><li><a href="/security">Security</a>: sign-in, browser policy, agents, server checks and how to report a problem.</li><li><a href="/terms">Terms of use</a>.</li></ul>
@@ -231,6 +231,7 @@ def _shots(key: str, title: str) -> str:
 
 def _layout(slug: str, title: str, desc: str, main: str) -> str:
     side = "".join(f'<li><a href="/docs/{s}"{" aria-current=page" if s == slug else ""}>{html.escape(t)}</a></li>' for s, t, *_ in PAGES)
+    side += f'<li><a href="/docs/api"{" aria-current=page" if slug == "api" else ""}>API reference</a></li>'
     url = f"{BASE}/docs/{slug}" if slug else f"{BASE}/docs"
     crumbs = {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
         {"@type": "ListItem", "position": 1, "name": "Docs", "item": f"{BASE}/docs"}] + (
@@ -250,7 +251,7 @@ def _layout(slug: str, title: str, desc: str, main: str) -> str:
 </head><body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="lg-top"><a class="brand" href="/" data-testid="brand"><img src="/static/brand/hb-mark-96.png" width="32" height="32" alt=""><span class="brand-text"><span class="name">HuhQueue</span><span class="built bt"><small>by HuhByte AI</small></span></span></a>
-<nav aria-label="Main"><a href="/docs" aria-current="page">Docs</a><a href="/api/docs">API</a><a href="/login">Connect Buffer</a><a class="btn sm" href="/demo" data-testid="docs-tour">Take the tour</a></nav></header>
+<nav aria-label="Main"><a href="/docs" aria-current="page">Docs</a><a href="/docs/api">API</a><a href="/login">Connect Buffer</a><a class="btn sm" href="/demo" data-testid="docs-tour">Take the tour</a></nav></header>
 <div class="dk">
 <aside class="dk-side" aria-label="Documentation">
   <form class="dk-search" role="search" action="/docs" method="get"><label class="sr" for="dq">Search the docs</label>
@@ -262,7 +263,7 @@ def _layout(slug: str, title: str, desc: str, main: str) -> str:
 <main id="main" class="dk-main" data-testid="docs">{main}</main>
 </div>
 <footer class="lg-foot"><span>HuhQueue by</span><img class="wm lt" src="/static/brand/hb-wordmark-light.png" width="333" height="64" alt="HuhByte AI"><img class="wm dk" src="/static/brand/hb-wordmark-dark.png" width="333" height="64" alt="HuhByte AI">
-<span>Built on the Buffer API, not affiliated with Buffer.</span><a href="/docs">Docs</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a><a href="https://github.com/dataanalystram/buffer-contest">Source code</a></footer>
+<span>Built on the Buffer API, not affiliated with Buffer.</span><a href="/docs">Docs</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a><a href="/docs/api">API</a><a href="https://github.com/dataanalystram/buffer-contest">Source code</a></footer>
 </body></html>"""
 
 
@@ -294,3 +295,145 @@ def page(slug: str) -> str | None:
 
 def missing() -> str:
     return _layout("", "Page not found", "That docs page does not exist.", '<h1>Page not found</h1><p class="dk-lede">That page does not exist. Try search, or start at <a href="/docs">the docs home</a>.</p>')
+
+
+# ---------------------------------------------------------------- API reference (/docs/api)
+# A first-party page, rendered on the server from the app's own OpenAPI schema and MCP tool list. It replaces FastAPI's
+# Swagger UI at /api/docs, which loads its script and CSS from a CDN and runs an inline script: the site's
+# Content-Security-Policy (script-src 'self') blocks both, so that page was blank and the footer's API link looked dead.
+_GROUPS = [  # (path prefix, section title)
+    ("/api/session", "Account and session"), ("/api/me", "Account and session"), ("/api/logout", "Account and session"),
+    ("/api/disconnect", "Account and session"), ("/api/device-link", "Account and session"),
+    ("/api/channels", "Channels and queue"), ("/api/queue", "Channels and queue"), ("/api/calendar", "Channels and queue"),
+    ("/api/inbox", "Channels and queue"),
+    ("/api/draft", "Posts"), ("/api/posts", "Posts"), ("/api/preflight", "Posts"), ("/api/check", "Posts"),
+    ("/api/media", "Posts"), ("/api/ideas", "Posts"),
+    ("/api/approvals", "Approvals"),
+    ("/api/agent", "Make a post (agent)"), ("/api/recommendations", "Make a post (agent)"), ("/api/onboarding", "Make a post (agent)"),
+    ("/api/takes", "One take"),
+    ("/api/radar", "News"), ("/api/sources", "News"), ("/api/news", "News"),
+    ("/api/brand", "Brand"), ("/api/templates", "Brand"), ("/api/ledger", "Brand"),
+    ("/api/ai", "AI engine"),
+    ("/api/agent-tokens", "AI apps, tokens and safety"), ("/api/safety", "AI apps, tokens and safety"),
+    ("/api/plan", "Limits"), ("/api/limits", "Limits"),
+    ("/api/activity", "Activity"), ("/api/audit", "Activity"),
+    ("/api/stats", "Public"), ("/healthz", "Public"),
+]
+# Plain-English line per endpoint; anything missing falls back to the route's OpenAPI summary (a test checks none is missing)
+_DESC = {
+    "POST /api/device-link": "One-time link (10 minutes, single use) to open this account on another device",
+    "POST /api/disconnect": "Disconnect Buffer and delete everything HuhQueue stored for you",
+    "POST /api/logout": "Sign this browser out", "GET /api/me": "The Buffer account and organization you are signed in as",
+    "GET /api/session": "Whether this browser is connected, plus the CSRF token for writes",
+    "GET /api/calendar": "Planner data: scheduled, sent, draft and waiting posts plus each channel's posting times",
+    "GET /api/channels": "Your Buffer channels with each network's limits", "GET /api/inbox": "The Inbox: what needs you, most urgent first",
+    "GET /api/queue": "Posts in your Buffer queue", "POST /api/check": "Check a caption (and media) against your brand kit and Style Ledger rules",
+    "POST /api/draft": "Read a link and draft one caption per channel (nothing is posted)", "POST /api/ideas": "Save an idea (title and text) to Buffer",
+    "POST /api/media": "Upload an image or video (multipart; size checked before parsing)",
+    "POST /api/posts/preview": "Validate a post for one channel and get a single-use confirm token",
+    "POST /api/posts/submit": "Submit exactly what the preview validated", "DELETE /api/posts/{post_id}": "Delete a Buffer post",
+    "PATCH /api/posts/{post_id}": "Edit a Buffer post's text or time", "POST /api/posts/{post_id}/reschedule": "Move a post to a new time",
+    "POST /api/preflight": "Dry-run a post against every chosen channel's Buffer and network rules",
+    "POST /api/preflight/fix": "Apply preflight fixes (trim, crop, recompress) for one channel",
+    "GET /api/preflight/rules": "The preflight rule pack with the official doc each rule comes from",
+    "GET /api/approvals": "Posts waiting for a person to approve", "POST /api/approvals/{approval_id}/approve": "Approve a waiting post; it goes to Buffer",
+    "POST /api/approvals/{approval_id}/reject": "Reject a waiting post", "POST /api/approvals/{approval_id}/reschedule": "Change a waiting post's time",
+    "GET /api/agent/brain": "Status of the post agent's AI engine", "GET /api/agent/runs": "Your recent Make a post runs",
+    "POST /api/agent/runs": "Start a Make a post run from a topic, a link or your media",
+    "GET /api/agent/runs/{rid}": "One run: its timeline, AI calls, cost and the post per channel",
+    "POST /api/agent/runs/{rid}/messages": "Tell a run what to change, in plain words", "POST /api/agent/runs/{rid}/packages/{channel_id}": "Edit one channel's post in a run",
+    "POST /api/agent/runs/{rid}/packages/{channel_id}/schedule": "Send one channel's post to Buffer (or to approval)",
+    "POST /api/agent/runs/{rid}/revise": "Revise a run with a correction (it becomes a Style Ledger rule)",
+    "POST /api/agent/runs/{rid}/tools/{name}": "Run one agent tool inside a run", "GET /api/onboarding": "Setup answers so far",
+    "PUT /api/onboarding": "Save setup answers", "GET /api/recommendations": "Stories recommended for your brand",
+    "GET /api/takes": "Your One take runs", "POST /api/takes": "Start a One take: one long video into clips",
+    "POST /api/takes/sample": "Run One take on the sample talk", "GET /api/takes/{rid}": "One take run with its clips",
+    "PATCH /api/takes/{rid}/clips/{clip_id}": "Adjust a clip's start, end or caption", "POST /api/takes/{rid}/place": "Place the clips into your Buffer week",
+    "GET /api/radar": "The For you news feed", "POST /api/radar/feeds": "Follow a feed", "DELETE /api/radar/feeds/{feed_id}": "Unfollow a feed",
+    "GET /api/sources": "Story scan sources and settings", "POST /api/sources/draft": "Write posts for the picked stories",
+    "GET /api/sources/runs/{rid}": "One story scan run", "POST /api/sources/scan": "Scan every source you turned on",
+    "POST /api/sources/settings": "Turn sources on or off", "GET /api/brand": "Your brand kit and Style Ledger rules", "POST /api/brand": "Save your brand kit",
+    "GET /api/brand-studio": "Your brand kit, cards and templates", "POST /api/brand-studio": "Save the brand kit and cards",
+    "GET /api/brand-studio/examples": "The example brands", "POST /api/brand-studio/examples/{example_id}": "Use an example brand",
+    "POST /api/brand-studio/preview": "Live preview of a template in your kit", "POST /api/brand/edit": "Change the brand in plain words",
+    "POST /api/brand/from-website": "Import logo, colours and fonts from your website", "POST /api/brand/preview": "Preview the brand kit as rendered cards",
+    "POST /api/ledger": "Add a Style Ledger rule", "DELETE /api/ledger/{rule_id}": "Delete a Style Ledger rule",
+    "POST /api/ledger/{rule_id}": "Turn a Style Ledger rule on or off (people only)", "GET /api/templates": "The templates you can render",
+    "GET /api/templates/recap": "This week's recap stories from your posts", "POST /api/templates/render": "Render a template for your channels",
+    "GET /api/templates/slots": "Recurring template slots", "POST /api/templates/slots": "Add a recurring slot", "DELETE /api/templates/slots/{sid}": "Delete a recurring slot",
+    "POST /api/templates/slots/{sid}/run": "Run a recurring slot now", "GET /api/templates/video/{jid}": "Status of a template video render",
+    "GET /api/ai": "Your AI engine settings (keys never returned)", "POST /api/ai": "Save your AI engine and key",
+    "POST /api/agent-tokens": "Create an agent token (shown once)", "DELETE /api/agent-tokens/{token_id}": "Revoke an agent token",
+    "GET /api/safety": "Kill switch and daily caps", "POST /api/safety/kill": "Pause or resume every agent (people only)",
+    "GET /api/limits": "Your Buffer API budget right now", "GET /api/plan": "Your Buffer plan's limits",
+    "GET /api/activity": "Activity log, newest first (tabs, filters, cursor)", "GET /api/activity/export.csv": "Activity log as CSV",
+    "GET /api/audit": "Audit log of writes", "GET /api/stats": "Public counters for the home page", "GET /healthz": "Uptime check",
+}
+_ORDER = ["Account and session", "Channels and queue", "Posts", "Approvals", "Make a post (agent)", "One take", "News", "Brand",
+          "AI engine", "AI apps, tokens and safety", "Limits", "Activity", "Public", "Other"]
+_PUBLIC = ("/healthz", "/api/stats")
+
+
+def _group(path: str) -> str:
+    best = ""
+    title = "Other"
+    for pre, t in _GROUPS:
+        if (path == pre or path.startswith(pre + "/") or path.startswith(pre + "-")) and len(pre) > len(best):
+            best, title = pre, t
+    return title
+
+
+def api_endpoints(schema: dict) -> list[dict]:
+    out = []
+    for path, ops in (schema.get("paths") or {}).items():
+        for method, op in ops.items():
+            if method.upper() not in ("GET", "POST", "PUT", "PATCH", "DELETE") or path == "/mcp":  # /mcp has its own section
+                continue
+            params = [p.get("name", "") for p in op.get("parameters") or [] if p.get("in") in ("query", "path")]
+            out.append({"method": method.upper(), "path": path, "summary": _DESC.get(f"{method.upper()} {path}") or op.get("summary") or "", "described": f"{method.upper()} {path}" in _DESC, "group": _group(path),
+                        "params": params, "body": bool(op.get("requestBody")), "public": path in _PUBLIC})
+    out.sort(key=lambda e: (_ORDER.index(e["group"]) if e["group"] in _ORDER else 99, e["path"], e["method"]))
+    return out
+
+
+def api_page(schema: dict, tools: list[dict]) -> str:
+    eps = api_endpoints(schema)
+    groups: dict[str, list[dict]] = {}
+    for e in eps:
+        groups.setdefault(e["group"], []).append(e)
+    gid = lambda t: re.sub(r"[^a-z0-9]+", "-", t.lower()).strip("-")
+    secs = []
+    for title, rows in groups.items():
+        trs = "".join(
+            f'<tr data-testid="api-endpoint"><td><span class="api-m m-{e["method"].lower()}">{e["method"]}</span></td>'
+            f'<td><code>{html.escape(e["path"])}</code></td><td>{html.escape(e["summary"])}'
+            + (f'<br><small>Parameters: {", ".join(f"<code>{html.escape(p)}</code>" for p in e["params"])}</small>' if e["params"] else "")
+            + (' <small>JSON body.</small>' if e["body"] and e["path"] != "/api/media" else "")
+            + f'</td><td>{"None" if e["public"] else ("Session or token" if e["method"] == "GET" else "Session + CSRF, or token")}</td></tr>'
+            for e in rows)
+        secs.append(f'<h2 id="{gid(title)}">{html.escape(title)}</h2><div class="dk-table"><table><thead><tr><th>Method</th><th>Path</th>'
+                    f'<th>What it does</th><th>Auth</th></tr></thead><tbody>{trs}</tbody></table></div>')
+    tool_rows = "".join(f'<tr data-testid="api-mcp-tool"><td><code>{html.escape(t.get("name", ""))}</code></td>'
+                        f'<td>{html.escape((t.get("description") or "").split(". ")[0].rstrip("."))}.</td></tr>' for t in tools)
+    body = f"""
+<h2 id="auth">Authentication</h2>
+<p>Two ways in, and every endpoint below accepts both unless it says <i>None</i>.</p>
+<ul><li><b>From a script or agent:</b> create a token on <b>AI apps</b> in the app and send <code>Authorization: Bearer hq_…</code>. Tokens are shown once and stored only as a hash. Each token has a policy (needs approval, Buffer drafts only, or schedule), a daily cap, and obeys the kill switch.</li>
+<li><b>From the browser:</b> the session cookie set when you connect Buffer. Writes (POST) also need the <code>X-HQ-CSRF</code> header, whose value comes from <code>GET /api/session</code>.</li></ul>
+<pre class="code">export HUHQUEUE_TOKEN=hq_…   # from AI apps
+curl -H "Authorization: Bearer $HUHQUEUE_TOKEN" {BASE}/api/channels</pre>
+<p>Errors come back as JSON <code>{{"error": "…"}}</code> with the HTTP status. A 429 from Buffer passes its <code>Retry-After</code> on.</p>
+<h2 id="mcp">MCP endpoint</h2>
+<p><code>POST {BASE}/mcp</code> speaks the Model Context Protocol (JSON-RPC over streamable HTTP). Claude, ChatGPT and Grok sign in with OAuth (discovery at <code>/.well-known/oauth-protected-resource</code>); Claude Code, Codex, Cursor and scripts send the same bearer token. See <a href="/docs/agents">AI apps over MCP</a> for per-app setup.</p>
+<pre class="code">curl -X POST {BASE}/mcp -H "Authorization: Bearer $HUHQUEUE_TOKEN" \\
+  -H "Content-Type: application/json" -d '{{"jsonrpc":"2.0","id":1,"method":"tools/list"}}'</pre>
+<details class="api-tools"><summary>The {len(tools)} MCP tools</summary><div class="dk-table"><table><thead><tr><th>Tool</th><th>What it does</th></tr></thead><tbody>{tool_rows}</tbody></table></div></details>
+<h2 id="schema">OpenAPI schema</h2>
+<p>The machine-readable schema is at <a href="/openapi.json">/openapi.json</a> (OpenAPI 3). Import it into Postman, Insomnia or a code generator.</p>
+{''.join(secs)}"""
+    toc = ('<li><a href="#auth">Authentication</a></li><li><a href="#mcp">MCP endpoint</a></li><li><a href="#schema">OpenAPI schema</a></li>'
+           + "".join(f'<li><a href="#{gid(t)}">{html.escape(t)}</a></li>' for t in groups))
+    main = (f'<p class="eyebrow"><a href="/docs">Docs</a></p><h1 data-testid="api-title">API reference</h1>'
+            f'<p class="dk-lede">Everything the app does is a REST endpoint and an MCP tool. {len(eps)} endpoints, {len(tools)} MCP tools, one token.</p>'
+            f'<nav class="dk-toc" aria-label="On this page"><ul>{toc}</ul></nav><article class="dk-body" data-testid="api-reference">{body}</article>')
+    return _layout("api", "API reference", "HuhQueue REST endpoints, the MCP endpoint and its tools, and how to authenticate with a token or a session.", main)

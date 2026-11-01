@@ -165,7 +165,7 @@ claude mcp add --transport http huhqueue https://huhqueue-studio.onrender.com/mc
 ```
 
 Tools: `get_inbox`, `clips_from_video`, `list_clips`, `adjust_clip`, `place_clips_in_week`, `whoami`, `list_channels`, `draft_from_link`, `preflight_post`, `autofix_post`, `list_rules`, `preview_post`, `submit_post`, `list_approvals`, `list_queue`, `update_post`, `reschedule_post`, `delete_draft`, `list_calendar`, `list_stories`, `create_idea`, `get_limits`, plus the agent tools `run_agent`, `edit_media`, `get_run`, `revise`, `remember_rule`, `brand_check`, `get_brand`, `schedule_package`.
-The REST API (`/api/docs`) accepts the same bearer token, so UI = API = MCP (a test asserts all three send Buffer the identical `createPost` input).
+The REST API (reference at `/docs/api`) accepts the same bearer token, so UI = API = MCP (a test asserts all three send Buffer the identical `createPost` input).
 
 ## Run it yourself
 

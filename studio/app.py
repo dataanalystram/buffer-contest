@@ -50,7 +50,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     print(f"activity retention: {activity_mod.RETENTION_DAYS} days; {activity_mod.purge(store)}", flush=True)
     buffer = BufferClient(s, store, http=http)
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
-    app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url="/api/docs", redoc_url=None)
+    # docs_url=None: Swagger UI needs a CDN script and an inline script, which the CSP (script-src 'self') blocks, so it
+    # rendered blank. /docs/api is our own server-rendered reference; /api/docs redirects there.
+    app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url=None, redoc_url=None)
     house = house_mod.House(studio, http=http)
     studio.house = house
     app.state.settings, app.state.store, app.state.buffer, app.state.studio, app.state.house = s, store, buffer, studio, house
@@ -203,7 +205,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.get("/robots.txt", include_in_schema=False)
     def robots():
-        body = ("User-agent: *\nAllow: /\nAllow: /docs\nAllow: /privacy\nAllow: /terms\nAllow: /security\nAllow: /api/docs\n"
+        body = ("User-agent: *\nAllow: /\nAllow: /docs\nAllow: /privacy\nAllow: /terms\nAllow: /security\nAllow: /docs/api\n"
                 "Disallow: /api/\nDisallow: /mcp\nDisallow: /callback\nDisallow: /login\nDisallow: /demo\nDisallow: /device/\n"
                 "Disallow: /oauth/\nDisallow: /m/\n"
                 f"Sitemap: {s.public_url}/sitemap.xml\n")
@@ -212,7 +214,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/sitemap.xml", include_in_schema=False)
     def sitemap():
         from . import docs as docs_mod
-        urls = ["/", *[f"/docs/{d}" if d else "/docs" for d in docs_mod.slugs()], "/privacy", "/terms", "/security", "/api/docs"]
+        urls = ["/", *[f"/docs/{d}" if d else "/docs" for d in docs_mod.slugs()], "/docs/api", "/privacy", "/terms", "/security"]
         body = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "".join(
             f"  <url><loc>{s.public_url}{u}</loc><lastmod>{docs_mod.LASTMOD}</lastmod></url>\n" for u in urls) + "</urlset>\n"
         return Response(body, media_type="application/xml")
@@ -221,6 +223,17 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def docs_search():
         from . import docs as docs_mod
         return JSONResponse(docs_mod.search_index(), headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/docs/api", include_in_schema=False)
+    def api_reference():
+        from . import docs as docs_mod
+        from . import mcp as mcp_mod
+        return Response(docs_mod.api_page(app.openapi(), mcp_mod.TOOLS), media_type="text/html",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/api/docs", include_in_schema=False)
+    def api_docs_moved():
+        return RedirectResponse("/docs/api", 308)
 
     @app.get("/docs", include_in_schema=False)
     @app.get("/docs/{slug}", include_in_schema=False)
