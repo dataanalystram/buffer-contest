@@ -112,6 +112,15 @@ studio/brand_examples/buffer/mark.png  (third-party trademark, used for a labell
   What:     the "Buffer (concept example)" brand in the sample workspace. Every render says "Concept example, not
             affiliated with Buffer". Buffer's name and logo are trademarks of Buffer, Inc.
 
+studio/hbstyle.py  (ported from the owner's own code; same copyright holder)
+  Source:   dataanalystram/Huhbyte.ai @ 49d0b5648f2c938482735123c11da2689e199189 - code/hb.py (cover_slide, text_slide,
+            facts_slide, reel_overlay_png, end_card_png). https://github.com/dataanalystram/Huhbyte.ai (private repository)
+  Licence:  the HuhByte AI pipeline is the project owner's own work (Copyright (c) 2026 Ram Prasad Somaraju), relicensed
+            here under this repository's MIT License by its owner.
+  What:     the HuhByte editorial look (hero photo band, circular inset, divider, Anton headline, accent-dot fact slides,
+            Reel overlay band, end card), ported and generalised: colours, fonts, handle, logo and end-card line come
+            from the brand kit and Style Ledger, and every text block goes through an auto-fit that never clips.
+
 studio/brand_examples/huhbyte/logo.png  (the owner's own brand)
   Source:   https://github.com/dataanalystram/Huhbyte.ai code/brand/logo.png
 
