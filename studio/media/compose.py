@@ -226,7 +226,7 @@ def cover_card(path: str, W: int, H: int, brand: dict, hook: str, still: Image.I
     bb, _ = _text_block(d, hook, brand["head_font"], hook_box, max_size=150, min_size=40, max_lines=4, upper=True,
                         accent_words=accent_words, accent=brand["accent"], valign="bottom")
     boxes["hook"] = bb
-    boxes["label"] = _pill(d, label, (l + r) // 2, bb[3] + int(H * 0.025), brand, size=30)
+    boxes["label"] = _pill(d, label, (l + r) // 2, bb[3] + int(H * 0.03), brand, size=30)  # clear gap under the last line
     im.save(path)
     return boxes
 
