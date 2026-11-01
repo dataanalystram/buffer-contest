@@ -11,7 +11,7 @@ from studio import take
 from studio.media import longform as L
 from studio.media import subtitles as S
 
-SAMPLE = json.loads((Path(__file__).resolve().parents[2] / "studio" / "sample_take" / "sample.json").read_text())
+SAMPLE = json.loads((Path(__file__).parent / "fixtures" / "nasa_take.json").read_text())
 WORDS = SAMPLE["analysis"]["words"]          # the NASA talk the owner split before (public domain), 179 s
 
 

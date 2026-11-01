@@ -175,7 +175,8 @@ class Takes:
         return self.get(a, rid)
 
     def start_sample(self, a: Actor, body: dict | None = None) -> dict:
-        """The sample take: a 3-minute public-domain talk, analysed and rendered ahead of time by the same pipeline.
+        """The sample take: Buffer's 89-minute Buffer Commit kickoff Q&A (credited), split into 5 clips ahead of time by the same
+        pipeline on the GitHub worker (scripts/demo_buffer_split.py).
         Mining, preflight and placement run live. It needs no worker and no Buffer."""
         self.h.studio._guard_write(a, "clips_from_video")
         from . import demo_guard

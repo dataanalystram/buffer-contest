@@ -13,7 +13,8 @@ from studio import actions, take, takes
 
 from .conftest import CHANNELS, agent_token, mcp_call
 
-SAMPLE = json.loads((Path(takes.SAMPLE_DIR) / "sample.json").read_text())
+SAMPLE = json.loads((Path(__file__).parent / "fixtures" / "nasa_take.json").read_text())  # the NASA talk, word level
+BUNDLE = json.loads((Path(takes.SAMPLE_DIR) / "sample.json").read_text())  # the bundled sample take (Buffer kickoff, 5 clips)
 WORDS = SAMPLE["analysis"]["words"]
 ANALYSIS = {**SAMPLE["analysis"], "faces": []}
 
@@ -190,24 +191,25 @@ def demo(client):
 
 def test_sample_take_end_to_end_in_the_demo_drafts_only(demo):
     t = demo.post("/api/takes/sample", json={}).json()
-    assert t["status"] == "ready" and t["sample"] and len(t["clips"]) == 3
+    assert t["status"] == "ready" and t["sample"] and len(t["clips"]) == 5
+    assert "Video: Buffer" in t["steps"][0]["detail"]                                       # credited
     assert [s["status"] for s in t["steps"]][-1] == "done"
     assert t["input"]["channels"] == [{"id": "demo_ig", "service": "instagram", "name": "brightdesk.news"}]
     for c in t["clips"]:
         assert c["url"].startswith("https://hq.test/sample/clip") and c["cover_url"].endswith(".jpg")
         pf = c["preflight"]["demo_ig"]
-        assert pf["status"] == "ok" and "720×1280" in pf["chip"]               # measured by the worker, not re-probed
+        assert pf["status"] == "ok" and "1080×1920" in pf["chip"]               # measured by the worker, not re-probed
         assert c["post_captions"]["instagram"].startswith("“")
     assert demo.get("/sample/clip1.mp4").headers["content-type"] == "video/mp4"
     assert demo.get("/sample/../store.py").status_code == 404
     before = len(demo.get("/api/calendar").json()["items"])
     dry = demo.post(f"/api/takes/{t['id']}/place", json={"dry_run": True}).json()
     plan = dry["plan"]
-    assert dry["dry_run"] and dry["confirm_token"].startswith("cf_") and len(plan["placements"]) == 3
+    assert dry["dry_run"] and dry["confirm_token"].startswith("cf_") and len(plan["placements"]) == 5
     assert len(demo.get("/api/calendar").json()["items"]) == before                    # a dry run creates nothing
-    assert len({p["day"] for p in plan["placements"]}) == 3
+    assert len({p["day"] for p in plan["placements"]}) == 5
     out = demo.post(f"/api/takes/{t['id']}/place", json={"confirm_token": dry["confirm_token"]}).json()
-    assert out["placed"] == 3 and out["failed"] == 0 and "drafts" in out["message"]
+    assert out["placed"] == 5 and out["failed"] == 0 and "drafts" in out["message"]
     items = demo.get("/api/calendar").json()["items"]
     new = [i for i in items if i["state"] == "draft" and i["type"] == "video"]
     assert sorted(i["when"] for i in new) == sorted(p["at"] for p in plan["placements"])
@@ -226,7 +228,7 @@ def test_sample_clip_caption_edit_works_but_trim_needs_a_worker(demo):
     r = demo.patch(f"/api/takes/{t['id']}/clips/c2", json={"caption": "Biofilms, explained in 30 seconds.", "service": "instagram"})
     assert r.status_code == 200
     assert next(c for c in r.json()["clips"] if c["id"] == "c2")["post_captions"]["instagram"] == "Biofilms, explained in 30 seconds."
-    r = demo.patch(f"/api/takes/{t['id']}/clips/c2", json={"start_ms": 72000})
+    r = demo.patch(f"/api/takes/{t['id']}/clips/c2", json={"start_ms": int(BUNDLE["moments"][1]["start"] * 1000) + 1000})
     assert r.status_code == 409 and "worker" in r.json()["error"]
     r = demo.patch(f"/api/takes/{t['id']}/clips/c2", json={"hook": "The most amazing breakthrough ever"})
     assert r.status_code == 400 and "extract, don't invent" in r.json()["error"]
@@ -243,17 +245,17 @@ def test_agent_spread_is_two_step_and_review_tokens_go_to_the_approval_inbox(dem
     assert [key(p) for p in dry["plan"]["placements"]] == [key(p) for p in rest["plan"]["placements"]]   # MCP = REST
     assert "Approvals" in dry["on_confirm"]
     res, out = mcp_call(demo, tok, "place_clips_in_week", {"take_id": t["id"], "confirm_token": dry["confirm_token"]}, mid=3)
-    assert out["placed"] == 3 and {r["status"] for r in out["results"]} == {"pending_approval"}
+    assert out["placed"] == 5 and {r["status"] for r in out["results"]} == {"pending_approval"}
     pend = demo.get("/api/approvals").json()
     clip_appr = [a for a in pend if a["payload"]["mode"] == "draft" and a["payload"].get("due_at")]
-    assert len(clip_appr) == 3
+    assert len(clip_appr) == 5
     sent = demo.post(f"/api/approvals/{clip_appr[0]['id']}/approve", json={}).json()
     assert sent["status"] == "sent_to_buffer" and sent["post"]["status"] == "draft"                # approved -> a draft
     # list_clips over MCP mirrors GET /api/takes
     res, lst = mcp_call(demo, tok, "list_clips", {}, mid=4)
     assert lst["takes"][0]["id"] == t["id"]
     res, one = mcp_call(demo, tok, "list_clips", {"take_id": t["id"]}, mid=5)
-    assert [c["id"] for c in one["clips"]] == ["c1", "c2", "c3"] and "words" not in one["clips"][0]
+    assert [c["id"] for c in one["clips"]] == ["c1", "c2", "c3", "c4", "c5"] and "words" not in one["clips"][0]
 
 
 def test_mcp_lists_the_one_take_tools(demo):
@@ -262,7 +264,7 @@ def test_mcp_lists_the_one_take_tools(demo):
     names = {x["name"] for x in r["result"]["tools"]}
     assert {"clips_from_video", "list_clips", "adjust_clip", "place_clips_in_week"} <= names
     res, t = mcp_call(demo, tok, "clips_from_video", {"sample": True}, mid=2)
-    assert t["status"] == "ready" and len(t["clips"]) == 3
+    assert t["status"] == "ready" and len(t["clips"]) == 5
 
 
 # ---------------------------------------------------------------- starting a real take: guards
