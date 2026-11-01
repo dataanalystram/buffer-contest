@@ -19,7 +19,8 @@ jobs:
       - run: pip install -q -r requirements-worker.txt
       - name: YouTube from a runner (Buffer Commit kickoff, QJf0H64BnFo)
         continue-on-error: true
-        run: python scripts/longform_live.py --url "https://www.youtube.com/watch?v=QJf0H64BnFo" --prompt "split this into 5 shorts" --credit "Video: Buffer on YouTube" --out out/buffer
+        run: |
+          python scripts/longform_live.py --url "https://www.youtube.com/watch?v=QJf0H64BnFo" --prompt "split this into 5 shorts" --credit "Video: Buffer on YouTube" --out out/buffer
       - name: NASA talk (images.nasa.gov GRC-2016-CM-0129.11, public domain) with NASA's own VTT
         run: |
           mkdir -p in && curl -sSL -o in/nasa.mp4 "https://images-assets.nasa.gov/video/GRC-2016-CM-0129.11/GRC-2016-CM-0129.11~large.mp4"
