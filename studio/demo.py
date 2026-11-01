@@ -93,6 +93,14 @@ SAMPLE_ACTIVITY = [  # (minutes ago, actor, action, category, ok, detail, extra 
     (90, "you", "ai_call", "agent", True, {"task": "draft captions"},
      {"surface": "ui", "app": "huhqueue", "provider": "groq", "model": "llama-3.3-70b-versatile", "tokens_in": 1200, "tokens_out": 340,
       "cost_usd": 0.000977}),
+    # one sample Make a post run: five model calls the Inbox folds into "HuhQueue agent made a post · 5 AI calls"
+    *[(m, "you", "ai_call", "agent", True, {"for": f, "run": "sample-run"},
+       {"surface": "ui", "app": "huhqueue-agent", "provider": "anthropic", "model": mdl, "tokens_in": ti, "tokens_out": to, "cost_usd": c})
+      for m, f, mdl, ti, to, c in ((24, "research the story", "claude-sonnet-4-5", 6200, 540, 0.0267),
+                                   (23, "check other outlets", "claude-haiku-4-5", 3100, 220, 0.0042),
+                                   (22, "plan the post", "claude-sonnet-4-5", 4800, 610, 0.0236),
+                                   (21, "write captions per channel", "claude-sonnet-4-5", 5400, 980, 0.0309),
+                                   (20, "check against the Style Ledger", "claude-haiku-4-5", 2600, 180, 0.0035))],
     (60, "system", "buffer_token_refreshed", "system", True, {}, {"surface": "system"}),
     (45, "system", "buffer_api", "system", True, {"op": "query channels", "status": 200}, {"surface": "system"}),
     (44, "system", "buffer_api", "system", True, {"op": "query posts", "status": 200}, {"surface": "system"}),

@@ -143,7 +143,7 @@ class Brain:
         with _rlock:
             _running.add(rid)
         # Activity labels this run's model calls "HuhQueue agent" (Make a post), not the Sources agent
-        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent"})
+        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
         tools = Tools(self.h, a, rid)
         try:
             engs = brain_llm.engines(self.store, a.uid, self.h.s, self.h.http, demo=tools.demo)

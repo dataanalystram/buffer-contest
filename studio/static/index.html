@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="/static/activity.css">
 <link rel="stylesheet" href="/static/brandstudio.css">
 <link rel="stylesheet" href="/static/ux3.css">
+<link rel="stylesheet" href="/static/layout.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -402,7 +403,7 @@
             <div><button class="btn" data-testid="create-token" type="submit">Create token</button></div>
           </form>
           <div id="tokenReveal" data-testid="token-reveal" hidden></div>
-          <p class="muted sm">Plain REST works too: send <code>Authorization: Bearer hq_…</code> to the same endpoints the app uses. <a href="/api/docs" target="_blank" rel="noopener">API reference</a></p>
+          <p class="muted sm">Plain REST works too: send <code>Authorization: Bearer hq_…</code> to the same endpoints the app uses. <a href="/docs/api" target="_blank" rel="noopener">API reference</a></p>
         </details>
       </div>
       <div class="tab" id="tab-activity" hidden>
@@ -465,11 +466,13 @@
 <footer class="foot"><div class="wrap foot-in">
   <span class="foot-brand"><span>HuhQueue by</span><img class="wm lt" src="/static/brand/hb-wordmark-light.png" width="333" height="64" alt="HuhByte AI"><img class="wm dk" src="/static/brand/hb-wordmark-dark.png" width="333" height="64" alt="HuhByte AI"></span>
   <span>An independent open-source project built on the Buffer API. Not affiliated with or endorsed by Buffer.</span>
-  <span class="foot-links"><a href="/docs">Docs</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a><a id="repoLink" href="https://github.com/dataanalystram/buffer-contest" target="_blank" rel="noopener">Source code</a></span></div></footer>
+  <span class="foot-links"><a href="/docs">Docs</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a><a href="/docs/api" data-testid="foot-api">API</a><a id="repoLink" href="https://github.com/dataanalystram/buffer-contest" target="_blank" rel="noopener">Source code</a></span></div></footer>
 <div id="toast" data-testid="toast" role="status" aria-live="polite" hidden></div>
 <script src="/static/oauth-open.js"></script>
 <script src="/static/ai-logos.js"></script>
 <script src="/static/ai-mark.js"></script>
+<script src="/static/net-logos-data.js"></script>
+<script src="/static/net-logos.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/house.js"></script>
 <script src="/static/planner.js"></script>

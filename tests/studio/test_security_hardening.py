@@ -251,7 +251,7 @@ def test_app_boot_migrates_and_logs_counts_only(tmp_path, capsys):
 
 # ------------------------------------------------------------------ sweep: every route is authenticated or listed public
 PUBLIC = {  # path -> why it is open to anyone
-    "/openapi.json": "API description (open source)", "/api/docs": "Swagger UI", "/docs/oauth2-redirect": "Swagger helper",
+    "/openapi.json": "API description (open source)", "/api/docs": "redirects to /docs/api", "/docs/api": "API reference page",
     "/": "landing / app shell", "/privacy": "privacy notice", "/static/{name}": "static assets", "/api/stats": "public counters",
     "/static/examples/{brand}/{name}": "pre-rendered example brand gallery (committed files)",
     "/static/{name:path}": "static assets (nested: fonts, brand, docs shots)", "/app": "app shell; redirects to / when signed out",
