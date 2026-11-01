@@ -335,7 +335,8 @@ def _overlay(style: str, W: int, H: int, brand: dict, hook: str, credit: str, L:
 
 # ------------------------------------------------------------------------------------------------ encode helpers
 def _venc(crf: int, preset: str) -> list[str]:
-    # identical settings for every segment so the concat demuxer can join them without re-encoding
+    # identical settings for every segment (no per-segment -tune: the joined MP4 keeps only the FIRST segment's SPS/PPS,
+    # so a stillimage-tuned card made the following segments decode black in testing)
     return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-r", str(FPS),
             "-profile:v", "high", "-threads", os.environ.get("HQ_FFMPEG_THREADS", "2"), "-video_track_timescale", "15360"]
 
@@ -343,7 +344,7 @@ def _venc(crf: int, preset: str) -> list[str]:
 def _card_segment(png: str, secs: float, out: str, crf: int, preset: str, fade: bool = True) -> str:
     vf = f"fps={FPS},format=yuv420p,setsar=1" + (",fade=t=in:st=0:d=0.25" if fade else "")
     ff.run(["-y", "-v", "error", "-loop", "1", "-framerate", str(FPS), "-t", f"{secs:.3f}", "-i", png, "-vf", vf, "-an",
-            *_venc(crf, preset), "-tune", "stillimage", out], timeout=600)
+            *_venc(crf, preset), out], timeout=600)
     return out
 
 
