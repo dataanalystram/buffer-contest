@@ -277,7 +277,10 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
             from . import activity
             activity.note(model_hint=str(meta.get("model") or meta.get("huhqueue/model"))[:80])
         name, args = p.get("name", ""), p.get("arguments") or {}
-        if name in _cb.SERVER_AI_TOOLS and not (isinstance(args, dict) and args.get("server_ai") is True):
+        # make_post with brain="external" only creates the run and the client drives the post_* tools: no HuhQueue model
+        # call, so it needs no server_ai (it still runs under the client-brain lock below, so the operator key stays blocked)
+        external = name == "make_post" and isinstance(args, dict) and args.get("brain") == "external"
+        if name in _cb.SERVER_AI_TOOLS and not external and not (isinstance(args, dict) and args.get("server_ai") is True):
             try:  # the kill switch answers first, for every tool that would act (SECURITY_RULES 4)
                 studio.kill_switch_check(actor, name)
             except (ActionError, BufferError) as e:
