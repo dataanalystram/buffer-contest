@@ -1,0 +1,28 @@
+/* Settings -> Integrations (studio/static/integrations.js) */
+#integrations,.integ-card{scroll-margin-top:96px}
+.integ-intro{margin:-4px 0 12px;max-width:72ch}
+.integ-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start;margin-bottom:24px}
+.integ-card{margin:0;display:flex;flex-direction:column;gap:10px;min-width:0;transition:box-shadow .3s}
+.integ-card p{margin:0}
+.integ-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.integ-top .card-title{margin:0}
+.integ-st{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:1.3;color:var(--muted);background:var(--sunken);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.integ-st:before{content:"";width:7px;height:7px;border-radius:999px;background:var(--subtle);flex:none}
+.integ-st.ok{color:var(--ink)}.integ-st.ok:before{background:var(--ok)}
+.integ-st.bad{color:var(--bad)}.integ-st.bad:before{background:var(--bad)}
+.integ-how summary{cursor:pointer;font-weight:600;font-size:14px}.integ-how p{margin:4px 0}
+.integ-how ol{margin:8px 0;padding-left:20px}.integ-how li{margin:4px 0;overflow-wrap:anywhere}
+.integ-code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px 6px;border-radius:6px;word-break:break-all}
+.integ-form{display:flex;flex-direction:column;gap:6px}
+.integ-form input{width:100%;box-sizing:border-box}
+.integ-btns{flex-wrap:wrap;align-items:center}
+.integ-msg{color:var(--muted)}.integ-msg:empty{display:none}
+.integ-msg.ok{color:var(--ok)}.integ-msg.bad{color:var(--bad)}
+.integ-flash{box-shadow:0 0 0 3px var(--focus)}
+@media (max-width:1180px){.integ-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:860px){.integ-grid{grid-template-columns:minmax(0,1fr)}}
+.integ-app{margin:0;color:var(--ink)}
+.integ-redirects{margin:0 0 24px}
+.integ-urls{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
+.integ-urls li{display:grid;grid-template-columns:minmax(180px,260px) minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+@media (max-width:860px){.integ-urls li{grid-template-columns:minmax(0,1fr) auto}.integ-urls li>span{grid-column:1 / -1}}

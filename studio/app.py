@@ -33,7 +33,7 @@ CSP = ("default-src 'self'; img-src 'self' https: data: blob:; media-src 'self' 
        "style-src 'self' 'unsafe-inline'; font-src 'self'; "  # fonts are self-hosted (studio/static/fonts): no third party
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 # Sign-in and token endpoints: a tighter per-IP limit for everyone who isn't already signed in (guessing, floods)
-AUTH_PATHS = ("/login", "/callback", "/device/", "/oauth/authorize", "/oauth/token", "/oauth/register")
+AUTH_PATHS = ("/login", "/callback", "/device/", "/oauth/authorize", "/oauth/token", "/oauth/register", "/integrations/")
 SECURITY_TXT_EXPIRES = "2027-10-31T00:00:00Z"
 
 
@@ -207,7 +207,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def robots():
         body = ("User-agent: *\nAllow: /\nAllow: /docs\nAllow: /privacy\nAllow: /terms\nAllow: /security\nAllow: /docs/api\n"
                 "Disallow: /api/\nDisallow: /mcp\nDisallow: /callback\nDisallow: /login\nDisallow: /demo\nDisallow: /device/\n"
-                "Disallow: /oauth/\nDisallow: /m/\n"
+                "Disallow: /oauth/\nDisallow: /m/\nDisallow: /integrations/\n"
                 f"Sitemap: {s.public_url}/sitemap.xml\n")
         return Response(body, media_type="text/plain")
 
@@ -750,6 +750,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     agent_routes.add_routes(app, house, actor)
     from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)
     library_mod.add_routes(app, house, actor)
+    from . import integrations as integrations_mod  # Settings -> Integrations: per-user keys + the Product Hunt callback
+    integrations_mod.add_routes(app, house, actor, COOKIE, s.public_url, s.secure_cookies)
 
     # ------------------------------------------------------------ MCP
     mcp_oauth.add_mcp_oauth_routes(app, store, studio, s.public_url, lambda r: store.session(r.cookies.get(COOKIE)))
