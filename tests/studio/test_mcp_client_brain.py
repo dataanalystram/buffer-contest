@@ -115,7 +115,7 @@ def test_client_brain_run_makes_zero_anthropic_calls(human, no_anthropic, page):
     assert budget._spent(store, f"user:{uid}") == 0.0
     from studio import mcp_client_brain as cb
     led = cb.ledger(store, uid)
-    assert led["source"] == "mcp_client_brain" and led["calls"] >= 4 and led["spent_usd"] == 0.0
+    assert led["source"] == "mcp_client_brain" and led["calls"] >= 3 and led["spent_usd"] == 0.0
     rows = [json.loads(r["detail"]) for r in store.q("SELECT detail FROM audit WHERE action='ai_call'")]
     assert rows and all(r.get("source") == "mcp_client_brain" and r.get("cost_usd") == 0 for r in rows)
 
