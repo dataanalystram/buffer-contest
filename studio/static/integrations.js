@@ -51,7 +51,8 @@
     form.querySelector("[data-act=test]").onclick = async (ev) => {
       const b = ev.currentTarget; b.disabled = true; b.textContent = "Testing…"; say("Checking with the service…");
       try { const r = await api(`/api/integrations/${key}/test`, { method: "POST", body: input.value ? { value: input.value } : {} });
-        say(r.message, r.ok); if (!input.value) load(); }
+        if (!input.value) { await load(); const m = document.querySelector(`[data-testid=integ-msg-${key}]`); if (m) { m.textContent = r.message; m.className = "integ-msg sm " + (r.ok ? "ok" : "bad"); } }
+        else say(r.message, r.ok); }
       catch (e) { say(e.message, false); } finally { b.disabled = false; b.textContent = "Test"; }
     };
     form.addEventListener("submit", async (ev) => {
