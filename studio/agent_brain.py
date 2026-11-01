@@ -101,6 +101,7 @@ class Brain:
             raise ActionError("Unknown media token. Upload the file first.", 404)
         inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
                "brief": str(body.get("brief") or "")[:1000],
+               "theme": str(body.get("theme") or "")[:40],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
         res = {"thread": [{"role": "user", "text": prompt or "(your file)", "at": _now()}], "plan": [], "brain": {}}
         if tok:
@@ -418,11 +419,13 @@ class Brain:
         inp, res = run["input"], run["result"]
         fmt = inp["intake"]["format"]
         has_video = bool(res.get("clip_token")) or any(m["type"] == "video" for m in (res.get("source") or {}).get("media") or [])
-        groups: dict[str, list[str]] = {"reel": [], "reel45": [], "carousel": [], "photo": []}
+        groups: dict[str, list[str]] = {"reel": [], "reel45": [], "carousel": [], "photo": [], "text": []}
         for c in inp["channels"]:
             svc = c["service"]
             if svc in VIDEO_ONLY:
                 f = "reel"
+            elif fmt == "text":
+                f = "text"  # Make a post v2: "Text" in the format menu is a caption with no media
             elif has_video and svc in ("facebook", "linkedin") and fmt in ("auto", "reel"):
                 f = "reel45"  # the feed variant: 4:5 video for LinkedIn / Facebook, 9:16 for Reels and Shorts
             elif fmt != "auto":
@@ -443,6 +446,11 @@ class Brain:
         style = media_styles.explicit(run["input"].get("prompt") or "")  # only when the person named a look
         if style and (g["reel"] or g["reel45"]) and not run["result"].get("clip_owned"):
             self.call(a, rid, tools, "find_media", {})
+        text_ids = [i for i in g["text"] if not only or i in only]
+        if text_ids:
+            run = self.h.run(a, rid)
+            tools._set_media(run, text_ids, [], "text", {"note": "Text only, as you asked."})
+            tools.save(run)
         for f, tool in (("carousel", "render_carousel"), ("photo", "render_cover"), ("reel", "render_reel"), ("reel45", "render_reel")):
             ids = [i for i in g[f] if not only or i in only]
             if ids:

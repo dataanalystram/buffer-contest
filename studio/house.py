@@ -441,6 +441,19 @@ class House:
                 d["cover"] = next((c.get("cover_url") for c in res.get("clips") or [] if c.get("cover_url")), "")
             d["cover"] = (res.get("media") or [{}])[0].get("url", "") if res.get("media") else ""
             d["packages"] = len(res.get("packages") or [])
+            # Make a post v2 "Recent content": type, slides / length badge and a status pill per run
+            pk = res.get("packages") or []
+            first = next((m for p in pk for m in (p.get("media") or [])), None) or (res.get("media") or [{}])[0] or {}
+            fmts = [p.get("format") for p in pk if p.get("format")]
+            d["format"] = "reel" if "reel" in fmts or first.get("type") == "video" else ("carousel" if "carousel" in fmts else
+                                                                                         ("image" if fmts and fmts[0] == "photo" else (fmts[0] if fmts else "")))
+            d["slides"] = max((len(p.get("media") or []) for p in pk if p.get("format") == "carousel"), default=0)
+            d["duration"] = first.get("duration") or (res.get("upload") or {}).get("duration") or None
+            d["thumb"] = next((m.get("url") for p in pk for m in (p.get("media") or []) if m.get("type") == "photo"), "")
+            sent = [p.get("sent") or {} for p in pk if p.get("sent")]
+            d["state"] = ("running" if d["status"] in ("running", "rendering") else "failed" if d["status"] == "failed" else
+                          "scheduled" if any(x.get("mode") in ("queue", "schedule") for x in sent) else
+                          "draft" if sent else "ready" if pk else d["status"])
             out.append(d)
         return out
 
