@@ -14,6 +14,7 @@ def test_specs_are_valid_tool_definitions():
     names = [s["name"] for s in tools.SPECS]
     assert len(names) == len(set(names)) == len(tools.NAMES)
     assert {"media_find", "media_render", "media_generate_images", "media_music", "media_plan"} <= set(names)
+    assert {"media_moments", "media_split", "media_recap_plan", "media_recap"} <= set(names)  # long video + weekly recap
     for s in tools.SPECS:
         assert s["description"] and isinstance(s["worker"], bool)
         sch = s["input_schema"]
@@ -22,9 +23,16 @@ def test_specs_are_valid_tool_definitions():
             assert r in sch["properties"], (s["name"], r)
         json.dumps(s)  # plain JSON, so the brain / REST / MCP layers can hand it to a model as-is
     heavy = {s["name"] for s in tools.SPECS if s["worker"]}
-    assert {"media_render", "media_fetch", "media_transcribe", "media_generate_images", "media_music"} == heavy
+    assert {"media_render", "media_fetch", "media_transcribe", "media_generate_images", "media_music",
+            "media_split", "media_recap"} == heavy  # splitting and the recap render run on the worker; planning is light
     enum = next(s for s in tools.SPECS if s["name"] == "media_render")["input_schema"]["properties"]["style"]["enum"]
     assert set(STYLE_IDS) <= set(enum)
+
+
+def test_no_temporary_workflows_ship():
+    from pathlib import Path
+    wf = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+    assert not (wf / "longform-probe.yml").exists()  # the splitter's real-input probe was temporary
 
 
 def test_style_aliases_and_pick():
