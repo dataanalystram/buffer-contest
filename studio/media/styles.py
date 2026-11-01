@@ -60,6 +60,22 @@ def describe() -> list[dict]:
     return [{"id": k, "label": v["label"], "about": v["about"], "best_for": v["best_for"]} for k, v in STYLE_PRESETS.items()]
 
 
+_EXPLICIT = [("hype", r"\bhype\s+(?:style|video|edit|reel|cut)\b|\bin\s+hype\b"), ("opus", r"\bopus(?:[\s-]?clip)?\b"),
+             ("minimal", r"\bminimal(?:ist)?\s+(?:style|video|edit|look|reel)\b"),
+             ("news", r"\b(?:huhbyte|news)\s+(?:style|layout|look)\b")]
+
+
+def explicit(text: str) -> str | None:
+    """The style the person NAMED ("opus clip", "hype style", "minimal look", "news layout"), else None. The fixed
+    (no-AI) planner only uses the media pipeline when asked by name; the AI brain picks a style itself."""
+    import re
+    s = (text or "").lower()
+    for sid, rx in _EXPLICIT:
+        if re.search(rx, s):
+            return sid
+    return None
+
+
 def pick(intent: str) -> str:
     """Map a person's words to a style id ("short punchy explainer" -> opus)."""
     s = (intent or "").lower()

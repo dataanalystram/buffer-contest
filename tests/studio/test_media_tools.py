@@ -34,6 +34,9 @@ def test_style_aliases_and_pick():
     assert styles.pick("calm tutorial for linkedin") == "minimal"
     assert styles.pick("hype it up") == "hype"
     assert styles.pick("big announcement") == "huhbyte_news"
+    assert styles.explicit("make it an opus clip") == "opus" and styles.explicit("do it in hype style") == "hype"
+    assert styles.explicit("minimal look please") == "minimal" and styles.explicit("huhbyte news layout") == "news"
+    assert styles.explicit("make it a short punchy explainer") is None  # a tone, not a named style
     got = tools.call("media_styles")["styles"]
     assert [s["id"] for s in got] == ["opus", "huhbyte_news", "minimal", "hype"]
 
