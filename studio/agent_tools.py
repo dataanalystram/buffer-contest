@@ -121,31 +121,8 @@ CHANNEL_STYLE = {
 }
 
 
-_URLISH = re.compile(r"https?://\S+|\b(?:www\.)?[\w-]+\.(?:com|ai|io|co|org|net|dev|app|be)/\S*|\b(?:x|twitter)\.com\b|/status/\d+", re.I)
-_ORDERS = re.compile(r"\b(?:search(?: it| for| online)?|research|look (?:it )?up|post (?:it |this )?on|all (?:my |the )?channels|you can|"
-                     r"can you|please|make (?:a|me|it)|have a|reel post|inst?a?g?ram reel|insta(?:gram)? post|do that|online|"
-                     r"every ?where|my channels)\b", re.I)
-
-
-def safe_headline(headline: str, prompt: str = "", fallbacks: tuple | list = ()) -> str:
-    """A headline is written from the story, never copied from the person's request. Owner bug, 1 Nov 2026: the prompt
-    "YOU CAN DO THAT ONLINE SEARCH IT IS HTTPS://X.COM/... RESEARCH AND HAVE A INSTGRAM..." was burned into a Reel.
-    Refuses (falls through to the next candidate) anything with a URL, request wording, or a long run copied from the
-    prompt."""
-    pw = re.findall(r"[a-z0-9$€£₹.%]+", (prompt or "").lower())
-    own = " ".join(re.findall(r"[a-z0-9$€£₹.%]+", intake.describe(prompt or "").lower()))  # their words about the content
-    for cand in [headline, *fallbacks]:
-        h = _URLISH.sub(" ", str(cand or ""))
-        h = re.sub(r"\s+", " ", h).strip(" -–—:;,.\"'“”")
-        if len(re.findall(r"\w{2,}", h)) < 2:
-            continue
-        if prompt and any(m.group(0).lower() in prompt.lower() for m in _ORDERS.finditer(h)):
-            continue  # the request's own wording ("search it", "post on all channels") is not a headline
-        hw = re.findall(r"[a-z0-9$€£₹.%]+", h.lower())
-        if pw and len(hw) >= 8 and " ".join(hw[:8]) in " ".join(pw) and " ".join(hw[:8]) not in own:
-            continue  # a long verbatim run of the request itself (its instructions), not words about the content
-        return h[:120]
-    return ""
+# the one headline guard (studio/headline.py) is used here, in house.py and in every renderer
+from .headline import ORDERS as _ORDERS, URLISH as _URLISH, safe_headline, spec_hook  # noqa: E402,F401
 
 
 def tone_keys(*texts: str) -> list[str]:
@@ -299,18 +276,57 @@ class Tools:
             up.update(transcript_tried=True, transcript=(text or "")[:8000], transcript_note=note)
         up["read"] = True
         it = run["input"]["intake"]
+        if up.get("frames") and "seen" not in up:  # what the video SHOWS (keyframes from the browser), not only what it says
+            ctx = " ".join(x for x in [(run["input"].get("brief") or "").strip(), intake.describe(run["input"].get("prompt", ""), it.get("rules")),
+                                       (up.get("transcript") or "")[:400]] if x)
+            up["seen"] = self._frames_seen(up, ctx)
         sents = [x.strip() for x in re.split(r"(?<=[.!?])\s+", up.get("transcript") or "") if len(x.split()) >= 3][:12]
         desc = (run["input"].get("brief") or "").strip() or intake.describe(run["input"].get("prompt", ""), it.get("rules")) or it.get("topic") or ""
-        if not res.get("source") and not it.get("source_url") and not (it.get("research") and it.get("topic")) and (sents or desc):
+        if not res.get("source") and not it.get("source_url") and not (it.get("research") and it.get("topic")) and \
+                (sents or desc or ((up.get("seen") or {}).get("summary"))):
             # no link and nothing to research: the upload itself is the story (its words, and the person's own line about it)
             what = "video" if up["type"] == "video" else "photo"
-            res["source"] = {"url": "", "title": (sents[0] if sents else desc)[:140], "description": desc[:300], "image": "",
+            shows = ((up.get("seen") or {}).get("summary") or "").strip()
+            res["source"] = {"url": "", "title": (sents[0] if sents else desc or shows)[:140], "description": (desc or shows)[:300], "image": "",
                              "site": f"Your {what}", "via": "upload", "post": None, "media": [], "media_note": "",
-                             "paragraphs": ([desc] if desc else []) + sents}
+                             "paragraphs": ([desc] if desc else []) + ([shows] if shows else []) + sents}
         self.save(run)
         return {"type": up["type"], "name": up.get("name", ""), "transcript": (up.get("transcript") or "")[:600],
+                "shows": ((up.get("seen") or {}).get("summary") or ""), "frames_seen_by": (up.get("seen") or {}).get("provider", ""),
                 "transcript_words": len((up.get("transcript") or "").split()), "note": up.get("transcript_note", ""),
                 "is_source": bool((res.get("source") or {}).get("via") == "upload")}
+
+    def _frames_seen(self, up: dict, ctx: str) -> dict:
+        """Claude vision (the brain's engine, budgeted) or the person's own key on the upload's keyframes, then TypeSafe /
+        SubQ System One; {} when nothing could look (the free sample never calls a model)."""
+        if self.demo:
+            return {}
+        frames = []
+        for tok in (up.get("frames") or [])[:4]:
+            m = self.h.get_media(tok)
+            p = vision.prepare(m["data"], 768) if m else None
+            if p:
+                frames.append(p)
+        if not frames:
+            return {}
+        from . import brain_llm, budget
+        for eng in brain_llm.engines(self.store, self.a.uid, self.s, self.h.http):
+            if eng["source"] not in ("huhqueue claude", "your key"):
+                continue
+            try:
+                out = brain_llm.call(eng, self.store, self.a.uid, self.a.label, system=vision.FRAME_SYSTEM,
+                                     messages=vision.frames_message(eng, frames, ctx), max_tokens=500, fast=True,
+                                     purpose="video frames", http=self.h.http, timeout=60)
+                d = llm.parse_json(out["text"])
+            except (budget.BudgetExceeded, llm.LLMError, ValueError, TypeError, KeyError):
+                continue
+            if isinstance(d, dict) and str(d.get("summary") or "").strip():
+                return {"summary": str(d["summary"])[:600], "subject": str(d.get("subject") or "")[:80],
+                        "people": d.get("people") if isinstance(d.get("people"), int) else None, "setting": str(d.get("setting") or "")[:80],
+                        "on_screen_text": str(d.get("on_screen_text") or "")[:200], "provider": eng["provider"], "model": out.get("model", ""),
+                        "frames": len(frames)}
+        got = vision.describe_frames_systemone(frames, ctx, self.h.http)
+        return {**got, "frames": len(frames)} if got else {"summary": "", "provider": "none", "frames": len(frames)}
 
     def t_x_oembed(self, url: str) -> dict:
         if not reader.x_status(url):
@@ -387,10 +403,12 @@ class Tools:
             d = self.model_json("facts", "You are a careful news editor. Use only facts in the source; never invent or change numbers.",
                                 "Return JSON {headline (max 12 words, plain, no hype, keep figures exactly as written), facts: [3 short facts], "
                                 "why_it_matters (one sentence), label (1-2 words)}. The headline comes from the story, never from the "
-                                "person's request; no URLs.\nSOURCE: " + json.dumps(
+                                "person's request; no URLs. When the person uploaded their own video, it is the post: say what IT shows "
+                                "and says (what_the_video_shows, video_transcript), with the source as context.\nSOURCE: " + json.dumps(
                                     {"title": article["title"], "description": article["description"], "text": text,
                                      "post_by": (post or {}).get("author_name"),
-                                     "video_transcript": ((res.get("upload") or {}).get("transcript") or "")[:2500]}))
+                                     "video_transcript": ((res.get("upload") or {}).get("transcript") or "")[:2500],
+                                     "what_the_video_shows": (((res.get("upload") or {}).get("seen") or {}).get("summary") or "")}))
             facts_ = [str(f)[:160] for f in ((d or {}).get("facts") or []) if str(f).strip()][:4]
             if d and d.get("headline") and facts_:
                 story = {"headline": str(d["headline"])[:120], "facts": facts_, "why": str(d.get("why_it_matters") or "")[:200],
@@ -644,6 +662,7 @@ class Tools:
             if own:
                 return own, "Your video as uploaded: there's no video renderer here, so it isn't re-cut with your brand. Reply “redo the reel” to try again."
             return frames or self._slides_45(run, carousel=True), "No video renderer here, so this channel gets the slides instead."
+        spec_hook(spec, (run.get("input") or {}).get("prompt", ""))  # the request never reaches a video (owner P0)
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (self.a.uid, self.rid, json.dumps(spec), "queued", time.time(), time.time()))
         if mode == "local":
@@ -927,6 +946,11 @@ class Tools:
                             "network's tone instructions and conventions exactly: the tone decides the hook, sentence length and energy.",
                             json.dumps({"brand_voice": kit.get("voice", ""), "rules": brand.rules_prompt(rules), "story": {"headline": st["headline"],
                                         "facts": st["facts"], "why": st.get("why", ""), "link": article["url"]},
+                                        **({"their_video": {"shows": ((res.get("upload") or {}).get("seen") or {}).get("summary", ""),
+                                                            "says": ((res.get("upload") or {}).get("transcript") or "")[:600],
+                                                            "note": "The post IS this video: describe what it shows and says. Never "
+                                                                    "describe the person's request or how the post was made."}}
+                                           if res.get("upload") else {}),
                                         "networks": {c["service"]: {"limit": limits[c["service"]], "tone": tones.get(c["id"], "") or default_tone,
                                                                     "tone_instructions": guide(c),
                                                                     "conventions": CHANNEL_STYLE.get(c["service"], "hook line, then the link.")}

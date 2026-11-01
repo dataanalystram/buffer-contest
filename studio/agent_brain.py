@@ -11,6 +11,7 @@ asked. The check step always runs last and builds the packages; nothing is publi
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -27,6 +28,8 @@ MAX_TURNS = int(os.environ.get("HQ_BRAIN_TURNS", "16"))
 STALE = int(os.environ.get("HQ_RUN_STALE", "900"))
 _pool = ThreadPoolExecutor(max_workers=int(os.environ.get("HQ_BRAIN_WORKERS", "4")), thread_name_prefix="agent-brain")
 _running: set[int] = set()
+KEYFRAMES_MAX = 4
+KEYFRAME_B64_MAX = 400_000  # one 768 px JPEG frame as a data URL is ~60-150 KB
 _rlock = threading.Lock()
 
 SYSTEM = """You are HuhQueue's post editor. You turn the person's request into on-brand social posts for their Buffer channels,
@@ -36,6 +39,10 @@ using ONLY the tools. Rules:
   instructions, never the topic. The topic comes from the link, the research and the upload's own content.
 - Context.upload is the person's OWN photo/video. read_upload has already run (its transcript is in the state); with no
   link it is the source. Use their video in render_reel with rights_confirmed true (it is theirs); a photo is the cover.
+- With an upload AND a link, the post is about THE UPLOADED VIDEO: Context.upload.shows (what its keyframes show) and its
+  transcript are the story; read the link for context and facts. Captions describe what the video shows and says, never
+  the person's request or how the post was made.
+- LinkedIn and Facebook get the 4:5 feed variant of a video (render_reel with ratio "4:5"); Instagram, YouTube and TikTok 9:16.
 - Headlines come from the story's facts. Never copy the person's request into a headline, and never put a URL in one.
 - Use only facts from the source. Never invent numbers. If extract_facts reports a conflict, do not pick a figure: finish and
   ask the person (the app shows your question).
@@ -102,6 +109,7 @@ class Brain:
             return rec
         inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
                "brief": str(body.get("brief") or "")[:1000],
+               "theme": str(body.get("theme") or "")[:40],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
         res = {"thread": [{"role": "user", "text": prompt or "(your file)", "at": _now()}], "plan": [], "brain": {}}
         if tok:
@@ -110,6 +118,12 @@ class Brain:
             res["upload"] = {"token": tok, "type": typ, "url": self.h.media_url(tok), "name": str(body.get("media_name") or "")[:80]}
             if typ == "video":
                 res["clip_token"], res["clip_owned"] = tok, True
+                frames = self._keyframes(a, body.get("keyframes"))
+                if frames:
+                    res["upload"]["frames"] = frames
+                dur = body.get("media_duration")
+                if isinstance(dur, (int, float)) and 0 < dur < 36000:
+                    res["upload"]["duration"] = round(float(dur), 2)
         rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
                            (a.uid, "agent", json.dumps(inp), "running", json.dumps([]), json.dumps(res), _now(), _now()))
         self.store.audit(a.uid, a.label, "agent_run", "read", {"run": rid, "kind": "agent", "source": "link" if parsed["source_url"] else "topic"})
@@ -245,6 +259,29 @@ class Brain:
                 cap["credits_cut"] = True  # too long for this network: the credits stay on screen in every slide
         self.h._save(rid, run["steps"], res)
 
+    def _keyframes(self, a: Actor, frames) -> list[str]:
+        """Up to 4 keyframes the browser took from the person's video (canvas -> JPEG data URLs, because the hosted app has
+        no FFmpeg). Size is checked on the base64 text before decoding, the bytes must be a JPEG/PNG and are re-encoded by
+        Pillow before anything else sees them (SECURITY_RULES 6). Bad frames are skipped, never fatal."""
+        out = []
+        if not isinstance(frames, list):
+            return out
+        from . import vision
+        for f in frames[:KEYFRAMES_MAX]:
+            if not isinstance(f, str) or len(f) > KEYFRAME_B64_MAX:
+                continue
+            b64 = f.split(",", 1)[1] if f.startswith("data:") and "," in f else f
+            try:
+                raw = base64.b64decode(b64, validate=True)
+            except (ValueError, TypeError):
+                continue
+            if not (raw[:3] == b"\xff\xd8\xff" or raw[:8] == b"\x89PNG\r\n\x1a\n"):
+                continue
+            clean = vision.prepare(raw, 768)
+            if clean:
+                out.append(self.h.put_media(a, clean, f"keyframe{len(out) + 1}.jpg", kind="keyframe", meta={"type": "photo", "role": "keyframe"}))
+        return out
+
     def tool(self, a: Actor, rid: int, name: str, args: dict) -> dict:
         """One tool on one run, for REST and MCP (a person's own assistant as the brain)."""
         run = self.h.run(a, rid)
@@ -263,8 +300,10 @@ class Brain:
         if not text:
             raise ActionError("Say what to change.")
         run = self.h.run(a, rid)
+        if run["kind"] in ("media", "news"):
+            return self.h.redo_with_agent(a, rid, text)  # a pre-agent run: redone by the agent, never the old pipeline
         if run["kind"] != "agent":
-            return self.h.revise(a, rid, text)  # a run from before the agent: the same reply box still edits it
+            return self.h.revise(a, rid, text)
         with _rlock:
             if rid in _running:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
@@ -298,7 +337,7 @@ class Brain:
         self.h.studio._guard_write(a, "agent_channel_media")
         run = self.h.run(a, rid)
         if run["kind"] != "agent":
-            raise ActionError("Only agent runs can change one channel's media. Start a new post.")
+            raise ActionError("This post was made before the agent. Press “Redo with the agent” (or reply in its thread) to remake it.", 409)
         with _rlock:
             if rid in _running:
                 raise ActionError("The agent is still working on this post. Try again when it's done.", 409)
@@ -440,6 +479,7 @@ class Brain:
         if res.get("upload"):
             up = res["upload"]
             ctx["upload"] = {"type": up["type"], "name": up.get("name", ""), "transcript": (up.get("transcript") or "")[:1500],
+                             "shows": ((up.get("seen") or {}).get("summary") or ""),
                              "is_source": (res.get("source") or {}).get("via") == "upload"}
         ctx["intake"]["research_asked"] = bool(inp["intake"].get("research"))
         if any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or inp["intake"].get("format") == "reel":
@@ -500,6 +540,14 @@ class Brain:
         if missing_media:
             self._renders(a, rid, tools, run, missing_media)
         run = self.h.run(a, rid)
+        cm = run["result"].get("channel_media") or {}
+        feed = [c["id"] for c in run["input"]["channels"] if c["service"] in ("linkedin", "facebook")
+                and (cm.get(c["id"]) or {}).get("format") == "reel" and (cm.get(c["id"]) or {}).get("ratio", "9:16") == "9:16"
+                and any(m.get("type") == "video" and m.get("role") != "original" for m in (cm.get(c["id"]) or {}).get("media") or [])]
+        if feed:  # the model gave a feed channel the vertical cut: LinkedIn / Facebook always get the 4:5 variant
+            extra = {"style": cm[feed[0]]["style"]} if cm[feed[0]].get("style") else {}
+            self.call(a, rid, tools, "render_reel", {"channel_ids": feed, "ratio": "4:5", **extra}, label="Render the 4:5 feed version")
+        run = self.h.run(a, rid)
         missing = [c["id"] for c in run["input"]["channels"] if c["id"] not in (run["result"].get("captions") or {})]
         if missing:
             self.call(a, rid, tools, "write_captions", {"channel_ids": missing})
@@ -515,11 +563,13 @@ class Brain:
         inp, res = run["input"], run["result"]
         fmt = inp["intake"]["format"]
         has_video = bool(res.get("clip_token")) or any(m["type"] == "video" for m in (res.get("source") or {}).get("media") or [])
-        groups: dict[str, list[str]] = {"reel": [], "reel45": [], "carousel": [], "photo": []}
+        groups: dict[str, list[str]] = {"reel": [], "reel45": [], "carousel": [], "photo": [], "text": []}
         for c in inp["channels"]:
             svc = c["service"]
             if svc in VIDEO_ONLY:
                 f = "reel"
+            elif fmt == "text":
+                f = "text"  # Make a post v2: "Text" in the format menu is a caption with no media
             elif has_video and svc in ("facebook", "linkedin") and fmt in ("auto", "reel"):
                 f = "reel45"  # the feed variant: 4:5 video for LinkedIn / Facebook, 9:16 for Reels and Shorts
             elif fmt != "auto":
@@ -540,6 +590,11 @@ class Brain:
         style = media_styles.explicit(run["input"].get("prompt") or "")  # only when the person named a look
         if style and (g["reel"] or g["reel45"]) and not run["result"].get("clip_owned"):
             self.call(a, rid, tools, "find_media", {})
+        text_ids = [i for i in g["text"] if not only or i in only]
+        if text_ids:
+            run = self.h.run(a, rid)
+            tools._set_media(run, text_ids, [], "text", {"note": "Text only, as you asked."})
+            tools.save(run)
         for f, tool in (("carousel", "render_carousel"), ("photo", "render_cover"), ("reel", "render_reel"), ("reel45", "render_reel")):
             ids = [i for i in g[f] if not only or i in only]
             if ids:

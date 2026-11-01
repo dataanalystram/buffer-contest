@@ -176,3 +176,24 @@ def test_recap_files_are_checked_for_what_they_claim(owner):  # noqa: F811
     with pytest.raises(ActionError, match="not a MP4"):
         h.on_recap_file(jid, "reel", png())
     assert h.on_recap_file(jid, "cover", png())["ok"]
+
+
+def test_split_and_recap_live_in_the_chat_thread():
+    """Make a post v2: a split request is answered in the chat thread (clips open in One take from there) and the
+    recap's rights question is answered inline in the thread, with one-tap answers."""
+    from pathlib import Path
+    st = Path(__file__).resolve().parents[2] / "studio" / "static"
+    hj, mj = (st / "house.js").read_text(), (st / "makepost.js").read_text()
+    assert "window.mpOnTake(run, body.prompt)" in hj and "window.mpOnTake = " in mj and "mp-open-take" in mj
+    assert "recap-rights-yes" in hj and "recap-rights-no" in hj and "Needs your answer below" in mj
+    assert 'data-testid="pkg-reel"' in hj  # the recap's Reel next to the carousel
+
+
+def test_recap_headlines_pass_the_headline_guard(tmp_path, monkeypatch):
+    from studio.media import recap
+    seen = []
+    monkeypatch.setattr(recap, "_segment", lambda s, *a, **k: seen.append(s["headline"]) or (_ for _ in ()).throw(StopIteration))
+    p = {"segments": [{"i": 1, "headline": "post this on all my channels https://x.com/a/status/1", "outlets": ["x.com"], "media": None}]}
+    with pytest.raises((StopIteration, RuntimeError)):
+        recap.compose(p, {1: None}, str(tmp_path), reel=False)
+    assert seen and "http" not in seen[0] and "all my channels" not in seen[0]

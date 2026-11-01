@@ -315,6 +315,8 @@ def brand_video(video: bytes, kit: dict, p: dict, *, logo: bytes | None = None, 
     headline and logo stay on screen from the first frame to the last, the whole clip plays in a band under it (never
     cropped to death), and the brand end card is appended last. Without a hook: full-frame crop + logo bug."""
     from . import hbstyle
+    from .headline import render_hook
+    hook = render_hook(hook)  # last line of defence: a URL or a request is never burned into a video
     W, H = SIZES[ratio]
     tmp = Path(tempfile.mkdtemp(prefix="hs_vid_"))
     try:

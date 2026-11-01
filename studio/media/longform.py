@@ -291,8 +291,10 @@ def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16
                   burned_subs: bool | None = None, names: list[str] | None = None, music: str = "auto",
                   src_size: tuple[int, int] | None = None) -> dict:
     """One finished clip in one ratio: opus style (hook on top, word captions, credit, end card), reframed."""
+    from ..headline import render_hook
     from . import ff
     from .compose import detect_burned_subs, render_style
+    m = {**m, "hook": render_hook(m.get("hook") or "")}  # the headline guard on every render path (owner P0)
     if src_size is None:
         pr = ff.probe(source)
         src_size = (pr["width"] or 1920, pr["height"] or 1080)

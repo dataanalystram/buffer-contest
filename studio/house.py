@@ -37,6 +37,12 @@ STALE_RUN = int(os.environ.get("HQ_RUN_STALE", "900"))  # a run silent this long
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="house-agent")
 
 
+def _req(inp: dict | None) -> str:
+    """The person's whole request on a run (agent runs keep it as prompt; pre-agent runs as query/url/brief)."""
+    inp = inp or {}
+    return " ".join(str(inp.get(k) or "") for k in ("prompt", "query", "url", "brief") if inp.get(k)).strip()
+
+
 def _now() -> float:
     return time.time()
 
@@ -428,12 +434,27 @@ class House:
                               (a.uid, limit)):
             d = dict(r)
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
-            d["title"] = (res.get("story") or {}).get("headline") or inp.get("query") or inp.get("url") or inp.get("brief") or "Your media"
+            from .headline import title as _title  # never the raw request with its URL (owner P0)
+            d["title"] = _title((res.get("story") or {}).get("headline") or "", _req(inp), "Your media" if d["kind"] == "media" else "Your post")
+            d["legacy"] = d["kind"] in ("media", "news")
             if d["kind"] == "take":
                 d["title"] = "One take: " + (inp.get("name") or "your video")
                 d["cover"] = next((c.get("cover_url") for c in res.get("clips") or [] if c.get("cover_url")), "")
             d["cover"] = (res.get("media") or [{}])[0].get("url", "") if res.get("media") else ""
             d["packages"] = len(res.get("packages") or [])
+            # Make a post v2 "Recent content": type, slides / length badge and a status pill per run
+            pk = res.get("packages") or []
+            first = next((m for p in pk for m in (p.get("media") or [])), None) or (res.get("media") or [{}])[0] or {}
+            fmts = [p.get("format") for p in pk if p.get("format")]
+            d["format"] = "reel" if "reel" in fmts or first.get("type") == "video" else ("carousel" if "carousel" in fmts else
+                                                                                         ("image" if fmts and fmts[0] == "photo" else (fmts[0] if fmts else "")))
+            d["slides"] = max((len(p.get("media") or []) for p in pk if p.get("format") == "carousel"), default=0)
+            d["duration"] = first.get("duration") or (res.get("upload") or {}).get("duration") or None
+            d["thumb"] = next((m.get("url") for p in pk for m in (p.get("media") or []) if m.get("type") == "photo"), "")
+            sent = [p.get("sent") or {} for p in pk if p.get("sent")]
+            d["state"] = ("running" if d["status"] in ("running", "rendering") else "failed" if d["status"] == "failed" else
+                          "scheduled" if any(x.get("mode") in ("queue", "schedule") for x in sent) else
+                          "draft" if sent else "ready" if pk else d["status"])
             out.append(d)
         return out
 
@@ -754,11 +775,12 @@ class House:
     # ---------------------------------------------------------------- video jobs
     def _queue_video(self, a, rid, kit, p, res, inp) -> dict:
         src = res.get("source_media") or {}
-        from .agent_tools import safe_headline
+        from .headline import safe_headline, spec_hook
         spec = {"kind": "brand_video" if src.get("type") == "video" else "slideshow", "kit": {k: kit[k] for k in brand.DEFAULT_KIT},
-                "params": p, "ratio": "9:16", "hook": safe_headline((res.get("story") or {}).get("headline", ""), inp.get("brief", "")),
+                "params": p, "ratio": "9:16", "hook": safe_headline((res.get("story") or {}).get("headline", ""), _req(inp)),
                 "logo": kit.get("logo") or "", "source": src.get("token", ""),
                 "slides": [m["token"] for m in res["media"] if m.get("role") == "slide"]}
+        spec_hook(spec, _req(inp))
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (a.uid, rid, json.dumps(spec), "queued", _now(), _now()))
         mode = self.video_mode()
@@ -854,6 +876,8 @@ class House:
         return "local" if self.local_video_ok() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none")
 
     def render_job_local(self, spec: dict) -> tuple[bytes, dict]:
+        from .headline import spec_hook
+        spec = spec_hook(dict(spec))  # render time: the same guard as the GitHub worker
         logo = self.get_media(spec["logo"])["data"] if spec.get("logo") and self.get_media(spec["logo"]) else None
         if spec["kind"] == "template_video":
             from . import templates
@@ -1002,6 +1026,8 @@ class House:
         if str(spec.get("kind", "")).startswith("take_"):
             return self.takes.job_payload(jid)
         spec.pop("_job_token", None)
+        from .headline import spec_hook
+        spec_hook(spec, self._run_prompt(rows[0]["run_id"]))  # jobs queued before the guard existed are cleaned here too
         base = self.s.public_url.rstrip("/") + "/m/"
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
                 "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",
@@ -1118,6 +1144,13 @@ class House:
             self._spawn_run(job["run_id"], self._resume_after_video, a, job["run_id"], jid)
         return {"ok": True, "token": tok}
 
+    def _run_prompt(self, rid) -> str:
+        rows = self.store.q("SELECT input FROM agent_runs WHERE id=?", (rid,)) if rid else []
+        try:
+            return _req(json.loads(rows[0]["input"] or "{}")) if rows else ""
+        except ValueError:
+            return ""
+
     def _run_kind(self, rid: int) -> str:
         rows = self.store.q("SELECT kind FROM agent_runs WHERE id=?", (rid,))
         return rows[0]["kind"] if rows else ""
@@ -1142,8 +1175,30 @@ class House:
         self._caption_check(a, rid, steps, inp, res, llm.resolve(self.store, a.uid, self.s))
 
     # ---------------------------------------------------------------- revise: correction -> rule -> re-render
+    def redo_with_agent(self, a: Actor, rid: int, message: str = "") -> dict:
+        """A run from the pre-agent pipeline (kind media/news) is never re-run by that pipeline: a reply or a redo starts
+        a fresh agent run from the same request, file and channels (owner P0: the old pipeline burned the request into
+        the video and wrote captions about the request). The old run points at the new one."""
+        run = self.run(a, rid)
+        inp = run["input"] or {}
+        prompt = _req(inp)
+        msg = (message or "").strip()
+        if msg and not re.fullmatch(r"(?i)\s*(?:redo|re-?do|again|redo (?:it )?with the agent)\s*", msg):
+            prompt = (prompt + "\n" + msg).strip()
+        body = {"prompt": prompt[:4000], "channel_ids": [c["id"] for c in inp.get("channels") or []],
+                "format": inp.get("format") or "auto"}
+        if inp.get("media_token"):
+            body["media_token"] = inp["media_token"]
+        new = self.start_run(a, body)
+        res = run["result"] or {}
+        res["superseded_by"] = new["id"]
+        self._save(rid, run["steps"], res)
+        return new
+
     def revise(self, a: Actor, rid: int, correction: str) -> dict:
         self.studio._guard_write(a, "revise")
+        if self._run_kind(rid) in ("media", "news"):  # never re-run the pre-agent pipeline (owner P0): the agent remakes it
+            return self.brain.reply(a, rid, correction)
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
             raise ActionError(demo_guard.WHY["run"], 429)
         run = self.run(a, rid)

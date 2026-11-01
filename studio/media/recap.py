@@ -504,6 +504,9 @@ def compose(p: dict, media: dict[int, str | None], out_dir: str, brand: dict | N
     wd = Path(tempfile.mkdtemp(prefix="hq_recap_"))
     segs = p["segments"]
     n = len(segs)
+    from ..headline import render_hook
+    for s in segs:  # the headline guard at render time (owner P0): no URL or request wording is ever burned in
+        s["headline"] = render_hook(s.get("headline") or "") or (f"Reported by {source_line(s)}" if source_line(s) else f"Story {s['i']}")
     media = {i: (m if usable(m, (next((s for s in segs if s["i"] == i), {}).get("media") or {}).get("kind")) else None)
              for i, m in media.items()}
     for s in segs:  # media that didn't arrive (or isn't real media) -> the story's title card, and no stale credit
