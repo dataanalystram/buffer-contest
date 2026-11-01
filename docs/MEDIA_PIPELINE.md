@@ -203,6 +203,8 @@ self-hosted worker (`JOB_TOKEN=... python -m studio.render_worker`), can run the
 | `tests/studio/test_media_subtitles.py` | SRT/VTT parsing, rolling-caption stitching, track choice, the reuse cascade |
 | `tests/studio/test_media_longform.py` | split requests, moment picking, hook titles, reframing, a real split end to end |
 | `tests/studio/test_media_recap.py` | recap prompts, story clustering and ranking, rights question, layout interface, carousel + Reel render |
+| `tests/studio/test_agent_recap.py` | recap routing in Make a post, inline rights answers, `media_recap` worker job, carousel + Reel packages, credits |
+| `tests/studio/test_media_lowerthird.py` | lower-third detection, band position per ratio/reframe, captions above it (1:1, 9:16) |
 
 Run one file at a time: `python -m pytest -q tests/studio/test_media_render.py`.
 
@@ -270,6 +272,15 @@ So for a YouTube link the app **asks for an upload** (the video, plus its `.srt`
 pretending to fetch it, and `media_find` says why in its `note`. We do not use cookies, residential proxies or
 account sign-ins to get around YouTube's bot check.
 
+### Captions vs lower-thirds
+
+A source with a lower-third graphic (name strap, ticker, product bar) would have our word captions printed over it.
+`compose.detect_lower_third` samples the clip and looks for rows in the lower frame dense with text edges, at the same
+height in most samples and far denser than the top of the picture (so busy footage doesn't count). `band_in_output`
+maps the band into the output frame for the crop in use (cover crop, face-track, padded fit, burned-subtitle crop),
+and the opus/hype caption line is lifted to end above it, in 9:16, 4:5 and 1:1. Burned-in subtitles keep their own
+handling (cropped off in full-bleed styles, our captions skipped in panel styles). `lower_third_mode="off"` disables it.
+
 ## 9. Weekly recap (`studio/media/recap.py`, tools `media_recap_plan` + `media_recap`)
 
 "Make a 7 days what happened in AI recap with videos", "weekly recap", "AI round-up of the week": `recap.wants_recap`
@@ -288,6 +299,17 @@ reads the window (default 7 days, max 14) and an optional story count (3-7, defa
    once at the very end (story slides never get their own end card). Output: a **4:5 carousel** of video slides
    (each ≤ 60 s) plus **one 9:16 Reel** (~7 s per story). Fetched media is validated (an error page is not an image)
    and every download goes through netguard with a byte cap.
+
+**In Make a post and the agent.** A recap prompt with no link or upload ("make a 7 days what happened in AI recap with
+videos", "weekly recap", "AI round-up of the week") starts an agent run that calls `recap_plan` (→ `media_recap_plan`).
+If some media isn't the company's own, the one rights question is posted in the chat thread with one-tap answers ("Use
+them with credit" / "Title cards instead"); a typed reply also works ("only 1 and 3"). Then `render_recap` queues a
+`media_recap` job (local FFmpeg off the hosted app, else the GitHub render worker `render.yml`, which posts each file
+once with its single-use job token; the app checks each is the PNG/MP4 its id says). Instagram and Threads get the
+4:5 carousel with the Reel beside it as its own post; every other channel posts the 9:16 Reel. Captions end with the
+credit lines (dropped only where a network's limit can't fit them; they stay on screen). `rights_confirmed` can be
+passed up front over REST/MCP to skip the question. Story headlines pass the headline guard (`studio/headline.py`)
+at render time.
 
 The look sits behind `RecapLayout` (`cover`, `story_overlay`, `plate`, `follow`). `register_layout("huhbyte_weekly_recap",
 ...)` swaps in the hq-themes template when it lands; until then the minimal layout renders the same structure, with
