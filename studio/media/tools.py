@@ -52,6 +52,18 @@ SPECS = [
          "clip": {"type": "array", "items": {"type": "number"}, "description": "[start, end] seconds; omit for the style default"},
          "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]}, "brand": BRAND,
          "official": {"type": "boolean"}, "rights_confirmed": {"type": "boolean"}, "run_dir": S}}},
+    {"name": "media_moments", "worker": False,
+     "description": "Long video -> the best moments to clip (Opus-style): N non-overlapping spans of whole sentences with a score, the reason each was picked and a hook title. Needs the transcript (words_path from media_transcribe, or caption text from an .srt/.vtt the source already has).",
+     "input_schema": {"type": "object", "properties": {"words_path": S, "captions": {"type": "string", "description": "SRT or WebVTT text"},
+                                                        "prompt": S, "n": {"type": "integer"}, "duration": {"type": "number"}}}},
+    {"name": "media_split", "worker": True,
+     "description": "Split a long video into N short clips ('split this into 5 shorts', 'find the best moments'): picks the moments, reuses the source's captions when it has them (else Whisper), reframes each clip around the speaker per ratio, hook title, word captions (skipped over burned-in subtitles), credit and Follow end card. Third-party video needs rights_confirmed.",
+     "input_schema": {"type": "object", "required": ["source_path"], "properties": {
+         "source_path": S, "url": {"type": "string", "description": "the post the video came from (its captions are reused)"},
+         "captions": {"type": "string", "description": "SRT or WebVTT text the person uploaded"}, "prompt": S,
+         "n": {"type": "integer"}, "ratios": {"type": "array", "items": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}},
+         "credit": S, "official": {"type": "boolean"}, "rights_confirmed": {"type": "boolean"}, "brand": BRAND,
+         "names": {"type": "array", "items": S}, "run_dir": S}}},
     {"name": "media_generate_images", "worker": True,
      "description": "No usable video or photo: generate n images for the story (configured image model, else on-brand cards). Labelled as AI-generated.",
      "input_schema": {"type": "object", "required": ["prompt"], "properties": {"prompt": S, "headline": S, "n": {"type": "integer"},
@@ -99,15 +111,21 @@ def ratios_for(channels: list[str] | None) -> dict:
 
 
 def media_plan(prompt: str, channels: list[str] | None = None, http=None, find: bool = True) -> dict:
+    from .longform import parse_request
     style = _styles.pick(prompt)
     m = re.search(r"(\d{2,3})\s*(?:s\b|sec|seconds)", prompt or "")
+    sp = parse_request(prompt)
     plan = {"style": style, "style_about": _styles.STYLE_PRESETS[style]["about"], "ratios": ratios_for(channels),
             "target_seconds": int(m.group(1)) if m else None, "links": urls_in(prompt)}
+    if sp["split"]:
+        plan["style"], plan["style_about"] = "opus", _styles.STYLE_PRESETS["opus"]["about"]
+        plan["split"] = {"clips": sp["n"] or "3-5", "seconds": [sp["lo"], sp["hi"]]}
     if find and plan["links"]:
         plan["media"] = media_find(prompt, http=http)
         bv = plan["media"]["best_downloadable"]
         plan["needs_rights_confirmation"] = bool(bv and not bv.get("official"))
-        plan["next"] = ("media_fetch -> media_transcribe -> media_render" if bv else "media_generate_images -> media_render")
+        plan["next"] = ("media_fetch -> media_split" if sp["split"] and bv else
+                        "media_fetch -> media_transcribe -> media_render" if bv else "media_generate_images -> media_render")
     return plan
 
 
@@ -151,6 +169,36 @@ def media_render(style: str, hook: str, source_path: str | None = None, images: 
     return {"renders": outs}
 
 
+def media_moments(words_path: str | None = None, captions: str | None = None, prompt: str = "", n: int | None = None,
+                  duration: float | None = None) -> dict:
+    from . import longform, subtitles
+    if captions:
+        words = subtitles.parse_captions(captions)
+    elif words_path:
+        words = json.loads(Path(words_path).read_text())["words"]
+    else:
+        return {"error": "Give words_path (media_transcribe) or captions (SRT/WebVTT text)."}
+    sp = longform.parse_request(prompt)
+    r = longform.pick_moments(words, duration, n or sp["n"], sp["lo"], sp["hi"])
+    keep = ("id", "rank", "start", "end", "duration", "score", "reason", "hook")
+    return {"moments": [{k: m[k] for k in keep} for m in r["moments"]], "picked_by": r["picked_by"], "sentences": r["sentences"]}
+
+
+def media_split(source_path: str, url: str | None = None, captions: str | None = None, prompt: str = "", n: int | None = None,
+                ratios: list[str] | None = None, credit: str = "", official: bool = False, rights_confirmed: bool = False,
+                brand: dict | None = None, names: list[str] | None = None, run_dir: str | None = None) -> dict:
+    from . import longform
+    d = _run_dir({"run_dir": run_dir}) / "clips"
+    man = longform.split_video(source_path, out_dir=str(d), url=url, caption_text=captions, prompt=prompt, n=n, ratios=ratios,
+                               brand=brand, credit=credit, official=official, rights_confirmed=rights_confirmed, names=names)
+    if man.get("needs_confirmation") or man.get("error"):
+        return man
+    return {"transcript": man["transcript"], "burned_subs": man["burned_subs"], "picked_by": man["picked_by"],
+            "clips": [{k: c[k] for k in ("id", "rank", "start", "end", "score", "reason", "hook")} |
+                      {"renders": [{k: r[k] for k in ("path", "ratio", "duration", "captions")} | {"reframe": r["reframe"]["mode"]}
+                                   for r in c["renders"]]} for c in man["clips"]]}
+
+
 def media_generate_images(prompt: str, headline: str = "", n: int = 3, ratio: str = "9:16", brand: dict | None = None,
                           run_dir: str | None = None, http=None) -> dict:
     from .imagegen import generate_images
@@ -180,6 +228,10 @@ def call(name: str, args: dict | None = None, http=None) -> dict:
         return media_transcribe(a["path"], a.get("names"), a.get("model"), a.get("run_dir"))
     if name == "media_render":
         return media_render(**{k: v for k, v in a.items() if k in media_render.__code__.co_varnames})
+    if name == "media_moments":
+        return media_moments(a.get("words_path"), a.get("captions"), a.get("prompt", ""), a.get("n"), a.get("duration"))
+    if name == "media_split":
+        return media_split(**{k: v for k, v in a.items() if k in media_split.__code__.co_varnames})
     if name == "media_generate_images":
         return media_generate_images(a["prompt"], a.get("headline", ""), int(a.get("n") or 3), a.get("ratio", "9:16"),
                                      a.get("brand"), a.get("run_dir"), http=http)
