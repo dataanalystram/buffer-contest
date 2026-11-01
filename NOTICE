@@ -184,6 +184,50 @@ studio/media/*  Media agent (find, download, transcribe, captions, compose, styl
   The source cascade, rights gate, caption fitting, clip picker glue and compositor are our own code. Third-party
   launch videos are never bundled; each render keeps the creator's credit line on screen.
 
+--------------------------------------------------------------------------------------------------------------
+studio/media/styles.py THEMES, studio/media/theme_cards.py, the theme caption styles in studio/media/captions.py
+(reimplemented; no code copied)
+  Source:   lemomo-ai/lemo-opuscar @ main (checked 1 Nov 2026), styles/<slug>/STYLE.md and style.json for caption-news,
+            news-package, newsreel, dark-keynote, glass-product, swiss-motion, kino-montage, silent-film, risograph,
+            hologram-hud, living-screencast, visual-investigation, countdown, ascii-crt, tilt-shift, game-show
+            https://github.com/lemomo-ai/lemo-opuscar
+  Licence:  code and docs MIT, Copyright (c) 2026 LemoLab (full text below); demo films and stills CC BY 4.0 (not used:
+            no film, still, font, voice or music file from the repository is bundled)
+  What:     the looks of 16 film styles (palettes, grade values such as Caption News' contrast/saturation and the
+            countdown's eq/colorbalance line, type choices, caption grammar: chunk slam with one keyword block, paper
+            strap, intertitles, projected gate, flicker/weave/grain, HUD brackets, T-minus clock, road-sign panels,
+            telop strokes) re-expressed as FFmpeg filter graphs, ASS caption styles and Pillow title/facts cards for
+            editing real footage. Their canvas/WebGL engines are not used. "cinematic" is HuhQueue's own.
+
+  MIT License
+
+  Copyright (c) 2026 LemoLab
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+  documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+  rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+  persons to whom the Software is furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+  Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+  WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+  COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+studio/hb_templates.py  (ported, same owner)
+  Source:   dataanalystram/Huhbyte.ai (private, same owner): code/hb.py (cover_slide, text_slide, facts_slide,
+            follow_slide, divider, circle), automation/weekly_recap.py (render_cover, story_layout, render_cta),
+            docs/DESIGN_SYSTEM.md, docs/GITHUB_PILLAR.md
+  Licence:  the owner's own work, relicensed here under this repository's MIT licence
+  What:     the HuhByte AI post formats redrawn on studio.templates.Brand so any brand kit drives them.
+
+studio/fonts/Oswald-SemiBold.ttf, DMSerifDisplay-Regular.ttf, VT323-Regular.ttf, IBMPlexMono-SemiBold.ttf  (copied, unmodified)
+  Source:   Google Fonts (github.com/google/fonts, ofl/oswald, ofl/dmserifdisplay, ofl/vt323, ofl/ibmplexmono)
+  Licence:  SIL Open Font License 1.1 (full texts in studio/fonts/OFL-*.txt)
+
+--------------------------------------------------------------------------------------------------------------
 studio/xreader.py  The free X reader (one public post a person links; no X API key)
   - react-tweet (Vercel)  https://github.com/vercel/react-tweet  Licence: MIT, Copyright (c) 2023 Vercel, Inc.
       The syndication endpoint (cdn.syndication.twimg.com/tweet-result) and its token formula

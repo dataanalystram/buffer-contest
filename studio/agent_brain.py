@@ -58,6 +58,13 @@ using ONLY the tools. Rules:
   needs_confirmation, finish and ask the person its question; when they say yes, call render_reel again with
   rights_confirmed true. No video at all: generate_images, then render_reel with a style.
   Context.video_style_hint is the style their words suggest for video channels; use it unless the story or the person says otherwise.
+- Video themes: Context.theme says whether the person picked a theme in the gallery (use it, never override it) or left it to
+  you ("auto"): then choose one from the story and their words with list_themes / set_theme (e.g. a GitHub repo -> crt, a chip
+  or robot -> hologram_hud, a weekly round-up -> news_package, "cinematic" -> cinematic, "like opus clip" -> opus), and say
+  which theme and why in one line of your plan. A reply that asks for another look ("make it more cinematic", "switch to the
+  news theme") -> set_theme, which re-renders the video channels.
+- Templates: when the person names a format (weekly recap, GitHub repo post, YC launch, launch Reel, viral trend with credit,
+  editorial cover, text slides) use render_template for the image channels instead of render_carousel.
 - Always call write_captions, then check (it builds the packages), then finish with one or two sentences.
 - Weekly recap ("7 days what happened in AI", "weekly recap", "AI round-up of the week"): recap_plan, then (if it returns a
   question) finish and ask it; with the answer call render_recap(rights_confirmed), then write_captions and check.
@@ -107,9 +114,12 @@ class Brain:
         rec = self._recap_request(a, body, prompt, parsed, chans, tok)
         if rec is not None:
             return rec
+        from .media import styles as media_styles
+        theme = media_styles.resolve(str(body.get("theme") or "auto"))
+        theme = theme if theme == "auto" or media_styles.known(theme) else "auto"
         inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
-               "brief": str(body.get("brief") or "")[:1000],
-               "theme": str(body.get("theme") or "")[:40],
+               "theme": theme, "brand_colors": bool(body.get("brand_colors")),
+               "brief": str(body.get("brief") or "")[:1000],  # theme: validated above (unknown -> auto); a gallery pick wins
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
         res = {"thread": [{"role": "user", "text": prompt or "(your file)", "at": _now()}], "plan": [], "brain": {}}
         if tok:
@@ -486,6 +496,10 @@ class Brain:
             # a hint for video channels from the person's words ("short punchy explainer" -> opus); the brain decides
             from .media import styles as media_styles
             ctx["video_style_hint"] = media_styles.explicit(inp["prompt"]) or media_styles.pick(" ".join([inp["prompt"], inp["intake"].get("tone") or ""]))
+            picked = inp.get("theme") or "auto"
+            sug, why = (picked, "the person picked it") if picked != "auto" else media_styles.pick_theme(
+                " ".join([inp["prompt"], inp["intake"].get("tone") or ""]), inp["intake"].get("topic") or "")
+            ctx["theme"] = {"picked": picked, "suggested": sug, "why": why}
         user = (f"Request: {inp['prompt']}\n\nContext: {json.dumps(ctx, default=str)[:5000]}" if message is None else
                 f"The person replied in the thread: {message}\n\nCurrent state: {json.dumps(_state_summary(res), default=str)[:9000]}\n"
                 "Change only what they asked, then write_captions for the affected channels, check, finish.")
@@ -588,6 +602,11 @@ class Brain:
         sec = run["input"]["intake"].get("seconds")
         from .media import styles as media_styles
         style = media_styles.explicit(run["input"].get("prompt") or "")  # only when the person named a look
+        picked = run["input"].get("theme") or "auto"
+        if picked != "auto" and media_styles.known(picked):
+            style = picked  # the gallery choice wins
+        elif not style:
+            style = media_styles.named_theme(run["input"].get("prompt") or "")
         if style and (g["reel"] or g["reel45"]) and not run["result"].get("clip_owned"):
             self.call(a, rid, tools, "find_media", {})
         text_ids = [i for i in g["text"] if not only or i in only]
@@ -616,6 +635,15 @@ class Brain:
         from_upload = bool(up) and not it["source_url"] and (res.get("source") or {}).get("via") == "upload"
         plan = [f"Read your {up['type']}" + (" and transcribe it" if up.get("type") == "video" else "")] if up else []
         plan += [f"Save {len(it['rules'])} standing rule(s) to your Style Ledger"] if it["rules"] else []
+        from .media import styles as media_styles
+        picked = inp.get("theme") or "auto"
+        tid = picked if picked != "auto" and media_styles.known(picked) else media_styles.named_theme(inp["prompt"])
+        if tid and any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or (tid and it.get("format") == "reel"):
+            lab = media_styles.config(tid).get("label", tid)
+            why = "you picked it" if picked != "auto" else "you asked for it"
+            plan += [f"Video theme: {lab} ({why})"]
+            res["theme"] = {"id": tid, "label": lab, "why": why}
+            self.h._save(rid, run["steps"], res)
         plan += [f"Read your link ({it['source_url'][:60]})" if it["source_url"] else
                  ("Use your upload as the story" if from_upload else f"Search the news for “{(it['topic'] or inp['prompt'])[:60]}”"),
                  "Pull out the facts and cross-check the numbers", "Render each channel in its format", "Write one caption per channel",
@@ -677,6 +705,11 @@ class Brain:
         for s in standing:
             self.call(a, rid, tools, "remember_rule", {"correction": s})
             did.append("rule")
+        from .media import styles as media_styles
+        new_theme = media_styles.named_theme(message)
+        if new_theme and not standing:  # "make it more cinematic", "switch to the news theme": re-render the videos in it
+            self.call(a, rid, tools, "set_theme", {"theme": new_theme, "why": f"you asked: {message[:60]}"})
+            did.append("theme")
         if brand_words and not standing:
             self.call(a, rid, tools, "edit_brand", {"instruction": message})
             did.append("brand")
@@ -720,7 +753,8 @@ class Brain:
             self._say(a, rid, "Done: " + ", ".join(dict.fromkeys({"rule": "saved to your Style Ledger", "brand": "brand kit updated",
                                                                    "number": "figure confirmed", "duration": "video length changed",
                                                                    "format": "format changed", "captions": "captions added", "tone": "captions rewritten",
-                                                                   "hook": "stronger hook", "rerender": "re-rendered"}[d] for d in did)) + ".")
+                                                                   "hook": "stronger hook", "rerender": "re-rendered",
+                                                                   "theme": "video theme changed"}[d] for d in did)) + ".")
         else:
             self._say(a, rid, "I couldn't tell what to change. Try “make the hook stronger”, “redo YouTube at 30s”, “LinkedIn more formal”, "
                                "“logo smaller” or “use #FF5A1F”.")

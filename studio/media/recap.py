@@ -378,7 +378,18 @@ def register_layout(name: str, layout: RecapLayout) -> None:
     RECAP_LAYOUTS[name] = layout
 
 
+def _builtin_layouts() -> None:
+    """The HuhByte weekly_recap template (studio/hb_recap_layout.py) registers itself the first time a layout is asked for."""
+    if "huhbyte_weekly_recap" not in RECAP_LAYOUTS:
+        try:
+            from .. import hb_recap_layout
+            hb_recap_layout.register()
+        except Exception:  # noqa: BLE001 - a broken template must never stop the recap; the minimal look still renders
+            pass
+
+
 def layout_for(name: str | None = None) -> RecapLayout:
+    _builtin_layouts()
     if name and name in RECAP_LAYOUTS:
         return RECAP_LAYOUTS[name]
     return RECAP_LAYOUTS.get("huhbyte_weekly_recap") or RECAP_LAYOUTS["minimal"]
