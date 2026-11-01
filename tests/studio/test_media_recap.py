@@ -128,3 +128,29 @@ def test_compose_cover_one_segment_per_story_and_follow_only_at_the_end(tmp_path
     assert r["duration"] == pytest.approx(recap.CARD_SECS + 3 * 2.0 + 3.0, abs=0.4)
     assert (ff.probe(r["path"])["width"], ff.probe(r["path"])["height"]) == (1080, 1920)
     assert time.time() - t0 < 240
+
+
+def test_feed_slide_fills_the_space_under_the_media(tmp_path):
+    """4:5: the story's summary and a 'Reported by' pill sit under the media (no empty bottom third); 9:16 keeps its
+    platform-UI safe zone clear."""
+    from studio.media.compose import DEFAULT_BRAND, safe_area
+    lay = recap.layout_for("minimal")
+    seg = {"i": 2, "headline": "OpenAI ships a new model for every ChatGPT user", "source": "The Verge",
+           "outlets": ["theverge.com", "wired.com", "techcrunch.com"],
+           "summary": recap.dek("<p>The model remembers past chats across devices and rolls out to Plus users first.</p>", "OpenAI ships"),
+           "media": {"kind": "video", "credit": "Video: @OpenAI on X"}}
+    bx = lay.story_overlay(str(tmp_path / "a.png"), 1080, 1350, DEFAULT_BRAND, seg, 5)
+    _, _, _, b = safe_area(1080, 1350)
+    assert bx["credit"][3] < bx["summary"][1] < bx["summary"][3] < bx["source"][1] <= b
+    assert bx["source"][3] >= b - 10                                     # the pill closes the slide
+    bare = lay.story_overlay(str(tmp_path / "b.png"), 1080, 1350, DEFAULT_BRAND, {**seg, "summary": "", "media": None}, 5)
+    assert "credit" not in bare and "source" in bare and "swipe" in bare  # the source is said once, in the pill
+    tall = lay.story_overlay(str(tmp_path / "c.png"), 1080, 1920, DEFAULT_BRAND, seg, 5)
+    assert "summary" not in tall and "source" not in tall
+
+
+def test_dek_drops_summaries_that_repeat_the_headline():
+    assert recap.dek("OpenAI ships GPT-6 to everyone", "OpenAI ships GPT-6 to everyone - The Verge") == ""
+    assert recap.dek("<b>Rolls out</b>&nbsp;to Plus users first", "OpenAI ships GPT-6") == "Rolls out to Plus users first"
+    assert len(recap.dek("word " * 80, "x")) <= 171
+    assert recap.source_line({"outlets": ["a.com", "b.com"]}) == "a.com + 1 more" and recap.source_line({}) == ""

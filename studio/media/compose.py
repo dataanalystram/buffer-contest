@@ -74,6 +74,20 @@ def _pill(d: ImageDraw.ImageDraw, text: str, cx: int, y: int, brand: dict, size:
     return box
 
 
+def _outline_pill(d: ImageDraw.ImageDraw, text: str, cx: int, y: int, brand: dict, height: int = 60, maxw: int = 900) -> tuple:
+    """A quiet outlined pill (source / 'reported by' lines): accent outline, text in the brand's text colour."""
+    size = max(16, int(height * 0.42))
+    r = textfit.fit(text, "Inter-SemiBold.ttf", maxw - size * 2, height, max_size=size, min_size=14, max_lines=1)
+    f = textfit.font("Inter-SemiBold.ttf", r.size)
+    tw = f.getlength(r.lines[0])
+    pw = int(tw + r.size * 2.2)
+    box = (cx - pw // 2, y, cx + pw // 2, y + height)
+    d.rounded_rectangle(box, height // 2, fill=(0, 0, 0, 110), outline=_rgb(brand["accent"]) + (255,), width=3)
+    a, de = f.getmetrics()
+    d.text((cx - tw / 2, y + (height - (a + de)) / 2), r.lines[0], font=f, fill=_rgb(brand.get("text", "#FFFFFF")))
+    return box
+
+
 def _text_block(d, text, font_name, box, *, max_size, min_size=20, max_lines=4, fill="#FFFFFF", align="center",
                 valign="middle", upper=False, accent_words=None, accent="#C9ACFA", spacing=1.08, stroke=0):
     x0, y0, x1, y1 = box

@@ -159,6 +159,29 @@ def headline(title: str, max_words: int = 12) -> str:
     return t if len(w) <= max_words else " ".join(w[:max_words]).rstrip(",;:") + "…"
 
 
+def dek(summary: str, title: str, max_chars: int = 170) -> str:
+    """The one-line summary under a story on the 4:5 slide: the feed's own summary, tags stripped, cut on a word.
+    Empty when it only repeats the headline (Google News summaries often do)."""
+    t = re.sub(r"<[^>]+>|&nbsp;", " ", summary or "")
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        return ""
+    a, b = _tokens(t), _tokens(title or "")
+    if a and b and len(a & b) / len(a) >= 0.7:
+        return ""
+    if len(t) > max_chars:
+        t = t[:max_chars].rsplit(" ", 1)[0].rstrip(",;:-") + "…"
+    return t
+
+
+def source_line(seg: dict) -> str:
+    """'The Verge + 2 more': who reported the story (the pill at the bottom of a 4:5 slide)."""
+    outlets = [o for o in seg.get("outlets") or [] if o] or ([seg["source"]] if seg.get("source") else [])
+    if not outlets:
+        return ""
+    return outlets[0] + (f" + {len(outlets) - 1} more" if len(outlets) > 1 else "")
+
+
 def x_media(post_url: str, http=None, read=None) -> dict | None:
     """An X post's own video (or photo) through the free X reader cascade (studio/xreader.py: oEmbed -> react-tweet
     syndication -> FxTwitter), as a direct MP4/JPG the worker fetches through netguard. The post URL stays as
@@ -222,7 +245,7 @@ def plan(stories: list[dict], find=None, video: bool = True, http=None, x_read=N
         if media and not media["official"] and _first_party(st, media):
             media["official"] = True
         seg = {"i": i + 1, "headline": headline(st["title"]), "url": st["url"], "source": st.get("source") or "",
-               "outlets": st.get("outlets") or [], "media": media}
+               "outlets": st.get("outlets") or [], "summary": dek(st.get("summary") or "", st["title"]), "media": media}
         if media and not media["official"]:
             ask.append({"i": i + 1, "headline": seg["headline"], "credit": media["credit"]})
         segs.append(seg)
@@ -292,11 +315,32 @@ class RecapLayout:
         ph = min(bottom - top, int(pw * 9 / 16) if H / W <= 1.6 else int(pw * 16 / 9))
         x0 = (W - pw) // 2
         boxes["panel"] = (x0, top, x0 + pw, top + ph)
-        credit = (seg.get("media") or {}).get("credit") or (f"Source: {seg['source']}" if seg.get("source") else "")
+        feed = H / W <= 1.6
+        credit = (seg.get("media") or {}).get("credit") or \
+            (f"Source: {seg['source']}" if seg.get("source") and not (feed and source_line(seg)) else "")  # 4:5: the pill says it
         if credit:
             boxes["credit"] = _credit_chip(d, credit, l, top + ph + 14, r - l)
+        if feed:  # 4:5 feed slide: the space under the media holds the story's summary and who reported it
+            self._feed_footer(d, W, H, brand, seg, (boxes.get("credit") or boxes["panel"])[3], boxes)
         im.save(path)
         return boxes
+
+    def _feed_footer(self, d, W: int, H: int, brand: dict, seg: dict, y_top: int, boxes: dict) -> None:
+        from .compose import _outline_pill, _text_block, safe_area
+        l, _, r, b = safe_area(W, H)
+        src = source_line(seg)
+        pill_h = int(H * 0.05)
+        bottom = b - (pill_h + int(H * 0.02) if src else 0)
+        y = y_top + int(H * 0.025)
+        if seg.get("summary") and bottom - y >= 60:
+            boxes["summary"], _ = _text_block(d, seg["summary"], brand.get("body_font") or "Poppins-Medium.ttf", (l, y, r, bottom),
+                                              max_size=40, min_size=22, max_lines=3, fill=brand.get("text", "#FFFFFF"))
+        if src:
+            py = b - pill_h if seg.get("summary") else (y + b) // 2 - pill_h  # no summary: the pill sits mid-space
+            boxes["source"] = _outline_pill(d, "Reported by " + src, (l + r) // 2, py, brand, height=pill_h, maxw=r - l)
+        if not seg.get("summary"):  # nothing to read under the media: a quiet swipe cue keeps the slide from looking unfinished
+            boxes["swipe"], _ = _text_block(d, "SWIPE FOR THE NEXT STORY", "Inter-SemiBold.ttf", (l, b - int(H * 0.045), r, b),
+                                            max_size=26, min_size=16, max_lines=1, fill=brand.get("muted", "#A0A0A8"))
 
     def plate(self, path: str, w: int, h: int, brand: dict, seg: dict) -> dict:
         """A story with no usable video or image: a quiet brand panel naming who reported it."""
