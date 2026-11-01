@@ -401,7 +401,8 @@ function ibItem(g, it) {
       ${it.reason ? `<span class="ib-reason${it.status === "warning" ? " warn" : ""}" data-testid="inbox-reason"><b class="sr">${it.status === "warning" ? "Warning" : "Problem"}: </b>${esc(it.reason)}</span>` : ""}</div>
     ${acts ? `<div class="ib-acts">${acts}</div>` : ""}</li>`;
 }
-function netBadge(svc) { return `<span class="net svc-${esc(svc || "")}" aria-hidden="true">${esc((typeof NET_MARK !== "undefined" && NET_MARK[svc]) || (svc || "?").slice(0, 2))}</span>`; }
+// network marks live in net-logos.js (simple-icons); `label` names the network for screen readers when no text says it
+function netBadge(svc, label) { return window.netIcon ? netIcon(svc, label) : `<span class="net svc-${esc(svc || "")}" aria-hidden="true">${esc((svc || "?").slice(0, 2))}</span>`; }
 function ibGroup(g) {
   const acts = (g.actions || []).map((a) => a.href
     ? `<a class="btn2 sm" data-testid="inbox-group-action" data-act="${esc(a.id)}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
@@ -470,7 +471,7 @@ function todayRow(p) {
   const ch = chOf(p.channelId), a = (p.assets || [])[0], vid = a && /video/.test((a.type || "") + (a.mimeType || ""));
   const th = a && (a.thumbnail || (!vid && a.source));
   return `<li class="ib-trow svc-${esc(ch.service)}" data-testid="inbox-today-item"><time datetime="${esc(p.dueAt)}">${esc(hhmm(p.dueAt))}<small>${esc(new Date(p.dueAt).toLocaleDateString([], { weekday: "short" }))}</small></time>
-    ${netBadge(ch.service)}<span class="ib-ttext"><b>${esc(ch.displayName || ch.name)}</b><span>${esc(p.text)}</span></span>
+    ${window.chMark ? chMark(ch, true) : netBadge(ch.service, true)}<span class="ib-ttext"><b>${esc(ch.displayName || ch.name)}</b><span>${esc(p.text)}</span></span>
     ${th ? `<img class="ib-tth" src="${esc(th)}" alt="" loading="lazy">` : vid ? `<span class="ib-tth vid" aria-label="Video"></span>` : ""}</li>`;
 }
 async function ibAgents() {

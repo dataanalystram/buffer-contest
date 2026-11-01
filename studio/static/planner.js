@@ -136,12 +136,16 @@ function plControls() {
   }
   tzSel.value = PL.tz;
   const box = $("#plChannels");
-  box.innerHTML = S.channels.map((c) => `<button type="button" class="pl-ch${PL.ch.has(c.id) ? " on" : ""}" data-testid="planner-channel" data-ch="${esc(c.id)}" aria-pressed="${PL.ch.has(c.id)}" title="${esc((c.displayName || c.name) + " on " + netName(c.service))}">${netMark(c.service)}<span>${esc(c.displayName || c.name)}</span></button>`).join("");
+  box.innerHTML = S.channels.map((c) => `<button type="button" class="pl-ch${PL.ch.has(c.id) ? " on" : ""}" data-testid="planner-channel" data-ch="${esc(c.id)}" aria-pressed="${PL.ch.has(c.id)}" title="${esc((c.displayName || c.name) + " on " + netName(c.service))}">${netMark(c.service, c.id)}<span>${esc(c.displayName || c.name)}</span></button>`).join("");
   box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => { const id = b.dataset.ch; PL.ch.has(id) ? PL.ch.delete(id) : PL.ch.add(id); plChanged(); }));
   $("#plClear").hidden = !plFiltersActive();
 }
 function plChanged() { plSaveState(); plControls(); plDraw(); }
-function netMark(svc) { return `<span class="net svc-${esc(svc)}" aria-hidden="true">${esc(NET_MARK[svc] || (svc || "?").slice(0, 2))}</span>`; }
+// the network's mark (net-logos.js, simple-icons); with a channel id, the channel's avatar too when Buffer has one
+function netMark(svc, chId, label) {
+  if (chId && window.chMark) { const c = (S.channels || []).find((x) => x.id === chId); if (c) return chMark({ ...c, service: svc || c.service }, label); }
+  return window.netIcon ? netIcon(svc, label) : `<span class="net svc-${esc(svc)}" aria-hidden="true">${esc(NET_MARK[svc] || (svc || "?").slice(0, 2))}</span>`;
+}
 function stateChip(st) { return `<span class="pl-state s-${esc(st)}" data-testid="planner-status">${esc(PL_STATES[st] || st)}</span>`; }
 
 // ---------------------------------------------------------------- draw
@@ -206,7 +210,7 @@ function plWhen(i) { return i.z ? timeLabel(i.z.h, i.z.mi) : "No date"; }
 // a compact chip for the week and month grids
 function plChip(i) {
   return `<button type="button" class="pl-chip s-${esc(i.state)}${i.draggable ? "" : " locked"}" data-testid="planner-item" data-ref="${esc(i.ref)}" data-state="${esc(i.state)}" data-ch="${esc(i.channel_id)}" ${i.draggable ? ' draggable="true"' : ''}
-    title="${esc(PL_STATES[i.state] + " · " + (i.channel || "") + " · " + netName(i.service) + "\n" + i.text)}">${netMark(i.service)}<span class="t">${esc(plWhen(i))}</span><span class="c">${esc(i.text || "(media)")}</span></button>`;
+    title="${esc(PL_STATES[i.state] + " · " + (i.channel || "") + " · " + netName(i.service) + "\n" + i.text)}">${netMark(i.service, i.channel_id, true)}<span class="t">${esc(plWhen(i))}</span><span class="c">${esc(i.text || "(media)")}</span></button>`;
 }
 // a full card for the list view and the No date sidebar
 function plCard(i, where) {
@@ -221,7 +225,7 @@ function plCard(i, where) {
   if (i.state === "sent" && i.link) acts.push(`<a class="link" href="${esc(i.link)}" target="_blank" rel="noopener" data-testid="planner-view-post">View post</a>`);
   return `<article class="pl-card s-${esc(i.state)}${where === "side" ? " in-side" : ""}" data-testid="${where === "side" ? "planner-nodate-item" : "planner-card"}" data-ref="${esc(i.ref)}" data-ch="${esc(i.channel_id)}" data-state="${esc(i.state)}" ${i.draggable ? 'draggable="true"' : ""}>
     <span class="pl-thumb">${plThumb(i)}</span>
-    <div class="pl-card-body"><div class="pl-meta">${netMark(i.service)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted nw">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
+    <div class="pl-card-body"><div class="pl-meta">${netMark(i.service, i.channel_id)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted nw">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
       <p class="pl-cap">${esc(i.text || "(media only)")}</p>${i.error ? `<p class="pl-err" data-testid="planner-error">${esc(i.error)}</p>` : ""}
       <div class="pl-foot">${stateChip(i.state)}${i.agent ? `<span class="muted xs">by ${esc(i.agent)}</span>` : ""}<span class="pl-acts">${acts.join("")}</span></div></div></article>`;
 }
@@ -305,7 +309,7 @@ function plDay(r, byDay) {
     <div class="pl-corner" aria-hidden="true">${esc(PL.tz.split("/").pop().replace(/_/g, " "))}</div>`;
   for (const c of chans) {
     const n = items.filter((i) => i.channel_id === c.id).length;
-    h += `<div class="pl-wh${d === t ? " today" : ""}" role="columnheader">${netMark(c.service)}<span class="dw">${esc(c.displayName || c.name)}</span><span class="dc" data-testid="planner-day-count">${n ? `${n} post${n === 1 ? "" : "s"}` : "&nbsp;"}</span></div>`;
+    h += `<div class="pl-wh${d === t ? " today" : ""}" role="columnheader">${netMark(c.service, c.id, true)}<span class="dw">${esc(c.displayName || c.name)}</span><span class="dc" data-testid="planner-day-count">${n ? `${n} post${n === 1 ? "" : "s"}` : "&nbsp;"}</span></div>`;
   }
   for (let hr = 0; hr < 24; hr++) {
     h += `<div class="pl-hr" aria-hidden="true">${esc(timeLabel(hr, 0))}</div>`;

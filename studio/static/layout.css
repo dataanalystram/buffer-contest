@@ -1,0 +1,39 @@
+/* Fluid app shell and network marks (loaded last, after ux3.css).
+   Large desktops: every screen uses the width it has up to 1680 px, centred in the space right of the side rail, instead
+   of a fixed 1080 px column on the left. Grids add columns as the screen grows. Narrow forms keep their reading width. */
+
+/* ---------------------------------------------------------------- shell */
+.pane{padding-left:clamp(16px,3vw,48px);padding-right:clamp(16px,3vw,48px)}
+.tab,.tab.planner{max-width:1680px;margin-left:auto;margin-right:auto;width:100%}
+.foot .wrap{max-width:1680px}
+
+/* ---------------------------------------------------------------- Inbox on wide screens */
+/* 1500 px and up: activity and recommendations sit side by side next to the main column (three columns in all). */
+@media (min-width:1500px){
+  .ib-dash{grid-template-columns:minmax(0,1.3fr) minmax(0,1.4fr)}
+  .ib-side{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
+}
+/* 2200 px and up: the main column's approval cards get room for two across */
+@media (min-width:2200px){
+  .ib-dash{grid-template-columns:minmax(0,1.2fr) minmax(0,1.3fr)}
+}
+
+/* ---------------------------------------------------------------- News and other card grids */
+@media (min-width:1500px){
+  .nf-grid,.nf-skel{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+}
+
+/* ---------------------------------------------------------------- network marks (net-logos.js, simple-icons) */
+.net.net-logo,.net.net-mono[style]{background:var(--net,var(--ink));color:#fff}
+.net.net-logo svg{width:62%;height:62%;fill:currentColor;display:block}
+/* black marks (X, Threads, TikTok) keep an edge on dark surfaces */
+.net.net-logo,.net.net-mono{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--paper) 14%,transparent)}
+.pl-ch.on .net.net-logo,.pl-ch.on .net.net-mono[style]{background:var(--net,var(--ink));color:#fff}
+.pl-slotmark .net.net-logo{background:var(--muted)}
+/* channel avatar with the network mark on its corner */
+.chmark{position:relative;display:inline-block;flex:none;width:26px;height:26px;vertical-align:middle}
+.chmark-av{width:26px;height:26px;border-radius:50%;object-fit:cover;display:block;background:var(--sunken)}
+.chmark .net{position:absolute;right:-3px;bottom:-3px;width:14px;height:14px;font-size:7px;border-radius:4px;box-shadow:0 0 0 2px var(--raised)}
+.pl-chip .chmark{width:16px;height:16px}.pl-chip .chmark-av{width:16px;height:16px}
+.pl-chip .chmark .net{width:10px;height:10px;font-size:6px;right:-3px;bottom:-3px;border-radius:3px}
+.ib-trow .chmark{width:24px;height:24px}.ib-trow .chmark-av{width:24px;height:24px}
