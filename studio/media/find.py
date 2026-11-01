@@ -372,7 +372,7 @@ NAMES = {"x": "X", "youtube": "YouTube", "vimeo": "Vimeo", "loom": "Loom", "tikt
 
 def credit_line(c: dict) -> str:
     who = c.get("uploader") or ""
-    where = NAMES.get(c["platform"]) or host_of(c.get("source_page") or c["url"])
+    where = NAMES.get(c["platform"]) or c.get("company") or host_of(c.get("source_page") or c["url"])
     return f"{'Video' if c['kind'] == 'video' else 'Image'}: {who + ' on ' if who else ''}{where}"
 
 
@@ -380,12 +380,20 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+GENERIC_HOSTS = ("github.com", "githubusercontent.com", "ycombinator.com", "news.ycombinator.com", "medium.com", "substack.com")
+
+
 def _mark_official(c: dict, company: str, domain: str) -> None:
+    """Official = posted by the company itself: the uploader matches the company name, a file served from the
+    company's own domain, or a video the maintainers attached to their own GitHub README."""
     co = _norm(company)
     up = _norm(c.get("uploader", "")) + _norm(c.get("author_url", ""))
     if co and len(co) >= 3 and (co[:12] in up or co.removeprefix("the")[:12] in up):
         c["official"] = True
-    if domain and host_of(c.get("source_page") or "").endswith(domain):
+    h = host_of(c["url"])
+    if domain and not domain.endswith(GENERIC_HOSTS) and (h == domain or h.endswith("." + domain)):
+        c["official"] = True
+    if c["how"] == "github_readme" and "github.com/user-attachments/" in c["url"]:
         c["official"] = True
     if c["official"]:
         c["confidence"] = round(min(0.99, c["confidence"] + 0.04), 3)
@@ -607,7 +615,7 @@ def find_launch_video(query: str, *, http: httpx.Client | None = None, max_resul
 
     for c in ranked:
         _mark_official(c, ctx.get("company", ""), host_of(ctx["site"]) if ctx.get("site") else "")
-        c["credit"] = credit_line(c)
         if ctx.get("company"):
             c["company"] = ctx["company"]
+        c["credit"] = credit_line(c)
     return rank(ranked)[:max_results]
