@@ -90,17 +90,66 @@ def parse(prompt: str, connected: list[dict] | None = None) -> dict:
     if m:
         secs = max(5, min(180, int(m.group(1))))
     tone = next((k for k, pat in TONES.items() if re.search(pat, t)), "")
-    topic = URL_RE.sub(" ", raw)
-    for r in rules:
-        topic = topic.replace(r, " ")
-    topic = re.sub(r"\b(?:i want to|i'd like to|please|can you|could you|make|create|write|post|share|about|this|in|on|to|all|my|"
-                   r"channels?|networks?|everywhere|a|an|the|and|here|you|also|have|it|for|me|short|punchy|explainer|reel|carousel)\b",
-                   " ", topic, flags=re.I)
-    topic = re.sub(r"\s+", " ", topic).strip(" .,;:-")
+    topic = topic_of(raw, rules)
     return {"prompt": raw, "truncated": len((prompt or "").strip()) > MAX_PROMPT, "urls": found,
             "source_url": found[0] if found else "", "extra_urls": found[1:], "channel_ids": chan_ids, "channels_why": chan_why,
-            "format": fmt, "seconds": secs, "tone": tone, "rules": rules, "topic": topic[:200],
+            "format": fmt, "seconds": secs, "tone": tone, "rules": rules, "topic": topic[:200], "research": asks_research(raw),
             "kind": "link" if found else ("topic" if topic else "empty")}
+
+
+# Words that tell the agent WHAT TO DO, never what the post is about ("search it online", "post on all my channels",
+# "make a reel", "you can do that"). Owner bug, 1 Nov 2026: a prompt like "you can do that online search it is <link>
+# research and have a instgram reel post on all channels" became the headline and the topic of the captions.
+INSTRUCTION_RE = re.compile(
+    r"\b(?:i want to|i'd like to|i would like to|please|pls|can you|could you|would you|you can|you could|you should|"
+    r"do that|do it|do this|go ahead|make|create|write|post(?:ed|ing|s)?|share|publish|upload(?:ed)?|schedule|send|put|"
+    r"search(?:ed|ing)?|research(?:ed|ing)?|look(?:ed)? (?:it )?up|google|find|online|on the (?:web|internet)|web|internet|"
+    r"have|get|give|use|add|turn|into|out of|from|as|with|of|"
+    r"about|this|that|these|those|it|its|it's|is|are|was|be|in|on|to|at|all|my|our|your|me|us|for|and|or|so|then|also|here|there|"
+    r"channels?|networks?|platforms?|socials?|accounts?|everywhere|"
+    r"a|an|the|short|punchy|snappy|explainer|simple|formal|casual|"
+    r"reels?|carousels?|videos?|clips?|shorts?|story|stories|posts?|captions?|images?|photos?|pictures?|slides?|thumbnails?|"
+    r"insta(?:gram)?|inst?g?ram|ig|linked ?in|facebook|fb|youtube|yt|tik ?tok|twitter|x|threads|bluesky|mastodon|"
+    r"link|url|below|above|attached|uploaded|my file|the file)\b", re.I)
+
+
+def topic_of(prompt: str, rules: list[str] | None = None) -> str:
+    """What the post is about once links, standing rules and instructions are taken out. "" when the prompt only says
+    what to do ("search it and post a reel on all channels https://x.com/..."): the link or the upload is then the
+    topic, never the prompt's own words."""
+    t = URL_RE.sub(" ", prompt or "")
+    t = BARE_RE.sub(" ", t)
+    for r in rules or []:
+        t = t.replace(r, " ")
+    t = INSTRUCTION_RE.sub(" ", t)
+    t = re.sub(r"\b\d{1,3}\s*(?:s|sec|secs|seconds)\b", " ", t, flags=re.I)
+    t = re.sub(r"[^\w$€£₹%.,'&+#@ -]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip(" .,;:-'")
+    return t if re.search(r"[A-Za-z0-9$€£₹]{2,}", t) else ""
+
+
+def describe(prompt: str, rules: list[str] | None = None) -> str:
+    """The person's own words about their content, with the instructions taken out but their grammar kept: clauses that
+    only say what to do ("make a reel", "post on all my channels", "search it") are dropped whole, links removed.
+    "Our studio opens Monday. Make a reel and post it everywhere" -> "Our studio opens Monday." Used as the person's line
+    about an upload (context for the captions), never as a headline."""
+    t = URL_RE.sub(" ", prompt or "")
+    t = BARE_RE.sub(" ", t)
+    for r in rules or standing_rules(prompt or ""):
+        t = t.replace(r, " ")
+    keep = []
+    for sent in re.split(r"(?<=[.!?])\s+|\n+", t):
+        parts = [p for p in re.split(r",\s*|\s+(?:and|then|also|so)\s+", sent) if p and p.strip()]
+        kept = [p.strip() for p in parts if topic_of(p)]
+        if kept:
+            s = ", ".join(kept)
+            keep.append(s if re.search(r"[.!?]$", s) else s + ".")
+    return re.sub(r"\s+", " ", " ".join(keep)).strip()[:600]
+
+
+def asks_research(prompt: str) -> bool:
+    """Did the person ask the agent to look things up ("search it", "research", "find out", "look up", "online")?"""
+    return bool(re.search(r"\b(?:search|research|look (?:it )?up|google|find out|dig into|online)\b", prompt or "", re.I))
 
 
 def standing_rules(text: str) -> list[str]:

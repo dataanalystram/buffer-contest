@@ -73,9 +73,8 @@ with sync_playwright() as p:
         pg.fill("[data-testid=agent-query]", q); pg.select_option("[data-testid=agent-format]", "carousel")
     else:
         photo = Path("/tmp/hq-sample-photo.jpg"); sample_photo(photo)
-        pg.click("[data-testid=src-media]")
         pg.set_input_files("[data-testid=agent-file]", str(photo))
-        pg.fill("[data-testid=agent-brief]", "Our new studio desk is ready for the morning show")
+        pg.fill("[data-testid=agent-query]", "Our new studio desk is ready for the morning show")
         pg.select_option("[data-testid=agent-format]", "photo")
     pg.click("[data-testid=agent-go]")
     pg.wait_for_selector("[data-testid=package]", timeout=100000)

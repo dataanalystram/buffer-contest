@@ -307,7 +307,7 @@ _GROUPS = [  # (path prefix, section title)
     ("/api/channels", "Channels and queue"), ("/api/queue", "Channels and queue"), ("/api/calendar", "Channels and queue"),
     ("/api/inbox", "Channels and queue"),
     ("/api/draft", "Posts"), ("/api/posts", "Posts"), ("/api/preflight", "Posts"), ("/api/check", "Posts"),
-    ("/api/media", "Posts"), ("/api/ideas", "Posts"),
+    ("/api/media", "Posts"), ("/api/ideas", "Posts"), ("/api/library", "Library"),
     ("/api/approvals", "Approvals"),
     ("/api/agent", "Make a post (agent)"), ("/api/recommendations", "Make a post (agent)"), ("/api/onboarding", "Make a post (agent)"),
     ("/api/takes", "One take"),
@@ -321,6 +321,13 @@ _GROUPS = [  # (path prefix, section title)
 ]
 # Plain-English line per endpoint; anything missing falls back to the route's OpenAPI summary (a test checks none is missing)
 _DESC = {
+    "POST /api/agent/runs/{rid}/packages/{channel_id}/media": "Replace or regenerate one channel's media in an agent run",
+    "GET /api/library": "List your Library: uploads and generated media, with search and type filters",
+    "POST /api/library/upload": "Upload a video or image to your Library (100 MB per file, 200 MB per account)",
+    "GET /api/library/{iid}": "One Library item, with the posts that use it",
+    "GET /api/library/{iid}/file": "Stream a Library file (supports range requests for video)",
+    "DELETE /api/library/{iid}": "Delete a Library item and its file (warns if an unsent post still uses it)",
+    "POST /api/library/{iid}/use": "Start a Make a post run with this Library item attached",
     "POST /api/device-link": "One-time link (10 minutes, single use) to open this account on another device",
     "POST /api/disconnect": "Disconnect Buffer and delete everything HuhQueue stored for you",
     "POST /api/logout": "Sign this browser out", "GET /api/me": "The Buffer account and organization you are signed in as",

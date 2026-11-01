@@ -122,6 +122,10 @@ from . import agent_routes as _agent_routes  # noqa: E402
 
 TOOLS += _agent_routes.TOOLS
 READ_ONLY |= _agent_routes.READ_ONLY
+from . import library as _library  # noqa: E402  Library: list_library, delete_library_item, use_library_item
+
+TOOLS += _library.TOOLS
+READ_ONLY |= _library.READ_ONLY
 
 
 def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
@@ -214,6 +218,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _agent_routes.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _library.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     raise ActionError(f"Unknown tool {name}", 404)

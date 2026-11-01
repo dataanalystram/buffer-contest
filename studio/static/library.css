@@ -1,0 +1,67 @@
+/* Make a post: the optional file, per-channel previews, plain send options. The Library screen, its viewer and picker.
+   Component styles only: the app shell, rail and page widths live in style.css / responsive.css / ux3.css. */
+.attach-row{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
+.attach-row .drop{flex:1 1 260px;min-width:0}
+.attach-row > .btn2{align-self:center}
+.attached{display:flex;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--raised)}
+.attached img,.attached video{width:48px;height:60px;object-fit:cover;border-radius:6px;background:var(--sunken);flex:none}
+.att-txt{flex:1;min-width:0;display:flex;flex-direction:column}.att-txt b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.att-txt small{color:var(--muted);font-size:12px}
+.run-upload{display:flex;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:12px;background:var(--raised)}
+.run-upload img,.run-upload video{width:54px;height:68px;object-fit:cover;border-radius:6px;background:var(--sunken);flex:none}
+.run-upload span{display:flex;flex-direction:column;min-width:0}.run-upload small{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.pkg-intro{margin:-6px 0 14px}
+
+/* one channel's own media: a playable video or the image(s), with its format, aspect and length */
+.pkg-media{display:flex;flex-direction:column;gap:6px}
+.pkg-media video,.pkg-media .pm-img{width:100%;max-height:420px;border-radius:8px;background:#000;border:0;padding:0;display:block;object-fit:contain}
+.pkg-media .pm-img{cursor:zoom-in;overflow:hidden;background:var(--sunken)}
+.pkg-media .pm-img img{width:100%;height:100%;object-fit:cover;display:block}
+.pkg-media.empty{border:1px dashed var(--line-strong);border-radius:8px;min-height:72px;display:grid;place-items:center}
+.pm-strip{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.pm-strip button{flex:none;border:1px solid var(--line);border-radius:6px;padding:0;background:none;cursor:zoom-in}
+.pm-strip img{width:48px;height:60px;object-fit:cover;border-radius:5px;display:block}
+.pm-meta{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.pm-fmt{font-weight:600;color:var(--ink)}
+.pm-acts{display:flex;gap:8px;flex-wrap:wrap}
+.pkg-help{margin-top:-4px}
+.chk-res details{margin-top:4px}
+.chk-res .rl-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.chk-res .rl-list .tag{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--sunken);color:var(--muted);margin-right:4px}
+
+/* Library */
+.lib-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.lib-bar input[type=search]{flex:1 1 220px;min-width:0}
+.lib-usage{margin-left:auto}
+.lib-up{cursor:pointer}
+.lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.lib-card{border:1px solid var(--line);border-radius:10px;background:var(--raised);display:flex;flex-direction:column;overflow:hidden}
+.lib-th{position:relative;border:0;padding:0;background:var(--sunken);aspect-ratio:4 / 5;cursor:zoom-in;display:block;width:100%}
+.lib-th img,.lib-th video{width:100%;height:100%;object-fit:cover;display:block}
+.lib-play{position:absolute;inset:auto auto 10px 10px;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;display:grid;place-items:center;font-size:13px}
+.lib-kind{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.62);color:#fff;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+.lib-info{padding:10px 12px 6px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.lib-info b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.lib-info small{color:var(--muted);font-size:12px}
+.lib-used{overflow-wrap:anywhere}.lib-used .link{font-size:12px}
+.lib-acts{display:flex;gap:8px;padding:6px 12px 12px;margin-top:auto;flex-wrap:wrap}
+.lib-acts .danger{color:var(--bad, #b3261e)}
+.lightbox,.lib-pick{border:0;border-radius:12px;padding:0;background:var(--raised);color:var(--ink);max-width:min(960px,94vw);width:100%;box-shadow:var(--float)}
+.lightbox::backdrop,.lib-pick::backdrop{background:rgba(0,0,0,.6)}
+.lb-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.lb-head b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb-nav{display:flex;gap:6px;flex:none}
+.lb-body{display:grid;place-items:center;background:#000;max-height:82vh}
+.lb-body img,.lb-body video{max-width:100%;max-height:82vh;display:block}
+.lib-pick .lib-grid{padding:14px;max-height:70vh;overflow:auto;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.lib-pick-item{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--raised);padding:0;overflow:hidden;cursor:pointer;text-align:left}
+.lib-pick-item:hover{border-color:var(--line-strong)}
+.lib-pick-item img,.lib-pick-item video{width:100%;aspect-ratio:4 / 5;object-fit:cover;background:var(--sunken)}
+.lib-pick-item span{display:flex;flex-direction:column;padding:6px 8px}.lib-pick-item b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lib-pick-item small{color:var(--muted);font-size:11px}
+@media (max-width:640px){
+  .lib-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .lib-usage{margin-left:0;width:100%}
+  .lib-acts .btn,.lib-acts .btn2{flex:1}
+  .pkg-media video,.pkg-media .pm-img{max-height:360px}
+}

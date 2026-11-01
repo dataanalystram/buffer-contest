@@ -50,6 +50,8 @@ class House:
         self.takes = Takes(self)
         from .agent_brain import Brain
         self.brain = Brain(self)
+        from .library import Library
+        self.library = Library(self)
 
     # ================================================================ brand kit
     def kit(self, a: Actor) -> dict:
@@ -229,19 +231,19 @@ class House:
     def get_media(self, token: str) -> dict | None:
         rows = self.store.q("SELECT token,user_id,mime,data,size,meta FROM media WHERE token=?", (token,))
         if not rows:
-            return None
+            return self.library.blob(token)  # an uploaded Library file works as a media token everywhere
         d = dict(rows[0])
         d["data"] = bytes(d["data"])
         return d
 
     def media_meta(self, a: Actor, token: str) -> dict | None:
         rows = self.store.q("SELECT meta FROM media WHERE token=? AND user_id=?", (token, a.uid))
-        return json.loads(rows[0]["meta"]) if rows else None
+        return json.loads(rows[0]["meta"]) if rows else self.library.meta(a, token)
 
     def media_url(self, token: str) -> str:
         return f"{self.s.public_url.rstrip('/')}/m/{token}" if token else ""
 
-    def upload(self, a: Actor, name: str, data_b64: str) -> dict:
+    def upload(self, a: Actor, name: str, data_b64: str, source: str = "upload") -> dict:
         self.studio._guard_write(a, "upload_media")
         b64 = data_b64.split(",", 1)[-1]
         demo_user = demo_guard.is_demo(a.uid)
@@ -260,6 +262,12 @@ class House:
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             raise ActionError("Upload a JPG, PNG, WebP photo or an MP4/MOV video.")
         kind = "video" if ext in ("mp4", "mov", "m4v", "webm") else "photo"
+        if not demo_user:  # a real account's uploads are kept in its Library (studio/library.py), type sniffed from the bytes
+            item = self.library.save_bytes(a, data, name, "take" if source == "take" else "upload")
+            kind = "video" if item["kind"] == "video" else "photo"
+            self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
+            return {"token": item["media_token"], "url": self.media_url(item["media_token"]), "type": kind, "bytes": len(data),
+                    "library_id": item["id"]}
         tok = self.put_media(a, data, name, kind="upload", meta={"type": kind})
         self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
         return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
@@ -277,8 +285,9 @@ class House:
 
     def purge_media(self, days: int = 21) -> int:
         cutoff = _now() - days * 86400
-        n = self.store.q("SELECT COUNT(*) AS n FROM media WHERE created<? AND meta NOT LIKE ?", (cutoff, '%"logo"%'))[0]["n"]
-        self.store.x("DELETE FROM media WHERE created<? AND meta NOT LIKE ?", (cutoff, '%"logo"%'))
+        keep = "token NOT IN (SELECT token FROM library_media)"  # Library items are kept until the person deletes them
+        n = self.store.q(f"SELECT COUNT(*) AS n FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))[0]["n"]
+        self.store.x(f"DELETE FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))
         return n
 
     # ================================================================ AI settings
@@ -330,11 +339,18 @@ class House:
 
     # ================================================================ agent runs
     def start_run(self, a: Actor, body: dict) -> dict:
-        from . import intake
-        q = str(body.get("query") or "")
-        if body.get("prompt") or body.get("brain") or intake.urls(q) or len(q) > 300:
-            # one prompt box: prose + links go to the agent brain (a pasted link is THE source, never a search)
-            return self.brain.start(a, body)
+        """Every Make a post run goes through the agent brain (plan -> tools -> check, with a reply thread): a prompt,
+        a prompt with a link, or a prompt with the person's own photo/video (an input tool, read_upload). The older
+        fixed pipeline below only finishes runs that were started before this change (owner bug, 1 Nov 2026: uploads
+        still ran it and burned the prompt into the video)."""
+        body = dict(body or {})
+        if not body.get("prompt"):
+            body["prompt"] = " ".join(str(body.get(k) or "").strip() for k in ("query", "brief") if body.get(k)).strip()
+        if body.get("brief") and body["brief"] not in body["prompt"]:
+            body["prompt"] = (body["prompt"] + " " + str(body["brief"])).strip()
+        return self.brain.start(a, body)
+
+    def _legacy_start_run(self, a: Actor, body: dict) -> dict:
         self.studio._guard_write(a, "agent_run")
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
             raise ActionError(demo_guard.WHY["run"], 429)
@@ -737,8 +753,9 @@ class House:
     # ---------------------------------------------------------------- video jobs
     def _queue_video(self, a, rid, kit, p, res, inp) -> dict:
         src = res.get("source_media") or {}
+        from .agent_tools import safe_headline
         spec = {"kind": "brand_video" if src.get("type") == "video" else "slideshow", "kit": {k: kit[k] for k in brand.DEFAULT_KIT},
-                "params": p, "ratio": "9:16", "hook": (res.get("story") or {}).get("headline") or inp.get("brief", ""),
+                "params": p, "ratio": "9:16", "hook": safe_headline((res.get("story") or {}).get("headline", ""), inp.get("brief", "")),
                 "logo": kit.get("logo") or "", "source": src.get("token", ""),
                 "slides": [m["token"] for m in res["media"] if m.get("role") == "slide"]}
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
@@ -774,6 +791,48 @@ class House:
         for m in res["media"]:
             m.pop("role", None)
         return {"id": jid, "status": "done", "detail": "No video worker: carousel instead"}
+
+    def transcribe(self, a: Actor, rid: int, token: str) -> tuple[str, str]:
+        """(transcript, note) for the person's own uploaded video, with studio.media transcribe (faster-whisper): in this
+        process where video may run, else on the free video worker (a 'transcribe' job). Never on the free sample."""
+        if demo_guard.is_demo(a.uid):
+            return "", "Transcripts need the video worker, which the free sample doesn't run."
+        mode = self.video_mode()
+        if mode == "local":
+            import tempfile
+            m = self.get_media(token)
+            if not m:
+                return "", "The upload is gone."
+            try:
+                from .media import transcribe as tr
+                with tempfile.TemporaryDirectory(prefix="hq_tr_") as d:
+                    path = os.path.join(d, "in.mp4")
+                    with open(path, "wb") as fh:
+                        fh.write(m["data"])
+                    out = tr.transcribe(path)
+                return out.get("text", ""), "Transcribed on this server."
+            except Exception as e:  # noqa: BLE001  faster-whisper missing, silent clip, ...
+                return "", f"No transcript ({str(e)[:120]})."
+        if mode != "github":
+            return "", "No transcriber here (the video worker isn't set up)."
+        jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
+                           (a.uid, rid, json.dumps({"kind": "transcribe", "source": token, "model": os.environ.get("HQ_WHISPER_MODEL", "tiny")}),
+                            "queued", _now(), _now()))
+        ok, why = self._dispatch_github(jid)
+        if not ok:
+            self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (why, _now(), jid))
+            return "", f"The transcriber didn't start ({why})."
+        t0, wait = _now(), int(os.environ.get("HQ_TRANSCRIBE_WAIT", "240"))
+        while _now() - t0 < wait:
+            time.sleep(0.05 if self.sync else 3)
+            row = self.store.q("SELECT status, error, result FROM render_jobs WHERE id=?", (jid,))[0]
+            self.store.x("UPDATE agent_runs SET updated=? WHERE id=?", (_now(), rid))
+            if row["status"] == "done":
+                return (json.loads(row["result"] or "{}").get("text") or ""), "Transcribed by the video worker."
+            if row["status"] == "failed":
+                return "", f"No transcript ({(row['error'] or '')[:120]})."
+        self.store.x("UPDATE render_jobs SET status='failed', error='timed out', updated=? WHERE id=?", (_now(), jid))
+        return "", "The transcriber took too long; I went on without it."
 
     @staticmethod
     def local_video_ok() -> bool:
@@ -958,6 +1017,14 @@ class House:
             raise ActionError("No such job.", 404)
         job = dict(rows[0])
         kind = json.loads(job["spec"]).get("kind", "")
+        if kind == "transcribe":
+            tr = (body or {}).get("transcript") if isinstance((body or {}).get("transcript"), dict) else None
+            ok = bool(tr and not error)
+            self.store.x("UPDATE render_jobs SET status=?, error=?, result=?, updated=? WHERE id=?",
+                         ("done" if ok else "failed", (error or ("" if ok else "no transcript"))[:500],
+                          json.dumps({"text": str(tr.get("text") or "")[:20000], "language": str(tr.get("language") or "")[:8]}) if ok else None,
+                          _now(), jid))
+            return {"ok": ok}
         if kind == "take_analyze":
             return self.takes.on_analysis(jid, (body or {}).get("analysis"), error)
         if kind == "take_render":

@@ -55,6 +55,11 @@ def add_routes(app: FastAPI, house, actor) -> None:
         """Reply in a run's thread: "make the hook stronger", "redo YouTube at 30s", "it's $1.3M"."""
         return house.brain.reply(actor(request, write=True), rid, body.get("text", ""))
 
+    @app.post("/api/agent/runs/{rid}/packages/{channel_id}/media")
+    def run_channel_media(rid: int, channel_id: str, request: Request, body: dict = Body(default={})):
+        """One channel's media: {"token": ...} uses the person's own file (Library item / upload); {} regenerates it."""
+        return house.brain.channel_media(actor(request, write=True), rid, channel_id, str((body or {}).get("token") or ""))
+
     @app.post("/api/agent/runs/{rid}/tools/{name}")
     def run_tool(rid: int, name: str, request: Request, body: dict = Body(default={})):
         return house.brain.tool(actor(request, write=True), rid, name, body or {})
@@ -88,6 +93,9 @@ TOOLS: list[dict[str, Any]] = [
                                                                             "brain": {"type": "string", "enum": ["huhqueue", "external"]}}}},
     {"name": "reply_post", "description": "Refine a post run in plain words, like replying in its thread: 'make the hook stronger', 'redo YouTube at 30s', 'LinkedIn more formal', 'logo smaller', 'it's $1.3M' (answers a fact question). Standing instructions become Style Ledger rules.",
      "inputSchema": {"type": "object", "required": ["run_id", "text"], "properties": {"run_id": {"type": "integer"}, "text": {"type": "string"}}}},
+    {"name": "replace_channel_media", "description": "Change ONE channel's media in a post run: media_token (a Library item's media_token from list_library / use_library_item, or an upload) uses the person's own file; omit it to regenerate that channel's media. The check runs again.",
+     "inputSchema": {"type": "object", "required": ["run_id", "channel"], "properties": {"run_id": {"type": "integer"}, "channel": {"type": "string", "description": "channel id or network name"},
+                                                                                       "media_token": {"type": "string"}}}},
     {"name": "edit_brand", "description": "Change the brand kit in plain words: 'make the logo smaller', 'use #FF5A1F', 'switch font to Poppins'. Records a ledger rule; returns a preview.",
      "inputSchema": {"type": "object", "required": ["instruction"], "properties": {"instruction": {"type": "string"}}}},
     {"name": "get_onboarding", "description": "The person's content types, channels, website, tone and X watchlist, with the options to choose from.",
@@ -113,6 +121,8 @@ def call_tool(studio, actor, name: str, args: dict):
             return h.brain.start(actor, {k: args.get(k) for k in ("prompt", "channel_ids", "format", "brain") if args.get(k)} | {"prompt": args.get("prompt", "")})
         if name == "reply_post":
             return h.brain.reply(actor, int(args.get("run_id") or 0), args.get("text", ""))
+        if name == "replace_channel_media":
+            return h.brain.channel_media(actor, int(args.get("run_id") or 0), str(args.get("channel") or ""), str(args.get("media_token") or ""))
         if name == "edit_brand":
             return edit_brand(h, actor, args.get("instruction", ""))
         if name == "get_onboarding":

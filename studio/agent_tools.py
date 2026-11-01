@@ -25,6 +25,11 @@ IDS = {"type": "array", "items": {"type": "string"}, "description": "Channel ids
 SPECS = [
     {"name": "read_url", "description": "Read a link the person gave: an article (direct read, Firecrawl fallback) or an X post (public oEmbed; media only with the person's X API key). The link is THE source; never replace it with a search.",
      "input_schema": {"type": "object", "required": ["url"], "properties": {"url": S}}},
+    {"name": "read_upload", "description": "Read the person's OWN uploaded photo or video (context.upload). A video is transcribed (studio.media "
+                                        "transcribe) so the post is about what is said in it; with no link, the upload (its transcript and the person's "
+                                        "own description) is the source. Call it first whenever there is an upload. It is their media: render_reel uses "
+                                        "it with rights_confirmed.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "x_oembed", "description": "Read an X/Twitter post through the public oEmbed endpoint: author, handle, text, date. No scraping, no login.",
      "input_schema": {"type": "object", "required": ["url"], "properties": {"url": S}}},
     {"name": "search_news", "description": "Find recent stories for a topic (Bing News, Hacker News, the person's feeds). Use only when the person gave no link.",
@@ -40,6 +45,8 @@ SPECS = [
                                        "tutorial look, hype = fast one-word captions. It uses the clip from the link or the video find_media found. "
                                        "Someone else's video needs rights_confirmed: if the result says needs_confirmation, finish and ask the person the question.",
      "input_schema": {"type": "object", "properties": {"channel_ids": IDS, "seconds": {"type": "integer"}, "captions": {"type": "boolean"},
+                                                       "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"],
+                                                                 "description": "9:16 for Instagram/YouTube/TikTok; 4:5 (or 1:1) for LinkedIn/Facebook feeds"},
                                                        "style": {"type": "string", "enum": ["opus", "news", "minimal", "hype"]},
                                                        "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
                                                        "rights_confirmed": {"type": "boolean", "description": "The person confirmed they may repost this video (with credit)"}}}},
@@ -66,7 +73,7 @@ SPECS = [
 ]
 CHECK_SPEC = {"name": "check", "description": "Check every channel (brand rules, clipped text, about the source, fact conflicts) and build the packages. Call after write_captions.",
               "input_schema": {"type": "object", "properties": {}}}
-LABELS = {"read_url": "Read your link", "x_oembed": "Read the X post", "search_news": "Search the news", "extract_facts": "Pull out the facts",
+LABELS = {"read_upload": "Read your upload", "read_url": "Read your link", "x_oembed": "Read the X post", "search_news": "Search the news", "extract_facts": "Pull out the facts",
           "render_cover": "Render the cover", "render_carousel": "Render the carousel", "render_reel": "Render the Reel",
           "add_end_card": "Set the end card", "edit_brand": "Update your brand kit", "edit_channel_media": "Re-render one channel",
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
@@ -99,6 +106,33 @@ CHANNEL_STYLE = {
     "bluesky": "hook line plus the link, under 300 characters.",
     "mastodon": "hook line, one short line, the link, 1-2 hashtags.",
 }
+
+
+_URLISH = re.compile(r"https?://\S+|\b(?:www\.)?[\w-]+\.(?:com|ai|io|co|org|net|dev|app|be)/\S*|\b(?:x|twitter)\.com\b|/status/\d+", re.I)
+_ORDERS = re.compile(r"\b(?:search(?: it| for| online)?|research|look (?:it )?up|post (?:it |this )?on|all (?:my |the )?channels|you can|"
+                     r"can you|please|make (?:a|me|it)|have a|reel post|inst?a?g?ram reel|insta(?:gram)? post|do that|online|"
+                     r"every ?where|my channels)\b", re.I)
+
+
+def safe_headline(headline: str, prompt: str = "", fallbacks: tuple | list = ()) -> str:
+    """A headline is written from the story, never copied from the person's request. Owner bug, 1 Nov 2026: the prompt
+    "YOU CAN DO THAT ONLINE SEARCH IT IS HTTPS://X.COM/... RESEARCH AND HAVE A INSTGRAM..." was burned into a Reel.
+    Refuses (falls through to the next candidate) anything with a URL, request wording, or a long run copied from the
+    prompt."""
+    pw = re.findall(r"[a-z0-9$€£₹.%]+", (prompt or "").lower())
+    own = " ".join(re.findall(r"[a-z0-9$€£₹.%]+", intake.describe(prompt or "").lower()))  # their words about the content
+    for cand in [headline, *fallbacks]:
+        h = _URLISH.sub(" ", str(cand or ""))
+        h = re.sub(r"\s+", " ", h).strip(" -–—:;,.\"'“”")
+        if len(re.findall(r"\w{2,}", h)) < 2:
+            continue
+        if prompt and any(m.group(0).lower() in prompt.lower() for m in _ORDERS.finditer(h)):
+            continue  # the request's own wording ("search it", "post on all channels") is not a headline
+        hw = re.findall(r"[a-z0-9$€£₹.%]+", h.lower())
+        if pw and len(hw) >= 8 and " ".join(hw[:8]) in " ".join(pw) and " ".join(hw[:8]) not in own:
+            continue  # a long verbatim run of the request itself (its instructions), not words about the content
+        return h[:120]
+    return ""
 
 
 def tone_keys(*texts: str) -> list[str]:
@@ -237,6 +271,34 @@ class Tools:
                        media=[m["type"] for m in art.get("media") or []], media_note=art.get("media_note", ""))
         return out
 
+    def t_read_upload(self) -> dict:
+        """The person's own photo/video as an input: transcribe a video, and with no link make it the source."""
+        run = self.state()
+        res = run["result"]
+        up = res.get("upload")
+        if not up:
+            raise ActionError("There's no upload in this post.")
+        if up["type"] == "video" and not up.get("transcript_tried"):
+            text, note = self.h.transcribe(self.a, self.rid, up["token"])
+            run = self.state()
+            res = run["result"]
+            up = res["upload"]
+            up.update(transcript_tried=True, transcript=(text or "")[:8000], transcript_note=note)
+        up["read"] = True
+        it = run["input"]["intake"]
+        sents = [x.strip() for x in re.split(r"(?<=[.!?])\s+", up.get("transcript") or "") if len(x.split()) >= 3][:12]
+        desc = (run["input"].get("brief") or "").strip() or intake.describe(run["input"].get("prompt", ""), it.get("rules")) or it.get("topic") or ""
+        if not res.get("source") and not it.get("source_url") and not (it.get("research") and it.get("topic")) and (sents or desc):
+            # no link and nothing to research: the upload itself is the story (its words, and the person's own line about it)
+            what = "video" if up["type"] == "video" else "photo"
+            res["source"] = {"url": "", "title": (sents[0] if sents else desc)[:140], "description": desc[:300], "image": "",
+                             "site": f"Your {what}", "via": "upload", "post": None, "media": [], "media_note": "",
+                             "paragraphs": ([desc] if desc else []) + sents}
+        self.save(run)
+        return {"type": up["type"], "name": up.get("name", ""), "transcript": (up.get("transcript") or "")[:600],
+                "transcript_words": len((up.get("transcript") or "").split()), "note": up.get("transcript_note", ""),
+                "is_source": bool((res.get("source") or {}).get("via") == "upload")}
+
     def t_x_oembed(self, url: str) -> dict:
         if not reader.x_status(url):
             raise ActionError("That isn't a link to an X post.")
@@ -309,9 +371,11 @@ class Tools:
             text = " ".join(article["paragraphs"])[:3000]
             d = self.model_json("facts", "You are a careful news editor. Use only facts in the source; never invent or change numbers.",
                                 "Return JSON {headline (max 12 words, plain, no hype, keep figures exactly as written), facts: [3 short facts], "
-                                "why_it_matters (one sentence), label (1-2 words)}.\nSOURCE: " + json.dumps(
+                                "why_it_matters (one sentence), label (1-2 words)}. The headline comes from the story, never from the "
+                                "person's request; no URLs.\nSOURCE: " + json.dumps(
                                     {"title": article["title"], "description": article["description"], "text": text,
-                                     "post_by": (post or {}).get("author_name")}))
+                                     "post_by": (post or {}).get("author_name"),
+                                     "video_transcript": ((res.get("upload") or {}).get("transcript") or "")[:2500]}))
             facts_ = [str(f)[:160] for f in ((d or {}).get("facts") or []) if str(f).strip()][:4]
             if d and d.get("headline") and facts_:
                 story = {"headline": str(d["headline"])[:120], "facts": facts_, "why": str(d.get("why_it_matters") or "")[:200],
@@ -326,7 +390,10 @@ class Tools:
                 story["label"] = "Launch"
             if re.search(r"\bon x\b|\(@\w+\)", story["headline"], re.I):
                 story["headline"] = re.split(r"(?<=[.!?])\s+", post["text"])[0][:110]
-        story["headline"] = tidy(story.get("headline", ""), story)
+        prompt = (run.get("input") or {}).get("prompt", "")
+        story["headline"] = tidy(safe_headline(story.get("headline", ""), prompt,
+                                               [article["title"], *(story.get("facts") or []), (post or {}).get("text", "")])
+                                 or (f"New from {story['source']}" if story.get("source") else "What's new"), story)
         story["why"] = tidy(story.get("why", ""), story)
         story["facts"] = [tidy(f, story) for f in story["facts"]]
         res["story"] = story
@@ -387,6 +454,11 @@ class Tools:
     def _hero(self, run) -> tuple[bytes | None, str]:
         res = run["result"]
         story = res.get("story") or {}
+        up = res.get("upload") or {}
+        if up.get("type") == "photo":  # their own photo is the picture on the cover, always (never judged or swapped)
+            m = self.h.get_media(up["token"])
+            if m:
+                return m["data"], "hero"
         url = story.get("image") or (res.get("source") or {}).get("image") or ""
         if not url:
             return None, "none"
@@ -413,6 +485,11 @@ class Tools:
         cm = res.setdefault("channel_media", {})
         for cid in ids:
             cm[cid] = {"format": fmt, "media": media, **(extra or {})}
+        if media:
+            try:  # every finished channel render is kept in the person's Library (studio/library.py)
+                self.h.library.register_generated(self.a, media, fmt, self.rid)
+            except Exception:  # noqa: BLE001  the Library never breaks a run
+                pass
         seen, allm = set(), []
         for v in cm.values():
             for m in v["media"]:
@@ -475,24 +552,28 @@ class Tools:
         return {"channels": ids, "format": "carousel", "media": [m["url"] for m in media], "clipped": self._clipped(media)}
 
     def t_render_reel(self, channel_ids: list | None = None, seconds: int | None = None, captions: bool | None = None,
-                      style: str | None = None, music: str | None = None, rights_confirmed: bool | None = None) -> dict:
+                      style: str | None = None, music: str | None = None, rights_confirmed: bool | None = None,
+                      ratio: str | None = None) -> dict:
         run = self.state()
         ids = [c["id"] for c in self.channels(run, channel_ids)]
+        ratio = ratio if ratio in ("9:16", "4:5", "1:1") else "9:16"
+        if any(c["service"] in VIDEO_ONLY for c in self.channels(run, ids)):
+            ratio = "9:16"  # YouTube Shorts / TikTok are vertical only
         if style:
-            media, note, ask = self._media_reel(run, style, seconds=seconds, music=music, rights_confirmed=bool(rights_confirmed))
+            media, note, ask = self._media_reel(run, style, seconds=seconds, music=music, rights_confirmed=bool(rights_confirmed), ratio=ratio)
             run = self.state()
             fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
-            self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": True, "style": style, "note": note})
+            self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": True, "style": style, "note": note, "ratio": ratio})
             self.save(run)
             out = {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note, "style": style,
                    "clipped": self._clipped([m for m in media if m["type"] == "photo"])}
             if ask:
                 out.update(needs_confirmation=True, question=ask)
             return out
-        media, note = self._reel(run, seconds=seconds, captions=bool(captions))
+        media, note = self._reel(run, seconds=seconds, captions=bool(captions), ratio=ratio)
         run = self.state()
         fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
-        self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": bool(captions), "note": note})
+        self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": bool(captions), "note": note, "ratio": ratio})
         self.save(run)
         return {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note,
                 "clipped": self._clipped([m for m in media if m["type"] == "photo"])}
@@ -515,7 +596,7 @@ class Tools:
         frames.append(self._keep(b, "r_facts.jpg", m, "slide"))
         return frames
 
-    def _reel(self, run, seconds=None, captions=False) -> tuple[list[dict], str]:
+    def _reel(self, run, seconds=None, captions=False, ratio: str = "9:16") -> tuple[list[dict], str]:
         """Render (or have the worker render) the Reel and wait for it. Never substitutes a sample clip: when no video
         can be made, the channel gets the slides and the note says why."""
         kit, rules, p, logo = self._ctx()
@@ -534,7 +615,7 @@ class Tools:
         frames = [] if clip_tok else self._reel_frames(run)
         note_extra = " Word-by-word captions need a transcript: use One take for talking clips." if captions and clip_tok else ""
         spec = {"kind": "brand_video" if clip_tok else "slideshow", "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": p,
-                "ratio": "9:16", "hook": st["headline"], "logo": kit.get("logo") or "", "source": clip_tok,
+                "ratio": ratio if clip_tok else "9:16", "hook": st["headline"], "logo": kit.get("logo") or "", "source": clip_tok,
                 "slides": [m["token"] for m in frames], "total": seconds}
         return self._video_job(run, spec, frames, note_extra)
 
@@ -543,7 +624,10 @@ class Tools:
         mode = self.h.video_mode()  # never "local" on the hosted app (512 MB): Reels go to the GitHub render worker there
         if self.demo:
             mode = "local" if self.h.local_video_ok() and demo_guard.take(self.store, self.a.uid, "video") else "none"
+        own = self._own_clip(run, spec)
         if mode == "none":
+            if own:
+                return own, "Your video as uploaded: there's no video renderer here, so it isn't re-cut with your brand. Reply “redo the reel” to try again."
             return frames or self._slides_45(run, carousel=True), "No video renderer here, so this channel gets the slides instead."
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (self.a.uid, self.rid, json.dumps(spec), "queued", time.time(), time.time()))
@@ -554,10 +638,14 @@ class Tools:
                 return [self.h._job_media(jid)], "Rendered on this server." + note_extra
             except Exception as e:
                 self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (str(e)[:500], time.time(), jid))
+                if own:
+                    return own, f"The branded render failed ({str(e)[:120]}), so this is your video as uploaded."
                 return frames or self._slides_45(run, carousel=True), f"The video render failed ({str(e)[:120]}); slides instead."
         ok, why = self.h._dispatch_github(jid)
         if not ok:
             self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (why, time.time(), jid))
+            if own:
+                return own, f"The render worker didn't start ({why}), so this is your video as uploaded."
             return frames or self._slides_45(run, carousel=True), f"The render worker didn't start ({why}); slides instead."
         t0 = time.time()
         while time.time() - t0 < VIDEO_WAIT:  # the brain waits here; 'updated' stays fresh so the watchdog knows it's alive
@@ -567,11 +655,25 @@ class Tools:
             if row["status"] == "done":
                 return [self.h._job_media(jid)], "Rendered by the video worker." + note_extra
             if row["status"] == "failed":
+                if own:
+                    return own, f"The branded render failed ({(row['error'] or '')[:120]}), so this is your video as uploaded."
                 return frames or self._slides_45(run, carousel=True), f"The video render failed ({(row['error'] or '')[:120]}); slides instead."
         self.store.x("UPDATE render_jobs SET status='failed', error='timed out', updated=? WHERE id=?", (time.time(), jid))
+        if own:
+            return own, "The video worker took too long, so this is your video as uploaded. Reply “redo the reel” to try again."
         return frames or self._slides_45(run, carousel=True), "The video worker took too long; slides instead. Reply “redo the reel” to try again."
 
-    def _media_reel(self, run, style: str, seconds=None, music=None, rights_confirmed=False) -> tuple[list[dict], str, str]:
+    def _own_clip(self, run, spec: dict) -> list[dict]:
+        """The person's own uploaded video, as uploaded: the fallback when a branded render can't be made (never slides
+        in place of a video they gave us)."""
+        res = run["result"]
+        tok = res.get("clip_token") or ""
+        if not (res.get("clip_owned") and tok and spec.get("source") == tok):
+            return []
+        return [{"token": tok, "url": self.h.media_url(tok), "type": "video", "name": (res.get("upload") or {}).get("name") or "your video",
+                 "role": "original"}]
+
+    def _media_reel(self, run, style: str, seconds=None, music=None, rights_confirmed=False, ratio: str = "9:16") -> tuple[list[dict], str, str]:
         """A styled Reel from the real video via studio.media (worker kind ``media_render``). Returns (media, note, question):
         a third-party video without the person's OK is not rendered; the question asks for it (docs/MEDIA_PIPELINE.md, Risks)."""
         from .media import styles as media_styles
@@ -594,8 +696,10 @@ class Tools:
         found = res.get("found_media") if isinstance(res.get("found_media"), dict) else {}
         cand = None if clip_tok else found.get("best_downloadable")
         gen = res.get("generated_images") or []
+        if clip_tok and res.get("clip_owned"):
+            rights_confirmed = True  # the person's own upload: nothing to ask
         if not clip_tok and not cand and not gen:
-            media, note = self._reel(run, seconds=seconds)
+            media, note = self._reel(run, seconds=seconds, ratio=ratio)
             return media, note + " No video to edit, so the styled edit wasn't used (find_media or generate_images first).", ""
         handle = ((src.get("post") or {}).get("handle") or "").lstrip("@")
         credit = (f"Video: @{handle} on X" if clip_tok and handle else
@@ -609,7 +713,7 @@ class Tools:
             frames = self._reel_frames(run)
             return frames or self._slides_45(run, carousel=True), "Slides for now: the video needs your OK first. " + ask, ask
         res.pop("rights_question", None)
-        spec = {"kind": "media_render", "style": sid, "ratio": "9:16", "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
+        spec = {"kind": "media_render", "style": sid, "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
                 "credit": credit, "names": [n for n in (st.get("company"), (cand or {}).get("company")) if n], "music": music or "auto",
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "logo": kit.get("logo") or "", "source": clip_tok, "candidate": cand,
@@ -684,7 +788,7 @@ class Tools:
             if tone:
                 tones[c["id"]] = tone
         if hook:
-            st["headline"] = tidy(hook[:120], st)
+            st["headline"] = tidy(safe_headline(hook, (run.get("input") or {}).get("prompt", ""), [st["headline"]]) or st["headline"], st)
         article = {"url": src.get("url") or st["url"], "title": st["headline"], "description": st.get("why") or src.get("description", ""),
                    "site": src.get("site") or st["source"], "image": "", "paragraphs": st["facts"] + (src.get("paragraphs") or [])[:3]}
         eng = llm.resolve(self.store, self.a.uid, self.s)
@@ -770,12 +874,14 @@ class Tools:
             pk = {"channel_id": c["id"], "service": c["service"], "channel_name": c["name"], "text": cap["text"],
                   "length": drafter.count(c["service"], cap["text"]), "limit": drafter.limit_for(c["service"]),
                   "media_urls": self._urls_for(c["service"], media), "format": cm["format"], "note": cm.get("note", ""),
+                  "ratio": cm.get("ratio") or ("9:16" if cm["format"] == "reel" else "4:5"),
                   "check": chk, "clipped": clipped, "status": status,
                   "idempotency_key": hashlib.sha256(f"{self.rid}:{c['id']}".encode()).hexdigest()[:16]}
             if c["service"] == "youtube":
                 pk["options"] = {"title": st["headline"][:100], "category_id": "28"}
             if prev.get("sent"):
                 pk["sent"] = prev["sent"]
+            pk["media"] = self._media_info(media, pk["media_urls"], pk["ratio"])
             packages.append(pk)
         res["packages"] = packages
         src_url = ((res.get("source") or {}).get("url") or "").split("?")[0].rstrip("/")
@@ -786,6 +892,22 @@ class Tools:
         res["checks"] = {"about_source": about, "problems": problems, "conflicts": len(res.get("conflicts") or [])}
         self.save(run)
         return {**res["checks"], "packages": len(packages)}
+
+    def _media_info(self, media: list[dict], urls: list[str], ratio: str) -> list[dict]:
+        """What each channel card shows: its own files with type, size, aspect and length (a playable preview, not a tile)."""
+        out = []
+        for m in media:
+            if m["url"] not in urls:
+                continue
+            meta = (self.h.media_meta(self.a, m["token"]) if m.get("token") else None) or {}
+            w, h = meta.get("width"), meta.get("height")
+            r = None if m.get("role") == "original" else ratio  # their own file as uploaded: its shape isn't known here
+            if w and h:
+                q = w / h
+                r = min((("9:16", 9 / 16), ("4:5", 0.8), ("1:1", 1.0), ("16:9", 16 / 9)), key=lambda x: abs(x[1] - q))[0]
+            out.append({"url": m["url"], "type": m["type"], "role": m.get("role", ""), "width": w, "height": h,
+                        "duration": meta.get("duration"), "ratio": r})
+        return out
 
     @staticmethod
     def _urls_for(svc: str, media: list[dict]) -> list[str]:

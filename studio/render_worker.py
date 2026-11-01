@@ -102,6 +102,19 @@ def main(argv=None) -> int:
     try:
         if str(spec.get("kind", "")).startswith("take_"):
             return take_job(c, base, h, args.job, j)
+        if spec["kind"] == "transcribe":  # the person's own upload -> words, so the post is about what is said in it
+            from .media import transcribe as tr
+            tmp = Path(tempfile.mkdtemp(prefix="hq_tr_"))
+            try:
+                _download(c, urls["source"], tmp / "in.mp4")
+                out = tr.transcribe(str(tmp / "in.mp4"), model=spec.get("model") or "tiny")
+            finally:
+                import shutil
+                shutil.rmtree(tmp, ignore_errors=True)
+            r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h,
+                       json={"transcript": {"text": out.get("text", "")[:20000], "language": out.get("language", "")}})
+            print("transcript posted:", len(out.get("text", "")), "chars:", r.status_code)
+            return 0 if r.status_code == 200 else 1
         logo = get(urls.get("logo"))
         if spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
             from .media.worker import render_job

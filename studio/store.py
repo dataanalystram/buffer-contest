@@ -103,6 +103,7 @@ ADDED_COLUMNS = {
               ("token_label", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"), ("tokens_in", "INTEGER"),
               ("tokens_out", "INTEGER"), ("cost_usd", "REAL"), ("ip", "TEXT"), ("ua", "TEXT")),
     "agent_tokens": (("client_id", "TEXT"), ("client_info", "TEXT"), ("app", "TEXT")),
+    "render_jobs": (("result", "TEXT"),),  # a transcribe job's transcript (studio.media transcribe on the worker)
 }
 INDEXES = ("CREATE INDEX IF NOT EXISTS audit_user_id ON audit(user_id, id)",
            "CREATE INDEX IF NOT EXISTS audit_user_cat ON audit(user_id, category, id)",
@@ -114,7 +115,7 @@ def sha(value: str) -> str:
 
 
 ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs",
-             "template_slots", "source_runs")  # Brand studio slots and Sources runs (their own schema in brand_studio.py, sources_agent.py)
+             "template_slots", "source_runs", "library_items")  # Brand studio slots and Sources runs (their own schema in brand_studio.py, sources_agent.py)
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
           "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
           "ai_settings")
@@ -280,6 +281,12 @@ class Store:
         for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
                   "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs", "ai_settings"):
             self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+        try:  # the Library's own tables (studio/library.py), when this store has them
+            self.x("DELETE FROM library_chunks WHERE item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
+            self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
+            self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
+        except Exception:  # noqa: BLE001
+            pass
         self.x("DELETE FROM users WHERE id=?", (uid,))
 
     # ---- sessions
