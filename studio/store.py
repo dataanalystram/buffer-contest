@@ -103,6 +103,7 @@ ADDED_COLUMNS = {
               ("token_label", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"), ("tokens_in", "INTEGER"),
               ("tokens_out", "INTEGER"), ("cost_usd", "REAL"), ("ip", "TEXT"), ("ua", "TEXT")),
     "agent_tokens": (("client_id", "TEXT"), ("client_info", "TEXT"), ("app", "TEXT")),
+    "render_jobs": (("result", "TEXT"),),  # a transcribe job's transcript (studio.media transcribe on the worker)
 }
 INDEXES = ("CREATE INDEX IF NOT EXISTS audit_user_id ON audit(user_id, id)",
            "CREATE INDEX IF NOT EXISTS audit_user_cat ON audit(user_id, category, id)",
