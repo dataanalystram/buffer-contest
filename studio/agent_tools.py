@@ -111,6 +111,24 @@ class Tools:
         names = fn.__code__.co_varnames[:fn.__code__.co_argcount]
         return fn(**{k: v for k, v in (args or {}).items() if k in names})
 
+    def model_json(self, purpose: str, system: str, user: str, max_tokens: int = 900):
+        """A fast model step (Claude Haiku on the operator key, budgeted; or the person's own key) returning JSON, or None
+        so the caller uses the free model / rule writer. Never for the free sample."""
+        if self.demo:
+            return None
+        from . import brain_llm, budget
+        for eng in brain_llm.engines(self.store, self.a.uid, self.s, self.h.http):
+            if eng["source"] not in ("huhqueue claude", "your key"):
+                continue
+            try:
+                out = brain_llm.call(eng, self.store, self.a.uid, self.a.label, system=system + " Reply with JSON only.",
+                                     messages=[{"role": "user", "content": user}], max_tokens=max_tokens, fast=True, purpose=purpose,
+                                     http=self.h.http, timeout=60)
+                return llm.parse_json(out["text"])
+            except (budget.BudgetExceeded, llm.LLMError):
+                continue
+        return None
+
     def thread(self, run: dict, role: str, text: str) -> None:
         run["result"].setdefault("thread", []).append({"role": role, "text": text[:2000], "at": time.time()})
 
@@ -186,7 +204,19 @@ class Tools:
             story = {"headline": str(headline)[:120], "facts": [str(f)[:160] for f in facts][:4], "why": str(why or "")[:200], "label": "News",
                      "source": src["site"], "url": src["url"], "image": src.get("image", ""), "engine": "agent brain"}
         else:
-            story = self.h._structure(self.a, llm.resolve(self.store, self.a.uid, self.s), article)
+            text = " ".join(article["paragraphs"])[:3000]
+            d = self.model_json("facts", "You are a careful news editor. Use only facts in the source; never invent or change numbers.",
+                                "Return JSON {headline (max 12 words, plain, no hype, keep figures exactly as written), facts: [3 short facts], "
+                                "why_it_matters (one sentence), label (1-2 words)}.\nSOURCE: " + json.dumps(
+                                    {"title": article["title"], "description": article["description"], "text": text,
+                                     "post_by": (post or {}).get("author_name")}))
+            facts_ = [str(f)[:160] for f in ((d or {}).get("facts") or []) if str(f).strip()][:4]
+            if d and d.get("headline") and facts_:
+                story = {"headline": str(d["headline"])[:120], "facts": facts_, "why": str(d.get("why_it_matters") or "")[:200],
+                         "label": str(d.get("label") or "News")[:16], "source": src["site"], "url": src["url"], "image": src.get("image", ""),
+                         "engine": "claude"}
+            else:
+                story = self.h._structure(self.a, llm.resolve(self.store, self.a.uid, self.s), article)
         story["url"] = src["url"]  # the person's link stays the source of record
         if post:
             story["source"] = f"X @{post['handle']}"
@@ -480,12 +510,24 @@ class Tools:
         for c in chans:
             groups.setdefault(tones.get(c["id"], ""), []).append(c)
         drafts = []
+        limits = {c["service"]: drafter.limit_for(c["service"]) for c in chans}
+        d = self.model_json("captions", "You write social captions for a brand. Use only the facts given; keep every figure exactly as written; "
+                            "no hype words; one caption per network, each under its limit.",
+                            json.dumps({"brand_voice": kit.get("voice", ""), "rules": brand.rules_prompt(rules), "story": {"headline": st["headline"],
+                                        "facts": st["facts"], "why": st.get("why", ""), "link": article["url"]},
+                                        "networks": {c["service"]: {"limit": limits[c["service"]], "tone": tones.get(c["id"], "")} for c in chans},
+                                        "format": "Return JSON {network: caption}. YouTube: first line is the title (max 90 chars). LinkedIn: 3 short "
+                                                  "paragraphs. Instagram: ends with 'Link in bio' instead of the URL. Others: include the link."}),
+                            max_tokens=1400)
+        if isinstance(d, dict) and all(isinstance(d.get(c["service"]), str) and d.get(c["service"]).strip() for c in chans):
+            drafts = [{"channel_id": c["id"], "service": c["service"], "text": d[c["service"]], "engine": "claude"} for c in chans]
+            groups = {}
         for tn, cs in groups.items():
             voice = "; ".join(x for x in [kit.get("voice", ""), {"formal": "formal and professional", "punchy": "short and punchy",
                                                                    "casual": "casual and friendly", "explainer": "explain it simply, like to a friend"}.get(tn, ""),
                                           brand.rules_prompt(rules)] if x)
             drafts += drafter.draft(cs, article, ai=ai, http=self.h.http, tone=voice)
-        if ai:
+        if ai and groups:
             self.h._ai_audit(self.a, eng, "captions")
         caps = res.setdefault("captions", {})
         for d in drafts:

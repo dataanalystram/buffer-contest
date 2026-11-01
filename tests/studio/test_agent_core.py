@@ -217,3 +217,76 @@ def test_stale_run_is_reported_not_spinning(owner):
 def test_tidy_keeps_money_and_plain_hyphens():
     st = {"facts": ["Raised $1.3M from YC and Afore Capital"]}
     assert agent_tools.tidy("A noise\u2011free option, 1.3M YC-backed", st) == "A noise-free option, $1.3M YC-backed"
+
+
+# ---------------------------------------------------------------- the Claude brain (tool use), scripted
+def test_claude_brain_tool_loop_budget_and_workspace_header(owner, monkeypatch):
+    from studio import brain_llm, budget
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_test")
+    monkeypatch.setenv("AI_BUDGET_PER_USER_USD", "1")
+    brain_llm._models.update(at=0.0, plan="", fast="")
+    seen = {"headers": [], "tool_turns": 0, "fast": 0, "models": 0}
+    script = [
+        ("1. Read the post\n2. Facts\n3. Render\n4. Captions\n5. Check", [("read_url", {"url": TWEET})]),
+        ("", [("extract_facts", {})]),
+        ("", [("render_carousel", {"channel_ids": ["ch_li", "ch_fb", "ch_ig"]}), ("render_reel", {"channel_ids": ["ch_yt"]})]),
+        ("", [("write_captions", {"tone": "punchy"})]),
+        ("", [("check", {})]),
+        ("", [("finish", {"message": "Four posts ready."})]),
+    ]
+    inner = owner.router
+
+    def anthropic(req):
+        if req.url.host != "api.anthropic.com":
+            return inner(req)
+        seen["headers"].append(dict(req.headers))
+        if req.url.path.endswith("/models"):
+            seen["models"] += 1
+            return httpx.Response(200, json={"data": [{"id": "claude-haiku-4-5-20251001", "created_at": "2025-10-01T00:00:00Z"},
+                                                      {"id": "claude-sonnet-4-5-20250929", "created_at": "2025-09-29T00:00:00Z"},
+                                                      {"id": "claude-3-5-sonnet-20240620", "created_at": "2024-06-20T00:00:00Z"}]})
+        body = json.loads(req.content)
+        usage = {"input_tokens": 1200, "output_tokens": 300, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 800}
+        if "tools" not in body:  # a fast step: facts or captions
+            seen["fast"] += 1
+            assert body["model"] == "claude-haiku-4-5-20251001"
+            txt = body["messages"][0]["content"]
+            if "networks" in txt:
+                out = {s: f"Subvocal raised $1.3M to build glasses that read silent speech. #{s}" for s in ("linkedin", "facebook", "youtube", "instagram")}
+            else:
+                out = {"headline": "Subvocal raises $1.3M for silent-speech glasses", "facts": ["Raised $1.3M from YC and Afore Capital",
+                       "Glasses read internal speech muscles", "No typing, no talking"], "why_it_matters": "Typing without a sound.", "label": "Launch"}
+            return httpx.Response(200, json={"content": [{"type": "text", "text": json.dumps(out)}], "usage": usage, "model": body["model"]})
+        assert body["model"] == "claude-sonnet-4-5-20250929"
+        assert body["system"][0]["cache_control"] == {"type": "ephemeral"} and body["tools"][-1]["cache_control"]
+        text, calls = script[min(seen["tool_turns"], len(script) - 1)]
+        seen["tool_turns"] += 1
+        content = ([{"type": "text", "text": text}] if text else []) + [
+            {"type": "tool_use", "id": f"tu{seen['tool_turns']}_{i}", "name": n, "input": a} for i, (n, a) in enumerate(calls)]
+        return httpx.Response(200, json={"content": content, "usage": usage, "model": body["model"], "stop_reason": "tool_use"})
+
+    owner.app.state.house.http = httpx.Client(transport=httpx.MockTransport(anthropic))
+    owner.app.state.studio.buffer.http = owner.app.state.house.http
+    r = owner.post("/api/agent/runs", json={"prompt": PROMPT}).json()
+    run = owner.get(f"/api/agent/runs/{r['id']}").json()
+    res = run["result"]
+    assert run["status"] == "ready", run["steps"]
+    assert res["brain"]["mode"] == "tools" and res["plan"][0] == "Read the post"
+    assert [s["tool"] for s in run["steps"]][:5] == ["read_url", "extract_facts", "render_carousel", "render_reel", "write_captions"]
+    assert res["story"]["engine"] == "claude" and seen["fast"] >= 2
+    assert all(h.get("anthropic-workspace-id") == "wrkspc_test" for h in seen["headers"])
+    assert {p["service"] for p in res["packages"]} == {"linkedin", "facebook", "youtube", "instagram"}
+    assert res["captions"]["ch_li"]["engine"] == "claude" and "$1.3M" in res["captions"]["ch_li"]["text"]
+    uid = owner.app.state.store.q("SELECT user_id FROM agent_runs")[0]["user_id"]
+    left = budget.remaining(owner.app.state.store, uid)
+    assert 0 < left["spent_usd"] < 0.2 and left["left_usd"] < 1
+    rows = owner.app.state.store.q("SELECT provider, model, cost_usd FROM audit WHERE action='ai_call'")
+    assert rows and all(r["cost_usd"] is not None for r in rows)
+    # over budget -> refused before the call, the standard plan runs instead, and the UI note says why
+    owner.app.state.store.x("UPDATE brain_budget SET spent=5 WHERE scope=?", (f"user:{uid}",))
+    calls_before = seen["tool_turns"]
+    r2 = owner.post("/api/agent/runs", json={"prompt": f"post this on linkedin {TWEET}"}).json()
+    run2 = owner.get(f"/api/agent/runs/{r2['id']}").json()
+    assert run2["status"] == "ready" and seen["tool_turns"] == calls_before
+    assert run2["result"]["brain"]["mode"] == "plan" and any("used up" in n for n in run2["result"]["notes"])
