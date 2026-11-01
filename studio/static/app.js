@@ -602,7 +602,7 @@ async function loadFeeds() {
   const scan = (sa && sa.settings && sa.settings.rss) || [];
   const rows = r.feeds.map((f) => ({ id: f.id, url: f.url, title: f.title }));
   for (const u of scan) if (!rows.some((x) => x.url === u)) rows.push({ id: null, url: u, title: hostOf(u) });
-  fl.innerHTML = rows.length ? rows.map((f) => `<li class="feed" data-testid="feed-row">${fav(hostOf(f.url))}<span><b>${esc(f.title || hostOf(f.url))}</b><small>${esc(hostOf(f.url))}</small></span><button class="link danger" type="button" data-testid="feed-remove" data-id="${f.id ?? ""}" data-url="${esc(f.url)}" aria-label="Stop following ${esc(f.url)}">Remove</button></li>`).join("")
+  fl.innerHTML = rows.length ? rows.map((f) => `<li class="feed" data-testid="feed-row">${fav(hostOf(f.url))}<span><b>${esc(f.title || hostOf(f.url))}</b>${f.title && f.title !== hostOf(f.url) ? `<small>${esc(hostOf(f.url))}</small>` : ""}</span><button class="link danger" type="button" data-testid="feed-remove" data-id="${f.id ?? ""}" data-url="${esc(f.url)}" aria-label="Stop following ${esc(f.url)}">Remove</button></li>`).join("")
     : `<li class="muted sm">No feeds yet.</li>`;
   favicons(fl);
   fl.querySelectorAll("[data-testid=feed-remove]").forEach((b) => (b.onclick = async () => {

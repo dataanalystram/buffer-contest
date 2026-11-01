@@ -200,3 +200,10 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
   .onb-card{padding:20px}
   .pg-tabs{display:flex;width:100%}.pg-tabs button{flex:1}
 }
+
+/* the oversized text box: .quick was switched to a column, so an input's flex-basis (320px) became its HEIGHT */
+.quick:not(:has(.row)){flex-direction:row;align-items:center;flex-wrap:wrap}
+.quick > input{flex:1 1 320px;height:48px;min-height:48px;max-height:48px}
+@media (max-width:600px){.quick > input{flex-basis:100%}}
+.onb{background:rgba(10,10,12,.5);backdrop-filter:blur(2px)}
+.onb h2:focus{outline:none}

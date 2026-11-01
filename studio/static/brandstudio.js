@@ -233,7 +233,7 @@
       <p class="muted xs">Sources and keys: <button class="link" type="button" data-go="news:sources">Sources</button></p></section>
     <div id="saStatus" class="sa-status" data-testid="sa-status"></div>
     <div id="saTopics" class="chips" data-testid="sa-topics"></div>
-    <ul id="saClusters" class="sa-clusters" data-testid="sa-clusters"></ul>
+    <ul id="saClusters" class="sa-clusters" data-testid="sa-clusters"><li class="ib-none" data-testid="sa-empty">No scan yet. Scan now reads every source you turned on and groups the same story into one card.</li></ul>
     <div class="sa-bar" id="saBar" hidden><span id="saPicked">0 stories</span><button class="btn" type="button" id="saDraft" data-testid="sa-draft">Write posts</button></div>
     <section id="saPkgs" class="panel" data-testid="sa-packages" hidden></section>`;
   const SRC_HTML = `
