@@ -70,3 +70,16 @@ clusters, drafts go to the sample's in-memory Buffer.
 | Scan now | `POST /api/sources/scan` | `sources_scan` |
 | A past scan | `GET /api/sources/runs/{id}` | — |
 | Write posts / Save as Buffer drafts | `POST /api/sources/draft` (`dry_run`, `cluster_ids`, `channel_ids`, `texts`) | `sources_draft` |
+
+## Keys: Settings → Integrations
+
+Keys for Product Hunt (`ph_token`), X (`x_bearer`) and the YouTube Data API (`yt_key`) are added in **Settings → Integrations**
+(`studio/integrations.py`, `GET/POST/DELETE /api/integrations[/{key}[/test]]`). They live in the same sealed per-user secret
+the adapters read (`source_settings.secret`, Fernet via `Store.seal`), are never returned to the browser (only `…abcd`), and
+only a signed-in person can add, test or remove them. Test is a live, rate-capped check that reports a status only.
+
+Product Hunt application Redirect URI: `https://huhqueue-studio.onrender.com/integrations/producthunt/callback`. Without
+`PH_CLIENT_ID`/`PH_CLIENT_SECRET` that page tells the person to copy the Developer Token (Create Token) and paste it in the
+card. With them set, `/integrations/producthunt/connect` runs the OAuth code flow with a single-use state cookie and the
+callback exchanges the code (`POST https://api.producthunt.com/v2/oauth/token`) and stores the token for that person; a code
+without our state is never exchanged.

@@ -114,6 +114,9 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <tr><td>Product Hunt</td><td>Today's top launches, API v2</td><td>Your free developer token</td></tr>
 <tr><td>X</td><td>Recent search with your query, API v2</td><td>Your own bearer token. A logged-in X is never scraped</td></tr></tbody></table></div>
 <p>Every live fetch goes through the safe-fetch guard: no automatic redirects, every hop's host re-checked, size caps. Keys are sealed at rest, shown only as their last four characters, and only a person (never an agent token) can add or remove them. Real accounts get 30 live scans a day.</p>
+<h2 id="keys">Adding your keys (Settings, Integrations)</h2>
+<p>Product Hunt, X and the YouTube Data API each have a card in <b>Settings</b>, <b>Integrations</b>: what the key unlocks, how to get one, a password field, <b>Test</b> (a live check that reports a status only), <b>Save</b> and <b>Remove</b>, and a masked status such as "Connected · …abcd · tested 2 min ago". Your AI model key stays in <b>Settings</b>, <b>AI engine</b>.</p>
+<p>Product Hunt: open <a href="https://api.producthunt.com/v2/oauth/applications" rel="noopener">api.producthunt.com/v2/oauth/applications</a>, choose <b>Add an application</b>, set the Redirect URI to <code>https://huhqueue-studio.onrender.com/integrations/producthunt/callback</code>, create it, then choose <b>Create Token</b> and paste the Developer Token into the Product Hunt card.</p>
 <h2 id="judging">Judging and deciding</h2>
 <p>The model makes judgments; code makes decisions. Each story is judged once (is it about AI, topic, kind, relevance, unconfirmed, sensitive, an allegation), by Jev first, then SubQ, then deterministic rules past the daily cap, without keys or in the sample. Each card says which one judged it. Code then decides:</p>
 <ul><li><b>Lane</b>: postable, idea bank (evergreen), low, or hidden (off-topic HN or X).</li>
