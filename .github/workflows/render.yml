@@ -1,5 +1,6 @@
 name: render
-# Free video render worker for HuhQueue. The app dispatches one run per video job.
+# Free video render worker for HuhQueue. The app dispatches one run per video job: kinds slideshow, brand_video,
+# template_video, media_render (studio.media styles) and media_recap (the weekly recap: carousel slides + one Reel).
 on:
   workflow_dispatch:
     inputs:
@@ -11,7 +12,7 @@ concurrency: {group: "render-${{ github.event.inputs.job_id }}", cancel-in-progr
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35   # a weekly recap fetches 5-7 stories' media and renders ~8 videos
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}

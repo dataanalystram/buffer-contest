@@ -118,6 +118,10 @@ FFmpeg and are queued as a render job on the video worker.
 | `media_fetch` | yes | **candidate**, run_dir | `{path, ...}` of the vetted download |
 | `media_transcribe` | yes | **path**, names, model | `words_path`, word count, language, text preview |
 | `media_render` | yes | **style** (`opus`/`news`/`minimal`/`hype`), **hook**, source_path or images, ratios, facts, credit, words_path, names, clip, music, brand, official, rights_confirmed | `renders: [{path, ratio, width, height, duration, clip, captions, burned_subs, music, caption_problems}]` |
+| `media_moments` | no | captions or words_path, prompt, n, duration | `moments: [{id, rank, start, end, duration, score, reason, hook}]` |
+| `media_split` | yes | **source_path**, url, captions, prompt, n, ratios, credit, official, rights_confirmed, brand | transcript source, burned subs, `clips` with renders (section 8) |
+| `media_recap_plan` | no | prompt, n, days | cover, `segments` (headline, url, media + credit), `needs_confirmation` + `question` (section 9) |
+| `media_recap` | yes | **plan**, rights_confirmed (true / false / story numbers), brand | carousel slides (4:5) and one Reel (9:16) |
 | `media_generate_images` | yes | **prompt**, headline, n, ratio, brand | `images: [{path, provider, credit}]` (never empty: the brand card is the last resort) |
 | `media_music` | yes | **seconds**, mood | `{path, mood, seconds, licence}` |
 
@@ -196,8 +200,120 @@ self-hosted worker (`JOB_TOKEN=... python -m studio.render_worker`), can run the
 | `tests/studio/test_media_textfit.py` | auto-fit, non-monotonic wraps, truncation flag |
 | `tests/studio/test_media_render.py` | every style and ratio end to end on synthetic clips: length, audio, safe area, no overlap, end card (needs FFmpeg) |
 | `tests/studio/test_media_tools.py` | tool specs, dispatch, style aliases, rights + credit gate, ratios, image and music fallbacks |
+| `tests/studio/test_media_subtitles.py` | SRT/VTT parsing, rolling-caption stitching, track choice, the reuse cascade |
+| `tests/studio/test_media_longform.py` | split requests, moment picking, hook titles, reframing, a real split end to end |
+| `tests/studio/test_media_recap.py` | recap prompts, story clustering and ranking, rights question, layout interface, carousel + Reel render |
+| `tests/studio/test_agent_recap.py` | recap routing in Make a post, inline rights answers, `media_recap` worker job, carousel + Reel packages, credits |
+| `tests/studio/test_media_lowerthird.py` | lower-third detection, band position per ratio/reframe, captions above it (1:1, 9:16) |
 
 Run one file at a time: `python -m pytest -q tests/studio/test_media_render.py`.
+
+## 8. Long-video splitting and transcript reuse
+
+### Splitting (`studio/media/longform.py`, tools `media_moments` + `media_split`)
+
+"Split this into 5 shorts", "find the best moments", "3 clips of 30-45 s each": `longform.parse_request` reads the
+count (digits or words, "a few" = 3) and the length range (20-60 s by default, clamped to 10 clips). With no count,
+`default_count` scales with the video's length.
+
+1. **Transcript** from `subtitles.resolve_transcript` (below): Whisper only runs when no captions exist.
+2. **Sentences** are rebuilt from the words (pauses ≥ 0.6 s, sentence punctuation, ≤ 34 words).
+3. **Moments** (`pick_moments`): runs of whole sentences inside the length range, scored 0-100 by One take's
+   deterministic scorer (strong opening line, question or number up front, clean ending, steady pace, little filler,
+   scene and silence boundaries) so both features agree on what a good moment is. Non-overlapping, best first. An
+   optional model (`chat_json`) can rank the candidates; every span it returns is validated against the transcript.
+   Each moment carries a plain `reason` and a **hook title**: the strongest line actually said near its start, cut to
+   ≤ 9 words with throat-clearing dropped (never invented).
+4. **Reframing** (`reframe_plan`): a MediaPipe face track on the worker drives `take.crop_plan` per clip and per ratio
+   (dead zone, smoothing, hard cut on scene changes). No face model on the box keeps a centre crop rather than guessing;
+   no face on screen (slides, screen recordings) shows the whole frame over a blurred copy of itself.
+5. **Render** (`render_moment`): opus style per ratio: hook from frame 0, word captions, the credit chip, Follow end
+   card, music under silent stretches. With burned-in subtitles the bottom 16% is cropped before reframing and our
+   captions are skipped, so captions never stack. Each render gets a contact sheet for a quick visual check.
+
+`split_video` writes `manifest.json` (transcript source, burned subs, reframe detector, every clip's score, reason, hook
+and renders). Third-party video needs `rights_confirmed` and a credit line, exactly like `media_render`.
+
+**Routing.** In Make a post (and `POST /api/agent/runs`), a split request ("split this into 5 shorts", "find the best
+moments") on a video link or an uploaded video becomes a One take run in the opus style (`agent_brain._split_request`
+→ `takes.start`), so the person picks from scored clips. Someone else's video gets the rights question inline under
+the composer first (a 409 starting `Rights:`), then the same request goes again with `rights_confirmed`. Any other
+prompt with a video stays on the normal Make a post path. Over MCP/REST the agent can call `media_moments` first to
+let the person pick, then `media_split`.
+
+### Transcript reuse (`studio/media/subtitles.py`)
+
+Captions the person or the platform already has are faster, free and spell names right, so the order is:
+
+| # | Source | How |
+|---|---|---|
+| 1 | Uploaded `.srt` / `.vtt` next to the video | `parse_captions` (size-capped at 8 MB before parsing) |
+| 2 | The platform's own track (YouTube, Vimeo, X, ...) | yt-dlp metadata only, that platform's extractor only, no video download; manual captions before automatic ones |
+| 3 | A caption stream in the file (MP4 `mov_text`, MKV SRT/ASS) | our FFmpeg |
+| 4 | Whisper | `studio.media.transcribe`, the only branch that costs CPU minutes |
+
+All four return the same `[{"w", "s", "e"}]` word list. Cue-level captions get each cue's words spread over the cue by
+length; YouTube's rolling captions (each cue repeats the previous line) are stitched by overlap so no word appears
+twice; `[Music]`/`(applause)` cues are dropped. The result says where it came from (`source`, `detail`) and the UI
+can say which captions it used.
+
+### YouTube fetch findings (Oct-Nov 2026)
+
+A temporary probe workflow ran the splitter on real inputs on a GitHub runner (the render worker's environment) and
+was removed before merge. Findings:
+
+- **yt-dlp is bot-blocked from datacenter IPs and from GitHub-hosted runners** ("Sign in to confirm you're not a bot")
+  for every yt-dlp player client, for both the video and the caption track.
+- **Piped and Invidious** public instances are blocked or rate-limited for YouTube media too, so they are not a route.
+- What does work from a server: official MP4s on company pages (og:video), X post video, Vimeo/Loom public files,
+  and anything the person uploads.
+
+So for a YouTube link the app **asks for an upload** (the video, plus its `.srt`/`.vtt` if they have one) instead of
+pretending to fetch it, and `media_find` says why in its `note`. We do not use cookies, residential proxies or
+account sign-ins to get around YouTube's bot check.
+
+### Captions vs lower-thirds
+
+A source with a lower-third graphic (name strap, ticker, product bar) would have our word captions printed over it.
+`compose.detect_lower_third` samples the clip and looks for rows in the lower frame dense with text edges, at the same
+height in most samples and far denser than the top of the picture (so busy footage doesn't count). `band_in_output`
+maps the band into the output frame for the crop in use (cover crop, face-track, padded fit, burned-subtitle crop),
+and the opus/hype caption line is lifted to end above it, in 9:16, 4:5 and 1:1. Burned-in subtitles keep their own
+handling (cropped off in full-bleed styles, our captions skipped in panel styles). `lower_third_mode="off"` disables it.
+
+## 9. Weekly recap (`studio/media/recap.py`, tools `media_recap_plan` + `media_recap`)
+
+"Make a 7 days what happened in AI recap with videos", "weekly recap", "AI round-up of the week": `recap.wants_recap`
+reads the window (default 7 days, max 14) and an optional story count (3-7, default 5).
+
+1. **Gather** (`gather_week`, light): AI headlines from the free news sources (Bing News, Google News, Hacker News,
+   followed feeds), clustered against each group's first headline measured on the longer title (no chaining, so two
+   different Anthropic stories don't merge), ranked by how many outlets carried it, Hacker News points and freshness,
+   at most two stories per company, publisher links rather than Google News redirects.
+2. **Plan** (`plan`): each story's official video or image through `media_find`; X posts through the free X reader
+   (oEmbed → react-tweet syndication → FxTwitter). Media from the company's own site or CDN counts as official. Anything
+   else is listed in `needs_confirmation` with **one** question for the person; stories they decline get a brand
+   plate naming who reported it.
+3. **Render** (`compose`, worker job `media_recap`): the HuhByte weekly-recap format: cover "DO YOU REALIZE WHAT JUST
+   HAPPENED IN AI IN THE LAST 7 DAYS?", one branded segment per story with its credit on screen, the Follow card only
+   once at the very end (story slides never get their own end card). Output: a **4:5 carousel** of video slides
+   (each ≤ 60 s) plus **one 9:16 Reel** (~7 s per story). Fetched media is validated (an error page is not an image)
+   and every download goes through netguard with a byte cap.
+
+**In Make a post and the agent.** A recap prompt with no link or upload ("make a 7 days what happened in AI recap with
+videos", "weekly recap", "AI round-up of the week") starts an agent run that calls `recap_plan` (→ `media_recap_plan`).
+If some media isn't the company's own, the one rights question is posted in the chat thread with one-tap answers ("Use
+them with credit" / "Title cards instead"); a typed reply also works ("only 1 and 3"). Then `render_recap` queues a
+`media_recap` job (local FFmpeg off the hosted app, else the GitHub render worker `render.yml`, which posts each file
+once with its single-use job token; the app checks each is the PNG/MP4 its id says). Instagram and Threads get the
+4:5 carousel with the Reel beside it as its own post; every other channel posts the 9:16 Reel. Captions end with the
+credit lines (dropped only where a network's limit can't fit them; they stay on screen). `rights_confirmed` can be
+passed up front over REST/MCP to skip the question. Story headlines pass the headline guard (`studio/headline.py`)
+at render time.
+
+The look sits behind `RecapLayout` (`cover`, `story_overlay`, `plate`, `follow`). `register_layout("huhbyte_weekly_recap",
+...)` swaps in the hq-themes template when it lands; until then the minimal layout renders the same structure, with
+the story headline and source pill filling the bottom of the 4:5 slide.
 
 ## Credits
 
