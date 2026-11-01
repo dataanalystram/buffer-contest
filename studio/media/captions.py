@@ -196,6 +196,8 @@ def build_ass(words: list[dict], style: str = "opus", *, W: int = 1080, H: int =
             s = w["s"] + offset
             e = (ch[i + 1]["s"] if i + 1 < len(ch) else min(w["e"] + 0.25, (nxt_start or 1e9))) + offset
             if end is not None:
+                if s >= end:
+                    continue
                 e = min(e, end)
             if e - s < 0.06:
                 e = s + 0.06

@@ -92,7 +92,8 @@ def measure(lines: list[str], f, spacing: float) -> tuple[int, int, int]:
 
 def fit(text: str, font_name: str, box_w: int, box_h: int, *, max_size: int = 140, min_size: int = 18,
         max_lines: int = 4, spacing: float = 1.12, upper: bool = False) -> Fit:
-    """Largest size whose wrapped text fits box_w x box_h in <= max_lines. ok=False only if even min_size can't."""
+    """Largest size whose wrapped text fits box_w x box_h in <= max_lines. ok=False only if even min_size can't
+    (then the lines are cut with an ellipsis so they still fit)."""
     text = (text or "").strip()
     if upper:
         text = text.upper()
@@ -107,7 +108,13 @@ def fit(text: str, font_name: str, box_w: int, box_h: int, *, max_size: int = 14
             lo = mid + 1
         else:
             hi = mid - 1
-    if best:
+    if best:  # wrapping isn't perfectly monotonic in size: probe a few sizes above the binary-search answer
+        for sz in range(best.size + 1, min(max_size, best.size + 8) + 1):
+            f = font(font_name, sz)
+            lines = wrap(text, f, box_w)
+            w, h, lh = measure(lines, f, spacing)
+            if len(lines) <= max_lines and w <= box_w and h <= box_h:
+                best = Fit(sz, lines, lh, w, h, True, font_name, spacing)
         return best
     f = font(font_name, min_size)  # last resort: min size, cut lines with an ellipsis so nothing leaves the box
     lines = wrap(text, f, box_w)
@@ -120,7 +127,8 @@ def fit(text: str, font_name: str, box_w: int, box_h: int, *, max_size: int = 14
             last = last[:-1].rstrip()
         lines[-1] = last + "…"
     w, h, lh = measure(lines, f, spacing)
-    return Fit(min_size, lines, lh, w, h, w <= box_w and h <= box_h, font_name, spacing, {"truncated": True})
+    # ok=False flags the degraded result (callers may shorten the copy); the text still never leaves the box
+    return Fit(min_size, lines, lh, w, h, False, font_name, spacing, {"truncated": True, "inside": w <= box_w and h <= box_h})
 
 
 def draw_fit(d: ImageDraw.ImageDraw, fitres: Fit, box: tuple[int, int, int, int], *, fill="white", align: str = "center",
