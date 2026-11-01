@@ -715,7 +715,7 @@ def cover(cfg: dict, path: str, W: int, H: int, brand: dict, hook: str, still: I
             p1 = (cx + r0 * math.cos(math.radians(a)), cy + r0 * math.sin(math.radians(a)))
             p2 = (cx + r0 * math.cos(math.radians(a + 7)), cy + r0 * math.sin(math.radians(a + 7)))
             d.polygon([(cx, cy), p1, p2], fill=_rgb(brand.get("muted", "#FFB870")) + (60,))
-        stroke = max(5, int(12 * k))
+        stroke = max(4, int(8 * k))  # a heavier stroke closed the word gaps on the candy cover
         bb, _ = _block(d, hook, head, (l, int(H * 0.26), r, int(H * 0.66)), max_size=int(150 * k), min_size=30, max_lines=4, upper=True,
                        fill=accent, stroke=stroke, accent_words=acc, accent="#FFFFFF")
         boxes["hook"] = bb
