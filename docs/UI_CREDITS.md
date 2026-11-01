@@ -62,3 +62,18 @@ shadcn/ui (MIT), Radix Primitives (MIT), Origin UI (MIT), Magic UI (MIT), Motion
 
 ## Tools
 Hallmark (MIT, Together AI) `work/oss/hallmark`: rules and `sloplint.mjs`. axe-core 4.10.2 (MPL-2.0) for checks. Playwright for screenshots.
+
+## UX v3 (1 Nov 2026): AI marks, Inbox dashboard, landing
+Patterns only, again: the Inbox dashboard (stat tiles, a today list, cards with media) and the sub-tab layout follow
+patterns seen on linear.app, vercel.com, arc.net, raycast.com and buffer.com's own publish app. No code, image or
+asset was copied from them.
+
+| Mark | Source | Terms |
+|---|---|---|
+| Claude, Claude Code, Anthropic, Cursor, Gemini, Mistral, Meta, Perplexity, OpenRouter, DeepSeek, Qwen, Hugging Face, Ollama, GitHub Copilot | simple-icons 16.36.0 | CC0 for the set; each brand's trademark terms apply |
+| OpenAI Blossom (ChatGPT, Codex, OpenAI models) | https://openai.com/brand (file via Wikimedia Commons "OpenAI logo 2025 (symbol)") | OpenAI Marks usage terms: refer to OpenAI services only, unmodified, never more prominent than ours |
+| Grok, xAI | xAI press kit https://data.x.ai/logos/xAI_Grok_Assets.zip | https://x.ai/legal/brand-guidelines |
+| Groq, unknown apps | monogram fallback in `ai-mark.js` | none used |
+
+Rebuild: `python scripts/build_ai_logos.py <simple-icons package> <openai symbol svg> <xAI assets dir>`.
+Landing images: `studio/static/land/made/*.webp`, downsized from our own `studio/static/examples/` renders.
