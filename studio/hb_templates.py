@@ -13,6 +13,7 @@ person's brand kit, at 4:5, 9:16, 1:1 and 16:9, with every text block auto-fitte
   github_repo        the GitHub pillar: hook cover with a repo card (stars, licence, language), 3 plain facts, the link
   yc_launch          one YC startup: batch tag, what it does, founders and funding
   viral_trend        a viral clip with the creator credited on every slide (+ the clip as a Reel with on-screen credit)
+  editorial_story    one company / launch: hero cover, one idea per slide, founders, Follow (studio/editorial.py)
 
 Rules kept from the HuhByte docs: the accent colour only on the key words of a headline and on the @handle; every carousel
 ends with the Follow slide (recaps: Follow + SAVE THIS, their only CTA); a third-party clip always carries its credit.
@@ -458,6 +459,12 @@ TEMPLATES = {
                   "about": "One YC startup: the batch tag, what it does in plain words, founders and funding, end card."},
     "viral_trend": {"name": "Viral trend with creator credit", "kind": "reel", "video": True, "front": "editorial",
                     "about": "A viral clip or trend with the creator credited on every slide and on screen in the Reel."},
+    "editorial_story": {"name": "Editorial story: one company, 5-7 slides", "kind": "carousel", "video": False, "front": "editorial",
+                        "about": "The HuhByte editorial carousel about one company or launch: the hero (product on the brand art + "
+                                 "founder avatars), one idea per slide with **bold** key facts and a source footnote, the founders, "
+                                 "Follow last. The agent fills it with research_company -> hero_edit -> write_editorial. Data: "
+                                 "eyebrow, headline, accent, dek, slides[{eyebrow, blocks[{head, body}], note, image}], founders, "
+                                 "hero, band, founder_photos."},
 }
 
 SAMPLE = {
@@ -488,6 +495,19 @@ SAMPLE = {
                            "Built for small factories"], "founders": "Two ex-research engineers", "funding": "Raised a seed round"},
     "viral_trend": {"creator": "@samplecreator", "platform": "X", "title": "This AI clip is everywhere this week",
                     "points": ["One prompt made a 30-second short film", "The creator shared the full workflow", "Free tools only"]},
+    "editorial_story": {"eyebrow": "YC F25 · AI + TOOLS", "headline": "Sample Co Turns One Video Into 7 Posts", "accent": ["7"],
+                        "dek": "Sample Co (YC F25) is a sample company for this preview.",
+                        "slides": [
+                            {"eyebrow": "How it works", "blocks": [{"head": "One Upload, 7 Posts", "body": "Drop in **one video** and it cuts "
+                             "**7 short posts**, each with captions in your brand."}], "accent": ["7"]},
+                            {"eyebrow": "Why it matters", "blocks": [{"head": "Hours Back Every Week", "body": "Editing shorts by hand "
+                             "takes **hours**. This takes **minutes**."}], "accent": ["Hours"], "note": "Sample figures for the preview."},
+                            {"eyebrow": "The math", "blocks": [{"head": "$0 to Start", "body": "Free for your **first 10 videos**, then a "
+                             "flat monthly price."}], "accent": ["$0"], "image": True},
+                            {"eyebrow": "What's next", "blocks": [{"head": "Live Clips Soon", "body": "Clips from **live streams** are "
+                             "next on the list."}], "accent": ["Live"]}],
+                        "founders": {"eyebrow": "The founders", "blocks": [{"head": "Two Video Nerds", "body": "Ex **video editors** "
+                                     "who got tired of cutting shorts by hand."}], "accent": ["Nerds"], "names": ["Sam Sample", "Alex Example"]}},
 }
 
 DEFAULT_CREDIT = "Video: the creator"
@@ -511,6 +531,13 @@ def slides(template: str, data: dict | None, b: T.Brand, ratio: str, now=None, m
     body: list = []
     end = "save" if TEMPLATES[template].get("end") == "save" else "brand"
     hero, inset = d.get("hero"), d.get("inset")
+    if template == "editorial_story":  # studio/editorial.py: cover, one idea per slide, founders, Follow
+        from . import editorial
+        spec = {k: v for k, v in d.items() if k not in ("hero", "band", "image", "inset", "founder_photos")}
+        photos = [p for p in (_img(x) for x in d.get("founder_photos") or []) if p is not None]
+        ims, _fit = editorial.render(b, spec, hero=_img(hero), band=_img(d.get("band") or d.get("image")), founders=photos,
+                                     ratio=ratio if ratio in editorial.SIZES else "4:5")
+        return ims if len(ims) <= cap else ims[:cap - 1] + ims[-1:]
     if template == "editorial_cover":
         return [editorial_cover(b, ratio, d["title"], hero, inset, d.get("accent_words"), d.get("sub", ""), label=d.get("label", ""),
                                 swipe=False)]

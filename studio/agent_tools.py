@@ -16,6 +16,8 @@ from urllib.parse import urlparse
 from . import brand, demo_guard, drafter, factcheck, hbstyle, intake, llm, netguard, reader, render, sources, vision
 from .media import styles as media_styles
 from .actions import ActionError
+from . import editorial_tools
+from .editorial_tools import EditorialTools
 
 VIDEO_ONLY = {"tiktok", "youtube"}
 TEXT_FIRST = {"twitter", "threads", "bluesky", "mastodon"}
@@ -96,6 +98,7 @@ SPECS = [
                                          "instead of other people's media) or the story numbers the person OK'd. Then write_captions and check.",
      "input_schema": {"type": "object", "properties": {"rights_confirmed": {"description": "true, false or a list of story numbers"},
                                                         "channel_ids": IDS}}},
+    *editorial_tools.SPECS,
     {"name": "finish", "description": "Stop: everything the person asked for is rendered, captioned and checked. message: one or two sentences for the person.",
      "input_schema": {"type": "object", "required": ["message"], "properties": {"message": S}}},
 ]
@@ -107,9 +110,10 @@ LABELS = {"read_upload": "Read your upload", "read_url": "Read your link", "x_oe
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
           "find_media": "Find media", "generate_images": "Make images", "check": "Check everything", "finish": "Done",
           "list_themes": "Look at the themes", "set_theme": "Set the video theme", "list_templates": "Look at the templates",
-          "render_template": "Render a template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap"}
+          "render_template": "Render a template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap",
+          **editorial_tools.LABELS}
 WRITES = {"generate_images", "render_recap", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media",
-          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template"}
+          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template"} | editorial_tools.WRITES
 
 
 # Tone drives the caption prompt (QA: "short punchy explainer" came out as plain explainers). Several tones can combine.
@@ -181,7 +185,37 @@ def tidy(text: str, story: dict | None = None) -> str:
     return re.sub(r"[ \t]{2,}", " ", t).strip()
 
 
-class Tools:
+HASHTAG = re.compile(r"(?<![\w#])#\w+")
+
+
+def cap_hashtags(text: str, n: int = 5) -> str:
+    """At most n hashtags in a caption (owner, 1 Nov 2026): the first n stay, the rest go, empty lines are tidied."""
+    seen = 0
+
+    def keep(m):
+        nonlocal seen
+        seen += 1
+        return m.group(0) if seen <= n else ""
+    t = HASHTAG.sub(keep, text or "")
+    t = "\n".join(re.sub(r"[ \t]{2,}", " ", ln).rstrip() for ln in t.split("\n"))
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def keyword_first(text: str, keyword: str) -> str:
+    """The first line leads with the keyword (the company / product people search for) when there is one: it is kept when it
+    is already in the first four words, else the line becomes 'keyword: line'."""
+    kw = (keyword or "").strip()
+    t = (text or "").strip()
+    if not kw or not t:
+        return t
+    first, _, rest = t.partition("\n")
+    head = re.sub(r"^[^\w$#@]+", "", first)
+    if kw.lower() in " ".join(head.split()[:4]).lower():
+        return t
+    return f"{kw}: {head}" + (("\n" + rest) if rest else "")
+
+
+class Tools(EditorialTools):
     def __init__(self, house, actor, rid: int):
         self.h, self.a, self.rid = house, actor, rid
         self.studio, self.store = house.studio, house.store
@@ -606,6 +640,8 @@ class Tools:
                       ratio: str | None = None) -> dict:
         run = self.state()
         ids = [c["id"] for c in self.channels(run, channel_ids)]
+        if not self._has_video(run):  # NO VIDEO -> NO REEL (owner, 1 Nov 2026): never a text-on-gradient video
+            return self._no_video(run, ids)
         ratio = ratio if ratio in ("9:16", "4:5", "1:1") else "9:16"
         if any(c["service"] in VIDEO_ONLY for c in self.channels(run, ids)):
             ratio = "9:16"  # YouTube Shorts / TikTok are vertical only
@@ -632,6 +668,32 @@ class Tools:
         self.save(run)
         return {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note,
                 "clipped": self._clipped([m for m in media if m["type"] == "photo"])}
+
+    def _no_video(self, run, ids: list[str]) -> dict:
+        """No real video for this run: video-only channels (YouTube, TikTok) are skipped with a note, every other channel
+        gets the carousel (the editorial one when it was rendered). Nothing is made into a slideshow video."""
+        res = run["result"]
+        chans = self.channels(run, ids)
+        skip = [c for c in chans if c["service"] in VIDEO_ONLY]
+        rest = [c["id"] for c in chans if c["service"] not in VIDEO_ONLY]
+        for c in skip:
+            self._skip_channel(res, c)
+        media: list[dict] = []
+        if rest:
+            ed = (res.get("editorial_media") or {}).get("4:5")
+            media = ed or self._slides_45(run, carousel=True)
+            self._set_media(run, rest, media, "carousel", {"note": editorial_tools.NO_VIDEO_NOTE, "ratio": "4:5",
+                                                          **({"template": "editorial_story"} if ed else {})})
+        self._plan_note(res)
+        notes = [editorial_tools.SKIP_NOTE.format(svc=c["service"].title()) for c in skip]
+        said = {t.get("text") for t in res.get("thread") or []}
+        for n in notes:
+            if n not in said:
+                self.thread(run, "agent", n)
+        self.save(run)
+        return {"channels": rest, "format": "carousel" if rest else "skipped", "media": [m["url"] for m in media],
+                "note": editorial_tools.NO_VIDEO_NOTE + (" " + " ".join(notes) if notes else ""), "no_video": True,
+                "skipped": [c["service"] for c in skip], "clipped": self._clipped(media)}
 
     def _reel_frames(self, run) -> list[dict]:
         """9:16 frames for a slideshow Reel; the story headline is on every one (the end card is added last)."""
@@ -817,6 +879,11 @@ class Tools:
         from . import templates
         if template not in templates.TEMPLATES:
             raise ActionError(f"Unknown template {template}. Pick one of {', '.join(templates.TEMPLATES)}.")
+        if template == "editorial_story":  # the editorial carousel has its own research -> hero -> copy chain
+            if (data or {}).get("slides") or (self.state()["result"].get("editorial") or {}).get("spec"):
+                return {"template": template, **self.t_render_editorial((data or None) if (data or {}).get("slides") else None, channel_ids)}
+            raise ActionError("editorial_story needs its slides: research_company, find_brand_assets, hero_edit and write_editorial "
+                              "first (or pass data with slides).")
         run = self.state()
         kit, _rules, _p, logo = self._ctx()
         st = run["result"].get("story") or {}
@@ -992,6 +1059,8 @@ class Tools:
         fmt = (format or ("reel" if seconds or captions else cur.get("format")) or "carousel").lower()
         if ch["service"] in VIDEO_ONLY:
             fmt = "reel"
+        if fmt in ("reel", "video") and not self._has_video(run):  # no video, no Reel: skipped / carousel with a note
+            return {"channel": ch["service"], **self._no_video(run, [ch["id"]])}
         if fmt in ("reel", "video"):
             r = self.t_render_reel([ch["id"]], seconds=seconds or cur.get("seconds"),
                                    captions=captions if captions is not None else cur.get("captions"))
@@ -1008,7 +1077,11 @@ class Tools:
         kit, rules = self.h.kit(self.a), self.h.rules(self.a)
         st = self._story(run)
         src = res.get("source") or {}
-        chans = self.channels(run, channel_ids)
+        cm_all = res.get("channel_media") or {}
+        skipped = [c["service"] for c in self.channels(run, channel_ids) if (cm_all.get(c["id"]) or {}).get("format") == "skipped"]
+        chans = [c for c in self.channels(run, channel_ids) if (cm_all.get(c["id"]) or {}).get("format") != "skipped"]
+        if not chans:
+            return {"captions": {}, "complete": {}, "skipped": skipped, "note": "Every channel asked for was skipped (no video)."}
         tones = res.setdefault("tones", {})
         for c in chans:
             if tone:
@@ -1033,6 +1106,7 @@ class Tools:
         def guide(c):  # the channel's own tone wins (a reply "LinkedIn more formal"); else the prompt's own words
             own = tones.get(c["id"], "")
             return tone_instructions(own) if own else tone_instructions(default_tone, prompt)
+        keyword = str(st.get("keyword") or st.get("company") or "").strip()
         d = self.model_json("captions", "You write social captions for a brand. Use only the facts given; keep every figure exactly as written; "
                             "no hype words like game-changer or revolutionary; one caption per network, each under its limit. Follow each "
                             "network's tone instructions and conventions exactly: the tone decides the hook, sentence length and energy.",
@@ -1047,8 +1121,11 @@ class Tools:
                                                                     "tone_instructions": guide(c),
                                                                     "conventions": CHANNEL_STYLE.get(c["service"], "hook line, then the link.")}
                                                      for c in chans},
+                                        **({"keyword": keyword} if keyword else {}),
                                         "format": "Return JSON {network: caption}. Every caption opens with a hook line, never a plain "
-                                                  "restatement of the headline. Brand rules win over conventions."}),
+                                                  "restatement of the headline. The first line is keyword-first: it starts with the "
+                                                  "key search term (the keyword when given, else the company, product or topic). At "
+                                                  "most 5 hashtags per caption. Brand rules win over conventions."}),
                             max_tokens=2400)
         truncated = self.truncated
         if isinstance(d, dict) and all(isinstance(d.get(c["service"]), str) and d.get(c["service"]).strip() for c in chans):
@@ -1062,7 +1139,7 @@ class Tools:
             self.h._ai_audit(self.a, eng, "captions")
         caps = res.setdefault("captions", {})
         for d in drafts:
-            raw = brand.apply_text_rules(tidy(d["text"], st), rules)
+            raw = brand.apply_text_rules(cap_hashtags(keyword_first(tidy(d["text"], st), keyword)), rules)
             if d["service"] == "youtube":
                 raw = dedupe_youtube(raw, st["headline"])
             text = drafter.fit(d["service"], raw)
@@ -1073,7 +1150,8 @@ class Tools:
         # the full saved text: a 160-character preview made the brain report a "cut off" caption that was complete
         return {"captions": {d["service"]: caps[d["channel_id"]]["text"] for d in drafts},
                 "complete": {d["service"]: not caps[d["channel_id"]]["trimmed"] for d in drafts},
-                "fallback_writer": bool(groups), "model_cut_off_retried": bool(truncated), "tone": tone or default_tone}
+                "fallback_writer": bool(groups), "model_cut_off_retried": bool(truncated), "tone": tone or default_tone,
+                **({"skipped": skipped} if skipped else {})}
 
     # ---------------------------------------------------------------- check + packages
     def t_check(self) -> dict:
@@ -1084,8 +1162,12 @@ class Tools:
         st = self._story(run)
         packages, problems = [], []
         old = {p["channel_id"]: p for p in res.get("packages") or []}
+        skipped = []
         for c in run["input"]["channels"]:
             cm = (res.get("channel_media") or {}).get(c["id"])
+            if cm and cm.get("format") == "skipped":  # no video, no Reel: not a problem, not a package
+                skipped.append({"service": c["service"], "channel_id": c["id"], "note": cm.get("note", "")})
+                continue
             cap = (res.get("captions") or {}).get(c["id"])
             if not cm or not cap:
                 problems.append(f"{c['service']}: {'no media' if not cm else 'no caption'}")
@@ -1123,7 +1205,7 @@ class Tools:
         about = not want or (src_url.lower().replace("twitter.com", "x.com") == want.lower().replace("twitter.com", "x.com"))
         if not about:
             problems.append("the story isn't from your link")
-        res["checks"] = {"about_source": about, "problems": problems, "conflicts": len(res.get("conflicts") or [])}
+        res["checks"] = {"about_source": about, "problems": problems, "conflicts": len(res.get("conflicts") or []), "skipped": skipped}
         self.save(run)
         return {**res["checks"], "packages": len(packages)}
 
