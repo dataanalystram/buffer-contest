@@ -19,7 +19,7 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
-from . import brain_llm, budget, demo_guard, intake, llm
+from . import activity, brain_llm, budget, demo_guard, intake, llm
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -45,8 +45,12 @@ using ONLY the tools. Rules:
   story is a launch/demo, call find_media, then render_reel with style (opus | news | minimal | hype). If render_reel returns
   needs_confirmation, finish and ask the person its question; when they say yes, call render_reel again with
   rights_confirmed true. No video at all: generate_images, then render_reel with a style.
+  Context.video_style_hint is the style their words suggest for video channels; use it unless the story or the person says otherwise.
 - Always call write_captions, then check (it builds the packages), then finish with one or two sentences.
-- save_buffer_drafts only when the person asked for drafts or to put it in Buffer."""
+- save_buffer_drafts only when the person asked for drafts or to put it in Buffer.
+- Pass the person's tone words to write_captions (e.g. tone "short punchy explainer"); the tone shapes the hook and rhythm.
+- Captions in tool results and the state are the full saved text unless marked "…[preview]". Never tell the person a caption
+  is cut off unless write_captions reports complete=false for that channel."""
 
 
 def _now() -> float:
@@ -138,6 +142,8 @@ class Brain:
     def _go(self, a: Actor, rid: int, message: str | None) -> None:
         with _rlock:
             _running.add(rid)
+        # Activity labels this run's model calls "HuhQueue agent" (Make a post), not the Sources agent
+        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent"})
         tools = Tools(self.h, a, rid)
         try:
             engs = brain_llm.engines(self.store, a.uid, self.h.s, self.h.http, demo=tools.demo)
@@ -164,6 +170,7 @@ class Brain:
             traceback.print_exc()
             self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
         finally:
+            activity.end(tok)
             with _rlock:
                 _running.discard(rid)
 
@@ -223,20 +230,26 @@ class Brain:
                "kit": {k: v for k, v in self.h.kit(a).items() if k in ("name", "handle", "voice", "colors", "font")},
                "ledger": [r["rule"] for r in self.h.rules(a)],
                "state": _state_summary(res)}
+        if any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or inp["intake"].get("format") == "reel":
+            # a hint for video channels from the person's words ("short punchy explainer" -> opus); the brain decides
+            from .media import styles as media_styles
+            ctx["video_style_hint"] = media_styles.explicit(inp["prompt"]) or media_styles.pick(" ".join([inp["prompt"], inp["intake"].get("tone") or ""]))
         user = (f"Request: {inp['prompt']}\n\nContext: {json.dumps(ctx, default=str)[:5000]}" if message is None else
-                f"The person replied in the thread: {message}\n\nCurrent state: {json.dumps(_state_summary(res), default=str)[:4000]}\n"
+                f"The person replied in the thread: {message}\n\nCurrent state: {json.dumps(_state_summary(res), default=str)[:9000]}\n"
                 "Change only what they asked, then write_captions for the affected channels, check, finish.")
         messages = [{"role": "user", "content": user}]
-        self._plan(a, rid, res.get("plan") or [], {"mode": "tools", "provider": eng["provider"], "model": eng["model"], "source": eng["source"]})
+        brain = {"mode": "tools", "provider": eng["provider"], "model": eng["model"], "fast_model": eng.get("fast_model") or eng["model"],
+                 "source": eng["source"]}
+        self._plan(a, rid, res.get("plan") or [], brain)
         label = a.label
         finished = False
         for turn in range(MAX_TURNS):
             out = brain_llm.call(eng, self.store, a.uid, label, system=SYSTEM, messages=messages, tools=SPECS + [_CHECK_SPEC],
-                                 max_tokens=1200, http=self.h.http)
+                                 max_tokens=2000, http=self.h.http)
             if turn == 0 and out["text"]:
                 plan = [re.sub(r"^\s*\d+[.)]\s*", "", ln).strip() for ln in out["text"].splitlines() if re.match(r"^\s*\d+[.)]", ln)]
                 if plan:
-                    self._plan(a, rid, plan[:12], {"mode": "tools", "provider": eng["provider"], "model": out["model"], "source": eng["source"]})
+                    self._plan(a, rid, plan[:12], {**brain, "model": out["model"]})
             messages.append(out["assistant"])
             if not out["tool_calls"]:
                 if out["text"]:
@@ -523,7 +536,13 @@ def _state_summary(res: dict) -> dict:
             "story": {k: st.get(k) for k in ("headline", "facts")}, "conflicts": res.get("conflicts") or [],
             "channels": {cid: {"format": v.get("format"), "files": len(v.get("media") or []), "seconds": v.get("seconds")}
                          for cid, v in (res.get("channel_media") or {}).items()},
-            "captions": {cid: v["text"][:120] for cid, v in (res.get("captions") or {}).items()}}
+            "captions": {cid: _preview(v) for cid, v in (res.get("captions") or {}).items()}}
+
+
+def _preview(cap: dict, n: int = 300) -> dict:
+    """A caption for the brain's context, marked as a preview when shortened so it is never mistaken for a cut-off caption."""
+    t = cap.get("text") or ""
+    return {"text": t if len(t) <= n else t[:n] + " …[preview]", "chars": len(t), "complete": not cap.get("trimmed")}
 
 
 def tool_specs_for_mcp() -> list[dict]:

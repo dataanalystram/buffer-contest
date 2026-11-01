@@ -191,9 +191,10 @@ def post_slide(post: dict, kit: dict, p: dict, *, logo: bytes | None = None, rat
     return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), **m}
 
 
-def end_card(kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5") -> tuple[bytes, dict]:
+def end_card(kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5",
+             n: tuple[int, int] | None = None) -> tuple[bytes, dict]:
     from . import hbstyle
-    canvas, m = hbstyle.end_card(kit, p, logo=logo, ratio=ratio)
+    canvas, m = hbstyle.end_card(kit, p, logo=logo, ratio=ratio, n=n)
     W, H = canvas.size
     return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), **m}
 

@@ -441,7 +441,7 @@ def post_card(post: dict, kit: dict, p: dict, *, logo: bytes | None = None, rati
     return canvas, {"headline": headline or body[:80], "has_logo": has_logo, "credit": "X", "text_boxes": p.pop("_boxes", [])}
 
 
-def end_card(kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5"):
+def end_card(kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5", n: tuple[int, int] | None = None):
     """hb.py end_card_png, brand-driven: logo, the CTA, the @handle in the accent, a rule, the brand line. Each line is
     fitted to 86% of the width, so a long CTA ("Follow for daily AI") shrinks instead of running off the edges."""
     R = _r()
@@ -486,6 +486,9 @@ def end_card(kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5
         for ln in llines:
             _text(d, (x0, y), ln, lf, _mix(txt, prim, 0.15), p, anchor_w=maxw)
             y += lstep
+    if n:  # a carousel's last slide carries its N/N badge like the others
+        badge(d, f"{n[0]}/{n[1]}", W, p, side="l" if p.get("logo_position", "tr") in ("tr", "br") else "r",
+              y=REEL_TOP_SAFE if ratio == "9:16" else 40)
     return canvas, {"headline": cta, "has_logo": lg is not None, "credit": "x", "end_card": True, "text_boxes": p.pop("_boxes", [])}
 
 

@@ -75,6 +75,61 @@ WRITES = {"generate_images", "render_cover", "render_carousel", "render_reel", "
           "save_buffer_drafts", "remember_rule"}
 
 
+# Tone drives the caption prompt (QA: "short punchy explainer" came out as plain explainers). Several tones can combine.
+TONE_GUIDE = {
+    "punchy": "PUNCHY: the first line is a scroll-stopping hook (the most surprising fact, figure or a sharp question, max 10 words). "
+              "Short sentences, most under 12 words. Active verbs and energy. No filler or throat-clearing ('In a recent announcement...'). "
+              "One idea per line, line breaks between ideas.",
+    "explainer": "EXPLAINER: say what happened, then why it matters, in plain words a friend would get. No jargon.",
+    "formal": "FORMAL: measured, professional, complete sentences, no slang or emoji.",
+    "casual": "CASUAL: friendly and conversational, like telling a friend.",
+    "short": "SHORT: well under the limit (LinkedIn under 600 characters, everywhere else under 300).",
+}
+TONE_WORDS = {"punchy": r"punchy|snappy|sharp|hype|hook|energ", "explainer": r"explain|simple|eli5|beginner",
+              "formal": r"formal|professional|corporate", "casual": r"casual|friendly|\bfun\b", "short": r"\bshort\b|\bbrief\b|concise|tight"}
+CHANNEL_STYLE = {
+    "linkedin": "hook line, blank line, 2-3 short paragraphs (1-2 sentences each), end with a takeaway or question, then the link; at most 3 hashtags.",
+    "facebook": "conversational hook line, 2-4 short lines, then the link.",
+    "instagram": "the hook is the first line (it shows before 'more'), short lines with breaks, end with 'Link in bio' instead of the URL, 3-5 hashtags.",
+    "youtube": "description only: the video title is set separately to the headline, so never repeat the headline; open with a hook sentence, "
+               "2-3 short lines, then the link.",
+    "tiktok": "hook line, 1-2 short lines, 3-5 hashtags.",
+    "twitter": "one punchy hook line plus the link, under 280 characters.",
+    "threads": "hook line, one short follow-up line, then the link.",
+    "bluesky": "hook line plus the link, under 300 characters.",
+    "mastodon": "hook line, one short line, the link, 1-2 hashtags.",
+}
+
+
+def tone_keys(*texts: str) -> list[str]:
+    """Every tone named in the tone argument / the person's prompt, in a stable order ("short punchy explainer" -> all three)."""
+    t = " ".join(x for x in texts if x).lower()
+    return [k for k, pat in TONE_WORDS.items() if re.search(pat, t)]
+
+
+def tone_instructions(*texts: str) -> str:
+    return " ".join(TONE_GUIDE[k] for k in tone_keys(*texts))
+
+
+def _words(s: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9$.]+", (s or "").lower())) - {"the", "a", "an", "and", "of", "to", "has", "have", "is"}
+
+
+def _same(a: str, b: str) -> bool:
+    wa, wb = _words(a), _words(b)
+    return bool(wa and wb) and len(wa & wb) / max(1, min(len(wa), len(wb))) >= 0.75
+
+
+def dedupe_youtube(text: str, title: str) -> str:
+    """YouTube gets its title as a separate field, so the description never opens with the headline or says it twice."""
+    lines = (text or "").strip().split("\n")
+    if len(lines) > 1 and lines[0].strip() and (_same(lines[0], title) or _same(lines[0], next((x for x in lines[1:] if x.strip()), ""))):
+        rest = "\n".join(lines[1:]).strip()
+        if rest:
+            return rest
+    return (text or "").strip()
+
+
 def tidy(text: str, story: dict | None = None) -> str:
     """Copy pass: plain hyphens/spaces the fonts and every network render, money keeps its currency sign."""
     t = (text or "").translate(str.maketrans({"\u2011": "-", "\u2010": "-", "\u2012": "-", "\u00a0": " ", "\u202f": " "}))
@@ -123,20 +178,31 @@ class Tools:
 
     def model_json(self, purpose: str, system: str, user: str, max_tokens: int = 900):
         """A fast model step (Claude Haiku on the operator key, budgeted; or the person's own key) returning JSON, or None
-        so the caller uses the free model / rule writer. Never for the free sample."""
+        so the caller uses the free model / rule writer. Never for the free sample. An answer cut by max_tokens is never
+        used as if it were complete: it is retried once with twice the room, then dropped (self.truncated says so)."""
+        self.truncated = False
         if self.demo:
             return None
         from . import brain_llm, budget
         for eng in brain_llm.engines(self.store, self.a.uid, self.s, self.h.http):
             if eng["source"] not in ("huhqueue claude", "your key"):
                 continue
-            try:
-                out = brain_llm.call(eng, self.store, self.a.uid, self.a.label, system=system + " Reply with JSON only.",
-                                     messages=[{"role": "user", "content": user}], max_tokens=max_tokens, fast=True, purpose=purpose,
-                                     http=self.h.http, timeout=60)
-                return llm.parse_json(out["text"])
-            except (budget.BudgetExceeded, llm.LLMError):
-                continue
+            room = max_tokens
+            for _ in range(2):
+                try:
+                    out = brain_llm.call(eng, self.store, self.a.uid, self.a.label, system=system + " Reply with JSON only.",
+                                         messages=[{"role": "user", "content": user}], max_tokens=room, fast=True, purpose=purpose,
+                                         http=self.h.http, timeout=60)
+                except (budget.BudgetExceeded, llm.LLMError):
+                    break
+                if out.get("stop_reason") == "max_tokens":
+                    self.truncated, room = True, room * 2
+                    continue
+                self.truncated = False
+                try:
+                    return llm.parse_json(out["text"])
+                except llm.LLMError:
+                    break
         return None
 
     def thread(self, run: dict, role: str, text: str) -> None:
@@ -264,20 +330,10 @@ class Tools:
         story["why"] = tidy(story.get("why", ""), story)
         story["facts"] = [tidy(f, story) for f in story["facts"]]
         res["story"] = story
-        primary = {"source": story["source"], "text": " ".join([story["headline"], *story["facts"], article["description"]])}
-        others = []
-        if not self.demo:  # cross-source figure check: never guess between two numbers
-            try:
-                for c in self.h._corroborate(article)[:3]:
-                    txt = c.get("title", "")
-                    try:
-                        oa = reader.read_article(sources.resolve_google_link(c["url"], self.h.http), self.h.http)
-                        txt += " " + oa.get("description", "") + " " + " ".join(oa.get("paragraphs") or [])[:2000]
-                    except Exception:
-                        pass
-                    others.append({"source": c.get("source") or urlparse(c["url"]).hostname, "url": c["url"], "text": txt})
-            except Exception:
-                others = []
+        # the person's source stays primary: its own words (the post text too) are what every other outlet is compared with
+        primary = {"source": story["source"], "url": src["url"],
+                   "text": " ".join([story["headline"], *story["facts"], article["description"], (post or {}).get("text", "")])}
+        others = self._corroborating(article, story) if not self.demo else []  # cross-source figure check: never guess
         res["other_outlets"] = [{"source": o["source"], "url": o["url"]} for o in others]
         done = {r.get("ours") for r in res.get("resolved") or []}
         res["conflicts"] = [c for c in factcheck.conflicts(primary, others) if c["ours"] not in done]
@@ -287,6 +343,35 @@ class Tools:
         self.save(run)
         return {"headline": story["headline"], "facts": story["facts"], "why": story.get("why", ""),
                 "also_reported_by": [o["source"] for o in others], "conflicts": res["conflicts"]}
+
+    def _corroborating(self, article: dict, story: dict) -> list[dict]:
+        """Other outlets on the same story, each read for its figures. Searched by the story's headline first (an X post's
+        own title is the founder's first sentence, which rarely names the company), then by the source title. Runs both
+        searches whenever the story states a figure, so "$1.3M" vs "$13 million" is surfaced, never silently picked."""
+        figures = factcheck.amounts(" ".join([story.get("headline", ""), *story.get("facts", [])]))
+        titles = [story.get("headline", ""), article.get("title", "")] if figures else [story.get("headline") or article.get("title", "")]
+        leads, seen = [], set()
+        for t in dict.fromkeys(x for x in titles if x):
+            try:
+                found = self.h._corroborate({**article, "title": t})
+            except Exception:
+                found = []
+            for c in found:
+                if c.get("url") and c["url"] not in seen:
+                    seen.add(c["url"])
+                    leads.append(c)
+            if len(leads) >= 3:
+                break
+        others = []
+        for c in leads[:3]:
+            txt = c.get("title", "") + " " + c.get("description", "")
+            try:
+                oa = reader.read_article(sources.resolve_google_link(c["url"], self.h.http), self.h.http)
+                txt += " " + (oa.get("description") or "") + " " + " ".join(oa.get("paragraphs") or [])[:2000]
+            except Exception:
+                pass  # the headline alone still carries the figure most of the time
+            others.append({"source": c.get("source") or urlparse(c["url"]).hostname, "url": c["url"], "text": txt})
+        return others
 
     # ---------------------------------------------------------------- rendering
     def _ctx(self):
@@ -361,7 +446,7 @@ class Tools:
         b, m = render.fact_slide("Why it matters" if st.get("why") else "What happened", bullets, kit, dict(p), logo=logo, ratio="4:5", n=(k, total))
         out.append(self._keep(b, "facts.jpg", m))
         if p.get("end_card"):
-            b, m = render.end_card(kit, dict(p), logo=logo, ratio="4:5")
+            b, m = render.end_card(kit, dict(p), logo=logo, ratio="4:5", n=(total, total))  # N/N like every other slide
             out.append(self._keep(b, "follow.jpg", m))
         return out
 
@@ -607,36 +692,53 @@ class Tools:
         if eng and eng["style"] == "openai":
             eng = self.h._ai_reserve(self.a, eng)
             ai = {"base_url": eng["base_url"], "api_key": eng["api_key"], "model": eng["model"]} if eng else None
+        prompt = (run.get("input") or {}).get("prompt", "")
+        default_tone = ((run.get("input") or {}).get("intake") or {}).get("tone", "")
         groups: dict[str, list] = {}
         for c in chans:
-            groups.setdefault(tones.get(c["id"], ""), []).append(c)
+            groups.setdefault(tones.get(c["id"], "") or default_tone, []).append(c)
         drafts = []
         limits = {c["service"]: drafter.limit_for(c["service"]) for c in chans}
+
+        def guide(c):  # the channel's own tone wins (a reply "LinkedIn more formal"); else the prompt's own words
+            own = tones.get(c["id"], "")
+            return tone_instructions(own) if own else tone_instructions(default_tone, prompt)
         d = self.model_json("captions", "You write social captions for a brand. Use only the facts given; keep every figure exactly as written; "
-                            "no hype words; one caption per network, each under its limit.",
+                            "no hype words like game-changer or revolutionary; one caption per network, each under its limit. Follow each "
+                            "network's tone instructions and conventions exactly: the tone decides the hook, sentence length and energy.",
                             json.dumps({"brand_voice": kit.get("voice", ""), "rules": brand.rules_prompt(rules), "story": {"headline": st["headline"],
                                         "facts": st["facts"], "why": st.get("why", ""), "link": article["url"]},
-                                        "networks": {c["service"]: {"limit": limits[c["service"]], "tone": tones.get(c["id"], "")} for c in chans},
-                                        "format": "Return JSON {network: caption}. YouTube: first line is the title (max 90 chars). LinkedIn: 3 short "
-                                                  "paragraphs. Instagram: ends with 'Link in bio' instead of the URL. Others: include the link."}),
-                            max_tokens=1400)
+                                        "networks": {c["service"]: {"limit": limits[c["service"]], "tone": tones.get(c["id"], "") or default_tone,
+                                                                    "tone_instructions": guide(c),
+                                                                    "conventions": CHANNEL_STYLE.get(c["service"], "hook line, then the link.")}
+                                                     for c in chans},
+                                        "format": "Return JSON {network: caption}. Every caption opens with a hook line, never a plain "
+                                                  "restatement of the headline. Brand rules win over conventions."}),
+                            max_tokens=2400)
+        truncated = self.truncated
         if isinstance(d, dict) and all(isinstance(d.get(c["service"]), str) and d.get(c["service"]).strip() for c in chans):
             drafts = [{"channel_id": c["id"], "service": c["service"], "text": d[c["service"]], "engine": "claude"} for c in chans]
             groups = {}
         for tn, cs in groups.items():
-            voice = "; ".join(x for x in [kit.get("voice", ""), {"formal": "formal and professional", "punchy": "short and punchy",
-                                                                   "casual": "casual and friendly", "explainer": "explain it simply, like to a friend"}.get(tn, ""),
+            voice = "; ".join(x for x in [kit.get("voice", ""), tone_instructions(tn, "" if tones.get(cs[0]["id"]) else prompt),
                                           brand.rules_prompt(rules)] if x)
             drafts += drafter.draft(cs, article, ai=ai, http=self.h.http, tone=voice)
         if ai and groups:
             self.h._ai_audit(self.a, eng, "captions")
         caps = res.setdefault("captions", {})
         for d in drafts:
-            text = drafter.fit(d["service"], brand.apply_text_rules(tidy(d["text"], st), rules))
-            caps[d["channel_id"]] = {"text": text, "engine": d["engine"], "tone": tones.get(d["channel_id"], "")}
+            raw = brand.apply_text_rules(tidy(d["text"], st), rules)
+            if d["service"] == "youtube":
+                raw = dedupe_youtube(raw, st["headline"])
+            text = drafter.fit(d["service"], raw)
+            caps[d["channel_id"]] = {"text": text, "engine": d["engine"], "tone": tones.get(d["channel_id"], "") or default_tone,
+                                     "trimmed": text != raw}
         res["story"] = st
         self.save(run)
-        return {"captions": {d["service"]: caps[d["channel_id"]]["text"][:160] for d in drafts}, "tone": tone or ""}
+        # the full saved text: a 160-character preview made the brain report a "cut off" caption that was complete
+        return {"captions": {d["service"]: caps[d["channel_id"]]["text"] for d in drafts},
+                "complete": {d["service"]: not caps[d["channel_id"]]["trimmed"] for d in drafts},
+                "fallback_writer": bool(groups), "model_cut_off_retried": bool(truncated), "tone": tone or default_tone}
 
     # ---------------------------------------------------------------- check + packages
     def t_check(self) -> dict:

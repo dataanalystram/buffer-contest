@@ -124,8 +124,12 @@ function showRun(r) {
 function agentExtras(r, agent, busy) {
   const res = r.result || {}, br = res.brain || {};
   $("#agentBrain").hidden = !agent || !br.mode;
-  if (agent && br.mode) $("#agentBrain").textContent = (br.mode === "tools" ? "Planned and run by " : "Standard plan, written with ") + (br.model || br.provider || "the built-in writer") +
-    ((res.notes || []).length ? " · " + res.notes[res.notes.length - 1] : "");
+  if (agent && br.mode) {
+    // the same words in the run view and the composer, after a reply too (QA: "free starter" showed while Claude ran)
+    $("#agentBrain").textContent = (br.mode === "tools" ? "Planned and run by " : "Standard plan, written with ") + brainName(br) +
+      ((res.notes || []).length ? " · " + res.notes[res.notes.length - 1] : "");
+    $("#agEngine").textContent = "Writing with: " + brainName(br);
+  }
   const plan = res.plan || [];
   $("#agentPlan").hidden = !agent || !plan.length;
   $("#agentPlan").innerHTML = plan.map((p) => `<li>${esc(p)}</li>`).join("");
@@ -224,9 +228,20 @@ async function loadRuns() {
   } catch (_) {}
 }
 
+function brainName(b) {
+  if (!b) return "the built-in writer";
+  if (b.source === "free starter") return "the free starter model";
+  const m = b.model || b.provider || b.source || "the built-in writer";
+  return b.fast_model && b.fast_model !== b.model ? `${m} (captions: ${b.fast_model})` : m;
+}
+
 async function loadAgent() {
   agentChips(); loadRuns(); readyBadge();
-  try { H.ai = await api("/api/ai"); $("#agEngine").textContent = "Writing with: " + H.ai.engine; } catch (_) {}
+  // the brain that will actually run (operator Claude, your key, the free starter), not only the caption writer
+  try {
+    H.brain = (await api("/api/agent/brain")).brain;
+    if (!(H.run && H.run.kind === "agent" && (H.run.result || {}).brain)) $("#agEngine").textContent = "Writing with: " + brainName(H.brain);
+  } catch (_) {}
 }
 
 // ---------------------------------------------------------------- Planner badge (the Planner itself lives in planner.js)

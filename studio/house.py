@@ -515,7 +515,8 @@ class House:
     def _corroborate(self, article: dict) -> list[dict]:
         """Other outlets with the same story: a different site whose headline shares most of the key words."""
         stop = {"the", "and", "for", "with", "that", "this", "from", "into", "your", "you", "are", "its", "new", "how", "why", "what"}
-        key = {w for w in re.findall(r"[a-z0-9]+", article["title"].lower()) if len(w) > 2 and w not in stop}
+        # figures are left out of the match: "$1.3M" and "$13 million" stories must still find each other
+        key = {w for w in re.findall(r"[a-z0-9]+", article["title"].lower()) if len(w) > 2 and w not in stop and not re.search(r"\d", w)}
         if len(key) < 2:
             return []
         q = " ".join(sorted(key, key=len, reverse=True)[:6])
@@ -628,7 +629,7 @@ class House:
                 if fmt["format"] == "carousel":
                     media += [cover, facts]
                     if p.get("end_card"):
-                        b3, m3 = render.end_card(kit, p, logo=logo, ratio=ratio)
+                        b3, m3 = render.end_card(kit, p, logo=logo, ratio=ratio, n=(total, total))
                         media.append(self._keep(a, b3, "follow.jpg", m3))
                 else:
                     media.append({**cover, "role": "slide"})

@@ -72,28 +72,66 @@ def test_website_falls_back_to_the_site_reader_and_rejects_junk(human, monkeypat
     assert r.status_code == 400 and "website" in r.json()["error"]
 
 
-def test_recommendations_follow_the_choices_cache_and_hand_off_to_make_a_post(app):
+def test_recommendations_follow_the_choices_cache_and_hand_off_to_make_a_post(app, monkeypatch):
+    """The sample serves the pre-made set: filtered by the choices, never a scan, a render or a model call."""
+    from studio import render, sources_agent
     c = sample(app)
+    boom = lambda *a, **k: (_ for _ in ()).throw(AssertionError("the sample must not scan or render for recommendations"))  # noqa: E731
+    monkeypatch.setattr(sources_agent.SourcesAgent, "scan", boom)
+    monkeypatch.setattr(render, "news_card", boom)
     chans = [ch["id"] for ch in c.get("/api/onboarding").json()["options"]["channels"]]
     c.put("/api/onboarding", json={"content_types": ["ai_news", "product_launches"], "channel_ids": chans[:2], "tone": "punchy"})
+    spendy = "SELECT COUNT(*) AS n FROM audit WHERE action IN ('recs_build','sources_scan','ai_call')"
+    before = app.state.store.q(spendy)[0]["n"]
     r = c.get("/api/recommendations").json()
-    assert r["cached"] is False and r["sample"] is True and r["content_types"] == ["ai_news", "product_launches"]
-    assert r["feed"], "the recorded sample sources have AI news"
-    assert all(f["why"].startswith("Matches") for f in r["feed"])
-    assert all(f["lane"] != "hidden" for f in r["feed"])
+    assert r["sample"] is True and r["static"] is True and r["run_id"] is None and r["content_types"] == ["ai_news", "product_launches"]
+    assert r["feed"], "the pre-made sample set has AI news"
+    assert all(f["why"].startswith("Matches") for f in r["feed"]) and all(f["lane"] != "hidden" for f in r["feed"])
     assert 1 <= len(r["recommended"]) <= 3
     for rec in r["recommended"]:
-        assert rec["cover"] and rec["headline"] and rec["tone"] == "punchy"
+        assert rec["cover"].startswith("/static/sample_recs/") and rec["headline"] and rec["tone"] == "punchy"
+        assert c.get(rec["cover"]).status_code == 200
         assert [cap["channel_id"] for cap in rec["captions"]] == chans[:2] and all(cap["text"] for cap in rec["captions"])
         assert rec["make_post"]["channel_ids"] == chans[:2]
         assert rec["make_post"]["prompt"].startswith("Post about this in all my channels")
         if rec["source_url"]:
             assert rec["source_url"] in rec["make_post"]["prompt"]
-    again = c.get("/api/recommendations").json()
-    assert again["cached"] is True and again["run_id"] == r["run_id"]  # opening the screen costs no source requests
-    c.put("/api/onboarding", json={"content_types": ["funding"]})  # new choices drop the cache
-    assert c.get("/api/recommendations").json()["cached"] is False
-    assert c.get("/api/recommendations?refresh=1").json()["cached"] is False
+    c.put("/api/onboarding", json={"content_types": ["funding"]})  # new choices re-filter the same set
+    f = c.get("/api/recommendations?refresh=1").json()
+    assert f["content_types"] == ["funding"] and f["static"] is True
+    assert app.state.store.q(spendy)[0]["n"] == before  # no scan, no model call, no charged rebuild
+
+
+def test_signed_in_recommendations_rate_limited_and_charged(human, monkeypatch):
+    from studio import budget
+    h = human.app.state.house
+    calls = []
+    clusters = [{"id": "c1", "topic": "Launch", "category": "product_feature", "lane": "postable", "score": 0.9,
+                 "story": {"headline": "Acme launches a new AI model", "source": "HN"},
+                 "items": [{"title": "Acme launches a new AI model", "url": "https://news.example.com/acme", "source": "HN"}]}]
+    monkeypatch.setattr(type(h.sources), "scan", lambda self, a, body=None: calls.append(body) or {"run_id": len(calls), "clusters": clusters})
+    monkeypatch.setattr(ob_mod, "RECS_COST", 0.25)
+    human.put("/api/onboarding", json={"x_watchlist": []})  # nothing to read from X here
+    r = human.get("/api/recommendations").json()
+    assert r["cached"] is False and len(calls) == 1 and r["recommended"][0]["cover"]
+    uid = human.get("/api/me").json()["id"]
+    store = human.app.state.store
+    assert budget.remaining(store, uid)["spent_usd"] == 0.25  # charged to the person's own allowance
+    assert budget._spent(store, "global") == 0  # not the shared AI pool
+    # refresh within the hour: the cached set, no new scan, and when the next refresh is allowed
+    again = human.get("/api/recommendations?refresh=1").json()
+    assert again["cached"] is True and again["next_refresh_in"] > 3000 and len(calls) == 1
+    # new choices mark the set stale but can't bypass the hourly limit
+    human.put("/api/onboarding", json={"content_types": ["funding"]})
+    stale = human.get("/api/recommendations").json()
+    assert stale["cached"] is True and stale["stale"] is True and len(calls) == 1
+    # an hour later it rebuilds; once the budget can't cover a rebuild, the last set is served without a scan
+    store.x("UPDATE audit SET ts=ts-4000 WHERE action='recs_build'")
+    assert human.get("/api/recommendations?refresh=1").json()["cached"] is False and len(calls) == 2
+    store.x("UPDATE audit SET ts=ts-4000 WHERE action='recs_build'")
+    store.x("UPDATE brain_budget SET spent=0.9 WHERE scope=?", (f"user:{uid}",))
+    out = human.get("/api/recommendations?refresh=1").json()
+    assert out["cached"] is True and "budget" in out["note"] and len(calls) == 2
 
 
 def test_onboarding_mcp_tools_match_rest(human):
