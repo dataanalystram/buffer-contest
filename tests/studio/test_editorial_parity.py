@@ -230,3 +230,10 @@ def test_the_fixed_plan_makes_the_company_post_and_says_no_video(owner, company,
     assert any("no video found" in p.lower() for p in res["plan"])
     assert [p["service"] for p in res["packages"]] == ["instagram"] and res["packages"][0]["format"] == "carousel"
     assert any("skipped" in t["text"].lower() and "youtube" in t["text"].lower() for t in res["thread"])
+
+
+def test_brand_templates_lists_and_previews_editorial_story(owner):  # noqa: F811
+    got = owner.get("/api/templates").json()
+    assert "editorial_story" in [t["id"] for t in got["templates"]]
+    r = owner.post("/api/templates/render", json={"template": "editorial_story", "channel_ids": ["ch_ig"]})
+    assert r.status_code == 200, r.text
