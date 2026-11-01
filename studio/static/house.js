@@ -172,7 +172,7 @@ function pkgCard(p) {
     ${checkList(p.check)}
     ${p.note ? `<small class="muted sm" data-testid="pkg-note">${esc(p.note)}</small>` : ""}
     ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.mode === "draft" ? " as a draft" : ""}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
-      : `<div class="pkg-act"><select data-testid="pkg-mode">${modeOptions("queue")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
+      : `<div class="pkg-act"><select data-testid="pkg-mode" aria-label="How to send">${modeOptions("draft")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
         <button class="btn sm" data-testid="pkg-send">Send to Buffer</button></div>`}
   </article>`;
 }
