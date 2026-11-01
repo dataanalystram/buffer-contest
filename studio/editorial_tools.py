@@ -310,7 +310,8 @@ class EditorialTools:
                 "Return JSON {eyebrow, headline, accent, dek, slides, founders, follow_line}. eyebrow: 'YC F26 · AI + FINTECH' style "
                 "(batch + 1-2 categories, upper case). headline: max 10 words, Title Case, a hook with the key figure (e.g. 'A Credit "
                 "Card That Pays You 4% Back On AI'). accent: the 1-2 words of the headline in the accent colour (the figure). dek: "
-                "one plain line, max 14 words, naming the company and batch. slides: 4 or 5 content slides, ONE idea each: "
+                "one plain line, max 14 words, naming the company and batch. slides: 3 or 4 content slides (the founders slide comes on "
+                "top, 7 slides at most in all), ONE idea each: "
                 "{eyebrow (2-4 words, e.g. HOW IT WORKS, WHY IT CAN BE CHEAPER, THE MATH), blocks: 1-2 x {head (max 6 words, Title "
                 "Case, lead with a figure when there is one), body (max 32 words, plain words a friend would get, **bold** the key "
                 "facts and figures)}, accent: [1 word of a head], note: an optional small grey footnote (source/terms, max 12 "
@@ -320,7 +321,7 @@ class EditorialTools:
                 "the sources; keep every figure exactly as written; where pages differ use figure_decisions. No hype words.")}
         sys_ = ("You are the editor of an AI news brand writing an Instagram editorial carousel about one company. Plain words, "
                 "one idea per slide, real figures only.")
-        return self.model_json("editorial", sys_, json.dumps(brief), max_tokens=2200)
+        return self.model_json("editorial", sys_, json.dumps(brief), max_tokens=4000)
 
     @staticmethod
     def _clean_spec(d: dict, comp: dict) -> dict:
@@ -331,8 +332,9 @@ class EditorialTools:
                     out.append({"head": str(b["head"]).strip()[:80], "body": str(b.get("body") or "").strip()[:400]})
             return out
 
-        def acc(v):
-            return [str(x)[:30] for x in (v if isinstance(v, list) else [v] if v else [])][:3]
+        def acc(v):  # accent words one by one ("4% Back" -> "4%", "Back"): the renderer matches single words
+            words = [w for x in (v if isinstance(v, list) else [v] if v else []) for w in str(x).split()]
+            return [w[:30] for w in words][:3]
         slides = []
         for s in (d.get("slides") or [])[:6]:
             if isinstance(s, dict) and blocks(s.get("blocks")):
