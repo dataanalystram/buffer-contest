@@ -5,9 +5,10 @@ brand: the brand's FRONT card first, the brand's END card last, the brand's logo
 between. Every slide is drawn here with Pillow (a few hundred ms per carousel), so the brand screen can show a live
 preview while someone edits their kit. Reels and quote clips are the same slides put through FFmpeg.
 
-Templates
-  weekly_recap    "What happened in AI in the last 7 days": a carousel or Reel built from the week's sent and scheduled posts
+Templates (the HuhByte AI formats live in studio/hb_templates.py and are registered here)
+  weekly_recap    "Do you realize what just happened in AI in the last 7 days?": carousel or Reel from the week's posts
   midweek_recap   the same, Monday to Wednesday, three stories
+  editorial_cover, text_slides, launch_reel, github_repo, yc_launch, viral_trend   (see hb_templates)
   breaking        a breaking-news cover
   launch          a launch/product carousel
   quote           a quote/CEO card, and a captioned 9:16 clip
@@ -630,6 +631,8 @@ def slides(template: str, data: dict | None, b: Brand, ratio: str = "4:5", now: 
     """The template's slides in order: front card first, end card last."""
     if template not in TEMPLATES:
         raise ValueError(f"Unknown template {template!r}. Pick one of {', '.join(TEMPLATES)}.")
+    if template in HB_IDS:  # the HuhByte AI formats (studio/hb_templates.py), drawn in this brand
+        return _hb.slides(template, data, b, ratio, now=now, max_slides=max_slides)
     d = {**SAMPLE[template], **(data or {})}
     now = now or datetime.now(timezone.utc)
     body: list = []
@@ -837,7 +840,10 @@ def quote_clip(b: Brand, quote: str, speaker: str, role: str = "", ratio: str = 
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def video(template: str, data: dict | None, b: Brand, ratio: str = "9:16", now: datetime | None = None) -> bytes:
+def video(template: str, data: dict | None, b: Brand, ratio: str = "9:16", now: datetime | None = None,
+          source: str | None = None, theme: str | None = None) -> bytes:
+    if template in HB_IDS:
+        return _hb.video(template, data, b, ratio, now=now, source=source, theme=theme)
     if template == "quote":
         d = {**SAMPLE["quote"], **(data or {})}
         return quote_clip(b, d["quote"], d.get("speaker", ""), d.get("role", ""), ratio)
@@ -916,3 +922,11 @@ def next_fire(weekday: str, hhmm: str, tz: str, after: datetime) -> datetime:
     if cand <= local:
         cand += timedelta(days=7)
     return cand.astimezone(timezone.utc)
+
+
+# ---------------------------------------------------------------------------------------------------- HuhByte AI formats
+from . import hb_templates as _hb  # noqa: E402  (hb_templates draws on the helpers above)
+
+TEMPLATES.update(_hb.TEMPLATES)
+SAMPLE.update(_hb.SAMPLE)
+HB_IDS = set(_hb.TEMPLATES)
