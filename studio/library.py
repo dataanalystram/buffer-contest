@@ -1,0 +1,507 @@
+"""Library: every file a person uploaded and every post media the agent made, in one place (UI = REST = MCP).
+
+Storage is the app's own database for now (Supabase Postgres in production, SQLite locally):
+
+* ``library_items``   one row per item: name, MIME (sniffed from the bytes, never trusted from the client), kind
+                      (video | image | carousel), source (upload | take | generated), size, SHA-256, where the bytes are.
+* ``library_chunks``  an upload's bytes in 1 MB chunks (bytea), so a 100 MB video is never one row and a video player's
+                      range request reads only the chunks it needs.
+* ``library_media``   media tokens that belong to a library item. A token here is never purged, and an uploaded item's
+                      own token works everywhere a media token does (the agent, the render worker, Buffer's /m/ fetch).
+
+Generated media already live in the ``media`` table (the renderer writes them there); their library row points at
+those tokens instead of copying the bytes. Caps: 100 MB a file, 200 MB a person (uploads and renders together), both
+checked before a byte is read (SECURITY_RULES 6). The free sample workspace sees bundled sample items, read-only.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import time
+from pathlib import Path
+
+from . import demo_guard
+from .actions import ActionError, Actor
+
+MB = 1024 * 1024
+CHUNK = MB
+FILE_MAX = int(os.environ.get("HQ_LIBRARY_FILE_MB", "100")) * MB
+QUOTA = int(os.environ.get("HQ_LIBRARY_QUOTA_MB", "200")) * MB
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS library_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, token TEXT, name TEXT, mime TEXT, kind TEXT, source TEXT,
+  size INTEGER, sha256 TEXT, storage TEXT, meta TEXT, run_id INTEGER, created REAL);
+CREATE TABLE IF NOT EXISTS library_chunks (item_id INTEGER, n INTEGER, data BLOB, PRIMARY KEY (item_id, n));
+CREATE TABLE IF NOT EXISTS library_media (token TEXT PRIMARY KEY, item_id INTEGER, user_id TEXT);
+"""
+TABLES = ("library_items", "library_chunks", "library_media")
+
+# (mime, extension, kind) from the file's first bytes. Anything else is refused.
+def sniff(head: bytes) -> tuple[str, str, str] | None:
+    h = head or b""
+    if h[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", "jpg", "image"
+    if h[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", "png", "image"
+    if h[:4] == b"RIFF" and h[8:12] == b"WEBP":
+        return "image/webp", "webp", "image"
+    if h[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", "gif", "image"
+    if h[4:8] == b"ftyp":
+        brand = h[8:12]
+        if brand.startswith(b"qt"):
+            return "video/quicktime", "mov", "video"
+        if brand in (b"heic", b"heix", b"mif1", b"msf1", b"avif"):
+            return None  # HEIC/AVIF stills: not something every network takes
+        return "video/mp4", "mp4", "video"
+    if h[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm", "webm", "video"
+    return None
+
+
+def safe_name(name: str, ext: str) -> str:
+    """A display name with no path, no control characters and the sniffed extension (never the client's)."""
+    base = Path(str(name or "").replace("\\", "/")).name
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    stem = re.sub(r"[^\w\- .()]+", "_", stem, flags=re.UNICODE).strip(" ._") or "file"
+    return f"{stem[:72]}.{ext}"
+
+
+def ensure(store) -> None:
+    for stmt in [x.strip() for x in SCHEMA.split(";") if x.strip()]:
+        if store.pg:
+            stmt = (stmt.replace(" REAL", " DOUBLE PRECISION").replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+                    .replace(" BLOB", " BYTEA"))
+        store.x(stmt)
+    store.x("CREATE INDEX IF NOT EXISTS library_items_user ON library_items(user_id, id)")
+    store.x("CREATE INDEX IF NOT EXISTS library_items_token ON library_items(token)")
+    if store.pg:  # closed to the hosted database's public data API, like every other table
+        for t in TABLES:
+            store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
+
+
+def _now() -> float:
+    return time.time()
+
+
+def _sample_items() -> list[dict]:
+    """The free sample's read-only Library: the sample take's clips and the example HuhByte carousel."""
+    from .takes import sample_meta
+    out = []
+    meta = sample_meta() or {}
+    base = Path(__file__).parent
+    for i, c in enumerate(meta.get("clips") or [], 1):
+        f = base / "sample_take" / c.get("file", "")
+        if not f.is_file():
+            continue
+        out.append({"id": f"sample-{i}", "name": f"Sample clip {i}.mp4", "kind": "video", "mime": "video/mp4", "source": "sample",
+                    "size": f.stat().st_size, "created": 0, "url": f"/sample/{c['file']}",
+                    "thumb": f"/sample/{c['cover']}" if c.get("cover") else "", "used_in": [], "read_only": True})
+    ex = base / "static" / "examples" / "huhbyte"
+    slides = sorted(p.name for p in ex.glob("launch-*.jpg")) if ex.is_dir() else []
+    if slides:
+        out.append({"id": "sample-carousel", "name": "Sample launch carousel", "kind": "carousel", "mime": "image/jpeg", "source": "sample",
+                    "size": sum((ex / s).stat().st_size for s in slides), "created": 0, "url": f"/static/examples/huhbyte/{slides[0]}",
+                    "thumb": f"/static/examples/huhbyte/{slides[0]}", "slides": [f"/static/examples/huhbyte/{s}" for s in slides],
+                    "used_in": [], "read_only": True})
+    for p in sorted(ex.glob("cover-*.jpg")) if ex.is_dir() else []:
+        out.append({"id": f"sample-{p.stem}", "name": p.name, "kind": "image", "mime": "image/jpeg", "source": "sample",
+                    "size": p.stat().st_size, "created": 0, "url": f"/static/examples/huhbyte/{p.name}",
+                    "thumb": f"/static/examples/huhbyte/{p.name}", "used_in": [], "read_only": True})
+    return out
+
+
+class Library:
+    def __init__(self, house):
+        self.h, self.store = house, house.store
+        ensure(self.store)
+
+    # ---------------------------------------------------------------- caps
+    def used(self, uid: str) -> int:
+        return int(self.store.q("SELECT COALESCE(SUM(size),0) AS n FROM library_items WHERE user_id=?", (uid,))[0]["n"] or 0)
+
+    def check_room(self, a: Actor, size: int | None) -> None:
+        """Before a byte is read: the file cap, then the person's quota."""
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("The sample workspace's Library is read-only. Connect Buffer to keep your own files.", 403)
+        if size is not None and size > FILE_MAX:
+            raise ActionError(f"Files up to {FILE_MAX // MB} MB.", 413)
+        if size is not None and self.used(a.uid) + size > QUOTA:
+            raise ActionError(f"Your Library is full ({QUOTA // MB} MB). Delete files you no longer need in Library.", 413)
+
+    # ---------------------------------------------------------------- uploads (chunked bytes)
+    def _new_item(self, a: Actor, source: str, name: str) -> tuple[int, str]:
+        tok = secrets.token_urlsafe(18)
+        iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created)"
+                           " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (a.uid, tok, name[:80], "", "", source, 0, "", "pending", "{}", None, _now()))
+        return iid, tok
+
+    def _drop(self, iid: int) -> None:
+        self.store.x("DELETE FROM library_chunks WHERE item_id=?", (iid,))
+        self.store.x("DELETE FROM library_media WHERE item_id=?", (iid,))
+        self.store.x("DELETE FROM library_items WHERE id=?", (iid,))
+
+    async def save_stream(self, a: Actor, name: str, stream, declared: int | None, source: str = "upload") -> dict:
+        """Stream a request body into chunks: capped while it streams, MIME sniffed from the first bytes, nothing
+        decoded. A file that breaks a rule leaves nothing behind."""
+        self.check_room(a, declared)
+        room = min(FILE_MAX, QUOTA - self.used(a.uid))
+        iid, tok = self._new_item(a, source, "upload")
+        h, buf, n, size, kind = hashlib.sha256(), bytearray(), 0, 0, None
+        try:
+            async for piece in stream:
+                size += len(piece)
+                if size > room:
+                    raise ActionError(f"Files up to {FILE_MAX // MB} MB, and your Library holds {QUOTA // MB} MB in all.", 413)
+                buf += piece
+                if kind is None and len(buf) >= 16:
+                    kind = sniff(bytes(buf[:32]))
+                    if not kind:
+                        raise ActionError("Upload a JPG, PNG, WebP or GIF image, or an MP4, MOV or WebM video.", 415)
+                while len(buf) >= CHUNK:
+                    part, buf = bytes(buf[:CHUNK]), buf[CHUNK:]
+                    h.update(part)
+                    self.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (iid, n, part))
+                    n += 1
+            if kind is None:
+                kind = sniff(bytes(buf[:32]))
+                if not kind:
+                    raise ActionError("Upload a JPG, PNG, WebP or GIF image, or an MP4, MOV or WebM video.", 415)
+            if buf:
+                h.update(bytes(buf))
+                self.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (iid, n, bytes(buf)))
+        except BaseException:
+            self._drop(iid)
+            raise
+        return self._finish(a, iid, tok, name, kind, size, h.hexdigest(), source)
+
+    def save_bytes(self, a: Actor, data: bytes, name: str, source: str = "upload") -> dict:
+        self.check_room(a, len(data))
+        kind = sniff(data[:32])
+        if not kind:
+            raise ActionError("Upload a JPG, PNG, WebP or GIF image, or an MP4, MOV or WebM video.", 415)
+        iid, tok = self._new_item(a, source, "upload")
+        try:
+            for n, i in enumerate(range(0, len(data), CHUNK)):
+                self.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (iid, n, data[i:i + CHUNK]))
+        except BaseException:
+            self._drop(iid)
+            raise
+        return self._finish(a, iid, tok, name, kind, len(data), hashlib.sha256(data).hexdigest(), source)
+
+    def _finish(self, a, iid, tok, name, kind, size, digest, source) -> dict:
+        mime, ext, k = kind
+        if not size:
+            self._drop(iid)
+            raise ActionError("That file is empty.")
+        same = self.store.q("SELECT id FROM library_items WHERE user_id=? AND sha256=? AND storage='chunks' AND id<>?", (a.uid, digest, iid))
+        if same:  # the same file again: keep the one already there
+            self._drop(iid)
+            return self.item(a, same[0]["id"])
+        tok = f"{tok}.{ext}"
+        meta = {"type": "video" if k == "video" else "photo"}
+        if k == "image":
+            meta.update(self._image_size(iid))
+        self.store.x("UPDATE library_items SET token=?, name=?, mime=?, kind=?, size=?, sha256=?, storage='chunks', meta=? WHERE id=?",
+                     (tok, safe_name(name, ext), mime, k, size, digest, json.dumps(meta), iid))
+        self.store.x("INSERT INTO library_media(token,item_id,user_id) VALUES(?,?,?)", (tok, iid, a.uid))
+        self.store.audit(a.uid, a.label, "library_upload", "read", {"kind": k, "bytes": size, "source": source})
+        return self.item(a, iid)
+
+    def _image_size(self, iid: int) -> dict:
+        try:
+            import io
+
+            from PIL import Image
+            data = self._read(iid, 0, None)
+            with Image.open(io.BytesIO(data)) as im:
+                return {"width": im.width, "height": im.height}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    # ---------------------------------------------------------------- generated media (bytes stay in `media`)
+    def register_generated(self, a: Actor, media: list[dict], fmt: str, run_id: int | None) -> int | None:
+        """One library row per finished channel render (a video, an image or a whole carousel). Idempotent per token set."""
+        if demo_guard.is_demo(a.uid):
+            return None
+        items = [m for m in media if m.get("token") and m.get("role") not in ("slide",)]
+        if not items:
+            return None
+        toks = [m["token"] for m in items]
+        have = {r["token"] for r in self.store.q(
+            f"SELECT token FROM library_media WHERE token IN ({','.join('?' * len(toks))})", tuple(toks))}
+        if set(toks) <= have:
+            return None
+        video = next((m for m in items if m.get("type") == "video"), None)
+        if video:
+            items, kind = [video], "video"
+        elif fmt == "carousel" and len(items) > 1:
+            kind = "carousel"
+        else:
+            items, kind = items[:1], "image"
+        toks = [m["token"] for m in items]
+        rows = self.store.q(f"SELECT token, mime, size, meta, user_id FROM media WHERE token IN ({','.join('?' * len(toks))})", tuple(toks))
+        rows = [r for r in rows if r["user_id"] == a.uid]
+        if not rows:
+            return None
+        by = {r["token"]: r for r in rows}
+        first = by.get(toks[0]) or rows[0]
+        meta = json.loads(first["meta"] or "{}")
+        info = {k: meta[k] for k in ("width", "height", "duration") if meta.get(k)}
+        info["tokens"] = [t for t in toks if t in by]
+        info["format"] = fmt
+        name = {"video": "Reel.mp4", "carousel": f"Carousel ({len(info['tokens'])} slides)", "image": "Image.jpg"}[kind]
+        iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created)"
+                           " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (a.uid, info["tokens"][0], name, first["mime"], kind, "generated", sum(int(by[t]["size"] or 0) for t in info["tokens"]),
+                            "", "media", json.dumps(info), run_id, _now()))
+        for t in info["tokens"]:
+            self.store.x("INSERT INTO library_media(token,item_id,user_id) VALUES(?,?,?) ON CONFLICT(token) DO NOTHING", (t, iid, a.uid))
+        return iid
+
+    # ---------------------------------------------------------------- reading
+    def _row(self, a: Actor, iid) -> dict:
+        try:
+            iid = int(iid)
+        except (TypeError, ValueError):
+            raise ActionError("No such Library item.", 404)
+        rows = self.store.q("SELECT * FROM library_items WHERE id=? AND user_id=? AND storage<>'pending'", (iid, a.uid))
+        if not rows:
+            raise ActionError("No such Library item.", 404)
+        d = dict(rows[0])
+        d["meta"] = json.loads(d["meta"] or "{}")
+        return d
+
+    def _public(self, d: dict, runs: list[dict] | None = None) -> dict:
+        tokens = d["meta"].get("tokens") or [d["token"]]
+        url = f"/api/library/{d['id']}/file"
+        out = {"id": d["id"], "name": d["name"], "kind": d["kind"], "mime": d["mime"], "source": d["source"], "size": int(d["size"] or 0),
+               "created": d["created"], "url": url, "thumb": url if d["kind"] != "video" else "",
+               "width": d["meta"].get("width"), "height": d["meta"].get("height"), "duration": d["meta"].get("duration"),
+               "media_token": d["token"], "read_only": False}
+        if d["kind"] == "carousel":
+            out["slides"] = [f"{url}?i={i}" for i in range(len(tokens))]
+        if runs is not None:
+            out["used_in"] = [r for r in runs if any(t in r["_blob"] for t in tokens)]
+            out["used_in"] = [{k: v for k, v in r.items() if k != "_blob"} for r in out["used_in"]]
+        return out
+
+    def _runs(self, a: Actor) -> list[dict]:
+        out = []
+        for r in self.store.q("SELECT id, kind, input, result, status, created FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT 200", (a.uid,)):
+            try:
+                inp, res = json.loads(r["input"] or "{}"), json.loads(r["result"] or "{}")
+            except ValueError:
+                continue
+            title = (res.get("story") or {}).get("headline") or inp.get("prompt") or inp.get("query") or inp.get("name") or "A post"
+            sent = any((p.get("sent") for p in res.get("packages") or []))
+            out.append({"run_id": r["id"], "kind": r["kind"], "title": str(title)[:90], "status": r["status"], "sent": bool(sent),
+                        "_blob": (r["input"] or "") + (r["result"] or "")})
+        return out
+
+    def list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200) -> dict:
+        if demo_guard.is_demo(a.uid):
+            items = _sample_items()
+            used = 0
+        else:
+            rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND storage<>'pending' ORDER BY id DESC LIMIT ?",
+                                (a.uid, max(1, min(int(limit or 200), 500))))
+            runs = self._runs(a)
+            items = []
+            for r in rows:
+                d = dict(r)
+                d["meta"] = json.loads(d["meta"] or "{}")
+                items.append(self._public(d, runs))
+            used = self.used(a.uid)
+        if kind in ("video", "image", "carousel"):
+            items = [i for i in items if i["kind"] == kind]
+        elif kind in ("upload", "generated"):
+            items = [i for i in items if (i["source"] in ("upload", "take")) == (kind == "upload")]
+        if q:
+            ql = q.lower()
+            items = [i for i in items if ql in i["name"].lower() or any(ql in u["title"].lower() for u in i.get("used_in") or [])]
+        return {"items": items, "used": used, "quota": QUOTA, "file_max": FILE_MAX, "read_only": demo_guard.is_demo(a.uid)}
+
+    def item(self, a: Actor, iid) -> dict:
+        return self._public(self._row(a, iid), self._runs(a))
+
+    def _read(self, iid: int, start: int, end: int | None) -> bytes:
+        """Bytes [start, end] of an uploaded item, reading only the chunks that hold them."""
+        first = start // CHUNK
+        last = (end // CHUNK) if end is not None else None
+        sql = "SELECT n, data FROM library_chunks WHERE item_id=? AND n>=?" + (" AND n<=?" if last is not None else "") + " ORDER BY n"
+        rows = self.store.q(sql, (iid, first, last) if last is not None else (iid, first))
+        data = b"".join(bytes(r["data"]) for r in rows)
+        off = start - first * CHUNK
+        return data[off:(end - first * CHUNK + 1) if end is not None else None]
+
+    def file(self, a: Actor, iid, i: int = 0) -> dict:
+        """What GET /api/library/{id}/file serves: (mime, size, reader)."""
+        d = self._row(a, iid)
+        return self._file_of(d, i)
+
+    def _file_of(self, d: dict, i: int = 0) -> dict:
+        if d["storage"] == "chunks":
+            return {"mime": d["mime"], "size": int(d["size"] or 0), "read": lambda s, e: self._read(d["id"], s, e), "name": d["name"]}
+        toks = d["meta"].get("tokens") or [d["token"]]
+        tok = toks[max(0, min(int(i or 0), len(toks) - 1))]
+        m = self.store.q("SELECT mime, data, size FROM media WHERE token=?", (tok,))
+        if not m:
+            raise ActionError("This file is gone.", 404)
+        blob = bytes(m[0]["data"])
+        return {"mime": m[0]["mime"], "size": len(blob), "read": lambda s, e: blob[s:(e + 1) if e is not None else None], "name": d["name"]}
+
+    # ---------------------------------------------------------------- tokens: library uploads work as media tokens
+    def by_token(self, token: str) -> dict | None:
+        rows = self.store.q("SELECT * FROM library_items WHERE token=? AND storage='chunks'", (token,))
+        if not rows:
+            return None
+        d = dict(rows[0])
+        d["meta"] = json.loads(d["meta"] or "{}")
+        return d
+
+    def blob(self, token: str) -> dict | None:
+        d = self.by_token(token)
+        if not d:
+            return None
+        return {"token": token, "user_id": d["user_id"], "mime": d["mime"], "data": self._read(d["id"], 0, None),
+                "size": int(d["size"] or 0), "meta": json.dumps({"kind": "upload", **d["meta"]})}
+
+    def meta(self, a: Actor, token: str) -> dict | None:
+        d = self.by_token(token)
+        return {"kind": "upload", **d["meta"]} if d and d["user_id"] == a.uid else None
+
+    # ---------------------------------------------------------------- delete / use
+    def delete(self, a: Actor, iid, force: bool = False) -> dict:
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("Sample items can't be deleted. Connect Buffer to manage your own Library.", 403)
+        self.h.studio._guard_write(a, "delete_library_item")
+        d = self._row(a, iid)
+        pub = self._public(d, self._runs(a))
+        live = [u for u in pub["used_in"] if not u["sent"] and u["status"] in ("ready", "running", "rendering")]
+        if live and not force:
+            raise ActionError(f"“{d['name']}” is used in {len(live)} post{'s' if len(live) > 1 else ''} that hasn't gone out yet "
+                              f"(“{live[0]['title'][:60]}”). Delete it anyway?", 409)
+        toks = d["meta"].get("tokens") or [d["token"]]
+        if d["storage"] == "media":
+            for t in toks:
+                self.store.x("DELETE FROM media WHERE token=? AND user_id=?", (t, a.uid))
+        self._drop(d["id"])
+        self.store.audit(a.uid, a.label, "delete_library_item", "safety", {"kind": d["kind"], "bytes": int(d["size"] or 0), "forced": bool(live)})
+        return {"deleted": True, "id": d["id"], "was_used_in": [u["run_id"] for u in pub["used_in"]]}
+
+    def use(self, a: Actor, iid, body: dict | None = None) -> dict:
+        """Attach an item to a new post. With a prompt it starts the agent run right away (make_post); without, it
+        returns the media token the Make a post screen (or make_post) takes."""
+        body = body or {}
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("Sample items can't be attached in the sample workspace; upload a file in Make a post instead.", 403)
+        d = self._row(a, iid)
+        tok = (d["meta"].get("tokens") or [d["token"]])[0]
+        out = {"item": self._public(d), "media_token": tok, "type": "video" if d["kind"] == "video" else "photo"}
+        if body.get("prompt"):
+            self.h.studio._guard_write(a, "use_library_item")
+            out["run"] = self.h.brain.start(a, {"prompt": body["prompt"], "media_token": tok, "channel_ids": body.get("channel_ids"),
+                                                "format": body.get("format")})
+        return out
+
+
+# ---------------------------------------------------------------- REST + MCP
+TOOLS = [
+    {"name": "list_library", "description": "The person's Library: every uploaded photo/video and every image, carousel and Reel the agent made, "
+                                            "with type, size, date and which posts used each one. q searches names and post titles; kind: video | image | carousel | upload | generated.",
+     "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}, "kind": {"type": "string"}}}},
+    {"name": "delete_library_item", "description": "Delete one Library item (the file and its record). Refused with a warning while a post that hasn't gone out uses it; force=true deletes anyway.",
+     "inputSchema": {"type": "object", "required": ["item_id"], "properties": {"item_id": {"type": "integer"}, "force": {"type": "boolean"}}}},
+    {"name": "use_library_item", "description": "Use a Library item in a new post. With prompt (what to post, which channels) it starts make_post with the file attached and returns the run; without, it returns the media_token to pass to make_post.",
+     "inputSchema": {"type": "object", "required": ["item_id"], "properties": {"item_id": {"type": "integer"}, "prompt": {"type": "string"},
+                                                                             "channel_ids": {"type": "array", "items": {"type": "string"}},
+                                                                             "format": {"type": "string", "enum": ["auto", "reel", "carousel", "photo"]}}}},
+]
+READ_ONLY = {"list_library"}
+
+
+def call_tool(studio, actor, name: str, args: dict):
+    lib = studio.house.library
+    if name == "list_library":
+        return lib.list(actor, str(args.get("q") or ""), str(args.get("kind") or ""))
+    if name == "delete_library_item":
+        return lib.delete(actor, args.get("item_id"), bool(args.get("force")))
+    if name == "use_library_item":
+        return lib.use(actor, args.get("item_id"), {k: args.get(k) for k in ("prompt", "channel_ids", "format") if args.get(k)})
+    return NotImplemented
+
+
+def parse_range(header: str, size: int) -> tuple[int, int] | None:
+    """'bytes=a-b' | 'bytes=a-' | 'bytes=-n' -> (start, end) inclusive, or None when absent/unsatisfiable."""
+    if not header.startswith("bytes=") or "," in header or size <= 0:
+        return None
+    a_, _, b_ = header[6:].strip().partition("-")
+    if a_ == "" and b_.isdigit():
+        n = int(b_)
+        return (max(0, size - n), size - 1) if n else None
+    if not a_.isdigit():
+        return None
+    start = int(a_)
+    end = min(int(b_), size - 1) if b_.isdigit() else size - 1
+    return (start, end) if start <= end else None
+
+
+def add_routes(app, house, actor) -> None:
+    from fastapi import Body, Request
+    from fastapi.responses import JSONResponse, Response
+
+    lib = house.library
+
+    def serve(f: dict, request: Request, cache: str):
+        size = f["size"]
+        headers = {"Accept-Ranges": "bytes", "Cache-Control": cache, "Content-Disposition": "inline"}
+        rng = parse_range(request.headers.get("range", ""), size)
+        if request.headers.get("range") and rng is None:
+            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
+        if rng:
+            s, e = rng
+            e = min(e, s + 8 * MB - 1)  # one range answer reads at most 8 MB (players ask again for the rest)
+            return Response(f["read"](s, e), status_code=206, media_type=f["mime"], headers={**headers, "Content-Range": f"bytes {s}-{e}/{size}"})
+        return Response(f["read"](0, None), media_type=f["mime"], headers=headers)
+
+    @app.get("/api/library")
+    def library_list(request: Request, q: str = "", kind: str = ""):
+        return lib.list(actor(request), q, kind)
+
+    @app.post("/api/library/upload")
+    async def library_upload(request: Request, name: str = "", source: str = "upload"):
+        """Raw file body (not JSON, not base64). Authenticated first; Content-Length, the per-file cap and the quota are
+        checked before reading; the body is counted as it streams and its type sniffed from the bytes."""
+        a = actor(request, write=True)
+        house.studio._guard_write(a, "library_upload")
+        cl = request.headers.get("content-length")
+        try:
+            declared = int(cl) if cl is not None else None
+        except ValueError:
+            raise ActionError("Bad Content-Length.", 400)
+        nm = name or request.headers.get("x-file-name", "") or "upload"
+        return await lib.save_stream(a, nm, request.stream(), declared, "take" if source == "take" else "upload")
+
+    @app.get("/api/library/{iid}")
+    def library_item(iid: int, request: Request):
+        return lib.item(actor(request), iid)
+
+    @app.get("/api/library/{iid}/file")
+    def library_file(iid: int, request: Request, i: int = 0):
+        return serve(lib.file(actor(request), iid, i), request, "private, max-age=3600")
+
+    @app.delete("/api/library/{iid}")
+    def library_delete(iid: int, request: Request, force: int = 0):
+        return lib.delete(actor(request, write=True), iid, bool(force))
+
+    @app.post("/api/library/{iid}/use")
+    def library_use(iid: int, request: Request, body: dict = Body(default={})):
+        return lib.use(actor(request, write=True), iid, body or {})
+
+    app.state.library_serve = serve
+    _ = JSONResponse  # imported for parity with the other route modules
