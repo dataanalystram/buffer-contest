@@ -279,15 +279,65 @@ class BrandStudio:
             out["channels"].append({"service": svc, "label": spec["label"], "ratio": spec["ratio"], "slides": urls})
         want_video = bool(body.get("video")) and templates.TEMPLATES[tpl]["video"]
         if want_video:
-            if demo or not templates.have_ffmpeg() or os.environ.get("HQ_TEMPLATE_VIDEO", "1") == "0":
-                ex = kit.get("example") or "huhbyte"
-                out["video"] = {"url": f"/static/examples/{ex}/reel-{tpl if tpl in ('weekly_recap', 'quote') else 'weekly_recap'}.mp4",
-                                "note": "Pre-rendered example Reel (video renders run where FFmpeg is installed)."}
-            else:
+            mode = "none" if os.environ.get("HQ_TEMPLATE_VIDEO", "1") == "0" else self.house.video_mode()
+            if not demo and mode == "local":
                 mp4 = templates.video(tpl, data, b, "9:16")
                 tok = self.house.put_media(a, mp4, f"{tpl}.mp4", kind="template", meta={"type": "video", "template": tpl})
-                out["video"] = {"url": self.house.media_url(tok), "bytes": len(mp4)}
+                out["video"] = {"url": self.house.media_url(tok), "bytes": len(mp4), "example": False, "rendered_by": "this server"}
+            elif not demo and mode == "github":
+                # the hosted app (512 MB) never runs FFmpeg: the person's own Reel renders on the GitHub worker. Never a canned clip.
+                out["video"], out["video_job"] = self._template_video_on_worker(a, tpl, data, kit)
+            else:
+                out["video"] = self._example_reel(kit, tpl)
         self.store.audit(a.uid, a.label, "render_template", "read", {"template": tpl, "services": services, "video": want_video})
+        return out
+
+    @staticmethod
+    def _example_reel(kit: dict, tpl: str) -> dict:
+        """The committed example Reel, always labelled: it shows the template, it is not made from the person's content."""
+        ex = kit.get("example") if kit.get("example") in brand_examples.EXAMPLES else "huhbyte"
+        name = (brand_examples.EXAMPLES.get(ex) or {}).get("title") or ex
+        return {"url": f"/static/examples/{ex}/reel-{tpl if tpl in ('weekly_recap', 'quote') else 'weekly_recap'}.mp4",
+                "example": True, "label": "Example",
+                "note": f"EXAMPLE REEL, not your content: a pre-rendered sample from the {name} example brand, to show the template. "
+                        "Your own Reel renders on a video worker (FFmpeg); the sample workspace never starts one."}
+
+    def _template_video_on_worker(self, a, tpl: str, data: dict | None, kit: dict) -> tuple[dict | None, dict]:
+        """Queue the template's Reel on the GitHub render worker and wait a little for it. Returns (video, job): video is
+        the person's own rendered Reel, or None while it renders (job says how to fetch it); never an example clip."""
+        spec = {"kind": "template_video", "template": tpl, "data": data, "ratio": "9:16",
+                "kit": {k: v for k, v in kit.items() if k != "_ledger"}, "logo": kit.get("logo") or "",
+                "front": (kit.get("front_card") or {}).get("image") or "", "end": (kit.get("end_card") or {}).get("image") or ""}
+        now = time.time()
+        jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
+                           (a.uid, None, json.dumps(spec), "queued", now, now))
+        ok, why = self.house._dispatch_github(jid)
+        if not ok:
+            self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (why, time.time(), jid))
+            return None, {"id": jid, "status": "failed", "note": f"The video worker didn't start ({why}); the slides above are ready."}
+        wait = float(os.environ.get("HQ_TEMPLATE_VIDEO_WAIT", "240"))
+        t0 = time.time()
+        while time.time() - t0 < wait:
+            row = self.store.q("SELECT status, error FROM render_jobs WHERE id=?", (jid,))[0]
+            if row["status"] == "done":
+                return {**self.house._job_media(jid), "example": False, "rendered_by": "video worker"}, {"id": jid, "status": "done"}
+            if row["status"] == "failed":
+                return None, {"id": jid, "status": "failed", "note": f"The video render failed ({(row['error'] or '')[:120]})."}
+            time.sleep(0.05 if self.house.sync else 3)
+        return None, {"id": jid, "status": "queued", "note": "Your Reel is still rendering on the video worker; "
+                      f"GET /api/templates/video/{jid} returns it when it's done."}
+
+    def video_job(self, a, jid: int) -> dict:
+        """A template Reel the worker rendered for this person (status, and the URL when done)."""
+        rows = self.store.q("SELECT user_id, status, error, spec FROM render_jobs WHERE id=?", (jid,))
+        if not rows or rows[0]["user_id"] != a.uid or json.loads(rows[0]["spec"]).get("kind") != "template_video":
+            raise StudioError("No such template video.")
+        r = rows[0]
+        out = {"id": jid, "status": r["status"]}
+        if r["status"] == "done":
+            out["video"] = {**self.house._job_media(jid), "example": False, "rendered_by": "video worker"}
+        elif r["status"] == "failed":
+            out["error"] = (r["error"] or "")[:200]
         return out
 
     def render_cover(self, a, story: dict, ratio: str, kit: dict | None = None) -> str:

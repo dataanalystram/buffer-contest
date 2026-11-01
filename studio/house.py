@@ -729,7 +729,7 @@ class House:
                 "slides": [m["token"] for m in res["media"] if m.get("role") == "slide"]}
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (a.uid, rid, json.dumps(spec), "queued", _now(), _now()))
-        mode = self.worker_mode or ("local" if render.have_ffmpeg() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none"))
+        mode = self.video_mode()
         # the free sample never starts the GitHub worker (SECURITY_RULES 3): it renders on this server under its daily cap,
         # or shows the bundled sample clip. The cap is checked before any render work starts.
         if demo_guard.is_demo(a.uid) and ((mode == "github" and not self._worker_allowed(a.uid))
@@ -761,8 +761,33 @@ class House:
             m.pop("role", None)
         return {"id": jid, "status": "done", "detail": "No video worker: carousel instead"}
 
+    @staticmethod
+    def local_video_ok() -> bool:
+        """May this process run FFmpeg itself? Never on the hosted app: Render's free instance has 512 MB and a Reel render
+        peaked at 1.5 GB, so video goes to the GitHub render worker there (RENDER is set by Render; HQ_NO_LOCAL_VIDEO=1
+        does the same anywhere)."""
+        if os.environ.get("HQ_NO_LOCAL_VIDEO") == "1" or os.environ.get("RENDER"):
+            return False
+        return render.have_ffmpeg()
+
+    def video_mode(self) -> str:
+        """Where video renders: local (FFmpeg in this process), github (the free render worker) or none."""
+        m = self.worker_mode
+        if m == "local" and not self.local_video_ok():
+            m = ""
+        if m:
+            return m
+        return "local" if self.local_video_ok() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none")
+
     def render_job_local(self, spec: dict) -> tuple[bytes, dict]:
         logo = self.get_media(spec["logo"])["data"] if spec.get("logo") and self.get_media(spec["logo"]) else None
+        if spec["kind"] == "template_video":
+            from . import templates
+            def _b(t):
+                m = self.get_media(t) if t else None
+                return m["data"] if m else None
+            b = templates.Brand(spec["kit"], logo, _b(spec.get("front")), _b(spec.get("end")))
+            return templates.video(spec["template"], spec.get("data"), b, spec.get("ratio", "9:16")), {"type": "video", "template": spec["template"]}
         if spec["kind"] == "brand_video":
             return render.brand_video(self.get_media(spec["source"])["data"], spec["kit"], spec["params"], logo=logo,
                                       hook=spec.get("hook", ""), ratio=spec.get("ratio", "9:16"))
@@ -896,7 +921,8 @@ class House:
         base = self.s.public_url.rstrip("/") + "/m/"
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
                 "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",
-                         "slides": [base + t for t in spec.get("slides", [])]}}
+                         "slides": [base + t for t in spec.get("slides", [])],
+                         "front": base + spec["front"] if spec.get("front") else "", "end": base + spec["end"] if spec.get("end") else ""}}
 
     def _job_media(self, jid: int) -> dict:
         tok = self.store.q("SELECT media_token FROM render_jobs WHERE id=?", (jid,))[0]["media_token"]

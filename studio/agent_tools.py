@@ -403,9 +403,9 @@ class Tools:
         spec = {"kind": "brand_video" if clip_tok else "slideshow", "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": p,
                 "ratio": "9:16", "hook": st["headline"], "logo": kit.get("logo") or "", "source": clip_tok,
                 "slides": [m["token"] for m in frames], "total": seconds}
-        mode = self.h.worker_mode or ("local" if render.have_ffmpeg() else ("github" if os.environ.get("GH_DISPATCH_TOKEN") else "none"))
+        mode = self.h.video_mode()  # never "local" on the hosted app (512 MB): Reels go to the GitHub render worker there
         if self.demo:
-            mode = "local" if render.have_ffmpeg() and demo_guard.take(self.store, self.a.uid, "video") else "none"
+            mode = "local" if self.h.local_video_ok() and demo_guard.take(self.store, self.a.uid, "video") else "none"
         if mode == "none":
             return frames or self._slides_45(run, carousel=True), "No video renderer here, so this channel gets the slides instead."
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",

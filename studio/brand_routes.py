@@ -95,6 +95,11 @@ def add_routes(app: FastAPI, house, actor) -> None:
     def tpl_render(request: Request, body: dict = Body(...)):
         return call(bs.render, actor(request, write=True), body)
 
+    @app.get("/api/templates/video/{jid}")
+    def tpl_video(jid: int, request: Request):
+        """A template Reel the video worker is rendering (or rendered) for this person."""
+        return call(bs.video_job, actor(request), jid)
+
     @app.get("/api/templates/slots")
     def slot_list(request: Request):
         return bs.slots(actor(request))
@@ -149,9 +154,11 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["slot_id"], "properties": {"slot_id": {"type": "integer"}}}},
     {"name": "list_templates", "description": "The brand's post templates (weekly recap, mid-week recap, breaking cover, launch carousel, quote/CEO clip, free-way-to tutorial), the channel frames and slide limits, and the front/end card styles.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "render_template", "description": "Render a template in the user's brand for each channel (front card first, end card last). data gives the content (recaps without data are built from the week's sent and scheduled posts). video: true adds a 9:16 Reel where FFmpeg runs. Returns media URLs; pass them to preview_post.",
+    {"name": "render_template", "description": "Render a template in the user's brand for each channel (front card first, end card last). data gives the content (recaps without data are built from the week's sent and scheduled posts). video: true adds the person's own 9:16 Reel (rendered here, or on the video worker for the hosted app; when it is still rendering, video is null and video_job.id goes to get_template_video). In the sample workspace video is a pre-rendered example with example: true, never the person's content. Returns media URLs; pass them to preview_post.",
      "inputSchema": {"type": "object", "required": ["template"], "properties": {"template": {"type": "string"},
          "services": {"type": "array", "items": {"type": "string"}}, "data": {"type": "object"}, "video": {"type": "boolean"}}}},
+    {"name": "get_template_video", "description": "Status of a template Reel the video worker is rendering (render_template's video_job.id), with its URL when done.",
+     "inputSchema": {"type": "object", "required": ["job_id"], "properties": {"job_id": {"type": "integer"}}}},
     {"name": "list_brand_examples", "description": "The example brands in the sample workspace (HuhByte AI; Buffer, a concept example not affiliated with Buffer) with their palettes, fonts, channels and pre-rendered example gallery.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "apply_brand_example", "description": "Switch the workspace's brand kit to an example brand (huhbyte or buffer): logo, colours, fonts, front and end cards, hashtags, channels.",
@@ -160,7 +167,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {"template": {"type": "string"}, "weekday": {"type": "string"}, "time": {"type": "string"},
          "tz": {"type": "string"}, "channel_ids": {"type": "array", "items": {"type": "string"}}}}},
 ]
-READ_ONLY = {"list_templates", "list_brand_examples"}
+READ_ONLY = {"list_templates", "list_brand_examples", "get_template_video"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
@@ -190,6 +197,8 @@ def _tool(bs, sa, actor, name: str, args: dict):
             return bs.run_slot(actor, int(args.get("slot_id") or 0))
         if name == "render_template":
             return bs.render(actor, args)
+        if name == "get_template_video":
+            return bs.video_job(actor, int(args.get("job_id") or 0))
         if name == "list_brand_examples":
             return bs.examples(actor)
         if name == "apply_brand_example":
