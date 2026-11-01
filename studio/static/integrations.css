@@ -1,4 +1,5 @@
 /* Settings -> Integrations (studio/static/integrations.js) */
+#integrations,.integ-card{scroll-margin-top:96px}
 .integ-intro{margin:-4px 0 12px;max-width:72ch}
 .integ-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start;margin-bottom:24px}
 .integ-card{margin:0;display:flex;flex-direction:column;gap:10px;min-width:0;transition:box-shadow .3s}
@@ -9,13 +10,13 @@
 .integ-st:before{content:"";width:7px;height:7px;border-radius:999px;background:var(--subtle);flex:none}
 .integ-st.ok{color:var(--ink)}.integ-st.ok:before{background:var(--ok)}
 .integ-st.bad{color:var(--bad)}.integ-st.bad:before{background:var(--bad)}
-.integ-how summary{cursor:pointer;font-weight:600;font-size:14px}
-.integ-how ol{margin:8px 0;padding-left:20px}.integ-how li{margin:4px 0}
+.integ-how summary{cursor:pointer;font-weight:600;font-size:14px}.integ-how p{margin:4px 0}
+.integ-how ol{margin:8px 0;padding-left:20px}.integ-how li{margin:4px 0;overflow-wrap:anywhere}
 .integ-code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px 6px;border-radius:6px;word-break:break-all}
 .integ-form{display:flex;flex-direction:column;gap:6px}
-.integ-form input{width:100%;box-sizing:border-box;font-family:var(--mono)}
+.integ-form input{width:100%;box-sizing:border-box}
 .integ-btns{flex-wrap:wrap;align-items:center}
-.integ-msg{min-height:1.2em;color:var(--muted)}
+.integ-msg{color:var(--muted)}.integ-msg:empty{display:none}
 .integ-msg.ok{color:var(--ok)}.integ-msg.bad{color:var(--bad)}
 .integ-flash{box-shadow:0 0 0 3px var(--focus)}
 @media (max-width:1180px){.integ-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
