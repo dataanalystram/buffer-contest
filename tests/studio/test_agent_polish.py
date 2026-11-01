@@ -286,3 +286,13 @@ def test_cross_check_searches_by_story_and_keeps_the_post_primary(owner, monkeyp
 
 
 REAL_CORROBORATE = house.House._corroborate  # captured at import, before the owner fixture stubs it
+
+
+def test_brain_gets_a_video_style_hint_from_intent(owner, monkeypatch):
+    seen = _claude(owner, monkeypatch)
+    owner.post("/api/agent/runs", json={"prompt": QA_PROMPT})
+    first = next(b for b in seen["bodies"] if "tools" in b)
+    ctx = first["messages"][0]["content"]
+    assert '"video_style_hint": "opus"' in ctx  # "short punchy explainer" -> opus for the YouTube channel
+    from studio.media import styles
+    assert styles.explicit(QA_PROMPT) is None  # the fixed planner still only styles a video when a look is named

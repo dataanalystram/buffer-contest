@@ -45,6 +45,7 @@ using ONLY the tools. Rules:
   story is a launch/demo, call find_media, then render_reel with style (opus | news | minimal | hype). If render_reel returns
   needs_confirmation, finish and ask the person its question; when they say yes, call render_reel again with
   rights_confirmed true. No video at all: generate_images, then render_reel with a style.
+  Context.video_style_hint is the style their words suggest for video channels; use it unless the story or the person says otherwise.
 - Always call write_captions, then check (it builds the packages), then finish with one or two sentences.
 - save_buffer_drafts only when the person asked for drafts or to put it in Buffer.
 - Pass the person's tone words to write_captions (e.g. tone "short punchy explainer"); the tone shapes the hook and rhythm.
@@ -229,6 +230,10 @@ class Brain:
                "kit": {k: v for k, v in self.h.kit(a).items() if k in ("name", "handle", "voice", "colors", "font")},
                "ledger": [r["rule"] for r in self.h.rules(a)],
                "state": _state_summary(res)}
+        if any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or inp["intake"].get("format") == "reel":
+            # a hint for video channels from the person's words ("short punchy explainer" -> opus); the brain decides
+            from .media import styles as media_styles
+            ctx["video_style_hint"] = media_styles.explicit(inp["prompt"]) or media_styles.pick(" ".join([inp["prompt"], inp["intake"].get("tone") or ""]))
         user = (f"Request: {inp['prompt']}\n\nContext: {json.dumps(ctx, default=str)[:5000]}" if message is None else
                 f"The person replied in the thread: {message}\n\nCurrent state: {json.dumps(_state_summary(res), default=str)[:9000]}\n"
                 "Change only what they asked, then write_captions for the affected channels, check, finish.")
