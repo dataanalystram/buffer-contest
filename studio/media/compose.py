@@ -115,11 +115,11 @@ def detect_burned_subs(src: str, duration: float, samples: int = 6) -> bool:
 
             def score(r0, r1):
                 band = a[int(h * r0):int(h * r1), int(w * 0.2):int(w * 0.8)]
-                bright = band > 225
-                edge = np.abs(np.diff(band, axis=1)) > 90
+                bright = band > 200
+                edge = np.abs(np.diff(band, axis=1)) > 60
                 return float((bright[:, 1:] & edge).mean())
             bottom, top = score(0.82, 0.97), score(0.03, 0.18)
-            if bottom > 0.004 and bottom > 3 * top:
+            if bottom > 0.005 and bottom > 2 * top + 0.002:  # tuned on the Aarush launch video (subs) vs Axonnic demos (none)
                 hits += 1
     return hits >= max(2, samples // 2)
 
