@@ -581,7 +581,7 @@ body.pl-dragging .pl-cell,body.pl-dragging .pl-mday{cursor:copy}
 .clip-act .link{white-space:nowrap}
 :root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 /* appearance: the top-bar sun/moon and Settings › Appearance (owner, 1 Nov 2026) */
-.hq-mode{width:40px;padding:0;flex:none}.hq-mode .ic{width:18px;height:18px}
+.hq-mode{width:44px;min-width:44px;padding:0;flex:none}.hq-mode .ic{width:18px;height:18px}
 .hq-modes{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--sunken);margin-top:12px;flex-wrap:wrap}
 .hq-modes button{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 14px;border-radius:8px;font-size:14px;font-weight:600;color:var(--muted)}
 .hq-modes button:hover{color:var(--ink)}
