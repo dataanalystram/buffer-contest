@@ -28,6 +28,8 @@ import time
 from urllib.parse import urlencode
 
 import httpx
+from fastapi import Body, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import demo_guard, netguard
 
@@ -314,11 +316,6 @@ STATE_TTL = 600
 
 def add_routes(app, house, actor, cookie_name: str, public_url: str, secure_cookies: bool = True) -> Integrations:
     """REST for the cards (person-only) and the two Product Hunt browser routes. Registered from app.create_app."""
-    import secrets as _secrets
-
-    from fastapi import Body, Request
-    from fastapi.responses import HTMLResponse, RedirectResponse
-
     from .actions import ActionError
 
     integ = Integrations(house, public_url)
@@ -382,7 +379,7 @@ def add_routes(app, house, actor, cookie_name: str, public_url: str, secure_cook
         uid = _uid(request)
         pending = store.unseal(request.cookies.get(STATE_COOKIE)) or {}
         valid = (bool(uid) and bool(state) and pending.get("uid") == uid and float(pending.get("exp") or 0) > time.time()
-                 and _secrets.compare_digest(str(pending.get("n") or ""), state))
+                 and secrets.compare_digest(str(pending.get("n") or ""), state))
         if not valid or not integ.ph_configured():
             if uid:
                 store.audit(uid, "system", "integration_failed", "auth", {"integration": "ph", "reason": "state mismatch or not configured"}, ok=False)
