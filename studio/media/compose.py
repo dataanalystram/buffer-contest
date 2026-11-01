@@ -373,9 +373,12 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  brand: dict | None = None, words: list[dict] | None = None, credit: str = "", clip: tuple | None = None,
                  images: list[str] | None = None, music_mood: str = "auto", names: list[str] | None = None,
                  burned_subs: bool | None = None, captions_mode: str = "auto", accent_words: list[str] | None = None,
-                 crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0) -> dict:
+                 crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
+                 reframe: dict | None = None) -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
+    reframe: a crop plan for the full-bleed styles (``longform.reframe_plan`` / ``take.crop_plan``): ``track`` follows
+    the face, ``pad`` shows the whole frame over a blurred copy, anything else (or None) is the centre crop.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from .styles import STYLE_PRESETS, resolve
     style = resolve(style)
@@ -447,7 +450,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
 
         main = str(wd / "s1_main.mp4")
         args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand,
-                               hook_path=hook_path)
+                               hook_path=hook_path, reframe=reframe)
         ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}",
                 *_venc(crf, preset), main], timeout=1800)
         segs.append(main)
@@ -477,7 +480,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             shutil.rmtree(wd, ignore_errors=True)
 
 
-def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand, hook_path=None):
+def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand, hook_path=None, reframe=None):
     args: list[str] = []
     n = 0
     if source:
@@ -499,7 +502,15 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
         src = f"[0:v]setpts=PTS-STARTPTS,fps={FPS},setsar=1"
         if burned_subs and cfg["fill"] == "fill":  # crop the burned-in subtitle band so captions never double up
             src += ",crop=iw:trunc(ih*0.84/2)*2:0:0"
-        if cfg["fill"] == "fill":
+        mode = (reframe or {}).get("mode")
+        if cfg["fill"] == "fill" and mode == "track":  # subject-aware: the crop window follows the face (take.crop_plan)
+            from ..take import crop_expr
+            parts.append(f"{src},crop={int(reframe['crop_w'])}:ih:x='{crop_expr(reframe)}':y=0,scale={W}:{H},setsar=1[base]")
+        elif cfg["fill"] == "fill" and mode == "pad":  # no one on camera: the whole frame over a blurred copy of itself
+            parts.append(f"{src},split[s1][s2];[s1]scale={W // 8}:{H // 8}:force_original_aspect_ratio=increase,"
+                         f"crop={W // 8}:{H // 8},gblur=sigma=6,scale={W}:{H},eq=brightness=-0.2:saturation=0.85[bgv];"
+                         f"[s2]scale={W}:{H}:force_original_aspect_ratio=decrease[fgv];[bgv][fgv]overlay=(W-w)/2:(H-h)/2[base]")
+        elif cfg["fill"] == "fill":
             parts.append(f"{src},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}[base]")
         elif cfg["fill"] == "blurpanel":
             parts.append(f"{src},split[s1][s2];[s1]scale={W // 8}:{H // 8}:force_original_aspect_ratio=increase,"
