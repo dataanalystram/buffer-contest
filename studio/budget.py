@@ -1,9 +1,9 @@
 """Hard budgets for the app's own model keys (the operator's ANTHROPIC_API_KEY), persisted in the database.
 
-- Global lifetime cap HQ_BRAIN_GLOBAL_USD (default $60) across every account.
-- Testing pool HQ_BRAIN_TEST_USD (default $30) for the accounts in HQ_BRAIN_TESTERS (comma-separated Buffer account
+- Global lifetime cap AI_BUDGET_TOTAL_USD (default $60) across every account.
+- Testing pool AI_BUDGET_TEST_USD (default $30) for the accounts in HQ_BRAIN_TESTERS (comma-separated Buffer account
   emails or user ids); testers draw from this pool instead of the per-user cap.
-- Per signed-in user HQ_BRAIN_USER_USD (default $1) lifetime.
+- Per signed-in user AI_BUDGET_PER_USER_USD (default $1) lifetime.
 - The free sample never uses the operator key.
 
 Every call is priced from its real token usage (input, output, cache writes, cache reads) with PRICES; before each call
@@ -46,8 +46,10 @@ def ensure(store) -> None:
 
 
 def caps() -> dict:
-    return {"global": float(os.environ.get("HQ_BRAIN_GLOBAL_USD", "60")), "testing": float(os.environ.get("HQ_BRAIN_TEST_USD", "30")),
-            "user": float(os.environ.get("HQ_BRAIN_USER_USD", "1")), "byo_tokens": int(os.environ.get("HQ_BRAIN_BYO_TOKENS", "400000"))}
+    e = os.environ.get
+    return {"global": float(e("AI_BUDGET_TOTAL_USD") or e("HQ_BRAIN_GLOBAL_USD") or "60"),
+            "testing": float(e("AI_BUDGET_TEST_USD") or e("HQ_BRAIN_TEST_USD") or "30"),
+            "user": float(e("AI_BUDGET_PER_USER_USD") or e("HQ_BRAIN_USER_USD") or "1"), "byo_tokens": int(os.environ.get("HQ_BRAIN_BYO_TOKENS", "400000"))}
 
 
 def family(model: str) -> str:

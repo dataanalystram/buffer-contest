@@ -25,6 +25,15 @@ def operator_key() -> str:
     return os.environ.get("ANTHROPIC_API_KEY", "").strip()
 
 
+def anthropic_headers(key: str) -> dict:
+    """Every Anthropic request; an organisation-scoped key also needs the workspace header."""
+    h = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    ws = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+    if ws and key == operator_key():
+        h["anthropic-workspace-id"] = ws
+    return h
+
+
 def resolve_models(key: str, http: httpx.Client | None = None, force: bool = False) -> dict:
     """{'plan': newest sonnet id, 'fast': newest haiku id} from GET /v1/models (overrides win)."""
     with _mlock:
@@ -33,7 +42,7 @@ def resolve_models(key: str, http: httpx.Client | None = None, force: bool = Fal
         ids = []
         try:
             r = netguard.safe_get(ANTHROPIC + "/models?limit=100", http=http, https_only=True, timeout=12, limit=500_000,
-                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01"})
+                                  headers=anthropic_headers(key))
             if r.status_code == 200:
                 ids = [(m.get("created_at") or "", m["id"]) for m in r.json().get("data") or [] if m.get("id")]
         except (netguard.FetchError, httpx.HTTPError, ValueError):
@@ -90,7 +99,7 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
                 tl[-1] = {**tl[-1], "cache_control": {"type": "ephemeral"}}  # caches system + every tool definition
                 body["tools"] = tl
             r = netguard.safe_post(base + "/messages", http=http, json=body, timeout=timeout, allowed_hosts=hosts,
-                                   headers={"x-api-key": engine["api_key"], "anthropic-version": "2023-06-01", "content-type": "application/json"})
+                                   headers=anthropic_headers(engine["api_key"]))
             if r.status_code >= 400:
                 raise llm.LLMError(f"{engine['provider']} answered HTTP {r.status_code}: {r.text[:200]}")
             j = r.json()
