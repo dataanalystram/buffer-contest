@@ -237,3 +237,17 @@ def test_brand_templates_lists_and_previews_editorial_story(owner):  # noqa: F81
     assert "editorial_story" in [t["id"] for t in got["templates"]]
     r = owner.post("/api/templates/render", json={"template": "editorial_story", "channel_ids": ["ch_ig"]})
     assert r.status_code == 200, r.text
+
+
+def test_fetch_image_checks_the_size_before_decoding(monkeypatch):
+    from studio import netguard
+    b = io.BytesIO()
+    Image.new("L", (7000, 7000)).save(b, "PNG")  # small file, 49M pixels: refused from the header alone
+    big = b.getvalue()
+
+    class R:
+        status_code, content = 200, big
+    monkeypatch.setattr(netguard, "safe_get", lambda *a, **k: R())
+    loaded = []
+    monkeypatch.setattr(Image.Image, "load", lambda self: loaded.append(1))
+    assert assets.fetch_image("https://ernd.io/huge.png") is None and not loaded

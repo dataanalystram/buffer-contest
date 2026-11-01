@@ -180,11 +180,11 @@ def fetch_image(url: str, http=None, min_side: int = 200) -> tuple[bytes, dict] 
     if r.status_code != 200 or not r.content:
         return None
     try:
-        im = Image.open(io.BytesIO(r.content))
+        im = Image.open(io.BytesIO(r.content))  # lazy: only the header is read here
+        if min(im.size) < min_side or im.width * im.height > 40_000_000:  # size check BEFORE decoding (SECURITY_RULES 6)
+            return None
         im.load()
     except Exception:  # noqa: BLE001
-        return None
-    if min(im.size) < min_side or im.width * im.height > 40_000_000:
         return None
     alpha = im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
     out = io.BytesIO()
