@@ -296,6 +296,8 @@ function brainName(b) {
   return b.fast_model && b.fast_model !== b.model ? `${m} (captions: ${b.fast_model})` : m;
 }
 
+window.showRunFromLibrary = (r) => { showRun(r); window.scrollTo({ top: 0 }); };
+
 async function loadAgent() {
   agentChips(); loadRuns(); readyBadge();
   // the brain that will actually run (operator Claude, your key, the free starter), not only the caption writer

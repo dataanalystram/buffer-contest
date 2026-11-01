@@ -13,7 +13,7 @@ const I = {
 const kbd = (k) => (k || []).map((x) => `<kbd>${x}</kbd>`).join("");
 const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const typing = (el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable;
-const TABS = [["inbox", "Inbox", ["G", "I"]], ["agent", "Make a post", ["G", "M"]], ["take", "One take", ["G", "T"]], ["planner", "Planner", ["G", "P"]],
+const TABS = [["inbox", "Inbox", ["G", "I"]], ["agent", "Make a post", ["G", "M"]], ["library", "Library", ["G", "L"]], ["take", "One take", ["G", "T"]], ["planner", "Planner", ["G", "P"]],
   ["news", "News", ["G", "N"]], ["brand", "Brand", ["G", "B"]], ["apps", "AI apps", ["G", "A"]], ["activity", "Activity", ["G", "Y"]], ["settings", "Settings", ["G", "S"]]];
 // jobs that live inside a screen, findable by their old names too
 const SUBS = [["inbox", "", "Approvals", "approve agent posts"], ["agent", "quick", "Quick text posts", "write from a link"], ["news", "scan", "Story scan", "sources agent"],
