@@ -378,7 +378,7 @@ function showTab(name, sub = "") {
 }
 window.showTab = showTab;
 
-// ---------------------------------------------------------------- Inbox: a dashboard of what needs you today
+// ---------------------------------------------------------------- Inbox: a dashboard of your day
 // Stats tiles, the agent posts waiting for approval (as cards with each channel's media), today's queue, what needs
 // attention (/api/inbox, the same as MCP get_inbox), agent activity with each app's mark, and posts recommended for you.
 const IB_URG = { now: "Now", soon: "Soon", fyi: "This week" };
