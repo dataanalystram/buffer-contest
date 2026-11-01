@@ -64,6 +64,19 @@ def add_routes(app: FastAPI, house, actor) -> None:
     def run_tool(rid: int, name: str, request: Request, body: dict = Body(default={})):
         return house.brain.tool(actor(request, write=True), rid, name, body or {})
 
+    @app.get("/api/themes")
+    def themes_list(request: Request):
+        """Every video look (the four edit styles + the themes) with its gallery still and loop, for the theme picker."""
+        actor(request)
+        from .media import styles as media_styles
+        return {"themes": media_styles.describe_themes(), "default": "auto"}
+
+    @app.post("/api/agent/runs/{rid}/theme")
+    def run_theme(rid: int, request: Request, body: dict = Body(...)):
+        """Set a run's video theme ({"theme": "cinematic"}) and re-render its video channels in it."""
+        return house.brain.tool(actor(request, write=True), rid, "set_theme", {"theme": str((body or {}).get("theme") or ""),
+                                                                              "why": "you picked it"})
+
     @app.post("/api/brand/edit")
     def brand_edit(request: Request, body: dict = Body(...)):
         return edit_brand(house, actor(request, write=True), body.get("instruction", ""))
@@ -90,6 +103,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "make_post", "description": "Make on-brand posts from one prompt (prose + links, up to 4,000 characters). A pasted link is THE source (X posts are read through X's public oEmbed). 'all my channels' = every connected channel. HuhQueue's agent plans, renders (carousel/Reel/cover), writes per-channel captions and checks them; poll get_run(run_id). brain='external' creates the run without running HuhQueue's agent, so YOU drive it with the post_* tools. Nothing is published.",
      "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "channel_ids": {"type": "array", "items": {"type": "string"}},
                                                                             "format": {"type": "string", "enum": ["auto", "reel", "carousel", "photo"]},
+                                                                            "theme": {"type": "string", "description": "A video theme id from list_themes, or auto (the agent picks from the content)"},
                                                                             "brain": {"type": "string", "enum": ["huhqueue", "external"]}}}},
     {"name": "reply_post", "description": "Refine a post run in plain words, like replying in its thread: 'make the hook stronger', 'redo YouTube at 30s', 'LinkedIn more formal', 'logo smaller', 'it's $1.3M' (answers a fact question). Standing instructions become Style Ledger rules.",
      "inputSchema": {"type": "object", "required": ["run_id", "text"], "properties": {"run_id": {"type": "integer"}, "text": {"type": "string"}}}},
@@ -105,10 +119,14 @@ TOOLS: list[dict[str, Any]] = [
                                                       "tone": {"type": "string"}, "website": {"type": "string"}, "x_watchlist": {"type": "array", "items": {"type": "string"}}}}},
     {"name": "get_recommendations", "description": "A feed tailored to the person's content types plus up to three ready-to-approve posts in their brand (cover + captions). Cached for an hour; refresh=true rescans.",
      "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}}},
+    {"name": "list_themes", "description": "Every video look for Make a post: the four edit styles (opus, huhbyte_news, minimal, hype) and the video themes (caption_news, news_package, newsreel, dark_keynote, glass_studio, swiss, kino, silent_film, risograph, hologram_hud, screencast, investigation, countdown, crt, tilt_shift, game_show, cinematic) with what each looks like, what it is best for and its gallery thumbnail.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "set_theme", "description": "Set a post run's video theme and re-render its video channels in it (e.g. 'cinematic', 'news_package'). Same as replying 'switch to the X theme'.",
+     "inputSchema": {"type": "object", "required": ["run_id", "theme"], "properties": {"run_id": {"type": "integer"}, "theme": {"type": "string"}}}},
     {"name": "get_brain", "description": "Which AI runs the in-app agent for this account (Claude, their own key, the free model or the rule writer) and the included budget left.",
      "inputSchema": {"type": "object", "properties": {}}},
 ] + agent_brain.tool_specs_for_mcp()
-READ_ONLY = {"get_onboarding", "get_brain"}
+READ_ONLY = {"get_onboarding", "get_brain", "list_themes"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
@@ -118,7 +136,12 @@ def call_tool(studio, actor, name: str, args: dict):
     ob = attach(h)
     try:
         if name == "make_post":
-            return h.brain.start(actor, {k: args.get(k) for k in ("prompt", "channel_ids", "format", "brain") if args.get(k)} | {"prompt": args.get("prompt", "")})
+            return h.brain.start(actor, {k: args.get(k) for k in ("prompt", "channel_ids", "format", "brain", "theme") if args.get(k)} | {"prompt": args.get("prompt", "")})
+        if name == "list_themes":
+            from .media import styles as media_styles
+            return {"themes": media_styles.describe_themes(), "default": "auto"}
+        if name == "set_theme":
+            return h.brain.tool(actor, int(args.get("run_id") or 0), "set_theme", {"theme": str(args.get("theme") or ""), "why": "you picked it"})
         if name == "reply_post":
             return h.brain.reply(actor, int(args.get("run_id") or 0), args.get("text", ""))
         if name == "replace_channel_media":

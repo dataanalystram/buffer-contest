@@ -26,9 +26,17 @@ def test_every_template_starts_with_the_front_card_and_ends_with_the_end_card(tp
     if tpl == "breaking":
         assert len(ims) == 1
         return
-    end = T.end_card(b, ratio)
-    assert list(ims[-1].getdata())[::997] == list(end.getdata())[::997]  # the last slide IS the brand's end card
-    if tpl != "quote":
+    from studio import hb_templates
+    spec = T.TEMPLATES[tpl]
+    if spec.get("kind") == "single":
+        assert len(ims) == 1
+        return
+    end = hb_templates.save_card(b, ratio, n=(len(ims), len(ims))) if spec.get("end") == "save" else T.end_card(b, ratio, n=(len(ims), len(ims)))
+    assert list(ims[-1].getdata())[::997] == list(end.getdata())[::997]  # the last slide IS the brand's end card (recaps: + SAVE THIS)
+    if spec.get("front") == "editorial":  # the HuhByte formats open on the editorial cover (hero band, logo divider)
+        cover = hb_templates.editorial_cover(b, ratio, "x", n=(1, len(ims)))
+        assert ims[0].size == cover.size
+    elif tpl != "quote":
         front = T.front_card(b, ratio, "x", "y")
         assert ims[0].getpixel((5, 5)) == front.getpixel((5, 5))  # same ground as the front card
 
@@ -38,7 +46,8 @@ def test_channel_caps_keep_the_end_card_last():
     data = {"stories": [{"title": f"Story {i}", "body": "x"} for i in range(9)]}
     ims = T.for_channel("weekly_recap", data, b, "twitter")
     assert len(ims) == 4 and ims[-1].size == T.SIZES["16:9"]
-    assert list(ims[-1].getdata())[::991] == list(T.end_card(b, "16:9").getdata())[::991]
+    from studio import hb_templates
+    assert list(ims[-1].getdata())[::991] == list(hb_templates.save_card(b, "16:9", n=(4, 4)).getdata())[::991]
 
 
 def test_uploaded_front_and_end_cards_replace_the_styles():

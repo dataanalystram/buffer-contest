@@ -33,7 +33,7 @@ SPECS = [
     {"name": "media_find", "worker": False,
      "description": "Find the REAL launch/demo video for a link or story on any platform (X, YouTube, Vimeo, Loom, YC launch pages, HN, GitHub, company pages via og:video). Returns ranked candidates with credit lines; best_downloadable is the one the worker can fetch.",
      "input_schema": {"type": "object", "required": ["query"], "properties": {"query": S, "max_results": {"type": "integer"}}}},
-    {"name": "media_styles", "worker": False, "description": "List the edit styles (opus, news = huhbyte_news, minimal, hype) with what each looks like and is best for.",
+    {"name": "media_styles", "worker": False, "description": "List every look: the four edit styles (opus, news = huhbyte_news, minimal, hype) and the video themes (caption_news, news_package, newsreel, dark_keynote, cinematic, crt, ...) with what each looks like and is best for.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "media_fetch", "worker": True,
      "description": "Download one candidate from media_find to the run folder (size-capped, vetted as plain video).",
@@ -45,7 +45,8 @@ SPECS = [
      "description": "Edit the video (or images) into branded shorts in one style for every ratio needed (9:16, 4:5, 1:1): hook in the first second, captions, credit, Follow end card, music under silent video. Third-party video needs rights_confirmed.",
      "input_schema": {"type": "object", "required": ["style", "hook"], "properties": {
          "source_path": S, "images": {"type": "array", "items": S},
-         "style": {"type": "string", "enum": ["opus", "news", "huhbyte_news", "minimal", "hype"]},
+         "style": {"type": "string", "enum": ["news"] + _styles.ALL_IDS, "description": "A base style or a video theme"},
+         "brand_colors": {"type": "boolean", "description": "Keep the brand's accent inside a theme"},
          "ratios": {"type": "array", "items": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}},
          "hook": {"type": "string", "description": "Max ~12 words, only facts from the source"},
          "facts": {"type": "array", "items": S}, "credit": S, "words_path": S, "names": {"type": "array", "items": S},
@@ -120,10 +121,10 @@ def ratios_for(channels: list[str] | None) -> dict:
 
 def media_plan(prompt: str, channels: list[str] | None = None, http=None, find: bool = True) -> dict:
     from .longform import parse_request
-    style = _styles.pick(prompt)
+    style, why = _styles.pick_theme(prompt)
     m = re.search(r"(\d{2,3})\s*(?:s\b|sec|seconds)", prompt or "")
     sp = parse_request(prompt)
-    plan = {"style": style, "style_about": _styles.STYLE_PRESETS[style]["about"], "ratios": ratios_for(channels),
+    plan = {"style": style, "style_about": _styles.config(style)["about"], "theme_why": why, "ratios": ratios_for(channels),
             "target_seconds": int(m.group(1)) if m else None, "links": urls_in(prompt)}
     if sp["split"]:
         plan["style"], plan["style_about"] = "opus", _styles.STYLE_PRESETS["opus"]["about"]
@@ -154,11 +155,12 @@ def media_transcribe(path: str, names: list[str] | None = None, model: str | Non
 def media_render(style: str, hook: str, source_path: str | None = None, images: list[str] | None = None,
                  ratios: list[str] | None = None, facts: list[str] | None = None, credit: str = "", words_path: str | None = None,
                  names: list[str] | None = None, clip: list[float] | None = None, music: str = "auto", brand: dict | None = None,
-                 official: bool = False, rights_confirmed: bool = False, run_dir: str | None = None) -> dict:
+                 official: bool = False, rights_confirmed: bool = False, run_dir: str | None = None,
+                 brand_colors: bool = False) -> dict:
     from .compose import render_style
     style = _styles.resolve(style)
-    if style not in _styles.STYLE_PRESETS:
-        return {"error": f"Unknown style {style!r}. Pick one of: opus, news, minimal, hype."}
+    if not _styles.known(style):
+        return {"error": f"Unknown style {style!r}. Pick one of: {', '.join(_styles.ALL_IDS)}."}
     if source_path and not (rights_confirmed or official):
         return {"needs_confirmation": True,
                 "question": f"This uses someone else's video{(' (' + credit + ')') if credit else ''}. I'll credit it on screen "
@@ -171,7 +173,8 @@ def media_render(style: str, hook: str, source_path: str | None = None, images: 
     for r in ratios or ["9:16"]:
         out = d / f"{style}_{r.replace(':', 'x')}.mp4"
         m = render_style(source_path, style, out=str(out), ratio=r, hook=hook, facts=facts, brand=brand, words=words,
-                         credit=credit, clip=tuple(clip) if clip else None, images=images, music_mood=music, names=names)
+                         credit=credit, clip=tuple(clip) if clip else None, images=images, music_mood=music, names=names,
+                         brand_colors=brand_colors)
         outs.append({k: m[k] for k in ("path", "ratio", "width", "height", "duration", "clip", "captions", "burned_subs",
                                        "music", "caption_problems")})
     return {"renders": outs}
@@ -273,7 +276,7 @@ def call(name: str, args: dict | None = None, http=None) -> dict:
     """Dispatch a tool by name with JSON args (what the brain / REST / MCP layer calls)."""
     a = dict(args or {})
     if name == "media_styles":
-        return {"styles": _styles.describe()}
+        return {"styles": _styles.describe(), "themes": _styles.describe_themes()}
     if name == "media_plan":
         return media_plan(a.get("prompt", ""), a.get("channels"), http=http)
     if name == "media_find":

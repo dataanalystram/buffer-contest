@@ -14,6 +14,7 @@ import time
 from urllib.parse import urlparse
 
 from . import brand, demo_guard, drafter, factcheck, hbstyle, intake, llm, netguard, reader, render, sources, vision
+from .media import styles as media_styles
 from .actions import ActionError
 
 VIDEO_ONLY = {"tiktok", "youtube"}
@@ -44,12 +45,14 @@ SPECS = [
     {"name": "render_reel", "description": "Render a 9:16 Reel: the headline on every frame, the source clip if there is one, the end card last. seconds sets a target length. "
                                        "style edits the real video with the media pipeline (studio.media): opus = auto-picked best moment with big word captions "
                                        "(short punchy explainers), news = HuhByte layout with the full video in a panel and a facts card, minimal = calm "
-                                       "tutorial look, hype = fast one-word captions. It uses the clip from the link or the video find_media found. "
+                                       "tutorial look, hype = fast one-word captions, or any video THEME (list_themes: caption_news, news_package, "
+                                       "newsreel, dark_keynote, glass_studio, swiss, kino, silent_film, risograph, hologram_hud, screencast, "
+                                       "investigation, countdown, crt, tilt_shift, game_show, cinematic). It uses the clip from the link or the video find_media found. "
                                        "Someone else's video needs rights_confirmed: if the result says needs_confirmation, finish and ask the person the question.",
      "input_schema": {"type": "object", "properties": {"channel_ids": IDS, "seconds": {"type": "integer"}, "captions": {"type": "boolean"},
                                                        "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"],
                                                                  "description": "9:16 for Instagram/YouTube/TikTok; 4:5 (or 1:1) for LinkedIn/Facebook feeds"},
-                                                       "style": {"type": "string", "enum": ["opus", "news", "minimal", "hype"]},
+                                                       "style": {"type": "string", "enum": ["news"] + media_styles.ALL_IDS},
                                                        "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
                                                        "rights_confirmed": {"type": "boolean", "description": "The person confirmed they may repost this video (with credit)"}}}},
     {"name": "add_end_card", "description": "Set the end card line for every future video (a Style Ledger rule), e.g. 'Follow @huhbyte'.",
@@ -70,6 +73,19 @@ SPECS = [
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "A link or the story; omit to use the person's link"}}}},
     {"name": "generate_images", "description": "No usable video or photo: make n images for the story (the configured image model, else on-brand cards), labelled as AI-generated. A styled render_reel then uses them.",
      "input_schema": {"type": "object", "properties": {"prompt": S, "n": {"type": "integer"}}}},
+    {"name": "list_themes", "description": "Every video look: the four edit styles and the video themes, with what each looks like, what it is best "
+                                        "for and its gallery thumbnail, plus the theme this run uses.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "set_theme", "description": "Set this run's video theme (the person picked one, or asked 'make it more cinematic' / 'switch to the news "
+                                      "theme') and re-render its video channels in it. why: one line for the plan.",
+     "input_schema": {"type": "object", "required": ["theme"], "properties": {"theme": {"type": "string", "enum": ["news"] + media_styles.ALL_IDS},
+                                                                             "why": S, "rerender": {"type": "boolean"}}}},
+    {"name": "list_templates", "description": "The brand's post templates (HuhByte formats: editorial cover, text slides, launch Reel, weekly and "
+                                           "mid-week recap, GitHub repo pillar, YC launch, viral trend; plus breaking, quote, tutorial).",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "render_template", "description": "Render a post template in the brand for the run's channels (each at its frame) instead of the default "
+                                            "carousel, using the story's facts and hero image unless data says otherwise. data: the template's fields.",
+     "input_schema": {"type": "object", "required": ["template"], "properties": {"template": S, "data": {"type": "object"}, "channel_ids": IDS}}},
     {"name": "recap_plan", "description": "Weekly recap ('make a 7 days what happened in AI recap with videos', 'weekly recap'): the week's top AI stories "
                                        "from the news sources, each with its official video/image and a credit line. Returns ONE rights question when "
                                        "some media isn't the company's own: finish and ask it, then call render_recap with the answer.",
@@ -90,9 +106,10 @@ LABELS = {"read_upload": "Read your upload", "read_url": "Read your link", "x_oe
           "add_end_card": "Set the end card", "edit_brand": "Update your brand kit", "edit_channel_media": "Re-render one channel",
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
           "find_media": "Find media", "generate_images": "Make images", "check": "Check everything", "finish": "Done",
-          "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap"}
-WRITES = {"generate_images", "render_recap", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media", "write_captions",
-          "save_buffer_drafts", "remember_rule"}
+          "list_themes": "Look at the themes", "set_theme": "Set the video theme", "list_templates": "Look at the templates",
+          "render_template": "Render a template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap"}
+WRITES = {"generate_images", "render_recap", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media",
+          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template"}
 
 
 # Tone drives the caption prompt (QA: "short punchy explainer" came out as plain explainers). Several tones can combine.
@@ -592,6 +609,11 @@ class Tools:
         ratio = ratio if ratio in ("9:16", "4:5", "1:1") else "9:16"
         if any(c["service"] in VIDEO_ONLY for c in self.channels(run, ids)):
             ratio = "9:16"  # YouTube Shorts / TikTok are vertical only
+        theme = (run.get("input") or {}).get("theme") or ""
+        if not style and theme and theme != "auto" and media_styles.known(theme):
+            style = theme  # the theme the person picked in Make a post (or set in the thread) styles every video
+        if rights_confirmed is None and run["result"].get("rights_confirmed"):
+            rights_confirmed = True  # they already said yes for this clip; a theme change doesn't ask again
         if style:
             media, note, ask = self._media_reel(run, style, seconds=seconds, music=music, rights_confirmed=bool(rights_confirmed), ratio=ratio)
             run = self.state()
@@ -712,8 +734,8 @@ class Tools:
         a third-party video without the person's OK is not rendered; the question asks for it (docs/MEDIA_PIPELINE.md, Risks)."""
         from .media import styles as media_styles
         sid = media_styles.resolve(style)
-        if sid not in media_styles.STYLE_PRESETS:
-            raise ActionError(f"Unknown style {style}. Pick opus, news, minimal or hype.")
+        if not media_styles.known(sid):
+            raise ActionError(f"Unknown style {style}. Pick one of {', '.join(media_styles.ALL_IDS)} (list_themes).")
         kit = self._ctx()[0]
         st = self._story(run)
         res = run["result"]
@@ -747,7 +769,9 @@ class Tools:
             frames = self._reel_frames(run)
             return frames or self._slides_45(run, carousel=True), "Slides for now: the video needs your OK first. " + ask, ask
         res.pop("rights_question", None)
-        spec = {"kind": "media_render", "style": sid, "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
+        if rights_confirmed and not official:
+            res["rights_confirmed"] = True
+        spec = {"kind": "media_render", "style": sid, "brand_colors": bool((run.get("input") or {}).get("brand_colors")), "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
                 "credit": credit, "names": [n for n in (st.get("company"), (cand or {}).get("company")) if n], "music": music or "auto",
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "logo": kit.get("logo") or "", "source": clip_tok, "candidate": cand,
@@ -757,6 +781,74 @@ class Tools:
         frames = [] if (clip_tok or cand) else gen
         media, note = self._video_job(run, spec, frames, f" Style: {sid}.")
         return media, note, ""
+
+    # ---------------------------------------------------------------- themes and templates
+    def t_list_themes(self) -> dict:
+        run = self.state()
+        return {"themes": media_styles.describe_themes(), "current": (run.get("input") or {}).get("theme") or "auto",
+                "chosen": run["result"].get("theme")}
+
+    def t_set_theme(self, theme: str, why: str = "", rerender: bool | None = None) -> dict:
+        sid = media_styles.resolve(theme)
+        if not media_styles.known(sid):
+            raise ActionError(f"Unknown theme {theme}. Pick one of {', '.join(media_styles.ALL_IDS)}.")
+        run = self.state()
+        run["input"]["theme"] = sid
+        label = media_styles.config(sid).get("label", sid)
+        run["result"]["theme"] = {"id": sid, "label": label, "why": (why or "you chose it")[:200]}
+        self.save(run)
+        self.store.x("UPDATE agent_runs SET input=? WHERE id=?", (json.dumps(run["input"]), self.rid))  # the run's theme from now on
+        out = {"theme": sid, "label": label, "why": run["result"]["theme"]["why"], "rerendered": []}
+        vids = [cid for cid, v in (run["result"].get("channel_media") or {}).items() if v.get("format") == "reel"]
+        if vids and rerender is not False:
+            r = self.t_render_reel(vids, style=sid, seconds=None)
+            out["rerendered"] = r.get("channels", [])
+            out["note"] = r.get("note", "")
+            if r.get("needs_confirmation"):
+                out.update(needs_confirmation=True, question=r.get("question"))
+        return out
+
+    def t_list_templates(self) -> dict:
+        from . import templates
+        return {"templates": [{"id": k, **{x: v.get(x) for x in ("name", "kind", "about", "video")}} for k, v in templates.TEMPLATES.items()]}
+
+    def t_render_template(self, template: str, data: dict | None = None, channel_ids: list | None = None) -> dict:
+        """A template in the brand for each channel's frame, filled from the story unless data says otherwise."""
+        from . import templates
+        if template not in templates.TEMPLATES:
+            raise ActionError(f"Unknown template {template}. Pick one of {', '.join(templates.TEMPLATES)}.")
+        run = self.state()
+        kit, _rules, _p, logo = self._ctx()
+        st = run["result"].get("story") or {}
+        img, _use = self._hero(run) if st else (None, "")
+        d = dict(data or {})
+        if st:
+            d.setdefault("title", st.get("headline", ""))
+            d.setdefault("hook", st.get("headline", ""))
+            facts = list(st.get("facts") or [])
+            for k in ("features", "facts", "what", "points"):
+                d.setdefault(k, facts[:4])
+            d.setdefault("credit", f"Source: {st.get('source', '')}" if st.get("source") else "")
+        if img:
+            d.setdefault("hero", img)
+            d.setdefault("image", img)
+        b = templates.Brand(kit, logo)
+        chans = [c for c in self.channels(run, channel_ids) if c["service"] not in VIDEO_ONLY]
+        by_ratio: dict[str, list[str]] = {}
+        for c in chans:
+            spec = templates.CHANNELS.get(c["service"], templates.CHANNELS["instagram"])
+            by_ratio.setdefault(spec["ratio"], []).append(c["id"])
+        out = {"template": template, "channels": [], "media": []}
+        for ratio, ids in by_ratio.items():
+            ims = templates.slides(template, d, b, ratio)
+            media = [self._keep(templates.jpeg(im), f"{template}-{i + 1}.jpg", {"type": "photo", "template": template, "width": im.width,
+                                                                                "height": im.height}, "slide")
+                     for i, im in enumerate(ims)]
+            self._set_media(run, ids, media, "carousel" if len(media) > 1 else "photo", {"template": template})
+            out["channels"] += ids
+            out["media"] += [m["url"] for m in media]
+        self.save(run)
+        return out
 
     # ---------------------------------------------------------------- weekly recap (studio/media/recap.py)
     def t_recap_plan(self, prompt: str = "", n: int | None = None, days: int | None = None) -> dict:

@@ -1,0 +1,20 @@
+/* HuhQueue video theme picker (themes.js). Scoped to .hqt; uses the app's tokens with fallbacks. */
+.hqt{display:block;margin:.25rem 0 .5rem}
+.hqt-head{display:flex;align-items:baseline;justify-content:space-between;gap:.75rem;margin-bottom:.4rem}
+.hqt-grid{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(112px,128px);gap:.6rem;overflow-x:auto;padding:.2rem .1rem .6rem;
+  scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
+.hqt-card{scroll-snap-align:start;display:flex;flex-direction:column;gap:.25rem;padding:.35rem;border-radius:12px;text-align:left;cursor:pointer;
+  background:var(--raised,#fff);color:var(--ink,#1a1c1e);border:1.5px solid var(--line,#e2e4e5);font:inherit;
+  transition:border-color var(--fast,120ms),transform var(--fast,120ms)}
+.hqt-card:hover{transform:translateY(-1px);border-color:var(--line-strong,#7e8388)}
+.hqt-card:focus-visible{outline:2px solid var(--focus,#1f5bd6);outline-offset:2px}
+.hqt-card.on{border-color:var(--accent,#c2005b);box-shadow:0 0 0 2px var(--accent-soft,#fbe7f0)}
+.hqt-thumb{position:relative;display:block;aspect-ratio:9/16;border-radius:8px;overflow:hidden;background:var(--well,#0b0c0d)}
+.hqt-thumb img,.hqt-thumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.hqt-thumb video{opacity:0;transition:opacity var(--base,200ms)}
+.hqt-card.playing .hqt-thumb video{opacity:1}
+.hqt-auto{position:absolute;inset:0;display:grid;place-items:center;font-size:2rem;color:var(--accent,#c2005b);
+  background:linear-gradient(160deg,var(--accent-soft,#fbe7f0),var(--sunken,#f1f2f2))}
+.hqt-name{font-weight:700;font-size:.82rem;line-height:1.2}
+.hqt-for{font-size:.72rem;line-height:1.25;color:var(--muted,#585d62);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+@media (prefers-reduced-motion:reduce){.hqt-card,.hqt-thumb video{transition:none}.hqt-card:hover{transform:none}}
