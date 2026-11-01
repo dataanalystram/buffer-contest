@@ -142,7 +142,8 @@ def test_reel_without_worker_falls_back_to_slides(client, monkeypatch):
     r = client.post("/api/agent/runs", json={"query": "x", "format": "reel", "channel_ids": ["demo_ig"]}).json()
     assert r["status"] == "ready", r["steps"]
     pk = r["result"]["packages"][0]
-    assert pk["format"] == "carousel" and "No video renderer" in pk["note"]
+    # no source video at all: NO VIDEO -> NO REEL (owner, 1 Nov 2026), the carousel with the note, never a slideshow
+    assert pk["format"] == "carousel" and "No video found" in pk["note"]
 
 
 def test_github_worker_roundtrip(client, monkeypatch):
