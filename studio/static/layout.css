@@ -37,3 +37,18 @@
 .pl-chip .chmark{width:16px;height:16px}.pl-chip .chmark-av{width:16px;height:16px}
 .pl-chip .chmark .net{width:10px;height:10px;font-size:6px;right:-3px;bottom:-3px;border-radius:3px}
 .ib-trow .chmark{width:24px;height:24px}.ib-trow .chmark-av{width:24px;height:24px}
+
+/* ---------------------------------------------------------------- Inbox agent activity: one row per Make a post run */
+.ib-arun{align-items:start}
+.ib-arun > .aim{margin-top:2px}
+.ib-arun-d summary{cursor:pointer;list-style:none;display:block}
+.ib-arun-d summary::-webkit-details-marker{display:none}
+.ib-arun-d summary > span{display:block;min-width:0}
+.ib-arun-n::after{content:"";display:inline-block;width:5px;height:5px;margin:0 0 2px 8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg)}
+.ib-arun-d[open] .ib-arun-n::after{transform:rotate(45deg)}
+.ib-arun-d summary:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+.ib-arun-n{color:var(--muted)}
+.ib-acalls{list-style:none;margin:8px 0 6px;padding:0;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.ib-acalls li{display:grid;grid-template-columns:12px minmax(0,1fr) auto auto;gap:6px;align-items:center}
+.ib-acalls li > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ib-acalls time{color:var(--muted)}

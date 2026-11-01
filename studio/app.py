@@ -529,10 +529,11 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/api/activity")
     def activity_page(request: Request, tab: str = "all", q: str = "", limit: int = 25, cursor: str = "",
                       app_: str = Query("", alias="app"), model: str = "", failed: bool = False,
-                      from_: str = Query("", alias="from"), to: str = ""):
-        """Activity log, newest first, cursor-paginated (limit 25 | 50 | 100; pass next_cursor back as cursor)."""
+                      from_: str = Query("", alias="from"), to: str = "", group: str = ""):
+        """Activity log, newest first, cursor-paginated (limit 25 | 50 | 100; pass next_cursor back as cursor).
+        group=run folds each Make a post run's AI calls into one row (with the calls kept in ``calls``)."""
         return studio.activity(actor(request), {"tab": tab, "q": q, "limit": limit, "cursor": cursor, "app": app_, "model": model,
-                                                "failed": failed, "from": from_, "to": to})
+                                                "failed": failed, "from": from_, "to": to, "group": group if group == "run" else ""})
 
     @app.get("/api/activity/export.csv")
     def activity_csv(request: Request, tab: str = "all", q: str = "", app_: str = Query("", alias="app"), model: str = "",
