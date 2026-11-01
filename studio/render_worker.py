@@ -103,12 +103,16 @@ def main(argv=None) -> int:
         if str(spec.get("kind", "")).startswith("take_"):
             return take_job(c, base, h, args.job, j)
         logo = get(urls.get("logo"))
-        if spec["kind"] == "brand_video":
+        if spec["kind"] == "template_video":  # a Brand studio template's Reel, in the person's own brand
+            from . import templates
+            b = templates.Brand(spec["kit"], logo, get(urls.get("front")), get(urls.get("end")))
+            data, meta = templates.video(spec["template"], spec.get("data"), b, spec.get("ratio", "9:16")), {"type": "video", "template": spec["template"]}
+        elif spec["kind"] == "brand_video":
             data, meta = render.brand_video(get(urls["source"]), spec["kit"], spec["params"], logo=logo, hook=spec.get("hook", ""),
                                             ratio=spec.get("ratio", "9:16"))
         else:
             data, meta = render.slideshow_reel([get(u) for u in urls["slides"]], spec["kit"], spec["params"], logo=logo,
-                                               ratio=spec.get("ratio", "9:16"))
+                                               ratio=spec.get("ratio", "9:16"), total=spec.get("total"))
         r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h, json={"data": base64.b64encode(data).decode(), "meta": meta})
         print("posted", len(data), "bytes:", r.status_code, r.text[:200])
         return 0 if r.status_code == 200 else 1

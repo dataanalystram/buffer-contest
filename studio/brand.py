@@ -14,8 +14,8 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf"}
-BODY_FONTS = {"anton": "Inter-SemiBold.ttf", "poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf"}
+FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf"}
+BODY_FONTS = {"anton": "Inter-SemiBold.ttf", "poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "figtree": "Figtree-Medium.ttf"}
 
 DEFAULT_KIT = {
     "name": "", "handle": "", "website": "",
@@ -171,6 +171,12 @@ def parse_correction(text: str) -> list[dict]:
             out.append(_rule("text", {"type": "banned_words", "words": ["revolutionary", "game-changer", "game changer",
                                                                           "insane", "mind-blowing", "10x", "ultimate"]},
                              "No hype words (revolutionary, game-changer, insane, mind-blowing, 10x, ultimate)", src))
+    vm = re.search(r"(?:end|finish|close)\s+(?:every|each|all(?: my)?|the)\s+(?:videos?|reels?|shorts?|clips?)\s+(?:with|on)\s+"
+                   r"(?:an? |the )?(?:end ?card (?:saying |that says |with )?)?[\"“']?(.+?)[\"”']?\s*[.!]?\s*$", t)
+    if vm:
+        cta = src[vm.start(1):vm.end(1)].strip()[:60]
+        out.append(_rule("visual", {"type": "end_card", "on": True, "cta": cta}, f"Every video ends on an end card: “{cta}”", src))
+        t = t[:vm.start()] + t[vm.end():]
     m = re.search(r"(?:always\s+)?(?:end|finish|sign off)\s+(?:every post\s+|captions?\s+)?with\s+[\"“']?([^\"”']+?)[\"”']?\s*$", t)
     if m:
         out.append(_rule("text", {"type": "ends_with", "text": src[m.start(1):m.end(1)].strip()}, f"Captions end with “{src[m.start(1):m.end(1)].strip()}”", src))
@@ -220,8 +226,8 @@ def parse_correction(text: str) -> list[dict]:
 RULE_SCHEMA_HINT = (
     'Return JSON {"rules":[{"kind":"text"|"visual","check":{...},"rule":"short human rule"}]}. check.type is one of: '
     'banned_words{words}, no_emoji, max_hashtags{n}, no_exclamation, ends_with{text}, require_text{text}, caption_case{value:"lower"}, '
-    'max_length{n}, logo_position{pos:tl|tr|bl|br}, logo_scale{scale:0.05-0.2}, end_card{on}, headline_case{value:upper|sentence}, '
-    'headline_max_words{n}, accent_color{hex}, font{name:anton|poppins|inter}, overlay{value:0-0.9}, source_credit{on}. '
+    'max_length{n}, logo_position{pos:tl|tr|bl|br}, logo_scale{scale:0.05-0.2}, end_card{on, cta?}, headline_case{value:upper|sentence}, '
+    'headline_max_words{n}, accent_color{hex}, font{name:anton|poppins|inter|figtree}, overlay{value:0-0.9}, source_credit{on}. '
     'Only rules the correction clearly implies; [] if none.')
 
 VALID_TYPES = {"banned_words", "no_emoji", "max_hashtags", "no_exclamation", "ends_with", "require_text", "caption_case",
@@ -261,6 +267,8 @@ def visual_params(kit: dict, rules: list[dict]) -> dict:
             p["logo_scale"] = max(0.04, min(0.22, float(c.get("scale", 0.11))))
         elif ty == "end_card":
             p["end_card"] = bool(c.get("on"))
+            if c.get("cta"):
+                p["end_card_text"] = str(c["cta"])[:60]
         elif ty == "headline_case":
             p["headline_case"] = c.get("value", "upper")
         elif ty == "headline_max_words":

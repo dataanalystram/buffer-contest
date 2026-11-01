@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import re
 import secrets
 import threading
@@ -24,6 +25,8 @@ from .store import Store
 
 MAX_BACKOFF = 5
 CHANNEL_TTL = 300  # seconds; channel lists change rarely, so cache them per user
+POSTS_TTL = int(os.environ.get("HQ_POSTS_TTL", "120"))  # one read per status per account per 2 minutes
+POSTS_PAGE = 100
 
 
 _COUNT = threading.local()
@@ -285,14 +288,27 @@ class BufferClient:
     POST_FIELDS = "id text status dueAt sentAt channelId externalLink assets { type mimeType source thumbnail } error { message }"
 
     def posts(self, uid: str, org_id: str, statuses: list[str], first: int = 30) -> list[dict]:
-        i = {"organizationId": org_id, "filter": {"status": statuses},
-             "sort": [{"field": "dueAt", "direction": "asc"}]}
+        """Posts by status, from ONE cached read per status per account (POSTS_TTL), whatever page asks and however many
+        it wants: browsing Inbox -> Planner -> Make a post costs no Buffer requests inside the window (Buffer's limits
+        are per app client and shared by every HuhQueue user). Our own writes clear this account's cache at once;
+        refresh() forces a re-read (the Refresh buttons)."""
+        out: list[dict] = []
+        for st in statuses:
+            def fetch(st=st):
+                i = {"organizationId": org_id, "filter": {"status": [st]}, "sort": [{"field": "dueAt", "direction": "asc"}]}
+                q = """query($i: PostsInput!, $n: Int) { posts(first: $n, input: $i) { edges { node { %s } } } }"""
+                data = self._gql_or(q % self.POST_FIELDS, q % "id text status dueAt channelId", {"i": i, "n": POSTS_PAGE}, uid)
+                return [e["node"] for e in data["posts"]["edges"]]
+            out += self._cached(("posts", uid, st), POSTS_TTL, fetch)
+        if len(statuses) > 1:
+            out.sort(key=lambda p: p.get("dueAt") or "")
+        return out[:first]
 
-        def fetch():
-            q = """query($i: PostsInput!, $n: Int) { posts(first: $n, input: $i) { edges { node { %s } } } }"""
-            data = self._gql_or(q % self.POST_FIELDS, q % "id text status dueAt channelId", {"i": i, "n": first}, uid)
-            return [e["node"] for e in data["posts"]["edges"]]
-        return self._cached(("posts", uid, tuple(statuses), first), 30, fetch)
+    def refresh(self, uid: str) -> None:
+        self.invalidate(uid)
+
+    def _drop_posts(self, uid: str | None = None) -> None:
+        self._cache = {k: v for k, v in self._cache.items() if not (k[0] == "posts" and (uid is None or k[1] == uid))}
 
     # ---- writes
     def create_post(self, uid: str, inp: dict) -> dict:
@@ -301,7 +317,7 @@ class BufferClient:
                  ... on MutationError { message } } }"""
         # Buffer answers HTTP 200 even when it refuses: the reason is in createPost.message (a typed MutationError)
         r = self.gql(q, {"input": inp}, uid=uid).get("createPost") or {}
-        self._cache = {k: v for k, v in self._cache.items() if k[0] != "posts"}
+        self._drop_posts(uid)
         if not r.get("post"):
             raise BufferError(r.get("message") or "Buffer rejected the post without saying why", 422)
         return r["post"]
@@ -312,7 +328,7 @@ class BufferClient:
                  ... on PostActionSuccess { post { id text status dueAt channelId } }
                  ... on MutationError { message } } }"""
         r = self.gql(q, {"input": inp}, uid=uid).get("editPost") or {}
-        self._cache = {k: v for k, v in self._cache.items() if k[0] != "posts"}
+        self._drop_posts(uid)
         if not r.get("post"):
             raise BufferError(r.get("message") or "Buffer rejected the change without saying why", 422)
         return r["post"]
@@ -322,7 +338,7 @@ class BufferClient:
                  ... on DeletePostSuccess { id }
                  ... on MutationError { message } } }"""
         r = self.gql(q, {"input": {"id": post_id}}, uid=uid)["deletePost"]
-        self._cache = {k: v for k, v in self._cache.items() if k[0] != "posts"}
+        self._drop_posts(uid)
         if "id" not in r:
             raise BufferError(r.get("message") or "Buffer could not delete the post", 422)
         return {"id": r["id"]}

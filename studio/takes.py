@@ -78,12 +78,7 @@ class Takes:
         return chans
 
     def _mode(self) -> str:
-        m = self.h.worker_mode
-        if m in ("local", "github", "none"):
-            return m
-        if take.have("ffmpeg"):
-            return "local"
-        return "github" if os.environ.get("GH_DISPATCH_TOKEN") else "none"
+        return self.h.video_mode()  # the hosted app never runs FFmpeg in-process (house.local_video_ok)
 
     def media_url(self, tok: str) -> str:
         return self.h.media_url(tok)
