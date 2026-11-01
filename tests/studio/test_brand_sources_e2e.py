@@ -6,7 +6,7 @@ import os
 import pytest
 
 pw = pytest.importorskip("playwright.sync_api")
-NO_TOUR = "localStorage.setItem('hq_tour_done','1')"
+NO_TOUR = "localStorage.setItem('hq_tour_done','1'); localStorage.setItem('hq_onb_seen', '1')"
 SHOTS = os.environ.get("SHOTS")
 
 

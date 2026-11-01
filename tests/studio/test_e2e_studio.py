@@ -13,7 +13,7 @@ from .conftest import ARTICLE, FakeBuffer, image_bytes
 from .browsers import free_port, serve
 
 pw = pytest.importorskip("playwright.sync_api")
-NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"  # the guided tour has its own test (test_tour_e2e.py)
+NO_TOUR = "localStorage.setItem('hq_tour_done', '1'); localStorage.setItem('hq_onb_seen', '1')"  # the guided tour has its own test (test_tour_e2e.py)
 
 
 def _free_port():
@@ -133,6 +133,7 @@ def test_planner_views_filters_and_drag_to_reschedule(live, chromium):
         ref = draft.get_attribute("data-ref")
         cell = page.locator("[data-testid=planner-slot][data-hour='14']").nth(2)
         day = cell.get_attribute("data-day")
+        cell.scroll_into_view_if_needed()  # the 14:00 row sits below the Week scroller's fold; scroll first, then drag
         draft.drag_to(cell)
         page.get_by_test_id("toast").get_by_text("Draft moved").wait_for()
         page.locator(f"[data-testid=planner-slot][data-day='{day}'][data-hour='14'] [data-ref='{ref}']").wait_for()
