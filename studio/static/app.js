@@ -744,6 +744,7 @@ function loadSettings() {
     : `<li class="muted sm">No channels in this Buffer organization yet.</li>`;
   if (window.onbState) onbState().then((st) => ($("#setOnbState").textContent = st.done ? "Setup is done. Open it again to change what you post, your channels or your brand." : st.skipped ? "You skipped setup. It takes about a minute." : "Setup isn't finished yet."));
   (window.HS_TABS || {}).ai?.();
+  (window.HS_TABS || {}).integrations?.();
 }
 $("#setOnbOpen").onclick = () => window.onbOpen && onbOpen();
 $("#refreshCh").onclick = () => loadChannels(true).then(() => { loadSettings(); toast("Channels refreshed from Buffer"); });

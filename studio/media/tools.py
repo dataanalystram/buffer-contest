@@ -74,8 +74,8 @@ def _brief(c: dict) -> dict:
     return {k: c[k] for k in keep if c.get(k) not in (None, "")}
 
 
-def media_find(query: str, max_results: int = 5, http=None) -> dict:
-    cands = find_launch_video(query, http=http, max_results=max(max_results, 6))
+def media_find(query: str, max_results: int = 5, http=None, youtube_api_key: str | None = None) -> dict:
+    cands = find_launch_video(query, http=http, max_results=max(max_results, 6), **({"youtube_api_key": youtube_api_key} if youtube_api_key else {}))
     vids = [c for c in cands if c["kind"] == "video"]
     best = vids[0] if vids else None
     best_dl = next((c for c in vids if c.get("downloadable")), None)
