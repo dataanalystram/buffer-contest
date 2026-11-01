@@ -38,6 +38,7 @@ def brain_status(house, a) -> dict:
                        "tool_use": bool(first.get("tools"))} if first else {"source": "built-in writer", "tool_use": False}),
             "fallbacks": [e["source"] for e in engs[1:]] + ["built-in writer"],
             "budget": budget.remaining(house.store, a.uid) if brain_llm.operator_key() else None,
+            "meter": budget.meter(house.store, a.uid) if brain_llm.operator_key() else None,
             "operator_key": bool(brain_llm.operator_key())}
 
 

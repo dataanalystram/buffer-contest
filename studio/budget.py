@@ -92,6 +92,23 @@ def remaining(store, uid: str) -> dict:
             "global_cap_usd": c["global"], "spent_usd": round(cap - max(0.0, mine), 4)}
 
 
+NUDGE_AT = 0.70  # share of the allowance used before the meter offers the free route (HuhQueue in Claude / ChatGPT)
+NUDGE = "Keep going free in Claude: connect HuhQueue"
+
+
+def meter(store, uid: str) -> dict:
+    """The allowance meter the app shows: "$0.62 of $1 left", and from 70% used (and at 100%) the brain-swap prompt:
+    the person's own Claude / ChatGPT does the thinking over MCP, HuhQueue does the editing, at $0 AI spend to us."""
+    r = remaining(store, uid)
+    cap = float(r["pool_cap_usd"] or 0)
+    left = float(r["left_usd"])
+    used = 1.0 if cap <= 0 else min(1.0, max(0.0, 1 - left / cap))
+    out = used >= 0.999 or left <= 0.005
+    return {"left_usd": round(left, 2), "cap_usd": cap, "used_pct": int(round(used * 100)), "pool": r["pool"],
+            "label": f"${left:.2f} of ${cap:g} left", "out": out, "nudge": out or used >= NUDGE_AT,
+            "message": ("Out of credit? " if out else "") + NUDGE + "."}
+
+
 def check(store, uid: str, model: str, est_in: int, max_out: int) -> None:
     """Refuse BEFORE the call when the worst case would cross any cap."""
     worst = price(model, est_in, max_out)

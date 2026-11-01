@@ -37,7 +37,7 @@ async function save(patch) {
   const body = {}; for (const k of Object.keys(patch)) if (k === "content_types" || k === "done") body[k] = O.st[k]; else if (k === "channels") body.channel_ids = O.st.channels;
   if (Object.keys(body).length) { try { await api("/api/onboarding", { method: "PUT", body }); } catch (_) {} }
 }
-const STEPS = ["What you post", "Your channels", "Your brand", "Your feed"];
+const STEPS = ["What you post", "Your channels", "Your brand", "Your AI", "Your feed"];
 function shell(inner, step) {
   return `<div class="onb-card" role="dialog" aria-modal="true" aria-labelledby="onbH" data-testid="onboarding" data-step="${step}">
     <div class="onb-top"><div class="onb-steps" aria-label="Step ${step + 1} of ${STEPS.length}">${STEPS.map((_, i) => `<i class="${i <= step ? "on" : ""}"></i>`).join("")}</div>
@@ -66,6 +66,13 @@ async function draw() {
     <div id="onbKit">${kit ? kitRow(kit) : ""}</div>${nav(s)}`;
   }
   if (s === 3) {
+    const url = window.hqMcpUrl ? hqMcpUrl() : location.origin + "/mcp";
+    inner = `<h2 id="onbH">Bring your own brain</h2><p class="lead">HuhQueue's agent comes with $1 of included AI. Already pay for Claude or ChatGPT? Add HuhQueue there and keep going free: your model does the thinking, HuhQueue does the editing.</p>
+    <div class="bsw-addr" data-testid="onboarding-mcp"><span class="label">MCP address</span><code>${esc(url)}</code><button class="btn2 sm" type="button" data-onb="copy" data-testid="onboarding-mcp-copy">Copy</button></div>
+    <ol class="bsw-steps" style="margin-top:12px"><li>Copy the address.</li><li>In Claude: Settings, Connectors, Add custom connector. In ChatGPT: Plugins, Add custom MCP server.</li><li>Sign in with Buffer when HuhQueue asks. Every post still waits for your approval.</li></ol>
+    <p class="muted sm" style="margin-top:8px">Not now? It's under Settings, Integrations any time.</p>${nav(s)}`;
+  }
+  if (s === 4) {
     const want = [...new Set(st.content_types.flatMap((t) => FEEDS[t] || []).map((f) => f[1]))].map((u) => Object.values(FEEDS).flat().find((f) => f[1] === u));
     const recs = (await getRecs()).items.slice(0, 4);
     inner = `<h2 id="onbH">Your feed is ready</h2><p class="lead">Posts worth making today, and a few sources to follow. Make post opens the agent with the story; nothing reaches Buffer until you approve it.</p>
@@ -98,9 +105,11 @@ function wire() {
     if (O.step === 0) await save({ content_types: picked("[data-testid=onboarding-types]") });
     if (O.step === 1) { await save({ channels: picked("[data-testid=onboarding-channels]") }); }
     if (O.step === 2) O.st.website = (O.el.querySelector("#onbSite")?.value || "").trim();
-    if (O.step === 3) return finish(false);
+    if (O.step === 4) return finish(false);
     O.step++; await save({ step: O.step }); draw();
   };
+  const cp = q("copy");
+  if (cp) cp.onclick = async () => { const u = window.hqMcpUrl ? hqMcpUrl() : location.origin + "/mcp"; try { await navigator.clipboard.writeText(u); } catch (_) {} cp.textContent = "Copied"; toast("Copied"); };
   const imp = q("import");
   if (imp) imp.onclick = async () => {
     const url = O.el.querySelector("#onbSite").value.trim(); if (!url) return toast("Type your website first");

@@ -21,6 +21,7 @@
 <link rel="stylesheet" href="/static/library.css">
 <link rel="stylesheet" href="/static/themes.css">
 <link rel="stylesheet" href="/static/integrations.css">
+<link rel="stylesheet" href="/static/brainswap.css">
 <link rel="stylesheet" href="/static/makepost.css">
 </head>
 <body>
@@ -122,6 +123,7 @@
             </form>
           </div>
           <div class="chips-head"><span class="label" id="agChLbl">Channels</span><span class="muted sm" id="agEngine" data-testid="agent-engine"></span></div>
+          <div id="agMeter" class="bsw-slot" data-testid="agent-meter" aria-live="polite" hidden></div>
           <div class="chips mp-chans" id="agChips" data-testid="agent-chips" role="group" aria-labelledby="agChLbl"></div>
           </div>
           <aside class="panel mp-disc" id="mpDiscover" data-testid="mp-discover" aria-labelledby="mpDiscH">
@@ -336,7 +338,7 @@
       <div class="tab bs" id="tab-brand" data-testid="brand" hidden>
         <div class="pg-head"><div><h1 class="page-title">Brand</h1>
           <p class="intro">One kit for every post: logo, colours, fonts, voice and the cards that open and close your videos. Templates use it, and the Style Ledger remembers every correction.</p></div></div>
-        <ol class="bs-steps" data-testid="bs-steps" aria-label="Get started"></ol>
+        <ol class="bsw-steps" data-testid="bsw-steps" aria-label="Get started"></ol>
         <div class="seg pg-tabs" role="tablist" aria-label="Brand" data-testid="brand-tabs">
           <button type="button" role="tab" data-sub="kit" data-testid="brand-tab-kit" aria-selected="true" class="on">Kit</button>
           <button type="button" role="tab" data-sub="templates" data-testid="brand-tab-templates" aria-selected="false">Templates</button>
@@ -491,6 +493,7 @@
         <h2 class="sec" id="aiH">AI engine</h2>
         <div class="set-grid">
           <div class="panel"><h2 class="card-title">Right now</h2><p id="aiNow" data-testid="ai-now"></p>
+            <div id="aiMeter" class="bsw-slot" data-testid="ai-meter" aria-live="polite" hidden></div>
             <p class="muted sm">Prefer your Claude or ChatGPT subscription? Connect it in <button class="link" type="button" data-go="apps" data-testid="ai-engine-go-apps">AI apps</button>; it does the thinking and HuhQueue supplies the tools.</p></div>
           <form class="panel" id="aiForm"><h2 class="card-title">Bring your own API key</h2>
             <p class="muted sm">Encrypted on the server, used only for your runs, never shown again.</p>
@@ -502,6 +505,7 @@
         </div>
         <h2 class="sec" id="integrations" data-testid="integrations-head">Integrations</h2>
         <p class="muted sm integ-intro">HuhQueue brings its own keys for research, so there's nothing you have to add. Your own key is an optional override: encrypted on the server, used only for your account and never shown again. Your AI model key lives in <button class="link" type="button" id="integAiLink" data-testid="integrations-ai-link">AI engine</button> above.</p>
+        <section class="panel bsw-card" id="useInClaude" data-testid="use-in-claude" aria-labelledby="useInClaudeH"></section>
         <div class="integ-grid" id="integCards" data-testid="integrations" aria-live="polite"></div>
         <section class="panel integ-redirects" id="integRedirects" data-testid="integ-redirects"></section>
         <h2 class="sec">Account</h2>
@@ -552,5 +556,6 @@
 <script src="/static/brandstudio.js"></script>
 <script src="/static/integrations.js"></script>
 <script src="/static/onboarding.js"></script>
+<script src="/static/brainswap.js"></script>
 </body>
 </html>
