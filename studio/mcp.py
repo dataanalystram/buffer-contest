@@ -118,6 +118,10 @@ from . import brand_routes as _brand_routes  # noqa: E402
 
 TOOLS += _brand_routes.TOOLS
 READ_ONLY |= _brand_routes.READ_ONLY
+from . import agent_routes as _agent_routes  # noqa: E402
+
+TOOLS += _agent_routes.TOOLS
+READ_ONLY |= _agent_routes.READ_ONLY
 
 
 def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
@@ -163,7 +167,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return studio.radar(actor)
     h = studio.house
     if name == "run_agent":
-        return h.start_run(actor, {k: args.get(k) for k in ("query", "url", "channel_ids", "format")})
+        return h.start_run(actor, {k: args.get(k) for k in ("prompt", "query", "url", "channel_ids", "format")})
     if name == "edit_media":
         up = h.import_url(actor, args.get("media_url", ""))
         return h.start_run(actor, {"media_token": up["token"], "brief": args.get("brief", ""), "channel_ids": args.get("channel_ids"),
@@ -207,6 +211,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "get_limits":
         return {**studio.limits(actor), "plan": studio.plan(actor)}
     extra = _brand_routes.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _agent_routes.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     raise ActionError(f"Unknown tool {name}", 404)

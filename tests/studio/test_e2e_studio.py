@@ -129,11 +129,16 @@ def test_planner_views_filters_and_drag_to_reschedule(live, chromium):
         page.get_by_test_id("planner-nodate-toggle").check(force=True)
         page.get_by_test_id("planner-next").click()
         page.get_by_test_id("planner-week").wait_for()
-        draft = page.get_by_test_id("planner-nodate-item").first
-        ref = draft.get_attribute("data-ref")
+        ref = page.locator("[data-testid=planner-nodate-item][data-state=draft]").first.get_attribute("data-ref")
+        draft = page.locator(f"[data-testid=planner-nodate-item][data-ref='{ref}']")
         cell = page.locator("[data-testid=planner-slot][data-hour='14']").nth(2)
         day = cell.get_attribute("data-day")
-        draft.drag_to(cell)
+        # HTML5 drag events sharing one DataTransfer: a mouse drag_to scrolls the week grid to the target after grabbing
+        # the source, so it picked up whichever card had scrolled under the pointer (the approval, on 1 Nov 2026)
+        dt = page.evaluate_handle("new DataTransfer()")
+        draft.dispatch_event("dragstart", {"dataTransfer": dt})
+        cell.dispatch_event("dragover", {"dataTransfer": dt})
+        cell.dispatch_event("drop", {"dataTransfer": dt})  # (no dragend: the card has already left the No date list)
         page.get_by_test_id("toast").get_by_text("Draft moved").wait_for()
         page.locator(f"[data-testid=planner-slot][data-day='{day}'][data-hour='14'] [data-ref='{ref}']").wait_for()
         # sent posts are locked
