@@ -101,6 +101,8 @@ def test_tone_words_become_caption_instructions():
 
 
 def test_tone_reaches_the_caption_prompt(owner, monkeypatch):
+    monkeypatch.setattr(agent_tools.Tools, "_has_video", lambda self, run: True)  # a post with a video: YouTube gets a caption
+    monkeypatch.setattr(agent_tools.Tools, "_video_job", lambda self, run, spec, frames, note_extra="": (frames, "test render"))
     seen = _claude(owner, monkeypatch)
     r = owner.post("/api/agent/runs", json={"prompt": QA_PROMPT}).json()
     run = owner.get(f"/api/agent/runs/{r['id']}").json()
@@ -204,6 +206,8 @@ def test_youtube_caption_in_a_run_is_deduped(owner, monkeypatch):
     title = FACTS["headline"]
     caps = {s: f"Never type again.\n\n{TWEET}" for s in SERVICES}
     caps["youtube"] = f"{title}\n\nSubvocal has raised $1.3M from YC and Afore Capital.\n\n{TWEET}"
+    monkeypatch.setattr(agent_tools.Tools, "_has_video", lambda self, run: True)  # a post with a video: YouTube gets a caption
+    monkeypatch.setattr(agent_tools.Tools, "_video_job", lambda self, run, spec, frames, note_extra="": (frames, "test render"))
     _claude(owner, monkeypatch, captions=caps)
     r = owner.post("/api/agent/runs", json={"prompt": QA_PROMPT}).json()
     res = owner.get(f"/api/agent/runs/{r['id']}").json()["result"]

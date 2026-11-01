@@ -31,6 +31,11 @@ def test_every_template_starts_with_the_front_card_and_ends_with_the_end_card(tp
     if spec.get("kind") == "single":
         assert len(ims) == 1
         return
+    if spec.get("end") == "follow":  # editorial_story ends on its own Follow card (studio/editorial.follow)
+        from studio import editorial
+        end = editorial.follow(b, (len(ims), len(ims)), ratio if ratio in editorial.SIZES else "4:5")
+        assert ims[-1].size == (W, H) and (ratio not in editorial.SIZES or list(ims[-1].getdata())[::997] == list(end.getdata())[::997])
+        return
     end = hb_templates.save_card(b, ratio, n=(len(ims), len(ims))) if spec.get("end") == "save" else T.end_card(b, ratio, n=(len(ims), len(ims)))
     assert list(ims[-1].getdata())[::997] == list(end.getdata())[::997]  # the last slide IS the brand's end card (recaps: + SAVE THIS)
     if spec.get("front") == "editorial":  # the HuhByte formats open on the editorial cover (hero band, logo divider)

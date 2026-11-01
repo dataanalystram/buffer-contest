@@ -460,6 +460,7 @@ TEMPLATES = {
     "viral_trend": {"name": "Viral trend with creator credit", "kind": "reel", "video": True, "front": "editorial",
                     "about": "A viral clip or trend with the creator credited on every slide and on screen in the Reel."},
     "editorial_story": {"name": "Editorial story: one company, 5-7 slides", "kind": "carousel", "video": False, "front": "editorial",
+                        "end": "follow",
                         "about": "The HuhByte editorial carousel about one company or launch: the hero (product on the brand art + "
                                  "founder avatars), one idea per slide with **bold** key facts and a source footnote, the founders, "
                                  "Follow last. The agent fills it with research_company -> hero_edit -> write_editorial. Data: "
@@ -537,7 +538,17 @@ def slides(template: str, data: dict | None, b: T.Brand, ratio: str, now=None, m
         photos = [p for p in (_img(x) for x in d.get("founder_photos") or []) if p is not None]
         ims, _fit = editorial.render(b, spec, hero=_img(hero), band=_img(d.get("band") or d.get("image")), founders=photos,
                                      ratio=ratio if ratio in editorial.SIZES else "4:5")
-        return ims if len(ims) <= cap else ims[:cap - 1] + ims[-1:]
+        ims = ims if len(ims) <= cap else ims[:cap - 1] + ims[-1:]
+        if ratio not in editorial.SIZES and ratio in T.SIZES:  # a 16:9 frame (Bluesky, Mastodon): the 4:5 slide, centred
+            W, H = T.SIZES[ratio][:2]
+            out = []
+            for im in ims:
+                c = Image.new("RGB", (W, H), b.bg)
+                im = im.resize((int(im.width * H / im.height), H), Image.LANCZOS)
+                c.paste(im, ((W - im.width) // 2, 0))
+                out.append(c)
+            ims = out
+        return ims
     if template == "editorial_cover":
         return [editorial_cover(b, ratio, d["title"], hero, inset, d.get("accent_words"), d.get("sub", ""), label=d.get("label", ""),
                                 swipe=False)]
