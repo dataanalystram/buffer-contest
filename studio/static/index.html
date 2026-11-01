@@ -20,6 +20,7 @@
 <link rel="stylesheet" href="/static/layout.css">
 <link rel="stylesheet" href="/static/library.css">
 <link rel="stylesheet" href="/static/integrations.css">
+<link rel="stylesheet" href="/static/makepost.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -81,50 +82,89 @@
     <div class="rail-scrim" id="railScrim" data-testid="nav-more-scrim" hidden></div>
 
     <div class="pane">
-      <div class="tab" id="tab-agent">
-        <h1 class="page-title">Make a post</h1>
-        <p class="intro" id="agentIntro">One agent does the whole job: finds the story, checks it on the source, renders it in your brand, writes a caption per channel and checks every rule you've taught it. You approve what goes to Buffer.</p>
-        <div class="seg pg-tabs" role="tablist" aria-label="How to make it" data-testid="agent-tabs">
-          <button type="button" role="tab" data-sub="agent" data-testid="agent-mode-agent" aria-selected="true" class="on">With the agent</button>
-          <button type="button" role="tab" data-sub="quick" data-testid="agent-mode-quick" aria-selected="false">Quick text posts</button>
+      <div class="tab mp2" id="tab-agent">
+        <div class="mp-top">
+          <div class="mp-head"><h1 class="page-title">Make a post</h1>
+            <p class="intro" id="agentIntro">Turn ideas, news or launches into ready-to-publish posts with your AI agent. It reads the source, renders in your brand, writes a caption per channel and checks your rules. You approve what goes to Buffer.</p></div>
+          <ol class="mp-steps" id="mpSteps" data-testid="mp-stepper" aria-label="Progress">
+            <li data-step="discover"><button type="button" class="mp-step" data-testid="mp-step-discover" data-goto="discover"><span class="mp-n" aria-hidden="true">1</span><span><b>Discover</b><small>Find a story or idea</small></span></button></li>
+            <li data-step="create" aria-current="step"><button type="button" class="mp-step" data-testid="mp-step-create" data-goto="create"><span class="mp-n" aria-hidden="true">2</span><span><b>Create</b><small>Generate content &amp; visuals</small></span></button></li>
+            <li data-step="review"><button type="button" class="mp-step" data-testid="mp-step-review" data-goto="review"><span class="mp-n" aria-hidden="true">3</span><span><b>Review</b><small>Edit, approve &amp; publish</small></span></button></li>
+          </ol>
+        </div>
+        <div class="pg-tabs mp-modes" role="tablist" aria-label="How to make it" data-testid="agent-tabs">
+          <button type="button" role="tab" data-sub="agent" data-testid="agent-mode-agent" aria-selected="true" class="mp-mode on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span><b>With AI agent</b><small>Research, create &amp; refine</small></span><i class="mp-tick" aria-hidden="true"></i></button>
+          <button type="button" role="tab" data-sub="quick" data-testid="agent-mode-quick" aria-selected="false" class="mp-mode"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg><span><b>Quick post</b><small>Write it yourself</small></span><i class="mp-tick" aria-hidden="true"></i></button>
+          <button type="button" data-mode="link" data-testid="agent-mode-link" class="mp-mode"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span><b>From a link</b><small>Turn an article or video into a post</small></span></button>
         </div>
         <section class="sub" data-sub="agent" data-testid="agent-main">
-        <div class="panel compose" id="agentCompose">
-          <form id="agentForm" class="agent-form">
-            <div class="field grow" id="fTopic"><label class="label" for="agQuery">What should we post?</label><textarea id="agQuery" data-testid="agent-query" rows="3" maxlength="4000" placeholder="A topic, a link, or both, in your own words. e.g. “post this on all my channels https://x.com/… as a short punchy explainer, and end every video with Follow @you”"></textarea><small class="muted sm" id="agCount" data-testid="agent-count" aria-live="polite">0 / 4,000</small></div>
-            <div class="field grow" id="fMedia"><span class="label">Your photo or video <span class="muted">(optional; the agent reads it, transcribes a video and uses it in the posts)</span></span>
-              <div class="attach-row"><div class="drop" id="drop" data-testid="agent-drop"><input id="agFile" data-testid="agent-file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" aria-label="Choose a photo or video"><span id="dropTxt">Drop a JPG, PNG or MP4 here, or choose a file (up to 40 MB)</span></div>
-                <button type="button" class="btn2 sm" id="agLib" data-testid="agent-from-library">Choose from Library</button></div>
-              <div class="attached" id="agAttached" data-testid="agent-attached" hidden></div></div>
-            <div class="field"><label class="label" for="agFormat">Format</label><select id="agFormat" data-testid="agent-format">
-              <option value="auto">Let the agent pick</option><option value="carousel">Carousel (4:5)</option><option value="photo">Single image</option><option value="reel">Reel (9:16 video)</option></select></div>
-            <div><button class="btn big" id="agGo" data-testid="agent-go" type="submit">Make it</button></div>
-          </form>
-          <div class="chips-head"><span class="label" id="agChLbl">Channels</span><span class="muted sm" id="agEngine" data-testid="agent-engine"></span></div>
-          <div class="chips" id="agChips" data-testid="agent-chips" role="group" aria-labelledby="agChLbl"></div>
-        </div>
-        <section id="runView" data-testid="run-view" hidden>
-          <div class="run-grid">
-            <ol class="timeline" id="timeline" data-testid="timeline"></ol>
-            <div class="run-main">
-              <div id="agentBrain" class="muted sm" data-testid="agent-brain" hidden></div>
-              <ol id="agentPlan" class="plan" data-testid="agent-plan" hidden></ol>
-              <div id="mediaBox" data-testid="run-media"></div>
-              <div id="agentThread" class="thread" data-testid="agent-thread" hidden></div>
-              <form class="revise" id="replyForm" data-testid="reply-form" hidden>
-                <label class="label" for="replyIn">Tell the agent what to change — e.g. make the hook stronger, redo YouTube at 30s, LinkedIn more formal.</label>
-                <div class="row"><textarea id="replyIn" data-testid="reply-input" rows="2" maxlength="4000" placeholder="Any channel, its media or its caption"></textarea>
-                  <button class="btn" data-testid="reply-go" type="submit">Send</button></div>
-                <div class="quickfix" id="replyChips" data-testid="reply-chips"></div>
-              </form>
-            </div>
+        <div class="mp-grid" id="mpCompose">
+          <div class="mp-main">
+          <div class="panel compose mp-box" id="agentCompose">
+            <form id="agentForm" class="agent-form">
+              <div class="field grow mp-q" id="fTopic"><label class="label" for="agQuery">What should we post?</label>
+                <textarea id="agQuery" data-testid="agent-query" rows="3" maxlength="4000" placeholder="E.g. “Find the latest AI startup launches from Y Combinator and create a 60-second Instagram Reel with key highlights and a catchy caption.”"></textarea>
+                <div class="mp-q-foot"><small class="muted sm" id="agCount" data-testid="agent-count" aria-live="polite">0 / 4,000</small>
+                  <button type="button" class="link mp-ex" id="mpExample" data-testid="mp-example"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>Try an example</button></div></div>
+              <div class="mp-chips" id="mpChips" role="group" aria-label="Quick actions" data-testid="mp-quick-chips"></div>
+              <div class="mp-tools">
+                <div class="drop mp-attach" id="drop" data-testid="agent-drop"><label class="btn2 mp-tool" for="agFile"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/></svg><span id="dropTxt">Attach</span></label>
+                  <input id="agFile" data-testid="agent-file" type="file" class="sr" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" aria-label="Attach a photo or video (up to 40 MB)"></div>
+                <button type="button" class="btn2 mp-tool" id="agLib" data-testid="agent-from-library"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>Media library</button>
+                <span class="mp-sp" aria-hidden="true"></span>
+                <label class="mp-fmt-l" for="agFormat">Format</label>
+                <select id="agFormat" data-testid="agent-format" class="mp-fmt"><option value="auto">Let agent pick</option><option value="reel">Reel (9:16)</option><option value="carousel">Carousel (4:5)</option><option value="photo">Image</option><option value="text">Text</option></select>
+                <div class="mp-theme" id="mpTheme" data-testid="mp-theme" hidden></div>
+                <button class="btn big mp-go" id="agGo" data-testid="agent-go" type="submit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>Create with agent</button>
+              </div>
+              <div class="attached" id="agAttached" data-testid="agent-attached" hidden></div>
+            </form>
           </div>
+          <div class="chips-head"><span class="label" id="agChLbl">Channels</span><span class="muted sm" id="agEngine" data-testid="agent-engine"></span></div>
+          <div class="chips mp-chans" id="agChips" data-testid="agent-chips" role="group" aria-labelledby="agChLbl"></div>
+          </div>
+          <aside class="panel mp-disc" id="mpDiscover" data-testid="mp-discover" aria-labelledby="mpDiscH">
+            <div class="mp-disc-head"><h2 class="h2" id="mpDiscH"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>Discover</h2><span class="mp-live" data-testid="mp-live"><i aria-hidden="true"></i>Live sources</span></div>
+            <p class="muted sm">Fresh launches, tech news and AI breakthroughs from the sources you follow.</p>
+            <div class="mp-disc-tabs" role="tablist" aria-label="Discover topics" data-testid="mp-disc-tabs"></div>
+            <ul class="mp-disc-list" id="mpDiscList" data-testid="mp-disc-list" aria-live="polite"></ul>
+            <button type="button" class="btn2 mp-disc-more" data-go="news" data-testid="mp-disc-more">View more stories →</button>
+          </aside>
+        </div>
+        <section id="runView" class="mp-thread" data-testid="run-view" hidden>
+          <div class="mp-thread-bar"><button type="button" class="btn2 sm" id="mpNew" data-testid="mp-new">← New post</button><span class="mp-status" id="mpStatus" data-testid="mp-status" role="status" aria-live="polite"></span></div>
+          <div class="mp-msg user" id="mpUser" data-testid="mp-user-msg"></div>
+          <div class="mp-msg agent" data-testid="mp-agent-msg">
+            <div class="mp-who"><span class="mp-av" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg></span><b>HuhQueue agent</b><span id="agentBrain" class="muted sm" data-testid="agent-brain" hidden></span></div>
+            <ol id="agentPlan" class="plan" data-testid="agent-plan" hidden></ol>
+            <details class="mp-trace" id="mpTrace" data-testid="mp-trace" open><summary data-testid="mp-trace-toggle"><span id="mpTraceSum">Working…</span></summary>
+              <ol class="timeline" id="timeline" data-testid="timeline"></ol></details>
+            <div class="mp-sources" id="mpSources" data-testid="mp-sources" hidden></div>
+            <div id="mediaBox" data-testid="run-media"></div>
+          </div>
+          <div id="agentThread" class="thread" data-testid="agent-thread" hidden></div>
           <h2 class="sec" id="pkgHead" data-testid="packages-head" hidden>Your posts — review and send</h2>
           <p class="muted sm pkg-intro" id="pkgHelp" hidden>One post per channel, each with its own media. Edit anything, then choose what to do with it. Nothing is posted until you press the button.</p>
           <div id="packages" class="packages" data-testid="packages"></div>
+          <div class="mp-acts" id="mpActs" data-testid="mp-actions" hidden>
+            <button type="button" class="btn" id="mpApprove" data-testid="mp-approve">Approve all as Buffer drafts</button>
+            <button type="button" class="btn2" id="mpRegen" data-testid="mp-regenerate">Regenerate</button>
+            <button type="button" class="btn2" id="mpEdit" data-testid="mp-edit">Edit with the agent</button>
+          </div>
+          <form class="revise mp-composer" id="replyForm" data-testid="reply-form" hidden>
+            <label class="sr" for="replyIn">Ask the agent to change something</label>
+            <div class="row"><textarea id="replyIn" data-testid="reply-input" rows="1" maxlength="4000" placeholder="Ask the agent to change something…"></textarea>
+              <button class="btn" data-testid="reply-go" type="submit" aria-label="Send">Send</button></div>
+            <div class="quickfix" id="replyChips" data-testid="reply-chips"></div>
+          </form>
         </section>
-        <h2 class="sec">Recent runs</h2>
-        <div id="runList" class="runlist" data-testid="run-list"></div>
+        <section class="mp-recent" data-testid="mp-recent" aria-labelledby="mpRecentH">
+          <div class="mp-recent-head"><h2 class="sec" id="mpRecentH">Recent content</h2>
+            <div class="mp-filters" role="group" aria-label="Show" data-testid="mp-recent-filters"></div>
+            <button type="button" class="link" data-go="library" data-testid="mp-view-all">View all →</button></div>
+          <div id="runList" class="runlist mp-cards" data-testid="run-list"></div>
+          <div id="mpRecentPager" class="pg-wrap" data-testid="mp-recent-pager" hidden></div>
+        </section>
       </section>
         <section class="sub" id="quickPane" data-sub="quick" data-testid="agent-quick" hidden>
         <p class="intro">Text posts for every channel from one link, without images or video. Fast, and checked by preflight before anything reaches Buffer.</p>
@@ -499,6 +539,7 @@
 <script src="/static/app.js"></script>
 <script src="/static/keyframes.js"></script>
 <script src="/static/house.js"></script>
+<script src="/static/makepost.js"></script>
 <script src="/static/library.js"></script>
 <script src="/static/planner.js"></script>
 <script src="/static/take.js"></script>
