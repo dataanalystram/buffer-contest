@@ -8,18 +8,18 @@
 const FIRST_URL_DEMO = new URLSearchParams(location.search).get("demo") === "1" && !new URLSearchParams(location.search).get("url"); // read before boot rewrites the URL; a link from the landing goes straight to drafting
 const TOUR_KEY = "hq_tour_done";
 const TOUR = [
-  { tab: "inbox", target: "#inboxGroups", title: "Your Inbox",
-    body: "Everything waiting for you, most urgent first: an agent post to approve, a post that bounced, a preflight warning, drafts with no date and empty slots this week." },
+  { tab: "inbox", target: "#ibStats", title: "Your Inbox",
+    body: "Your day at a glance: what's scheduled, agent posts to approve with their media, what bounced, what each AI app did, and posts worth making." },
   { tab: "agent", target: "#agentCompose", title: "Make a post",
     body: "Give the agent a topic or a link. It finds and checks the story, renders it in your brand, writes a caption per channel and checks your Style Ledger. In the sample it can research a few topics a day, then it uses the sample story." },
   { tab: "take", target: "[data-testid=take-sample]", title: "One take → a week",
     body: "Try the sample take: one talk becomes three captioned clips. The Spread drops them into the open posting times of your week as drafts." },
   { tab: "planner", target: "#plMain", title: "Planner",
     body: "Week, Month, Day, List, Board and Grid on the same posts. Drag a post to move it, or a draft from No date onto the week. Preflight checks every change, and Fix it repairs what it can." },
-  { tab: "brand", target: "#kitForm", title: "Brand and Style Ledger",
-    body: "Import your colors and logo from your website, or set them here. Every correction you give becomes a rule the agent never forgets." },
-  { tab: "agents", target: "#tokenForm", title: "Agents and MCP",
-    body: "Give Claude, ChatGPT or any agent a token. Agent posts wait in Approvals for you. A token made here is a sample token: it only reaches this sample workspace." },
+  { tab: "brand", target: ".bs-kit", title: "Brand",
+    body: "One kit for every post: import your logo and colours from your website, pick fonts and cards, and watch the preview redraw. Templates and the Style Ledger sit on the tabs above." },
+  { tab: "apps", target: "#cxApps", title: "AI apps",
+    body: "Use HuhQueue from Claude, ChatGPT, Grok, Cursor or Codex. Their posts wait in your Inbox for approval. A token made here is a sample token: it only reaches this sample workspace." },
   { tab: null, target: "[data-testid=demo-connect]", title: "Use it for real",
     body: "Everything you just saw works the same on your own Buffer channels. Connect Buffer when you're ready; nothing is posted until you say so.", last: true },
 ];

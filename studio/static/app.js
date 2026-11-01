@@ -151,6 +151,7 @@ async function boot() {
   document.body.classList.add("in-app"); document.body.classList.toggle("is-demo", !!s.demo);
   $("#acctBtn").textContent = (s.user.name || s.user.email || "Account") + (s.user.organization ? " · " + s.user.organization : "");
   setKill(s.user.kill_switch);
+  if (window.onbState) await onbState().catch(() => {}); // the channels picked in setup are every composer's default
   await loadChannels();
   budget(); refreshBadge(); if (typeof readyBadge === "function") readyBadge();
   api("/api/inbox").then((d) => ibBadge(d.waiting)).catch(() => {});
@@ -390,7 +391,7 @@ function ibItem(g, it) {
   const acts = (it.actions || []).map((a) => a.href
     ? `<a class="btn2 sm" data-testid="inbox-action" data-act="${esc(a.id)}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
     : `<button type="button" class="${a.id === "approve" || a.id === "fix" ? "btn accent sm" : "btn2 sm"}" data-testid="inbox-action" data-act="${esc(a.id)}" data-go="${esc(a.go || "")}" data-id="${esc(it.id ?? "")}">${esc(a.label)}</button>`).join("");
-  if (g.key === "open_slots") return `<li class="ib-item" data-testid="inbox-item" data-group="${g.key}">${netBadge(it.service)}<div class="ib-what"><b>${esc(it.channel)}</b><small>${it.count} open · next ${esc(ibWhen(it.next))}</small></div></li>`;
+  if (g.key === "open_slots") return `<li class="ib-slot" data-testid="inbox-item" data-group="${g.key}" title="next ${esc(ibWhen(it.next))}">${netBadge(it.service)}<b>${it.count}</b><span class="sr"> open on ${esc(it.channel)}</span></li>`;
   if (g.key === "plan") return "";
   const meta = [it.channel, ibWhen(it.when)].filter(Boolean).map(esc).join(" · ");
   return `<li class="ib-item" data-testid="inbox-item" data-group="${g.key}" data-ref="${esc(it.ref || "")}">${netBadge(it.service)}
@@ -410,7 +411,7 @@ function ibGroup(g) {
       <span class="ib-urg">${IB_URG[g.urgency]}</span></header>
     <p class="ib-sum" data-testid="inbox-group-summary">${esc(g.summary)}</p>
     ${g.key === "plan" ? `<div class="plan" id="planBox" data-testid="plan-box"></div>` : ""}
-    ${(g.items || []).length && g.key !== "plan" ? `<ul class="ib-items">${g.items.map((it) => ibItem(g, it)).join("")}</ul>` : ""}${more}
+    ${(g.items || []).length && g.key !== "plan" ? `<ul class="${g.key === "open_slots" ? "ib-slots" : "ib-items"}">${g.items.map((it) => ibItem(g, it)).join("")}</ul>` : ""}${more}
     ${acts ? `<div class="ib-gacts">${acts}</div>` : ""}</section>`;
 }
 async function ibGo(go) {
@@ -472,13 +473,14 @@ function todayRow(p) {
 }
 async function ibAgents() {
   const box = $("#ibAgents");
-  let r; try { r = await api("/api/activity?tab=agent&limit=6"); } catch (_) { box.innerHTML = `<li class="ib-none">Agent activity shows here once an app connects.</li>`; return; }
-  box.innerHTML = r.items.length ? r.items.map((x) => { const who = x.app_label || x.token_label || "Agent";
+  let r; try { r = await api("/api/activity?tab=agent&limit=25"); } catch (_) { box.innerHTML = `<li class="ib-none">Agent activity shows here once an app connects.</li>`; return; }
+  box.innerHTML = r.items.length ? r.items.slice(0, 6).map((x) => { const who = x.app_label || x.token_label || "Agent";
     return `<li class="ib-arow${x.ok ? "" : " bad"}" data-testid="inbox-agent-row">${aiMark(x.app || who, 28)}<span><b>${esc(who)}</b> ${esc(actionWords(x.action))}${x.model ? `<small>${aiMark(x.model, 12)} ${esc(x.model)}</small>` : ""}</span><time>${esc(timeAgo(x.ts * 1000))}</time></li>`; }).join("")
     : `<li class="ib-none">No agent has acted yet. <button class="link" type="button" data-go="apps">Connect Claude, ChatGPT or Cursor</button>.</li>`;
 }
 const ACTION_WORDS = { submit_post: "wrote a post", approve_post: "had a post approved", preview_post: "checked a post", draft: "drafted posts", list_channels: "read your channels",
-  get_inbox: "read your Inbox", agent_run: "ran the agent", sources_scan: "scanned sources", sources_draft: "drafted from sources", render: "rendered media", get_calendar: "read your Planner" };
+  get_inbox: "read your Inbox", agent_run: "ran the agent", sources_scan: "scanned sources", sources_draft: "drafted from sources", render: "rendered media", get_calendar: "read your Planner", ai_call: "made an AI call", preflight: "checked a post", get_posts: "read your posts", create_idea: "saved an idea",
+  approve: "approved a post", reject: "rejected a post", create_token: "got a token", schedule_package: "scheduled a package" };
 const actionWords = (a) => ACTION_WORDS[a] || String(a || "").replace(/_/g, " ");
 // Recommended for you: GET /api/recommendations (backend, docs/ONBOARDING.md). Until that ships, the newest stories from
 // your feeds stand in, clearly labelled.
@@ -496,7 +498,7 @@ async function ibRecs() {
 function recCard(x) {
   const host = hostOf(x.url);
   return `<article class="rec" data-testid="rec-card">${x.image ? `<img class="rec-img" src="${esc(x.image)}" alt="" loading="lazy">` : ""}
-    <div class="rec-b"><span class="nf-src">${fav(host)}${esc(x.source || host)}</span><b class="rec-t">${esc(x.title)}</b>${x.why ? `<span class="rec-why">${esc(x.why)}</span>` : ""}
+    <div class="rec-b"><span class="nf-src">${fav(host)}${esc(host || x.source)}</span><b class="rec-t">${esc(x.title)}</b>${x.why ? `<span class="rec-why">${esc(x.why)}</span>` : ""}
     <span class="row tight">${x.run_id ? `<button class="btn sm" type="button" data-run="${esc(x.run_id)}" data-testid="rec-review">Review</button>` : `<button class="btn sm" type="button" data-make="${esc(x.url)}" data-testid="rec-make">Make post</button>`}</span></div></article>`;
 }
 function ibBadge(n) { const b = $("#inboxBadge"); b.textContent = n; b.hidden = !n; }
@@ -547,7 +549,7 @@ function storyItem(st) {
   const host = hostOf(st.url), ago = st.published ? timeAgo(st.published * 1000) : "", why = whyLine(st);
   return `<article class="nf-card" data-testid="story-item">
     ${st.image ? `<img class="nf-img" src="${esc(st.image)}" alt="" loading="lazy">` : ""}
-    <div class="nf-b"><div class="nf-meta">${fav(host)}<span class="nf-src">${esc(st.source || host)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}</div>
+    <div class="nf-b"><div class="nf-meta">${fav(host)}<span class="nf-src" title="via ${esc(st.source || "")}">${esc(host || st.source)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}</div>
       <a class="nf-t" href="${esc(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
       ${why ? `<p class="nf-why">${esc(why)}</p>` : ""}
       <div class="nf-act"><button class="btn sm" type="button" data-make="${esc(st.url)}" data-testid="story-write">Make post</button></div></div></article>`;
@@ -585,7 +587,7 @@ $("#nfMore").onclick = () => { NF.shown += 12; loadFeed(); };
 window.HS_SUBS = Object.assign(window.HS_SUBS || {}, { "news:feed": loadFeed, "news:sources": loadFeeds });
 // One list of followed feeds: the For you feed (news radar) and the story scan (sources agent) read the same list.
 async function loadFeeds() {
-  const fl = $("#feeds");
+  const fl = $("#feeds"); window.loadSources?.();
   let r, sa; try { [r, sa] = await Promise.all([api("/api/radar"), api("/api/sources").catch(() => null)]); } catch (e) { fl.innerHTML = `<li class="st err">${esc(e.message)}</li>`; return; }
   const scan = (sa && sa.settings && sa.settings.rss) || [];
   const rows = r.feeds.map((f) => ({ id: f.id, url: f.url, title: f.title }));
@@ -680,7 +682,7 @@ async function loadAppUsage() {
   try {
     const r = await api("/api/activity?tab=agent&limit=25");
     box.innerHTML = r.agents && r.agents.length ? `<h2 class="sec">What each app did</h2><div class="ax-usage">${r.agents.map((g) => `<button type="button" class="ax-u" data-go="activity" data-testid="apps-usage-card">
-      <span class="ax-uh">${aiMark(g.app || g.label, 24)}<b>${esc(g.label)}</b></span><span class="ax-un"><b>${g.actions.toLocaleString()}</b> actions${g.failed ? ` · <em>${g.failed} failed</em>` : ""}</span>
+      <span class="ax-uh">${aiMark(g.app || g.label, 24)}<b>${esc(g.label)}</b></span><span class="ax-un"><b>${g.actions.toLocaleString()}</b> action${g.actions === 1 ? "" : "s"}${g.failed ? ` · <em>${g.failed} failed</em>` : ""}</span>
       <span class="ax-um">${g.models.length ? g.models.slice(0, 3).map((m) => `${aiMark(m.model || m.provider, 12)} ${esc(m.model || "unknown model")} ×${m.calls}`).join("<br>") : "model not reported by the app"}</span></button>`).join("")}</div>` : "";
   } catch (_) { box.innerHTML = ""; }
 }

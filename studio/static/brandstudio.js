@@ -11,80 +11,78 @@
     brandstudio: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 13h8M8 16h5"/>',
     sources: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M8 11h6M11 8v6"/>' };
 
-  // ------------------------------------------------------------ mount: two tabs in "More", two panes
+  // ------------------------------------------------------------ mount: the Brand screen's Kit and Templates, and News'
+  // Story scan and source settings (the shells are in index.html; one kit, one source list, no second copy anywhere)
   function mount() {
-    const more = document.getElementById("railMore"), pane = document.querySelector(".pane");
-    if (!more || !pane || document.getElementById("tab-brandstudio")) return;
-    const first = more.querySelector("[data-tab]");
-    for (const [key, label] of [["sources", "Sources agent"], ["brandstudio", "Brand studio"]]) {
-      const b = document.createElement("button");
-      b.dataset.tab = key; b.setAttribute("data-testid", "tab-" + key);
-      b.innerHTML = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICON[key]}</svg><span>${label}</span>`;
-      b.onclick = () => showTab(key);
-      more.insertBefore(b, first);
-    }
-    pane.insertAdjacentHTML("beforeend", BRAND_HTML + SOURCES_HTML);
-    window.HS_TABS = Object.assign(window.HS_TABS || {}, { brandstudio: loadBrand, sources: loadSources });
+    const k = document.getElementById("bsKitMount"); if (!k || document.getElementById("bsName")) return;
+    k.innerHTML = KIT_HTML; document.getElementById("bsTplMount").innerHTML = TPL_HTML;
+    document.getElementById("saScanMount").innerHTML = SCAN_HTML; document.getElementById("saSetMount").innerHTML = SRC_HTML;
+    window.HS_TABS = Object.assign(window.HS_TABS || {}, { brand: () => { loadBrand(); if ((document.getElementById("tab-brand").dataset.sub || "kit") === "ledger") window.loadLedger?.(); } });
+    window.HS_SUBS = Object.assign(window.HS_SUBS || {}, { "brand:ledger": () => window.loadLedger?.(), "brand:kit": () => B.kit || loadBrand(), "brand:templates": () => B.kit || loadBrand(), "news:scan": loadSources });
+    window.loadSources = loadSources;
     wireBrand(); wireSources();
-    const want = new URLSearchParams(location.search).get("tab");
-    if (want === "brandstudio" || want === "sources") setTimeout(() => showTab(want), 0);
   }
-
   const cost = (r) => r && r.buffer_cost ? (r.buffer_cost.live ? `Buffer API: ${r.buffer_cost.requests} request${r.buffer_cost.requests === 1 ? "" : "s"}`
     : "Sample: 0 Buffer requests (connect Buffer to see real calls)") : "";
   function showCost(id, r) { const el = $(id); if (el) { el.textContent = cost(r); el.hidden = !r || !r.buffer_cost; } }
 
   // ============================================================ Brand studio
-  const BRAND_HTML = `
-  <div class="tab bs" id="tab-brandstudio" hidden>
-    <h1 class="page-title">Brand studio</h1>
-    <p class="intro">Your logo, colours, fonts and a front and end card, applied to reusable templates on every channel. Edit on the left; the preview on the right redraws as you type.</p>
-    <ol class="bs-steps" data-testid="bs-steps" aria-label="Get started"></ol>
-    <section class="panel bs-ex" aria-labelledby="bsExH"><h2 id="bsExH" class="h2">Example brands</h2>
-      <div class="bs-ex-row" id="bsExamples" data-testid="bs-examples"></div>
-      <div id="bsGallery" class="bs-gallery" data-testid="bs-gallery" hidden></div></section>
+  const KIT_HTML = `
     <div class="bs-grid">
       <section class="panel bs-kit" aria-labelledby="bsKitH"><h2 id="bsKitH" class="h2">Your kit</h2>
+        <div class="field"><label class="label" for="kitSite">Website</label><div class="row bs-site"><input id="kitSite" data-testid="kit-site" placeholder="yourbrand.com" autocomplete="url"><button class="btn2" type="button" id="kitImport" data-testid="kit-import">Import logo and colours</button></div></div>
         <div class="field"><label class="label" for="bsLogo">Logo</label><div class="row"><img id="bsLogoImg" class="bs-logo" alt="" hidden><input id="bsLogo" data-testid="bs-logo" type="file" accept="image/png,image/jpeg,image/webp"></div></div>
         <div class="row2"><div class="field"><label class="label" for="bsName">Brand name</label><input id="bsName" data-testid="bs-name" maxlength="60"></div>
           <div class="field"><label class="label" for="bsHandle">Handle</label><input id="bsHandle" data-testid="bs-handle" maxlength="40"></div></div>
-        <div class="bs-colors">${["primary:Ground", "accent:Accent", "text:Text", "secondary:Second"].map((x) => { const [k, l] = x.split(":"); return `<label class="bs-col"><input type="color" data-col="${k}" data-testid="bs-color-${k}"><span>${l}</span></label>`; }).join("")}</div>
-        <div class="row2"><div class="field"><label class="label" for="bsFont">Headlines</label><select id="bsFont" data-testid="bs-font">${FONTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
+        <div class="field"><span class="label">Colours</span><div class="bs-colors">${["primary:Ground", "accent:Accent", "text:Text", "secondary:Second"].map((x) => { const [k, l] = x.split(":"); return `<label class="bs-col"><input type="color" data-col="${k}" data-testid="bs-color-${k}"><span>${l}</span></label>`; }).join("")}</div></div>
+        <div class="row3"><div class="field"><label class="label" for="bsFont">Headlines</label><select id="bsFont" data-testid="bs-font">${FONTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
           <div class="field"><label class="label" for="bsBody">Body</label><select id="bsBody" data-testid="bs-body">${FONTS.filter((f) => f[0] !== "anton").map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
-          <div class="field"><label class="label" for="bsCase">Case</label><select id="bsCase"><option value="upper">UPPERCASE</option><option value="title">Sentence case</option></select></div></div>
+          <div class="field"><label class="label" for="bsCase">Case</label><select id="bsCase"><option value="upper">CAPS</option><option value="title">Sentence</option></select></div></div>
+        <div class="field"><label class="label" for="kitVoice">Voice (how you write)</label><textarea id="kitVoice" data-testid="kit-voice" rows="2" maxlength="300" placeholder="Plain, specific, a little dry. No hype."></textarea></div>
         <div class="field"><span class="label">Front card</span><div class="seg bs-styles" id="bsFront" data-testid="bs-front-styles" role="group" aria-label="Front card style"></div>
-          <label class="muted sm">or upload one <input type="file" id="bsFrontImg" data-testid="bs-front-upload" accept="image/png,image/jpeg,image/webp"></label></div>
+          <label class="muted sm bs-up">or upload one <input type="file" id="bsFrontImg" data-testid="bs-front-upload" accept="image/png,image/jpeg,image/webp"></label></div>
         <div class="field"><span class="label">End card</span><div class="seg bs-styles" id="bsEnd" role="group" aria-label="End card style"></div>
           <div class="row2"><input id="bsCta" data-testid="bs-cta" placeholder="Follow for more" maxlength="28" aria-label="End card call to action"><input id="bsLine" placeholder="One line under it" maxlength="70" aria-label="End card line"></div>
-          <label class="muted sm">or upload one <input type="file" id="bsEndImg" accept="image/png,image/jpeg,image/webp"></label></div>
+          <label class="chk"><input type="checkbox" id="ecOn" data-testid="kit-endcard"> End every video with the end card</label>
+          <label class="muted sm bs-up">or upload one <input type="file" id="bsEndImg" accept="image/png,image/jpeg,image/webp"></label></div>
         <div class="field"><label class="label" for="bsTags">Hashtags</label><input id="bsTags" data-testid="bs-tags" placeholder="#AI #YourBrand"></div>
-        <div class="row"><button class="btn" id="bsSave" data-testid="bs-save" type="button">Save kit</button><span class="muted sm" id="bsSaved" role="status"></span></div>
+        <div class="row bs-save"><button class="btn" id="bsSave" data-testid="bs-save" type="button">Save kit</button><span class="muted sm" id="bsSaved" role="status"></span></div>
       </section>
       <section class="panel bs-prev" aria-labelledby="bsPrevH"><h2 id="bsPrevH" class="h2">Live preview</h2>
         <div class="row2"><div class="field"><label class="label" for="bsTpl">Template</label><select id="bsTpl" data-testid="bs-template"></select></div>
           <div class="field"><label class="label" for="bsSvc">Channel</label><select id="bsSvc" data-testid="bs-service"></select></div></div>
         <p class="muted sm" id="bsTplAbout"></p>
         <div class="bs-strip" id="bsStrip" data-testid="bs-preview" aria-live="polite"></div>
+        <div id="kitCheck" data-testid="kit-check"></div>
+      </section>
+    </div>`;
+  const TPL_HTML = `
+    <section class="panel bs-ex" aria-labelledby="bsExH"><h2 id="bsExH" class="h2">Example brands</h2>
+      <p class="muted sm">Two finished kits with real renders. Use one to start, then make it yours on the Kit tab.</p>
+      <div class="bs-ex-row" id="bsExamples" data-testid="bs-examples"></div>
+      <div id="bsGallery" class="bs-gallery" data-testid="bs-gallery" hidden></div></section>
+    <div class="bs-grid">
+      <section class="panel" aria-labelledby="bsRenH"><h2 id="bsRenH" class="h2">Render a template</h2>
+        <div class="field"><label class="label" for="bsTplR">Template</label><select id="bsTplR" data-testid="bs-render-template"></select></div>
         <div class="row"><label class="chk"><input type="checkbox" id="bsVideo"> Reel too</label>
           <button class="btn2" id="bsRender" data-testid="bs-render" type="button">Render for my channels</button></div>
         <div class="muted sm bs-cost" id="bsCost" data-testid="bs-cost" hidden></div>
-        <div id="bsRendered" data-testid="bs-rendered"></div>
-        <h3 class="h3">Recurring slots</h3>
+        <div id="bsRendered" data-testid="bs-rendered"></div></section>
+      <section class="panel" aria-labelledby="bsSlotH"><h2 id="bsSlotH" class="h2">Recurring slots</h2>
         <p class="muted sm">A slot renders the template from that week's posts and puts a Buffer <b>draft</b> on each channel at the time. You approve it in Buffer.</p>
         <form class="row bs-slotform" id="bsSlotForm"><select id="bsSlotTpl" aria-label="Template"></select><select id="bsSlotDay" aria-label="Day">${DAYS.map((d) => `<option>${d}</option>`).join("")}</select>
           <input id="bsSlotTime" type="time" value="20:00" aria-label="Time"><button class="btn2 sm" data-testid="bs-slot-add" type="submit">Add slot</button></form>
         <ul class="bs-slots" id="bsSlots" data-testid="bs-slots"></ul>
-        <div class="muted sm bs-cost" id="bsSlotCost" hidden></div>
-      </section>
-    </div>
-  </div>`;
+        <div class="muted sm bs-cost" id="bsSlotCost" hidden></div></section>
+    </div>`;
 
   function kitPatch() {
     const cols = {};
-    document.querySelectorAll("#tab-brandstudio [data-col]").forEach((i) => (cols[i.dataset.col] = i.value.toUpperCase()));
+    document.querySelectorAll("#tab-brand [data-col]").forEach((i) => (cols[i.dataset.col] = i.value.toUpperCase()));
     return { name: $("#bsName").value, handle: $("#bsHandle").value, colors: cols, font: $("#bsFont").value, body_font: $("#bsBody").value,
-             headline_case: $("#bsCase").value, front_card: { style: B.front }, end_card: { style: B.end, cta: $("#bsCta").value, line: $("#bsLine").value },
-             hashtags: $("#bsTags").value.split(/[\s,]+/).filter(Boolean) };
+             headline_case: $("#bsCase").value, front_card: { style: B.front },
+             hashtags: $("#bsTags").value.split(/[\s,]+/).filter(Boolean), website: $("#kitSite").value.trim(), voice: $("#kitVoice").value,
+             end_card: { style: B.end, cta: $("#bsCta").value, line: $("#bsLine").value, on: $("#ecOn").checked } };
   }
   function styleChips(box, cur, set) {
     box.innerHTML = Object.entries(B.styles).map(([k, d]) => `<button type="button" class="${k === cur ? "on" : ""}" data-style="${k}" title="${esc(d)}" aria-pressed="${k === cur}">${k}</button>`).join("");
@@ -93,9 +91,10 @@
   function fillKit(k) {
     B.kit = k; B.front = k.front_card.style; B.end = k.end_card.style;
     $("#bsName").value = k.name || ""; $("#bsHandle").value = k.handle ? "@" + k.handle : "";
-    for (const c of ["primary", "accent", "text", "secondary"]) { const i = $(`#tab-brandstudio [data-col=${c}]`); i.value = (k.colors[c] || "#888888").slice(0, 7); }
+    for (const c of ["primary", "accent", "text", "secondary"]) { const i = $(`#tab-brand [data-col=${c}]`); i.value = (k.colors[c] || "#888888").slice(0, 7); }
     $("#bsFont").value = k.font; $("#bsBody").value = k.body_font === "anton" ? "inter" : k.body_font; $("#bsCase").value = k.headline_case;
     $("#bsCta").value = k.end_card.cta || ""; $("#bsLine").value = k.end_card.line || ""; $("#bsTags").value = (k.hashtags || []).join(" ");
+    $("#kitSite").value = k.website || ""; $("#kitVoice").value = k.voice || ""; $("#ecOn").checked = !!k.end_card.on;
     const img = $("#bsLogoImg"); img.hidden = !k.logo_url; if (k.logo_url) img.src = k.logo_url;
     styleChips($("#bsFront"), B.front, (v) => (B.front = v)); styleChips($("#bsEnd"), B.end, (v) => (B.end = v));
     steps();
@@ -104,7 +103,7 @@
     const k = B.kit, f = k.first_run || {};
     const items = [["logo", "Upload your logo", f.logo], ["style", "Pick a style", f.style], ["examples", "See examples", f.examples_seen],
                    ["buffer", "Connect Buffer", f.buffer]];
-    $("#tab-brandstudio .bs-steps").innerHTML = items.map(([key, l, done], i) => `<li class="${done ? "done" : ""}" data-step="${key}"><b>${done ? "✓" : i + 1}</b>
+    $("#tab-brand .bs-steps").innerHTML = items.map(([key, l, done], i) => `<li class="${done ? "done" : ""}" data-step="${key}"><b>${done ? "✓" : i + 1}</b>
       ${key === "buffer" && !done ? `<a href="/login" data-testid="bs-connect">${l}</a>` : `<span>${l}</span>`}</li>`).join("");
   }
   async function loadBrand() {
@@ -112,10 +111,11 @@
       const d = await api("/api/brand-studio");
       B.tpls = d.templates; B.styles = d.styles; B.examples = d.examples; B.slots = d.slots; B.channels = d.channels;
       $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+      $("#bsTplR").innerHTML = $("#bsTpl").innerHTML;
       $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single").map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
       $("#bsSvc").innerHTML = Object.entries(d.channels).filter(([, c]) => !c.video_only).map(([k, c]) => `<option value="${k}">${esc(c.label)} (${c.ratio})</option>`).join("");
       $("#bsTpl").value = B.tpl; $("#bsSvc").value = B.svc;
-      fillKit(d.kit); examples(d.active); slots(); preview();
+      fillKit(d.kit); examples(d.active); slots(); preview(); window.brandCheck?.($("#kitCheck"));
     } catch (e) { toast(e.message); }
   }
   function examples(active) {
@@ -178,12 +178,12 @@
     document.querySelectorAll("#bsSlots [data-del]").forEach((b) => (b.onclick = async () => { await api(`/api/templates/slots/${b.dataset.del}`, { method: "DELETE" }); B.slots = await api("/api/templates/slots"); slots(); }));
   }
   function wireBrand() {
-    document.querySelectorAll("#tab-brandstudio input, #tab-brandstudio select").forEach((i) => {
+    document.querySelectorAll("#tab-brand input, #tab-brand select").forEach((i) => {
       if (i.type === "file" || i.id === "bsVideo" || i.closest("#bsSlotForm")) return;
       i.addEventListener("input", preview);
     });
     $("#bsSave").onclick = async () => {
-      try { const k = await api("/api/brand-studio", { method: "POST", body: kitPatch() }); fillKit(k); $("#bsSaved").textContent = "Saved"; setTimeout(() => ($("#bsSaved").textContent = ""), 2000); }
+      try { const k = await api("/api/brand-studio", { method: "POST", body: kitPatch() }); fillKit(k); $("#bsSaved").textContent = "Saved"; setTimeout(() => ($("#bsSaved").textContent = ""), 2000); window.brandCheck?.($("#kitCheck")); }
       catch (e) { toast(e.message); }
     };
     $("#bsLogo").onchange = async (ev) => {
@@ -196,10 +196,19 @@
         try { const up = await upload(f); fillKit(await api("/api/brand-studio", { method: "POST", body: { [key]: { image: up.token } } })); preview(); } catch (e) { toast(e.message); }
       };
     }
+    $("#kitImport").onclick = async () => {
+      const b = $("#kitImport"), url = $("#kitSite").value.trim(); if (!url) return toast("Type your website first");
+      b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Reading…`;
+      try { const r = await api("/api/brand/from-website", { method: "POST", body: { url } });
+        if (r.sample) toast(r.note, 6000);
+        else toast(`Imported ${r.kit.name}${r.found.logo ? ", logo" : ""}${r.found.palette.length ? ", colours" : ""}${r.found.handle ? ", @" + r.found.handle : ""}`, 5000);
+        B.kit = null; loadBrand(); }
+      catch (e) { toast(e.message, 5000); } finally { b.disabled = false; b.textContent = "Import logo and colours"; }
+    };
     $("#bsRender").onclick = async () => {
       const b = $("#bsRender"); b.disabled = true; b.textContent = "Rendering…";
       try {
-        const r = await api("/api/templates/render", { method: "POST", body: { template: $("#bsTpl").value, video: $("#bsVideo").checked } });
+        const r = await api("/api/templates/render", { method: "POST", body: { template: $("#bsTplR").value, video: $("#bsVideo").checked } });
         showCost("#bsCost", r);
         $("#bsRendered").innerHTML = `<p class="muted sm">Content: ${esc(r.content)}</p>` + r.channels.map((c) => `<div class="bs-chan"><b>${esc(c.label)}</b> <span class="muted sm">${esc(c.ratio)} · ${c.slides.length} slides</span>
           <div class="bs-strip sm">${c.slides.map((u) => `<img loading="lazy" src="${esc(u)}" alt="">`).join("")}${c.note ? `<span class="muted sm">${esc(c.note)}</span>` : ""}</div></div>`).join("") +
@@ -217,28 +226,25 @@
   }
 
   // ============================================================ Sources agent
-  const SOURCES_HTML = `
-  <div class="tab sa" id="tab-sources" hidden>
-    <h1 class="page-title">Sources agent</h1>
-    <p class="intro">Reads YC launches, Hacker News, the lab blogs you follow, and Product Hunt or X with your own key. Same story from several places becomes one card. Pick stories and it writes a post per channel in your brand, saved to Buffer as <b>drafts</b>.</p>
-    <section class="panel sa-set" aria-labelledby="saSetH"><h2 class="h2" id="saSetH">Sources</h2>
-      <div class="sa-srcs" id="saSrcs" data-testid="sa-sources"></div>
-      <details><summary>Feeds, keys and AI writer</summary>
-        <div class="field"><label class="label" for="saRss">RSS / Atom feeds (one per line, up to 8)</label><textarea id="saRss" rows="4" data-testid="sa-rss"></textarea></div>
-        <div class="row2"><div class="field"><label class="label" for="saPh">Product Hunt developer token (free)</label><input id="saPh" type="password" autocomplete="off" placeholder="paste to add" data-testid="sa-ph-key"></div>
-          <div class="field"><label class="label" for="saX">X API bearer token (yours)</label><input id="saX" type="password" autocomplete="off" placeholder="paste to add" data-testid="sa-x-key"></div></div>
-        <div class="field"><label class="label" for="saXq">X search</label><input id="saXq" placeholder="(AI OR LLM) -is:retweet lang:en"></div>
-        <p class="muted sm" id="saAi" data-testid="sa-ai"></p>
-        <div class="row"><button class="btn2 sm" type="button" id="saSaveSet" data-testid="sa-save">Save sources</button><button class="link" type="button" id="saAiKey">Use your own AI key (OpenRouter, Anthropic, OpenAI)</button></div>
-      </details>
-      <div class="row"><button class="btn big" type="button" id="saScan" data-testid="sa-scan">Scan now</button><span class="muted sm" id="saMode"></span></div>
-    </section>
+  const SCAN_HTML = `
+    <section class="panel sa-set" aria-labelledby="saScanH"><div class="sa-head"><div><h2 class="h2" id="saScanH">Story scan</h2>
+      <p class="muted sm">Reads YC launches, Hacker News, your feeds, and Product Hunt or X with your own key. The same story from several places becomes one card. Pick stories and it writes a post per channel in your brand, saved to Buffer as <b>drafts</b>.</p></div>
+      <div class="sa-go"><button class="btn big" type="button" id="saScan" data-testid="sa-scan">Scan now</button><span class="muted xs" id="saMode"></span></div></div>
+      <p class="muted xs">Sources and keys: <button class="link" type="button" data-go="news:sources">Sources</button></p></section>
     <div id="saStatus" class="sa-status" data-testid="sa-status"></div>
     <div id="saTopics" class="chips" data-testid="sa-topics"></div>
     <ul id="saClusters" class="sa-clusters" data-testid="sa-clusters"></ul>
     <div class="sa-bar" id="saBar" hidden><span id="saPicked">0 stories</span><button class="btn" type="button" id="saDraft" data-testid="sa-draft">Write posts</button></div>
-    <section id="saPkgs" class="panel" data-testid="sa-packages" hidden></section>
-  </div>`;
+    <section id="saPkgs" class="panel" data-testid="sa-packages" hidden></section>`;
+  const SRC_HTML = `
+    <section class="panel sa-set" aria-labelledby="saSetH"><h2 class="h2" id="saSetH">What the story scan reads</h2>
+      <div class="sa-srcs" id="saSrcs" data-testid="sa-sources"></div>
+      <div class="row2"><div class="field"><label class="label" for="saPh">Product Hunt developer token (free)</label><input id="saPh" type="password" autocomplete="off" placeholder="paste to add" data-testid="sa-ph-key"></div>
+        <div class="field"><label class="label" for="saX">X API bearer token (yours)</label><input id="saX" type="password" autocomplete="off" placeholder="paste to add" data-testid="sa-x-key"></div></div>
+      <div class="field"><label class="label" for="saXq">X search</label><input id="saXq" placeholder="(AI OR LLM) -is:retweet lang:en"></div>
+      <p class="muted sm" id="saAi" data-testid="sa-ai"></p>
+      <div class="row"><button class="btn2 sm" type="button" id="saSaveSet" data-testid="sa-save">Save sources</button><button class="link" type="button" id="saAiKey">Use your own AI key</button></div>
+    </section>`;
   const LANE = { postable: "Post-worthy", idea_bank: "Idea bank", low: "Low", hidden: "Off topic" };
   const AGENT = { agent_ok: "", verify_first: "Verify first", person_only: "Needs a person" };
   async function loadSources() {
@@ -246,8 +252,8 @@
       const d = await api("/api/sources"); B.sset = d.settings;
       const s = d.settings;
       $("#saSrcs").innerHTML = s.adapters.map((a) => `<label class="sa-src" title="${esc(a.about)}"><input type="checkbox" data-src="${a.key}" ${s.on[a.key] ? "checked" : ""} data-testid="sa-src-${a.key}">
-        <span><b>${esc(a.label)}</b>${a.needs_key ? `<small>${(a.key === "x" ? s.x_key : s.ph_key) ? "key added" : "needs your key"}</small>` : "<small>free</small>"}</span></label>`).join("");
-      $("#saRss").value = (s.rss || []).join("\n"); $("#saXq").value = s.x_query || "";
+        <span class="sa-src-t"><b>${esc(a.label)}</b>${a.needs_key ? `<small>${(a.key === "x" ? s.x_key : s.ph_key) ? "key added" : "needs your key"}</small>` : "<small>free</small>"}</span></label>`).join("");
+      $("#saXq").value = s.x_query || "";
       $("#saMode").textContent = s.sample ? "Sample workspace: recorded sources, no live calls." : "Live: reads the sources now and drafts into your Buffer.";
       const cls = s.classifier || { order: ["rules"] };
       api("/api/ai").then((ai) => { $("#saAi").textContent = `Writer: ${ai.engine}. Story judges: ${cls.order.join(" → ")}${cls.configured ? ` (capped at ${cls.cap_per_day} a day)` : ""}.`; }).catch(() => {});
@@ -309,12 +315,12 @@
     };
     $("#saSaveSet").onclick = async () => {
       const on = {}; document.querySelectorAll("#saSrcs [data-src]").forEach((i) => (on[i.dataset.src] = i.checked));
-      const body = { on, rss: $("#saRss").value.split("\n").map((x) => x.trim()).filter(Boolean), x_query: $("#saXq").value };
+      const body = { on, x_query: $("#saXq").value }; // the feed list is managed above (one list for the feed and the scan)
       if ($("#saPh").value) body.ph_key = $("#saPh").value;
       if ($("#saX").value) body.x_key = $("#saX").value;
       try { await api("/api/sources/settings", { method: "POST", body }); $("#saPh").value = ""; $("#saX").value = ""; toast("Sources saved"); loadSources(); } catch (e) { toast(e.message); }
     };
-    $("#saAiKey").onclick = () => showTab("ai");
+    $("#saAiKey").onclick = () => showTab("settings");
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount); else mount();
