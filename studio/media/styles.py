@@ -41,6 +41,16 @@ STYLE_PRESETS: dict[str, dict] = {
     },
 }
 
+# Short names agents and people use ("news" is the HuhByte news layout).
+ALIASES = {"news": "huhbyte_news", "huhbyte": "huhbyte_news", "opus_clip": "opus", "clean": "minimal"}
+
+
+def resolve(style: str | None) -> str:
+    """A style id or alias -> the preset id (unknown names pass through so compose.py can refuse them clearly)."""
+    s = (style or "").strip().lower()
+    return ALIASES.get(s, s)
+
+
 CHANNEL_RATIO = {"instagram_reel": "9:16", "tiktok": "9:16", "youtube": "9:16", "youtube_shorts": "9:16",
                  "instagram": "4:5", "facebook": "4:5", "linkedin": "4:5", "threads": "4:5", "x": "1:1",
                  "twitter": "1:1", "bluesky": "1:1", "mastodon": "1:1"}

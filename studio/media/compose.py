@@ -362,7 +362,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
-    from .styles import STYLE_PRESETS
+    from .styles import STYLE_PRESETS, resolve
+    style = resolve(style)
     if style not in STYLE_PRESETS:
         raise ff.MediaError(f"Unknown style {style!r}. Pick one of: {', '.join(STYLE_PRESETS)}.")
     cfg = STYLE_PRESETS[style]
