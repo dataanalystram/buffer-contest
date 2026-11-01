@@ -136,3 +136,28 @@ studio/static/fonts/*.woff2  (copied, unmodified; renamed)
 studio/static/brand/*, studio/static/favicon.ico  (derived)
   Source:   the HuhByte AI logo, dataanalystram/Huhbyte.ai code/brand/logo.png (the project owner's own brand),
             processed by scripts/brand_assets.py (mark on a dark tile; a light-paper wordmark variant).
+
+studio/media/*  Media agent (find, download, transcribe, captions, compose, styles, music, imagegen; docs/MEDIA_PIPELINE.md)
+  Adapted from the project owner's own HuhByte pipeline, dataanalystram/Huhbyte.ai (same owner, Ram Prasad Somaraju):
+  - code/hb.py: the HuhByte news Reel layout (build_reel / add_cta: cover, logo + hook over the video panel, credit line,
+    Follow pill, end card) and the 9:16 safe-area numbers, re-implemented in studio/media/compose.py.
+  - code/music/make_cinematic.py: the cinematic score (organ pad, ticking pulse, piano ostinato, swell), ported to a
+    function in studio/media/music.py. The pulse bed is our own.
+  Libraries and programs used (called, no code copied):
+  - yt-dlp  https://github.com/yt-dlp/yt-dlp  Licence: The Unlicense (public domain). Platform metadata and downloads,
+      one extractor per allow-listed host.
+  - faster-whisper  https://github.com/SYSTRAN/faster-whisper  Licence: MIT, Copyright (c) 2023 SYSTRAN; Whisper model
+      weights (Systran/faster-whisper-tiny / -base, CTranslate2 conversions of openai/whisper) MIT, Copyright (c) 2022
+      OpenAI, downloaded at run time, not redistributed; Silero VAD (bundled in faster-whisper) MIT.
+      tests/studio/fixtures/media/aarush_words_tiny.json is a transcript produced by this model.
+  - NumPy  https://numpy.org  Licence: BSD 3-Clause. Music synthesis and audio arrays.
+  - imageio-ffmpeg  https://github.com/imageio/imageio-ffmpeg  Licence: BSD 2-Clause; its bundled ffmpeg binary is
+      GPLv3, used only as a separate program when the system has no FFmpeg.
+  - FFmpeg with libass and libx264  https://ffmpeg.org  (LGPL-2.1+ / GPL-2.0+ with x264), invoked as a subprocess.
+  - Pillow  https://python-pillow.org  Licence: MIT-CMU (HPND). Cards, text measuring.
+  - FLUX.1-schnell (Black Forest Labs) via Hugging Face Inference Providers, Apache License 2.0 weights, only when the
+    user supplies an HF token; Pollinations (gen.pollinations.ai) only with a user/operator key. Outputs are labelled
+    "AI-generated image".
+  Fonts used in renders: Anton, Inter, Poppins, Figtree (SIL OFL 1.1, studio/fonts).
+  The source cascade, rights gate, caption fitting, clip picker glue and compositor are our own code. Third-party
+  launch videos are never bundled; each render keeps the creator's credit line on screen.
