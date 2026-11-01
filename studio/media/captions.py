@@ -223,7 +223,7 @@ def build_ass(words: list[dict], style: str = "opus", *, W: int = 1080, H: int =
     border_style = 3 if st.box else 1
     lx = left if left is not None else int(W * (1 - st.width_frac) / 2)
     head = (
-        f"[Script Info]\nScriptType: v4.00+\nPlayResX: {W}\nPlayResY: {H}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n"
+        f"[Script Info]\n; huhqueue-style: {style}\nScriptType: v4.00+\nPlayResX: {W}\nPlayResY: {H}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n"
         "YCbCr Matrix: TV.709\n\n[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, "
@@ -297,7 +297,7 @@ def check_ass_fits(ass: str, W: int, H: int, margin: int = 24) -> list[str]:
         fs = int(re.search(r"\\fs(\d+)", ln).group(1))
         x = int(re.search(r"\\pos\((\d+),", ln).group(1))
         left = "\\an4" in ln
-        txt = re.sub(r"\{[^}]*\}", "", ln.split(",,", 1)[1].split(",", 4)[-1])
+        txt = re.sub(r"\{[^}]*\}", "", ln.split(",,", 1)[1].split(",", 4)[-1]).replace("\\h", " ")
         f = textfit.font(file, _pil_size_for_line_height(file, fs))
         pad = 2 * max(2, int(H * st.size_frac * st.outline_frac)) + 2 * block_border(st, fs) + (int(fs * 0.3) if st.box else 0)
         for row in txt.split("\\N"):

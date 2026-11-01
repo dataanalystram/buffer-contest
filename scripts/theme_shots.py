@@ -101,6 +101,8 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     report = []
     for sid in ids:
+        if a.gallery and (out / f"{sid}.jpg").exists() and (out / f"{sid}.mp4").exists():
+            continue
         for ratio in (["9:16"] if a.gallery else a.ratios.split(",")):
             dst = out / f"{sid}_{ratio.replace(':', 'x')}.mp4"
             t0 = time.time()

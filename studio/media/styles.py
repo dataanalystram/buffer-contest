@@ -453,3 +453,19 @@ def transition_chain(cfg: dict) -> str:
     if tr == "glitch":
         return "rgbashift=rh=16:bh=-16:enable='lt(t,0.18)',noise=alls=45:allf=t:enable='lt(t,0.18)'"
     return ""
+
+
+_NAMED = (r"\b(?:theme|style|look|cinematic|newsreel|keynote|crt|terminal look|silent[\s-]film|riso(?:graph)?|hud|hologram|"
+          r"countdown|tilt[\s-]?shift|miniature|game[\s-]?show|caption[\s-]?news|swiss|constructivist|screen\s?cast|"
+          r"investigation|news package|opus)\b")
+
+
+def named_theme(text: str) -> str | None:
+    """A look the person NAMED in a prompt or a thread reply ("make it more cinematic", "switch to the news theme",
+    "like opus clip", "crt look") -> its id; None for anything that is only a topic or a tone. The fixed planner styles a
+    video only when a look is named or picked in the gallery."""
+    import re
+    s = text or ""
+    if not re.search(_NAMED, s, re.I):
+        return None
+    return explicit_theme(s)

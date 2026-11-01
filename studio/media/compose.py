@@ -168,7 +168,8 @@ def end_card(path: str, W: int, H: int, brand: dict) -> dict:
                             fill=brand["muted"])
         boxes["name"] = bb
         y = bb[3] + int(H * 0.04)
-    bb, _ = _text_block(d, "Follow", brand["head_font"], (l, y, r, y + int(H * 0.13)), max_size=int(W * 0.2), max_lines=1)
+    bb, _ = _text_block(d, "Follow", brand["head_font"], (l, y, r, y + int(H * 0.13)), max_size=int(W * 0.2), max_lines=1,
+                        fill=brand["text"])
     boxes["follow"] = bb
     y = bb[3] + int(H * 0.015)
     bb, _ = _text_block(d, brand["handle"], brand["head_font"], (l, y, r, y + int(H * 0.09)), max_size=int(W * 0.15),
@@ -178,7 +179,7 @@ def end_card(path: str, W: int, H: int, brand: dict) -> dict:
     d.line((W // 2 - 60, y, W // 2 + 60, y), fill=(70, 70, 76), width=2)
     y += int(H * 0.03)
     bb, _ = _text_block(d, brand["end_line"], "Inter-Regular.ttf", (l, y, r, y + int(H * 0.08)), max_size=40, max_lines=2,
-                        fill="#DADADE")
+                        fill=brand.get("muted") if brand["text"].upper() != "#FFFFFF" else "#DADADE")
     boxes["line"] = bb
     im.save(path)
     return boxes
