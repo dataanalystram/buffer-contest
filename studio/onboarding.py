@@ -219,7 +219,7 @@ class Onboarding:
                 try:
                     p = reader.x_oembed(w["url"], self.http)
                     watch.append({"url": w["url"], "author": p["author_name"], "handle": p["handle"], "text": p["text"][:280]})
-                except reader.ReadError:
+                except Exception:  # a post that won't read (deleted, odd answer) never breaks the screen
                     continue
         chans = self._chans(a, prof)
         recommended = [self._ready_post(a, c, chans, prof.get("tone", "plain")) for c in feed[:3]]
