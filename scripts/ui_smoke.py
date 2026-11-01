@@ -17,7 +17,14 @@ with sync_playwright() as p:
     pg = b.new_page(viewport={"width": 1366, "height": 900}, device_scale_factor=1)
     pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
-    pg.on("console", lambda m: m.type == "error" and errors.append(m.text))
+    # a failed request is recorded by its URL (the console only says "Failed to load resource"), so the one allowance
+    # below can be exact: /api/onboarding and /api/recommendations come from hq-agent-core (feat/agent-core,
+    # docs/ONBOARDING.md); until that merges the browser falls back on a 404, by design. Drop the allowance after it merges.
+    PENDING = ("/api/onboarding", "/api/recommendations")
+    pg.on("console", lambda m: m.type == "error" and not m.text.startswith("Failed to load resource") and errors.append(m.text))
+    pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base)
+          and not (r.status == 404 and r.url.split("?")[0][len(base):] in PENDING)
+          and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
     pg.goto(base + "/")
     pg.screenshot(path=str(out / "00_landing.png"), full_page=True)
     pg.goto(base + "/demo")
