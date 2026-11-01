@@ -107,8 +107,9 @@ TOOLS: list[dict[str, Any]] = [
                      "ratio": {"type": "string", "enum": ["4:5", "1:1", "9:16"]}}}},
     {"name": "edit_video", "description": "Edit or cut a video on the HuhQueue server (no HuhQueue AI): trim to start_s..end_s or "
      "cut_first_s seconds off the start, reframe to 9:16 / 4:5 / 1:1 (speaker-aware), burned-in word captions on or off "
-     "(transcribed with Whisper on the video worker), a theme/style (list_themes), the brand's Follow end card, music under "
-     "silent video, a hook title. Give the video as media_token, library_id or url. Returns a job id at once; poll "
+     "(transcribed with Whisper on the video worker), a theme/style (list_themes), music under silent video, a hook title; the "
+     "brand's Follow end card is always added last (brand rule). "
+     "Give the video as media_token, library_id or url. Returns a job id at once; poll "
      "render_status(job_id) every 10-20 s until status is done, then show download_url.",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC,
          "start_s": {"type": "number"}, "end_s": {"type": "number"},
@@ -117,7 +118,6 @@ TOOLS: list[dict[str, Any]] = [
          "captions": {"type": "boolean", "description": "Burn in word-by-word captions (default true)"},
          "caption_style": {"type": "string", "enum": ["opus", "huhbyte_news", "minimal", "hype"], "description": "Caption/edit style"},
          "theme": {"type": "string", "description": "A video theme id from list_themes (overrides caption_style's look)"},
-         "end_card": {"type": "boolean", "description": "Add the brand's Follow end card (default true)"},
          "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
          "hook": {"type": "string", "description": "On-screen title you wrote (max ~12 words, facts only)"},
          "credit": {"type": "string", "description": "Credit line for a video the user didn't make"},
@@ -447,12 +447,12 @@ def _video_spec(h, a, args, tok, meta) -> dict:
         if e <= s + 1:
             raise ActionError("The cut must leave at least one second (end_s after start_s).")
         clip = [round(s, 2), round(e, 2)]
-    owned = meta.get("kind") in ("upload", "take") or meta.get("source") in ("upload", "take") or True
+    owned = True  # media_token / library_id / url imports are the user's own files (library_upload_url: "a video you own")
     spec = {"kind": "media_render", "style": sid, "ratio": args.get("ratio") if args.get("ratio") in ("9:16", "4:5", "1:1") else "9:16",
             "hook": str(args.get("hook") or "")[:120], "facts": [], "credit": str(args.get("credit") or "")[:160], "names": [],
             "music": args.get("music") or "auto", "official": False,
             "rights_confirmed": bool(args.get("rights_confirmed", owned)), "source": tok, "candidate": None, "slides": [],
-            "captions": args.get("captions") is not False, "end_card": args.get("end_card") is not False,
+            "captions": args.get("captions") is not False,
             "brand_colors": True, **_kit_spec(h, a), "via": SOURCE}
     if clip:
         spec["clip"] = clip
@@ -467,7 +467,7 @@ def t_edit_video(studio, a, args):
         raise ActionError("That media is not a video.")
     spec = _video_spec(h, a, args, tok, meta)
     out = _queue_video(h, a, spec)
-    return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "end_card", "music")}}
+    return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "music")}}
 
 
 def t_render_reel(studio, a, args):

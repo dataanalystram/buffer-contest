@@ -126,6 +126,23 @@ from . import library as _library  # noqa: E402  Library: list_library, delete_l
 
 TOOLS += _library.TOOLS
 READ_ONLY |= _library.READ_ONLY
+from . import mcp_client_brain as _cb  # noqa: E402  client brain: the hands without HuhQueue's AI (docs/MCP_TOOLS.md)
+
+TOOLS += _cb.TOOLS
+READ_ONLY |= _cb.READ_ONLY
+
+
+def _mark_server_ai(tools: list[dict]) -> None:
+    """Tools that spend HuhQueue's own model key say so, and take server_ai: true (the person's explicit choice)."""
+    for t in tools:
+        if t["name"] in _cb.SERVER_AI_TOOLS and _cb.SERVER_AI_NOTE not in t["description"]:
+            t["description"] = t["description"].rstrip() + _cb.SERVER_AI_NOTE
+            props = t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})
+            props["server_ai"] = {"type": "boolean", "description": "true = use HuhQueue's server AI (the user's HuhQueue AI "
+                                  "allowance). Leave out to do it yourself with the client-brain tools."}
+
+
+_mark_server_ai(TOOLS)
 
 
 def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
@@ -223,6 +240,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _library.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
+    extra = _cb.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
     raise ActionError(f"Unknown tool {name}", 404)
 
 
@@ -237,10 +257,15 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
     if method == "initialize":
         ci = (msg.get("params") or {}).get("clientInfo") or {}
         studio.note_client(actor, f"{ci.get('name', '')} {ci.get('version', '')}".strip())
+        caps = (msg.get("params") or {}).get("capabilities") or {}
+        # sampling/createMessage needs a server -> client request on an open stream; this endpoint answers each POST with
+        # JSON (stateless), so small LLM steps fall back to the rule-based path. Recorded so Activity shows the client can.
+        from . import activity
+        activity.note(client_sampling=bool(isinstance(caps, dict) and caps.get("sampling") is not None))
         return ok({"protocolVersion": msg.get("params", {}).get("protocolVersion") or PROTOCOL,
                    "capabilities": {"tools": {"listChanged": False}},
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
-                   "instructions": "HuhQueue edits posts to the user's brand. One take -> a week: clips_from_video -> poll list_clips(take_id) -> adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Typical post loop: run_agent (topic or link) or edit_media (their photo/video) -> poll get_run until ready -> show the media and captions -> turn any feedback into revise(run_id, correction), which saves a Style Ledger rule -> schedule_package. Posts wait for human approval unless the token policy says otherwise."})
+                   "instructions": _cb.INSTRUCTIONS + " Also: HuhQueue edits posts to the user's brand. One take -> a week: clips_from_video -> poll list_clips(take_id) -> adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Typical post loop: run_agent (topic or link) or edit_media (their photo/video) -> poll get_run until ready -> show the media and captions -> turn any feedback into revise(run_id, correction), which saves a Style Ledger rule -> schedule_package. Posts wait for human approval unless the token policy says otherwise."})
     if method == "ping":
         return ok({})
     if method == "tools/list":
@@ -251,10 +276,18 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
         if isinstance(meta, dict) and (meta.get("model") or meta.get("huhqueue/model")):
             from . import activity
             activity.note(model_hint=str(meta.get("model") or meta.get("huhqueue/model"))[:80])
+        name, args = p.get("name", ""), p.get("arguments") or {}
+        if name in _cb.SERVER_AI_TOOLS and not (isinstance(args, dict) and args.get("server_ai") is True):
+            hint = _cb.server_ai_hint(name)  # no model call: the client is the brain unless the person chose server AI
+            return ok({"content": [{"type": "text", "text": json.dumps(hint, indent=1)}], "structuredContent": hint, "isError": False})
+        from . import brain_llm
+        tok = brain_llm.client_brain(not (isinstance(args, dict) and args.get("server_ai") is True))
         try:
-            result = call_tool(studio, actor, p.get("name", ""), p.get("arguments") or {})
+            result = call_tool(studio, actor, name, {k: v for k, v in args.items() if k != "server_ai"} if isinstance(args, dict) else {})
             return ok({"content": [{"type": "text", "text": json.dumps(result, indent=1, default=str)}],
                        "structuredContent": result if isinstance(result, dict) else {"items": result}, "isError": False})
         except (ActionError, BufferError) as e:
             return ok({"content": [{"type": "text", "text": str(e)}], "isError": True})
+        finally:
+            brain_llm.client_brain_end(tok)
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"Method not found: {method}"}}

@@ -7,6 +7,7 @@ ANTHROPIC_MODEL_FAST override. The list is cached for six hours.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import threading
@@ -17,6 +18,20 @@ import httpx
 from . import budget, llm, netguard
 
 ANTHROPIC = "https://api.anthropic.com/v1"
+# Client brain (docs/MCP_TOOLS.md): while an MCP tool call runs without server_ai: true, HuhQueue's own key is never used.
+_client_brain: contextvars.ContextVar[bool] = contextvars.ContextVar("hq_client_brain", default=False)
+
+
+def client_brain(on: bool = True) -> contextvars.Token:
+    return _client_brain.set(bool(on))
+
+
+def client_brain_end(tok: contextvars.Token) -> None:
+    _client_brain.reset(tok)
+
+
+def client_brain_active() -> bool:
+    return _client_brain.get()
 _models: dict = {"at": 0.0, "plan": "", "fast": "", "all": []}
 _mlock = threading.Lock()
 
@@ -61,7 +76,7 @@ def engines(store, uid: str, settings, http=None, demo: bool = False) -> list[di
     starter model (planner mode, simpler plan), then none (rules)."""
     out = []
     k = operator_key()
-    if k and not demo:
+    if k and not demo and not client_brain_active():  # an MCP call without server_ai never reaches the operator key
         m = resolve_models(k, http)
         if m["plan"]:
             out.append({"source": "huhqueue claude", "provider": "anthropic", "base_url": ANTHROPIC, "api_key": k, "model": m["plan"],
@@ -85,6 +100,9 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
     stop_reason ("max_tokens" when the answer was cut, for both API styles)}.
     Raises budget.BudgetExceeded (before the call) or llm.LLMError."""
     model = engine["fast_model"] if fast else engine["model"]
+    if engine.get("budgeted") and client_brain_active():  # belt and braces: the client is the brain on this call
+        raise budget.BudgetExceeded("This request came from an AI app over MCP: the app's own model is the brain, so "
+                                    "HuhQueue's AI isn't used (pass server_ai: true to use it).")
     if engine.get("budgeted"):
         budget.check(store, uid, model, _est_tokens([system, messages, tools]), max_tokens)
     elif engine.get("source") == "your key":

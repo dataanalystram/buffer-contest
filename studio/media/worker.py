@@ -96,7 +96,7 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
             credit = credit or gen["images"][0]["credit"]
 
         words_path = None
-        if source_path and (style in CAPTION_STYLES or style in styles.THEMES):
+        if source_path and spec.get("captions") is not False and (style in CAPTION_STYLES or style in styles.THEMES):
             try:  # captions and the opus/hype clip picker need the transcript; a failure only turns captions off
                 tr = tools.media_transcribe(source_path, names=spec.get("names"), run_dir=str(tmp))
                 words_path = tr["words_path"] if tr.get("words") else None
