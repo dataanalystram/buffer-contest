@@ -32,6 +32,11 @@ _rlock = threading.Lock()
 SYSTEM = """You are HuhQueue's post editor. You turn the person's request into on-brand social posts for their Buffer channels,
 using ONLY the tools. Rules:
 - A link the person pasted is THE source. Read it with read_url. Never search instead of reading their link.
+- Words that say what to DO ("search it", "research", "post on all channels", "make a reel", "you can do that") are
+  instructions, never the topic. The topic comes from the link, the research and the upload's own content.
+- Context.upload is the person's OWN photo/video. read_upload has already run (its transcript is in the state); with no
+  link it is the source. Use their video in render_reel with rights_confirmed true (it is theirs); a photo is the cover.
+- Headlines come from the story's facts. Never copy the person's request into a headline, and never put a URL in one.
 - Use only facts from the source. Never invent numbers. If extract_facts reports a conflict, do not pick a figure: finish and
   ask the person (the app shows your question).
 - Plan first: reply with a short numbered plan (one line per step), then call the tools in that order.
@@ -83,11 +88,20 @@ class Brain:
             raise ActionError("Pick at least one connected channel.")
         if body.get("format") and body["format"] != "auto":
             parsed["format"] = body["format"]
-        inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": body.get("media_token") or "",
+        tok = str(body.get("media_token") or "")
+        meta = self.h.media_meta(a, tok) if tok else None
+        if tok and meta is None:
+            raise ActionError("Unknown media token. Upload the file first.", 404)
+        inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
+               "brief": str(body.get("brief") or "")[:1000],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
-        res = {"thread": [{"role": "user", "text": prompt, "at": _now()}], "plan": [], "brain": {}}
-        if body.get("media_token"):
-            res["clip_token"] = body["media_token"] if (self.h.media_meta(a, body["media_token"]) or {}).get("type") == "video" else ""
+        res = {"thread": [{"role": "user", "text": prompt or "(your file)", "at": _now()}], "plan": [], "brain": {}}
+        if tok:
+            # the person's own file is an input to the agent (read_upload), never a pipeline of its own
+            typ = "video" if (meta or {}).get("type") == "video" else "photo"
+            res["upload"] = {"token": tok, "type": typ, "url": self.h.media_url(tok), "name": str(body.get("media_name") or "")[:80]}
+            if typ == "video":
+                res["clip_token"], res["clip_owned"] = tok, True
         rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
                            (a.uid, "agent", json.dumps(inp), "running", json.dumps([]), json.dumps(res), _now(), _now()))
         self.store.audit(a.uid, a.label, "agent_run", "read", {"run": rid, "kind": "agent", "source": "link" if parsed["source_url"] else "topic"})
@@ -116,7 +130,7 @@ class Brain:
             raise ActionError("Say what to change.")
         run = self.h.run(a, rid)
         if run["kind"] != "agent":
-            raise ActionError("Replies work on agent runs; use “Fix and remember” on this one.")
+            return self.h.revise(a, rid, text)  # a run from before the agent: the same reply box still edits it
         with _rlock:
             if rid in _running:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
@@ -124,6 +138,44 @@ class Brain:
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
         self.h._save(rid, run["steps"], res, "running")
         self._spawn(self._go, a, rid, text)
+        return self.h.run(a, rid)
+
+    def channel_media(self, a: Actor, rid: int, channel_id: str, token: str = "") -> dict:
+        """One channel's media: replace it with the person's own file (a Library item or an upload), or regenerate it
+        (token empty). Then the check runs again, so the package, its preview and its brand check stay true."""
+        self.h.studio._guard_write(a, "agent_channel_media")
+        run = self.h.run(a, rid)
+        if run["kind"] != "agent":
+            raise ActionError("Only agent runs can change one channel's media. Start a new post.")
+        with _rlock:
+            if rid in _running:
+                raise ActionError("The agent is still working on this post. Try again when it's done.", 409)
+        ch = next((c for c in run["input"]["channels"] if c["id"] == channel_id or c["service"] == channel_id), None)
+        if not ch:
+            raise ActionError("That channel isn't in this post.", 404)
+        pk = next((p for p in run["result"].get("packages") or [] if p["channel_id"] == ch["id"]), None)
+        if pk and pk.get("sent"):
+            raise ActionError("This post is already in Buffer; change it there.", 409)
+        tools = Tools(self.h, a, rid)
+        if token:
+            meta = self.h.media_meta(a, token)
+            if meta is None:
+                raise ActionError("Unknown file. Upload it or pick it from your Library first.", 404)
+            typ = "video" if meta.get("type") == "video" else "photo"
+            if ch["service"] in VIDEO_ONLY and typ != "video":
+                raise ActionError(f"{ch['service'].title()} needs a video.")
+            key = self._step(a, rid, "replace_media", {}, f"Use your file on {ch['name']}")
+            run = self.h.run(a, rid)
+            run["result"].setdefault("channel_media", {})[ch["id"]] = {
+                "format": "reel" if typ == "video" else "photo", "note": "Your file, as you uploaded it.",
+                "media": [{"token": token, "url": self.h.media_url(token), "type": typ, "name": "your file", "role": "original"}]}
+            self.h._save(rid, run["steps"], run["result"])
+            self._done(a, rid, key, "done", f"{typ} from your Library")
+        else:
+            self.call(a, rid, tools, "edit_channel_media", {"channel": ch["id"]}, label=f"Regenerate {ch['name']}")
+        self.call(a, rid, tools, "check", {})
+        run = self.h.run(a, rid)
+        self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else run["status"])
         return self.h.run(a, rid)
 
     def _spawn(self, fn, *args):
@@ -146,6 +198,9 @@ class Brain:
         tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent"})
         tools = Tools(self.h, a, rid)
         try:
+            if message is None and (self.h.run(a, rid)["result"].get("upload") or {}).get("read") is None \
+                    and self.h.run(a, rid)["result"].get("upload"):
+                self.call(a, rid, tools, "read_upload", {})  # the upload is an input tool, read first whatever the brain
             engs = brain_llm.engines(self.store, a.uid, self.h.s, self.h.http, demo=tools.demo)
             eng = next((e for e in engs if e.get("tools")), None)
             done = False
@@ -230,6 +285,11 @@ class Brain:
                "kit": {k: v for k, v in self.h.kit(a).items() if k in ("name", "handle", "voice", "colors", "font")},
                "ledger": [r["rule"] for r in self.h.rules(a)],
                "state": _state_summary(res)}
+        if res.get("upload"):
+            up = res["upload"]
+            ctx["upload"] = {"type": up["type"], "name": up.get("name", ""), "transcript": (up.get("transcript") or "")[:1500],
+                             "is_source": (res.get("source") or {}).get("via") == "upload"}
+        ctx["intake"]["research_asked"] = bool(inp["intake"].get("research"))
         if any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or inp["intake"].get("format") == "reel":
             # a hint for video channels from the person's words ("short punchy explainer" -> opus); the brain decides
             from .media import styles as media_styles
@@ -303,14 +363,16 @@ class Brain:
         inp, res = run["input"], run["result"]
         fmt = inp["intake"]["format"]
         has_video = bool(res.get("clip_token")) or any(m["type"] == "video" for m in (res.get("source") or {}).get("media") or [])
-        groups: dict[str, list[str]] = {"reel": [], "carousel": [], "photo": []}
+        groups: dict[str, list[str]] = {"reel": [], "reel45": [], "carousel": [], "photo": []}
         for c in inp["channels"]:
             svc = c["service"]
             if svc in VIDEO_ONLY:
                 f = "reel"
+            elif has_video and svc in ("facebook", "linkedin") and fmt in ("auto", "reel"):
+                f = "reel45"  # the feed variant: 4:5 video for LinkedIn / Facebook, 9:16 for Reels and Shorts
             elif fmt != "auto":
                 f = fmt
-            elif has_video and svc in ("instagram", "facebook", "linkedin"):
+            elif has_video and svc == "instagram":
                 f = "reel"
             elif svc in TEXT_FIRST or svc == "pinterest":
                 f = "photo"
@@ -324,12 +386,14 @@ class Brain:
         sec = run["input"]["intake"].get("seconds")
         from .media import styles as media_styles
         style = media_styles.explicit(run["input"].get("prompt") or "")  # only when the person named a look
-        if style and g["reel"]:
+        if style and (g["reel"] or g["reel45"]) and not run["result"].get("clip_owned"):
             self.call(a, rid, tools, "find_media", {})
-        for f, tool in (("carousel", "render_carousel"), ("photo", "render_cover"), ("reel", "render_reel")):
+        for f, tool in (("carousel", "render_carousel"), ("photo", "render_cover"), ("reel", "render_reel"), ("reel45", "render_reel")):
             ids = [i for i in g[f] if not only or i in only]
             if ids:
-                extra = {**({"seconds": sec} if f == "reel" and sec else {}), **({"style": style} if f == "reel" and style else {})}
+                vid = f in ("reel", "reel45")
+                extra = {**({"seconds": sec} if vid and sec else {}), **({"style": style} if vid and style else {}),
+                         **({"ratio": "4:5"} if f == "reel45" else {})}
                 self.call(a, rid, tools, tool, {"channel_ids": ids, **extra})
 
     def _planner(self, a, rid, tools: Tools, message: str | None, engs: list[dict]):
@@ -341,8 +405,12 @@ class Brain:
         if message is not None:
             return self._refine(a, rid, tools, message, brain)
         it = inp["intake"]
-        plan = [f"Save {len(it['rules'])} standing rule(s) to your Style Ledger"] if it["rules"] else []
-        plan += [f"Read your link ({it['source_url'][:60]})" if it["source_url"] else f"Search the news for “{it['topic'][:60]}”",
+        up = res.get("upload") or {}
+        from_upload = bool(up) and not it["source_url"] and (res.get("source") or {}).get("via") == "upload"
+        plan = [f"Read your {up['type']}" + (" and transcribe it" if up.get("type") == "video" else "")] if up else []
+        plan += [f"Save {len(it['rules'])} standing rule(s) to your Style Ledger"] if it["rules"] else []
+        plan += [f"Read your link ({it['source_url'][:60]})" if it["source_url"] else
+                 ("Use your upload as the story" if from_upload else f"Search the news for “{(it['topic'] or inp['prompt'])[:60]}”"),
                  "Pull out the facts and cross-check the numbers", "Render each channel in its format", "Write one caption per channel",
                  "Check brand rules, clipping and the source"]
         wants_drafts = bool(re.search(r"\bdrafts?\b|\bput (?:it|them) in buffer\b|\bsave (?:it|them) to buffer\b", inp["prompt"], re.I))
@@ -353,8 +421,10 @@ class Brain:
             self.call(a, rid, tools, "remember_rule", {"correction": r})
         if it["source_url"]:
             self.call(a, rid, tools, "read_url", {"url": it["source_url"]})
-        elif res.get("clip_token") and not it["topic"]:
-            raise ActionError("Tell me what the clip is about (one line), or paste the link it comes from.")
+        elif from_upload:
+            pass  # read_upload made the person's own file (its words + their line about it) the source
+        elif up and not (it["research"] and it["topic"]):
+            raise ActionError(f"Tell me what your {up['type']} is about (one line), or paste the link it comes from.")
         else:
             out = self.call(a, rid, tools, "search_news", {"query": it["topic"] or inp["prompt"][:200]})
             opened = False
