@@ -27,7 +27,7 @@ def test_rank_clusters_outlets_without_chaining_and_caps_each_company():
         lead("Anthropic orders Claude to stop remaking video games", "https://gamedeveloper.com/a"),
         lead("Anthropic's Claude AI blocks video game cloning and remaking", "https://pcgamer.com/b"),
         lead("Claude stops remaking video games, Anthropic says", "https://news.google.com/rss/x"),
-        lead("Reading Anthropic's S-1 as a Claude Code user", "https://alexkras.com/s1", points=400),
+        lead("Reading Anthropic's S-1 as a Claude Code user", "https://alexkras.com/s1", points=120),
         lead("Anthropic drops Ultra five-hour limit for Claude Code", "https://thenextweb.com/c"),
         lead("Google DeepMind introduces Gemini 4 Carbon model", "https://blog.google/g"),
         lead("Gemini 4 Carbon from Google DeepMind is here", "https://theverge.com/g"),
@@ -36,7 +36,8 @@ def test_rank_clusters_outlets_without_chaining_and_caps_each_company():
     ]
     out = recap.rank(leads, now=NOW, n=5)
     titles = [s["title"] for s in out]
-    assert titles[0].startswith("Anthropic") and len(out[0]["outlets"]) == 3        # three outlets, one story
+    assert titles[0].startswith("Anthropic orders") and len(out[0]["outlets"]) == 3   # three outlets, one story
+    assert not any(s["title"].startswith("Reading") and len(s["outlets"]) > 1 for s in out)  # no chaining into it
     assert any("Gemini 4 Carbon" in t for t in titles)
     assert sum(1 for t in titles if "Anthropic" in t or "Claude" in t) <= recap.MAX_PER_COMPANY
     assert not any("football" in t or "Old AI" in t for t in titles)              # AI only, inside the 7-day window

@@ -62,13 +62,15 @@ def _norm_title(t: str) -> str:
 
 
 def same_story(a: dict, b: dict) -> bool:
-    """Two headlines about one event: half the salient words shared, or four of them (outlets word it differently)."""
+    """Two headlines about one event: at least half the salient words of the LONGER headline shared (measured against the
+    shorter one, "Anthropic ... Claude Code" would merge every Anthropic story of the week)."""
     ta, tb = _tokens(_norm_title(a["title"])), _tokens(_norm_title(b["title"]))
     if not ta or not tb:
         return False
     shared = ta & tb
-    ratio = len(shared) / min(len(ta), len(tb))
-    return (len(shared) >= 2 and ratio >= 0.5) or (len(shared) >= 4 and ratio >= 0.4)
+    if len(shared) < 2:
+        return False
+    return len(shared) / max(len(ta), len(tb)) >= 0.5 or shared == min(ta, tb, key=len)  # "Gemini 4 Carbon" inside a longer one
 
 
 AI_RX = re.compile(r"\b(ai|a\.i\.|model|models|llm|gpt|gemini|claude|openai|anthropic|deepmind|nvidia|agents?|chatbot|copilot|"
