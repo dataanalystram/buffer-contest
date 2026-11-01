@@ -1,4 +1,5 @@
-"""Free video render worker. Runs on GitHub Actions (`.github/workflows/render.yml` for Reels, `take.yml` for One take),
+"""Free video render worker. Runs on GitHub Actions (`.github/workflows/render.yml` for Reels and the weekly recap
+(job kind media_recap), `take.yml` for One take),
 dispatched by the app per job:
 
     python -m studio.render_worker --job 12 --app https://huhqueue-studio.onrender.com
@@ -72,6 +73,40 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def recap_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict, get) -> int:
+    """The weekly recap (studio/media/recap.py): fetch each story's media (netguard / single-extractor yt-dlp, vetted),
+    render the 4:5 carousel slides and the 9:16 Reel, and post each file once (the job token allows each file id once)."""
+    import shutil
+    from urllib.parse import quote
+
+    from .media import tools as media_tools
+    from .media.worker import brand_from_kit
+    spec, urls = j["spec"], j["urls"]
+    tmp = Path(tempfile.mkdtemp(prefix="hq_recap_"))
+    try:
+        logo = get(urls.get("logo"))
+        logo_path = None
+        if logo:
+            logo_path = str(tmp / "logo.png")
+            Path(logo_path).write_bytes(logo)
+        # rights were settled in the app before the job was queued (declined stories carry no media)
+        out = media_tools.media_recap(spec["plan"], True, brand_from_kit(spec.get("kit"), logo_path), run_dir=str(tmp / "run"), http=c)
+        if out.get("needs_confirmation"):
+            raise RuntimeError("rights not settled for this recap")
+        sent = 0
+        for cid, path, meta in media_tools.recap_files(out):
+            data = Path(path).read_bytes()
+            r = c.post(f"{base}/api/worker/jobs/{jid}/clips/{quote(cid, safe='')}", headers=h,
+                       json={"data": base64.b64encode(data).decode(), "meta": meta})
+            print(f"recap {cid}: {len(data)} bytes: {r.status_code}")
+            sent += r.status_code == 200
+        r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"meta": {"files": sent, "slides": len(out.get("slides") or [])}})
+        print("recap done:", r.status_code, r.text[:200])
+        return 0 if r.status_code == 200 else 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def claim(c: httpx.Client, base: str, jid: int) -> str:
     """Trade this run's GitHub OIDC token (audience: the app URL) for the job's token, once. Never printed."""
     from urllib.parse import quote
@@ -122,6 +157,8 @@ def main(argv=None) -> int:
                        json={"transcript": {"text": out.get("text", "")[:20000], "language": out.get("language", "")}})
             print("transcript posted:", len(out.get("text", "")), "chars:", r.status_code)
             return 0 if r.status_code == 200 else 1
+        if spec["kind"] == "media_recap":  # the weekly recap: carousel slides + one Reel, several files
+            return recap_job(c, base, h, args.job, j, get)
         logo = get(urls.get("logo"))
         if spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
             from .media.worker import render_job

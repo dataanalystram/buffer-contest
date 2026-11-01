@@ -159,7 +159,12 @@ function agentExtras(r, busy) {
   const th = (res.thread || []).slice(1);
   $("#agentThread").hidden = !th.length;
   $("#agentThread").innerHTML = th.map((m) => `<div class="msg ${m.role}" data-testid="thread-msg"><b>${m.role === "user" ? "You" : "Agent"}</b><span>${esc(m.text)}</span></div>`).join("") +
-    ((res.conflicts || []).length ? `<div class="st warn" data-testid="agent-question">${esc(res.conflicts[0].question)}</div>` : "");
+    ((res.conflicts || []).length ? `<div class="st warn" data-testid="agent-question">${esc(res.conflicts[0].question)}</div>` : "") +
+    // the weekly recap's one rights question, answered inline: yes, title cards, or type the story numbers below
+    (res.recap && res.recap.awaiting_rights && res.rights_question ? `<div class="st warn" data-testid="recap-rights">${esc(res.rights_question)}
+      <div class="row"><button type="button" class="btn primary sm" data-testid="recap-rights-yes" data-say="Yes, use them with credit">Use them with credit</button>
+      <button type="button" class="btn ghost sm" data-testid="recap-rights-no" data-say="No, title cards instead">Title cards instead</button></div></div>` : "");
+  $("#agentThread").querySelectorAll("[data-testid^=recap-rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
   // one edit box for every run, after it finishes (also older runs: the server routes it)
   $("#replyForm").hidden = busy;
   $("#replyChips").innerHTML = REPLY_CHIPS.map((q) => `<button type="button" class="chip mini" data-testid="reply-chip" data-say="${esc(q)}">${esc(q)}</button>`).join("");
@@ -205,8 +210,13 @@ function pkgMedia(p) {
   const main = first.type === "video"  // #t: the browser shows a real frame before play, never a black tile
     ? `<video src="${esc(first.url)}#t=0.1" controls playsinline preload="metadata" data-testid="pkg-video" style="${ar(first.ratio)}"></video>`
     : `<button type="button" class="pm-img" data-open="0" data-testid="pkg-media-open" aria-label="Open full size" style="${ar(first.ratio || "4:5")}"><img src="${esc(first.url)}" alt="${esc(netName(p.service))} ${esc(p.format)}, slide 1"></button>`;
-  const strip = m.length > 1 ? `<div class="pm-strip" data-testid="pkg-slides">${m.map((x, i) => `<button type="button" data-open="${i}" data-testid="pkg-slide" aria-label="Slide ${i + 1}"><img src="${esc(x.url)}" alt=""></button>`).join("")}</div>` : "";
-  return `<div class="pkg-media" data-testid="pkg-media">${main}${strip}
+  const thumb = (x) => (x.type === "video" ? `<video src="${esc(x.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${esc(x.url)}" alt="">`);
+  const strip = m.length > 1 ? `<div class="pm-strip" data-testid="pkg-slides">${m.map((x, i) => `<button type="button" data-open="${i}" data-testid="pkg-slide" aria-label="Slide ${i + 1}">${thumb(x)}</button>`).join("")}</div>` : "";
+  // the weekly recap: the same stories as one 9:16 Reel, ready as its own post next to the carousel
+  const reel = (p.reel || [])[0];
+  const reelBox = reel ? `<div class="pkg-reel" data-testid="pkg-reel"><small class="muted sm">Reel · 9:16${reel.duration ? " · " + fmtDur(reel.duration) : ""} · its own post</small>
+      <video src="${esc(reel.url)}#t=0.1" controls playsinline preload="metadata" data-testid="pkg-reel-video" style="aspect-ratio:9 / 16;max-height:360px"></video></div>` : "";
+  return `<div class="pkg-media" data-testid="pkg-media">${main}${strip}${reelBox}
     <div class="pm-meta"><span class="pm-fmt" data-testid="pkg-format">${esc(mediaLabel(p))}</span>
       <button type="button" class="link" data-open="0" data-testid="pkg-fullsize">Full size</button></div></div>`;
 }

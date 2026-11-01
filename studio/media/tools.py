@@ -244,6 +244,17 @@ def media_recap(plan: dict, rights_confirmed=None, brand: dict | None = None, ru
     return {k: v for k, v in out.items() if k != "boxes"}
 
 
+def recap_files(out: dict) -> list[tuple[str, str, dict]]:
+    """studio.media.tools.media_recap's result -> [(file id, path, meta)] in the order the worker posts them."""
+    files = [("cover", out["cover"], {"ratio": "4:5"})]
+    files += [(f"s{sl['i']}", sl["path"], {"duration": sl.get("duration"), "ratio": "4:5", "credit": sl.get("credit") or ""})
+              for sl in out.get("slides") or []]
+    files.append(("follow", out["follow"], {"ratio": "4:5"}))
+    if out.get("reel"):
+        files.append(("reel", out["reel"]["path"], {"duration": out["reel"].get("duration"), "ratio": "9:16"}))
+    return files
+
+
 def media_generate_images(prompt: str, headline: str = "", n: int = 3, ratio: str = "9:16", brand: dict | None = None,
                           run_dir: str | None = None, http=None) -> dict:
     from .imagegen import generate_images

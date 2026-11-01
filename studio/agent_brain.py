@@ -52,6 +52,8 @@ using ONLY the tools. Rules:
   rights_confirmed true. No video at all: generate_images, then render_reel with a style.
   Context.video_style_hint is the style their words suggest for video channels; use it unless the story or the person says otherwise.
 - Always call write_captions, then check (it builds the packages), then finish with one or two sentences.
+- Weekly recap ("7 days what happened in AI", "weekly recap", "AI round-up of the week"): recap_plan, then (if it returns a
+  question) finish and ask it; with the answer call render_recap(rights_confirmed), then write_captions and check.
 - save_buffer_drafts only when the person asked for drafts or to put it in Buffer.
 - Pass the person's tone words to write_captions (e.g. tone "short punchy explainer"); the tone shapes the hook and rhythm.
 - Captions in tool results and the state are the full saved text unless marked "…[preview]". Never tell the person a caption
@@ -95,6 +97,9 @@ class Brain:
         split = self._split_request(a, body, prompt, parsed, chans, tok, meta)
         if split is not None:
             return split
+        rec = self._recap_request(a, body, prompt, parsed, chans, tok)
+        if rec is not None:
+            return rec
         inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
                "brief": str(body.get("brief") or "")[:1000],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
@@ -143,6 +148,103 @@ class Brain:
                                       "name": str(body.get("media_name") or "")[:80], "captions": body.get("captions") or "",
                                       "channel_ids": [c["id"] for c in chans]})
 
+    # ---------------------------------------------------------------- weekly recap
+    def _recap_request(self, a: Actor, body: dict, prompt: str, parsed: dict, chans: list[dict], tok: str):
+        """"make a 7 days what happened in AI recap with videos" / "weekly recap": the week's stories with their videos
+        (media_recap_plan -> the one rights question, inline -> media_recap). None when the prompt isn't a recap
+        request (a link or an upload makes it a post about that source instead)."""
+        from .media import recap as recap_mod
+        want = recap_mod.wants_recap(prompt)
+        if not want["recap"] or body.get("brain") == "external" or parsed.get("source_url") or tok:
+            return None
+        rights = body.get("rights_confirmed")
+        inp = {"prompt": prompt, "intake": parsed, "source_url": "", "media_token": "", "brief": str(body.get("brief") or "")[:1000],
+               "recap": {"days": want["days"], "n": want["n"], "rights": rights if isinstance(rights, (bool, list)) else None},
+               "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
+        res = {"thread": [{"role": "user", "text": prompt, "at": _now()}], "plan": [],
+               "brain": {"mode": "plan", "provider": "recap", "model": "built-in", "source": "weekly recap"}}
+        rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
+                           (a.uid, "agent", json.dumps(inp), "running", json.dumps([]), json.dumps(res), _now(), _now()))
+        self.store.audit(a.uid, a.label, "agent_run", "read", {"run": rid, "kind": "agent", "source": "recap"})
+        self._spawn(self._recap_go, a, rid, inp["recap"]["rights"], True)
+        return self.h.run(a, rid)
+
+    @staticmethod
+    def rights_answer(text: str):
+        """The person's answer to the recap's rights question: True (use them), False (title cards) or the story numbers
+        they OK'd ("only 1 and 3"). None when the reply isn't an answer."""
+        t = (text or "").strip().lower()
+        nums = [int(x) for x in re.findall(r"\b([1-9])\b", t)]
+        if re.search(r"\b(?:no|nope|don'?t|do not|title cards?|skip (?:them|the media)|none)\b", t) and not nums:
+            return False
+        if nums and re.search(r"\b(?:only|just|use|ok|okay|yes|fine|keep|stories?|#)\b|#\d|^[\d ,&and#]+$", t):
+            return sorted(set(nums))
+        if re.search(r"\b(?:yes|yep|yeah|sure|ok|okay|go ahead|use them|fine|i do|i have|confirmed?|all)\b", t):
+            return True
+        return None
+
+    def _recap_go(self, a: Actor, rid: int, rights, first: bool = False) -> None:
+        with _rlock:
+            _running.add(rid)
+        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
+        tools = Tools(self.h, a, rid)
+        try:
+            run = self.h.run(a, rid)
+            if first:
+                rc = run["input"].get("recap") or {}
+                self._plan(a, rid, [f"Gather the last {rc.get('days') or 7} days of AI news and rank the stories",
+                                    "Find each story's official video or image, with its credit",
+                                    "Ask once about media that isn't the company's own",
+                                    "Render a 4:5 carousel (cover, one video slide per story, Follow card last) and one 9:16 Reel",
+                                    "Write one caption per channel with the credits", "Check brand rules"], run["result"].get("brain") or {})
+                out = self.call(a, rid, tools, "recap_plan", {"prompt": run["input"]["prompt"], "n": rc.get("n"), "days": rc.get("days")})
+                if out["needs_confirmation"] and rights is None:
+                    self._say(a, rid, out["question"] + " Reply “yes”, “no” (title cards instead) or the story numbers to use, e.g. “only 1 and 3”.")
+                    run = self.h.run(a, rid)
+                    self.h._save(rid, run["steps"], run["result"], "ready")
+                    return
+            self.call(a, rid, tools, "render_recap", {"rights_confirmed": rights})
+            self.call(a, rid, tools, "write_captions", {})
+            self._recap_credits(a, rid)
+            self.call(a, rid, tools, "check", {})
+            run = self.h.run(a, rid)
+            res = run["result"]
+            n = len(res.get("packages") or [])
+            self._say(a, rid, f"Your weekly recap is ready on {n} channel{'s' if n != 1 else ''}: " +
+                      ", ".join(f"{p['service']} ({p['format']}{' + Reel' if p.get('reel') else ''})" for p in res.get("packages") or []) +
+                      ". Reply here to change anything.")
+            run = self.h.run(a, rid)
+            self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
+        except ActionError as e:
+            self._fail(a, rid, str(e))
+        except Exception as e:  # never leave a run spinning
+            traceback.print_exc()
+            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+        finally:
+            activity.end(tok)
+            with _rlock:
+                _running.discard(rid)
+
+    def _recap_credits(self, a: Actor, rid: int) -> None:
+        """Every credited story's line goes in the caption too (rights rule), kept inside each network's limit."""
+        from . import drafter
+        run = self.h.run(a, rid)
+        res = run["result"]
+        credits = (res.get("recap") or {}).get("credits") or []
+        if not credits:
+            return
+        block = "Credits: " + " · ".join(credits)
+        for c in run["input"]["channels"]:
+            cap = (res.get("captions") or {}).get(c["id"])
+            if not cap or block in cap["text"]:
+                continue
+            text = cap["text"].rstrip() + "\n\n" + block
+            if drafter.count(c["service"], text) <= drafter.limit_for(c["service"]):
+                cap["text"] = text
+            else:
+                cap["credits_cut"] = True  # too long for this network: the credits stay on screen in every slide
+        self.h._save(rid, run["steps"], res)
+
     def tool(self, a: Actor, rid: int, name: str, args: dict) -> dict:
         """One tool on one run, for REST and MCP (a person's own assistant as the brain)."""
         run = self.h.run(a, rid)
@@ -168,6 +270,16 @@ class Brain:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
         res = run["result"]
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
+        if (res.get("recap") or {}).get("awaiting_rights") or re.search(r"\bredo the recap\b", text, re.I) and res.get("recap"):
+            ans = self.rights_answer(text) if res["recap"].get("awaiting_rights") else res["recap"].get("rights")
+            if res["recap"].get("awaiting_rights") and ans is None:
+                res["thread"].append({"role": "agent", "at": _now(),
+                                      "text": "Say “yes” to use them with credit, “no” for title cards, or the story numbers to use."})
+                self.h._save(rid, run["steps"], res, "ready")
+                return self.h.run(a, rid)
+            self.h._save(rid, run["steps"], res, "running")
+            self._spawn(self._recap_go, a, rid, ans)
+            return self.h.run(a, rid)
         self.h._save(rid, run["steps"], res, "running")
         self._spawn(self._go, a, rid, text)
         return self.h.run(a, rid)
