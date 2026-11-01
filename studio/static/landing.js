@@ -1,4 +1,4 @@
-// HuhQueue landing (Hero C). Vanilla, no dependencies, no network calls except this server's /api/session and /api/stats.
+// HuhQueue landing (Hero C). Vanilla, no dependencies, no network calls except this server's /api/session.
 // Motion is CSS (scroll timelines); this file only measures, fills the product pieces and wires four small controls.
 "use strict";
 (() => {
@@ -36,7 +36,7 @@ document.querySelectorAll("[data-week]").forEach((wk) => {
 
 // ---- the thread: from the paste field's right edge to the page edge and down off the hero. Pure SVG.
 function thread() {
-  const svg = $("#thread"), hero = svg.parentElement, f = $("#paste"), path = $("#threadP");
+  const svg = $("#thread"); if (!svg) return; const hero = svg.parentElement, f = $("#paste"), path = $("#threadP");
   const H = hero.getBoundingClientRect(), r = f.getBoundingClientRect();
   const x0 = r.right - H.left + 2, y0 = r.top - H.top + r.height / 2, xe = document.documentElement.clientWidth - H.left - 40, ye = H.height + 40;
   svg.setAttribute("width", Math.max(1, xe + 4)); svg.setAttribute("height", ye + 4);
@@ -107,7 +107,7 @@ seg($("#plseg"), (v) => vt(() => {
 $("#copyB").onclick = async () => { try { await navigator.clipboard.writeText($("#mcp").textContent); } catch (_) { /* clipboard blocked: the text stays selectable */ }
   const b = $("#copyB"); b.textContent = "Copied"; $("#copyS").textContent = "Command copied"; setTimeout(() => { b.textContent = "Copy"; }, 1600); };
 
-// ---- server state: an error from Buffer's sign-in, an unconfigured server, live counters (real rows only)
+// ---- server state: an error from Buffer's sign-in, an unconfigured server
 const p = new URLSearchParams(location.search);
 if (p.get("error")) { toast("Buffer: " + p.get("error")); history.replaceState({}, "", "/"); }
 fetch("/api/session", { credentials: "same-origin" }).then((r) => r.json()).then((s) => {
@@ -115,10 +115,11 @@ fetch("/api/session", { credentials: "same-origin" }).then((r) => r.json()).then
   if (s.connected) { location.replace("/"); return; }
   if (!s.configured) { $("#configNote").hidden = false; $("#connectBtn").classList.add("off"); $("#connectBtn").setAttribute("aria-disabled", "true"); }
 }).catch(() => {});
-fetch("/api/stats").then((r) => r.json()).then((st) => {
-  const n = st.buffer_accounts, m = st.posts_sent_to_buffer; if (!n) return;
-  const el = $("#landStats");
-  el.innerHTML = `<span><b>${n.toLocaleString()}</b> Buffer account${n === 1 ? "" : "s"} connected</span><span><b>${m.toLocaleString()}</b> post${m === 1 ? "" : "s"} sent to Buffer</span><span><b>${(st.sample_workspaces_open || 0).toLocaleString()}</b> trying the sample today</span>`;
-  el.hidden = false;
-}).catch(() => {});
+})();
+
+// ---- the hero Reel and the render wall: pause when off screen, never move under reduced motion
+(() => {
+  const v = document.querySelector(".stage video"); if (!v) return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { v.removeAttribute("autoplay"); v.pause(); v.controls = true; return; }
+  if ("IntersectionObserver" in window) new IntersectionObserver((es) => es.forEach((e) => (e.isIntersecting ? v.play().catch(() => {}) : v.pause()))).observe(v);
 })();

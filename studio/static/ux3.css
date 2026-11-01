@@ -156,7 +156,8 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
 
 /* ---------------------------------------------------------------- Settings */
 .set-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-.set-grid .panel{margin:0}
+.set-grid{align-items:start}.set-grid .panel{margin:0}
+#tab-agent[data-sub=quick] #agentIntro{display:none}
 .set-ch{list-style:none;margin:0 0 12px;padding:0}
 .set-ch li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
 .set-ch li span{display:flex;flex-direction:column}.set-ch small{color:var(--muted);font-size:12px}

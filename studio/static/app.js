@@ -183,7 +183,9 @@ function defaultChannels() {
   return pick.length ? live.filter((c) => pick.includes(c.id)) : live;
 }
 // "Write as threads" only means something for X, Bluesky, Threads and Mastodon: show it only when one is picked.
-function threadOpt() { const o = $("#threadOpt"); if (!o) return; const on = [...S.selected].some((id) => THREADS.has(chOf(id).service)); o.hidden = !on; if (!on) $("#threadChk").checked = false; }
+function threadOpt() { const o = $("#threadOpt"); if (!o) return; const nets = [...new Set([...S.selected].map((id) => chOf(id).service).filter((s) => THREADS.has(s)))].map(netName);
+  o.hidden = !nets.length; if (!nets.length) $("#threadChk").checked = false;
+  const t = o.lastChild; if (t && t.nodeType === 3) t.textContent = ` Write ${nets.length > 1 ? nets.slice(0, -1).join(", ") + " and " + nets.at(-1) : nets[0] || ""} posts as threads`; }
 async function loadChannels(refresh = false) {
   const box = $("#chips");
   try { S.channels = await api("/api/channels" + (refresh ? "?refresh=1" : "")); }

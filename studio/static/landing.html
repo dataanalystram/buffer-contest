@@ -62,7 +62,7 @@
     <h1 id="h1"><span>Paste one link.</span><span>Approve one week.</span></h1>
     <div class="row">
       <div>
-        <p class="lede">HuhQueue reads the story, makes the posts in your brand, checks them for every channel and plans them into your Buffer week. Nothing posts until you approve.</p>
+        <p class="lede">Give it a story. It checks the facts, renders the carousel and the Reel in your brand, writes each channel's caption, and fills next week in Buffer. You approve; then it posts.</p>
         <form class="paste" action="/demo" method="get" id="paste" aria-label="Make posts from a link" data-testid="hero-paste">
           <svg class="ic" aria-hidden="true"><use href="#i-link"/></svg>
           <label class="sr" for="u">Link to a story</label>
@@ -75,16 +75,27 @@
           <p>Sign in with Buffer’s own OAuth. Your real channels, real Buffer API calls, and nothing posts until you approve.</p>
         </div>
         <p class="aux" id="configNote" data-testid="config-note" hidden>This server has no Buffer app client configured yet, so Connect Buffer is off. The sample works.</p>
-        <p class="stats" id="landStats" data-testid="land-stats" hidden></p>
+        <ul class="facts" data-testid="land-facts"><li>Open source, MIT</li><li>Buffer's own sign-in</li><li>Nothing posts without your yes</li></ul>
       </div>
+      <figure class="stage" data-testid="hero-stage" aria-label="Real HuhQueue output for the HuhByte brand: a weekly recap carousel and the Reel made from it">
+        <div class="fan" aria-hidden="true">
+          <img src="/static/land/made/huhbyte-recap-03.webp" width="640" height="800" alt="" class="f3" decoding="async">
+          <img src="/static/land/made/huhbyte-recap-02.webp" width="640" height="800" alt="" class="f2" decoding="async">
+          <img src="/static/land/made/huhbyte-recap-01.webp" width="640" height="800" alt="" class="f1" fetchpriority="high">
+        </div>
+        <div class="phone"><video src="/static/examples/huhbyte/reel-weekly_recap.mp4" poster="/static/land/made/huhbyte-recap-01.webp" muted autoplay loop playsinline preload="metadata" aria-label="The Reel HuhQueue rendered from the same week, playing silently"></video></div>
+        <div class="chipa" aria-hidden="true"><span class="ok">✓</span><span><b>3 posts</b><small>waiting for your approval</small></span></div>
+        <figcaption>Rendered by HuhQueue for <b>HuhByte</b>: carousel and Reel from one week of AI news.</figcaption>
+      </figure>
     </div>
-    <svg class="thread" id="thread" aria-hidden="true"><path id="threadP" pathLength="1" d=""/></svg>
-    <div class="beads" id="beads" role="list" aria-label="What the link becomes">
-      <div class="bead" role="listitem"><span class="ok"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span><span>Receipt<small>4 facts, linked</small></span></div>
-      <div class="bead" role="listitem"><span class="t kit" aria-hidden="true"></span><span>Carousel<small>5 slides</small></span></div>
-      <div class="bead" role="listitem"><span class="t r kit alt" aria-hidden="true"></span><span>Reel<small>0:38, captioned</small></span></div>
-      <div class="bead end" role="listitem"><span class="ok appr"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span><span>3 posts<small>wait for approval</small></span></div>
-    </div>
+  </section>
+
+  <section class="made-wall" id="made" aria-labelledby="mdH">
+    <div class="wrap mw-head"><h2 class="h2" id="mdH">Real renders, not mockups.</h2>
+      <p class="sub">Every image here came out of HuhQueue's own templates: covers sized per network, recap carousels, launch and tutorial slides. Two brand kits, one engine.</p></div>
+    <div class="mw-row" data-testid="made-row-huhbyte"><div class="mw-track"><div class="mw-set" role="img" aria-label="HuhByte carousels: weekly AI recap, tutorial, launch and quote slides"><img src="/static/land/made/huhbyte-recap-01.webp" width="640" height="800" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-tutorial-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-launch-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-recap-04.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-quote-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-midweek_recap-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-recap-06.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-tutorial-03.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-launch-02.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-recap-08.webp" width="400" height="500" loading="lazy" decoding="async" alt=""></div><div class="mw-set" aria-hidden="true"><img src="/static/land/made/huhbyte-recap-01.webp" width="640" height="800" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-tutorial-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-launch-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-recap-04.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-quote-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-midweek_recap-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-recap-06.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-tutorial-03.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-launch-02.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/huhbyte-recap-08.webp" width="400" height="500" loading="lazy" decoding="async" alt=""></div></div></div>
+    <div class="mw-row rev" data-testid="made-row-buffer"><div class="mw-track"><div class="mw-set" role="img" aria-label="Buffer concept carousels in a second brand kit"><img src="/static/land/made/buffer-recap-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-launch-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-midweek_recap-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-tutorial-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-quote-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-recap-03.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-launch-03.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-midweek_recap-03.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-tutorial-02.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-recap-05.webp" width="400" height="500" loading="lazy" decoding="async" alt=""></div><div class="mw-set" aria-hidden="true"><img src="/static/land/made/buffer-recap-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-launch-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-midweek_recap-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-tutorial-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-quote-01.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-recap-03.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-launch-03.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-midweek_recap-03.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-tutorial-02.webp" width="400" height="500" loading="lazy" decoding="async" alt=""><img src="/static/land/made/buffer-recap-05.webp" width="400" height="500" loading="lazy" decoding="async" alt=""></div></div></div>
+    <p class="wrap mw-note">Top row: HuhByte, the account this was built for. Bottom row: a <b>Buffer concept</b> kit made to show a second brand; not an official Buffer asset.</p>
   </section>
 
   <section class="chapter" id="chapter" aria-labelledby="chH">
@@ -221,19 +232,6 @@
         <p class="sr" role="status" id="copyS"></p>
       </div>
     </div>
-  </section>
-
-  <section class="beat wrap" id="radar" aria-labelledby="rdH">
-    <h2 class="h2" id="rdH">Never miss the story.</h2>
-    <p class="sub">Follow any feed. The newest stories wait with one click to write the posts.</p>
-    <ul class="rd" aria-label="Stories from followed feeds, 29 and 30 October 2026">
-      <li><span class="src">The Verge AI<time datetime="2026-10-30">30 Oct</time></span><a class="t" href="https://www.theverge.com/tech/1023763/openai-google-microsoft-ai-scraping-standard-opt-out">The biggest names in AI are backing a new way to opt out of scraping</a><span class="who"><b>Check first</b>a claim to verify</span><a class="btn2 sm" href="/demo">Write posts</a></li>
-      <li><span class="src">Hugging Face blog<time datetime="2026-10-29">29 Oct</time></span><a class="t" href="https://huggingface.co/blog/mistral-large4">Welcome Le Chonk: Mistral Large 4 on Hugging Face</a><span class="who"><b>Agent can write it</b>first-party launch</span><a class="btn2 sm" href="/demo">Write posts</a></li>
-      <li><span class="src">The Verge AI<time datetime="2026-10-30">30 Oct</time></span><a class="t" href="https://www.theverge.com/tech/1023974/apple-intelligence-china-ios-27-3">Apple Intelligence is finally coming to China with iOS 27.3</a><span class="who"><b>Agent can write it</b>news</span><a class="btn2 sm" href="/demo">Write posts</a></li>
-      <li><span class="src">Simon Willison<time datetime="2026-10-29">29 Oct</time></span><a class="t" href="https://simonwillison.net/2026/Oct/29/api-credits/">API credits benefit for eligible ChatGPT subscriptions</a><span class="who"><b>Agent can write it</b>explainer</span><a class="btn2 sm" href="/demo">Write posts</a></li>
-      <li><span class="src">The Verge AI<time datetime="2026-10-30">30 Oct</time></span><a class="t" href="https://www.theverge.com/ai-artificial-intelligence/1023188/pope-leo-disarm-ai">Pope Leo calls for the disarmament of AI: ‘Machines are tools, not persons’</a><span class="who"><b>A person writes this</b>sensitive</span><a class="btn2 sm" href="/demo">Write posts</a></li>
-    </ul>
-    <p class="note">Sorting by brand fit, as shown in the third column, is planned. Following feeds and Write posts work today.</p>
   </section>
 
   <section class="beat wrap bt-line" id="demo" aria-labelledby="dmH">
