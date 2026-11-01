@@ -23,6 +23,10 @@ WORDS = SAMPLE["analysis"]["words"]          # the NASA talk the owner split bef
     ("give me the top 3 moments from this talk", 3, True),
     ("make 4 reels out of this podcast", 4, True),
     ("opus clip this keynote", None, True),
+    ("make 3 opus clips from this talk", 3, True),
+    ("post this on youtube https://x.com/a/status/1 as an opus clip", None, False),  # a style for one Reel, not a split
+    ("make it an opus clip", None, False),
+    ("do it in opus style", None, False),
     ("post about this launch in all my channels", None, False),
     ("make a reel about this", None, False),
 ])

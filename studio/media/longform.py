@@ -47,7 +47,9 @@ SPLIT_RX = [
 INTENT_RX = re.compile(
     r"\b(?:best|top|key|viral|strongest|most interesting)\s+(?:\w+\s+)?(?:moments?|parts?|bits?|highlights?|clips?|quotes?)\b|"
     r"\bsplit\b.{0,40}\b(?:into|shorts?|clips?|reels?)\b|\bclip\s+(?:this|it|the)\b|\bhighlights?\b.{0,30}\b(?:of|from)\b|"
-    r"\bopus[\s-]?(?:clip|style)\b|\binto\s+(?:\w+\s+)?shorts\b|\brepurpose\b.{0,40}\b(?:shorts?|clips?|reels?)\b", re.I)
+    # "opus clip this keynote" / "opus clips from this talk" split; "as an opus clip" / "opus style" name an edit style
+    r"\bopus[\s-]?clip\s+(?:this|it|that|the|my)\b|\bopus[\s-]?(?:style\s+)?clips\b|"
+    r"\binto\s+(?:\w+\s+)?shorts\b|\brepurpose\b.{0,40}\b(?:shorts?|clips?|reels?)\b", re.I)
 LEN_RX = re.compile(r"\b(\d{2,3})\s*(?:-|–|to)\s*(\d{2,3})\s*(?:s|sec|secs|seconds)\b", re.I)
 UNDER_RX = re.compile(r"\b(?:under|max(?:imum)?|at most|no longer than|up to)\s+(\d{2,3})\s*(?:s|sec|secs|seconds)\b", re.I)
 EACH_RX = re.compile(r"\b(\d{2,3})\s*(?:s|sec|secs|seconds)\s+(?:each|clips?|shorts?|long)\b", re.I)
