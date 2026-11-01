@@ -415,6 +415,12 @@ def enrich(c: dict, http=None, deep: bool = True) -> dict:
             c["note"] = m["error"]
             if "No video" in m["error"]:  # e.g. a text-only X post: oEmbed works, there is just no video
                 c["kind"], c["downloadable"], c["confidence"] = "post", False, 0.2
+            elif "not a bot" in m["error"] or "Sign in" in m["error"]:
+                # YouTube's bot check on datacenter IPs (seen live from this sandbox, 1 Nov 2026): the video is real but
+                # this server can't fetch it. Keep it as the reference/link; let the company's own file win the render.
+                c["downloadable"] = False
+                c["blocked"] = "platform_bot_check"
+                c["confidence"] = round(c["confidence"] - 0.1, 3)
     return c
 
 
@@ -433,12 +439,20 @@ def from_yc_launch(url: str, http=None) -> tuple[list[dict], dict]:
     return out, ctx
 
 
-def from_hn(url: str, http=None) -> tuple[str | None, dict]:
+def from_hn(url: str, http=None) -> tuple[str | None, dict, list[dict]]:
+    """HN item via the Algolia API: its link, and video links in a text post (Launch HN posts often have no link)."""
     iid = (parse_qs(urlparse(url).query).get("id") or [""])[0]
     if not iid.isdigit():
-        return None, {}
+        return None, {}, []
     j = _json(f"https://hn.algolia.com/api/v1/items/{iid}", http, limit=2_000_000)
-    return j.get("url"), {"title": j.get("title") or ""}
+    body = html.unescape(j.get("text") or "")
+    vids = [_cand(u, "yc_launch_body", source_page=url) for u in urls_in(re.sub(r"<[^>]+>", " ", body))
+            if is_video_post(u) or urlparse(u).path.lower().endswith(VIDEO_EXT)]
+    m = re.search(r"Launch HN:\s*([^(–—-]+)", j.get("title") or "")
+    ctx = {"title": j.get("title") or "", "company": m.group(1).strip() if m else ""}
+    site = j.get("url") or next((u for u in urls_in(re.sub(r"<[^>]+>", " ", body)) if not platform_of(u)
+                                 and host_of(u) not in ("news.ycombinator.com", "github.com")), None)
+    return site, ctx, vids
 
 
 def from_github(url: str, http=None) -> tuple[list[dict], dict]:
@@ -544,8 +558,9 @@ def find_launch_video(query: str, *, http: httpx.Client | None = None, max_resul
                 if c2.get("site"):
                     visit(c2["site"], depth + 1)
             elif h == "news.ycombinator.com" and path == "/item":
-                nxt, c2 = from_hn(url, http)
-                ctx.update(c2)
+                nxt, c2, got = from_hn(url, http)
+                cands.extend(got)
+                ctx.update({k: v for k, v in c2.items() if v})
                 if nxt:
                     visit(nxt, depth + 1)
             elif h == "github.com":
