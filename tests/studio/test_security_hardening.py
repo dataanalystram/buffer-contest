@@ -267,6 +267,7 @@ PUBLIC = {  # path -> why it is open to anyone
     "/.well-known/oauth-authorization-server/mcp": "MCP OAuth discovery", "/oauth/register": "dynamic client registration (rate-limited)",
     "/oauth/authorize": "consent; needs a signed-in session to grant", "/oauth/token": "code/refresh exchange (PKCE)",
     "/mcp:GET": "405 only",
+    "/integrations/producthunt/callback": "Product Hunt Redirect URI: a friendly page; a code is exchanged only with our own single-use state",
 }
 
 

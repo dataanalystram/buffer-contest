@@ -263,15 +263,17 @@ class X(Adapter):
 
 
 class ProductHunt(Adapter):
-    key, label, about = "ph", "Product Hunt (free token)", "Today's top launches, through the Product Hunt API with your own free developer token."
-    needs_key = True
+    key, label, about = "ph", "Product Hunt", ("Today's top launches. HuhQueue reads Product Hunt once for everyone (its own API app, or the "
+                                               "public feed) and caches it; your own developer token is an optional override.")
+    needs_key = False
     QUERY = ("query { posts(first: 20, order: VOTES) { edges { node { id name tagline url website votesCount createdAt "
              "topics(first: 3) { edges { node { name } } } } } } }")
 
     def live(self, cfg, secret, http):
         key = (secret or {}).get("ph_token", "")
-        if not key:
-            raise SourceError("Add your free Product Hunt developer token to read Product Hunt.")
+        if not key:  # the shared, app-level read (studio/appkeys.py): app token or public feed, cached globally
+            from . import appkeys
+            return appkeys.ph_shared(http, self.QUERY)[0]
         r = _post("https://api.producthunt.com/v2/api/graphql", http, {"query": self.QUERY}, {"Authorization": f"Bearer {key}"})
         if r.status_code in (401, 403):
             raise SourceError("Product Hunt refused the token; check it in your Product Hunt API dashboard.")
@@ -617,7 +619,7 @@ class SourcesAgent:
         rows = self.store.q("SELECT data, secret FROM source_settings WHERE user_id=?", (a.uid,))
         cfg = json.loads(rows[0]["data"]) if rows else {}
         sec = self.store.unseal(rows[0]["secret"]) if rows and rows[0]["secret"] else {}
-        on = {k: cfg.get("on", {}).get(k, k not in KEYED or demo_guard.is_demo(a.uid)) for k in ADAPTERS}
+        on = {k: cfg.get("on", {}).get(k, not ADAPTERS[k].needs_key or demo_guard.is_demo(a.uid)) for k in ADAPTERS}
         return {"on": on, "rss": cfg.get("rss") or DEFAULT_RSS, "x_query": cfg.get("x_query", ""), "hn_query": cfg.get("hn_query", ""),
                 "x_key": ("…" + sec["x_bearer"][-4:]) if sec.get("x_bearer") else "",
                 "ph_key": ("…" + sec["ph_token"][-4:]) if sec.get("ph_token") else "",
@@ -631,7 +633,7 @@ class SourcesAgent:
         cfg = json.loads(rows[0]["data"]) if rows else {}
         sec = (self.store.unseal(rows[0]["secret"]) if rows and rows[0]["secret"] else {}) or {}
         if isinstance(body.get("on"), dict):
-            cfg["on"] = {k: bool(body["on"].get(k, cfg.get("on", {}).get(k, k not in KEYED))) for k in ADAPTERS}
+            cfg["on"] = {k: bool(body["on"].get(k, cfg.get("on", {}).get(k, not ADAPTERS[k].needs_key))) for k in ADAPTERS}
         if isinstance(body.get("rss"), list):
             feeds = []
             for u in body["rss"][:MAX_RSS]:
@@ -659,7 +661,8 @@ class SourcesAgent:
                 cfg.setdefault("on", {})[src] = True
             else:
                 sec.pop(field, None)
-                cfg.setdefault("on", {})[src] = False
+                if ADAPTERS[src].needs_key:  # Product Hunt keeps working on the shared app-level read
+                    cfg.setdefault("on", {})[src] = False
         self.store.x("INSERT INTO source_settings(user_id,data,secret,updated) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
                      "data=excluded.data, secret=excluded.secret, updated=excluded.updated",
                      (a.uid, json.dumps(cfg), self.store.seal(sec) if sec else "", time.time()))

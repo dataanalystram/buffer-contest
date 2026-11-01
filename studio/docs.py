@@ -114,6 +114,10 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <tr><td>Product Hunt</td><td>Today's top launches, API v2</td><td>Your free developer token</td></tr>
 <tr><td>X</td><td>Recent search with your query, API v2</td><td>Your own bearer token. A logged-in X is never scraped</td></tr></tbody></table></div>
 <p>Every live fetch goes through the safe-fetch guard: no automatic redirects, every hop's host re-checked, size caps. Keys are sealed at rest, shown only as their last four characters, and only a person (never an agent token) can add or remove them. Real accounts get 30 live scans a day.</p>
+<h2 id="keys">Adding your keys (Settings, Integrations)</h2>
+<p>Product Hunt, X and the YouTube Data API each have a card in <b>Settings</b>, <b>Integrations</b>: what the key unlocks, how to get one, a password field, <b>Test</b> (a live check that reports a status only), <b>Save</b> and <b>Remove</b>, and a masked status such as "Connected · …abcd · tested 2 min ago". Your AI model key stays in <b>Settings</b>, <b>AI engine</b>.</p>
+<p>You don't have to add anything: HuhQueue reads Product Hunt for everyone with its own app (or Product Hunt's public feed), and reads a linked X post without any key through public embeds (X's oEmbed, the syndication endpoint used by Vercel's react-tweet, and FxTwitter). Your own keys are optional overrides. Those X endpoints are unofficial and can break; HuhQueue only reads the one public post you link, never bulk-scrapes X. Product Hunt's API is non-commercial by default.</p>
+<p>Product Hunt: open <a href="https://api.producthunt.com/v2/oauth/applications" rel="noopener">api.producthunt.com/v2/oauth/applications</a>, choose <b>Add an application</b>, set the Redirect URI to <code>https://huhqueue-studio.onrender.com/integrations/producthunt/callback</code>, create it, then choose <b>Create Token</b> and paste the Developer Token into the Product Hunt card.</p>
 <h2 id="judging">Judging and deciding</h2>
 <p>The model makes judgments; code makes decisions. Each story is judged once (is it about AI, topic, kind, relevance, unconfirmed, sensitive, an allegation), by Jev first, then SubQ, then deterministic rules past the daily cap, without keys or in the sample. Each card says which one judged it. Code then decides:</p>
 <ul><li><b>Lane</b>: postable, idea bank (evergreen), low, or hidden (off-topic HN or X).</li>
@@ -314,6 +318,7 @@ _GROUPS = [  # (path prefix, section title)
     ("/api/radar", "News"), ("/api/sources", "News"), ("/api/news", "News"),
     ("/api/brand", "Brand"), ("/api/templates", "Brand"), ("/api/ledger", "Brand"),
     ("/api/ai", "AI engine"),
+    ("/api/integrations", "Integrations (your keys)"),
     ("/api/agent-tokens", "AI apps, tokens and safety"), ("/api/safety", "AI apps, tokens and safety"),
     ("/api/plan", "Limits"), ("/api/limits", "Limits"),
     ("/api/activity", "Activity"), ("/api/audit", "Activity"),
@@ -321,6 +326,10 @@ _GROUPS = [  # (path prefix, section title)
 ]
 # Plain-English line per endpoint; anything missing falls back to the route's OpenAPI summary (a test checks none is missing)
 _DESC = {
+    "GET /api/integrations": "Your key-based integrations (Product Hunt, X, YouTube): status and a masked hint, never the key",
+    "POST /api/integrations/{key}": "Save a key for one integration (person only; encrypted at rest)",
+    "POST /api/integrations/{key}/test": "Live-check a pasted or saved key; returns a status only (person only, rate-capped)",
+    "DELETE /api/integrations/{key}": "Remove one integration's key",
     "POST /api/agent/runs/{rid}/packages/{channel_id}/media": "Replace or regenerate one channel's media in an agent run",
     "GET /api/library": "List your Library: uploads and generated media, with search and type filters",
     "POST /api/library/upload": "Upload a video or image to your Library (100 MB per file, 200 MB per account)",

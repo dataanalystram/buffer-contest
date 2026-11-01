@@ -226,3 +226,16 @@ studio/hb_templates.py  (ported, same owner)
 studio/fonts/Oswald-SemiBold.ttf, DMSerifDisplay-Regular.ttf, VT323-Regular.ttf, IBMPlexMono-SemiBold.ttf  (copied, unmodified)
   Source:   Google Fonts (github.com/google/fonts, ofl/oswald, ofl/dmserifdisplay, ofl/vt323, ofl/ibmplexmono)
   Licence:  SIL Open Font License 1.1 (full texts in studio/fonts/OFL-*.txt)
+
+--------------------------------------------------------------------------------------------------------------
+studio/xreader.py  The free X reader (one public post a person links; no X API key)
+  - react-tweet (Vercel)  https://github.com/vercel/react-tweet  Licence: MIT, Copyright (c) 2023 Vercel, Inc.
+      The syndication endpoint (cdn.syndication.twimg.com/tweet-result) and its token formula
+      ((Number(id) / 1e15) * Math.PI).toString(36) with zeros and the dot removed, re-implemented in Python
+      (syndication_token, with a port of V8's Number.prototype.toString(radix) so the token matches exactly).
+  - FixTweet / FxTwitter  https://github.com/FixTweet/FxTwitter  Licence: MIT, Copyright (c) FixTweet contributors.
+      Its public API (api.fxtwitter.com/status/<id>) is called as a fallback for the full text and media URLs; no code
+      copied.
+  These are unofficial public endpoints that can change or break; X's Terms restrict scraping. HuhQueue reads only the
+  single public post a person links, on demand, and never crawls, searches or bulk-collects X. Recorded responses for
+  one public post are kept as test fixtures (tests/studio/fixtures/x/).

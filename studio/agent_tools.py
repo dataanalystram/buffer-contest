@@ -343,7 +343,9 @@ class Tools:
         if not q:
             raise ActionError("Read a source first (read_url or search_news), or give find_media a link.")
         try:
-            got = media_tools.media_find(q, http=self.h.http)
+            from .integrations import user_secret  # the person's own YouTube Data API key (Settings -> Integrations)
+            yt = "" if self.demo else user_secret(self.store, self.a.uid, "yt_key")
+            got = media_tools.media_find(q, http=self.h.http, **({"youtube_api_key": yt} if yt else {}))
         except Exception as e:  # noqa: BLE001
             return {"found": [], "note": f"Media finder failed ({e.__class__.__name__})."}
         res["found_media"] = got

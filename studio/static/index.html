@@ -20,6 +20,7 @@
 <link rel="stylesheet" href="/static/layout.css">
 <link rel="stylesheet" href="/static/library.css">
 <link rel="stylesheet" href="/static/themes.css">
+<link rel="stylesheet" href="/static/integrations.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -458,6 +459,10 @@
             <div class="field"><label class="label" for="aiKey">API key</label><input id="aiKey" data-testid="ai-key" type="password" autocomplete="off"></div>
             <div class="row tight"><button class="btn" data-testid="ai-save" type="submit">Test and save</button><button class="btn2" type="button" id="aiRemove" data-testid="ai-remove" hidden>Remove my key</button></div></form>
         </div>
+        <h2 class="sec" id="integrations" data-testid="integrations-head">Integrations</h2>
+        <p class="muted sm integ-intro">HuhQueue brings its own keys for research, so there's nothing you have to add. Your own key is an optional override: encrypted on the server, used only for your account and never shown again. Your AI model key lives in <button class="link" type="button" id="integAiLink" data-testid="integrations-ai-link">AI engine</button> above.</p>
+        <div class="integ-grid" id="integCards" data-testid="integrations" aria-live="polite"></div>
+        <section class="panel integ-redirects" id="integRedirects" data-testid="integ-redirects"></section>
         <h2 class="sec">Account</h2>
         <div class="panel set-acct">
           <p class="muted sm" id="setWho" data-testid="settings-who"></p>
@@ -501,6 +506,7 @@
 <script src="/static/shell.js"></script>
 <script src="/static/activity.js"></script>
 <script src="/static/brandstudio.js"></script>
+<script src="/static/integrations.js"></script>
 <script src="/static/onboarding.js"></script>
 </body>
 </html>
