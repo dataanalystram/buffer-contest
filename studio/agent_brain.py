@@ -440,7 +440,7 @@ class Brain:
         from .media import styles as media_styles
         picked = inp.get("theme") or "auto"
         tid = picked if picked != "auto" and media_styles.known(picked) else media_styles.named_theme(inp["prompt"])
-        if tid and (any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or it.get("format") == "reel"):
+        if tid and any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or (tid and it.get("format") == "reel"):
             lab = media_styles.config(tid).get("label", tid)
             why = "you picked it" if picked != "auto" else "you asked for it"
             plan += [f"Video theme: {lab} ({why})"]

@@ -19,6 +19,7 @@
 <link rel="stylesheet" href="/static/ux3.css">
 <link rel="stylesheet" href="/static/layout.css">
 <link rel="stylesheet" href="/static/library.css">
+<link rel="stylesheet" href="/static/themes.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -97,6 +98,7 @@
               <div class="attached" id="agAttached" data-testid="agent-attached" hidden></div></div>
             <div class="field"><label class="label" for="agFormat">Format</label><select id="agFormat" data-testid="agent-format">
               <option value="auto">Let the agent pick</option><option value="carousel">Carousel (4:5)</option><option value="photo">Single image</option><option value="reel">Reel (9:16 video)</option></select></div>
+            <div class="field grow" id="agTheme" data-testid="agent-theme"></div>
             <div><button class="btn big" id="agGo" data-testid="agent-go" type="submit">Make it</button></div>
           </form>
           <div class="chips-head"><span class="label" id="agChLbl">Channels</span><span class="muted sm" id="agEngine" data-testid="agent-engine"></span></div>
@@ -489,6 +491,7 @@
 <script src="/static/net-logos-data.js"></script>
 <script src="/static/net-logos.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/themes.js"></script>
 <script src="/static/house.js"></script>
 <script src="/static/library.js"></script>
 <script src="/static/planner.js"></script>

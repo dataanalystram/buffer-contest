@@ -19,9 +19,10 @@ ends with the Follow slide (recaps: Follow + SAVE THIS, their only CTA); a third
 """
 from __future__ import annotations
 
+import io
 import re
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from . import templates as T
 
@@ -53,14 +54,6 @@ def _auto_accent(text: str) -> set[str]:
     return {w for w in out if w}
 
 
-def _fit_line(d, text, make_font, start: int, maxw: int, min_size: int = 10):
-    """One line that always fits: shrink until it does (URLs and repo names don't wrap)."""
-    size = start
-    while size > min_size and d.textlength(text, font=make_font(size)) > maxw:
-        size = int(size * 0.93)
-    return make_font(size)
-
-
 def headline(d, b: T.Brand, text: str, box, accent=None, start=None, max_lines=4, align="center", min_size=26) -> int:
     """Condensed headline with accent keywords (hb.headline / weekly_recap draw_headline). Returns the bottom y."""
     x0, y0, x1, y1 = box
@@ -71,8 +64,7 @@ def headline(d, b: T.Brand, text: str, box, accent=None, start=None, max_lines=4
         f = b.head(size)
         lines = T.wrap(d, t, f, x1 - x0)
         lh = int(size * (1.04 if b.upper else 1.12))
-        widest = max((d.textlength(ln, font=f) for ln in lines), default=0)
-        if (len(lines) <= max_lines and lh * len(lines) <= y1 - y0 and widest <= x1 - x0) or size <= min_size:
+        if (len(lines) <= max_lines and lh * len(lines) <= y1 - y0) or size <= min_size:
             break
         size = int(size * 0.93)
     lines = lines[:max_lines]
@@ -91,6 +83,14 @@ def headline(d, b: T.Brand, text: str, box, accent=None, start=None, max_lines=4
     return y
 
 
+def _fit_line(d, text, make_font, start: int, maxw: int, min_size: int = 10):
+    """One line that always fits: shrink until it does (URLs and repo names don't wrap)."""
+    size = start
+    while size > min_size and d.textlength(text, font=make_font(size)) > maxw:
+        size = int(size * 0.93)
+    return make_font(size)
+
+
 def _badge(d, b: T.Brand, n, W, m):
     if not n or n[1] <= 1:
         return
@@ -103,10 +103,10 @@ def _badge(d, b: T.Brand, n, W, m):
 
 
 def _divider(canvas, d, b: T.Brand, y, W):
-    """hb.divider: two rules with the logo between them."""
+    """hb.divider: two white rules with the logo between them."""
     lh = max(28, int(W * 0.055))
     lg = T.logo_for(b, "glow", int(lh * 3.2), lh)
-    lw = lg.width if lg else int(d.textlength(b.headline(b.name or ""), font=b.head(int(lh * 0.8))))
+    lw = lg.width if lg else int(d.textlength(b.name or "", font=b.head(lh)))
     mid = W // 2
     d.line((0, y, mid - lw // 2 - 24, y), fill=b.text, width=3)
     d.line((mid + lw // 2 + 24, y, W, y), fill=b.text, width=3)
@@ -161,14 +161,15 @@ def _handle_footer(canvas, d, b: T.Brand, W, H, m, credit=""):
         hx = W - m - d.textlength(t, font=f)
         d.text((hx, y), t, font=f, fill=b.accent)
     lg = T.logo_for(b, "glow", int(W * 0.14), int(f.size * 1.6))
+    x = m
     if lg and not credit:
         canvas.paste(lg, (m, int(y + f.size * 0.6 - lg.height / 2)), lg)
     if credit:
         cf = b.body(int(min(W, H) * 0.022))
         t = T._clean(credit, cf)
-        while d.textlength(t, font=cf) > hx - m - 30 and len(t) > 8:
+        while d.textlength(t, font=cf) > hx - x - 30 and len(t) > 8:
             t = t[:-2]
-        d.text((m, y), t, font=cf, fill=T.mix(b.text, b.bg, 0.4))
+        d.text((x, y), t, font=cf, fill=T.mix(b.text, b.bg, 0.4))
 
 
 def _panel(canvas, img, box, r=28, b: T.Brand | None = None, word=""):
@@ -182,8 +183,8 @@ def _panel(canvas, img, box, r=28, b: T.Brand | None = None, word=""):
         dd = ImageDraw.Draw(pic)
         lg = T.logo_for(b, "glow", int(w * 0.42), int(h * 0.3))
         if word and len(word) <= 14:
+            f = _fit_line(dd, b.headline(word), b.head, int(h * 0.36), int(w * 0.84))
             t = b.headline(word)
-            f = _fit_line(dd, t, b.head, int(h * 0.36), int(w * 0.84))
             bb = dd.textbbox((0, 0), t, font=f)
             dd.text(((w - (bb[2] - bb[0])) / 2 - bb[0], (h - (bb[3] - bb[1])) / 2 - bb[1]), t, font=f,
                     fill=T.mix(b.accent, b.bg, 0.15))
@@ -198,8 +199,7 @@ def _panel(canvas, img, box, r=28, b: T.Brand | None = None, word=""):
 
 def _bullets(d, b: T.Brand, items, box, size) -> int:
     x0, y0, x1, y1 = box
-    rows, f = [], b.body(size)
-    for _ in range(10):
+    for _ in range(8):
         f = b.body(size)
         lh = int(size * 1.36)
         y = y0
@@ -211,7 +211,6 @@ def _bullets(d, b: T.Brand, items, box, size) -> int:
         if y <= y1 or size <= 22:
             break
         size = int(size * 0.92)
-    lh = int(size * 1.36)
     y = y0
     for ls in rows:
         dot = int(size * 0.38)
@@ -240,7 +239,8 @@ def editorial_cover(b: T.Brand, ratio: str, title: str, hero=None, inset=None, a
         im.paste(Image.new("RGB", (hw, H), b.bg), (0, 0), g)
         d = ImageDraw.Draw(im)
         if _img(inset) is not None:
-            _circle(im, _img(inset), int(H * 0.3), (m, m))
+            D = int(H * 0.3)
+            _circle(im, _img(inset), D, (m, m))
         box = (hw + m // 2, int(H * 0.2), W - m, H - int(m * 1.6))
         if label:
             kf = b.body(int(H * 0.034), strong=True)
@@ -252,7 +252,8 @@ def editorial_cover(b: T.Brand, ratio: str, title: str, hero=None, inset=None, a
         _fade(im, 0, 0, W, ph, b.bg)
         d = ImageDraw.Draw(im)
         if _img(inset) is not None:
-            _circle(im, _img(inset), int(W * 0.3), (int(m * 0.6), int(H * 0.09)))
+            D = int(W * 0.3)
+            _circle(im, _img(inset), D, (int(m * 0.6), int(H * 0.09)))
         _divider(im, d, b, ph - 10, W)
         top = ph + int(W * 0.07)
         if label:
@@ -285,7 +286,7 @@ def text_slide(b: T.Brand, ratio: str, text: str, image=None, n=None, title: str
     if title:
         y = headline(d, b, title, (m, y, m + tw, y + int(H * 0.16)), None, start=int(min(W, H) * 0.08), max_lines=2,
                      align="left") + int(m * 0.3)
-    size = int(min(W, H) * 0.05)
+    size = int(min(W, H) * 0.046)
     floor = H - int(m * 1.6) if wide else int(H * 0.5)
     while True:
         f = b.body(size)
@@ -323,9 +324,9 @@ def facts_slide(b: T.Brand, ratio: str, title: str, bullets: list[str], image=No
     floor = H - int(m * 1.6) if (wide or not has_img) else int(H * 0.62)
     y = _bullets(d, b, bullets[:4], (m, y, m + tw, floor), int(min(W, H) * 0.052))
     if wide:
-        if has_img:
+        if _img(image) is not None:
             _panel(im, image, (m + tw + m // 2, int(m * 1.5), W - m, H - int(m * 1.6)))
-    elif has_img and H - y - int(m * 1.6) > H * 0.18:
+    elif _img(image) is not None and H - y - int(m * 1.6) > H * 0.18:
         _panel(im, image, (int(m * 0.3), y + int(m * 0.3), W - int(m * 0.3), H - int(m * 1.5)))
     _handle_footer(im, d, b, W, H, m)
     return im
@@ -384,9 +385,8 @@ def save_card(b: T.Brand, ratio: str, n=None) -> Image.Image:
     d.text(((W - d.textlength(lines[0], font=f)) / 2, y), lines[0], font=f, fill=b.text)
     y += int(f.size * 1.08)
     if b.handle:
-        t = "@" + (b.handle.upper() if b.upper else b.handle)
-        hf = _fit_line(d, t, b.head, int(k * 0.12), W - 2 * m)
-        d.text(((W - d.textlength(t, font=hf)) / 2, y), t, font=hf, fill=b.accent)
+        hf, hl = T.fit_text(d, "@" + (b.handle.upper() if b.upper else b.handle), b.head, int(k * 0.12), W - 2 * m, 1)
+        d.text(((W - d.textlength(hl[0], font=hf)) / 2, y), hl[0], font=hf, fill=b.accent)
         y += int(hf.size * 1.25)
     line = b.end_line or "for daily AI news made simple"
     lf = b.body(int(k * 0.036))
@@ -490,6 +490,8 @@ SAMPLE = {
                     "points": ["One prompt made a 30-second short film", "The creator shared the full workflow", "Free tools only"]},
 }
 
+DEFAULT_CREDIT = "Video: the creator"
+
 
 def _range(d: dict, now, days: int) -> str:
     from datetime import timedelta
@@ -515,7 +517,7 @@ def slides(template: str, data: dict | None, b: T.Brand, ratio: str, now=None, m
     if template in ("weekly_recap", "midweek_recap"):
         days = 7 if template == "weekly_recap" else 3
         stories = [s for s in d.get("stories") or [] if (s.get("title") or "").strip()][: (7 if days == 7 else 3)]
-        front = (d.get("headline") or (RECAP_HEADLINE if days == 7 else MIDWEEK_HEADLINE), RECAP_ACCENT if days == 7 else {"AI", "3"},
+        front = (d.get("title") or (RECAP_HEADLINE if days == 7 else MIDWEEK_HEADLINE), RECAP_ACCENT if days == 7 else {"AI", "3"},
                  _range(d, now, days), "")
         body = [("story", s) for s in stories]
     elif template == "text_slides":
@@ -540,7 +542,8 @@ def slides(template: str, data: dict | None, b: T.Brand, ratio: str, now=None, m
         body = [("facts", "What's going on", list(d.get("points") or [])[:3], d.get("image")), ("credit", credit)]
     else:
         raise ValueError(template)
-    body = body[:max(0, cap - 2)]
+    keep = max(0, cap - 2)
+    body = body[:keep]
     total = len(body) + 2
     out = [editorial_cover(b, ratio, front[0], hero, inset, front[1], front[2], n=(1, total), label=front[3])]
     for k, part in enumerate(body, start=2):
@@ -586,8 +589,9 @@ def _link_slide(b, ratio, d, n):
     k = min(W, H)
     y = headline(dd, b, "Link", (m, int(H * 0.25), W - m, int(H * 0.25) + int(k * 0.16)), set(), start=int(k * 0.13), max_lines=1)
     f = _fit_line(dd, url, lambda s: b.body(s, strong=True), int(k * 0.06), W - 2 * m)
-    dd.text(((W - dd.textlength(url, font=f)) / 2, y + int(k * 0.04)), url, font=f, fill=b.accent)
-    y += int(f.size * 1.3)
+    for ln in [url]:
+        dd.text(((W - dd.textlength(ln, font=f)) / 2, y + int(k * 0.04)), ln, font=f, fill=b.accent)
+        y += int(f.size * 1.3)
     tip = d.get("cta") or "Link in the caption and the first comment"
     tf = b.body(int(k * 0.034))
     for ln in T.wrap(dd, tip, tf, W - 2 * m)[:2]:
@@ -605,8 +609,9 @@ def _credit_slide(b, ratio, credit, n):
     k = min(W, H)
     y = headline(dd, b, "Credit", (m, int(H * 0.3), W - m, int(H * 0.3) + int(k * 0.15)), set(), start=int(k * 0.12), max_lines=1)
     f = _fit_line(dd, credit, lambda s: b.body(s, strong=True), int(k * 0.06), W - 2 * m)
-    dd.text(((W - dd.textlength(credit, font=f)) / 2, y + int(k * 0.04)), credit, font=f, fill=b.accent)
-    y += int(f.size * 1.3)
+    for ln in [credit]:
+        dd.text(((W - dd.textlength(ln, font=f)) / 2, y + int(k * 0.04)), ln, font=f, fill=b.accent)
+        y += int(f.size * 1.3)
     tf = b.body(int(k * 0.032))
     t = "All rights to the creator. Go follow them."
     dd.text(((W - dd.textlength(t, font=tf)) / 2, y + int(k * 0.08)), t, font=tf, fill=T.mix(b.text, b.bg, 0.3))
@@ -616,10 +621,9 @@ def _credit_slide(b, ratio, credit, n):
 
 def video(template: str, data: dict | None, b: T.Brand, ratio: str = "9:16", now=None, source: str | None = None,
           theme: str | None = None) -> bytes:
-    """The template as a Reel. launch_reel / viral_trend / github_repo / yc_launch with a real clip (``source`` path) go
-    through the media pipeline (studio.media.compose: the full video in the brand, credit on screen, Follow end card,
-    music under silence) in ``theme`` (default huhbyte_news, caption_news for viral_trend); everything else is the slides
-    as a Reel."""
+    """The template as a Reel. launch_reel / viral_trend with a real clip (``source`` path) go through the media pipeline
+    (studio.media.compose: the full video in the brand, credit on screen, Follow end card, music under silence) in
+    ``theme`` (default huhbyte_news / caption_news); everything else is the slides as a Reel."""
     d = {**SAMPLE[template], **(data or {})}
     if source and template in ("launch_reel", "viral_trend", "github_repo", "yc_launch"):
         import tempfile
@@ -633,10 +637,19 @@ def video(template: str, data: dict | None, b: T.Brand, ratio: str = "9:16", now
                 logo = str(Path(td) / "logo.png")
                 b.logo.save(logo)
             credit = (f"Video: {d.get('creator')} on {d.get('platform', 'X')}" if template == "viral_trend"
-                      else d.get("credit") or (f"Video: {d.get('company')}" if d.get("company") else "Video: the creator"))
+                      else d.get("credit") or (f"Video: {d.get('company')}" if d.get("company") else DEFAULT_CREDIT))
             facts = list(d.get("features") or d.get("facts") or d.get("what") or d.get("points") or [])[:4]
             m = compose.render_style(source, theme or ("caption_news" if template == "viral_trend" else "huhbyte_news"),
                                      out=str(Path(td) / "t.mp4"), ratio=ratio, hook=d.get("title") or d.get("hook") or "",
                                      facts=facts, brand=brand_from_kit(b.kit, logo), credit=credit)
             return Path(m["path"]).read_bytes()
     return T.reel(slides(template, data, b, ratio, now=now))
+
+
+def jpeg_bytes(im: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    im.convert("RGB").save(buf, "JPEG", quality=90)
+    return buf.getvalue()
+
+
+_ = ImageFilter  # Pillow filters are used by the templates module this one builds on

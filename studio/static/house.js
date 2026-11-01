@@ -71,10 +71,13 @@ async function uploadFile(f, source = "upload") {
 }
 window.hqUploadFile = uploadFile;
 
+// the video theme picker (studio/static/themes.js), mounted minimally; the Make a post redesign re-mounts it
+if (window.HQThemes && $("#agTheme")) H.themePicker = window.HQThemes.mount($("#agTheme"), { value: "auto", onChange: (id) => { H.theme = id; } });
+
 $("#agentForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!H.sel.size) return toast("Pick at least one channel");
-  const body = { channel_ids: [...H.sel], format: $("#agFormat").value, prompt: $("#agQuery").value.trim() };
+  const body = { channel_ids: [...H.sel], format: $("#agFormat").value, prompt: $("#agQuery").value.trim(), theme: H.theme || "auto" };
   if (!body.prompt && !H.upload && !H.attach) return toast("Tell the agent what to post, paste a link, or add your photo or video");
   const b = $("#agGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
   try {
