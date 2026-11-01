@@ -1,0 +1,12 @@
+{
+  "note": "Shape of the cross-check for the live-QA Subvocal post (1 Nov 2026): the founder's X post says $1.3M, one outlet's headline says $13 million, another agrees with $1.3 million. The news search answers only to the company name, not to the founder's first sentence.",
+  "bing": [
+    {"title": "Subvocal raises $13 million for glasses that read your silent speech", "url": "https://www.msn.com/en-us/news/technology/subvocal-glasses/ar-AA1", "source": "msn.com"},
+    {"title": "YC-backed Subvocal raises $1.3 million from YC and Afore Capital", "url": "https://techstartups.example/subvocal-raises", "source": "techstartups.example"}
+  ],
+  "google": [],
+  "articles": {
+    "https://www.msn.com/en-us/news/technology/subvocal-glasses/ar-AA1": {"description": "The startup raised $13 million to build glasses that track internal speech.", "paragraphs": ["Subvocal said the $13 million round was led by YC and Afore Capital."]},
+    "https://techstartups.example/subvocal-raises": {"description": "Subvocal raised $1.3 million.", "paragraphs": ["The $1.3 million pre-seed came from YC and Afore Capital."]}
+  }
+}
