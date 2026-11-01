@@ -114,6 +114,14 @@ def record(store, uid: str, cost: float) -> None:
                 "spent=brain_budget.spent+excluded.spent, calls=brain_budget.calls+1, updated=excluded.updated", (scope, cost, now))
 
 
+def charge_user(store, uid: str, cost: float) -> None:
+    """A non-model cost (a scan + renders) charged to the person's own allowance only, not the shared AI pool."""
+    now = time.time()
+    for scope in scopes(store, uid)[1:]:
+        store.x("INSERT INTO brain_budget(scope,spent,calls,updated) VALUES(?,?,1,?) ON CONFLICT(scope) DO UPDATE SET "
+                "spent=brain_budget.spent+excluded.spent, calls=brain_budget.calls+1, updated=excluded.updated", (scope, cost, now))
+
+
 def byo_check(store, uid: str, add: int = 0) -> None:
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if add:

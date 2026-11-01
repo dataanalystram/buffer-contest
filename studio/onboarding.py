@@ -7,23 +7,33 @@
   links read through X's public oEmbed).
 - GET /api/recommendations: the Sources agent's scan filtered and ranked by those choices, plus up to three ready-to-
   approve posts (cover in the brand + one caption per chosen channel). Cached per account for an hour, so opening the
-  screen costs no source requests; ?refresh=1 rescans (inside the Sources agent's daily cap).
+  screen costs no source requests; ?refresh=1 rescans (inside the Sources agent's daily cap), at most once an hour
+  (HQ_RECS_REFRESH_SECONDS), and each rebuild counts HQ_RECS_COST_USD against the person's included budget.
+  The sample workspace never scans, renders or calls a model here: it serves the pre-made sample_recs/recs.json
+  (scripts/build_sample_recs.py), filtered by the visitor's choices.
 Stored in the existing database (user_profiles); the sample workspace uses recorded fixtures only.
 """
 from __future__ import annotations
 
 import json
 import os
+import os
 import re
 import time
 
+from pathlib import Path
+
 import httpx
 
-from . import brand, demo_guard, netguard, reader, render
+from . import brand, budget, demo_guard, netguard, reader, render
 
 SCHEMA = "CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, data TEXT, recs TEXT, recs_at REAL, updated REAL)"
 CONTEXT_DEV = "https://api.context.dev/v1/brand/retrieve"
 RECS_TTL = 3600
+RECS_REFRESH = int(os.environ.get("HQ_RECS_REFRESH_SECONDS", "3600"))  # one rebuild per account per hour, refresh or not
+RECS_COST = float(os.environ.get("HQ_RECS_COST_USD", "0.02"))          # a scan + 3 rendered covers, charged to the person's $1
+SAMPLE_RECS = Path(__file__).parent / "sample_recs" / "recs.json"
+_sample_cache: dict = {}
 
 CONTENT_TYPES = {
     "ai_news": {"label": "AI news", "cats": {"model_release", "research", "safety_society", "policy_law"}, "words": ["ai", "model", "openai", "anthropic", "gemini", "llm"], "sources": ["hn", "rss"]},
@@ -110,7 +120,7 @@ class Onboarding:
         if body.get("done") is not None:
             cur["done"] = bool(body["done"])
         self.store.x("INSERT INTO user_profiles(user_id,data,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data, "
-                     "updated=excluded.updated, recs=NULL, recs_at=0", (a.uid, json.dumps(cur), time.time()))
+                     "updated=excluded.updated, recs_at=0", (a.uid, json.dumps(cur), time.time()))
         self.store.audit(a.uid, a.label, "onboarding", "read", {"fields": sorted(k for k in body if k != "website"), "website": bool(body.get("website"))})
         return {**self.get(a), **out}
 
@@ -177,42 +187,75 @@ class Onboarding:
     # ---------------------------------------------------------------- recommendations
     def recommendations(self, a, refresh: bool = False) -> dict:
         row = self._row(a.uid)
-        if row["recs"] and not refresh and row["recs_at"] > time.time() - RECS_TTL:
+        if demo_guard.is_demo(a.uid):
+            return self._sample_recs(a, row["data"])  # no scan, no render, no model: the pre-made set
+        now = time.time()
+        if row["recs"] and not refresh and row["recs_at"] > now - RECS_TTL:
             return {**row["recs"], "cached": True}
-        prof = row["data"]
+        last = self.store.q("SELECT MAX(ts) AS t FROM audit WHERE user_id=? AND action='recs_build'", (a.uid,))[0]["t"] or 0
+        wait = int(last + RECS_REFRESH - now)
+        if wait > 0:  # rate limit: one rebuild an hour, whatever asked for it (refresh, new choices)
+            if row["recs"]:
+                return {**row["recs"], "cached": True, "stale": row["recs_at"] <= now - RECS_TTL, "next_refresh_in": wait}
+            raise OnboardingError(f"Recommendations rebuild once an hour; try again in {max(1, wait // 60)} min.")
+        if budget.remaining(self.store, a.uid)["left_usd"] < RECS_COST:
+            if row["recs"]:
+                return {**row["recs"], "cached": True, "stale": True, "note": "Your included budget is used up, so these aren't refreshed."}
+            raise OnboardingError("Your included budget is used up, so I can't build recommendations. Add your own key in AI engine.")
+        out = self._build_recs(a, row["data"])
+        budget.charge_user(self.store, a.uid, RECS_COST)
+        self.store.audit(a.uid, a.label, "recs_build", "read", {"cost_usd": RECS_COST, "refresh": bool(refresh), "recommended": len(out["recommended"])})
+        return {**out, "cached": False}
+
+    def _build_recs(self, a, prof: dict) -> dict:
         types = prof.get("content_types") or ["ai_news", "product_launches"]
         want_src = sorted({s for t in types for s in CONTENT_TYPES[t]["sources"]})
         settings = self.h.sources.settings(a)
-        on = [s for s in want_src if settings["on"].get(s) or demo_guard.is_demo(a.uid)]
+        on = [s for s in want_src if settings["on"].get(s)]
         scan = self.h.sources.scan(a, {"sources": on or ["hn", "yc", "rss"]})
-        cats = set().union(*[CONTENT_TYPES[t]["cats"] for t in types])
-        words = [w for t in types for w in CONTENT_TYPES[t]["words"]]
-        feed = []
-        for c in scan["clusters"]:
-            if c["lane"] == "hidden":
-                continue
-            txt = (c["story"].get("headline", "") + " " + " ".join(i["title"] for i in c["items"])).lower()
-            match = (c["category"] in cats) + sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", txt))
-            if match:
-                feed.append({**c, "match": match, "why": _why(c, types, txt)})
-        feed.sort(key=lambda c: ({"postable": 0, "idea_bank": 1, "low": 2}.get(c["lane"], 3), -c["match"], -c["score"]))
+        feed = _filter(scan["clusters"], types)
         watch = []
         for w in (prof.get("x_watchlist") or [])[:5]:
-            if w["type"] == "post" and not demo_guard.is_demo(a.uid):
+            if w["type"] == "post":
                 try:
                     p = reader.x_oembed(w["url"], self.http)
                     watch.append({"url": w["url"], "author": p["author_name"], "handle": p["handle"], "text": p["text"][:280]})
                 except reader.ReadError:
                     continue
-        chans = [c for c in self.h.studio.channels(a) if c["id"] in (prof.get("channel_ids") or [])] or \
-            [c for c in self.h.studio.channels(a) if not c.get("isDisconnected")]
+        chans = self._chans(a, prof)
         recommended = [self._ready_post(a, c, chans, prof.get("tone", "plain")) for c in feed[:3]]
         out = {"run_id": scan["run_id"], "content_types": types, "feed": [{k: c[k] for k in ("id", "topic", "category", "lane", "score", "story",
                                                                                               "items", "why")} for c in feed[:20]],
                "recommended": recommended, "watchlist": watch, "sample": scan.get("sample", False), "at": time.time()}
         self.store.x("INSERT INTO user_profiles(user_id,data,recs,recs_at,updated) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
                      "recs=excluded.recs, recs_at=excluded.recs_at", (a.uid, json.dumps(prof), json.dumps(out), time.time(), time.time()))
-        return {**out, "cached": False}
+        return out
+
+    def _chans(self, a, prof: dict) -> list[dict]:
+        allc = self.h.studio.channels(a)
+        return [c for c in allc if c["id"] in (prof.get("channel_ids") or [])] or [c for c in allc if not c.get("isDisconnected")]
+
+    def _sample_recs(self, a, prof: dict) -> dict:
+        """The sample workspace's recommendations: pre-made clusters and covers, filtered by the visitor's choices; the
+        captions come from the rule writer. Nothing is fetched, rendered, stored or charged."""
+        from .sources_agent import caption
+        if "feed" not in _sample_cache:
+            _sample_cache["feed"] = json.loads(SAMPLE_RECS.read_text())["feed"]
+        types = prof.get("content_types") or ["ai_news", "product_launches"]
+        feed = _filter(_sample_cache["feed"], types)
+        chans = self._chans(a, prof)
+        kit, rules = self.h.kit(a), self.h.rules(a)
+        recommended = []
+        for c in [c for c in feed if c.get("cover")][:3]:
+            st, url = c["story"], (c["items"][0] or {}).get("url", "")
+            recommended.append({"cluster_id": c["id"], "headline": st.get("headline"), "source_url": url, "cover": c["cover"],
+                                "captions": [{"channel_id": ch["id"], "service": ch["service"],
+                                              "text": brand.apply_text_rules(caption(ch["service"], st, kit), rules)} for ch in chans],
+                                "make_post": {"prompt": f"Post about this in all my channels {url}".strip(), "channel_ids": [ch["id"] for ch in chans]},
+                                "tone": prof.get("tone", "plain")})
+        return {"run_id": None, "content_types": types, "feed": [{k: c[k] for k in ("id", "topic", "category", "lane", "score", "story", "items", "why")}
+                                                                  for c in feed[:20]],
+                "recommended": recommended, "watchlist": [], "sample": True, "static": True, "at": time.time(), "cached": True}
 
     def _ready_post(self, a, cluster: dict, chans: list[dict], tone: str) -> dict:
         from .sources_agent import caption
@@ -228,6 +271,22 @@ class Onboarding:
                              for c in chans],
                 "make_post": {"prompt": f"Post about this in all my channels {url}".strip(), "channel_ids": [c["id"] for c in chans]},
                 "tone": tone}
+
+
+def _filter(clusters: list[dict], types: list[str]) -> list[dict]:
+    """The clusters that match the chosen content types, best lane first, then the closest match, then the score."""
+    cats = set().union(*[CONTENT_TYPES[t]["cats"] for t in types])
+    words = [w for t in types for w in CONTENT_TYPES[t]["words"]]
+    feed = []
+    for c in clusters:
+        if c["lane"] == "hidden":
+            continue
+        txt = (c["story"].get("headline", "") + " " + " ".join(i["title"] for i in c["items"])).lower()
+        match = (c["category"] in cats) + sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", txt))
+        if match:
+            feed.append({**c, "match": match, "why": _why(c, types, txt)})
+    feed.sort(key=lambda c: ({"postable": 0, "idea_bank": 1, "low": 2}.get(c["lane"], 3), -c["match"], -c["score"]))
+    return feed
 
 
 def _why(c: dict, types: list[str], txt: str) -> str:
