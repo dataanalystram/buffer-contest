@@ -1,8 +1,8 @@
 """read_url: one way to read any link the person pastes, without scraping logged-in pages.
 
-- X / Twitter post links: the public oEmbed endpoint (publish.x.com/oembed) for the author and the post's words; the
-  person's own X API bearer token (Sources settings) for the photo or video; without a key the agent says so and asks
-  for the clip. HuhQueue never scrapes x.com or signs in to it.
+- X / Twitter post links: no key needed. studio/xreader.py reads the ONE public post linked through oEmbed (the words),
+  the public syndication endpoint react-tweet uses, and FxTwitter (photos, video); an X API bearer (the person's own,
+  or X_BEARER_TOKEN) is an optional override. HuhQueue never crawls x.com or signs in to it.
 - Article links: netguard.safe_get + the readability-style parser in drafter.fetch_article; when the page blocks bots or
   has no readable text, Firecrawl (FIRECRAWL_API_KEY on the server) reads it instead.
 Every request goes through netguard (each redirect hop re-checked, private/metadata addresses refused, bodies capped).
@@ -154,36 +154,47 @@ def read_article(url: str, http: httpx.Client | None = None) -> dict:
 
 
 def read_post(url: str, http: httpx.Client | None = None, x_bearer: str = "") -> dict:
-    """An X post as an article-shaped dict plus 'post' (author, handle, text, date) and 'media' (when a key allows)."""
+    """An X post as an article-shaped dict plus 'post' (author, handle, text, date) and 'media' (photos/videos).
+
+    No key needed: the free cascade in studio/xreader.py (oEmbed -> syndication -> FxTwitter), cached and rate-limited
+    globally. A person's own X API bearer, or X_BEARER_TOKEN on the server, is an optional override for the media."""
+    from . import xreader
     handle, sid = x_status(url)
-    post = x_oembed(url, http)
-    media, note = [], ""
-    if x_bearer:
+    post_url = f"https://x.com/{handle}/status/{sid}"
+    try:
+        got = xreader.read(handle, sid, http)
+    except xreader.XReadError as e:
+        raise ReadError(str(e))
+    post = {"author_name": got["author_name"] or handle, "handle": got["handle"] or handle, "text": got["text"], "date": got["date"],
+            "url": post_url, "has_media": got["has_media"], "truncated": got["text"].endswith("…"), "via": got["layers"]}
+    if got.get("quoted"):
+        post["quoted"] = got["quoted"]
+    media = [{"type": "video", "url": v["url"], "poster": v.get("poster", ""), "duration": v.get("duration", 0), "source_page": post_url}
+             for v in got["videos"]] + [{"type": "photo", "url": u} for u in got["photos"]]
+    note = ""
+    bearer = x_bearer or (_app_x() and "app")
+    if bearer and (x_bearer or (got["has_media"] and not media)):  # the optional official-API override
         try:
-            got = x_media(sid, x_bearer, http)
-            full = next((g for g in got if g["type"] == "text"), None)
+            from . import appkeys
+            api = x_media(sid, x_bearer, http) if x_bearer else appkeys.x_media_shared(sid, http)
+            full = next((g for g in api if g["type"] == "text"), None)
             if full and len(full["text"]) > len(post["text"]):
                 post["text"] = re.sub(r"\s*https://t\.co/\w+$", "", full["text"]).strip()
                 post["truncated"] = False
-            media = [g for g in got if g["type"] != "text"]
+            api_media = [{**g, "source_page": post_url} for g in api if g["type"] != "text"]
+            media = api_media or media
         except ReadError as e:
-            note = str(e)
-    elif post["has_media"] and _app_x():  # HuhQueue's own X bearer (X_BEARER_TOKEN), cached + rate-limited (appkeys)
-        from . import appkeys
-        try:
-            media = [g for g in appkeys.x_media_shared(sid, http) if g["type"] != "text"]
-        except ReadError as e:
-            note = str(e)
-    elif post["has_media"]:
-        note = ("This post has a photo or video. X only shares media through its API, so add your X API key in Sources, "
-                "or upload the clip here and I'll edit it into the Reel.")
+            note = "" if media else str(e)
+    if got["has_media"] and not media and not note:
+        note = ("This post has a photo or video that X's public embeds didn't share. Upload the clip here and I'll edit it "
+                "into the Reel, or the render worker can fetch it from the post link.")
     text = post["text"]
     first = re.split(r"(?<=[.!?])\s+|\n", text, maxsplit=1)[0]
     paras = [p.strip() for p in re.split(r"\n+", text) if p.strip()]
-    return {"url": f"https://x.com/{handle}/status/{sid}", "title": first[:200] or f"Post by @{handle}", "description": text[:600],
+    return {"url": post_url, "title": first[:200] or f"Post by @{handle}", "description": text[:600],
             "image": next((m["url"] for m in media if m["type"] == "photo"), next((m.get("poster", "") for m in media if m["type"] == "video"), "")),
-            "site": "X", "paragraphs": paras, "via": "x_oembed", "post": {**post, "credit": f"X @{handle}"}, "media": media,
-            "media_note": note}
+            "site": "X", "paragraphs": paras, "via": "x_oembed" if got["layers"].get("oembed") == "ok" else "x_public",
+            "post": {**post, "credit": f"X @{post['handle']}"}, "media": media, "media_note": note}
 
 
 def _app_x() -> bool:
