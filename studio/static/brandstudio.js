@@ -239,8 +239,7 @@
   const SRC_HTML = `
     <section class="panel sa-set" aria-labelledby="saSetH"><h2 class="h2" id="saSetH">What the story scan reads</h2>
       <div class="sa-srcs" id="saSrcs" data-testid="sa-sources"></div>
-      <div class="row2"><div class="field"><label class="label" for="saPh">Product Hunt developer token (free)</label><input id="saPh" type="password" autocomplete="off" placeholder="paste to add" data-testid="sa-ph-key"></div>
-        <div class="field"><label class="label" for="saX">X API bearer token (yours)</label><input id="saX" type="password" autocomplete="off" placeholder="paste to add" data-testid="sa-x-key"></div></div>
+      <p class="muted sm" data-testid="sa-keys-note">Product Hunt and X read with your own key. Add, test or remove keys in <button class="link" type="button" data-integ="integrations" data-testid="sa-keys-link">Settings → Integrations</button>.</p>
       <div class="field"><label class="label" for="saXq">X search</label><input id="saXq" placeholder="(AI OR LLM) -is:retweet lang:en"></div>
       <p class="muted sm" id="saAi" data-testid="sa-ai"></p>
       <div class="row"><button class="btn2 sm" type="button" id="saSaveSet" data-testid="sa-save">Save sources</button><button class="link" type="button" id="saAiKey">Use your own AI key</button></div>
@@ -252,7 +251,7 @@
       const d = await api("/api/sources"); B.sset = d.settings;
       const s = d.settings;
       $("#saSrcs").innerHTML = s.adapters.map((a) => `<label class="sa-src" title="${esc(a.about)}"><input type="checkbox" data-src="${a.key}" ${s.on[a.key] ? "checked" : ""} data-testid="sa-src-${a.key}">
-        <span class="sa-src-t"><b>${esc(a.label)}</b>${a.needs_key ? `<small>${(a.key === "x" ? s.x_key : s.ph_key) ? "key added" : "needs your key"}</small>` : "<small>free</small>"}</span></label>`).join("");
+        <span class="sa-src-t"><b>${esc(a.label)}</b>${a.needs_key ? ((a.key === "x" ? s.x_key : s.ph_key) ? "<small>key added</small>" : `<small><button class="link xs" type="button" data-integ="integ-${a.key}" data-testid="sa-add-key-${a.key}">Add your key</button></small>`) : "<small>free</small>"}</span></label>`).join("");
       $("#saXq").value = s.x_query || "";
       $("#saMode").textContent = s.sample ? "Sample workspace: recorded sources, no live calls." : "Live: reads the sources now and drafts into your Buffer.";
       const cls = s.classifier || { order: ["rules"] };
@@ -316,9 +315,7 @@
     $("#saSaveSet").onclick = async () => {
       const on = {}; document.querySelectorAll("#saSrcs [data-src]").forEach((i) => (on[i.dataset.src] = i.checked));
       const body = { on, x_query: $("#saXq").value }; // the feed list is managed above (one list for the feed and the scan)
-      if ($("#saPh").value) body.ph_key = $("#saPh").value;
-      if ($("#saX").value) body.x_key = $("#saX").value;
-      try { await api("/api/sources/settings", { method: "POST", body }); $("#saPh").value = ""; $("#saX").value = ""; toast("Sources saved"); loadSources(); } catch (e) { toast(e.message); }
+      try { await api("/api/sources/settings", { method: "POST", body }); toast("Sources saved"); loadSources(); } catch (e) { toast(e.message); }
     };
     $("#saAiKey").onclick = () => showTab("settings");
   }

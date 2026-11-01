@@ -79,11 +79,12 @@ def test_live_fetches_go_through_netguard(monkeypatch):
     monkeypatch.setattr(netguard, "safe_get", real)
 
 
-def test_keyed_sources_refuse_without_a_key():
+def test_x_refuses_without_a_key_and_product_hunt_uses_the_shared_read(monkeypatch):
     with pytest.raises(S.SourceError, match="never scrapes"):
         S.X().live({}, {}, None)
-    with pytest.raises(S.SourceError, match="Product Hunt"):
-        S.ProductHunt().live({}, {}, None)
+    from studio import appkeys
+    monkeypatch.setattr(appkeys, "ph_shared", lambda http, q: ([{"title": "shared"}], "feed"))
+    assert S.ProductHunt().live({}, {}, None) == [{"title": "shared"}]  # no key: HuhQueue's app-level read for everyone
 
 
 # ---------------------------------------------------------------- through the app
@@ -126,7 +127,7 @@ def test_real_account_scan_reads_live_sources_and_drafts_into_buffer_as_drafts_o
     d = r.json()
     assert d["sample"] is False and any(s["mode"] == "live" for s in d["status"])
     assert any("ycombinator.com" in u for u in calls) and any("algolia" in u for u in calls)
-    assert not any("api.x.com" in u or "producthunt" in u for u in calls)  # no keys, no calls
+    assert not any("api.x.com" in u or "api.producthunt.com" in u for u in calls)  # no keys: no API calls (PH reads its public feed)
     cid = next(cl["id"] for cl in d["clusters"] if cl["lane"] == "postable")
     dry = c.post("/api/sources/draft", json={"run_id": d["run_id"], "cluster_ids": [cid]}).json()
     assert dry["dry_run"] and {p["service"] for p in dry["packages"]} == {ch["service"] for ch in CHANNELS}
