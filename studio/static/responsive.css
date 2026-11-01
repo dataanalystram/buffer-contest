@@ -172,5 +172,7 @@ pre.code{white-space:pre-wrap;word-break:break-word}
 
 /* the light/dark toggle (owner A3) joined the top bar: at phone widths the account name gives way so nothing scrolls sideways */
 @media (max-width:480px){
-  #acctBtn{max-width:28vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top-right>.acct.help,.top-right>#killPill{flex:none}
+  .top-right>.acct:not(.help){min-width:44px;flex:0 1 auto}
+  .top-right .acct #acctBtn{max-width:min(28vw,100%);min-width:44px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 }
