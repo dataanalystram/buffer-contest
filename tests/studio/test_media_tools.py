@@ -209,3 +209,9 @@ def test_job_without_media_generates_images(stub_tools, monkeypatch):
     r = stub_tools["render"]
     assert r["source_path"] is None and len(r["images"]) == 3 and meta["credit"] == "Graphic: brand card"
     assert "transcribe" not in stub_tools
+
+
+def test_safe_area_scales_with_the_frame():
+    assert compose.safe_area(1080, 1920) == (60, 230, 930, 1500)       # hb.py's Reels numbers at 1080 wide
+    assert compose.safe_area(720, 1280) == (40, 153, 620, 1000)         # same proportions at 720p
+    assert compose.safe_area(1080, 1350) == (56, 56, 1024, 1294)

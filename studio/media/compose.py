@@ -42,9 +42,10 @@ DEFAULT_BRAND = {"name": "HuhByte AI", "handle": "@huhbyte.ai", "accent": "#C9AC
 def safe_area(W: int, H: int) -> tuple[int, int, int, int]:
     """(left, top, right, bottom) inner rectangle clear of platform UI. 9:16 numbers from code/hb.py (Reels/TikTok:
     header ~230 px, caption/buttons ~420 px, right rail ~150 px); feed posts only need a margin."""
+    k = W / 1080  # the platform UI scales with the frame, so a 720x1280 render keeps the same proportions
     if H / W > 1.6:
-        return 60, 230, W - 150, H - 420
-    return 56, 56, W - 56, H - 56
+        return round(60 * k), round(230 * k), W - round(150 * k), H - round(420 * k)
+    return round(56 * k), round(56 * k), W - round(56 * k), H - round(56 * k)
 
 
 # ------------------------------------------------------------------------------------------------ small helpers
