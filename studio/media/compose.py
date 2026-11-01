@@ -521,7 +521,16 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             lsw, lsh = cfg["tall_aspect"]
         L = layout(cfg["layout"], W, H, lsw, lsh, brand, hook, caps_on)
         lower_third = None
-        if caps_on and source and cfg["fill"] == "fill" and "captions_center" in L and lower_third_mode != "off":
+        pad_band = None
+        if caps_on and source and cfg["fill"] == "fill" and "captions_center" in L and (reframe or {}).get("mode") == "pad":
+            # screen recordings / slides (pad): the whole frame sits centred, so the captions go in the empty band under
+            # it instead of over the slide (and a name line on the slide is no longer in their way)
+            k = min(W / sw, (H / (sh * 0.84 if burned_subs else sh)))
+            fit_bottom = (H + (sh * 0.84 if burned_subs else sh) * k) / 2
+            if H - fit_bottom >= H * 0.14:
+                pad_band = int(fit_bottom + (H - fit_bottom) * 0.30)
+                L["captions_center"] = min(pad_band, int(H * 0.80))
+        if pad_band is None and caps_on and source and cfg["fill"] == "fill" and "captions_center" in L and lower_third_mode != "off":
             # a lower-third graphic in the source (name strap, ticker): our captions go above it, in every ratio
             lower_third = lower_third_mode if isinstance(lower_third_mode, dict) else detect_lower_third(source, c0, c1)
             y_band = band_in_output(lower_third, sw, sh, W, H, reframe, bool(burned_subs)) if lower_third else None

@@ -1,0 +1,24 @@
+/* Brain swap: the AI allowance meter and the "Use HuhQueue in Claude / ChatGPT" card (studio/static/brainswap.js) */
+.bsw-slot{margin-top:12px}
+.bsw-meter{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--sunken)}
+.bsw-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.bsw-label{font-size:13px;color:var(--muted)}
+.bsw-left{font-size:15px;font-variant-numeric:tabular-nums}
+.bsw-bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden}
+.bsw-bar i{display:block;height:100%;border-radius:999px;background:var(--ok);transition:width var(--base)}
+.bsw-meter.low .bsw-bar i{background:var(--warn)}
+.bsw-meter.out .bsw-bar i{background:var(--accent)}
+.bsw-meter.out{border-color:var(--accent);background:var(--accent-soft)}
+.bsw-nudge{font-size:14px;margin:0;overflow-wrap:anywhere}
+.bsw-nudge .bsw-link{font-weight:700;font-size:inherit;padding:0 2px;text-decoration:underline;text-underline-offset:2px}
+#agMeter .bsw-meter{max-width:560px}
+.bsw-card{margin:0 0 16px;display:flex;flex-direction:column;gap:12px;scroll-margin-top:96px;transition:box-shadow .3s}
+.bsw-card .card-title{margin:0}
+.bsw-tag{font-size:17px;font-weight:700;margin:0;max-width:60ch}
+.bsw-addr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--sunken)}
+.bsw-addr .label{margin:0}
+.bsw-addr code{font-family:var(--mono);font-size:13px;flex:1 1 220px;min-width:0;overflow-wrap:anywhere}
+.bsw-steps{margin:0;padding-left:22px;display:grid;gap:6px;max-width:80ch}
+.bsw-steps li{overflow-wrap:anywhere}
+@media (max-width:860px){.bsw-addr .btn{width:100%}}
+.bsw-card .bsw-link{font-size:inherit;padding:0 2px;text-decoration:underline;text-underline-offset:2px}

@@ -6,6 +6,10 @@ cards and Reels, writes one caption per channel, and checks all of it against yo
 your corrections. You approve, and the **Planner** shows it in your Buffer queue, ready to drag to a better time. Your own
 Claude or ChatGPT can do all of this over MCP, but nothing they write goes out until you approve it.
 
+**Bring your own brain.** In the app the agent runs on $1 of included AI. Add HuhQueue to the Claude or ChatGPT you already
+pay for and keep going free: your model does the thinking, HuhQueue does the editing (research, carousels, reels, cuts,
+captions, splits) at $0 AI spend. See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
+
 **Live:** https://huhqueue-studio.onrender.com · **Buffer Commit entry:** see [CONTEST.md](CONTEST.md) and [SUBMISSION.md](SUBMISSION.md)
 
 > HuhQueue is an independent open-source project built on the [Buffer API](https://developers.buffer.com). It is not made, endorsed or operated by Buffer.
@@ -156,6 +160,8 @@ Everything below was built in the Buffer Commit window; the pre-existing self-ho
 **Claude.ai or ChatGPT:** add a custom connector with the URL `https://huhqueue-studio.onrender.com/mcp`. It signs you in with
 Buffer and asks what the assistant may do (ask first, drafts only, or trusted) and how many posts a day. No token to paste.
 The connection is an ordinary agent token underneath, so it shows on the Agents screen and the kill switch stops it.
+MCP calls use **your** model by default (client brain): HuhQueue's own AI only runs on a tool call with `server_ai: true`,
+and then counts against your allowance. Every tool, which side thinks, and recipes: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
 
 **Claude Code / other clients:** create a token in **Agents**, then:
 

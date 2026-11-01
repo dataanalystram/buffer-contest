@@ -104,6 +104,14 @@ def _sample_items() -> list[dict]:
         out.append({"id": f"sample-{i}", "name": f"Sample clip {i}.mp4", "kind": "video", "mime": "video/mp4", "source": "sample",
                     "size": f.stat().st_size, "created": 0, "url": f"/sample/{c['file']}",
                     "thumb": f"/sample/{c['cover']}" if c.get("cover") else "", "used_in": [], "read_only": True})
+    src = meta.get("source") or {}
+    if src.get("media_url", "").startswith("https://") and meta.get("clips"):  # the long video the sample clips were cut from
+        out.append({"id": "sample-source", "name": f"{src.get('title') or 'Sample source video'}.mp4", "kind": "video",
+                       "mime": "video/mp4", "source": "sample", "size": int(src.get("bytes") or 0), "created": 0,
+                       "url": src["media_url"], "thumb": f"/sample/{src['poster']}" if src.get("poster") else "",
+                       "duration": src.get("duration"), "credit": src.get("credit", ""), "origin_url": src.get("url", ""),
+                       "note": src.get("note", ""), "clips": [f"sample-{i}" for i in range(1, len(meta["clips"]) + 1)],
+                       "used_in": [], "read_only": True})
     ex = base / "static" / "examples" / "huhbyte"
     slides = sorted(p.name for p in ex.glob("launch-*.jpg")) if ex.is_dir() else []
     if slides:

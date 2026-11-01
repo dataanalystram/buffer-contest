@@ -175,7 +175,8 @@ class Takes:
         return self.get(a, rid)
 
     def start_sample(self, a: Actor, body: dict | None = None) -> dict:
-        """The sample take: a 3-minute public-domain talk, analysed and rendered ahead of time by the same pipeline.
+        """The sample take: Buffer's 89-minute Buffer Commit kickoff Q&A (credited), split into 5 clips ahead of time by the same
+        pipeline on the GitHub worker (scripts/demo_buffer_split.py).
         Mining, preflight and placement run live. It needs no worker and no Buffer."""
         self.h.studio._guard_write(a, "clips_from_video")
         from . import demo_guard
@@ -259,6 +260,9 @@ class Takes:
         j = self._job(jid)
         spec = dict(j["spec"])
         spec.pop("_job_token", None)
+        if spec.get("platform_url"):  # the operator's YouTube fallback flag travels with the job (studio.media.yt_fallback)
+            from .media import yt_fallback
+            spec["yt_fallback"] = yt_fallback.config()
         base = self.s.public_url.rstrip("/") + "/m/"
         return {"id": jid, "status": j["status"], "spec": spec,
                 "urls": {"source": spec.get("source_url") or (base + spec["source"] if spec.get("source") else ""),

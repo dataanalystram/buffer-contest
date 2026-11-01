@@ -64,6 +64,8 @@ def download_platform(url: str, dest: Path, max_bytes: int = MAX_BYTES, max_heig
     except Exception as e:  # noqa: BLE001
         msg = str(e).split("\n")[0]
         if "not a bot" in msg or "Sign in" in msg:
+            if plat == "youtube":  # the operator's opt-in route (HQ_YT_FALLBACK=invidious); else: upload the file
+                return _youtube_fallback(url, dest, max_bytes, max_height, e)
             raise DownloadError("The platform asked this server to sign in (bot check), so the video can't be fetched "
                                 "from here. Use the company's own file, or upload the video.") from e
         raise DownloadError(f"Couldn't download the video: {msg[:160]}") from e
@@ -75,6 +77,21 @@ def download_platform(url: str, dest: Path, max_bytes: int = MAX_BYTES, max_heig
         raise DownloadError("The download finished without a file.")
     if got != dest:
         got.replace(dest)
+    return dest
+
+
+def _youtube_fallback(url: str, dest: Path, max_bytes: int, max_height: int, cause: Exception) -> Path:
+    """yt-dlp was bot-checked: the Invidious route when the operator turned it on (studio.media.yt_fallback), else the
+    plain message to upload the file."""
+    from . import yt_fallback
+    from .find import youtube_id
+    if not yt_fallback.enabled():
+        raise DownloadError(yt_fallback.FAIL) from cause
+    try:
+        yt_fallback.fetch(youtube_id(url) or "", dest, max_bytes=max_bytes, max_height=min(max_height, 720))
+    except yt_fallback.FallbackError as e:
+        print(f"youtube fallback failed: {str(e)[:300]}")
+        raise DownloadError(yt_fallback.FAIL) from e
     return dest
 
 

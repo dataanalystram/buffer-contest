@@ -1,0 +1,29 @@
+name: demo-clips
+# Renders the "Split a long video" demo bundle (Buffer's Buffer Commit kickoff Q&A -> 5 opus-style 9:16 clips) on the
+# free GitHub worker: faster-whisper per moment window, built-in scorer, MediaPipe reframe, FFmpeg. No AI spend, no
+# secrets: the source is a public file on the HuhByte media bucket. The bundle is uploaded as an artifact and committed
+# to studio/sample_take/ by hand after the contact sheets are checked.
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/mcp-video-demo]
+    paths: [scripts/demo_buffer_split.py, .github/workflows/demo-clips.yml]
+permissions: {contents: read}
+jobs:
+  clips:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip, cache-dependency-path: requirements-worker.txt}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libegl1 libgles2 >/dev/null
+      - run: pip install -q -r requirements-worker.txt
+      - uses: actions/cache@v4
+        with: {path: ~/.cache/huggingface, key: whisper-small-v1}
+      - name: Split the Buffer Commit kickoff into 5 clips
+        env: {HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite"}
+        run: python scripts/demo_buffer_split.py --out demo_out --model small
+      - uses: actions/upload-artifact@v4
+        with: {name: demo-split-bundle, path: demo_out/, retention-days: 14}

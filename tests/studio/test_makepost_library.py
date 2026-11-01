@@ -265,6 +265,9 @@ def test_sample_workspace_library_is_read_only(tmp_path):
     assert lst["read_only"] and lst["items"] and all(i["read_only"] for i in lst["items"])
     assert {"video", "carousel"} <= {i["kind"] for i in lst["items"]}
     assert c.get(lst["items"][0]["url"]).status_code == 200  # the sample files are served
+    src = next(i for i in lst["items"] if i["id"] == "sample-source")  # the long video the sample clips were cut from
+    assert src["kind"] == "video" and src["url"].startswith("https://huggingface.co/") and src["credit"].startswith("Video: Buffer")
+    assert len(src["clips"]) == 5 and src["size"] > 0
     assert c.post("/api/library/upload?name=a.mp4", content=MP4).status_code == 403
     assert c.delete("/api/library/1").status_code == 403
     # the sample still takes a Make a post upload (kept as run media, not in a Library)
