@@ -40,6 +40,16 @@ SOCIAL_PAGES = ("youtube.com", "youtu.be", "tiktok.com", "instagram.com", "faceb
                 "linkedin.com", "twitch.tv")
 SAMPLE_DIR = Path(__file__).parent / "sample_take"
 MAX_TAKE_SECS = int(os.environ.get("HQ_MAX_TAKE_SECS", "1800"))
+MAX_CAPTION_TEXT = 4 * 1024 * 1024  # an uploaded .srt/.vtt; checked before it is parsed (SECURITY_RULES 6)
+# Opus-style takes render each clip in the ratio its channel needs (Instagram is posted as a Reel here)
+TAKE_RATIO = {"instagram": "9:16", "tiktok": "9:16", "youtube": "9:16", "facebook": "9:16", "linkedin": "4:5", "threads": "4:5",
+              "twitter": "1:1", "x": "1:1", "bluesky": "1:1", "mastodon": "1:1"}
+
+
+def ratios_for(services: list[str]) -> list[str]:
+    """The ratios to render, 9:16 first (the clip everyone sees in the UI)."""
+    got = {TAKE_RATIO.get(s, "9:16") for s in services} | {"9:16"}
+    return sorted(got, key=["9:16", "4:5", "1:1"].index)
 
 
 def _now() -> float:
@@ -94,15 +104,18 @@ class Takes:
         if demo_guard.is_demo(a.uid):
             raise ActionError("In the sample workspace, One take runs on the bundled sample talk (Try the sample take). "
                               "Connect Buffer to cut your own videos.", 403)
-        if not body.get("owns"):
-            raise ActionError("Confirm this is your own video (owns: true). One take only clips videos you own or have the "
-                              "rights to.")
+        from .media.find import platform_of
+        owns, rights = bool(body.get("owns")), bool(body.get("rights_confirmed"))
+        if not (owns or rights):
+            raise ActionError("Confirm this is your own video (owns: true), or that you have the right to clip it "
+                              "(rights_confirmed: true, with a credit line). One take only clips videos you own or have the rights to.")
         token, url = (body.get("media_token") or "").strip(), (body.get("url") or body.get("media_url") or "").strip()
         base = self.s.public_url.rstrip("/") + "/m/"
         if url.startswith(base):
             token, url = url[len(base):], ""
         if not token and not url:
-            raise ActionError("Upload a video (media_token) or give a direct link to a video file you own (url).")
+            raise ActionError("Upload a video (media_token), or give a link to the video (a YouTube / Vimeo / X post, or a file).")
+        platform_url, credit = "", str(body.get("credit") or "").strip()[:160]
         if token:
             meta = self.h.media_meta(a, token)
             if not meta or meta.get("type") != "video":
@@ -110,28 +123,55 @@ class Takes:
         else:
             p = urlparse(url)
             if p.scheme != "https" or not p.hostname or not drafter._public(p.hostname):
-                raise ActionError("The link must be a public https:// address of a video file.")
+                raise ActionError("The link must be a public https:// address of a video.")
             host = p.hostname.lower().removeprefix("www.").removeprefix("m.")
-            if any(host == d or host.endswith("." + d) for d in SOCIAL_PAGES):
-                raise ActionError("Give a direct link to the video file itself (for example …/talk.mp4 from your own storage), "
-                                  "not a page on a social network.")
+            if platform_of(url):  # a video post on YouTube / Vimeo / X / ...: fetched on the worker, captions reused
+                platform_url, url = url, ""
+                if not credit:
+                    from .media.find import oembed
+                    o = oembed(platform_url, http=self.h.http) or {}
+                    who, where = o.get("author") or "", o.get("provider") or (p.hostname or "")
+                    credit = f"Video: {who + ' on ' if who else ''}{where}"
+            elif any(host == d or host.endswith("." + d) for d in SOCIAL_PAGES):
+                raise ActionError("Give a link to the video post itself (YouTube, Vimeo, X, Loom, TikTok) or the video file, "
+                                  "not a profile or page.")
+        if not owns and not credit:
+            raise ActionError("Add a credit line for a video you didn't make (credit: 'Video: @handle on YouTube').")
+        style = "opus" if (platform_url or str(body.get("style") or "").lower() in ("opus", "opus_clip", "shorts")) else "take"
+        captions = body.get("captions") or ""
+        if captions:
+            if not isinstance(captions, str) or len(captions.encode("utf-8", "ignore")) > MAX_CAPTION_TEXT:
+                raise ActionError("Caption files up to 4 MB (SRT or WebVTT).", 413)
+            from .media.subtitles import CaptionError, parse_captions
+            try:
+                if not parse_captions(captions):
+                    raise CaptionError("empty")
+            except CaptionError:
+                raise ActionError("That caption file isn't SRT or WebVTT with timed lines.")
+        from .media import longform
+        req = longform.parse_request(str(body.get("prompt") or ""))
         chans = self._channels(a, body.get("channel_ids"))
         if not chans:
             raise ActionError("Pick at least one connected channel that takes video (Instagram, TikTok, YouTube, X, LinkedIn, Threads).")
-        count = body.get("count")
-        count = max(1, min(7, int(count))) if count else None
+        count = body.get("count") or req["n"]
+        count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
         steps = [{"key": k, "label": l, "status": "pending", "detail": "", "data": None} for k, l in STEPS]
-        inp = {"media_token": token, "url": url, "count": count, "owns": True, "name": (body.get("name") or "")[:80],
+        inp = {"media_token": token, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
+               "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]],
+               "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
+               "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
         rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
                            (a.uid, "take", json.dumps(inp), "running", json.dumps(steps), json.dumps({}), _now(), _now()))
-        self.store.audit(a.uid, a.label, "clips_from_video", "read", {"take": rid, "source": "upload" if token else "link"})
+        self.store.audit(a.uid, a.label, "clips_from_video", "read",
+                         {"take": rid, "source": "upload" if token else ("platform" if platform_url else "link"), "style": style})
         run = self._run(a, rid)
-        self._step(run["steps"], "upload", "done", "Your upload" if token else f"Your link ({urlparse(url).hostname})",
-                   {"source": self.media_url(token) if token else url})
+        self._step(run["steps"], "upload", "done", "Your upload" if token else f"Your link ({urlparse(url or platform_url).hostname})"
+                   + (f" · {credit}" if credit and not owns else ""), {"source": self.media_url(token) if token else (url or platform_url)})
         self._save(rid, run["steps"], run["result"])
-        self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_url": url, "model": os.environ.get("HQ_STT_MODEL", "small")},
-                    "transcribe", "Transcribing on the video worker (faster-whisper, CPU)")
+        self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_url": url, "platform_url": platform_url,
+                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small")},
+                    "transcribe", "Reading captions, else transcribing on the video worker (faster-whisper, CPU)")
         return self.get(a, rid)
 
     def start_sample(self, a: Actor, body: dict | None = None) -> dict:
@@ -236,17 +276,19 @@ class Takes:
                 if not m:
                     raise take.TakeError("The uploaded video is gone.")
                 src.write_bytes(m["data"])
+            elif spec.get("platform_url"):
+                fetch_platform(spec["platform_url"], src)
             else:
                 self._download(spec["source_url"], src)
             if spec["kind"] == "take_analyze":
-                analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=MAX_TAKE_SECS)
+                analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=MAX_TAKE_SECS,
+                                        transcript=reuse_captions(str(src), spec))
                 self.on_analysis(jid, analysis, "")
             else:
                 logo = self.h.get_media(spec["logo"])["data"] if spec.get("logo") and self.h.get_media(spec["logo"]) else None
                 for c in spec["clips"]:
-                    data, cover, meta = take.render_clip(str(src), c, c["words"], c["faces"], spec.get("scenes") or [], spec["src"],
-                                                         spec["kit"], spec["params"], logo=logo)
-                    self.on_clip(jid, c["id"], data, cover, meta)
+                    for cid, data, cover, meta in render_spec_clip(str(src), spec, c, logo):
+                        self.on_clip(jid, cid, data, cover, meta)
                 self.on_render_done(jid, "")
         except Exception as e:  # noqa: BLE001 - every failure is reported on the take, never left spinning
             traceback.print_exc()
@@ -300,9 +342,18 @@ class Takes:
         self._step(steps, "moments", "running", "Scoring every stretch of the talk")
         self._save(rid, steps, res)
         eng = self.h._ai_reserve(a, llm.resolve(self.store, a.uid, self.s))
+        chat = lambda e, sy, us: llm.chat_json(e, sy, us, http=self.h.http, max_tokens=1500)  # noqa: E731
         try:
-            mined = take.mine_moments(analysis, run["input"].get("count"), eng,
-                                      lambda e, sy, us: llm.chat_json(e, sy, us, http=self.h.http, max_tokens=1500))
+            if run["input"].get("style") == "opus":
+                from .media import longform
+                lo, hi = (run["input"].get("range") or [longform.MIN_S, longform.MAX_S])[:2]
+                mined = longform.pick_moments(analysis.get("words") or [], (analysis.get("probe") or {}).get("duration"),
+                                              run["input"].get("count"), lo, hi, scenes=analysis.get("scenes"),
+                                              silences=analysis.get("silences"), engine=eng, chat_json=chat)
+                for m in mined["moments"]:
+                    m["why"] = m["reason"]
+            else:
+                mined = take.mine_moments(analysis, run["input"].get("count"), eng, chat)
         except take.TakeError as e:
             self._step(steps, "moments", "failed", str(e))
             self._save(rid, steps, res, "failed")
@@ -313,8 +364,8 @@ class Takes:
         self._step(steps, "moments", "done", f"{len(mined['moments'])} moments from {mined['sentences']} sentences · picked by {mined['picked_by']}",
                    {"moments": [{k: m[k] for k in ("id", "start", "end", "hook", "score")} for m in mined["moments"]]})
         res["clips"] = [{"id": f"c{i + 1}", "moment_id": m["id"], "status": "rendering", "start": m["start"], "end": m["end"],
-                         "hook": m["hook"], "text": m["text"], "score": m["score"], "why": m.get("why", ""), "captions": {},
-                         "placements": []} for i, m in enumerate(mined["moments"])]
+                         "hook": m["hook"], "text": m["text"], "score": m["score"], "why": m.get("why", ""), "rank": m.get("rank"),
+                         "reasons": m.get("reasons") or [], "captions": {}, "placements": []} for i, m in enumerate(mined["moments"])]
         self._save(rid, steps, res)
         self._render(a, rid, [c["id"] for c in res["clips"]])
         return {"ok": True}
@@ -330,15 +381,21 @@ class Takes:
             if c["id"] not in clip_ids:
                 continue
             c["status"] = "rendering"
+            ratios = run["input"].get("ratios") or ["9:16"]
             clips.append({"id": c["id"], "start": c["start"], "end": c["end"], "hook": c["hook"],
                           "words": take.words_in(an["words"], c["start"], c["end"]),
-                          "faces": [f for f in an.get("faces") or [] if c["start"] - 1 <= f["t"] <= c["end"] + 1]})
+                          "faces": [f for f in an.get("faces") or [] if c["start"] - 1 <= f["t"] <= c["end"] + 1],
+                          "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else []})
         for k in ("reframe", "captions", "covers"):
             self._step(run["steps"], k, "running", f"0 of {len(clips)} clips")
         self._save(rid, run["steps"], res, "rendering")
         spec = {"kind": "take_render", "source": run["input"].get("media_token") or "", "source_url": run["input"].get("url") or "",
+                "platform_url": run["input"].get("platform_url") or "",
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": p, "logo": kit.get("logo") or "",
-                "scenes": an.get("scenes") or [], "src": an["probe"], "clips": clips}
+                "scenes": an.get("scenes") or [], "src": an["probe"], "clips": clips,
+                "style": run["input"].get("style") or "take", "ratios": run["input"].get("ratios") or ["9:16"],
+                "credit": run["input"].get("credit") or "", "burned_subs": bool(an.get("burned_subs")),
+                "face_detector": an.get("face_detector", True)}
         self._queue(a, rid, spec, "reframe", f"Rendering {len(clips)} clips on the video worker")
 
     def on_clip(self, jid: int, clip_id: str, data: bytes, cover: bytes, meta: dict) -> dict:
@@ -347,9 +404,15 @@ class Takes:
             a, rid = Actor(j["user_id"]), j["run_id"]
             run = self._run(a, rid)
             steps, res = run["steps"], run["result"]
-            clip = next((c for c in res.get("clips", []) if c["id"] == clip_id), None)
+            base_id, _, ratio = clip_id.partition("@")
+            clip = next((c for c in res.get("clips", []) if c["id"] == base_id), None)
             if not clip:
                 raise ActionError("No such clip.", 404)
+            if ratio:  # another aspect ratio of the same clip (Opus-style takes): kept beside it, used by placement
+                vt = self.h.put_media(a, data, f"clip-{base_id}-{ratio.replace(':', 'x')}.mp4", kind="render", meta=meta)
+                clip.setdefault("variants", {})[ratio] = {"token": vt, "url": self.media_url(vt), "meta": meta}
+                self._save(rid, steps, res)
+                return {"ok": True, "token": vt}
             tok = self.h.put_media(a, data, f"clip-{clip_id}.mp4", kind="render", meta=meta)
             ctok = self.h.put_media(a, cover, f"cover-{clip_id}.jpg", kind="render", meta={"type": "photo", "cover": True})
             clip.update(status="rendered", token=tok, url=self.media_url(tok), cover_token=ctok, cover_url=self.media_url(ctok),
@@ -452,7 +515,8 @@ class Takes:
         clips = []
         for c in res.get("clips", []):
             d = {k: c.get(k) for k in ("id", "moment_id", "status", "start", "end", "hook", "text", "score", "why", "url", "cover_url",
-                                       "error", "placements", "preflight", "captions")}
+                                       "error", "placements", "preflight", "captions", "rank", "reasons")}
+            d["variants"] = {r: v["url"] for r, v in (c.get("variants") or {}).items()}
             m = c.get("meta") or {}
             d["duration"] = m.get("duration") or round((c["end"] - c["start"]) + take.COVER_SECS + take.END_SECS, 2)
             d["layout"], d["face_coverage"] = m.get("layout"), m.get("face_coverage")
@@ -461,6 +525,7 @@ class Takes:
             d["post_captions"] = {ch["service"]: self.caption(a, c, ch["service"], kit, rules) for ch in run["input"]["channels"]}
             clips.append(d)
         return {"id": run["id"], "kind": "take", "status": run["status"], "steps": run["steps"], "input": run["input"],
+                "style": run["input"].get("style") or "take", "transcript_source": an.get("transcript_source"),
                 "sample": bool(res.get("sample")), "source": res.get("source") or {}, "providers": res.get("providers") or {},
                 "timings": res.get("timings") or {}, "picked_by": res.get("picked_by"), "moments": res.get("moments") or [],
                 "clips": clips, "created": run["created"], "updated": run["updated"],
@@ -583,7 +648,8 @@ class Takes:
             ch, c = chans[p["channel_id"]], byid[p["clip_id"]]
             p["service"], p["channel_name"] = ch["service"], ch.get("displayName") or ch["name"]
             p["text"] = self.caption(a, c, ch["service"], kit, rules)
-            p["media_url"], p["cover_url"], p["hook"] = c["url"], c.get("cover_url"), c["hook"]
+            v = (c.get("variants") or {}).get(TAKE_RATIO.get(ch["service"], "9:16")) if run["input"].get("style") == "opus" else None
+            p["media_url"], p["cover_url"], p["hook"] = (v or {}).get("url") or c["url"], c.get("cover_url"), c["hook"]
             p["options"] = self._clip_options(ch["service"], c)
             p["preflight"] = (c.get("preflight") or {}).get(ch["id"], {}).get("status", "ok")
         return {"week_of": monday.isoformat(), "timezone": tz, "channel_ids": ids, **plan,
@@ -660,3 +726,62 @@ class Takes:
 
 def encode(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+# ---------------------------------------------------------------------- shared by the local runner and render_worker
+def fetch_platform(url: str, dest: Path) -> None:
+    """A YouTube / Vimeo / X post -> dest, through studio.media.download (single extractor, size + height caps, vetted).
+    YouTube often refuses datacenter IPs; the error then says to upload the file."""
+    from .media.download import DownloadError, download_video
+    try:
+        download_video(url, dest)
+    except DownloadError as e:
+        raise take.TakeError(str(e))
+
+
+def reuse_captions(path: str, spec: dict) -> dict | None:
+    """Captions that already exist (uploaded .srt/.vtt, the platform's track, a caption stream in the file) so Whisper
+    doesn't run. None when there are none: take.analyze transcribes."""
+    from .media.subtitles import resolve_transcript
+    try:
+        tr = resolve_transcript(path, url=spec.get("platform_url") or None, caption_text=spec.get("captions") or None,
+                                transcribe=False)
+    except Exception:  # noqa: BLE001 - bad captions fall back to Whisper
+        return None
+    return tr if tr.get("words") else None
+
+
+def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
+    """Yields (clip_id, mp4, cover_jpg, meta) for one clip of a take_render job: the classic One take render, or for
+    Opus-style takes one render per ratio (the first under the clip's id, the others as '<id>@<ratio>')."""
+    if spec.get("style") != "opus":
+        data, cover, meta = take.render_clip(src, c, c["words"], c["faces"], spec.get("scenes") or [], spec["src"],
+                                             spec["kit"], spec["params"], logo=logo)
+        yield c["id"], data, cover, meta
+        return
+    from .media import longform
+    from .media.worker import brand_from_kit
+    tmp = Path(tempfile.mkdtemp(prefix="hq_opus_"))
+    try:
+        logo_path = None
+        if logo:
+            logo_path = str(tmp / "logo.png")
+            Path(logo_path).write_bytes(logo)
+        b = brand_from_kit(spec.get("kit"), logo_path)
+        sz = (int(spec["src"].get("width") or 1920), int(spec["src"].get("height") or 1080))
+        for i, r in enumerate(spec.get("ratios") or ["9:16"]):
+            out = tmp / f"{c['id']}_{r.replace(':', 'x')}.mp4"
+            got = longform.render_moment(src, c, c["words"], ratio=r, brand=b, credit=spec.get("credit") or "", out=str(out),
+                                         faces=c.get("faces"), scenes=spec.get("scenes"), detector=spec.get("face_detector", True),
+                                         burned_subs=bool(spec.get("burned_subs")), src_size=sz)
+            cover = tmp / f"{c['id']}_{i}.jpg"
+            take.frame_at(str(out), 0.4, str(cover))  # the hook is on screen from frame 0
+            rf = got["reframe"]
+            meta = {"type": "video", "style": "opus", "ratio": r, "duration": got["duration"], "width": got["width"],
+                    "height": got["height"], "layout": {"track": "track", "pad": "pad"}.get(rf["mode"], "center"),
+                    "face_coverage": rf.get("face_coverage"), "captions": got["captions"], "burned_subs": got["burned_subs"],
+                    "caption_problems": got["caption_problems"], "cover_offset_ms": 400, "credit": spec.get("credit") or ""}
+            yield (c["id"] if i == 0 else f"{c['id']}@{r}"), out.read_bytes(), cover.read_bytes(), meta
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)

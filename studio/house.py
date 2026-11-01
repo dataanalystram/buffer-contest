@@ -974,7 +974,8 @@ class House:
                 return False
             t["read"] = True
         elif use == "clip":
-            ids = {str(c.get("id")) for c in spec.get("clips") or []}
+            ids = {str(c.get("id")) for c in spec.get("clips") or []} | \
+                {str(v) for c in spec.get("clips") or [] for v in c.get("variant_ids") or []}  # other ratios of a clip
             if clip_id not in ids or clip_id in (t.get("clips") or []):
                 return False
             t["clips"] = list(t.get("clips") or []) + [clip_id]
