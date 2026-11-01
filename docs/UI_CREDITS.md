@@ -77,3 +77,17 @@ asset was copied from them.
 
 Rebuild: `python scripts/build_ai_logos.py <simple-icons package> <openai symbol svg> <xAI assets dir>`.
 Landing images: `studio/static/land/made/*.webp`, downsized from our own `studio/static/examples/` renders.
+
+## Make a post v2 (1 Nov 2026): agent workspace, Discover, Recent content, Story scan cards
+Still vanilla JS and our own CSS (`studio/static/makepost.js`, `makepost.css`, `pager.js`, `keyframes.js`); no React, no
+component code copied. The layout follows the owner's mock; these open-source projects shaped the patterns:
+
+| Pattern | From | Licence |
+|---|---|---|
+| Chat thread with a user bubble, an agent message, a sticky composer that grows and sends on Enter | assistant-ui (`Thread`, `Composer`) https://github.com/assistant-ui/assistant-ui | MIT |
+| Tool-activity trace (collapsible), "Sources" with favicons, streaming status line, plan list | shadcn AI Elements (`Tool`, `Sources`, `Reasoning`, `Loader`) https://github.com/vercel/ai-elements | MIT |
+| Prompt input with tool row (attach, model / format select, primary submit), suggestion chips, "Try an example" | prompt-kit (`PromptInput`, `PromptSuggestion`) https://github.com/ibelick/prompt-kit | MIT |
+| Stepper, mode cards with a check, segmented filters, news cards with a thumbnail and an open action | 21st.dev community components (MIT-licensed entries only; patterns, no code) https://21st.dev | per component, MIT entries only |
+
+Story pictures come from each story's own og:image, read and re-encoded by our server (`studio/thumbs.py`); when a story
+has none, the site's own favicon (or a monogram) is shown. No third-party favicon or image service is used.

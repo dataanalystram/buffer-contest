@@ -35,9 +35,13 @@ async function loadLibrary() {
     const { fmtSize } = window.HQ_FMT;
     $("#libUsage").textContent = d.read_only ? "Sample items · read-only" : `${fmtSize(d.used)} of ${fmtSize(d.quota)} used · files up to ${fmtSize(d.file_max)}`;
     $("#libUpBtn").hidden = !!d.read_only;
-    grid.innerHTML = d.items.length ? d.items.map(libCard).join("")
+    const per = 12, pages = Math.max(1, Math.ceil(d.items.length / per));
+    LIB.page = Math.min(LIB.page || 1, pages);
+    grid.innerHTML = d.items.length ? d.items.slice((LIB.page - 1) * per, LIB.page * per).map(libCard).join("")
       : `<div class="empty" data-testid="library-empty"><b>${$("#libQ").value || $("#libKind").value ? "Nothing matches" : "Your Library is empty"}</b><span>Upload a photo or video here or in Make a post, or make a post: every image, carousel and Reel the agent makes lands here.</span></div>`;
     grid.querySelectorAll(".lib-card").forEach(wireLibCard);
+    window.hqPager && window.hqPager($("#libPager"), { total: d.items.length, page: LIB.page, per, label: "Library pages",
+      onPage: (n) => { LIB.page = n; loadLibrary(); grid.scrollIntoView({ behavior: "smooth", block: "start" }); } });
   } catch (e) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
 }
 function wireLibCard(el) {
