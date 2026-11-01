@@ -581,7 +581,7 @@ function whyLine(st) {
 function storyItem(st) {
   const host = hostOf(st.url), ago = st.published ? timeAgo(st.published * 1000) : "", why = whyLine(st);
   return `<article class="nf-card" data-testid="story-item">
-    ${st.image ? `<img class="nf-img" src="${esc(st.image)}" alt="" loading="lazy">` : ""}
+    <img class="nf-img" src="${esc(window.hqThumb(st.url, st.image || ""))}" alt="" loading="lazy" data-testid="story-thumb">
     <div class="nf-b"><div class="nf-meta">${fav(host)}<span class="nf-src" title="via ${esc(st.source || "")}">${esc(host || st.source)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}</div>
       <a class="nf-t" href="${esc(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
       ${why ? `<p class="nf-why">${esc(why)}</p>` : ""}
@@ -605,7 +605,7 @@ function wireMake(box) {
   }));
   box.querySelectorAll("[data-run]").forEach((b) => (b.onclick = async () => { showTab("agent", "agent"); try { const r = await api(`/api/agent/runs/${b.dataset.run}`); window.showRun && showRun(r); } catch (e) { toast(e.message); } }));
 }
-const NF = { stories: [], shown: 12 };
+const NF = { stories: [], shown: 12, page: 1 };
 async function loadNews() { if ((document.getElementById("tab-news").dataset.sub || "feed") === "feed") loadFeed(); }
 async function loadFeed() {
   const box = $("#stories");
@@ -613,8 +613,11 @@ async function loadFeed() {
   try {
     const r = await api("/api/radar"); NF.stories = r.stories; NF.feeds = r.feeds;
     box.innerHTML = (r.errors || []).map((e) => `<div class="st err">${esc(hostOf(e.feed))}: ${esc(e.error)}</div>`).join("")
-      + (r.stories.length ? r.stories.slice(0, NF.shown).map(storyItem).join("") : `<div class="empty"><b>No stories yet</b><span>Follow a site in <button class="link" type="button" data-go="news:sources" data-testid="news-empty-sources">Sources</button>. Most news sites and blogs have a feed at /feed or /rss.</span></div>`);
-    $("#nfMore").hidden = r.stories.length <= NF.shown;
+      + (r.stories.length ? r.stories.slice((NF.page - 1) * 12, NF.page * 12).map(storyItem).join("") : `<div class="empty"><b>No stories yet</b><span>Follow a site in <button class="link" type="button" data-go="news:sources" data-testid="news-empty-sources">Sources</button>. Most news sites and blogs have a feed at /feed or /rss.</span></div>`);
+    $("#nfMore").hidden = true;  // numbered pages instead of "Show more" (owner, 1 Nov 2026)
+    window.hqPager($("#nfPager"), { total: r.stories.length, page: NF.page, per: 12, label: "News pages",
+      onPage: (n) => { NF.page = n; loadFeed(); box.scrollIntoView({ behavior: "smooth", block: "start" }); } });
+    box.querySelectorAll(".nf-img").forEach((im) => (im.onerror = () => im.remove()));
     wireMake(box); favicons(box);
   } catch (e) { box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
 }

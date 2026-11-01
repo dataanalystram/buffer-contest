@@ -170,6 +170,7 @@
           <label class="btn sm lib-up" id="libUpBtn">Upload<input id="libFile" data-testid="library-upload" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" hidden></label>
         </div>
         <div id="libGrid" class="lib-grid" data-testid="library-grid" aria-live="polite"></div>
+        <div id="libPager" class="pg-wrap" data-testid="library-pager" hidden></div>
       </div>
       <div class="tab" id="tab-take" data-testid="take" hidden>
         <h1 class="page-title">One take</h1>
@@ -361,6 +362,7 @@
         <section class="sub" data-sub="feed" data-testid="news-feed">
           <div id="stories" class="nf-grid" data-testid="story-list"></div>
           <div class="row nf-pager"><button class="btn2 sm" type="button" id="nfMore" data-testid="news-more" hidden>Show more</button></div>
+          <div id="nfPager" class="pg-wrap" data-testid="news-pager" hidden></div>
         </section>
         <section class="sub" data-sub="scan" data-testid="news-scan" hidden><div id="saScanMount"></div></section>
         <section class="sub" data-sub="sources" data-testid="news-sources" hidden>
@@ -493,6 +495,7 @@
 <script src="/static/ai-mark.js"></script>
 <script src="/static/net-logos-data.js"></script>
 <script src="/static/net-logos.js"></script>
+<script src="/static/pager.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/keyframes.js"></script>
 <script src="/static/house.js"></script>
