@@ -81,7 +81,8 @@ def _est_tokens(obj) -> int:
 
 def call(engine: dict, store, uid: str, label: str, *, system: str, messages: list, tools: list | None = None,
          max_tokens: int = 1500, fast: bool = False, purpose: str = "agent brain", http=None, timeout: float = 90) -> dict:
-    """One model turn. Returns {text, tool_calls:[{id,name,input}], assistant (history entry), usage{in,out,cw,cr,cost}}.
+    """One model turn. Returns {text, tool_calls:[{id,name,input}], assistant (history entry), usage{in,out,cw,cr,cost}, model,
+    stop_reason ("max_tokens" when the answer was cut, for both API styles)}.
     Raises budget.BudgetExceeded (before the call) or llm.LLMError."""
     model = engine["fast_model"] if fast else engine["model"]
     if engine.get("budgeted"):
@@ -109,6 +110,7 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
             text = "".join(b.get("text", "") for b in j.get("content") or [] if b.get("type") == "text")
             calls = [{"id": b["id"], "name": b["name"], "input": b.get("input") or {}} for b in j.get("content") or [] if b.get("type") == "tool_use"]
             assistant = {"role": "assistant", "content": j.get("content") or []}
+            stop = j.get("stop_reason") or ""
         else:
             headers = {"Authorization": f"Bearer {engine['api_key']}"} if engine.get("api_key") else {}
             msgs = [{"role": "system", "content": system}] + messages
@@ -124,7 +126,9 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
             u = j.get("usage") or {}
             usage = {"in": int(u.get("prompt_tokens") or 0), "out": int(u.get("completion_tokens") or 0), "cw": 0,
                      "cr": int(((u.get("prompt_tokens_details") or {}).get("cached_tokens")) or 0)}
-            msg = (j.get("choices") or [{}])[0].get("message") or {}
+            choice = (j.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            stop = "max_tokens" if choice.get("finish_reason") == "length" else (choice.get("finish_reason") or "")
             text = msg.get("content") or ""
             calls = []
             for tc in msg.get("tool_calls") or []:
@@ -145,7 +149,7 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
     elif engine.get("source") == "your key":
         budget.byo_check(store, uid, usage["in"] + usage["out"])
     _log(engine, store, uid, label, model, usage, purpose)
-    return {"text": text, "tool_calls": calls, "assistant": assistant, "usage": usage, "model": model}
+    return {"text": text, "tool_calls": calls, "assistant": assistant, "usage": usage, "model": model, "stop_reason": stop}
 
 
 def _log(engine, store, uid, label, model, usage, purpose):

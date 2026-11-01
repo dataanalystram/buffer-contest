@@ -38,7 +38,7 @@ SYSTEM_ACTIONS = {"buffer_api", "buffer_token_refreshed", "worker_claim", "worke
 
 APPS = {  # id -> label
     "claude": "Claude", "chatgpt": "ChatGPT", "grok": "Grok", "cursor": "Cursor", "codex": "Codex",
-    "claude-code": "Claude Code", "huhqueue": "HuhQueue Sources agent", "mcp": "Other MCP client", "api": "Agent token (REST)",
+    "claude-code": "Claude Code", "huhqueue": "HuhQueue Sources agent", "huhqueue-agent": "HuhQueue agent", "mcp": "Other MCP client", "api": "Agent token (REST)",
 }
 
 # USD per million tokens (input, output); estimates from the providers' public price pages. Unknown models get no cost.
@@ -179,8 +179,8 @@ def enrich(uid: str, actor: str, action: str, risk: str, detail: dict) -> dict:
                    model=clean_text(u.get("model") or detail.get("model"), 80),
                    tokens_in=u.get("tokens_in"), tokens_out=u.get("tokens_out"))
         row["cost_usd"] = cost(row["model"], u.get("source", ""), row["tokens_in"], row["tokens_out"])
-        if not row["app"]:
-            row["app"] = "huhqueue"  # the app's own Sources/research agent working for the signed-in person
+        if not row["app"]:  # the app's own agents working for the signed-in person: Make a post, else the Sources agent
+            row["app"] = c.get("internal_app") or "huhqueue"
     if cat == "signin":
         row["ip"], row["ua"] = clean_text(c.get("ip"), 64), clean_text(c.get("ua"), 200)
     return row
