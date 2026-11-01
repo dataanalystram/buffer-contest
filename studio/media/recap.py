@@ -1,0 +1,369 @@
+"""Weekly recap with videos: "make a 7 days what happened in AI recap with videos".
+
+    stories = recap.gather_week(http=client)                    # the week's top stories (news search, deduped, ranked)
+    plan = recap.plan(stories, find=tools.media_find)           # each story's official video/image + credit + rights
+    out = recap.compose(plan, fetched, out_dir="recap/")        # worker: carousel video slides + one Reel
+
+The HuhByte weekly-recap format (owner's rules, 22 Oct 2026): a cover that asks "DO YOU REALIZE WHAT JUST HAPPENED IN AI
+IN THE LAST 7 DAYS?", one branded segment per story with its credit line on screen, and the Follow card only once, at
+the very end. Story slides never get their own end card or Follow pill. Slides stay at or under 60 s.
+
+Gathering and composition live here; the look is behind ``RecapLayout``. The HuhByte weekly-recap template design is
+being ported separately (hq-themes); when a layout is registered under ``RECAP_LAYOUTS`` (``register_layout``) it is
+used, otherwise the minimal internal layout below renders the same structure.
+
+Rights: a video or image from the company's own site/channel (``official``) is fine with a credit; anything else needs
+the person's confirmation (``plan()["needs_confirmation"]`` lists those stories with one question), and stories the
+person declines fall back to an on-brand title card.
+"""
+from __future__ import annotations
+
+import re
+import shutil
+import tempfile
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+
+COVER_TEXT = "DO YOU REALIZE WHAT JUST HAPPENED IN AI IN THE LAST 7 DAYS?"
+COVER_ACCENT = ["LAST", "7", "DAYS?"]
+DEFAULT_QUERIES = ("artificial intelligence", "AI model launch", "OpenAI", "Anthropic Claude", "Google Gemini AI",
+                   "Nvidia AI")
+MAX_STORIES = 7
+SLIDE_MAX = 60.0       # carousel video slides: never over 60 s
+REEL_STORY_SECS = 7.0  # per story in the single Reel
+CARD_SECS = 2.5
+RECAP_RX = re.compile(r"\b(?:recap|round-?up|week in ai|what happened in ai|this week in ai|last 7 days|past week|weekly)\b", re.I)
+WITH_VIDEO_RX = re.compile(r"\bwith (?:the |their )?(?:videos?|clips?|launch videos?|media)\b|\bvideo recap\b", re.I)
+
+
+def wants_recap(prompt: str) -> dict:
+    """Pure. {"recap": bool, "videos": bool, "days": int, "n": int|None}."""
+    p = prompt or ""
+    days = 7
+    m = re.search(r"\b(\d{1,2})\s*[- ]?days?\b", p, re.I)
+    if m:
+        days = max(1, min(14, int(m.group(1))))
+    n = None
+    m = re.search(r"\btop\s+(\d{1,2})\b|\b(\d{1,2})\s+(?:stories|things|headlines)\b", p, re.I)
+    if m:
+        n = max(3, min(MAX_STORIES, int(m.group(1) or m.group(2))))
+    return {"recap": bool(RECAP_RX.search(p)), "videos": bool(WITH_VIDEO_RX.search(p)) or "video" in p.lower(), "days": days, "n": n}
+
+
+# ====================================================================== gather (light: runs on the web app)
+def _tokens(t: str) -> set[str]:
+    from ..sources_agent import tokens
+    return tokens(t)
+
+
+def same_story(a: dict, b: dict) -> bool:
+    ta, tb = _tokens(a["title"]), _tokens(b["title"])
+    if not ta or not tb:
+        return False
+    shared = ta & tb
+    return len(shared) >= 2 and len(shared) / min(len(ta), len(tb)) >= 0.5
+
+
+AI_RX = re.compile(r"\b(ai|a\.i\.|model|models|llm|gpt|gemini|claude|openai|anthropic|deepmind|nvidia|agents?|chatbot|copilot|"
+                   r"machine learning|neural|robot\w*|grok|llama|mistral|perplexity)\b", re.I)
+
+
+def rank(leads: list[dict], days: int = 7, now: float | None = None, n: int = 5) -> list[dict]:
+    """Leads -> one entry per story, ranked by how many outlets carried it, Hacker News points and freshness.
+    Only AI stories from the window; the most-covered link of each cluster is the story's link."""
+    now = now or time.time()
+    lo = now - days * 86400
+    leads = [x for x in leads if x.get("title") and AI_RX.search(x["title"]) and (not x.get("published") or x["published"] >= lo)]
+    groups: list[list[dict]] = []
+    for x in leads:
+        for g in groups:
+            if any(same_story(x, y) for y in g):
+                g.append(x)
+                break
+        else:
+            groups.append([x])
+    out = []
+    for g in groups:
+        outlets = {(urlparse(y["url"]).hostname or y.get("source") or "").removeprefix("www.") for y in g}
+        pts = max((y.get("points") or 0) for y in g)
+        pub = max((y.get("published") or 0) for y in g)
+        fresh = max(0.0, 1 - (now - pub) / (days * 86400)) if pub else 0.3
+        lead = max(g, key=lambda y: (len(y.get("summary") or ""), -len(y["title"])))
+        score = 3 * len(outlets) + min(4, pts / 100) + 2 * fresh
+        out.append({"title": lead["title"], "url": lead["url"], "source": lead.get("source") or "", "published": pub,
+                    "outlets": sorted(o for o in outlets if o), "score": round(score, 2), "summary": lead.get("summary") or "",
+                    "image": next((y.get("image") for y in g if y.get("image")), "")})
+    out.sort(key=lambda s: -s["score"])
+    return out[:n]
+
+
+def gather_week(http=None, queries=DEFAULT_QUERIES, days: int = 7, n: int = 5, feeds: list[dict] | None = None,
+                search=None) -> list[dict]:
+    """The week's top AI stories from the free news sources (Bing News, Google News, Hacker News, followed feeds)."""
+    from .. import sources
+    leads: list[dict] = []
+    for q in queries:
+        if search:
+            leads += search(q)
+            continue
+        leads += sources.bing_news(q, http, 15) + sources.google_news(q, http, 15) + sources.hacker_news(q, http, 10)
+    if feeds:
+        leads += sources.followed(feeds, http, 30)
+    return rank(leads, days=days, n=n)
+
+
+# ====================================================================== plan (light): media + rights per story
+def headline(title: str, max_words: int = 12) -> str:
+    t = re.sub(r"\s+[-|–—]\s+[^-|–—]{2,40}$", "", title or "").strip()  # " - The Verge" tails
+    w = t.split()
+    return t if len(w) <= max_words else " ".join(w[:max_words]).rstrip(",;:") + "…"
+
+
+def plan(stories: list[dict], find=None, video: bool = True) -> dict:
+    """Each story -> {headline, url, media: {kind, url, official, credit, candidate} | None}. Official media needs no
+    question; other people's media is listed in ``needs_confirmation`` with one question for the person."""
+    segs, ask = [], []
+    for i, st in enumerate(stories):
+        media = None
+        if find and video:
+            try:
+                got = find(st["url"])
+            except Exception:  # noqa: BLE001 - a story without media gets a title card
+                got = {}
+            c = (got or {}).get("best_downloadable") or None
+            if c:
+                media = {"kind": "video", "url": c["url"], "official": bool(c.get("official")), "credit": c.get("credit") or "",
+                         "candidate": c}
+            else:
+                im = next(iter((got or {}).get("images") or []), None)
+                if im:
+                    media = {"kind": "image", "url": im["url"], "official": bool(im.get("official")), "credit": im.get("credit") or "",
+                             "candidate": im}
+        if not media and st.get("image"):
+            media = {"kind": "image", "url": st["image"], "official": False, "credit": f"Image: {st.get('source') or 'the publisher'}",
+                     "candidate": {"url": st["image"], "kind": "image"}}
+        seg = {"i": i + 1, "headline": headline(st["title"]), "url": st["url"], "source": st.get("source") or "",
+               "outlets": st.get("outlets") or [], "media": media}
+        if media and not media["official"]:
+            ask.append({"i": i + 1, "headline": seg["headline"], "credit": media["credit"]})
+        segs.append(seg)
+    out = {"cover": COVER_TEXT, "segments": segs, "follow_only_at_end": True}
+    if ask:
+        out["needs_confirmation"] = ask
+        out["question"] = ("These stories use media that isn't from the company itself: " +
+                           "; ".join(f"#{a['i']} {a['headline']} ({a['credit']})" for a in ask) +
+                           ". I'll credit each on screen and in the caption. OK to use them, or should I use title cards instead?")
+    return out
+
+
+def apply_rights(p: dict, confirmed: bool | list[int]) -> dict:
+    """The person's answer: True (all), False (none: title cards), or the story numbers they OK'd."""
+    ok = set(confirmed) if isinstance(confirmed, list) else None
+    for s in p["segments"]:
+        m = s.get("media")
+        if m and not m["official"]:
+            allowed = confirmed is True or (ok is not None and s["i"] in ok)
+            m["rights_confirmed"] = bool(allowed)
+            if not allowed:
+                s["media"] = None
+    p.pop("needs_confirmation", None)
+    p.pop("question", None)
+    return p
+
+
+# ====================================================================== layout interface (hq-themes registers its own)
+class RecapLayout:
+    """What a recap look must provide. Every method writes a PNG of exactly (W, H) and returns layout boxes."""
+    name = "minimal"
+
+    def cover(self, path: str, W: int, H: int, brand: dict, text: str, still) -> dict:
+        from .compose import cover_card
+        return cover_card(path, W, H, brand, text, still, label="WEEKLY RECAP", accent_words=COVER_ACCENT)
+
+    def story_overlay(self, path: str, W: int, H: int, brand: dict, seg: dict, n: int) -> dict:
+        """Transparent overlay over the story's media: counter, headline on top, credit under the media panel.
+        Returns {"panel": (x0, y0, x1, y1), ...} where the media goes."""
+        from PIL import Image, ImageDraw
+
+        from .compose import _credit_chip, _pill, _text_block, safe_area
+        im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        l, t, r, b = safe_area(W, H)
+        boxes = {"counter": _pill(d, f"{seg['i']} / {n}", (l + r) // 2, t, brand, size=28)}
+        y = boxes["counter"][3] + int(H * 0.02)
+        hb, _ = _text_block(d, seg["headline"], brand["head_font"], (l, y, r, y + int(H * (0.16 if H / W > 1.6 else 0.18))),
+                            max_size=84, min_size=30, max_lines=3, upper=True, valign="top")
+        boxes["headline"] = hb
+        top = hb[3] + int(H * 0.025)
+        bottom = b - 70
+        pw = r - l if H / W > 1.6 else W - 2 * l
+        ph = min(bottom - top, int(pw * 9 / 16) if H / W <= 1.6 else int(pw * 16 / 9))
+        x0 = (W - pw) // 2
+        boxes["panel"] = (x0, top, x0 + pw, top + ph)
+        credit = (seg.get("media") or {}).get("credit") or (f"Source: {seg['source']}" if seg.get("source") else "")
+        if credit:
+            boxes["credit"] = _credit_chip(d, credit, l, top + ph + 14, r - l)
+        im.save(path)
+        return boxes
+
+    def follow(self, path: str, W: int, H: int, brand: dict) -> dict:
+        from .compose import end_card
+        return end_card(path, W, H, brand)
+
+
+RECAP_LAYOUTS: dict[str, RecapLayout] = {"minimal": RecapLayout()}
+
+
+def register_layout(name: str, layout: RecapLayout) -> None:
+    RECAP_LAYOUTS[name] = layout
+
+
+def layout_for(name: str | None = None) -> RecapLayout:
+    if name and name in RECAP_LAYOUTS:
+        return RECAP_LAYOUTS[name]
+    return RECAP_LAYOUTS.get("huhbyte_weekly_recap") or RECAP_LAYOUTS["minimal"]
+
+
+# ====================================================================== compose (worker)
+SIZES = {"9:16": (1080, 1920), "4:5": (1080, 1350)}
+FPS = 30
+
+
+def _venc() -> list[str]:
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-r", str(FPS)]
+
+
+def _aenc() -> list[str]:
+    return ["-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2"]
+
+
+def _card(png: str, secs: float, out: str) -> str:
+    from . import ff
+    ff.run(["-y", "-v", "error", "-loop", "1", "-framerate", str(FPS), "-t", f"{secs:.2f}", "-i", png, "-f", "lavfi", "-t",
+            f"{secs:.2f}", "-i", "anullsrc=r=44100:cl=stereo", "-vf", "format=yuv420p,setsar=1", *_venc(), *_aenc(),
+            "-shortest", out], timeout=300)
+    return out
+
+
+def _segment(seg: dict, media_path: str | None, secs: float, W: int, H: int, brand: dict, lay: RecapLayout, n: int,
+             wd: Path, tag: str) -> tuple[str, dict]:
+    """One story: its media in the layout's panel (video from the start, up to ``secs``; an image with a slow push-in;
+    nothing -> the panel shows a brand-coloured title plate), the overlay on top, the source's own audio (silence if
+    none). Returns (mp4 path, boxes)."""
+    from . import ff
+    ov = str(wd / f"ov_{tag}.png")
+    boxes = lay.story_overlay(ov, W, H, brand, seg, n)
+    x0, y0, x1, y1 = boxes["panel"]
+    pw, ph = (x1 - x0) // 2 * 2, (y1 - y0) // 2 * 2
+    bg = brand["bg"].lstrip("#")
+    out = str(wd / f"seg_{tag}.mp4")
+    kind = (seg.get("media") or {}).get("kind") if media_path else None
+    dur = secs
+    if kind == "video":
+        pr = ff.probe(media_path)
+        dur = max(2.0, min(secs, pr["duration"] or secs))
+        args = ["-t", f"{dur:.3f}", "-i", media_path]
+        src = (f"[0:v]setpts=PTS-STARTPTS,fps={FPS},scale={pw}:{ph}:force_original_aspect_ratio=decrease,"
+               f"pad={pw}:{ph}:(ow-iw)/2:(oh-ih)/2:color=0x{bg}[pv]")
+        audio = ["a"] if pr.get("has_audio") else []
+    elif kind == "image":
+        args = ["-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.3f}", "-i", media_path]
+        fr = int(dur * FPS)
+        src = (f"[0:v]scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph},setsar=1,scale={pw * 112 // 100 // 2 * 2}:-2,"
+               f"zoompan=z='min(1+0.0010*on,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={fr}:s={pw}x{ph}:fps={FPS}[pv]")
+        audio = []
+    else:
+        args = ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", f"color=c=0x{brand['accent'].lstrip('#')}@0.18:s={pw}x{ph}:r={FPS}"]
+        src = "[0:v]format=yuv420p[pv]"
+        audio = []
+    fc = (f"{src};color=c=0x{bg}:s={W}x{H}:r={FPS}:d={dur:.3f}[bgc];[bgc][pv]overlay={x0}:{y0}:shortest=1[b];"
+          f"[b][1:v]overlay=0:0,format=yuv420p,setsar=1[v]")
+    if audio:
+        fc += f";[0:a]aresample=44100,aformat=channel_layouts=stereo,apad,atrim=0:{dur:.3f},afade=t=out:st={max(0, dur - 0.4):.2f}:d=0.4[a]"
+    else:
+        args += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
+    ff.run(_cmd(args, out, ov, dur, fc, audio), timeout=900)
+    return out, boxes
+
+
+def _cmd(args: list[str], out: str, ov: str, dur: float, fc: str, audio: list[str]) -> list[str]:
+    """ffmpeg command for a segment. Input order: 0 = media (or colour), 1 = overlay, [2 = silence]."""
+    media, silence = args, []
+    if not audio:  # the silence input was appended to args last; keep it after the overlay so it is input 2
+        media, silence = args[:-6], args[-6:]
+    amap = ["-map", "[a]"] if audio else ["-map", "2:a"]
+    return ["-y", "-v", "error", *media, "-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.3f}", "-i", ov, *silence,
+            "-filter_complex", fc, "-map", "[v]", *amap, "-t", f"{dur:.3f}", *_venc(), *_aenc(), out]
+
+
+def _concat(parts: list[str], out: str) -> str:
+    from . import ff
+    lst = Path(out).with_suffix(".txt")
+    lst.write_text("".join(f"file '{Path(p).resolve()}'\n" for p in parts))
+    ff.run(["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", "-movflags", "+faststart", out],
+           timeout=600)
+    return out
+
+
+def compose(p: dict, media: dict[int, str | None], out_dir: str, brand: dict | None = None, layout: str | None = None,
+            reel: bool = True, slides: bool = True, reel_secs: float = REEL_STORY_SECS, slide_max: float = SLIDE_MAX) -> dict:
+    """Render the recap. ``media`` maps story number -> local file (video or image) or None. Returns
+    {"slides": [{i, path, duration, ratio}], "reel": {path, duration} | None, "cover", "follow", "boxes"}.
+
+    Carousel (4:5): slide 0 the cover, one video slide per story (its media up to 60 s, no end card, no Follow pill),
+    last slide the Follow card. Reel (9:16): cover 2.5 s -> each story up to ``reel_secs`` -> Follow card, once."""
+    from PIL import Image
+
+    from . import ff
+    from .compose import DEFAULT_BRAND
+    brand = {**DEFAULT_BRAND, **(brand or {})}
+    lay = layout_for(layout)
+    od = Path(out_dir)
+    od.mkdir(parents=True, exist_ok=True)
+    wd = Path(tempfile.mkdtemp(prefix="hq_recap_"))
+    segs = p["segments"]
+    n = len(segs)
+    result: dict = {"slides": [], "reel": None, "layout": lay.name, "boxes": {}}
+    try:
+        still = None
+        for s in segs:
+            mp = media.get(s["i"])
+            if mp and (s.get("media") or {}).get("kind") == "video":
+                f = wd / "still.png"
+                ff.run(["-y", "-v", "error", "-ss", "1", "-i", mp, "-frames:v", "1", "-update", "1", str(f)], timeout=60)
+                still = Image.open(f)
+                break
+            if mp and (s.get("media") or {}).get("kind") == "image":
+                still = Image.open(mp)
+                break
+        for ratio, on in (("4:5", slides), ("9:16", reel)):
+            if not on:
+                continue
+            W, H = SIZES[ratio]
+            tag = ratio.replace(":", "x")
+            cov = str(od / f"cover_{tag}.png")
+            result["boxes"][f"cover_{tag}"] = lay.cover(cov, W, H, brand, p.get("cover") or COVER_TEXT, still)
+            fol = str(od / f"follow_{tag}.png")
+            result["boxes"][f"follow_{tag}"] = lay.follow(fol, W, H, brand)
+            if ratio == "4:5":
+                result["cover"], result["follow"] = cov, fol
+                for s in segs:
+                    path, bx = _segment(s, media.get(s["i"]), slide_max if (s.get("media") or {}).get("kind") == "video" else 6.0,
+                                        W, H, brand, lay, n, wd, f"s{s['i']}_{tag}")
+                    dst = od / f"slide_{s['i']:02d}.mp4"
+                    shutil.move(path, dst)
+                    result["slides"].append({"i": s["i"], "path": str(dst), "duration": round(ff.probe(str(dst))["duration"], 2),
+                                             "ratio": ratio, "credit": (s.get("media") or {}).get("credit") or "", "boxes": bx})
+            else:
+                parts = [_card(cov, CARD_SECS, str(wd / f"c_{tag}.mp4"))]
+                for s in segs:
+                    path, bx = _segment(s, media.get(s["i"]), reel_secs, W, H, brand, lay, n, wd, f"r{s['i']}_{tag}")
+                    parts.append(path)
+                    result["boxes"][f"reel_{s['i']}"] = bx
+                parts.append(_card(fol, 3.0, str(wd / f"f_{tag}.mp4")))
+                rp = _concat(parts, str(od / "recap_reel_9x16.mp4"))
+                result["reel"] = {"path": rp, "duration": round(ff.probe(rp)["duration"], 2), "segments": len(parts)}
+        return result
+    finally:
+        shutil.rmtree(wd, ignore_errors=True)
