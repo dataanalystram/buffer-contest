@@ -373,16 +373,23 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  brand: dict | None = None, words: list[dict] | None = None, credit: str = "", clip: tuple | None = None,
                  images: list[str] | None = None, music_mood: str = "auto", names: list[str] | None = None,
                  burned_subs: bool | None = None, captions_mode: str = "auto", accent_words: list[str] | None = None,
-                 crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0) -> dict:
+                 crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
+                 brand_colors: bool = False) -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
+    ``style`` is a base style or a theme (styles.THEMES: its grade, effects, captions, cards and chrome on a base
+    layout); brand_colors=True keeps the brand's accent inside a theme.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
-    from .styles import STYLE_PRESETS, resolve
+    from . import theme_cards
+    from .styles import ALL_IDS, apply_palette, config, resolve
     style = resolve(style)
-    if style not in STYLE_PRESETS:
-        raise ff.MediaError(f"Unknown style {style!r}. Pick one of: {', '.join(STYLE_PRESETS)}.")
-    cfg = STYLE_PRESETS[style]
+    try:
+        cfg = config(style)
+    except KeyError:
+        raise ff.MediaError(f"Unknown style {style!r}. Pick one of: {', '.join(ALL_IDS)}.") from None
     brand = {**DEFAULT_BRAND, **(brand or {})}
+    if cfg.get("theme"):
+        brand = apply_palette(brand, cfg, keep_brand=brand_colors)
     if ratio not in SIZES:
         raise ff.MediaError(f"Unknown ratio {ratio!r}. Use 9:16, 4:5 or 1:1.")
     W, H = SIZES[ratio]
@@ -418,8 +425,16 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         total = cover_s + D + facts_s + CARD_SECS
 
         still = Image.open(frame_at(source, c0 + min(D * 0.3, 4.0), str(wd / "still.png"))) if source else Image.open(images[0])
-        L = layout(cfg["layout"], W, H, sw, sh, brand, hook, caps_on)
-        ov, boxes = _overlay(cfg["layout"], W, H, brand, hook, credit, L, acc)
+        lsw, lsh = (int(1000 * cfg["gate"][0] / cfg["gate"][1]), 1000) if cfg.get("gate") else (sw, sh)
+        L = layout(cfg["layout"], W, H, lsw, lsh, brand, hook, caps_on)
+        if cfg.get("chrome"):
+            ov, boxes = theme_cards.overlay(cfg, W, H, brand, hook, credit, L, acc)
+        else:
+            ov, boxes = _overlay(cfg["layout"], W, H, brand, hook, credit, L, acc)
+        stage_path = None
+        if cfg.get("fill") == "stage":
+            stage_path = wd / "stage.png"
+            theme_cards.stage(cfg, W, H, brand, L["panel"]).save(stage_path)
         if "cap_band" in L:
             boxes["cap_band"] = L["cap_band"]
         ov_path = wd / "overlay.png"
@@ -431,7 +446,11 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             hk.save(hook_path)
         segs = []
         if cover_s:
-            cover_card(str(wd / "cover.png"), W, H, brand, hook, still, label=cfg["cover_label"], accent_words=acc)
+            if cfg.get("card"):
+                boxes["cover_boxes"] = theme_cards.cover(cfg, str(wd / "cover.png"), W, H, brand, hook, still,
+                                                         label=cfg["cover_label"], accent_words=acc)
+            else:
+                cover_card(str(wd / "cover.png"), W, H, brand, hook, still, label=cfg["cover_label"], accent_words=acc)
             boxes["cover_card"] = "cover.png"
             segs.append(_card_segment(str(wd / "cover.png"), cover_s, str(wd / "s0_cover.mp4"), crf, preset, fade=False))
 
@@ -440,19 +459,24 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         if caps_on:
             ass = captions.build_ass(cw, cfg["captions"], W=W, H=H, accent=brand["accent"], text=brand["text"],
                                      outline=brand["bg"], band=(L["cap_band"][1], L["cap_band"][3]) if "cap_band" in L else None,
-                                     center_y=(L["captions_center"] / H) if "captions_center" in L else None, end=D)
+                                     center_y=(L["captions_center"] / H) if "captions_center" in L else None, end=D,
+                                     palette={k: brand[k] for k in ("text", "accent", "bg", "muted", "on_accent") if brand.get(k)},
+                                     left=L.get("cap_left", L["safe"][0]))
             cap_problems = captions.check_ass_fits(ass, W, H)
             ass_path = wd / "caps.ass"
             ass_path.write_text(ass)
 
         main = str(wd / "s1_main.mp4")
         args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand,
-                               hook_path=hook_path)
+                               hook_path=hook_path, stage_path=stage_path, L=L, wd=wd)
         ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}",
                 *_venc(crf, preset), main], timeout=1800)
         segs.append(main)
         if facts_s:
-            facts_card(str(wd / "facts.png"), W, H, brand, cfg["facts_title"], facts, still)
+            if cfg.get("card"):
+                theme_cards.facts(cfg, str(wd / "facts.png"), W, H, brand, cfg["facts_title"] or "What it does", facts, still)
+            else:
+                facts_card(str(wd / "facts.png"), W, H, brand, cfg["facts_title"], facts, still)
             segs.append(_card_segment(str(wd / "facts.png"), facts_s, str(wd / "s2_facts.mp4"), crf, preset))
         boxes["end_card"] = end_card(str(wd / "end.png"), W, H, brand)
         segs.append(_card_segment(str(wd / "end.png"), CARD_SECS, str(wd / "s3_end.mp4"), crf, preset))
@@ -467,7 +491,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         outp.parent.mkdir(parents=True, exist_ok=True)
         _mux_audio(video, source if (source and not silent) else None, c0, D, cover_s, total, wav, str(outp))
         got = ff.probe(str(outp))
-        return {"path": str(outp), "style": style, "ratio": ratio, "width": got["width"], "height": got["height"],
+        return {"path": str(outp), "style": style, "theme": cfg.get("theme"), "ratio": ratio, "width": got["width"], "height": got["height"],
                 "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), why], "boxes": boxes,
                 "layout": {k: v for k, v in L.items()}, "safe_area": safe_area(W, H), "caption_problems": cap_problems,
                 "captions": caps_on, "burned_subs": burned_subs, "music": mood if wav else "none", "source_silent": silent,
@@ -477,7 +501,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             shutil.rmtree(wd, ignore_errors=True)
 
 
-def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand, hook_path=None):
+def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand, hook_path=None,
+                stage_path=None, L=None, wd=None):
     args: list[str] = []
     n = 0
     if source:
@@ -491,6 +516,19 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
     args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", str(ov_path)]
     if hook_path:
         args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{min(D, HYPE_HOOK_SECS):.3f}", "-i", str(hook_path)]
+    from . import styles as _st
+    from . import theme_cards as _tc
+    nxt = ov_i + 1 + (1 if hook_path else 0)
+    st_i = sw_i = None
+    if stage_path:
+        args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", str(stage_path)]
+        st_i, nxt = nxt, nxt + 1
+    if _st.has_fx(cfg, "sweep") and wd is not None:
+        args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", _tc.sweep_png(str(Path(wd) / "sweep.png"), W, H)]
+        sw_i, nxt = nxt, nxt + 1
+    look = _st.footage_chain(cfg, W)
+    look = ("," + look) if look else ""
+    weave = _st.has_fx(cfg, "weave")
     bg = brand["bg"].lstrip("#")
     px0, py0, px1, py1 = panel
     pw, ph = px1 - px0, py1 - py0
@@ -500,34 +538,75 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
         if burned_subs and cfg["fill"] == "fill":  # crop the burned-in subtitle band so captions never double up
             src += ",crop=iw:trunc(ih*0.84/2)*2:0:0"
         if cfg["fill"] == "fill":
-            parts.append(f"{src},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}[base]")
+            parts.append(f"{src},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}{look}[base]")
         elif cfg["fill"] == "blurpanel":
             parts.append(f"{src},split[s1][s2];[s1]scale={W // 8}:{H // 8}:force_original_aspect_ratio=increase,"
                          f"crop={W // 8}:{H // 8},gblur=sigma=6,scale={W}:{H},eq=brightness=-0.16:saturation=0.85[bgv];"
-                         f"[s2]scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph}[pv];"
+                         f"[s2]scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph}{look}[pv];"
                          f"[bgv][pv]overlay={px0}:{py0}[base]")
         else:
-            parts.append(f"color=c=0x{bg}:s={W}x{H}:r={FPS}:d={D:.3f}[bgc];{src},scale={pw}:{ph}:"
-                         f"force_original_aspect_ratio=increase,crop={pw}:{ph}[pv];[bgc][pv]overlay={px0}:{py0}:shortest=1[base]")
+            ground = (f"[{st_i}:v]fps={FPS},format=yuv420p,setsar=1[bgc]" if st_i is not None
+                      else f"color=c=0x{bg}:s={W}x{H}:r={FPS}:d={D:.3f}[bgc]")
+            if weave:  # projector gate weave: scale a little over, crop with a drifting offset
+                fit = (f"scale={pw + 12}:{ph + 12}:force_original_aspect_ratio=increase,crop={pw + 12}:{ph + 12},"
+                       f"crop={pw}:{ph}:'6+3*sin(t*9.1)+2*sin(t*23)':'6+3*cos(t*7.3)'")
+            else:
+                fit = f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph}"
+            parts.append(f"{ground};{src},{fit}{look}[pv];[bgc][pv]overlay={px0}:{py0}:shortest=1[base]")
+        if _st.has_fx(cfg, "tiltshift"):  # miniature: blurred bands top and bottom, a softer band inside each
+            a1, a2 = int(H * 0.26) // 2 * 2, int(H * 0.36) // 2 * 2
+            parts.append(f"[base]split=5[t0][t1][t2][t3][t4];[t1]crop={W}:{a1}:0:0,gblur=sigma=10[u1];"
+                         f"[t2]crop={W}:{a2 - a1}:0:{a1},gblur=sigma=3.5[u2];[t3]crop={W}:{a1}:0:{H - a1},gblur=sigma=10[d1];"
+                         f"[t4]crop={W}:{a2 - a1}:0:{H - a2},gblur=sigma=3.5[d2];[t0][u1]overlay=0:0[q1];[q1][u2]overlay=0:{a1}[q2];"
+                         f"[q2][d1]overlay=0:{H - a1}[q3];[q3][d2]overlay=0:{H - a2}[base]")
     else:
         segs = []
         for i in range(len(images)):
             fr = max(1, int(D / len(images) * FPS))
             parts.append(f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,"
                          f"scale={int(W * 1.12) // 2 * 2}:-2,zoompan=z='min(1+0.0012*on,1.1)':x='iw/2-(iw/zoom/2)':"
-                         f"y='ih/2-(ih/zoom/2)':d={fr}:s={W}x{H}:fps={FPS}[k{i}]")
+                         f"y='ih/2-(ih/zoom/2)':d={fr}:s={W}x{H}:fps={FPS}{look}[k{i}]")
             segs.append(f"[k{i}]")
         parts.append(f"{''.join(segs)}concat=n={len(images)}:v=1:a=0[base]")
-    chain = f"[base][{ov_i}:v]overlay=0:0:shortest=1"
+    chain = "[base]"
+    if sw_i is not None:  # glass studio: a strip of light travels across the frame every 3.2 s
+        chain += f"[{sw_i}:v]overlay=x='-w+(W+w)*mod(t,3.2)/3.2':y=0:shortest=1[sw];[sw]"
+    chain += f"[{ov_i}:v]overlay=0:0:shortest=1"
     if hook_path:
         chain += f"[b1];[b1][{ov_i + 1}:v]overlay=0:0:eof_action=pass:enable='lt(t,{HYPE_HOOK_SECS})'"
-    if cfg.get("flash") and source:
-        chain += ",fade=t=in:st=0:d=0.2:color=white"
+    chain += _theme_text(cfg, L or {}, D)
+    tr = _st.transition_chain(cfg) if source else ""
+    if tr:
+        chain += "," + tr
     if ass_path:
         fontsdir = str(Path(__file__).resolve().parent.parent / "fonts")
         chain += f",ass='{_esc(str(ass_path))}':fontsdir='{_esc(fontsdir)}'"
     parts.append(chain + ",format=yuv420p,setsar=1[v]")
     return args, ";".join(parts)
+
+
+def _theme_text(cfg: dict, L: dict, D: float) -> str:
+    """Live text the theme draws with FFmpeg: the countdown's T-minus clock + progress bar, the investigation timecode."""
+    out = ""
+    mono = _esc(str(Path(__file__).resolve().parent.parent / "fonts" / "IBMPlexMono-SemiBold.ttf"))
+    if "clock_text" in L:
+        x, y, sz = L["clock_text"]
+        col = (cfg.get("palette") or {}).get("text", "#FFFFFF").lstrip("#")
+        txt = (f"%{{eif\\:trunc(({D:.2f}-t)/60)\\:d\\:2}}\\:%{{eif\\:mod(trunc({D:.2f}-t)\\,60)\\:d\\:2}}"
+               f".%{{eif\\:mod(trunc(({D:.2f}-t)*10)\\,10)\\:d\\:1}}")
+        out += f",drawtext=fontfile='{mono}':text='{txt}':x={x}:y={y}:fontsize={sz}:fontcolor=0x{col}"
+    if "progress" in L:
+        x, y, w, h = L["progress"]
+        acc = (cfg.get("palette") or {}).get("accent", "#FF5B1F").lstrip("#")
+        n = 24
+        for i in range(n):
+            out += (f",drawbox=x={x + w * i // n}:y={y}:w={w // n + 1}:h={h}:color=0x{acc}@1:t=fill"
+                    f":enable='gte(t,{D * (i + 1) / n:.3f})'")
+    if "timecode" in L:
+        x, y, sz = L["timecode"]
+        out += (f",drawtext=fontfile='{mono}':text='T+ %{{pts\\:hms}}':x={x}:y={y}:fontsize={sz}:fontcolor=0xECEAE4"
+                ":box=1:boxcolor=0x0B0C0E@0.75:boxborderw=8")
+    return out
 
 
 def _mux_audio(video: str, speech_src: str | None, c0: float, D: float, cover_s: float, total: float, wav: str | None,

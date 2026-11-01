@@ -407,14 +407,30 @@ def overlay(cfg: dict, W: int, H: int, brand: dict, hook: str, credit: str, L: d
 
 
 def _round_corners(d, p, r, color, top=True):
-    """Mask a video panel's square corners with the ground colour (None = transparent: the stage shows through)."""
+    """Round a video panel's square corners by painting the ground colour outside a quarter circle at each corner."""
     if color is None:
         return
     x0, y0, x1, y1 = p
     for (cx, cy, sx, sy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
         if not top and sy == 1:
             continue
-        d.pieslice((cx, cy, cx + 2 * r * sx, cy + 2 * r * sy), 0, 360, fill=color)
+        sq = (min(cx, cx + r * sx), min(cy, cy + r * sy), max(cx, cx + r * sx), max(cy, cy + r * sy))
+        d.rectangle(sq, fill=color)
+        ex = (min(cx, cx + 2 * r * sx), min(cy, cy + 2 * r * sy), max(cx, cx + 2 * r * sx), max(cy, cy + 2 * r * sy))
+        d.ellipse(ex, fill=(0, 0, 0, 0))
+
+
+def sweep_png(path: str, W: int, H: int) -> str:
+    """A soft diagonal strip of light (glass_studio's strip-light sweep), moved across the frame by FFmpeg."""
+    w = max(60, int(W * 0.22))
+    im = Image.new("RGBA", (w, H), (255, 255, 255, 0))
+    d = ImageDraw.Draw(im)
+    for x in range(w):
+        a = int(46 * math.sin(math.pi * x / w) ** 2)
+        d.line((x, 0, x, H), fill=(235, 245, 255, a))
+    im = im.rotate(0)
+    im.save(path)
+    return path
 
 
 # ================================================================================================== covers

@@ -409,3 +409,47 @@ def pick_theme(prompt: str, content: str = "", fmt: str = "") -> tuple[str, str]
     if best and score >= 2:
         return best, f"{THEMES[best]['label']} fits the story ({THEMES[best]['best_for'][0]})"
     return "huhbyte_news", "HuhByte news fits a launch or announcement (the full video in a panel with a facts card)"
+
+
+_FX_ORDER = ["misreg", "curve", "scanlines", "vignette", "flicker", "grain"]
+
+
+def footage_chain(cfg: dict, W: int = 1080) -> str:
+    """The theme's grade + picture effects as one FFmpeg filter chain, applied to the footage only (never to type).
+    weave, tiltshift, sweep, letterbox, clock and timecode need their own graph pieces (compose._main_graph builds them)."""
+    k = W / 1080
+    parts = [cfg["grade"]] if cfg.get("grade") else []
+    fx = {f.partition(":")[0]: f.partition(":")[2] for f in cfg.get("fx") or []}
+    for name in _FX_ORDER:
+        if name not in fx:
+            continue
+        arg = fx[name]
+        if name == "grain":
+            parts.append(f"noise=alls={int(arg or 6)}:allf=t+u")
+        elif name == "vignette":
+            parts.append("vignette=angle=PI/4.6")
+        elif name == "flicker":  # projector flicker: two unrelated sines so it never looks like a pulse
+            parts.append("eq=brightness='0.022*sin(2*PI*t*2.7)+0.014*sin(2*PI*t*11.3)':eval=frame")
+        elif name == "scanlines":
+            parts.append(f"drawgrid=w=iw:h={max(3, round(4 * k))}:t=1:c=black@0.32")
+        elif name == "curve":  # CRT glass bulge
+            parts.append("lenscorrection=k1=-0.07:k2=-0.015")
+        elif name == "misreg":  # riso: the second plate a few pixels off
+            parts.append(f"rgbashift=rh={-round(6 * k)}:rv={-round(3 * k)}:bh={round(5 * k)}:bv={round(4 * k)}:edge=smear")
+    return ",".join(parts)
+
+
+def has_fx(cfg: dict, name: str) -> bool:
+    return any(f.partition(":")[0] == name for f in cfg.get("fx") or [])
+
+
+def transition_chain(cfg: dict) -> str:
+    """Into the footage: cut | flash (white) | fade (from the ground) | glitch (RGB split + noise for 0.18 s)."""
+    tr = cfg.get("transition") or ("flash" if cfg.get("flash") else "cut")
+    if tr == "flash":
+        return "fade=t=in:st=0:d=0.2:color=white"
+    if tr == "fade":
+        return "fade=t=in:st=0:d=0.35"
+    if tr == "glitch":
+        return "rgbashift=rh=16:bh=-16:enable='lt(t,0.18)',noise=alls=45:allf=t:enable='lt(t,0.18)'"
+    return ""
