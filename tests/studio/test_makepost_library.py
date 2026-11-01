@@ -163,7 +163,9 @@ def test_one_reply_box_edits_any_channel(owner):
     n = len(owner.specs)
     owner.post(f"/api/agent/runs/{r['id']}/messages", json={"text": "redo YouTube at 30s"})
     run = owner.get(f"/api/agent/runs/{r['id']}").json()
-    assert run["status"] == "ready" and owner.specs[n:] and owner.specs[-1]["total"] == 30
+    # the post has no video: NO VIDEO -> NO REEL (owner, 1 Nov 2026), so no 30 s slideshow is rendered; YouTube says why
+    assert run["status"] == "ready" and not owner.specs[n:]
+    assert run["result"]["channel_media"]["ch_yt"]["format"] == "skipped"
 
 
 # ---------------------------------------------------------------- the Library

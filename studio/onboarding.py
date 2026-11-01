@@ -24,6 +24,7 @@ from pathlib import Path
 
 import httpx
 
+from .actions import ActionError
 from . import brand, budget, demo_guard, netguard, reader, render
 
 SCHEMA = "CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, data TEXT, recs TEXT, recs_at REAL, updated REAL)"
@@ -122,6 +123,25 @@ class Onboarding:
                      "updated=excluded.updated, recs_at=0", (a.uid, json.dumps(cur), time.time()))
         self.store.audit(a.uid, a.label, "onboarding", "read", {"fields": sorted(k for k in body if k != "website"), "website": bool(body.get("website"))})
         return {**self.get(a), **out}
+
+    # ---------------------------------------------------------------- appearance (light / dark / system), owner 1 Nov 2026
+    MODES = ("system", "light", "dark")
+
+    def appearance(self, a) -> dict:
+        return {"mode": self._row(a.uid)["data"].get("appearance") or "system", "modes": list(self.MODES)}
+
+    def set_appearance(self, a, mode: str) -> dict:
+        mode = str(mode or "").lower()
+        if mode not in self.MODES:
+            raise ActionError("Appearance is system, light or dark.")
+        if demo_guard.is_demo(a.uid):  # the shared sample keeps it in the browser only
+            return {"mode": mode, "modes": list(self.MODES), "saved": "browser"}
+        rows = self.store.q("SELECT data FROM user_profiles WHERE user_id=?", (a.uid,))
+        cur = json.loads(rows[0]["data"] or "{}") if rows else {}
+        cur["appearance"] = mode
+        self.store.x("INSERT INTO user_profiles(user_id,data,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data, "
+                     "updated=excluded.updated", (a.uid, json.dumps(cur), time.time()))
+        return {"mode": mode, "modes": list(self.MODES), "saved": "account"}
 
     # ---------------------------------------------------------------- brand from a domain (context.dev)
     def brand_from_domain(self, a, website: str) -> dict:

@@ -56,14 +56,65 @@
     else { setStep("create"); q().focus(); }
   }));
 
-  // ------------------------------------------------------------ mode cards ("From a link" only prefills the box)
-  root.querySelector("[data-mode=link]").onclick = () => {
-    root.querySelector("[data-testid=agent-mode-agent]").click();
-    leaveThread();
-    fill("Turn this into a post for all my channels: ");
-    q().placeholder = "Paste a link to an article, a video or an X post, and say what you want.";
-    toast("Paste the link after the words, then press Create with agent.");
+  // ------------------------------------------------------------ mode cards: "From a link" is a real mode (owner, 1 Nov 2026:
+  // the card did nothing visible). It selects like the other two, shows a URL field (focused), previews the pasted link
+  // (POST /api/link/preview: the X reader for posts, the page reader for articles, server-side through netguard) and
+  // Create runs the agent with that link as THE source.
+  const linkCard = root.querySelector("[data-mode=link]"), LK = { url: "", t: null, seq: 0, ok: false };
+  const isUrl = (u) => /^https?:\/\/[^\s/$.?#][^\s]*$/i.test(u || "");
+  function linkMode(on) {
+    root.classList.toggle("mp-link-on", on);
+    $("#mpLink").hidden = !on;
+    linkCard.classList.toggle("on", on); linkCard.setAttribute("aria-selected", String(on)); linkCard.tabIndex = on ? 0 : -1;
+    if (on) root.querySelectorAll(".mp-modes [data-sub]").forEach((b) => { b.classList.remove("on"); b.setAttribute("aria-selected", "false"); b.tabIndex = -1; });
+    $("#agQueryLbl").textContent = on ? "What should the post say? (optional)" : "What should we post?";
+    q().placeholder = on ? "E.g. “a short punchy explainer for all my channels”. Leave it empty and the agent picks the format."
+      : "E.g. “Find the latest AI startup launches from Y Combinator and create a 60-second Instagram Reel with key highlights and a catchy caption.”";
+    $("#agGo").lastChild.textContent = on ? "Create from link" : "Create with agent";
+  }
+  linkCard.onclick = () => {
+    root.querySelector("[data-testid=agent-mode-agent]").click();  // the agent pane, then mark the link mode
+    leaveThread(); linkMode(true);
+    if (/^Turn this into a post for all my channels:\s*$/.test(q().value)) { q().value = ""; q().dispatchEvent(new Event("input")); }
+    $("#mpLinkUrl").focus(); setStep("create");
   };
+  root.querySelectorAll(".mp-modes [data-sub]").forEach((b) => b.addEventListener("click", () => linkMode(false)));
+  async function preview() {
+    const u = $("#mpLinkUrl").value.trim(), box = $("#mpLinkPreview"), n = ++LK.seq;
+    $("#mpLinkClear").hidden = !u; LK.ok = false;
+    if (!u) { box.hidden = true; box.innerHTML = ""; return; }
+    if (!isUrl(u)) { box.hidden = false; box.innerHTML = `<p class="mp-lp-err" data-testid="mp-link-error">That doesn't look like a link yet. It should start with https://</p>`; return; }
+    box.hidden = false; box.innerHTML = `<div class="mp-lp-load" aria-busy="true"><span class="spin" aria-hidden="true"></span>Reading ${esc(hostOf(u) || "the link")}…</div>`;
+    try {
+      const r = await api("/api/link/preview", { method: "POST", body: { url: u } });
+      if (n !== LK.seq) return;
+      LK.url = r.url || u; LK.ok = true;
+      const pic = r.image || r.url ? window.hqThumb(r.url || u, r.image || "") : "";
+      box.innerHTML = `<div class="mp-lp-card" data-testid="mp-link-card">${pic ? `<span class="mp-lp-pic"><img src="${esc(pic)}" alt="" loading="lazy"></span>` : ""}
+        <span class="mp-lp-b"><small class="mp-lp-site">${fav(hostOf(r.url || u))}${esc(r.site || hostOf(u))}${r.author ? " · " + esc(r.author) : ""}</small>
+        <b class="mp-lp-t" data-testid="mp-link-title">${esc(r.title || u)}</b>${r.description ? `<span class="mp-lp-d">${esc(r.description.slice(0, 220))}</span>` : ""}
+        ${r.media && r.media.length ? `<small class="mp-lp-m">${esc(r.media.join(" + "))} in the post</small>` : ""}</span></div>`;
+      const im = box.querySelector("img"); if (im) im.onerror = () => im.closest(".mp-lp-pic").remove();
+      if (typeof favicons === "function") favicons(box);
+    } catch (e) {
+      if (n !== LK.seq) return;
+      LK.url = u; LK.ok = true;  // a page we can't preview can still be the source: the agent reads it with its fallbacks
+      box.innerHTML = `<p class="mp-lp-err" data-testid="mp-link-error">${esc(e.message || "Couldn't preview that link")}. You can still press Create: the agent tries again with its other readers.</p>`;
+    }
+  }
+  $("#mpLinkUrl").addEventListener("input", () => { clearTimeout(LK.t); LK.t = setTimeout(preview, 350); });
+  $("#mpLinkUrl").addEventListener("paste", () => { clearTimeout(LK.t); setTimeout(preview, 0); });
+  $("#mpLinkUrl").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#agentForm").requestSubmit(); } });
+  $("#mpLinkClear").onclick = () => { $("#mpLinkUrl").value = ""; preview(); $("#mpLinkUrl").focus(); };
+  // Create in link mode: the link joins the prompt before house.js reads it (capture phase runs first)
+  document.addEventListener("submit", (e) => {
+    if (e.target.id !== "agentForm" || !root.classList.contains("mp-link-on")) return;
+    const u = $("#mpLinkUrl").value.trim();
+    if (!isUrl(u)) { e.preventDefault(); e.stopImmediatePropagation(); toast("Paste a link first (https://…)."); $("#mpLinkUrl").focus(); return; }
+    const said = q().value.replace(u, "").trim();
+    q().value = `${said || "Turn this into a post for all my channels:"} ${u}`;
+  }, true);
+  window.mpLinkMode = linkMode;
 
   // ------------------------------------------------------------ prompt box: example, quick actions, theme
   $("#mpExample").onclick = () => { fill(EXAMPLES[MP.ex = ((MP.ex ?? -1) + 1) % EXAMPLES.length]); };
@@ -132,11 +183,22 @@
     if (x.format === "text") return `${ic(I.text)}Text`;
     return x.kind === "take" ? `${ic(I.cut)}One take` : "Post";
   }
+  // a still for every card (owner, 1 Nov 2026: video-only runs showed burned captions or a blank intro frame, and a One take
+  // showed nothing): the run's own picture, else the story's picture (GET /api/thumb, read server-side), else a video frame
+  const isVid = (u) => /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(u || "");
   function cardPic(x) {
-    const img = x.thumb || (x.cover && !/\.(mp4|mov|webm)(\?|$)/i.test(x.cover) ? x.cover : "");
-    if (img) return `<img src="${esc(img)}" alt="" loading="lazy">`;
-    if (x.cover) return `<video src="${esc(x.cover)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>`;
-    return `<span class="mp-rc-ph" aria-hidden="true">${ic(I.text)}</span>`;
+    const img = x.thumb || (x.cover && !isVid(x.cover) ? x.cover : "");
+    if (img) return `<img src="${esc(img)}" alt="" loading="lazy" data-testid="mp-rc-img">`;
+    const src = x.thumb_src && x.thumb_src.url && window.hqThumb ? window.hqThumb(x.thumb_src.url, x.thumb_src.img || "") : "";
+    if (src) return `<img src="${esc(src)}" alt="" loading="lazy" data-testid="mp-rc-img"${x.cover ? ` data-fallback="${esc(x.cover)}"` : ""}>`;
+    if (x.cover) return `<video src="${esc(x.cover)}#t=1.5" muted playsinline preload="metadata" aria-hidden="true" data-testid="mp-rc-video"></video>`;
+    return `<span class="mp-rc-ph" aria-hidden="true">${ic(x.kind === "take" ? I.cut : I.text)}</span>`;
+  }
+  function wirePics(box) {  // a story picture that 204s / fails falls back to the video's frame, then to the placeholder
+    box.querySelectorAll(".mp-rc-pic img").forEach((im) => (im.onerror = () => {
+      const v = im.dataset.fallback;
+      im.outerHTML = v ? `<video src="${esc(v)}#t=1.5" muted playsinline preload="metadata" aria-hidden="true" data-testid="mp-rc-video"></video>` : `<span class="mp-rc-ph" aria-hidden="true">${ic(I.text)}</span>`;
+    }));
   }
   function drawRecent() {
     const per = 8, rows = MP.recent.filter((x) => MP.filter === "all" || (MP.filter === "draft" ? x.state === "draft" : x.format === MP.filter));
@@ -148,6 +210,7 @@
         <span class="mp-rc-pic">${cardPic(x)}<span class="mp-badge" data-testid="mp-badge">${badge(x)}</span></span>
         <span class="mp-rc-b"><b>${esc(x.title)}</b><span class="mp-pill st-${esc(x.state || x.status)}" data-testid="mp-pill">${esc(STATE[x.state] || x.status)}</span></span></button>`).join("")
       || `<div class="empty"><b>${MP.recent.length ? "Nothing here yet" : "No posts yet"}</b><span>Ask the agent above, or pick a story from Discover.</span></div>`;
+    wirePics(box);
     box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => {
       if (b.dataset.kind === "take") return window.openTake(b.dataset.id);
       const r = await api(`/api/agent/runs/${b.dataset.id}`); showRun(r); if (["running", "rendering"].includes(r.status)) watchRun(r.id); window.scrollTo({ top: 0, behavior: "smooth" });
@@ -155,6 +218,10 @@
     window.hqPager($("#mpRecentPager"), { total: rows.length, page: MP.page, per, label: "Recent content pages", onPage: (n) => { MP.page = n; drawRecent(); } });
   }
   window.mpRecent = (rows) => { MP.recent = rows; drawRecent(); };
+  // "View all →": the Library with everything (runs' renders are registered there server-side), on the same filter
+  const LIB_KIND = { all: "", reel: "video", carousel: "carousel", image: "image", draft: "draft" };
+  const va = root.querySelector("[data-testid=mp-view-all]");
+  if (va) { va.removeAttribute("data-go"); va.onclick = () => { window.LIB_PRESET = { kind: LIB_KIND[MP.filter] ?? "" }; showTab("library"); }; }
 
   // ------------------------------------------------------------ the chat thread
   function leaveThread() {

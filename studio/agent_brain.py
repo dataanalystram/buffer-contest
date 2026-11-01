@@ -20,7 +20,7 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, brain_llm, budget, demo_guard, intake, llm
+from . import activity, brain_llm, budget, demo_guard, editorial_tools, intake, llm
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -47,8 +47,15 @@ using ONLY the tools. Rules:
 - Use only facts from the source. Never invent numbers. If extract_facts reports a conflict, do not pick a figure: finish and
   ask the person (the app shows your question).
 - Plan first: reply with a short numbered plan (one line per step), then call the tools in that order.
-- Formats: video-only channels (youtube, tiktok) get render_reel; instagram/linkedin/facebook get render_carousel unless the
-  person asked for a reel or the source has a video; X/threads/bluesky get render_cover. One render call can cover several channels.
+- Formats: video-only channels (youtube, tiktok) get render_reel only when there is a real video (else they are skipped);
+  instagram/linkedin/facebook get render_carousel unless the person asked for a reel or the source has a video; X/threads/bluesky
+  get render_cover. One render call can cover several channels.
+- A post about ONE company or launch (a YC startup like "ernd (YC F26)", a product launch; Context.company names it): do NOT
+  search the news or call extract_facts. Go research_company(name, urls) -> find_brand_assets -> hero_edit -> write_editorial ->
+  render_editorial (it covers every image channel and skips video-only ones when there is no video) -> write_captions -> check
+  -> finish. Call find_media before render_editorial only when there are video channels or the person asked for a video; with a
+  real video found, render_reel the video channels after render_editorial. If render_editorial reports fit_problems, call
+  write_editorial once with feedback naming them, then render_editorial again.
 - Standing instructions ("end every video with ...", "never say ...", "always ...") -> remember_rule or add_end_card FIRST,
   so this post already follows them.
 - Brand changes -> edit_brand. One channel's change ("YouTube at 30s", "LinkedIn more formal") -> edit_channel_media or
@@ -56,7 +63,8 @@ using ONLY the tools. Rules:
 - Video edits: when the person asks for a style of video ("short punchy explainer", "opus clip", "hype", "calm tutorial") or the
   story is a launch/demo, call find_media, then render_reel with style (opus | news | minimal | hype). If render_reel returns
   needs_confirmation, finish and ask the person its question; when they say yes, call render_reel again with
-  rights_confirmed true. No video at all: generate_images, then render_reel with a style.
+  rights_confirmed true. NO VIDEO -> NO REEL: never make a text-on-gradient video. With no real video, render_reel skips
+  YouTube/TikTok with a note and gives the other channels the carousel; your plan says "No video found, carousel only".
   Context.video_style_hint is the style their words suggest for video channels; use it unless the story or the person says otherwise.
 - Video themes: Context.theme says whether the person picked a theme in the gallery (use it, never override it) or left it to
   you ("auto"): then choose one from the story and their words with list_themes / set_theme (e.g. a GitHub repo -> crt, a chip
@@ -492,6 +500,9 @@ class Brain:
                              "shows": ((up.get("seen") or {}).get("summary") or ""),
                              "is_source": (res.get("source") or {}).get("via") == "upload"}
         ctx["intake"]["research_asked"] = bool(inp["intake"].get("research"))
+        company = editorial_tools.company_request(inp["prompt"], inp["intake"].get("urls"))
+        if company and not res.get("upload"):
+            ctx["company"] = company
         if any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or inp["intake"].get("format") == "reel":
             # a hint for video channels from the person's words ("short punchy explainer" -> opus); the brain decides
             from .media import styles as media_styles
@@ -632,6 +643,9 @@ class Brain:
             return self._refine(a, rid, tools, message, brain)
         it = inp["intake"]
         up = res.get("upload") or {}
+        company = "" if up else editorial_tools.company_request(inp["prompt"], it.get("urls"))
+        if company:
+            return self._company_plan(a, rid, tools, company, brain)
         from_upload = bool(up) and not it["source_url"] and (res.get("source") or {}).get("via") == "upload"
         plan = [f"Read your {up['type']}" + (" and transcribe it" if up.get("type") == "video" else "")] if up else []
         plan += [f"Save {len(it['rules'])} standing rule(s) to your Style Ledger"] if it["rules"] else []
@@ -692,6 +706,50 @@ class Brain:
             n = len(res.get("packages") or [])
             self._say(a, rid, f"{n} post{'s' if n != 1 else ''} ready: " + ", ".join(f"{p['service']} ({p['format']})" for p in res.get("packages") or [])
                       + ". Reply here to change anything, e.g. “make the hook stronger” or “redo YouTube at 30s”.")
+
+    def _company_plan(self, a, rid, tools: Tools, company: str, brain: dict):
+        """A post about one company / launch (the fixed plan; the tool-use brain follows the same order from SYSTEM):
+        research -> official images -> hero edit -> slides -> editorial carousel -> captions -> check. No video, no Reel."""
+        run = self.h.run(a, rid)
+        inp = run["input"]
+        it = inp["intake"]
+        vids = [c["id"] for c in inp["channels"] if c["service"] in VIDEO_ONLY]
+        want_video = bool(vids) or it.get("format") == "reel"
+        plan = [f"Save {len(it['rules'])} standing rule(s) to your Style Ledger"] if it["rules"] else []
+        plan += [f"Research {company}: its YC page, launch post and website (newest official words win)",
+                 "Find the official images (logo, product, founders)", "Edit the hero: product on the brand art, founder avatars",
+                 "Write the slides: 4-5 ideas, one per slide", "Render the editorial carousel in your brand"]
+        if want_video:
+            plan.insert(len(plan) - 1, "Look for the real launch video")
+        plan += ["Write one caption per channel (keyword first, at most 5 hashtags)", "Check brand rules, clipping and the source"]
+        self._plan(a, rid, plan, brain)
+        for r in it["rules"]:
+            self.call(a, rid, tools, "remember_rule", {"correction": r})
+        self.call(a, rid, tools, "research_company", {"name": company, "urls": it.get("urls") or []})
+        self.call(a, rid, tools, "find_brand_assets", {})
+        try:
+            self.call(a, rid, tools, "hero_edit", {})
+        except ActionError:
+            pass  # no art and no product image: the cover is the brand ground
+        out = self.call(a, rid, tools, "write_editorial", {})
+        if want_video:
+            self.call(a, rid, tools, "find_media", {"query": (self.h.run(a, rid)["result"].get("company") or {}).get("website") or company})
+        r = self.call(a, rid, tools, "render_editorial", {})
+        if r.get("fit_problems") and out.get("engine") == "claude":
+            self.call(a, rid, tools, "write_editorial", {"feedback": "; ".join(r["fit_problems"]) + ". Make those slides shorter."})
+            self.call(a, rid, tools, "render_editorial", {})
+        run = self.h.run(a, rid)
+        if vids and tools._has_video(run):
+            self.call(a, rid, tools, "render_reel", {"channel_ids": vids, "style": inp.get("theme") if inp.get("theme") not in (None, "", "auto") else "news"})
+        tone = it.get("tone") or ""
+        self.call(a, rid, tools, "write_captions", {"tone": tone} if tone else {})
+        self.call(a, rid, tools, "check", {})
+        res = self.h.run(a, rid)["result"]
+        skipped = [s["service"] for s in (res.get("checks") or {}).get("skipped") or []]
+        n = len(res.get("packages") or [])
+        self._say(a, rid, f"{n} post{'s' if n != 1 else ''} ready: " + ", ".join(f"{p['service']} ({p['format']})" for p in res.get("packages") or [])
+                  + (f". {', '.join(s.title() for s in skipped)} skipped: no video found, so no Reel." if skipped else ".")
+                  + " Reply here to change anything.")
 
     def _refine(self, a, rid, tools: Tools, message: str, brain: dict):
         run = self.h.run(a, rid)

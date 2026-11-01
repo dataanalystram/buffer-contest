@@ -7,8 +7,12 @@ const SRC_NAME = { upload: "Uploaded", take: "Uploaded (One take)", generated: "
 const libWhen = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "Sample");
 
 function libThumb(it, cls = "") {
-  if (it.kind === "video") return it.thumb ? `<img class="${cls}" src="${esc(it.thumb)}" alt="" loading="lazy">`
-    : `<video class="${cls}" src="${esc(it.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>`;
+  if (it.kind === "video") {
+    if (it.thumb) return `<img class="${cls}" src="${esc(it.thumb)}" alt="" loading="lazy">`;
+    const s = it.thumb_src && it.thumb_src.url && window.hqThumb ? window.hqThumb(it.thumb_src.url, it.thumb_src.img || "") : "";
+    return s ? `<img class="${cls}" src="${esc(s)}" alt="" loading="lazy" data-fallback="${esc(it.url)}">`
+      : `<video class="${cls}" src="${esc(it.url)}#t=1.5" muted playsinline preload="metadata" aria-hidden="true"></video>`;
+  }
   return `<img class="${cls}" src="${esc(it.thumb || it.url)}" alt="" loading="lazy">`;
 }
 function libCard(it) {
@@ -28,6 +32,9 @@ function libCard(it) {
 
 async function loadLibrary() {
   const grid = $("#libGrid");
+  if (window.LIB_PRESET) {  // Make a post's "View all →" carries its filter (Reels -> Videos, Drafts -> Drafts ...)
+    $("#libKind").value = window.LIB_PRESET.kind || ""; $("#libQ").value = ""; LIB.page = 1; window.LIB_PRESET = null;
+  }
   if (!LIB.data) grid.innerHTML = `<div class="ph" aria-hidden="true"><span class="spin"></span></div>`;
   try {
     const q = new URLSearchParams({ q: $("#libQ").value.trim(), kind: $("#libKind").value });
@@ -38,8 +45,14 @@ async function loadLibrary() {
     const per = 12, pages = Math.max(1, Math.ceil(d.items.length / per));
     LIB.page = Math.min(LIB.page || 1, pages);
     grid.innerHTML = d.items.length ? d.items.slice((LIB.page - 1) * per, LIB.page * per).map(libCard).join("")
-      : `<div class="empty" data-testid="library-empty"><b>${$("#libQ").value || $("#libKind").value ? "Nothing matches" : "Your Library is empty"}</b><span>Upload a photo or video here or in Make a post, or make a post: every image, carousel and Reel the agent makes lands here.</span></div>`;
+      : ($("#libQ").value || $("#libKind").value
+        ? `<div class="empty" data-testid="library-empty"><b>Nothing matches</b><span>Nothing in your Library fits this filter yet. <button type="button" class="link" data-testid="library-show-all">Show everything</button></span></div>`
+        : `<div class="empty" data-testid="library-empty"><b>Your Library is empty</b><span>Upload a photo or video here or in Make a post, or make a post: every image, carousel and Reel the agent makes lands here.</span></div>`);
+    const sa = grid.querySelector("[data-testid=library-show-all]");
+    if (sa) sa.onclick = () => { $("#libKind").value = ""; $("#libQ").value = ""; LIB.page = 1; loadLibrary(); };
     grid.querySelectorAll(".lib-card").forEach(wireLibCard);
+    grid.querySelectorAll(".lib-th img[data-fallback]").forEach((im) => (im.onerror = () => {
+      im.outerHTML = `<video src="${esc(im.dataset.fallback)}#t=1.5" muted playsinline preload="metadata" aria-hidden="true"></video>`; }));
     window.hqPager && window.hqPager($("#libPager"), { total: d.items.length, page: LIB.page, per, label: "Library pages",
       onPage: (n) => { LIB.page = n; loadLibrary(); grid.scrollIntoView({ behavior: "smooth", block: "start" }); } });
   } catch (e) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }

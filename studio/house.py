@@ -47,6 +47,41 @@ def _now() -> float:
     return time.time()
 
 
+
+def _run_thumb(res: dict, inp: dict) -> str:
+    """A still for a run's Recent / Library card (owner, 1 Nov 2026: video-only runs showed a frame with burned captions or
+    a blank intro, and a One take showed nothing): any photo the run made (a package, a channel's slides, a clip cover),
+    then the upload's own keyframe. "" when the run only has video; thumb_src then names a page to read a picture from."""
+    for p in res.get("packages") or []:
+        for m in p.get("media") or []:
+            if m.get("type") == "photo" and m.get("url"):
+                return m["url"]
+    for v in (res.get("channel_media") or {}).values():
+        for m in (v or {}).get("media") or []:
+            if m.get("type") == "photo" and m.get("url"):
+                return m["url"]
+    for c in res.get("clips") or []:
+        if c.get("cover_url"):
+            return c["cover_url"]
+    up = res.get("upload") or {}
+    if up.get("type") == "photo" and up.get("url"):
+        return up["url"]
+    return ""
+
+
+def _run_thumb_src(res: dict, inp: dict) -> dict | None:
+    """The story behind a video-only run, for GET /api/thumb (its og:image, read server-side through netguard and
+    re-encoded): {url, img}. None for a person's own upload (their video frame is the right picture)."""
+    src = res.get("source") or {}
+    if src.get("via") == "upload":
+        return None
+    url = src.get("url") or inp.get("platform_url") or inp.get("url") or inp.get("source_url") or ""
+    poster = next((m.get("poster") for m in src.get("media") or [] if m.get("poster")), "")
+    img = src.get("image") or poster or ""
+    if not (isinstance(url, str) and url.startswith("https://")):
+        return None
+    return {"url": url, "img": img if isinstance(img, str) and img.startswith("https://") else ""}
+
 class House:
     def __init__(self, studio: Studio, http: httpx.Client | None = None):
         self.studio, self.store, self.s = studio, studio.store, studio.s
@@ -438,9 +473,12 @@ class House:
             d["title"] = _title((res.get("story") or {}).get("headline") or "", _req(inp), "Your media" if d["kind"] == "media" else "Your post")
             d["legacy"] = d["kind"] in ("media", "news")
             if d["kind"] == "take":
+                # (the take's clip cover used to be overwritten by the generic line below: the blank 5th Recent card)
                 d["title"] = "One take: " + (inp.get("name") or "your video")
-                d["cover"] = next((c.get("cover_url") for c in res.get("clips") or [] if c.get("cover_url")), "")
-            d["cover"] = (res.get("media") or [{}])[0].get("url", "") if res.get("media") else ""
+                d["cover"] = next((c.get("cover_url") for c in res.get("clips") or [] if c.get("cover_url")), "") or \
+                    (self.media_url(inp["media_token"]) if inp.get("media_token") else "")
+            else:
+                d["cover"] = (res.get("media") or [{}])[0].get("url", "") if res.get("media") else ""
             d["packages"] = len(res.get("packages") or [])
             # Make a post v2 "Recent content": type, slides / length badge and a status pill per run
             pk = res.get("packages") or []
@@ -450,7 +488,7 @@ class House:
                                                                                          ("image" if fmts and fmts[0] == "photo" else (fmts[0] if fmts else "")))
             d["slides"] = max((len(p.get("media") or []) for p in pk if p.get("format") == "carousel"), default=0)
             d["duration"] = first.get("duration") or (res.get("upload") or {}).get("duration") or None
-            d["thumb"] = next((m.get("url") for p in pk for m in (p.get("media") or []) if m.get("type") == "photo"), "")
+            d["thumb"], d["thumb_src"] = _run_thumb(res, inp), _run_thumb_src(res, inp)
             sent = [p.get("sent") or {} for p in pk if p.get("sent")]
             d["state"] = ("running" if d["status"] in ("running", "rendering") else "failed" if d["status"] == "failed" else
                           "scheduled" if any(x.get("mode") in ("queue", "schedule") for x in sent) else

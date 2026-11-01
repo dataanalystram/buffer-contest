@@ -505,6 +505,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return Response(status_code=204, headers={"Cache-Control": "private, max-age=3600"})  # no picture: the page shows the favicon
         return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
 
+    @app.post("/api/link/preview")
+    def link_preview(request: Request, body: dict = Body(default={})):
+        """Make a post › From a link: what the agent will read from a pasted link (the X reader for posts, the page reader
+        for articles), read server-side through netguard. Same limiter as thumbnails; the free sample never fetches."""
+        from . import link_preview as lp
+        a = actor(request)
+        return lp.preview(a, str((body or {}).get("url") or ""), http=house.http, demo=demo_guard.is_demo(a.uid))
+
     @app.get("/api/radar")
     def radar_list(request: Request):
         return studio.radar(actor(request))
