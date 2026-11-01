@@ -13,7 +13,7 @@ from .conftest import ARTICLE, FakeBuffer, image_bytes
 from .browsers import free_port, serve
 
 pw = pytest.importorskip("playwright.sync_api")
-NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"  # the guided tour has its own test (test_tour_e2e.py)
+NO_TOUR = "localStorage.setItem('hq_tour_done', '1'); localStorage.setItem('hq_onb_seen', '1')"  # the guided tour has its own test (test_tour_e2e.py)
 
 
 def _free_port():
@@ -50,10 +50,10 @@ def test_link_to_buffer_draft_and_agent_approval(live, chromium):
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())  # hermetic: no fonts or images from the internet
         page = ctx.new_page()
         page.goto(base)
-        page.get_by_test_id("agent-go").wait_for()  # HuhQueue opens on the agent
-        page.get_by_test_id("tab-inbox").click()
+        page.get_by_test_id("inbox-title").wait_for()  # HuhQueue opens on the Inbox dashboard
         page.get_by_test_id("inbox-item").first.wait_for()
-        page.get_by_test_id("tab-studio").click()
+        page.get_by_test_id("tab-agent").click()
+        page.get_by_test_id("agent-mode-quick").click()  # Write from a link is Make a post > Quick text posts
         page.get_by_test_id("channel-chip").first.wait_for()
         assert page.get_by_test_id("channel-chip").count() == 3
         assert not page.get_by_test_id("landing").is_visible()
@@ -73,13 +73,13 @@ def test_link_to_buffer_draft_and_agent_approval(live, chromium):
         agent = studio.resolve_agent(tok)
         pv = studio.preview_post(agent, {"channel_id": "ch_li", "text": "Agent post", "mode": "draft"})
         studio.submit_post(agent, pv["confirm_token"])
-        page.get_by_test_id("tab-approvals").click()
+        page.get_by_test_id("tab-inbox").click()  # approvals are cards on the Inbox
         page.get_by_test_id("approval-item").wait_for()
         page.get_by_test_id("approve").click()
         page.get_by_test_id("approval-status").get_by_text("Sent to Buffer").wait_for()
         assert fake.created[-1]["text"] == "Agent post"
-        page.get_by_test_id("tab-agents").click()
-        page.locator("label.switch").click()
+        page.get_by_test_id("tab-apps").click()  # tokens and the kill switch live in AI apps
+        page.locator("#killPanel label.switch").click()
         page.get_by_text("Agents paused").wait_for()
         assert app.state.store.user("acc_1")["kill_switch"] == 1
         page.get_by_test_id("tab-activity").click()
@@ -165,7 +165,8 @@ def test_preflight_panel_blocks_then_fix_it_makes_posts_pass(live, chromium):
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(base)
-        page.get_by_test_id("tab-studio").click()
+        page.get_by_test_id("tab-agent").click()
+        page.get_by_test_id("agent-mode-quick").click()
         page.get_by_test_id("url-input").fill("https://news.example.com/ai-launch")
         page.get_by_test_id("draft-btn").click()
         page.get_by_test_id("draft-card").first.wait_for()

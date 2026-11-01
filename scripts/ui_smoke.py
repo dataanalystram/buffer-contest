@@ -17,17 +17,20 @@ with sync_playwright() as p:
     pg = b.new_page(viewport={"width": 1366, "height": 900}, device_scale_factor=1)
     pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
-    pg.on("console", lambda m: m.type == "error" and errors.append(m.text))
+    # a failed request is recorded by its URL (the console only says "Failed to load resource"); no 4xx/5xx is allowed
+    pg.on("console", lambda m: m.type == "error" and not m.text.startswith("Failed to load resource") and errors.append(m.text))
+    pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base) and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
     pg.goto(base + "/")
     pg.screenshot(path=str(out / "00_landing.png"), full_page=True)
     pg.goto(base + "/demo")
-    pg.wait_for_selector("[data-testid=agent-go]")
-    pg.screenshot(path=str(out / "01_agent_empty.png"))
-    # brand kit first
+    pg.wait_for_selector("[data-testid=inbox-title]")
+    pg.screenshot(path=str(out / "01_inbox.png"))
+    # brand kit first (one Brand screen: Kit, Templates, Style Ledger)
     pg.click("[data-testid=tab-brand]")
-    pg.wait_for_selector("[data-testid=kit-preview] img", timeout=20000)
-    pg.fill("[data-testid=kit-name]", "Huhbyte"); pg.fill("[data-testid=kit-handle]", "@huhbyte")
-    pg.click("[data-testid=kit-save]"); time.sleep(2)
+    pg.wait_for_selector("[data-testid=bs-slide]", timeout=20000)
+    pg.fill("[data-testid=bs-name]", "Huhbyte"); pg.fill("[data-testid=bs-handle]", "@huhbyte")
+    pg.click("[data-testid=bs-save]"); time.sleep(2)
+    pg.click("[data-testid=brand-tab-ledger]")
     pg.fill("[data-testid=rule-input]", "never say game-changer, max 2 hashtags"); pg.click("[data-testid=rule-add]"); time.sleep(2)
     pg.screenshot(path=str(out / "02_brand.png"), full_page=True)
     # agent run
@@ -78,11 +81,11 @@ with sync_playwright() as p:
     except Exception:
         print("planner save error:", pg.inner_text("#plDlgErr"))
         raise
-    pg.click("[data-testid=tab-ai]"); time.sleep(1.5)
+    pg.click("[data-testid=tab-settings]"); time.sleep(1.5)
     pg.screenshot(path=str(out / "07_ai.png"), full_page=True)
     m = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
     m.add_init_script("localStorage.setItem('hq_tour_done', '1')")
-    m.goto(base + "/demo"); m.wait_for_selector("[data-testid=agent-go]"); time.sleep(1)
+    m.goto(base + "/demo"); m.wait_for_selector("[data-testid=inbox-title]"); time.sleep(1)
     m.screenshot(path=str(out / "08_mobile.png"), full_page=True)
     b.close()
 (out / "errors.txt").write_text("\n".join(errors) or "no browser errors")

@@ -12,10 +12,11 @@ from playwright.sync_api import sync_playwright
 
 WIDTHS = [360, 390, 768, 1024, 1440]
 SCHEMES = ["light", "dark"]
-TABS = ["home", "agent", "take", "planner", "brand", "studio", "radar", "approvals", "connect", "agents", "ai", "activity"]
+TABS = ["inbox", "agent", "take", "planner", "news", "brand", "apps", "activity", "settings"]
+SUBS = ["agent:quick", "news:scan", "news:sources", "brand:templates", "brand:ledger"]  # sub-tabs, audited as pages too
 VIEWS = ["month", "day", "list", "board", "grid"]  # the Planner's other views (week is the "planner" tab itself)
 PAGES = ["/docs", "/docs/planner", "/privacy", "/terms", "/security"]  # public pages outside the app
-EXTRA = [f"planner-{v}" for v in VIEWS] + PAGES
+EXTRA = [f"planner-{v}" for v in VIEWS] + SUBS + PAGES
 
 # Everything a page can do wrong at this width: sideways scroll, who causes it, and controls too small to tap.
 PROBE = """(minTap) => {
@@ -83,6 +84,12 @@ def audit_with(browser, base: str, shots: str | None = None, widths=WIDTHS, sche
                     out.append({"page": t, "width": w, "scheme": scheme, **page.evaluate(PROBE, 44)})
                     if shots:
                         page.screenshot(path=f"{shots}/{t}-{w}-{scheme}.png")
+                for sub in SUBS:
+                    t, s = sub.split(":")
+                    page.evaluate("([t, s]) => window.showTab && window.showTab(t, s)", [t, s])
+                    page.wait_for_timeout(450)
+                    out.append({"page": sub, "width": w, "scheme": scheme, **page.evaluate(PROBE, 44)})
+                page.evaluate("() => window.showTab('planner')")
                 for v in VIEWS:
                     page.evaluate("(v) => window.plSetView && window.plSetView(v)", v)
                     page.wait_for_timeout(450)

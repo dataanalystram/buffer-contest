@@ -1,6 +1,6 @@
 // Connect AI apps: per-app setup for Claude, ChatGPT, Grok, Claude Code, Codex, Cursor and any MCP client. One MCP
 // address for all of them; OAuth apps sign in themselves, the rest get an agent token made here (the same
-// /api/agent-tokens action as the Agents screen, so the same policy, daily cap and kill switch apply). "Last used" comes
+// /api/agent-tokens action as the custom token form on this screen, so the same policy, daily cap and kill switch apply). "Last used" comes
 // from the agent tokens list (/api/safety), matched to an app by the token's name.
 "use strict";
 (() => {
@@ -45,7 +45,7 @@ async function loadConnect() {
     const tok = made[a.id] || "hq_YOUR_TOKEN";
     const snip = a.snip ? a.snip(url, tok) : "";
     return `<article class="cx-card" data-testid="connect-app" data-app="${a.id}">
-      <header><span class="cx-mark" aria-hidden="true">${esc(a.mark)}</span><div><h2>${esc(a.name)}</h2><p class="muted xs">${esc(a.where)}</p></div>
+      <header>${aiMark(a.id === "other" ? "mcp" : a.name, 36)}<div><h2>${esc(a.name)}</h2><p class="muted xs">${esc(a.where)}</p></div>
         <span class="cx-status${mine.length ? " on" : ""}" data-testid="connect-last-used">${esc(status)}</span></header>
       <ol class="cx-steps">${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
       ${snip ? `<div class="cx-snip"><pre class="code" data-testid="connect-snippet">${esc(snip)}</pre><button class="btn2 sm" type="button" data-copy="${a.id}" data-testid="connect-copy-snippet">Copy</button></div>` : ""}

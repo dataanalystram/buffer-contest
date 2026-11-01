@@ -19,7 +19,7 @@
     if (r.category === "agent" || r.token_label) {
       const app = r.app_label || "Agent";
       const sub = [r.token_label, r.client_id ? `client ${r.client_id}` : "", r.surface].filter(Boolean).join(" · ");
-      return `<td class="act-who"><b>${esc(app)}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</td>`;
+      return `<td class="act-who"><span class="aiw">${aiMark(r.app || app, 18)}<b>${esc(app)}</b></span>${sub ? `<small>${esc(sub)}</small>` : ""}</td>`;
     }
     if (r.category === "signin") {
       const sub = [r.ip, (r.ua || "").slice(0, 60)].filter(Boolean).join(" · ");
@@ -30,13 +30,13 @@
   function model(r) {
     if (!r.model && !r.provider) return "<td></td>";
     const usage = [r.tokens_in != null ? `${num(r.tokens_in)} in` : "", r.tokens_out != null ? `${num(r.tokens_out)} out` : "", money(r.cost_usd)].filter(Boolean).join(" · ");
-    return `<td class="act-model">${esc(r.model || "")}<small>${esc(r.provider || "")}${usage ? " · " + esc(usage) : ""}</small></td>`;
+    return `<td class="act-model">${r.model || r.provider ? aiMark(r.model || r.provider, 14) + " " : ""}${esc(r.model || "")}<small>${esc(r.provider || "")}${usage ? " · " + esc(usage) : ""}</small></td>`;
   }
 
   function groups(list) {
     if (!list || !list.length) return "";
     return `<div class="act-groups" data-testid="act-groups">${list.map((g) => `<button type="button" class="act-group${A.app === g.app ? " on" : ""}" data-app="${esc(g.app)}" data-testid="act-group">
-      <h3>${esc(g.label)}</h3><p>${num(g.actions)} actions${g.failed ? ` · ${num(g.failed)} failed` : ""}</p>
+      <h3 class="aiw">${aiMark(g.app || g.label, 22)}<span>${esc(g.label)}</span></h3><p>${num(g.actions)} actions${g.failed ? ` · ${num(g.failed)} failed` : ""}</p>
       ${g.models.length ? `<p>${g.models.map((m) => esc(`${m.model || "unknown model"}${m.provider ? ` (${m.provider})` : ""} ×${m.calls}`)).join("<br>")}</p><p class="act-note" data-testid="act-model-note">model reported by the client</p>` : `<p>model not reported by the client</p>`}
       ${g.tokens_in || g.tokens_out ? `<p>${num(g.tokens_in)} tokens in · ${num(g.tokens_out)} out${g.cost_usd != null ? " · " + money(g.cost_usd) : ""}</p>` : ""}
       ${g.agents.length ? `<p>${g.agents.map((t) => esc(t.label || `token ${t.token_id}`)).join(", ")}</p>` : ""}</button>`).join("")}</div>`;

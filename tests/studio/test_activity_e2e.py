@@ -13,7 +13,7 @@ from .browsers import free_port, serve
 from .conftest import FakeBuffer
 
 pw = pytest.importorskip("playwright.sync_api")
-NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"
+NO_TOUR = "localStorage.setItem('hq_tour_done', '1'); localStorage.setItem('hq_onb_seen', '1')"
 
 
 def until(fn, timeout=10.0):
@@ -51,15 +51,16 @@ def live(tmp_path):
              ("acc_1", "you", f"seeded_{i:02d}", "read", json.dumps({"i": i}), 1, now - 3600 + i, "human"))
     server = serve(app, port)
     base = f"http://127.0.0.1:{port}"
-    tok = httpx.post(f"{base}/api/agent-tokens", cookies={"hq_sid": "sid-act"}, headers={"X-HQ-CSRF": "csrf-act"},
+    lo = httpx.Client(trust_env=False)  # loopback calls must not go through a sandbox HTTP(S)_PROXY
+    tok = lo.post(f"{base}/api/agent-tokens", cookies={"hq_sid": "sid-act"}, headers={"X-HQ-CSRF": "csrf-act"},
                      json={"name": "my editor", "policy": "review"}).json()["token"]
     h = {"Authorization": f"Bearer {tok}"}
-    httpx.post(f"{base}/mcp", headers=h, json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
+    lo.post(f"{base}/mcp", headers=h, json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
                                                "params": {"clientInfo": {"name": "cursor-vscode", "version": "1.2"}}})
-    httpx.post(f"{base}/mcp", headers=h, json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+    lo.post(f"{base}/mcp", headers=h, json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                                "params": {"name": "create_idea", "arguments": {"text": "idea from cursor"},
                                                           "_meta": {"model": "claude-sonnet-4-5"}}})
-    httpx.get(f"{base}/api/me", headers={"Authorization": "Bearer hq_wrong_token_for_the_failed_signin_row"})
+    lo.get(f"{base}/api/me", headers={"Authorization": "Bearer hq_wrong_token_for_the_failed_signin_row"})
     yield base, app
     server.should_exit = True
 

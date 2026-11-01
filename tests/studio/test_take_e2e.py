@@ -11,7 +11,7 @@ from studio.config import load_settings
 from .browsers import free_port, serve
 
 pw = pytest.importorskip("playwright.sync_api")
-NO_TOUR = "localStorage.setItem('hq_tour_done', '1')"  # the guided tour has its own test (test_tour_e2e.py)
+NO_TOUR = "localStorage.setItem('hq_tour_done', '1'); localStorage.setItem('hq_onb_seen', '1')"  # the guided tour has its own test (test_tour_e2e.py)
 
 
 def _free_port():
@@ -50,8 +50,12 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
     _open_sample(page, live)
     assert page.get_by_test_id("clip-card").count() == 3
     assert page.locator("[data-testid=take-step][data-status=done]").count() == 8
-    assert page.get_by_test_id("clip-preflight").count() == 3
-    assert page.locator("[data-testid=clip-preflight][data-status=ok]").count() == 3
+    # one preflight chip per clip per selected channel; the default is Make a post's (setup's channels, else every
+    # connected one) minus channels without video
+    chans = page.locator("[data-testid=take-chip][aria-pressed=true]").count()
+    assert chans >= 1
+    assert page.get_by_test_id("clip-preflight").count() == 3 * chans
+    assert page.locator("[data-testid=clip-preflight][data-status=ok]").count() == 3 * chans
     if shots:
         page.evaluate("() => window.scrollTo(0, document.querySelector('#tkHead').getBoundingClientRect().top + scrollY - 90)")
         page.wait_for_timeout(600)
@@ -75,16 +79,16 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
     page.get_by_test_id("planner-spread").wait_for()
     ghosts = page.locator("[data-ref^='ghost:']")
     ghosts.first.wait_for()
-    assert ghosts.count() == 3
+    assert ghosts.count() == 3 * chans  # one ghost per clip per channel
     page.wait_for_function("() => !document.querySelector('.spread-layer')")  # the flight finished
-    assert page.locator(".pl-chip.s-ghost.landed").count() == 3
+    assert page.locator(".pl-chip.s-ghost.landed").count() == 3 * chans
     if shots:
         page.screenshot(path=f"{shots}/take-spread-{scheme}.png")
     page.get_by_test_id("planner-spread-save").click()
     page.get_by_test_id("toast").filter(has_text="Buffer drafts").wait_for()
     page.wait_for_function("() => !document.querySelector(\"[data-ref^='ghost:']\")")
     assert page.get_by_test_id("planner-spread").is_hidden()
-    assert page.locator("[data-testid=planner-item][data-state=draft]").count() >= 3
+    assert page.locator("[data-testid=planner-item][data-state=draft]").count() >= 3 * chans
     if shots:
         page.screenshot(path=f"{shots}/take-saved-{scheme}.png")
     ctx.close()
@@ -98,9 +102,10 @@ def test_spread_respects_reduced_motion(live, chromium):
     page = ctx.new_page()
     _open_sample(page, live)
     page.evaluate("() => { window.__flights = 0; new MutationObserver((m) => m.forEach((r) => r.addedNodes.forEach((n) => { if (n.classList && n.classList.contains('spread-layer')) window.__flights++; }))).observe(document.body, {childList: true}); }")
+    chans = page.locator("[data-testid=take-chip][aria-pressed=true]").count()
     page.get_by_test_id("spread-go").click()
     page.locator("[data-ref^='ghost:']").first.wait_for()
-    assert page.locator("[data-ref^='ghost:']").count() == 3
+    assert page.locator("[data-ref^='ghost:']").count() == 3 * chans
     assert page.evaluate("window.__flights") == 0          # no cards in flight, the plan just appears
     page.get_by_test_id("planner-spread-cancel").click()
     page.get_by_test_id("toast").filter(has_text="Nothing was saved").wait_for()
