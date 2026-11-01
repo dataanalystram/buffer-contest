@@ -12,7 +12,7 @@ const TOUR = [
     body: "Your day at a glance: what's scheduled, agent posts to approve with their media, what bounced, what each AI app did, and posts worth making." },
   { tab: "agent", target: "#agentCompose", title: "Make a post",
     body: "Give the agent a topic or a link. It finds and checks the story, renders it in your brand, writes a caption per channel and checks your Style Ledger. In the sample it can research a few topics a day, then it uses the sample story." },
-  { tab: "take", target: "[data-testid=take-sample]", title: "One take → a week",
+  { tab: "take", target: "[data-testid=take-sample]", title: "One take",
     body: "Try the sample take: one talk becomes three captioned clips. The Spread drops them into the open posting times of your week as drafts." },
   { tab: "planner", target: "#plMain", title: "Planner",
     body: "Week, Month, Day, List, Board and Grid on the same posts. Drag a post to move it, or a draft from No date onto the week. Preflight checks every change, and Fix it repairs what it can." },

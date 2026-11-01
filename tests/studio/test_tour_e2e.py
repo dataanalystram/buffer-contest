@@ -4,7 +4,7 @@ from "Take the tour". Desktop and a 390 px phone. Skips without Chromium."""
 import pytest
 
 pytest.importorskip("playwright.sync_api")
-TABS = ["inbox", "agent", "take", "planner", "brand", "agents"]  # the tab each of steps 1-6 shows
+TABS = ["inbox", "agent", "take", "planner", "brand", "apps"]  # the tab each of steps 1-6 shows
 
 
 def _ctx(chromium, base, width):
