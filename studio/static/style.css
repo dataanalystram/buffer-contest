@@ -10,12 +10,18 @@
   --mono:"Atkinson Hyperlegible Mono",ui-monospace,Menlo,Consolas,monospace;
   --fast:120ms;--base:200ms;
 }
-@media (prefers-color-scheme:dark){:root{
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
   --paper:#121314;--raised:#1b1c1e;--sunken:#0b0c0d;--ink:#eceeef;--muted:#a3a8ad;--subtle:#7b8086;
   --line:#2a2c2f;--line-strong:#6d7278;--accent:#ff6aa8;--accent-ink:#ff9cc4;--on-accent:#1a1c1e;--accent-soft:#3d1529;
   --focus:#8ab0ff;--ok:#4cc7c2;--warn:#e3b341;--bad:#ff8c7c;--inv:#1b1c1e;--well:#0b0c0d;
   --float:0 1px 2px rgba(0,0,0,.5),0 6px 20px rgba(0,0,0,.55);
 }}
+:root[data-theme=dark]{
+  --paper:#121314;--raised:#1b1c1e;--sunken:#0b0c0d;--ink:#eceeef;--muted:#a3a8ad;--subtle:#7b8086;
+  --line:#2a2c2f;--line-strong:#6d7278;--accent:#ff6aa8;--accent-ink:#ff9cc4;--on-accent:#1a1c1e;--accent-soft:#3d1529;
+  --focus:#8ab0ff;--ok:#4cc7c2;--warn:#e3b341;--bad:#ff8c7c;--inv:#1b1c1e;--well:#0b0c0d;
+  --float:0 1px 2px rgba(0,0,0,.5),0 6px 20px rgba(0,0,0,.55);
+}
 *{box-sizing:border-box}html,body{margin:0}
 body{font:16px/1.5 var(--sans);color:var(--ink);background:var(--paper);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;min-height:100vh}
 main{flex:1}
@@ -91,7 +97,8 @@ button.status{cursor:pointer}button.status:hover{color:var(--ink)}
 .fake-btn{height:36px;padding:0 16px;border-radius:6px;background:var(--accent);color:var(--on-accent);font-weight:600;font-size:14px;display:inline-flex;align-items:center}
 .band{border-top:1px solid var(--line);padding:96px 0}.band.sunken{background:var(--sunken);border-top:0}
 .band.inverse{background:var(--inv);color:var(--inv-ink);border-top:0}.band.inverse .lede,.band.inverse .soft{color:var(--inv-muted)}
-@media (prefers-color-scheme:dark){.band.inverse{border-top:1px solid var(--line);border-bottom:1px solid var(--line)}}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .band.inverse{border-top:1px solid var(--line);border-bottom:1px solid var(--line)}}
+:root[data-theme=dark] .band.inverse{border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .h-display{font-size:36px;line-height:1.12;font-weight:300;letter-spacing:-.6px;max-width:18em}.h-display.lg{font-size:clamp(36px,4vw,48px);line-height:1.06;letter-spacing:-1px}
 #how .h-display{margin-bottom:48px}
 .points{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:48px}
@@ -572,3 +579,11 @@ body.pl-dragging .pl-cell,body.pl-dragging .pl-mday{cursor:copy}
 .take-go-row .chk input{width:18px;height:18px;flex:none}
 .ce-words{text-align:left;word-spacing:normal}
 .clip-act .link{white-space:nowrap}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+/* appearance: the top-bar sun/moon and Settings › Appearance (owner, 1 Nov 2026) */
+.hq-mode{width:40px;padding:0;flex:none}.hq-mode .ic{width:18px;height:18px}
+.hq-modes{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--sunken);margin-top:12px;flex-wrap:wrap}
+.hq-modes button{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 14px;border-radius:8px;font-size:14px;font-weight:600;color:var(--muted)}
+.hq-modes button:hover{color:var(--ink)}
+.hq-modes button.on{background:var(--raised);color:var(--ink);box-shadow:0 0 0 1px var(--line-strong)}
+.hq-modes button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}

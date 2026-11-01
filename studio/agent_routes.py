@@ -80,6 +80,14 @@ def add_routes(app: FastAPI, house, actor) -> None:
     def onboarding_put(request: Request, body: dict = Body(...)):
         return call(ob.put, actor(request, write=True), body)
 
+    @app.get("/api/prefs/appearance")
+    def appearance_get(request: Request):
+        return call(ob.appearance, actor(request))
+
+    @app.put("/api/prefs/appearance")
+    def appearance_put(request: Request, body: dict = Body(...)):
+        return call(ob.set_appearance, actor(request, write=True), (body or {}).get("mode", ""))
+
     @app.get("/api/recommendations")
     def recs(request: Request, refresh: int = 0):
         a = actor(request, write=bool(refresh))
