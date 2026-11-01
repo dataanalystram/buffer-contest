@@ -140,6 +140,79 @@ def detect_burned_subs(src: str, duration: float, samples: int = 6) -> bool:
     return hits >= max(2, samples // 2)
 
 
+def _band_rows(a, lo: float = 0.55, hi: float = 0.95, thr: float = 0.06) -> tuple[float, float] | None:
+    """Rows in [lo, hi] of a greyscale frame dense with sharp vertical edges (text / a graphic bar), as (top, bottom)
+    fractions of the frame height, or None. The densest contiguous run of at least 3% of the height wins."""
+    import numpy as np
+    h, w = a.shape
+    dens = (np.abs(np.diff(a, axis=1)) > 50).mean(axis=1)
+    top_ref = float(np.median(dens[int(h * 0.05):int(h * 0.45)]))  # a busy picture has edges everywhere: not a band
+    best, run = None, None
+    for r in range(int(h * lo), int(h * hi)):
+        on = dens[r] > max(thr, 2.5 * top_ref + 0.01)
+        if on and run is None:
+            run = r
+        if (not on or r == int(h * hi) - 1) and run is not None:
+            end = r if not on else r + 1
+            if end - run >= max(3, int(h * 0.03)) and (best is None or end - run > best[1] - best[0]):
+                best = (run, end)
+            run = None
+    return (best[0] / h, best[1] / h) if best else None
+
+
+def detect_lower_third(src: str, start: float = 0.0, end: float | None = None, samples: int = 6) -> dict | None:
+    """A lower-third graphic band in the source (a name strap, a news ticker, a product caption bar): rows in the lower
+    part of most sampled frames dense with text edges, at the same height each time, far denser than the top of the
+    picture. Returns {"top", "bottom"} as fractions of the source height (min top / max bottom seen), or None.
+    Our captions are then placed above it (render_style), in every ratio."""
+    import numpy as np
+    if end is None:
+        end = ff.probe(src)["duration"]
+    span = max(0.1, end - start)
+    bands = []
+    with tempfile.TemporaryDirectory() as td:
+        for i in range(samples):
+            t = start + span * (i + 1) / (samples + 1)
+            p = Path(td) / f"l{i}.png"
+            try:
+                ff.run(["-y", "-v", "error", "-ss", f"{t:.2f}", "-i", src, "-frames:v", "1", "-vf", "scale=480:-2",
+                        "-update", "1", str(p)], timeout=60)
+            except ff.MediaError:
+                continue
+            b = _band_rows(np.asarray(Image.open(p).convert("L"), dtype=np.int16))
+            if b:
+                bands.append(b)
+    if len(bands) < max(2, samples // 3):
+        return None
+    tops = sorted(b[0] for b in bands)
+    med = tops[len(tops) // 2]
+    same = [b for b in bands if abs(b[0] - med) <= 0.05]  # a strap sits at one height; moving texture doesn't
+    if len(same) < max(2, samples // 3):
+        return None
+    return {"top": round(min(b[0] for b in same), 3), "bottom": round(max(b[1] for b in same), 3), "frames": len(same)}
+
+
+def band_in_output(band: dict, sw: int, sh: int, W: int, H: int, reframe: dict | None = None, burned_subs: bool = False) -> int | None:
+    """Where a source band's top lands in the output frame (pixels) for the full-bleed styles, or None when it is cropped
+    away. Mirrors _main_graph: the burned-subtitle crop, then track (full height), pad (fit + centre) or cover crop."""
+    top = band["top"]
+    if burned_subs:
+        if top >= 0.84:
+            return None
+        top = top / 0.84
+        sh = int(sh * 0.84)
+    mode = (reframe or {}).get("mode")
+    if mode == "track":
+        y = top * H
+    elif mode == "pad":
+        k = min(W / sw, H / sh)
+        y = (H - sh * k) / 2 + top * sh * k
+    else:
+        k = max(W / sw, H / sh)
+        y = top * sh * k - (sh * k - H) / 2
+    return int(y) if 0 < y < H else None
+
+
 def pick_clip(words: list[dict], duration: float, lo: float = 20.0, hi: float = 45.0) -> tuple[float, float, str]:
     """Opus-style: the best self-contained moment (sentence boundaries) of the transcript. Reuses the One take
     engine's deterministic scorer (studio/take.py) so both features pick moments the same way."""
@@ -388,11 +461,12 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  images: list[str] | None = None, music_mood: str = "auto", names: list[str] | None = None,
                  burned_subs: bool | None = None, captions_mode: str = "auto", accent_words: list[str] | None = None,
                  crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
-                 reframe: dict | None = None) -> dict:
+                 reframe: dict | None = None, lower_third_mode="auto") -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     reframe: a crop plan for the full-bleed styles (``longform.reframe_plan`` / ``take.crop_plan``): ``track`` follows
     the face, ``pad`` shows the whole frame over a blurred copy, anything else (or None) is the centre crop.
+    lower_third_mode: auto (detect a lower-third band and lift the captions above it) | off | a band dict.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from .styles import STYLE_PRESETS, resolve
     style = resolve(style)
@@ -436,6 +510,20 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
 
         still = Image.open(frame_at(source, c0 + min(D * 0.3, 4.0), str(wd / "still.png"))) if source else Image.open(images[0])
         L = layout(cfg["layout"], W, H, sw, sh, brand, hook, caps_on)
+        lower_third = None
+        if caps_on and source and cfg["fill"] == "fill" and "captions_center" in L and lower_third_mode != "off":
+            # a lower-third graphic in the source (name strap, ticker): our captions go above it, in every ratio
+            lower_third = lower_third_mode if isinstance(lower_third_mode, dict) else detect_lower_third(source, c0, c1)
+            y_band = band_in_output(lower_third, sw, sh, W, H, reframe, bool(burned_subs)) if lower_third else None
+            if y_band is not None:
+                cst = captions.STYLES[cfg["captions"]]
+                half = int(H * cst.size_frac * 1.25 * cst.max_lines / 2) + int(H * 0.02)
+                cy = min(L["captions_center"], y_band - half)
+                L["captions_center"] = max(int(H * 0.30), cy)
+                if cfg["layout"] == "hype" and "hook" in L:  # the giant first-beat hook stays clear of the lifted line
+                    hx0, hy0, hx1, hy1 = L["hook"]
+                    L["hook"] = (hx0, hy0, hx1, max(hy0 + int(H * 0.08), min(hy1, L["captions_center"] - int(H * 0.09))))
+                lower_third = {**lower_third, "out_top": y_band}
         ov, boxes = _overlay(cfg["layout"], W, H, brand, hook, credit, L, acc)
         if "cap_band" in L:
             boxes["cap_band"] = L["cap_band"]
@@ -487,7 +575,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         return {"path": str(outp), "style": style, "ratio": ratio, "width": got["width"], "height": got["height"],
                 "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), why], "boxes": boxes,
                 "layout": {k: v for k, v in L.items()}, "safe_area": safe_area(W, H), "caption_problems": cap_problems,
-                "captions": caps_on, "burned_subs": burned_subs, "music": mood if wav else "none", "source_silent": silent,
+                "captions": caps_on, "burned_subs": burned_subs, "lower_third": lower_third,
+                "captions_center": L.get("captions_center"), "music": mood if wav else "none", "source_silent": silent,
                 "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit}
     finally:
         if own:
