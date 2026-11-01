@@ -523,8 +523,11 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
     if not Path(model_path).exists():
         import httpx
         Path(model_path).write_bytes(httpx.get(FACE_MODEL_URL, timeout=60, follow_redirects=True).content)
-    det = vision.FaceDetector.create_from_options(vision.FaceDetectorOptions(
-        base_options=BaseOptions(model_asset_path=model_path), min_detection_confidence=0.6))
+    try:  # MediaPipe needs libEGL/libGLES; a box without them reframes with the centre/blur layout instead of failing
+        det = vision.FaceDetector.create_from_options(vision.FaceDetectorOptions(
+            base_options=BaseOptions(model_asset_path=model_path), min_detection_confidence=0.6))
+    except OSError as e:
+        return [], f"none (MediaPipe couldn't load: {str(e)[:80]})"
     w, h = 320, 180
     info = probe(path)
     if info["width"] and info["height"]:

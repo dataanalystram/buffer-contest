@@ -276,9 +276,13 @@ def test_start_needs_ownership_and_a_direct_file_link(human, app, monkeypatch):
     monkeypatch.setattr(app.state.house.takes, "_mode", lambda: "none")
     r = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4"})
     assert r.status_code == 400 and "owns" in r.json()["error"]
-    for bad in ("https://www.youtube.com/watch?v=abc", "https://youtu.be/abc", "https://www.tiktok.com/@me/video/1"):
+    for bad in ("https://www.facebook.com/somebrand", "https://www.twitch.tv/someone"):     # pages, not video posts
         r = human.post("/api/takes", json={"url": bad, "owns": True})
-        assert r.status_code == 400 and "not a page on a social network" in r.json()["error"]
+        assert r.status_code == 400 and "not a profile or page" in r.json()["error"]
+    # a video post on YouTube / TikTok is an Opus-style take now (test_take_opus.py covers it end to end)
+    monkeypatch.setattr("studio.media.find.oembed", lambda url, http=None: None)
+    yt = human.post("/api/takes", json={"url": "https://youtu.be/abc", "owns": True}).json()
+    assert yt["style"] == "opus" and yt["input"]["platform_url"] == "https://youtu.be/abc"
     assert human.post("/api/takes", json={"url": "http://cdn.example.com/a.mp4", "owns": True}).status_code == 400
     assert human.post("/api/takes", json={"url": "https://127.0.0.1/a.mp4", "owns": True}).status_code == 400
     t = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True}).json()
