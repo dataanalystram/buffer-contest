@@ -212,3 +212,10 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
   .nf-t{min-height:44px}
   .bs-steps li a{display:inline-flex;align-items:center;min-height:44px;margin:-11px 0}
 }
+/* AI apps snippets: code never breaks mid-word (it scrolls inside its box), and Copy sits above the code instead of on it */
+.cx-card{min-width:0}
+.cx-card .cx-snip{display:flex;flex-direction:column;gap:6px;min-width:0}
+.cx-card .cx-snip .btn2{position:static;align-self:flex-end;order:-1}
+.cx-card .cx-snip pre.code{white-space:pre;word-break:normal;overflow-wrap:normal;overflow-x:auto;max-width:100%;padding-right:16px}
+/* phones: Inbox tile labels and their small lines wrap instead of being cut ("Buffer requests left", "0 used: nothing reaches Buffer") */
+@media (max-width:600px){.ib-tl,.ib-ts{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}}
