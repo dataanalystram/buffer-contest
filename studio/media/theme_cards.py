@@ -78,10 +78,18 @@ def _vignette(im: Image.Image, strength: int = 150) -> Image.Image:
 
 
 def _grid(d, W, H, step, color, every=0, strong=None):
+    """Hairline grid. Translucent colours are composited on a layer (ImageDraw would write the alpha straight in)."""
+    im = d._image
+    lay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    ld = ImageDraw.Draw(lay)
     for i, x in enumerate(range(0, W + 1, step)):
-        d.line((x, 0, x, H), fill=strong if (every and i % every == 0 and strong) else color, width=1)
+        ld.line((x, 0, x, H), fill=strong if (every and i % every == 0 and strong) else color, width=1)
     for i, y in enumerate(range(0, H + 1, step)):
-        d.line((0, y, W, y), fill=strong if (every and i % every == 0 and strong) else color, width=1)
+        ld.line((0, y, W, y), fill=strong if (every and i % every == 0 and strong) else color, width=1)
+    if im.mode == "RGBA":
+        im.alpha_composite(lay)
+    else:
+        im.paste(lay, (0, 0), lay)
 
 
 def _dots(d, W, H, step, color, r=1.4):
@@ -320,7 +328,7 @@ def overlay(cfg: dict, W: int, H: int, brand: dict, hook: str, credit: str, L: d
             d.rectangle((cb[0], cb[1], cb[0] + end_w, cb[3]), fill=_rgb(accent) + (255,))
             _block(d, (brand.get("name") or "NEWS").split()[0].upper(), "Inter-Bold.ttf",
                    (cb[0] + int(10 * k), cb[1] + int(8 * k), cb[0] + end_w - int(10 * k), cb[3] - int(8 * k)), max_size=int(30 * k),
-                   min_size=12, max_lines=2, fill=brand.get("on_accent", "#121417"))
+                   min_size=9, max_lines=1, fill=brand.get("on_accent", "#121417"))
             L["cap_left"] = cb[0] + end_w + int(22 * k)
         if "pill_y" in L:
             boxes["pill"] = C._pill(d, "Follow " + brand["handle"], W // 2, L["pill_y"], brand, size=32, maxw=r - l)
