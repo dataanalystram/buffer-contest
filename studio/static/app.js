@@ -329,7 +329,7 @@ $("#moreBtn").onclick = () => moreSheet(!$("#rail").classList.contains("more-ope
 $("#moreClose").onclick = () => moreSheet(false);
 $("#railScrim").onclick = () => moreSheet(false);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#rail").classList.contains("more-open")) moreSheet(false); });
-// one generic "go to" for links between screens: <button data-go="planner"> or data-go="brand:ledger"
+// one generic "go to" for links between screens: a button with data-go="planner" or data-go="brand:ledger"
 document.addEventListener("click", (e) => {
   const g = e.target.closest("[data-go]"); if (!g || g.dataset.act || !g.dataset.go) return;
   e.preventDefault(); ibGo(g.dataset.go);
@@ -451,7 +451,7 @@ async function loadInbox() {
   const soon = next.length ? next : sched.filter((p) => p.dueAt).sort((a, b) => a.dueAt.localeCompare(b.dueAt)).slice(0, 4);
   $("#ibTodayH").textContent = next.length ? "Today's queue" : "Coming up";
   $("#ibToday").innerHTML = soon.length ? soon.slice(0, 6).map(todayRow).join("")
-    : `<li class="ib-none">Nothing scheduled. <button class="link" type="button" data-go="agent">Make a post</button> or <button class="link" type="button" data-go="take">turn one video into a week</button>.</li>`;
+    : `<li class="ib-none">Nothing scheduled. <button class="link" type="button" data-go="agent" data-testid="inbox-empty-make">Make a post</button> or <button class="link" type="button" data-go="take" data-testid="inbox-empty-take">turn one video into a week</button>.</li>`;
   // needs attention
   $("#inboxJump").innerHTML = live.length > 2 ? live.map((g) => `<a class="ib-chip u-${g.urgency}" href="#ib-${g.key}" data-testid="inbox-jump-chip" data-group="${g.key}"><span>${esc(g.title)}</span><b>${g.count}</b></a>`).join("") : "";
   box.innerHTML = (live.length ? live.map(ibGroup).join("") : "")
@@ -478,7 +478,7 @@ async function ibAgents() {
   let r; try { r = await api("/api/activity?tab=agent&limit=25"); } catch (_) { box.innerHTML = `<li class="ib-none">Agent activity shows here once an app connects.</li>`; return; }
   box.innerHTML = r.items.length ? r.items.slice(0, 6).map((x) => { const who = x.app_label || x.token_label || "Agent";
     return `<li class="ib-arow${x.ok ? "" : " bad"}" data-testid="inbox-agent-row">${aiMark(x.app || who, 28)}<span><b>${esc(who)}</b> ${esc(actionWords(x.action))}${x.model ? `<small>${aiMark(x.model, 12)} ${esc(x.model)}</small>` : ""}</span><time>${esc(timeAgo(x.ts * 1000))}</time></li>`; }).join("")
-    : `<li class="ib-none">No agent has acted yet. <button class="link" type="button" data-go="apps">Connect Claude, ChatGPT or Cursor</button>.</li>`;
+    : `<li class="ib-none">No agent has acted yet. <button class="link" type="button" data-go="apps" data-testid="inbox-empty-apps">Connect Claude, ChatGPT or Cursor</button>.</li>`;
 }
 const ACTION_WORDS = { submit_post: "wrote a post", approve_post: "had a post approved", preview_post: "checked a post", draft: "drafted posts", list_channels: "read your channels",
   get_inbox: "read your Inbox", agent_run: "ran the agent", sources_scan: "scanned sources", sources_draft: "drafted from sources", render: "rendered media", get_calendar: "read your Planner", ai_call: "made an AI call", preflight: "checked a post", get_posts: "read your posts", create_idea: "saved an idea",
@@ -502,7 +502,7 @@ async function getRecs() {
 async function ibRecs() {
   const box = $("#ibRecs"), r = await getRecs();
   box.innerHTML = r.items.length ? r.items.slice(0, 4).map((x) => recCard(x)).join("") + (r.live ? "" : `<p class="muted xs">From your feeds. Personal picks arrive after setup.</p>`)
-    : `<p class="ib-none">Follow a few feeds in <button class="link" type="button" data-go="news:sources">News</button> and posts worth making show up here.</p>`;
+    : `<p class="ib-none">Follow a few feeds in <button class="link" type="button" data-go="news:sources" data-testid="inbox-empty-sources">News</button> and posts worth making show up here.</p>`;
   wireMake(box); favicons(box);
 }
 function recCard(x) {
@@ -588,7 +588,7 @@ async function loadFeed() {
   try {
     const r = await api("/api/radar"); NF.stories = r.stories; NF.feeds = r.feeds;
     box.innerHTML = (r.errors || []).map((e) => `<div class="st err">${esc(hostOf(e.feed))}: ${esc(e.error)}</div>`).join("")
-      + (r.stories.length ? r.stories.slice(0, NF.shown).map(storyItem).join("") : `<div class="empty"><b>No stories yet</b><span>Follow a site in <button class="link" type="button" data-go="news:sources">Sources</button>. Most news sites and blogs have a feed at /feed or /rss.</span></div>`);
+      + (r.stories.length ? r.stories.slice(0, NF.shown).map(storyItem).join("") : `<div class="empty"><b>No stories yet</b><span>Follow a site in <button class="link" type="button" data-go="news:sources" data-testid="news-empty-sources">Sources</button>. Most news sites and blogs have a feed at /feed or /rss.</span></div>`);
     $("#nfMore").hidden = r.stories.length <= NF.shown;
     wireMake(box); favicons(box);
   } catch (e) { box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }

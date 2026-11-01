@@ -327,11 +327,11 @@
           </div>
           <aside class="ib-col ib-side">
             <section class="ib-sec" aria-labelledby="ibAgH">
-              <header class="ib-sh"><h2 id="ibAgH">Agent activity</h2><button class="link" type="button" data-go="activity">All activity</button></header>
+              <header class="ib-sh"><h2 id="ibAgH">Agent activity</h2><button class="link" type="button" data-go="activity" data-testid="inbox-all-activity">All activity</button></header>
               <ul class="ib-agents" id="ibAgents" data-testid="inbox-agents"></ul>
             </section>
             <section class="ib-sec" aria-labelledby="ibRecH">
-              <header class="ib-sh"><h2 id="ibRecH">Recommended for you</h2><button class="link" type="button" data-go="news">News</button></header>
+              <header class="ib-sh"><h2 id="ibRecH">Recommended for you</h2><button class="link" type="button" data-go="news" data-testid="inbox-all-news">News</button></header>
               <div class="ib-recs" id="ibRecs" data-testid="inbox-recs"></div>
             </section>
           </aside>
@@ -435,7 +435,7 @@
         <h2 class="sec" id="aiH">AI engine</h2>
         <div class="set-grid">
           <div class="panel"><h2 class="card-title">Right now</h2><p id="aiNow" data-testid="ai-now"></p>
-            <p class="muted sm">Prefer your Claude or ChatGPT subscription? Connect it in <button class="link" type="button" data-go="apps">AI apps</button>; it does the thinking and HuhQueue supplies the tools.</p></div>
+            <p class="muted sm">Prefer your Claude or ChatGPT subscription? Connect it in <button class="link" type="button" data-go="apps" data-testid="ai-engine-go-apps">AI apps</button>; it does the thinking and HuhQueue supplies the tools.</p></div>
           <form class="panel" id="aiForm"><h2 class="card-title">Bring your own API key</h2>
             <p class="muted sm">Encrypted on the server, used only for your runs, never shown again.</p>
             <div class="two"><div class="field"><label class="label" for="aiProv">Provider</label><select id="aiProv" data-testid="ai-provider"></select></div>
