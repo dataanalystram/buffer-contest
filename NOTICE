@@ -195,3 +195,9 @@ studio/xreader.py  The free X reader (one public post a person links; no X API k
   These are unofficial public endpoints that can change or break; X's Terms restrict scraping. HuhQueue reads only the
   single public post a person links, on demand, and never crawls, searches or bulk-collects X. Recorded responses for
   one public post are kept as test fixtures (tests/studio/fixtures/x/).
+
+Make a post v2 UI (studio/static/makepost.js, makepost.css, pager.js)
+  Interaction patterns (no code copied) from: assistant-ui (MIT, https://github.com/assistant-ui/assistant-ui),
+  AI Elements by Vercel / shadcn (MIT, https://github.com/vercel/ai-elements), prompt-kit (MIT,
+  https://github.com/ibelick/prompt-kit) and MIT-licensed 21st.dev community components (https://21st.dev).
+  Details: docs/UI_CREDITS.md.
