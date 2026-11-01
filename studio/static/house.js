@@ -1,22 +1,24 @@
-// HuhQueue front end: the agent, its timeline, before/after, the Style Ledger, the brand kit, AI engine.
+// HuhQueue front end: Make a post (the agent, its timeline, per-channel posts, the reply thread), the Style Ledger, AI engine.
 "use strict";
-const H = { src: "topic", run: null, poll: null, sel: new Set(), ai: null, upload: null };
+const H = { run: null, poll: null, sel: new Set(), ai: null, upload: null, attach: null };
 const STATUS_ICON = { pending: "", running: '<span class="spin" aria-hidden="true"></span>', done: "✓", warn: "!", failed: "×" };
-const QUICK_FIXES = ["Logo smaller", "Logo top left", "No hashtags", "Less hype", "Headlines in sentence case", "Darker overlay", "No end card"];
+// suggestion chips under the reply box: one box edits any channel, its media or its caption
+const REPLY_CHIPS = ["Make the hook stronger", "Redo YouTube at 30s", "LinkedIn more formal", "Shorter captions", "Logo smaller", "No hashtags"];
+// what each send option does, in plain words (owner: "Ready for Buffer" / "Buffer draft" confused him)
+const PKG_MODES = [["draft", "Save as Buffer draft (not posted)", "Goes to your Buffer drafts. Nothing is posted until you publish it there.", "Save draft"],
+  ["queue", "Add to queue", "Buffer posts it at the channel's next open time slot.", "Add to queue"],
+  ["schedule", "Schedule…", "Pick a day and time; Buffer posts it then.", "Schedule"]];
 const fmtWhen = (iso) => (iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 const isVid = (u) => /\.(mp4|mov|m4v|webm)(\?|$)/i.test(u || "");
+const fmtDur = (s) => { if (!s && s !== 0) return ""; s = Math.round(+s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const fmtSize = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
+window.HQ_FMT = { fmtDur, fmtSize, isVid };
 
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { agent: loadAgent, ai: loadAI });
 
-// ---------------------------------------------------------------- agent composer
-function setSrc(src) {
-  H.src = src;
-  document.querySelectorAll(".seg [data-src]").forEach((b) => { const on = b.dataset.src === src; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
-  $("#fTopic").hidden = src !== "topic"; $("#fMedia").hidden = src !== "media";
-}
+// ---------------------------------------------------------------- agent composer: one prompt, an optional file of yours
 function countPrompt() { const n = $("#agQuery").value.length; $("#agCount").textContent = `${n.toLocaleString()} / 4,000`; $("#agCount").classList.toggle("over", n > 3800); }
 $("#agQuery").addEventListener("input", countPrompt);
-document.querySelectorAll(".seg [data-src]").forEach((b) => (b.onclick = () => setSrc(b.dataset.src)));
 
 function agentChips() {
   const box = $("#agChips");
@@ -37,25 +39,49 @@ const drop = $("#drop");
 ["dragleave", "drop"].forEach((e) => drop.addEventListener(e, () => drop.classList.remove("over")));
 drop.addEventListener("drop", (ev) => { ev.preventDefault(); if (ev.dataTransfer.files[0]) pickFile(ev.dataTransfer.files[0]); });
 $("#agFile").onchange = (e) => e.target.files[0] && pickFile(e.target.files[0]);
+const UPLOAD_MAX = () => (S.session?.demo ? 8 : 40) * 1048576;
 function pickFile(f) {
-  if (f.size > 40 * 1024 * 1024) return toast("Files up to 40 MB");
-  H.upload = f; $("#dropTxt").textContent = `${f.name} · ${(f.size / 1048576).toFixed(1)} MB`;
+  if (f.size > UPLOAD_MAX()) return toast(`Files up to ${UPLOAD_MAX() / 1048576} MB here`);
+  H.upload = f; H.attach = null; drawAttached();
 }
+function drawAttached() {
+  const box = $("#agAttached"), f = H.upload, a = H.attach;
+  box.hidden = !f && !a; drop.hidden = !!(f || a);
+  if (!f && !a) { box.innerHTML = ""; return; }
+  const name = f ? f.name : a.name, vid = f ? /^video\//.test(f.type) : a.kind === "video";
+  const src = f ? URL.createObjectURL(f) : (a.thumb || a.url);
+  const thumb = vid ? `<video src="${esc(f ? src : a.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${esc(src)}" alt="">`;
+  box.innerHTML = `${thumb}<span class="att-txt"><b>${esc(name)}</b><small>${vid ? "Video" : "Photo"}${f ? " · " + fmtSize(f.size) : " · from your Library"} · the agent reads it first</small></span>
+    <button type="button" class="link" data-testid="agent-attached-remove">Remove</button>`;
+  box.querySelector("[data-testid=agent-attached-remove]").onclick = () => { H.upload = null; H.attach = null; $("#agFile").value = ""; drawAttached(); };
+}
+window.attachToPost = (item) => { H.upload = null; H.attach = item; drawAttached(); $("#agQuery").focus(); };
+$("#agLib").onclick = () => window.pickFromLibrary && window.pickFromLibrary((item) => window.attachToPost(item), { title: "Attach from your Library" });
 const readB64 = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+
+// a file of yours -> a media token: a real account keeps it in its Library (raw upload, sniffed and capped on the server);
+// the sample workspace keeps it with the run only
+async function uploadFile(f, source = "upload") {
+  if (S.session?.demo) return (await api("/api/media", { method: "POST", body: { name: f.name, data: await readB64(f), source } })).token;
+  const r = await fetch(`/api/library/upload?name=${encodeURIComponent(f.name)}&source=${source}`, { method: "POST", credentials: "same-origin",
+    headers: { "X-HQ-CSRF": S.csrf, "Content-Type": f.type || "application/octet-stream" }, body: f });
+  let j = {}; try { j = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j.media_token;
+}
+window.hqUploadFile = uploadFile;
 
 $("#agentForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!H.sel.size) return toast("Pick at least one channel");
-  const body = { channel_ids: [...H.sel], format: $("#agFormat").value };
+  const body = { channel_ids: [...H.sel], format: $("#agFormat").value, prompt: $("#agQuery").value.trim() };
+  if (!body.prompt && !H.upload && !H.attach) return toast("Tell the agent what to post, paste a link, or add your photo or video");
   const b = $("#agGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
   try {
-    if (H.src === "topic") { body.prompt = $("#agQuery").value.trim(); if (!body.prompt) throw new Error("Tell the agent what to post, or paste a link"); }
-    if (H.src === "media") {
-      if (!H.upload) throw new Error("Choose a photo or video first");
+    if (H.upload) {
       b.innerHTML = `<span class="spin" aria-hidden="true"></span>Uploading…`;
-      const up = await api("/api/media", { method: "POST", body: { name: H.upload.name, data: await readB64(H.upload) } });
-      body.media_token = up.token; body.brief = $("#agBrief").value.trim();
-    }
+      body.media_token = await uploadFile(H.upload); body.media_name = H.upload.name;
+    } else if (H.attach) { body.media_token = H.attach.media_token; body.media_name = H.attach.name; }
     const run = await api("/api/agent/runs", { method: "POST", body });
     showRun(run); watch(run.id);
   } catch (e) { toast(e.message, 5000); }
@@ -86,31 +112,26 @@ function showRun(r) {
   $("#timeline").innerHTML = r.steps.map((s) => `<li class="step ${s.status}" data-testid="step" data-key="${s.key}">
       <span class="dot" aria-hidden="true">${STATUS_ICON[s.status] || ""}</span>
       <div><b>${esc(s.label)}</b>${s.detail ? `<small>${esc(s.detail)}</small>` : ""}${stepExtra(s)}</div></li>`).join("");
-  const res = r.result || {}, media = res.media || [];
-  const rev = (res.revisions || []).slice(-1)[0];
+  const res = r.result || {}, media = res.media || [], busy = ["running", "rendering"].includes(r.status);
+  const pk = res.packages || [];
   let html = "";
-  if (rev && rev.after && rev.before && rev.before[0] && rev.after[0] && !isVid(rev.after[0])) {
-    html += `<div class="ba" data-testid="before-after"><div class="ba-frame"><img src="${esc(rev.after[0])}" alt="After"><div class="ba-before" style="width:50%"><img src="${esc(rev.before[0])}" alt="Before"></div><span class="ba-tag l">Before</span><span class="ba-tag r">After</span></div>
-      <input type="range" min="0" max="100" value="50" aria-label="Compare before and after" data-testid="ba-slider"><p class="muted sm">“${esc(rev.correction)}” → ${esc((rev.rules || []).join(" · ") || "no new rule")}</p></div>`;
+  if (res.upload) {
+    const u = res.upload;
+    html += `<div class="run-upload" data-testid="run-upload">${u.type === "video" ? `<video src="${esc(u.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${esc(u.url)}" alt="">`}
+      <span><b>Your ${esc(u.type)}${u.name ? ": " + esc(u.name) : ""}</b><small>${u.transcript ? "Transcript: “" + esc(u.transcript.slice(0, 160)) + (u.transcript.length > 160 ? "…”" : "”") : esc(u.transcript_note || "The agent reads it first")}</small></span></div>`;
   }
-  if (media.length) {
+  if (!pk.length && media.length) {  // while the agent works: what it has made so far (each channel's own card follows)
     html += `<div class="strip" data-testid="media-strip">${media.map((m, i) => isVid(m.url) || m.type === "video"
       ? `<video src="${esc(m.url)}" controls playsinline preload="metadata" data-testid="media-video"></video>`
       : `<a href="${esc(m.url)}" target="_blank" rel="noopener"><img src="${esc(m.url)}" alt="Slide ${i + 1}" data-testid="media-img"></a>`).join("")}</div>`;
-  } else if (["running", "rendering"].includes(r.status)) html += `<div class="ph" aria-hidden="true"><span class="spin"></span></div>`;
+  } else if (busy && !pk.length) html += `<div class="ph" aria-hidden="true"><span class="spin"></span></div>`;
   $("#mediaBox").innerHTML = html;
-  const ba = $("#mediaBox .ba input");
-  if (ba) ba.oninput = () => ($("#mediaBox .ba-before").style.width = ba.value + "%");
-  const agent = r.kind === "agent", busy = ["running", "rendering"].includes(r.status);
-  const done = ["ready", "failed"].includes(r.status) && res.format;
-  $("#reviseForm").hidden = agent || !done || r.status === "failed";
-  agentExtras(r, agent, busy);
-  $("#quickfix").innerHTML = QUICK_FIXES.map((q) => `<button type="button" class="chip mini" data-fix="${esc(q)}">${esc(q)}</button>`).join("");
-  $("#quickfix").querySelectorAll("[data-fix]").forEach((b) => (b.onclick = () => { $("#reviseIn").value = b.dataset.fix.toLowerCase(); $("#reviseForm").requestSubmit(); }));
-  const pk = res.packages || [];
-  $("#pkgHead").hidden = !pk.length || r.status !== "ready";
-  $("#packages").innerHTML = r.status === "ready" ? pk.map(pkgCard).join("") + (r.kind === "agent" && pk.some((p) => p.status === "ready")
-    ? `<div class="pkg-all"><button class="btn" data-testid="save-drafts">Save all as Buffer drafts</button></div>` : "") : "";
+  agentExtras(r, busy);
+  const ready = ["ready"].includes(r.status) || (!busy && pk.length);
+  $("#pkgHead").hidden = !pk.length || !ready;
+  $("#pkgHelp").hidden = $("#pkgHead").hidden;
+  $("#packages").innerHTML = ready ? pk.map(pkgCard).join("") + (pk.some((p) => p.status === "ready")
+    ? `<div class="pkg-all"><button class="btn2" data-testid="save-drafts">Save all as Buffer drafts (not posted)</button></div>` : "") : "";
   const sd = $("[data-testid=save-drafts]");
   if (sd) sd.onclick = async () => {
     sd.disabled = true;
@@ -121,8 +142,8 @@ function showRun(r) {
   wirePackages(r);
 }
 
-function agentExtras(r, agent, busy) {
-  const res = r.result || {}, br = res.brain || {};
+function agentExtras(r, busy) {
+  const res = r.result || {}, br = res.brain || {}, agent = r.kind === "agent";
   $("#agentBrain").hidden = !agent || !br.mode;
   if (agent && br.mode) {
     // the same words in the run view and the composer, after a reply too (QA: "free starter" showed while Claude ran)
@@ -131,13 +152,16 @@ function agentExtras(r, agent, busy) {
     $("#agEngine").textContent = "Writing with: " + brainName(br);
   }
   const plan = res.plan || [];
-  $("#agentPlan").hidden = !agent || !plan.length;
+  $("#agentPlan").hidden = !plan.length;
   $("#agentPlan").innerHTML = plan.map((p) => `<li>${esc(p)}</li>`).join("");
   const th = (res.thread || []).slice(1);
-  $("#agentThread").hidden = !agent || !th.length;
+  $("#agentThread").hidden = !th.length;
   $("#agentThread").innerHTML = th.map((m) => `<div class="msg ${m.role}" data-testid="thread-msg"><b>${m.role === "user" ? "You" : "Agent"}</b><span>${esc(m.text)}</span></div>`).join("") +
     ((res.conflicts || []).length ? `<div class="st warn" data-testid="agent-question">${esc(res.conflicts[0].question)}</div>` : "");
-  $("#replyForm").hidden = !agent || busy;
+  // one edit box for every run, after it finishes (also older runs: the server routes it)
+  $("#replyForm").hidden = busy;
+  $("#replyChips").innerHTML = REPLY_CHIPS.map((q) => `<button type="button" class="chip mini" data-testid="reply-chip" data-say="${esc(q)}">${esc(q)}</button>`).join("");
+  $("#replyChips").querySelectorAll("[data-say]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
 }
 
 function stepExtra(s) {
@@ -147,67 +171,104 @@ function stepExtra(s) {
   if (s.key === "structure" && d.facts) return `<ul class="facts">${d.facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
   if (s.tool === "extract_facts" && d.facts) return `<ul class="facts">${d.facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
   if (s.tool === "search_news" && d.leads) return `<ul class="leads">${d.leads.slice(0, 3).map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a></li>`).join("")}</ul>`;
+  if (s.tool === "read_upload" && d.transcript) return `<p class="muted sm">“${esc(d.transcript.slice(0, 200))}${d.transcript.length > 200 ? "…" : ""}”</p>`;
   return "";
 }
 
+// the brand check: which rules were checked, open on a click (owner: "2 rules checked" didn't say which)
 function checkList(chk) {
   if (!chk) return "";
-  const fails = chk.results.filter((x) => !x.pass), passes = chk.results.filter((x) => x.pass);
+  const res = chk.results || [], fails = res.filter((x) => !x.pass), passes = res.filter((x) => x.pass);
+  const kind = (k) => (k === "visual" ? "Look" : "Words");
+  if (!res.length) return `<div class="chk-res ok" data-testid="brand-check"><b>No brand rules yet</b><small class="muted">Teach one in Brand › Style Ledger, or reply “never say …”.</small></div>`;
   return `<div class="chk-res ${chk.pass ? "ok" : "bad"}" data-testid="brand-check"><b>${chk.pass ? "Passes your brand rules" : "Breaks " + fails.length + " rule" + (fails.length > 1 ? "s" : "")}</b>
     ${fails.map((f) => `<span class="rl bad">✕ ${esc(f.rule)}${f.why ? ` <em>${esc(f.why)}</em>` : ""}</span>`).join("")}
-    ${passes.length ? `<details><summary>${passes.length} rule${passes.length > 1 ? "s" : ""} checked</summary>${passes.map((f) => `<span class="rl">✓ ${esc(f.rule)}</span>`).join("")}</details>` : ""}</div>`;
+    ${passes.length ? `<details data-testid="brand-rules"><summary data-testid="brand-rules-toggle">Show the ${passes.length} rule${passes.length > 1 ? "s" : ""} it passed</summary><ul class="rl-list">${passes.map((f) => `<li class="rl" data-testid="brand-rule"><span class="tag ${f.kind}">${kind(f.kind)}</span> ✓ ${esc(f.rule)}</li>`).join("")}</ul></details>` : ""}</div>`;
+}
+
+const FMT_NAME = { reel: "Reel", carousel: "Carousel", photo: "Image", video: "Video" };
+function mediaLabel(p) {
+  const m = p.media || [], first = m[0] || {};
+  const parts = [p.format === "carousel" && m.length > 1 ? `Carousel · ${m.length} slides` : (first.type === "video" ? (p.format === "reel" ? "Reel" : "Video") : FMT_NAME[p.format] || "Image")];
+  if (first.ratio) parts.push(first.ratio);
+  if (first.type === "video") parts.push(first.duration ? fmtDur(first.duration) : "…");
+  if (first.role === "original") parts.push("your file");
+  return parts.join(" · ");
+}
+function pkgMedia(p) {
+  const m = p.media && p.media.length ? p.media : (p.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo", ratio: p.ratio }));
+  if (!m.length) return `<div class="pkg-media empty" data-testid="pkg-media"><span class="muted sm">${p.service === "youtube" || p.service === "tiktok" ? "Needs a video" : "Text only"}</span></div>`;
+  const ar = (r) => (r || "4:5").replace(":", " / ");
+  const first = m[0];
+  const main = first.type === "video"
+    ? `<video src="${esc(first.url)}" controls playsinline preload="metadata" data-testid="pkg-video" style="aspect-ratio:${ar(first.ratio)}"></video>`
+    : `<button type="button" class="pm-img" data-open="0" data-testid="pkg-media-open" aria-label="Open full size" style="aspect-ratio:${ar(first.ratio)}"><img src="${esc(first.url)}" alt="${esc(netName(p.service))} ${esc(p.format)}, slide 1"></button>`;
+  const strip = m.length > 1 ? `<div class="pm-strip" data-testid="pkg-slides">${m.map((x, i) => `<button type="button" data-open="${i}" data-testid="pkg-slide" aria-label="Slide ${i + 1}"><img src="${esc(x.url)}" alt=""></button>`).join("")}</div>` : "";
+  return `<div class="pkg-media" data-testid="pkg-media">${main}${strip}
+    <div class="pm-meta"><span class="pm-fmt" data-testid="pkg-format">${esc(mediaLabel(p))}</span>
+      <button type="button" class="link" data-open="0" data-testid="pkg-fullsize">Full size</button></div></div>`;
 }
 
 function pkgCard(p) {
   const ch = chOf(p.channel_id), sent = ["sent_to_buffer", "pending_approval"].includes(p.status);
-  const thumbs = (p.media_urls || []).slice(0, 4).map((u) => (isVid(u) ? `<span class="vt">▶ Reel</span>` : `<img src="${esc(u)}" alt="">`)).join("");
+  const help = PKG_MODES[0][2];
   return `<article class="pkg" data-testid="package" data-ch="${esc(p.channel_id)}">
     <header>${avatar(ch)}<div><b>${esc(p.channel_name)}</b><small>${esc(netName(p.service))}</small></div><span class="cnt ${p.length > p.limit ? "over" : ""}" data-testid="pkg-count">${p.length}/${p.limit}</span></header>
-    <div class="thumbs">${thumbs || `<span class="muted sm">Text only</span>`}</div>
-    <textarea data-testid="pkg-text" rows="5" ${sent ? "disabled" : ""}>${esc(p.text)}</textarea>
-    ${checkList(p.check)}
+    ${pkgMedia(p)}
+    ${sent ? "" : `<div class="pm-acts"><button type="button" class="btn2 sm" data-testid="pkg-replace">Replace</button><button type="button" class="btn2 sm" data-testid="pkg-regen">Regenerate</button></div>`}
     ${p.note ? `<small class="muted sm" data-testid="pkg-note">${esc(p.note)}</small>` : ""}
-    ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.mode === "draft" ? " as a draft" : ""}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
-      : `<div class="pkg-act"><select data-testid="pkg-mode" aria-label="How to send">${modeOptions("draft")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
-        <button class="btn sm" data-testid="pkg-send">Send to Buffer</button></div>`}
+    <label class="sr" for="pt-${esc(p.channel_id)}">Caption for ${esc(p.channel_name)}</label>
+    <textarea id="pt-${esc(p.channel_id)}" data-testid="pkg-text" rows="5" ${sent ? "disabled" : ""}>${esc(p.text)}</textarea>
+    ${checkList(p.check)}
+    ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.mode === "draft" ? " as a draft (not posted)" : ""}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
+      : `<div class="pkg-act"><select data-testid="pkg-mode" aria-label="What to do with this post">${PKG_MODES.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
+        <button class="btn sm" data-testid="pkg-send">${PKG_MODES[0][3]}</button></div><small class="muted sm pkg-help" data-testid="pkg-help">${esc(help)}</small>`}
   </article>`;
 }
 
 function wirePackages(r) {
   document.querySelectorAll("#packages .pkg").forEach((el) => {
     const ch = el.dataset.ch, ta = el.querySelector("textarea"), mode = el.querySelector("[data-testid=pkg-mode]"), when = el.querySelector("[data-testid=pkg-when]");
+    const pk = (r.result.packages || []).find((p) => p.channel_id === ch) || {};
     let t;
     ta.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
       try { const p = await api(`/api/agent/runs/${r.id}/packages/${ch}`, { method: "POST", body: { text: ta.value } });
         el.querySelector("[data-testid=pkg-count]").textContent = `${p.length}/${p.limit}`;
         el.querySelector(".chk-res").outerHTML = checkList(p.check); } catch (e) { toast(e.message); } }, 450); };
-    if (mode) mode.onchange = () => (when.hidden = mode.value !== "schedule");
+    // a video's length when the server didn't record it: read from the file itself
+    const v = el.querySelector("[data-testid=pkg-video]");
+    if (v) v.addEventListener("loadedmetadata", () => { const f = el.querySelector("[data-testid=pkg-format]"); if (f && f.textContent.endsWith("…") && isFinite(v.duration)) f.textContent = f.textContent.replace(/…$/, fmtDur(v.duration)); });
+    el.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => window.openMedia && window.openMedia((pk.media && pk.media.length ? pk.media : (pk.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo" }))), +b.dataset.open, `${netName(pk.service)} · ${mediaLabel(pk)}`)));
+    const busyBtn = (b, txt) => { b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>${txt}`; };
+    const rep = el.querySelector("[data-testid=pkg-replace]");
+    if (rep) rep.onclick = () => window.pickFromLibrary && window.pickFromLibrary(async (item) => {
+      busyBtn(rep, "Replacing…");
+      try { showRun(await api(`/api/agent/runs/${r.id}/packages/${ch}/media`, { method: "POST", body: { token: item.media_token } })); toast("Media replaced"); }
+      catch (e) { toast(e.message, 6000); rep.disabled = false; rep.textContent = "Replace"; }
+    }, { title: `Replace ${netName(pk.service)} media`, upload: true, video: pk.service === "youtube" || pk.service === "tiktok" });
+    const regen = el.querySelector("[data-testid=pkg-regen]");
+    if (regen) regen.onclick = async () => {
+      busyBtn(regen, "Regenerating…");
+      try { showRun(await api(`/api/agent/runs/${r.id}/packages/${ch}/media`, { method: "POST", body: {} })); toast(`${netName(pk.service)} regenerated`); }
+      catch (e) { toast(e.message, 6000); regen.disabled = false; regen.textContent = "Regenerate"; }
+    };
+    if (mode) mode.onchange = () => {
+      const m = PKG_MODES.find((x) => x[0] === mode.value);
+      when.hidden = mode.value !== "schedule"; el.querySelector("[data-testid=pkg-help]").textContent = m[2]; el.querySelector("[data-testid=pkg-send]").textContent = m[3];
+    };
     const send = el.querySelector("[data-testid=pkg-send]");
     if (send) send.onclick = async () => {
       send.disabled = true;
       try {
         const body = { mode: mode.value };
-        if (mode.value === "schedule") { if (!when.value) throw new Error("Pick a time"); body.due_at = new Date(when.value).toISOString(); }
+        if (mode.value === "schedule") { if (!when.value) throw new Error("Pick a day and time"); body.due_at = new Date(when.value).toISOString(); }
         const out = await api(`/api/agent/runs/${r.id}/packages/${ch}/schedule`, { method: "POST", body });
-        toast(out.status === "pending_approval" ? "Waiting for approval" : "Sent to Buffer" + (out.warnings?.length ? " · " + out.warnings[0] : ""), 4500);
+        toast(out.status === "pending_approval" ? "Waiting for approval" : (mode.value === "draft" ? "Saved as a Buffer draft (not posted)" : "Sent to Buffer") + (out.warnings?.length ? " · " + out.warnings[0] : ""), 4500);
         const fresh = await api(`/api/agent/runs/${r.id}`); showRun(fresh); readyBadge();
       } catch (e) { toast(e.message, 6000); send.disabled = false; }
     };
   });
 }
-
-$("#reviseForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const c = $("#reviseIn").value.trim(); if (!c || !H.run) return;
-  const b = $("[data-testid=revise-go]"); b.disabled = true;
-  try {
-    const r = await api(`/api/agent/runs/${H.run.id}/revise`, { method: "POST", body: { correction: c } });
-    const box = $("#learned"); box.hidden = false;
-    box.innerHTML = r.learned.length ? `<div class="st ok">Learned: ${r.learned.map((x) => esc(x.rule)).join(" · ")}. Every future post follows ${r.learned.length > 1 ? "these" : "this"}.</div>` : `<div class="st warn">${esc(r.message)}</div>`;
-    $("#reviseIn").value = ""; showRun(r); watch(r.id);
-  } catch (e) { toast(e.message, 5000); }
-  finally { b.disabled = false; }
-});
 
 $("#replyForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
