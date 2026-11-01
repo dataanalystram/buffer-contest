@@ -157,7 +157,36 @@ def headline(title: str, max_words: int = 12) -> str:
     return t if len(w) <= max_words else " ".join(w[:max_words]).rstrip(",;:") + "…"
 
 
-def plan(stories: list[dict], find=None, video: bool = True) -> dict:
+def x_media(post_url: str, http=None, read=None) -> dict | None:
+    """An X post's own video (or photo) through the free X reader cascade (studio/xreader.py: oEmbed -> react-tweet
+    syndication -> FxTwitter), as a direct MP4/JPG the worker fetches through netguard. The post URL stays as
+    ``source_page`` so the worker can fall back to yt-dlp's Twitter extractor. None when the post has no media."""
+    from ..reader import X_STATUS
+    m = X_STATUS.match(post_url or "")
+    if not m:
+        return None
+    if read is None:
+        from ..xreader import XReadError, read as _read
+
+        def read(h, sid, http=None):  # noqa: E306
+            try:
+                return _read(h, sid, http)
+            except XReadError:
+                return None
+    got = read(m.group(1), m.group(2), http=http) or {}
+    who = got.get("handle") or m.group(1)
+    if got.get("videos"):
+        v = got["videos"][0]
+        return {"kind": "video", "url": v["url"], "official": False, "credit": f"Video: @{who} on X",
+                "candidate": {"url": v["url"], "kind": "video", "platform": "", "source_page": post_url, "poster": v.get("poster", ""),
+                              "duration": v.get("duration")}}
+    if got.get("photos"):
+        return {"kind": "image", "url": got["photos"][0], "official": False, "credit": f"Image: @{who} on X",
+                "candidate": {"url": got["photos"][0], "kind": "image", "source_page": post_url}}
+    return None
+
+
+def plan(stories: list[dict], find=None, video: bool = True, http=None, x_read=None) -> dict:
     """Each story -> {headline, url, media: {kind, url, official, credit, candidate} | None}. Official media needs no
     question; other people's media is listed in ``needs_confirmation`` with one question for the person."""
     segs, ask = [], []
@@ -168,15 +197,23 @@ def plan(stories: list[dict], find=None, video: bool = True) -> dict:
                 got = find(st["url"])
             except Exception:  # noqa: BLE001 - a story without media gets a title card
                 got = {}
-            c = (got or {}).get("best_downloadable") or None
+            c = (got or {}).get("best_downloadable") or (got or {}).get("best_video") or None
+            if c and re.search(r"//(?:www\.|mobile\.)?(?:x|twitter)\.com/", c.get("url") or ""):
+                # an X post: its media through the free X reader; a post without video is not a video
+                xm = x_media(c["url"], http=http, read=x_read)
+                if xm:
+                    media = xm
+                c = None
             if c:
                 media = {"kind": "video", "url": c["url"], "official": bool(c.get("official")), "credit": c.get("credit") or "",
                          "candidate": c}
-            else:
+            elif not media:
                 im = next(iter((got or {}).get("images") or []), None)
                 if im:
                     media = {"kind": "image", "url": im["url"], "official": bool(im.get("official")), "credit": im.get("credit") or "",
                              "candidate": im}
+        if not media and video and "x.com/" in (st.get("url") or ""):
+            media = x_media(st["url"], http=http, read=x_read)
         if not media and st.get("image"):
             media = {"kind": "image", "url": st["image"], "official": False, "credit": f"Image: {st.get('source') or 'the publisher'}",
                      "candidate": {"url": st["image"], "kind": "image"}}

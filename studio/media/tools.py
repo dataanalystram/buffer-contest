@@ -64,6 +64,14 @@ SPECS = [
          "n": {"type": "integer"}, "ratios": {"type": "array", "items": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}},
          "credit": S, "official": {"type": "boolean"}, "rights_confirmed": {"type": "boolean"}, "brand": BRAND,
          "names": {"type": "array", "items": S}, "run_dir": S}}},
+    {"name": "media_recap_plan", "worker": False,
+     "description": "Weekly recap ('make a 7 days what happened in AI recap with videos'): the week's top AI stories from the news sources, each with its official video/image (X posts through the free X reader), credit lines, and the one rights question for media that isn't the company's own.",
+     "input_schema": {"type": "object", "properties": {"prompt": S, "n": {"type": "integer"}, "days": {"type": "integer"}}}},
+    {"name": "media_recap", "worker": True,
+     "description": "Render a recap plan (after media_recap_plan and the person's answer): HuhByte weekly-recap format, cover 'DO YOU REALIZE WHAT JUST HAPPENED IN AI IN THE LAST 7 DAYS?', one branded segment per story with its credit, Follow card only at the end; a 4:5 carousel of video slides plus one 9:16 Reel.",
+     "input_schema": {"type": "object", "required": ["plan"], "properties": {"plan": {"type": "object"},
+                                                                            "rights_confirmed": {"description": "true, false, or the story numbers OK'd"},
+                                                                            "brand": BRAND, "run_dir": S}}},
     {"name": "media_generate_images", "worker": True,
      "description": "No usable video or photo: generate n images for the story (configured image model, else on-brand cards). Labelled as AI-generated.",
      "input_schema": {"type": "object", "required": ["prompt"], "properties": {"prompt": S, "headline": S, "n": {"type": "integer"},
@@ -199,6 +207,43 @@ def media_split(source_path: str, url: str | None = None, captions: str | None =
                                    for r in c["renders"]]} for c in man["clips"]]}
 
 
+def media_recap_plan(prompt: str = "", n: int | None = None, days: int | None = None, http=None) -> dict:
+    from . import recap
+    want = recap.wants_recap(prompt)
+    stories = recap.gather_week(http=http, days=days or want["days"], n=n or want["n"] or 5)
+    return recap.plan(stories, find=lambda u: media_find(u, http=http), video=True, http=http)
+
+
+def media_recap(plan: dict, rights_confirmed=None, brand: dict | None = None, run_dir: str | None = None, http=None) -> dict:
+    from . import recap
+    from .download import DownloadError, download_video
+    if plan.get("needs_confirmation") and rights_confirmed is None:
+        return {"needs_confirmation": True, "question": plan.get("question")}
+    p = recap.apply_rights(dict(plan), rights_confirmed if rights_confirmed is not None else True)
+    d = _run_dir({"run_dir": run_dir}) / "recap"
+    d.mkdir(parents=True, exist_ok=True)
+    media: dict[int, str | None] = {}
+    for s in p["segments"]:
+        m = s.get("media")
+        media[s["i"]] = None
+        if not m:
+            continue
+        ext = ".mp4" if m["kind"] == "video" else ".jpg"
+        try:  # videos: direct files through netguard, platform posts through single-extractor yt-dlp, then vetted;
+            # images: netguard (every hop checked, 15 MB cap), then recap.usable() checks they really are images
+            if m["kind"] == "video":
+                media[s["i"]] = download_video(m.get("candidate") or m["url"], d / f"src_{s['i']}{ext}", http=http)["path"]
+            else:
+                from .. import netguard
+                f = d / f"src_{s['i']}{ext}"
+                f.write_bytes(netguard.safe_get(m["url"], http=http, limit=15_000_000, timeout=30).content)
+                media[s["i"]] = str(f)
+        except (DownloadError, Exception):  # noqa: BLE001 - that story gets its title plate
+            media[s["i"]] = None
+    out = recap.compose(p, media, str(d), brand=brand)
+    return {k: v for k, v in out.items() if k != "boxes"}
+
+
 def media_generate_images(prompt: str, headline: str = "", n: int = 3, ratio: str = "9:16", brand: dict | None = None,
                           run_dir: str | None = None, http=None) -> dict:
     from .imagegen import generate_images
@@ -232,6 +277,10 @@ def call(name: str, args: dict | None = None, http=None) -> dict:
         return media_moments(a.get("words_path"), a.get("captions"), a.get("prompt", ""), a.get("n"), a.get("duration"))
     if name == "media_split":
         return media_split(**{k: v for k, v in a.items() if k in media_split.__code__.co_varnames})
+    if name == "media_recap_plan":
+        return media_recap_plan(a.get("prompt", ""), a.get("n"), a.get("days"), http=http)
+    if name == "media_recap":
+        return media_recap(a["plan"], a.get("rights_confirmed"), a.get("brand"), a.get("run_dir"), http=http)
     if name == "media_generate_images":
         return media_generate_images(a["prompt"], a.get("headline", ""), int(a.get("n") or 3), a.get("ratio", "9:16"),
                                      a.get("brand"), a.get("run_dir"), http=http)
