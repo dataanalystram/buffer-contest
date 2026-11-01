@@ -57,12 +57,18 @@ def _tokens(t: str) -> set[str]:
     return tokens(t)
 
 
+def _norm_title(t: str) -> str:
+    return re.sub(r"[’']s\b", "", t or "")
+
+
 def same_story(a: dict, b: dict) -> bool:
-    ta, tb = _tokens(a["title"]), _tokens(b["title"])
+    """Two headlines about one event: half the salient words shared, or four of them (outlets word it differently)."""
+    ta, tb = _tokens(_norm_title(a["title"])), _tokens(_norm_title(b["title"]))
     if not ta or not tb:
         return False
     shared = ta & tb
-    return len(shared) >= 2 and len(shared) / min(len(ta), len(tb)) >= 0.5
+    ratio = len(shared) / min(len(ta), len(tb))
+    return (len(shared) >= 2 and ratio >= 0.5) or (len(shared) >= 4 and ratio >= 0.4)
 
 
 AI_RX = re.compile(r"\b(ai|a\.i\.|model|models|llm|gpt|gemini|claude|openai|anthropic|deepmind|nvidia|agents?|chatbot|copilot|"
@@ -76,9 +82,9 @@ def rank(leads: list[dict], days: int = 7, now: float | None = None, n: int = 5)
     lo = now - days * 86400
     leads = [x for x in leads if x.get("title") and AI_RX.search(x["title"]) and (not x.get("published") or x["published"] >= lo)]
     groups: list[list[dict]] = []
-    for x in leads:
+    for x in sorted(leads, key=lambda y: -(y.get("points") or 0)):
         for g in groups:
-            if any(same_story(x, y) for y in g):
+            if same_story(x, g[0]):  # against the group's first headline only: no chaining into a different story
                 g.append(x)
                 break
         else:
@@ -89,13 +95,37 @@ def rank(leads: list[dict], days: int = 7, now: float | None = None, n: int = 5)
         pts = max((y.get("points") or 0) for y in g)
         pub = max((y.get("published") or 0) for y in g)
         fresh = max(0.0, 1 - (now - pub) / (days * 86400)) if pub else 0.3
-        lead = max(g, key=lambda y: (len(y.get("summary") or ""), -len(y["title"])))
+        # the publisher's own link beats a news.google.com redirect; then the fullest summary
+        lead = max(g, key=lambda y: ("news.google.com" not in y["url"], len(y.get("summary") or ""), -len(y["title"])))
         score = 3 * len(outlets) + min(4, pts / 100) + 2 * fresh
         out.append({"title": lead["title"], "url": lead["url"], "source": lead.get("source") or "", "published": pub,
                     "outlets": sorted(o for o in outlets if o), "score": round(score, 2), "summary": lead.get("summary") or "",
                     "image": next((y.get("image") for y in g if y.get("image")), "")})
     out.sort(key=lambda s: -s["score"])
-    return out[:n]
+    picked: list[dict] = []
+    per: dict[str, int] = {}
+    for st in out:  # a recap covers different things: one entry per event, at most two stories per company
+        who = company(st["title"])
+        if any(same_story(st, p) for p in picked) or (who and per.get(who, 0) >= MAX_PER_COMPANY):
+            continue
+        picked.append(st)
+        if who:
+            per[who] = per.get(who, 0) + 1
+    return picked[:n]
+
+
+COMPANIES = [("anthropic", r"anthropic|claude"), ("openai", r"openai|chatgpt|gpt-?\d|sora"), ("google", r"google|gemini|deepmind"),
+             ("nvidia", r"nvidia"), ("meta", r"\bmeta\b|llama"), ("microsoft", r"microsoft|copilot"), ("xai", r"\bxai\b|grok"),
+             ("deepseek", r"deepseek"), ("apple", r"\bapple\b"), ("amazon", r"amazon|\baws\b"), ("mistral", r"mistral")]
+MAX_PER_COMPANY = 2
+
+
+def company(title: str) -> str:
+    t = (title or "").lower()
+    for name, rx in COMPANIES:
+        if re.search(rx, t):
+            return name
+    return ""
 
 
 def gather_week(http=None, queries=DEFAULT_QUERIES, days: int = 7, n: int = 5, feeds: list[dict] | None = None,
@@ -110,7 +140,14 @@ def gather_week(http=None, queries=DEFAULT_QUERIES, days: int = 7, n: int = 5, f
         leads += sources.bing_news(q, http, 15) + sources.google_news(q, http, 15) + sources.hacker_news(q, http, 10)
     if feeds:
         leads += sources.followed(feeds, http, 30)
-    return rank(leads, days=days, n=n)
+    top = rank(leads, days=days, n=n)
+    for st in top:  # a Google News redirect -> the publisher's page, so media search reads the real article
+        if "news.google.com" in st["url"]:
+            try:
+                st["url"] = sources.resolve_google_link(st["url"], http)
+            except Exception:  # noqa: BLE001
+                pass
+    return top
 
 
 # ====================================================================== plan (light): media + rights per story
