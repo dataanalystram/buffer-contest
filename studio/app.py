@@ -644,8 +644,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return house.start_run(actor(request, write=True), body)
 
     @app.get("/api/agent/runs")
-    def run_list(request: Request):
-        return house.runs(actor(request))
+    def run_list(request: Request, limit: int = 20):
+        return house.runs(actor(request), max(1, min(int(limit), 100)))
 
     @app.get("/api/agent/runs/{rid}")
     def run_get(rid: int, request: Request):

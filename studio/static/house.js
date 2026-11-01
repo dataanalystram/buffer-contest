@@ -32,6 +32,10 @@ function agentChips() {
     el.onclick = () => { if (c.isDisconnected) return; H.sel.has(c.id) ? H.sel.delete(c.id) : H.sel.add(c.id); el.classList.toggle("on"); el.setAttribute("aria-pressed", H.sel.has(c.id)); };
     box.appendChild(el);
   }
+  const add = document.createElement("button");  // connect another channel (Settings → Connected channels)
+  add.type = "button"; add.className = "chip mp-add"; add.dataset.go = "settings"; add.setAttribute("data-testid", "mp-add-channel");
+  add.setAttribute("aria-label", "Connect another channel"); add.textContent = "+";
+  box.appendChild(add);
 }
 
 const drop = $("#drop");
@@ -76,7 +80,8 @@ $("#agentForm").addEventListener("submit", async (ev) => {
   if (!H.sel.size) return toast("Pick at least one channel");
   const body = { channel_ids: [...H.sel], format: $("#agFormat").value, prompt: $("#agQuery").value.trim() };
   if (!body.prompt && !H.upload && !H.attach) return toast("Tell the agent what to post, paste a link, or add your photo or video");
-  const b = $("#agGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
+  const b = $("#agGo"), label = b.innerHTML; b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
+  if (H.theme) body.theme = H.theme;
   try {
     if (H.upload) {
       b.innerHTML = `<span class="spin" aria-hidden="true"></span>Uploading…`;
@@ -86,7 +91,7 @@ $("#agentForm").addEventListener("submit", async (ev) => {
     const run = await api("/api/agent/runs", { method: "POST", body });
     showRun(run); watch(run.id);
   } catch (e) { toast(e.message, 5000); }
-  finally { b.disabled = false; b.textContent = "Make it"; }
+  finally { b.disabled = false; b.innerHTML = label; }
 });
 
 // the agent sees the video, not only hears it: 4 keyframes from the browser (keyframes.js), sent with the run
@@ -120,6 +125,7 @@ function watch(id) {
 // ---------------------------------------------------------------- run view
 function showRun(r) {
   H.run = r; $("#runView").hidden = false;
+  window.mpOnRun && window.mpOnRun(r);
   $("#timeline").innerHTML = r.steps.map((s) => `<li class="step ${s.status}" data-testid="step" data-key="${s.key}">
       <span class="dot" aria-hidden="true">${STATUS_ICON[s.status] || ""}</span>
       <div><b>${esc(s.label)}</b>${s.detail ? `<small>${esc(s.detail)}</small>` : ""}${stepExtra(s)}</div></li>`).join("");
@@ -319,7 +325,8 @@ $("#replyForm").addEventListener("submit", async (ev) => {
 async function loadRuns() {
   const box = $("#runList");
   try {
-    const rows = await api("/api/agent/runs");
+    const rows = await api("/api/agent/runs?limit=60");
+    if (window.mpRecent) return window.mpRecent(rows);  // Make a post v2: Recent content cards (makepost.js)
     box.innerHTML = rows.length ? rows.map((x) => `<button class="runrow" data-testid="run-row" data-id="${x.id}" data-kind="${esc(x.kind)}">${x.cover ? (isVid(x.cover) ? `<span class="vt">▶</span>` : `<img src="${esc(x.cover)}" alt="">`) : `<span class="vt">·</span>`}
       <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${x.packages ? " · " + x.packages + " posts" : ""}</small></span></button>`).join("")
       : `<div class="empty"><b>No runs yet</b><span>Give the agent a topic like “AI agents” and watch it work.</span></div>`;
@@ -335,6 +342,7 @@ function brainName(b) {
 }
 
 window.showRunFromLibrary = (r) => { showRun(r); window.scrollTo({ top: 0 }); };
+window.showRun = showRun; window.watchRun = watch; window.loadRuns = loadRuns; window.H_STATE = H;
 
 async function loadAgent() {
   agentChips(); loadRuns(); readyBadge();
