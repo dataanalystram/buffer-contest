@@ -487,7 +487,15 @@ const actionWords = (a) => ACTION_WORDS[a] || String(a || "").replace(/_/g, " ")
 // Recommended for you: GET /api/recommendations (backend, docs/ONBOARDING.md). Until that ships, the newest stories from
 // your feeds stand in, clearly labelled.
 async function getRecs() {
-  try { const r = await api("/api/recommendations"); if (Array.isArray(r.items)) return { items: r.items, live: true }; } catch (_) {}
+  try {
+    const r = await api("/api/recommendations");
+    const ready = (r.recommended || []).map((x) => ({ id: x.cluster_id, title: x.headline, url: x.source_url, image: x.cover, branded: true,
+      why: ((r.feed || []).find((c) => c.id === x.cluster_id) || {}).why || "Rendered in your brand, ready to review" }));
+    const feed = (r.feed || []).filter((c) => !ready.some((x) => x.id === c.id)).map((c) => ({ id: c.id, title: c.story?.headline || c.items?.[0]?.title,
+      why: c.why || c.story?.line || "", url: c.items?.[0]?.url || "", source: c.items?.[0]?.source }));
+    const items = Array.isArray(r.items) ? r.items : [...ready, ...feed];
+    if (items.length) return { items, live: true };
+  } catch (_) {}
   try { const r = await api("/api/radar"); return { items: r.stories.slice(0, 4).map((s) => ({ id: s.url, title: s.title, why: whyLine(s), source: s.source, url: s.url, image: s.image, published: s.published })), live: false }; }
   catch (_) { return { items: [], live: false }; }
 }
@@ -499,7 +507,7 @@ async function ibRecs() {
 }
 function recCard(x) {
   const host = hostOf(x.url);
-  return `<article class="rec" data-testid="rec-card">${x.image ? `<img class="rec-img" src="${esc(x.image)}" alt="" loading="lazy">` : ""}
+  return `<article class="rec${x.branded ? " branded" : ""}" data-testid="rec-card">${x.image ? `<img class="rec-img" src="${esc(x.image)}" alt="${x.branded ? "Cover rendered in your brand" : ""}" loading="lazy">` : ""}
     <div class="rec-b"><span class="nf-src">${fav(host)}${esc(host || x.source)}</span><b class="rec-t">${esc(x.title)}</b>${x.why ? `<span class="rec-why">${esc(x.why)}</span>` : ""}
     <span class="row tight">${x.run_id ? `<button class="btn sm" type="button" data-run="${esc(x.run_id)}" data-testid="rec-review">Review</button>` : `<button class="btn sm" type="button" data-make="${esc(x.url)}" data-testid="rec-make">Make post</button>`}</span></div></article>`;
 }

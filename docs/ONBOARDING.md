@@ -3,24 +3,22 @@
 What you post → your channels → your brand → your feed. Skippable at every step (Esc or "Skip setup"), re-openable from
 Settings → Setup. Never opens over the sample's guided tour. Frontend: `studio/static/onboarding.js`.
 
-## Backend contract (owned by the agent pipeline; the UI degrades gracefully until it ships)
+## Backend contract (owned by the agent pipeline, `studio/onboarding.py` on feat/agent-core; the UI degrades gracefully until it ships)
 
-`GET /api/onboarding` → 200
-```json
-{"done": false, "skipped": false, "step": 0, "content_types": ["ai_news", "launches"], "channels": ["ch_1"], "website": "huhbyte.com"}
-```
-`PUT /api/onboarding` with any subset of those fields → 200 with the full object. Session-authenticated (CSRF on PUT),
-per user, no agent tokens. `content_types` ids: `ai_news, launches, tutorials, recaps, opinion, behind, company, events,
-offers, clips`. `channels` are Buffer channel ids; they become the default selection in Make a post, Quick text posts and
-One take (One take keeps only channels that take video).
+`GET /api/onboarding` → `{"profile": {"content_types": [...], "channel_ids": [...], "website": "", "tone": "plain", "x_watchlist": [], "done": false},
+"options": {"content_types": [{"id": "ai_news", "label": "AI news"}, ...], "tones": [...], "channels": [...]}, "brand": {...}, "x_key": false}`.
+The UI shows `options.content_types` as the chips (its built-in copy of the same ten ids is the fallback).
 
-`GET /api/recommendations` → 200
-```json
-{"items": [{"id": "r1", "title": "…", "why": "one line", "source": "openai.com", "url": "https://…", "image": "https://…",
-            "format": "carousel", "run_id": null}]}
-```
-`run_id` set means a rendered post is ready: the card shows Review (opens that agent run) instead of Make post.
+`PUT /api/onboarding` with any of `content_types`, `channel_ids`, `website` (builds the brand kit through context.dev, else the
+website reader; the response carries `brand`), `tone`, `x_watchlist`, `done` → the GET shape. `channel_ids` become the default
+selection in Make a post, Quick text posts and One take (One take keeps the channels that take video).
 
-Until these routes exist the UI keeps onboarding state in `localStorage` (`hq_onb`) and fills "Recommended for you" from
-the newest followed-feed stories, labelled "From your feeds". Brand import uses the existing
-`POST /api/brand/from-website` (context.dev on the backend) and logo upload uses `POST /api/media` + `POST /api/brand-studio`.
+`GET /api/recommendations` → `{"feed": [{"id", "topic", "story": {"headline", "line"}, "items": [{"url", "title", "source"}], "why"}],
+"recommended": [{"cluster_id", "headline", "source_url", "cover", "captions": [...], "make_post": {...}}], "sample": bool, "cached": bool}`.
+"Recommended for you" on the Inbox and the last onboarding step show `recommended` first (cover rendered in the brand), then `feed`.
+
+Skipping is remembered in the browser (`hq_onb.skipped`): the server only knows done or not done, so a skipped setup stays
+closed on this browser and Settings → Setup opens it again.
+
+Where the routes are missing (404) the UI keeps the whole state in `localStorage` (`hq_onb`) and fills "Recommended for you"
+from the newest followed-feed stories, labelled "From your feeds". Logo upload uses `POST /api/media` + `POST /api/brand-studio`.

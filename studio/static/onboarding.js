@@ -1,24 +1,31 @@
 // Setup after Connect Buffer: what you post -> your channels -> your brand -> a tailored feed and posts to approve.
-// Skippable at every step and re-openable from Settings. State lives on the server (GET/PUT /api/onboarding, see
-// docs/ONBOARDING.md); until that route ships, the browser keeps it, so the flow never blocks on the backend.
+// Skippable at every step and re-openable from Settings. State lives on the server (GET/PUT /api/onboarding and
+// GET /api/recommendations, docs/ONBOARDING.md); where that route isn't there yet, the browser keeps it, so the flow
+// never blocks on the backend. "Skipped" is the browser's own note (the server only knows done or not).
 "use strict";
 (() => {
 const KEY = "hq_onb";
-const TYPES = [["ai_news", "AI and tech news"], ["launches", "Product launches"], ["tutorials", "Tutorials and how-tos"], ["recaps", "Weekly recaps"],
-  ["opinion", "Opinions and quotes"], ["behind", "Behind the scenes"], ["company", "Company news"], ["events", "Events"], ["offers", "Offers and deals"], ["clips", "Video clips from talks"]];
+// the server sends its own list (options.content_types); this is the same list for when it can't
+let TYPES = [["ai_news", "AI news"], ["product_launches", "Product launches"], ["yc_startups", "YC startups"], ["tutorials", "Tutorials and how-tos"],
+  ["dev_tools", "Developer tools"], ["memes", "Memes and culture"], ["india_tech", "India tech"], ["research", "Research papers"], ["funding", "Funding and deals"], ["open_source", "Open source"]];
 // a starting feed per content type: public RSS only, nothing that needs a key
 const FEEDS = {
   ai_news: [["Hacker News front page", "https://hnrss.org/frontpage"], ["The Verge AI", "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"]],
-  launches: [["Hacker News Show HN", "https://hnrss.org/show"]],
-  tutorials: [["Hacker News best", "https://hnrss.org/best"]],
-  company: [["TechCrunch", "https://techcrunch.com/feed/"]],
+  product_launches: [["Hacker News Show HN", "https://hnrss.org/show"]], dev_tools: [["Hacker News Show HN", "https://hnrss.org/show"]],
+  tutorials: [["Hacker News best", "https://hnrss.org/best"]], funding: [["TechCrunch", "https://techcrunch.com/feed/"]],
+  research: [["Hugging Face blog", "https://huggingface.co/blog/feed.xml"]], open_source: [["Hugging Face blog", "https://huggingface.co/blog/feed.xml"]],
 };
 const O = { st: null, step: 0, el: null, back: null };
 const local = () => { try { return JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (_) { return {}; } };
 async function onbState() {
   if (O.st) return O.st;
   let st = null;
-  try { st = await api("/api/onboarding"); } catch (_) { st = null; }
+  try {
+    const r = await api("/api/onboarding"), p = r.profile || r;
+    st = { content_types: p.content_types || [], channels: p.channel_ids || p.channels || [], website: p.website || "", done: !!p.done };
+    if (r.options && Array.isArray(r.options.content_types) && r.options.content_types.length) TYPES = r.options.content_types.map((t) => [t.id, t.label]);
+    O.server = true;
+  } catch (_) { st = null; O.server = false; }
   O.st = Object.assign({ done: false, skipped: false, content_types: [], channels: [], website: "", step: 0 }, local(), st || {});
   S.onb = O.st;
   return O.st;
@@ -26,7 +33,9 @@ async function onbState() {
 async function save(patch) {
   Object.assign(O.st, patch); S.onb = O.st;
   try { localStorage.setItem(KEY, JSON.stringify(O.st)); } catch (_) {}
-  try { await api("/api/onboarding", { method: "PUT", body: { content_types: O.st.content_types, channels: O.st.channels, website: O.st.website, step: O.st.step, done: O.st.done, skipped: O.st.skipped } }); } catch (_) { /* not merged yet: the browser copy stands in */ }
+  if (O.server === false) return; // no server route here: the browser copy stands in
+  const body = {}; for (const k of Object.keys(patch)) if (k === "content_types" || k === "done") body[k] = O.st[k]; else if (k === "channels") body.channel_ids = O.st.channels;
+  if (Object.keys(body).length) { try { await api("/api/onboarding", { method: "PUT", body }); } catch (_) {} }
 }
 const STEPS = ["What you post", "Your channels", "Your brand", "Your feed"];
 function shell(inner, step) {
@@ -88,7 +97,7 @@ function wire() {
   q("next").onclick = async () => {
     if (O.step === 0) await save({ content_types: picked("[data-testid=onboarding-types]") });
     if (O.step === 1) { await save({ channels: picked("[data-testid=onboarding-channels]") }); }
-    if (O.step === 2) await save({ website: (O.el.querySelector("#onbSite")?.value || "").trim() });
+    if (O.step === 2) O.st.website = (O.el.querySelector("#onbSite")?.value || "").trim();
     if (O.step === 3) return finish(false);
     O.step++; await save({ step: O.step }); draw();
   };
@@ -96,8 +105,11 @@ function wire() {
   if (imp) imp.onclick = async () => {
     const url = O.el.querySelector("#onbSite").value.trim(); if (!url) return toast("Type your website first");
     imp.disabled = true; imp.innerHTML = `<span class="spin" aria-hidden="true"></span>Reading…`;
-    try { const r = await api("/api/brand/from-website", { method: "POST", body: { url } }); if (r.sample) toast(r.note, 6000);
-      const k = await api("/api/brand-studio").then((d) => d.kit); O.el.querySelector("#onbKit").innerHTML = kitRow(k); await save({ website: url }); }
+    try {
+      let r = null;
+      if (O.server) { try { const o = await api("/api/onboarding", { method: "PUT", body: { website: url } }); r = o.brand || { sample: false }; if (r.note) toast(r.note, 6000); } catch (e) { if (e.status !== 404) throw e; } }
+      if (!r) { r = await api("/api/brand/from-website", { method: "POST", body: { url } }); if (r.sample) toast(r.note, 6000); }
+      const k = await api("/api/brand-studio").then((d) => d.kit); O.el.querySelector("#onbKit").innerHTML = kitRow(k); O.st.website = url; }
     catch (e) { toast(e.message, 5000); } finally { imp.disabled = false; imp.textContent = "Import"; }
   };
   const logo = O.el.querySelector("#onbLogo");
