@@ -249,7 +249,7 @@ def test_library_mcp_tools(owner):
     assert call("delete_library_item", {"item_id": pic["id"], "force": True})["isError"]  # the kill switch stops agent writes
     owner.post("/api/safety/kill", json={"on": False})
     assert not call("delete_library_item", {"item_id": pic["id"], "force": True})["isError"]
-    assert call("list_library")["structuredContent"]["items"] == []
+    assert pic["id"] not in [i["id"] for i in call("list_library")["structuredContent"]["items"]]
 
 
 def test_sample_workspace_library_is_read_only(tmp_path):

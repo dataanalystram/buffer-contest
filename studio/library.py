@@ -23,6 +23,9 @@ import secrets
 import time
 from pathlib import Path
 
+from fastapi import Body, Request
+from fastapi.responses import Response, StreamingResponse
+
 from . import demo_guard
 from .actions import ActionError, Actor
 
@@ -463,9 +466,6 @@ def parse_range(header: str, size: int) -> tuple[int, int] | None:
 
 
 def add_routes(app, house, actor) -> None:
-    from fastapi import Body, Request
-    from fastapi.responses import Response, StreamingResponse
-
     lib = house.library
 
     def serve(f: dict, request: Request, cache: str):
