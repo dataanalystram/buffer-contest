@@ -234,6 +234,7 @@
     <div id="saStatus" class="sa-status" data-testid="sa-status"></div>
     <div id="saTopics" class="chips" data-testid="sa-topics"></div>
     <ul id="saClusters" class="sa-clusters" data-testid="sa-clusters"><li class="ib-none" data-testid="sa-empty">No scan yet. Scan now reads every source you turned on and groups the same story into one card.</li></ul>
+    <div id="saPager" class="pg-wrap" data-testid="sa-pager" hidden></div>
     <div class="sa-bar" id="saBar" hidden><span id="saPicked">0 stories</span><button class="btn" type="button" id="saDraft" data-testid="sa-draft">Write posts</button></div>
     <section id="saPkgs" class="panel" data-testid="sa-packages" hidden></section>`;
   const SRC_HTML = `
@@ -267,15 +268,37 @@
     $("#saTopics").querySelectorAll("[data-topic]").forEach((b) => (b.onclick = () => { B.topic = b.dataset.topic; $("#saTopics").querySelectorAll(".chip").forEach((x) => x.classList.toggle("on", x === b)); list(); }));
     list(); bar();
   }
-  function list() {
-    const rows = B.run.clusters.filter((c) => c.lane !== "hidden" && (!B.topic || c.topic === B.topic)).slice(0, 30);
-    $("#saClusters").innerHTML = rows.map((c) => `<li class="sa-card lane-${c.lane}" data-testid="sa-cluster">
-      <label class="chk"><input type="checkbox" data-pick="${c.id}" ${B.picks.has(c.id) ? "checked" : ""} aria-label="Pick ${esc(c.story.headline)}"></label>
-      <div><div class="sa-meta"><span class="sa-topic">${esc(c.topic)}</span><span>${LANE[c.lane]}</span>${AGENT[c.agent] ? `<span class="sa-warn">${AGENT[c.agent]}</span>` : ""}<span class="muted">score ${c.score}</span><span class="muted">${esc(c.judgments.provider || "rules")}</span></div>
-      <h3><a href="${esc(c.items[0].url)}" target="_blank" rel="noopener">${esc(c.story.headline)}</a></h3>
-      ${c.story.line ? `<p class="muted sm">${esc(c.story.line)}</p>` : ""}
-      <p class="sm">${c.items.map((i) => esc(i.source)).join(" · ")}${c.story.also.length ? ` · also ${esc(c.story.also.join(", "))}` : ""}</p></div></li>`).join("") || `<li class="muted">Nothing in this topic.</li>`;
-    $("#saClusters").querySelectorAll("[data-pick]").forEach((i) => (i.onchange = () => { i.checked ? B.picks.add(i.dataset.pick) : B.picks.delete(i.dataset.pick); bar(); }));
+  // Story scan cards are visual (owner, 1 Nov 2026): picture (og:image via /api/thumb, else the favicon), source, time,
+  // headline, why it matters, tags, Make post; 12 per page with numbered pages instead of one endless list.
+  const PER = 12;
+  function card(c) {
+    const it = c.items[0] || {}, url = c.story.url || it.url || "", host = hostOf(url) || it.source || "";
+    const ago = it.published ? timeAgo(it.published * 1000) : "";
+    const why = c.story.why || c.story.line || "";
+    const tags = [c.topic, LANE[c.lane], ...(c.story.also || []).slice(0, 2).map((x) => "also " + x)].filter(Boolean);
+    return `<li class="sa-card sa-vis lane-${c.lane}" data-testid="sa-cluster">
+      <div class="sa-pic">${url ? `<img src="${esc(window.hqThumb(url, c.story.image || ""))}" alt="" loading="lazy" data-testid="sa-thumb" data-host="${esc(host)}">` : ""}
+        <span class="sa-pic-fb" aria-hidden="true">${fav(host)}<b>${esc(host)}</b></span>
+        <label class="chk sa-pick"><input type="checkbox" data-pick="${c.id}" data-testid="sa-pick" ${B.picks.has(c.id) ? "checked" : ""} aria-label="Pick ${esc(c.story.headline)}"></label></div>
+      <div class="sa-b"><div class="sa-src">${fav(host)}<span>${esc(it.source || host)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}${AGENT[c.agent] ? `<span class="sa-warn">${AGENT[c.agent]}</span>` : ""}</div>
+        <h3><a href="${esc(url)}" target="_blank" rel="noopener">${esc(c.story.headline)}</a></h3>
+        ${why ? `<p class="sa-why" data-testid="sa-why"><b>Why it matters:</b> ${esc(why)}</p>` : ""}
+        <div class="sa-tags" data-testid="sa-tags">${tags.map((t) => `<span class="sa-tag">${esc(t)}</span>`).join("")}<span class="sa-score muted">score ${c.score}</span></div>
+        <div class="sa-act"><button class="btn sm" type="button" data-make="${esc(url)}" data-testid="sa-make">Make post</button>
+          <a class="link sm" href="${esc(url)}" target="_blank" rel="noopener" data-testid="sa-open">Open source</a></div></div></li>`;
+  }
+  function list(page) {
+    B.page = page || 1;
+    const rows = B.run.clusters.filter((c) => c.lane !== "hidden" && (!B.topic || c.topic === B.topic));
+    const shown = rows.slice((B.page - 1) * PER, B.page * PER);
+    const box = $("#saClusters");
+    box.innerHTML = shown.map(card).join("") || `<li class="muted">Nothing in this topic.</li>`;
+    box.querySelectorAll("[data-testid=sa-thumb]").forEach((im) => (im.onerror = () => im.closest(".sa-pic").classList.add("nopic")));
+    box.querySelectorAll("[data-pick]").forEach((i) => (i.onchange = () => { i.checked ? B.picks.add(i.dataset.pick) : B.picks.delete(i.dataset.pick); bar(); }));
+    if (typeof wireMake === "function") wireMake(box);
+    if (typeof favicons === "function") favicons(box);
+    window.hqPager($("#saPager"), { total: rows.length, page: B.page, per: PER, label: "Story scan pages",
+      onPage: (n) => { list(n); $("#saClusters").scrollIntoView({ behavior: "smooth", block: "start" }); } });
   }
   function bar() { $("#saBar").hidden = !B.picks.size; $("#saPicked").textContent = `${B.picks.size} stor${B.picks.size === 1 ? "y" : "ies"}`; }
   function pkgs(r, sent) {
