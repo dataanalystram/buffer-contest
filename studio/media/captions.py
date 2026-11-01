@@ -122,6 +122,11 @@ def chunk_words(words: list[dict], max_words: int, max_chars: int, gap: float = 
 
 
 # ------------------------------------------------------------------------------------------------ fitting
+def pop_scale(st: CapStyle) -> float:
+    """Worst-case width growth of a line during the pop animation (whole line scaled: conservative)."""
+    return 1.35 if st.one_word else (1.18 if st.pop else 1.0)
+
+
 def _pil_size_for_line_height(file: str, line_h: int) -> int:
     f = textfit.font(file, 100)
     a, d = f.getmetrics()
@@ -132,13 +137,22 @@ def fit_chunk(text: str, st: CapStyle, W: int, H: int) -> tuple[int, list[str]]:
     """(ass_fontsize, lines) such that every line fits st.width_frac*W with margin, in <= st.max_lines lines."""
     file = FONTS[st.family]
     maxw = int(W * st.width_frac) - int(H * st.outline_frac * st.size_frac * 2) - 8  # room for the outline both sides
+    maxw = int(maxw / pop_scale(st))  # the pop's first frame is the widest the line ever gets
     target = _pil_size_for_line_height(file, int(H * st.size_frac))
     lowest = _pil_size_for_line_height(file, int(H * st.min_frac))
     r = textfit.fit(text, file, maxw, int(H * st.size_frac * 1.25 * st.max_lines), max_size=target, min_size=lowest,
                     max_lines=st.max_lines, spacing=1.0, upper=st.upper)
-    f = textfit.font(file, r.size)
+    size = r.size
+    words = (text.upper() if st.upper else text).split()
+    while size > 8:  # captions map whole words to lines, so the longest single word must fit on its own
+        f = textfit.font(file, size)
+        if max((f.getlength(w) for w in words), default=0) <= maxw:
+            break
+        size -= 2
+    f = textfit.font(file, size)
+    lines = textfit.wrap(text.upper() if st.upper else text, f, maxw)
     a, d = f.getmetrics()
-    return a + d, r.lines
+    return a + d, lines
 
 
 def build_ass(words: list[dict], style: str = "opus", *, W: int = 1080, H: int = 1920, accent: str = "#C9ACFA",
@@ -205,18 +219,18 @@ def build_ass(words: list[dict], style: str = "opus", *, W: int = 1080, H: int =
 
 
 def check_ass_fits(ass: str, W: int, H: int, margin: int = 24) -> list[str]:
-    """Re-measure every dialogue line of a built ASS file; returns problems (empty list = everything fits)."""
+    """Re-measure every dialogue line of a built ASS file at its widest animation frame; returns problems."""
     style = re.search(r"^Style: Cap,([^,]+),", ass, re.M).group(1)
     file = FONTS[style]
+    st = next(v for v in STYLES.values() if v.family == style)
     probs = []
     for ln in re.findall(r"^Dialogue: .*$", ass, re.M):
         fs = int(re.search(r"\\fs(\d+)", ln).group(1))
+        x = int(re.search(r"\\pos\((\d+),", ln).group(1))
         txt = re.sub(r"\{[^}]*\}", "", ln.split(",,", 1)[1].split(",", 4)[-1])
-        pil = _pil_size_for_line_height(file, fs)
-        f = textfit.font(file, pil)
-        scale = 1.35 if "fscx135" in ln else (1.18 if "fscx118" in ln else 1.0)  # the pop's first frame is widest
+        f = textfit.font(file, _pil_size_for_line_height(file, fs))
         for row in txt.split("\\N"):
-            w = f.getlength(row) * (scale if "fscx135" in ln else 1.0) + (f.getlength(row.split(" ")[0]) * (scale - 1) if scale == 1.18 else 0)
-            if w > W - 2 * margin:
-                probs.append(f"{row!r} is {w:.0f}px wide (frame {W}px)")
+            w = f.getlength(row) * pop_scale(st) + 2 * max(2, int(H * st.size_frac * st.outline_frac))
+            if x - w / 2 < margin or x + w / 2 > W - margin:
+                probs.append(f"{row!r} is {w:.0f}px wide at x={x} (frame {W}px)")
     return probs
