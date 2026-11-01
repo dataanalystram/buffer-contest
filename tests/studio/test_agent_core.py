@@ -137,16 +137,18 @@ def test_exact_prompt_end_to_end(owner):
     assert res["source"]["url"] == TWEET and res["story"]["url"] == TWEET
     assert res["checks"]["about_source"] is True
     # "all my channels" beats the one chip that was selected
-    assert {p["service"] for p in res["packages"]} == {"linkedin", "facebook", "youtube", "instagram"}
+    # NO VIDEO -> NO REEL (owner, 1 Nov 2026): the post has no video, so YouTube is skipped with a note, never a slideshow
+    assert {p["service"] for p in res["packages"]} == {"linkedin", "facebook", "instagram"}
+    assert [x["service"] for x in res["checks"]["skipped"]] == ["youtube"] and res["channel_media"]["ch_yt"]["format"] == "skipped"
+    assert any("no video found" in p.lower() for p in res["plan"])
     # the standing rule went to the ledger and drives the end card
     rules = owner.get("/api/brand").json()["rules"]
     assert any(x["check"].get("cta") == "Follow @huhbyte.ai" for x in rules)
-    # every channel has real media, nothing clipped; YouTube got a real video (no canned sample)
+    # every channel has real media, nothing clipped; no video was made from text (no slideshow job)
     for p in res["packages"]:
         assert p["media_urls"], p
         assert not p["clipped"], p
-    yt = next(p for p in res["packages"] if p["service"] == "youtube")
-    assert yt["format"] == "reel" and yt["media_urls"][0].endswith(".mp4") and "/sample/" not in yt["media_urls"][0]
+    assert not owner.app.state.store.q("SELECT id FROM render_jobs")
     ig = next(p for p in res["packages"] if p["service"] == "instagram")
     assert ig["format"] == "carousel" and len(ig["media_urls"]) == 4  # cover, the post card, facts, end card
     # the headline on the cover is about THAT post
@@ -174,18 +176,22 @@ def test_exact_prompt_end_to_end(owner):
 def test_refine_one_channel_only(owner):
     r = owner.post("/api/agent/runs", json={"prompt": f"post this everywhere {TWEET}"}).json()
     run = owner.get(f"/api/agent/runs/{r['id']}").json()
-    before = {cid: v["media"][0]["url"] for cid, v in run["result"]["channel_media"].items()}
+
+    def firsts(cm):
+        return {cid: (v["media"][0]["url"] if v["media"] else v["format"]) for cid, v in cm.items()}
+    before = firsts(run["result"]["channel_media"])
     owner.post(f"/api/agent/runs/{r['id']}/messages", json={"text": "it's $1.3M"})
     owner.post(f"/api/agent/runs/{r['id']}/messages", json={"text": "redo YouTube at 20s"})
     run = owner.get(f"/api/agent/runs/{r['id']}").json()
-    after = {cid: v["media"][0]["url"] for cid, v in run["result"]["channel_media"].items()}
-    assert run["result"]["channel_media"]["ch_yt"]["seconds"] == 20
+    after = firsts(run["result"]["channel_media"])
+    # no video in this post: "redo YouTube at 20s" still makes no Reel, YouTube stays skipped with the note
+    assert run["result"]["channel_media"]["ch_yt"]["format"] == "skipped" and "needs a video" in run["result"]["channel_media"]["ch_yt"]["note"]
     # LinkedIn's carousel didn't change when only YouTube was asked for... (the figure answer re-rendered all once)
     owner.post(f"/api/agent/runs/{r['id']}/messages", json={"text": "make LinkedIn more formal"})
     run2 = owner.get(f"/api/agent/runs/{r['id']}").json()
     assert run2["result"]["captions"]["ch_li"]["tone"] == "formal"
     assert run2["result"]["captions"]["ch_fb"]["tone"] != "formal"
-    assert after["ch_li"] == {cid: v["media"][0]["url"] for cid, v in run2["result"]["channel_media"].items()}["ch_li"]
+    assert after["ch_li"] == firsts(run2["result"]["channel_media"])["ch_li"]
     assert before.keys() == after.keys()
 
 
@@ -276,7 +282,7 @@ def test_claude_brain_tool_loop_budget_and_workspace_header(owner, monkeypatch):
     assert [s["tool"] for s in run["steps"]][:5] == ["read_url", "extract_facts", "render_carousel", "render_reel", "write_captions"]
     assert res["story"]["engine"] == "claude" and seen["fast"] >= 2
     assert all(h.get("anthropic-workspace-id") == "wrkspc_test" for h in seen["headers"])
-    assert {p["service"] for p in res["packages"]} == {"linkedin", "facebook", "youtube", "instagram"}
+    assert {p["service"] for p in res["packages"]} == {"linkedin", "facebook", "instagram"}  # no video: YouTube skipped
     assert res["captions"]["ch_li"]["engine"] == "claude" and "$1.3M" in res["captions"]["ch_li"]["text"]
     uid = owner.app.state.store.q("SELECT user_id FROM agent_runs")[0]["user_id"]
     left = budget.remaining(owner.app.state.store, uid)

@@ -235,7 +235,7 @@ class Library:
             return {}
 
     # ---------------------------------------------------------------- generated media (bytes stay in `media`)
-    def register_generated(self, a: Actor, media: list[dict], fmt: str, run_id: int | None) -> int | None:
+    def register_generated(self, a: Actor, media: list[dict], fmt: str, run_id: int | None, created: float | None = None) -> int | None:
         """One library row per finished channel render (a video, an image or a whole carousel). Idempotent per token set."""
         if demo_guard.is_demo(a.uid):
             return None
@@ -269,7 +269,7 @@ class Library:
         iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created)"
                            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                            (a.uid, info["tokens"][0], name, first["mime"], kind, "generated", sum(int(by[t]["size"] or 0) for t in info["tokens"]),
-                            "", "media", json.dumps(info), run_id, _now()))
+                            "", "media", json.dumps(info), run_id, created or _now()))
         for t in info["tokens"]:
             self.store.x("INSERT INTO library_media(token,item_id,user_id) VALUES(?,?,?) ON CONFLICT(token) DO NOTHING", (t, iid, a.uid))
         return iid
@@ -298,10 +298,11 @@ class Library:
             out["slides"] = [f"{url}?i={i}" for i in range(len(tokens))]
         if runs is not None:
             out["used_in"] = [r for r in runs if any(t in r["_blob"] for t in tokens)]
-            out["used_in"] = [{k: v for k, v in r.items() if k != "_blob"} for r in out["used_in"]]
+            out["used_in"] = [{k: v for k, v in r.items() if not k.startswith("_")} for r in out["used_in"]]
         return out
 
     def _runs(self, a: Actor) -> list[dict]:
+        from .house import _run_thumb, _run_thumb_src
         out = []
         for r in self.store.q("SELECT id, kind, input, result, status, created FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT 200", (a.uid,)):
             try:
@@ -309,27 +310,85 @@ class Library:
             except ValueError:
                 continue
             title = (res.get("story") or {}).get("headline") or inp.get("prompt") or inp.get("query") or inp.get("name") or "A post"
-            sent = any((p.get("sent") for p in res.get("packages") or []))
+            sent = [p.get("sent") for p in res.get("packages") or [] if p.get("sent")]
+            draft = bool(sent) and not any((x or {}).get("mode") in ("queue", "schedule") for x in sent)
             out.append({"run_id": r["id"], "kind": r["kind"], "title": str(title)[:90], "status": r["status"], "sent": bool(sent),
+                        "draft": draft, "_created": r["created"], "_thumb": _run_thumb(res, inp), "_thumb_src": _run_thumb_src(res, inp), "_res": res,
                         "_blob": (r["input"] or "") + (r["result"] or "")})
         return out
+
+    @staticmethod
+    def _run_media(res: dict) -> list[tuple[str, list[dict]]]:
+        """Every finished render a run holds, as (format, media) groups: per channel (agent runs), the packages (older runs),
+        the run's own media list (the first News / media runs) and a take's rendered clips. Media without a token get it
+        from their /m/<token> URL."""
+        groups: list[tuple[str, list[dict]]] = []
+
+        def norm(ms):
+            out = []
+            for m in ms or []:
+                if not isinstance(m, dict):
+                    continue
+                tok = m.get("token") or (str(m.get("url") or "").rsplit("/m/", 1)[-1] if "/m/" in str(m.get("url") or "") else "")
+                if tok and m.get("role") != "original":
+                    out.append({**m, "token": tok.split("?")[0], "type": m.get("type") or "photo"})
+            return out
+        for v in (res.get("channel_media") or {}).values():
+            if isinstance(v, dict) and v.get("media"):
+                groups.append((v.get("format") or "", norm(v["media"])))
+        for p in res.get("packages") or []:
+            groups.append((p.get("format") or "", norm(p.get("media"))))
+        if res.get("media"):
+            groups.append(("", norm(res["media"])))
+        for c in res.get("clips") or []:
+            if c.get("token"):
+                groups.append(("reel", [{"token": c["token"], "type": "video"}]))
+        return [(f, ms) for f, ms in groups if ms]
+
+    def backfill(self, a: Actor, runs: list[dict] | None = None) -> int:
+        """Runs made before the Library existed (or rendered on the GitHub worker) left no Library rows, so "View all"
+        opened an empty Library while Recent content showed five posts (owner, 1 Nov 2026). Register every run's renders
+        once; register_generated is idempotent per token set and only takes the person's own media rows."""
+        if demo_guard.is_demo(a.uid):
+            return 0
+        have = {r["run_id"] for r in self.store.q("SELECT DISTINCT run_id FROM library_items WHERE user_id=? AND run_id IS NOT NULL", (a.uid,))}
+        n = 0
+        for r in runs if runs is not None else self._runs(a):
+            if r["run_id"] in have or r["status"] in ("running", "rendering"):
+                continue
+            for fmt, media in self._run_media(r["_res"]):
+                try:
+                    if self.register_generated(a, media, fmt, r["run_id"], r.get("_created")):
+                        n += 1
+                except Exception:  # noqa: BLE001  one odd old run never breaks the Library
+                    continue
+        return n
 
     def list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200) -> dict:
         if demo_guard.is_demo(a.uid):
             items = _sample_items()
             used = 0
         else:
-            rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND storage<>'pending' ORDER BY id DESC LIMIT ?",
-                                (a.uid, max(1, min(int(limit or 200), 500))))
             runs = self._runs(a)
+            self.backfill(a, runs)
+            rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND storage<>'pending' ORDER BY created DESC, id DESC LIMIT ?",
+                                (a.uid, max(1, min(int(limit or 200), 500))))
+            by_run = {r["run_id"]: r for r in runs}
             items = []
             for r in rows:
                 d = dict(r)
                 d["meta"] = json.loads(d["meta"] or "{}")
-                items.append(self._public(d, runs))
+                it = self._public(d, runs)
+                own = by_run.get(d.get("run_id"))
+                if it["kind"] == "video" and own:  # a still for a video card: the run's own picture, else the story's
+                    it["thumb"] = own["_thumb"] or ""
+                    it["thumb_src"] = own["_thumb_src"]
+                items.append(it)
             used = self.used(a.uid)
         if kind in ("video", "image", "carousel"):
             items = [i for i in items if i["kind"] == kind]
+        elif kind == "draft":  # Make a post's "Drafts" filter, carried over by "View all"
+            items = [i for i in items if any(u.get("draft") for u in i.get("used_in") or [])]
         elif kind in ("upload", "generated"):
             items = [i for i in items if (i["source"] in ("upload", "take")) == (kind == "upload")]
         if q:

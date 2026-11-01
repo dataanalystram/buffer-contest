@@ -245,3 +245,17 @@ Make a post v2 UI (studio/static/makepost.js, makepost.css, pager.js)
   AI Elements by Vercel / shadcn (MIT, https://github.com/vercel/ai-elements), prompt-kit (MIT,
   https://github.com/ibelick/prompt-kit) and MIT-licensed 21st.dev community components (https://21st.dev).
   Details: docs/UI_CREDITS.md.
+
+--------------------------------------------------------------------------------------------------------------
+studio/editorial.py, studio/hero_edit.py, studio/assets.py, studio/editorial_tools.py  (ported, same owner)
+  Source:   dataanalystram/Huhbyte.ai (private, same owner): code/hb.py (editorial_cover, editorial_slide,
+            editorial_follow), docs/DESIGN_SYSTEM.md "Editorial", and the hand-made ernd carousel recipe
+            (content/ycombinator/ernd, code/yc-ernd/make.py): saliency crop, colour match, fade, cut-out + tilt + shadow,
+            ringed founder avatars.
+  Licence:  the owner's own work, relicensed here under this repository's MIT licence
+  What:     the editorial_story carousel and its research -> official images -> hero edit -> copy -> render tools.
+            Pure Pillow (MIT-CMU licence); no model is downloaded. rembg (MIT) is used only when an operator installs it.
+  Data:     company facts and images come from the company's own public pages (its YC company page and Launch YC post,
+            its website, Product Hunt when it answers), fetched one company at a time on request through netguard, kept
+            with their source URLs and the note "official press/brand image" (used to report on the company, credited in
+            the caption). No crawling. Fonts: Oswald, Inter (SIL OFL 1.1, studio/fonts).

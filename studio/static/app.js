@@ -148,6 +148,7 @@ async function boot() {
   }
   sessionStorage.removeItem("hq_bounced");
   $("#app").hidden = false; $("#topRight").hidden = false; $("#demoBar").hidden = !s.demo;
+  if (window.HQMode) { HQMode.wire(); if (!s.demo) HQMode.fromAccount(); }  // the account's light / dark choice
   document.body.classList.add("in-app"); document.body.classList.toggle("is-demo", !!s.demo);
   $("#acctBtn").textContent = (s.user.name || s.user.email || "Account") + (s.user.organization ? " · " + s.user.organization : "");
   setKill(s.user.kill_switch);

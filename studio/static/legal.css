@@ -46,7 +46,8 @@
 .lg-foot a{color:var(--muted);min-height:44px;display:inline-flex;align-items:center}
 .lg-foot .wm{height:16px;width:auto}
 .wm.dk{display:none}
-@media (prefers-color-scheme:dark){.wm.lt{display:none}.wm.dk{display:inline-block}}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .wm.lt{display:none}:root:not([data-theme=light]) .wm.dk{display:inline-block}}
+:root[data-theme=dark] .wm.lt{display:none}:root[data-theme=dark] .wm.dk{display:inline-block}
 @media (max-width:900px){.lg{grid-template-columns:minmax(0,1fr);gap:28px;padding-top:32px}.lg-toc{position:static}.lg-toc ol{display:flex;flex-wrap:wrap;gap:4px;border:0}.lg-toc a{border:1px solid var(--line);border-radius:999px;min-height:44px}
   .lg-top{padding:8px 16px}.lg-top nav a:not(.btn){display:none}.lg-top .bt small{display:none}}
 .lg-top .brand,.brand{min-height:44px;display:flex;align-items:center}
