@@ -1,25 +1,30 @@
 name: longform-probe
-# TEMPORARY (feat/longform-clips): can a GitHub runner fetch the two test videos + their captions? Removed before merge.
+# TEMPORARY (feat/longform-clips): real-input check of the long-video splitter on a GitHub runner (the render worker's
+# environment: x86, ffmpeg, MediaPipe face track). Removed before merge.
 on:
   push:
     branches: [feat/longform-clips]
-    paths: [".github/workflows/longform-probe.yml", "scripts/longform_live.py"]
+    paths: [".github/workflows/longform-probe.yml", "scripts/longform_live.py", "studio/media/longform.py"]
 permissions: {contents: read}
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - run: pip install -q -U "yt-dlp>=2026.10.26"
-      - name: metadata + captions + small video
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libegl1 libgles2 >/dev/null
+      - run: pip install -q -r requirements-worker.txt
+      - name: YouTube from a runner (Buffer Commit kickoff, QJf0H64BnFo)
+        continue-on-error: true
+        run: python scripts/longform_live.py --url "https://www.youtube.com/watch?v=QJf0H64BnFo" --prompt "split this into 5 shorts" --credit "Video: Buffer on YouTube" --out out/buffer
+      - name: NASA talk (images.nasa.gov GRC-2016-CM-0129.11, public domain) with NASA's own VTT
         run: |
-          mkdir out && cd out
-          for v in QJf0H64BnFo u_bqAJdTAw4; do
-            for c in default web_embedded tv_simply android_vr mweb; do
-              echo "== $v $c"
-              if timeout 120 yt-dlp --extractor-args "youtube:player_client=$c" --no-playlist --write-subs --write-auto-subs --sub-langs "en.*" --sub-format vtt -f "b[height<=360]/b" -o "$v.%(ext)s" "https://www.youtube.com/watch?v=$v"; then echo "OK $v $c"; break; fi
-            done
-          done
-          ls -la
+          mkdir -p in && curl -sSL -o in/nasa.mp4 "https://images-assets.nasa.gov/video/GRC-2016-CM-0129.11/GRC-2016-CM-0129.11~large.mp4"
+          curl -sSL -o in/nasa.vtt "https://images-assets.nasa.gov/video/GRC-2016-CM-0129.11/GRC-2016-CM-0129.11.vtt"
+          python scripts/longform_live.py --video in/nasa.mp4 --captions in/nasa.vtt --ratios 9:16,4:5,1:1 --credit "Video: NASA Glenn Research Center (public domain)" --official --out out/nasa
       - uses: actions/upload-artifact@v4
-        with: {name: probe, path: out, retention-days: 3}
+        if: always()
+        with: {name: longform-shots, path: out, retention-days: 5}
