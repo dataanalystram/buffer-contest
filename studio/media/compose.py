@@ -21,8 +21,6 @@ Credit: layouts adapted from dataanalystram/Huhbyte.ai (same owner), see NOTICE.
 """
 from __future__ import annotations
 
-import json
-import math
 import os
 import shutil
 import tempfile
@@ -231,104 +229,144 @@ def cover_card(path: str, W: int, H: int, brand: dict, hook: str, still: Image.I
     return boxes
 
 
+# ------------------------------------------------------------------------------------------------ layout
+def layout(style: str, W: int, H: int, sw: int, sh: int, brand: dict, hook: str, captions_on: bool) -> dict:
+    """Every box of the main section, stacked top to bottom inside the safe area with no overlap:
+    logo -> hook -> video panel -> caption band -> Follow pill (9:16 only). Returns pixel boxes (x0, y0, x1, y1)."""
+    l, t, r, b = safe_area(W, H)
+    tall = H / W > 1.6
+    L: dict = {"safe": (l, t, r, b)}
+    if style in ("opus", "hype"):
+        hb = (l, t, r, t + int(H * (0.12 if tall else 0.15)))
+        L.update(panel=(0, 0, W, H), hook=hb, captions_center=int(H * (0.60 if tall else 0.70)))
+        return L
+    logo_h = int(H * 0.032) if (style == "huhbyte_news" and brand.get("logo")) else 0
+    hook_font = brand["head_font"] if style == "huhbyte_news" else "Inter-SemiBold.ttf"
+    hf = textfit.fit(hook, hook_font, r - l, int(H * (0.17 if tall else 0.16)), max_size=96 if style == "huhbyte_news" else 64,
+                     min_size=30, max_lines=3, upper=style == "huhbyte_news")
+    hook_h = hf.height + 8
+    pill_h = int(32 * 2.1) if (style == "huhbyte_news" and tall) else 0
+    cap_h = int(H * (0.036 if style == "huhbyte_news" else 0.034) * 2.3) if captions_on else 0
+    if style == "huhbyte_news":
+        pw = W
+    else:
+        pw = r - l
+    ph = int(round(pw * sh / sw / 2) * 2)
+    gaps = [int(H * 0.018)] * 4
+    fixed = logo_h + hook_h + cap_h + pill_h + sum(gaps)
+    max_ph = (b - t) - fixed
+    if ph > max_ph:
+        ph = max(2, max_ph - max_ph % 2)
+        pw = min(pw, int(round(ph * sw / sh / 2) * 2))
+    slack = (b - t) - fixed - ph
+    y = t + max(0, slack // 3)  # optical centre: a third of the slack above, the rest below
+    if logo_h:
+        L["logo"] = ((W - 3 * logo_h) // 2, y, (W + 3 * logo_h) // 2, y + logo_h)
+        y += logo_h + gaps[0]
+    L["hook"] = (l, y, r, y + hook_h)
+    y += hook_h + gaps[1]
+    x0 = (W - pw) // 2
+    L["panel"] = (x0, y, x0 + pw, y + ph)
+    y += ph + gaps[2]
+    if cap_h:
+        L["cap_band"] = (l, y, r, y + cap_h)
+        y += cap_h + gaps[3]
+    if pill_h:
+        L["pill_y"] = y
+    return L
+
+
+def _credit_chip(d, credit: str, x: int, y: int, maxw: int) -> tuple:
+    f = textfit.fit(credit, "Inter-SemiBold.ttf", maxw - 28, 40, max_size=24, min_size=14, max_lines=1)
+    fo = textfit.font("Inter-SemiBold.ttf", f.size)
+    tw = int(fo.getlength(f.lines[0]))
+    a, de = fo.getmetrics()
+    box = (x, y, x + tw + 28, y + a + de + 16)
+    d.rounded_rectangle(box, 12, fill=(0, 0, 0, 160))
+    d.text((x + 14, y + 8), f.lines[0], font=fo, fill=(236, 236, 240))
+    return box
+
+
 # ------------------------------------------------------------------------------------------------ overlays per style
-def _overlay(style: str, W: int, H: int, brand: dict, hook: str, credit: str, panel: tuple | None, accent_words,
-             cap_band: tuple | None) -> tuple[Image.Image, dict]:
+def _overlay(style: str, W: int, H: int, brand: dict, hook: str, credit: str, L: dict, accent_words) -> tuple[Image.Image, dict]:
     o = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(o)
-    l, t, r, b = safe_area(W, H)
+    l, t, r, b = L["safe"]
     boxes: dict = {}
     if style == "huhbyte_news":
         o.paste(Image.new("RGBA", (W, H), _rgb(brand["bg"]) + (255,)))
         d = ImageDraw.Draw(o)
-        y = t
-        lg = _logo(brand, int(H * 0.034))
-        if lg:
-            o.paste(lg, ((W - lg.width) // 2, y), lg)
-            boxes["logo"] = ((W - lg.width) // 2, y, (W + lg.width) // 2, y + lg.height)
-            y += lg.height + int(H * 0.018)
-        bb, _ = _text_block(d, hook, brand["head_font"], (l, y, r, panel[1] - int(H * 0.02)), max_size=96, min_size=34,
-                            max_lines=3, upper=True, accent_words=accent_words, accent=brand["accent"], valign="bottom")
+        if "logo" in L:
+            lg = _logo(brand, L["logo"][3] - L["logo"][1])
+            if lg:
+                x = (W - lg.width) // 2
+                o.paste(lg, (x, L["logo"][1]), lg)
+                boxes["logo"] = (x, L["logo"][1], x + lg.width, L["logo"][1] + lg.height)
+        bb, _ = _text_block(d, hook, brand["head_font"], L["hook"], max_size=96, min_size=30, max_lines=3, upper=True,
+                            accent_words=accent_words, accent=brand["accent"], valign="bottom")
         boxes["hook"] = bb
-        d.rectangle(panel, fill=(0, 0, 0, 0))
-        boxes["panel"] = panel
-        if credit:
-            cb, _ = _text_block(d, credit, "Inter-Regular.ttf", (l, cap_band[1] + 6, r, cap_band[1] + 6 + int(H * 0.022)),
-                                max_size=26, min_size=16, max_lines=1, fill=brand["muted"])
-            boxes["credit"] = cb
-        if H / W > 1.6:
-            boxes["pill"] = _pill(d, "Follow " + brand["handle"], (l + r) // 2, b - int(H * 0.045), brand, size=32,
-                                  maxw=r - l)
+        d.rectangle(L["panel"], fill=(0, 0, 0, 0))
+        boxes["panel"] = L["panel"]
+        if "pill_y" in L:
+            boxes["pill"] = _pill(d, "Follow " + brand["handle"], W // 2, L["pill_y"], brand, size=32, maxw=r - l)
     elif style in ("opus", "hype"):
-        # translucent top band for the hook (Opus puts a title card at the top), credit chip
-        hb = (l, t, r, t + int(H * (0.13 if style == "opus" else 0.16)))
+        hb = L["hook"]
         if style == "opus":
             d.rounded_rectangle((hb[0] - 10, hb[1] - 10, hb[2] + 10, hb[3] + 10), 28, fill=(255, 255, 255, 236))
             bb, _ = _text_block(d, hook, brand["bold_font"], (hb[0] + 18, hb[1] + 4, hb[2] - 18, hb[3] - 4), max_size=64,
-                                min_size=26, max_lines=3, fill="#111114")
-        else:
-            bb = hb
-        boxes["hook"] = bb
+                                min_size=24, max_lines=3, fill="#111114")
+            boxes["hook"] = (hb[0] - 10, hb[1] - 10, hb[2] + 10, hb[3] + 10)
+            boxes["hook_text"] = bb
         if credit:
-            f = textfit.fit(credit, "Inter-SemiBold.ttf", r - l - 40, 40, max_size=26, min_size=16, max_lines=1)
-            fo = textfit.font("Inter-SemiBold.ttf", f.size)
-            tw = int(fo.getlength(f.lines[0]))
-            y0 = (hb[3] + 22) if style == "opus" else t
-            d.rounded_rectangle((l, y0, l + tw + 28, y0 + f.size + 20), 14, fill=(0, 0, 0, 150))
-            d.text((l + 14, y0 + 8), f.lines[0], font=fo, fill=(235, 235, 240))
-            boxes["credit"] = (l, y0, l + tw + 28, y0 + f.size + 20)
+            y0 = (hb[3] + 24) if style == "opus" else t
+            boxes["credit"] = _credit_chip(d, credit, l, y0, r - l)
     elif style == "minimal":
-        y = t
-        bb, _ = _text_block(d, hook, "Inter-SemiBold.ttf", (l, y, r, panel[1] - int(H * 0.025)), max_size=64, min_size=28,
-                            max_lines=3, align="left", valign="bottom", stroke=0)
+        bb, _ = _text_block(d, hook, "Inter-SemiBold.ttf", L["hook"], max_size=64, min_size=28, max_lines=3, align="left",
+                            valign="bottom")
         boxes["hook"] = bb
-        d.rounded_rectangle((panel[0] - 3, panel[1] - 3, panel[2] + 3, panel[3] + 3), 18, outline=(255, 255, 255, 90), width=3)
-        boxes["panel"] = panel
-        if credit:
-            cb, _ = _text_block(d, credit, "Inter-Regular.ttf", (l, panel[3] + 14, r, panel[3] + 14 + int(H * 0.022)),
-                                max_size=26, min_size=16, max_lines=1, fill="#C8C8CE", align="left")
-            boxes["credit"] = cb
+        p = L["panel"]
+        d.rounded_rectangle((p[0] - 4, p[1] - 4, p[2] + 4, p[3] + 4), 18, outline=(255, 255, 255, 110), width=4)
+        boxes["panel"] = p
+    if credit and style in ("huhbyte_news", "minimal"):
+        p = L["panel"]
+        boxes["credit"] = _credit_chip(d, credit, p[0] + 16, p[1] + 16, (p[2] - p[0]) - 32)
     return o, boxes
 
 
-def _panel_for(style: str, W: int, H: int, sw: int, sh: int) -> tuple[int, int, int, int]:
-    l, t, r, b = safe_area(W, H)
-    if style == "huhbyte_news":
-        pw = W
-        ph = int(round(pw * sh / sw / 2) * 2)
-        maxh = int(H * (0.42 if H / W > 1.6 else 0.5))
-        if ph > maxh:
-            ph = maxh - maxh % 2
-            pw = int(round(ph * sw / sh / 2) * 2)
-        y = int(H * 0.36) if H / W > 1.6 else int(H * 0.26)
-        x = (W - pw) // 2
-        return (x, y, x + pw, y + ph)
-    if style == "minimal":
-        pw = r - l
-        ph = int(round(pw * sh / sw / 2) * 2)
-        maxh = int((b - t) * 0.62)
-        if ph > maxh:
-            ph = maxh - maxh % 2
-            pw = int(round(ph * sw / sh / 2) * 2)
-        x = (W - pw) // 2
-        y = t + int((b - t) * 0.22)
-        return (x, y, x + pw, y + ph)
-    return (0, 0, W, H)
+# ------------------------------------------------------------------------------------------------ encode helpers
+def _venc(crf: int, preset: str) -> list[str]:
+    # identical settings for every segment so the concat demuxer can join them without re-encoding
+    return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-r", str(FPS),
+            "-profile:v", "high", "-threads", os.environ.get("HQ_FFMPEG_THREADS", "2"), "-video_track_timescale", "15360"]
+
+
+def _card_segment(png: str, secs: float, out: str, crf: int, preset: str, fade: bool = True) -> str:
+    vf = f"fps={FPS},format=yuv420p,setsar=1" + (",fade=t=in:st=0:d=0.25" if fade else "")
+    ff.run(["-y", "-v", "error", "-loop", "1", "-framerate", str(FPS), "-t", f"{secs:.3f}", "-i", png, "-vf", vf, "-an",
+            *_venc(crf, preset), "-tune", "stillimage", out], timeout=600)
+    return out
+
+
+def _esc(p: str) -> str:
+    return p.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
 
 # ------------------------------------------------------------------------------------------------ main entry
 def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16", hook: str = "", facts: list[str] | None = None,
                  brand: dict | None = None, words: list[dict] | None = None, credit: str = "", clip: tuple | None = None,
                  images: list[str] | None = None, music_mood: str = "auto", names: list[str] | None = None,
-                 burned_subs: bool | None = None, accent_words: list[str] | None = None, crf: int = 21,
-                 preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0) -> dict:
-    """Render one styled video. ``source`` None + ``images`` -> a Ken Burns slideshow (no-media fallback).
-    Returns {path, style, ratio, width, height, duration, clip, boxes, captions, burned_subs, music}."""
+                 burned_subs: bool | None = None, captions_mode: str = "auto", accent_words: list[str] | None = None,
+                 crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0) -> dict:
+    """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
+    captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
+    Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from .styles import STYLE_PRESETS
     if style not in STYLE_PRESETS:
         raise ff.MediaError(f"Unknown style {style!r}. Pick one of: {', '.join(STYLE_PRESETS)}.")
-    preset_cfg = STYLE_PRESETS[style]
+    cfg = STYLE_PRESETS[style]
     brand = {**DEFAULT_BRAND, **(brand or {})}
+    if ratio not in SIZES:
+        raise ff.MediaError(f"Unknown ratio {ratio!r}. Use 9:16, 4:5 or 1:1.")
     W, H = SIZES[ratio]
     own = workdir is None
     wd = Path(workdir or tempfile.mkdtemp(prefix="hqm-"))
@@ -339,187 +377,156 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             pr = ff.probe(source)
             sw, sh, dur, has_a = pr["width"] or 1920, pr["height"] or 1080, pr["duration"], pr["has_audio"]
         else:
-            sw, sh, dur, has_a = 1920, 1080, max(6.0, 3.5 * len(images or [])), False
+            if not images:
+                raise ff.MediaError("Nothing to render: no video and no images.")
+            sw, sh, dur, has_a = 1920, 1080, max(6.0, 3.5 * len(images)), False
         words = captions.fix_names(list(words or []), names)
-        # clip window
         if clip:
             c0, c1, why = float(clip[0]), float(clip[1]), "given"
-        elif preset_cfg["autoclip"] and source:
-            c0, c1, why = pick_clip(words, dur, *preset_cfg["clip_range"])
+        elif cfg["autoclip"] and source:
+            c0, c1, why = pick_clip(words, dur, *cfg["clip_range"])
         else:
             c0, c1, why = 0.0, min(dur, max_main), "full video"
         D = max(0.5, c1 - c0)
         cw = [{"w": w["w"], "s": w["s"] - c0, "e": w["e"] - c0} for w in words if c0 <= w["s"] < c1]
         silent = (not has_a) or (source is not None and ff.is_silent(source))
         if burned_subs is None:
-            burned_subs = bool(source) and preset_cfg["fill"] == "fill" and detect_burned_subs(source, dur)
-        cover_s = preset_cfg["cover_secs"] if source else 0.0
+            burned_subs = bool(source) and detect_burned_subs(source, dur)
+        caps_on = bool(cw) and bool(cfg["captions"]) and (
+            captions_mode == "on" or (captions_mode == "auto" and not (burned_subs and cfg["fill"] != "fill")))
+        cover_s = cfg["cover_secs"] if source else 0.0
         facts = [f for f in (facts or []) if f.strip()]
-        facts_s = preset_cfg["facts_secs"] if facts else 0.0
+        facts_s = cfg["facts_secs"] if facts else 0.0
         total = cover_s + D + facts_s + CARD_SECS
 
-        # stills for cover / facts backgrounds
-        still = None
-        if source:
-            still = Image.open(frame_at(source, c0 + min(D * 0.3, 4.0), str(wd / "still.png")))
-        elif images:
-            still = Image.open(images[0])
-
-        panel = _panel_for(preset_cfg["layout"], W, H, sw, sh)
-        l, t, r, b = safe_area(W, H)
-        if preset_cfg["layout"] == "huhbyte_news":
-            cap_band = (panel[3] + int(H * 0.012), min(b - int(H * 0.06), panel[3] + int(H * 0.012) + int(H * 0.09)))
-        elif preset_cfg["layout"] == "minimal":
-            cap_band = (panel[3] + int(H * 0.04), panel[3] + int(H * 0.04) + int(H * 0.08))
-        else:
-            cap_band = None
-        ov, boxes = _overlay(preset_cfg["layout"], W, H, brand, hook, credit, panel, acc, cap_band)
+        still = Image.open(frame_at(source, c0 + min(D * 0.3, 4.0), str(wd / "still.png"))) if source else Image.open(images[0])
+        L = layout(cfg["layout"], W, H, sw, sh, brand, hook, caps_on)
+        ov, boxes = _overlay(cfg["layout"], W, H, brand, hook, credit, L, acc)
+        if "cap_band" in L:
+            boxes["cap_band"] = L["cap_band"]
         ov_path = wd / "overlay.png"
         ov.save(ov_path)
-        cards = {"end": str(wd / "end.png")}
-        boxes["end_card"] = end_card(cards["end"], W, H, brand)
+        segs = []
         if cover_s:
-            cards["cover"] = str(wd / "cover.png")
-            boxes["cover_card"] = cover_card(cards["cover"], W, H, brand, hook, still, label=preset_cfg["cover_label"],
-                                             accent_words=acc)
-        if facts_s:
-            cards["facts"] = str(wd / "facts.png")
-            boxes["facts_card"] = facts_card(cards["facts"], W, H, brand, preset_cfg["facts_title"], facts, still)
+            cover_card(str(wd / "cover.png"), W, H, brand, hook, still, label=cfg["cover_label"], accent_words=acc)
+            boxes["cover_card"] = "cover.png"
+            segs.append(_card_segment(str(wd / "cover.png"), cover_s, str(wd / "s0_cover.mp4"), crf, preset, fade=False))
 
-        # captions
         ass_path = None
         cap_problems: list[str] = []
-        if cw and preset_cfg["captions"]:
-            cy = None
-            if preset_cfg["layout"] in ("opus", "hype"):
-                cy = 0.60 if H / W > 1.6 else 0.70
-            ass = captions.build_ass(cw, preset_cfg["captions"], W=W, H=H, accent=brand["accent"], text=brand["text"],
-                                     outline=brand["bg"], offset=0.0, band=cap_band, center_y=cy, end=D)
+        if caps_on:
+            ass = captions.build_ass(cw, cfg["captions"], W=W, H=H, accent=brand["accent"], text=brand["text"],
+                                     outline=brand["bg"], band=(L["cap_band"][1], L["cap_band"][3]) if "cap_band" in L else None,
+                                     center_y=(L["captions_center"] / H) if "captions_center" in L else None, end=D)
             cap_problems = captions.check_ass_fits(ass, W, H)
             ass_path = wd / "caps.ass"
             ass_path.write_text(ass)
 
-        # music
-        mood = preset_cfg["music"] if music_mood == "auto" else music_mood
-        wav = None
-        if mood != "none":
-            wav = music.make(str(wd / "music.wav"), total + 0.5, mood)
+        main = str(wd / "s1_main.mp4")
+        args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand)
+        ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}",
+                *_venc(crf, preset), main], timeout=1800)
+        segs.append(main)
+        if facts_s:
+            facts_card(str(wd / "facts.png"), W, H, brand, cfg["facts_title"], facts, still)
+            segs.append(_card_segment(str(wd / "facts.png"), facts_s, str(wd / "s2_facts.mp4"), crf, preset))
+        boxes["end_card"] = end_card(str(wd / "end.png"), W, H, brand)
+        segs.append(_card_segment(str(wd / "end.png"), CARD_SECS, str(wd / "s3_end.mp4"), crf, preset))
+        lst = wd / "segments.txt"
+        lst.write_text("".join(f"file '{Path(s).resolve()}'\n" for s in segs))
+        video = str(wd / "video.mp4")
+        ff.run(["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", video], timeout=300)
 
-        args, fc = _graph(source, images, preset_cfg, W, H, panel, c0, D, cover_s, facts_s, total, ov_path, cards,
-                          ass_path, burned_subs, has_a and not silent, wav, sw, sh, brand)
+        mood = cfg["music"] if music_mood == "auto" else music_mood
+        wav = music.make(str(wd / "music.wav"), total + 0.5, mood) if mood != "none" else None
         outp = Path(out)
         outp.parent.mkdir(parents=True, exist_ok=True)
-        cmd = ["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-t", f"{total:.3f}",
-               "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-r", str(FPS),
-               "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-movflags", "+faststart", str(outp)]
-        (wd / "ffmpeg_args.json").write_text(json.dumps(cmd, indent=0))
-        ff.run(cmd, timeout=1800)
+        _mux_audio(video, source if (source and not silent) else None, c0, D, cover_s, total, wav, str(outp))
         got = ff.probe(str(outp))
         return {"path": str(outp), "style": style, "ratio": ratio, "width": got["width"], "height": got["height"],
                 "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), why], "boxes": boxes,
-                "safe_area": safe_area(W, H), "caption_problems": cap_problems, "burned_subs": burned_subs,
-                "music": mood if wav else "none", "source_silent": silent, "cover_secs": cover_s, "facts_secs": facts_s,
-                "credit": credit}
+                "layout": {k: v for k, v in L.items()}, "safe_area": safe_area(W, H), "caption_problems": cap_problems,
+                "captions": caps_on, "burned_subs": burned_subs, "music": mood if wav else "none", "source_silent": silent,
+                "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit}
     finally:
         if own:
             shutil.rmtree(wd, ignore_errors=True)
 
 
-def _graph(source, images, cfg, W, H, panel, c0, D, cover_s, facts_s, total, ov_path, cards, ass_path, burned_subs,
-           speech, wav, sw, sh, brand):
-    """FFmpeg inputs + one filter graph: [cover] + [main] + [facts] + [end] video, and the audio mix."""
+def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand):
     args: list[str] = []
     n = 0
-    vin = None
     if source:
         args += ["-ss", f"{c0:.3f}", "-t", f"{D:.3f}", "-i", source]
-        vin, n = n, n + 1
+        n = 1
     else:
-        for p in images or []:
-            args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D / max(1, len(images)):.3f}", "-i", p]
-        n += len(images or [])
+        for p in images:
+            args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D / len(images):.3f}", "-i", p]
+        n = len(images)
     ov_i = n
     args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", str(ov_path)]
-    n += 1
-    idx = {}
-    for k in ("cover", "facts", "end"):
-        if k in cards:
-            secs = {"cover": cover_s, "facts": facts_s, "end": CARD_SECS}[k]
-            args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{secs:.3f}", "-i", cards[k]]
-            idx[k], n = n, n + 1
-    wav_i = None
-    if wav:
-        args += ["-i", wav]
-        wav_i, n = n, n + 1
-    args += ["-f", "lavfi", "-t", f"{total:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
-    sil_i, n = n, n + 1
-
     bg = brand["bg"].lstrip("#")
-    parts = []
     px0, py0, px1, py1 = panel
     pw, ph = px1 - px0, py1 - py0
+    parts = []
     if source:
-        src = f"[{vin}:v]setpts=PTS-STARTPTS,fps={FPS},setsar=1"
-        if burned_subs:  # crop the burned-in subtitle band away so captions never double up
-            src += ",crop=iw:ih*0.84:0:0"
+        src = f"[0:v]setpts=PTS-STARTPTS,fps={FPS},setsar=1"
+        if burned_subs and cfg["fill"] == "fill":  # crop the burned-in subtitle band so captions never double up
+            src += ",crop=iw:trunc(ih*0.84/2)*2:0:0"
         if cfg["fill"] == "fill":
             parts.append(f"{src},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}[base]")
         elif cfg["fill"] == "blurpanel":
-            parts.append(f"{src},split[s1][s2];[s1]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,"
-                         f"crop={W // 4}:{H // 4},gblur=sigma=12,scale={W}:{H},eq=brightness=-0.18:saturation=0.8[bgv];"
+            parts.append(f"{src},split[s1][s2];[s1]scale={W // 8}:{H // 8}:force_original_aspect_ratio=increase,"
+                         f"crop={W // 8}:{H // 8},gblur=sigma=6,scale={W}:{H},eq=brightness=-0.16:saturation=0.85[bgv];"
                          f"[s2]scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph}[pv];"
                          f"[bgv][pv]overlay={px0}:{py0}[base]")
-        else:  # panel on the brand ground
+        else:
             parts.append(f"color=c=0x{bg}:s={W}x{H}:r={FPS}:d={D:.3f}[bgc];{src},scale={pw}:{ph}:"
                          f"force_original_aspect_ratio=increase,crop={pw}:{ph}[pv];[bgc][pv]overlay={px0}:{py0}:shortest=1[base]")
-    else:  # slideshow with a slow push-in per image
-        k = len(images or [])
-        per = D / max(1, k)
+    else:
         segs = []
-        for i in range(k):
-            fr = int(per * FPS)
-            parts.append(f"[{i}:v]scale={W * 2}:{H * 2}:force_original_aspect_ratio=increase,crop={W * 2}:{H * 2},"
-                         f"zoompan=z='min(1.0+0.0009*on,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={fr}:s={W}x{H}:fps={FPS},"
-                         f"setsar=1[k{i}]")
+        for i in range(len(images)):
+            fr = max(1, int(D / len(images) * FPS))
+            parts.append(f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,"
+                         f"scale={int(W * 1.12) // 2 * 2}:-2,zoompan=z='min(1+0.0012*on,1.1)':x='iw/2-(iw/zoom/2)':"
+                         f"y='ih/2-(ih/zoom/2)':d={fr}:s={W}x{H}:fps={FPS}[k{i}]")
             segs.append(f"[k{i}]")
-        parts.append(f"{''.join(segs)}concat=n={k}:v=1:a=0[base]")
+        parts.append(f"{''.join(segs)}concat=n={len(images)}:v=1:a=0[base]")
     chain = f"[base][{ov_i}:v]overlay=0:0:shortest=1"
     if cfg.get("flash") and source:
-        chain += ",fade=t=in:st=0:d=0.18:color=white"
+        chain += ",fade=t=in:st=0:d=0.2:color=white"
     if ass_path:
         fontsdir = str(Path(__file__).resolve().parent.parent / "fonts")
         chain += f",ass='{_esc(str(ass_path))}':fontsdir='{_esc(fontsdir)}'"
-    chain += f",format=yuv420p,setsar=1[main]"
-    parts.append(chain)
-    order = []
-    for k in ("cover",):
-        if k in idx:
-            parts.append(f"[{idx[k]}:v]fps={FPS},format=yuv420p,setsar=1[c_{k}]")
-            order.append(f"[c_{k}]")
-    order.append("[main]")
-    for k in ("facts", "end"):
-        if k in idx:
-            parts.append(f"[{idx[k]}:v]fps={FPS},fade=t=in:st=0:d=0.25,format=yuv420p,setsar=1[c_{k}]")
-            order.append(f"[c_{k}]")
-    parts.append(f"{''.join(order)}concat=n={len(order)}:v=1:a=0[v]")
-
-    # audio
-    if source and speech:
-        d_ms = int(cover_s * 1000)
-        parts.append(f"[{vin}:a]asetpts=PTS-STARTPTS,aresample=44100,aformat=channel_layouts=stereo,"
-                     f"afade=t=out:st={max(0.0, D - 0.5):.3f}:d=0.5,adelay={d_ms}|{d_ms},apad,atrim=0:{total:.3f}[sp]")
-        if wav_i is not None:
-            parts.append(f"[{wav_i}:a]atrim=0:{total:.3f},volume=0.55[mu];[sp]asplit[sp1][sp2];"
-                         f"[mu][sp1]sidechaincompress=threshold=0.02:ratio=12:attack=15:release=350[duck];"
-                         f"[sp2][duck]amix=inputs=2:weights='1 0.35':normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
-        else:
-            parts.append("[sp]loudnorm=I=-14:TP=-1.5:LRA=11[a]")
-    elif wav_i is not None:
-        parts.append(f"[{wav_i}:a]atrim=0:{total:.3f},loudnorm=I=-16:TP=-1.5:LRA=11[a]")
-    else:
-        parts.append(f"[{sil_i}:a]anull[a]")
+    parts.append(chain + ",format=yuv420p,setsar=1[v]")
     return args, ";".join(parts)
 
 
-def _esc(p: str) -> str:
-    return p.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+def _mux_audio(video: str, speech_src: str | None, c0: float, D: float, cover_s: float, total: float, wav: str | None,
+               out: str) -> None:
+    """Final pass: copy the joined video, build the audio (real sound first, music ducked under it), -14 LUFS."""
+    args = ["-y", "-v", "error", "-i", video]
+    parts = []
+    n = 1
+    if speech_src:
+        args += ["-ss", f"{c0:.3f}", "-t", f"{D:.3f}", "-i", speech_src]
+        sp_i, n = n, n + 1
+        d_ms = int(cover_s * 1000)
+        parts.append(f"[{sp_i}:a]asetpts=PTS-STARTPTS,aresample=44100,aformat=channel_layouts=stereo,"
+                     f"afade=t=out:st={max(0.0, D - 0.4):.3f}:d=0.4,adelay={d_ms}|{d_ms},apad,atrim=0:{total:.3f}[sp]")
+    if wav:
+        args += ["-i", wav]
+        mu_i, n = n, n + 1
+    if speech_src and wav:
+        parts.append(f"[{mu_i}:a]atrim=0:{total:.3f},volume=0.5[mu];[sp]asplit[sp1][sp2];"
+                     f"[mu][sp1]sidechaincompress=threshold=0.015:ratio=14:attack=10:release=400[duck];"
+                     f"[sp2][duck]amix=inputs=2:weights='1 0.3':normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+    elif speech_src:
+        parts.append("[sp]loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+    elif wav:
+        parts.append(f"[{mu_i}:a]atrim=0:{total:.3f},loudnorm=I=-16:TP=-1.5:LRA=11[a]")
+    else:
+        args += ["-f", "lavfi", "-t", f"{total:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
+        parts.append(f"[{n}:a]anull[a]")
+    ff.run([*args, "-filter_complex", ";".join(parts), "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
+            "-b:a", "160k", "-ar", "44100", "-t", f"{total:.3f}", "-movflags", "+faststart", out], timeout=900)
