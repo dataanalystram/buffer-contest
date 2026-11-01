@@ -1,0 +1,7 @@
+# Media agent extras (studio/media, docs/MEDIA_PIPELINE.md). Only the video worker needs these; the web app imports
+# studio.media without them. Licences: yt-dlp Unlicense, faster-whisper MIT (models MIT), numpy BSD-3,
+# imageio-ffmpeg BSD-2 (its bundled ffmpeg binary is GPLv3, used as a separate program).
+yt-dlp>=2026.10.26
+faster-whisper>=1.2.1
+numpy>=2.0
+imageio-ffmpeg>=0.7.0

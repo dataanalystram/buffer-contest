@@ -788,6 +788,15 @@ class House:
                 return m["data"] if m else None
             b = templates.Brand(spec["kit"], logo, _b(spec.get("front")), _b(spec.get("end")))
             return templates.video(spec["template"], spec.get("data"), b, spec.get("ratio", "9:16")), {"type": "video", "template": spec["template"]}
+        if spec["kind"] == "media_render":  # studio.media styled edit (docs/MEDIA_PIPELINE.md); off the hosted app only
+            from .media.worker import render_job
+            base = self.s.public_url.rstrip("/") + "/m/"
+            urls = {"source": base + spec["source"] if spec.get("source") else "", "slides": [base + t for t in spec.get("slides", [])]}
+
+            def _get(u):
+                m = self.get_media(u[len(base):]) if u.startswith(base) else None
+                return m["data"] if m else None
+            return render_job(spec, _get, urls=urls, logo=logo, http=self.http)
         if spec["kind"] == "brand_video":
             return render.brand_video(self.get_media(spec["source"])["data"], spec["kit"], spec["params"], logo=logo,
                                       hook=spec.get("hook", ""), ratio=spec.get("ratio", "9:16"))

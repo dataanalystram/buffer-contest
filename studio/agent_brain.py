@@ -41,6 +41,10 @@ using ONLY the tools. Rules:
   so this post already follows them.
 - Brand changes -> edit_brand. One channel's change ("YouTube at 30s", "LinkedIn more formal") -> edit_channel_media or
   write_captions for that channel only.
+- Video edits: when the person asks for a style of video ("short punchy explainer", "opus clip", "hype", "calm tutorial") or the
+  story is a launch/demo, call find_media, then render_reel with style (opus | news | minimal | hype). If render_reel returns
+  needs_confirmation, finish and ask the person its question; when they say yes, call render_reel again with
+  rights_confirmed true. No video at all: generate_images, then render_reel with a style.
 - Always call write_captions, then check (it builds the packages), then finish with one or two sentences.
 - save_buffer_drafts only when the person asked for drafts or to put it in Buffer."""
 
@@ -305,10 +309,15 @@ class Brain:
     def _renders(self, a, rid, tools, run, only: list[str] | None = None):
         g = self._formats(run)
         sec = run["input"]["intake"].get("seconds")
+        from .media import styles as media_styles
+        style = media_styles.explicit(run["input"].get("prompt") or "")  # only when the person named a look
+        if style and g["reel"]:
+            self.call(a, rid, tools, "find_media", {})
         for f, tool in (("carousel", "render_carousel"), ("photo", "render_cover"), ("reel", "render_reel")):
             ids = [i for i in g[f] if not only or i in only]
             if ids:
-                self.call(a, rid, tools, tool, {"channel_ids": ids, **({"seconds": sec} if f == "reel" and sec else {})})
+                extra = {**({"seconds": sec} if f == "reel" and sec else {}), **({"style": style} if f == "reel" and style else {})}
+                self.call(a, rid, tools, tool, {"channel_ids": ids, **extra})
 
     def _planner(self, a, rid, tools: Tools, message: str | None, engs: list[dict]):
         run = self.h.run(a, rid)
