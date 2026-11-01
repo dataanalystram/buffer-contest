@@ -20,5 +20,5 @@ window.hqPager = function (el, o) {
 };
 // a story picture through our own server (studio/thumbs.py); the caller shows the favicon monogram on error
 // The free sample never makes the server fetch anything (SECURITY_RULES 3): it shows the feed's own picture, if any.
-window.hqThumb = (url, img) => (window.S && S.session && S.session.demo ? (img || "data:,")
+window.hqThumb = (url, img) => (typeof S !== "undefined" && S.session && S.session.demo ? (img || "data:,")
   : `/api/thumb?url=${encodeURIComponent(url || "")}${img ? "&img=" + encodeURIComponent(img) : ""}`);
