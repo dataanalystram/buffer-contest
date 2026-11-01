@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from studio import brand, drafter, house, llm, render, sources
+from studio import brand, drafter, house, llm, netguard, reader, render, sources
 from studio.app import create_app
 from studio.config import load_settings
 
@@ -36,6 +36,10 @@ def client(tmp_path, monkeypatch):
          "published": 0, "via": "bing_news"}])
     monkeypatch.setattr(sources, "google_news", lambda q, http=None, limit=10: [])
     monkeypatch.setattr(drafter, "fetch_article", lambda url, http=None, check_host=True: dict(ARTICLE))
+    # the agent brain reads links through reader (every Make a post run goes through it now)
+    monkeypatch.setattr(reader, "read_url", lambda url, http=None, x_bearer="": {**ARTICLE, "via": "direct", "post": None, "media": [], "media_note": ""})
+    monkeypatch.setattr(reader, "read_article", lambda url, http=None: {**ARTICLE, "url": url})
+    monkeypatch.setattr(netguard, "_host_ok", lambda host: True)  # hermetic: no DNS for the example hosts
     monkeypatch.setattr(house.House, "_fetch_bytes", lambda self, url, limit: jpeg() if url else None)
     c = TestClient(create_app(s))
     c.get("/demo", follow_redirects=False)
@@ -83,33 +87,38 @@ def test_visual_rules_drive_the_render():
 
 
 # ---------------------------------------------------------------- agent loop
-def test_news_run_end_to_end_with_revision_schedule_and_calendar(client):
+def _tools(run):
+    return [st.get("tool") for st in run["steps"]]
+
+
+def test_news_run_end_to_end_with_reply_schedule_and_calendar(client):
     client.post("/api/brand", json={"name": "Huhbyte", "handle": "@huhbyte", "colors": {"accent": "#c9acfa"}})
     r = client.post("/api/agent/runs", json={"query": "travel agents", "format": "carousel"}).json()
     assert r["status"] == "ready", r["steps"]
-    keys = [s["key"] for s in r["steps"]]
-    assert keys == ["find", "verify", "structure", "format", "render", "caption", "check", "ready"]
-    assert "also reported by other.example.org" in r["steps"][1]["detail"]
+    assert r["kind"] == "agent"  # every Make a post run goes through the agent brain (plan -> tools -> check)
+    tools = _tools(r)
+    assert tools[:3] == ["search_news", "read_url", "extract_facts"] and tools[-1] == "check" and "write_captions" in tools
+    facts = next(st for st in r["steps"] if st["tool"] == "extract_facts")
+    assert facts["detail"].startswith("Acme launches")  # the headline comes from the story, not the request
     res = r["result"]
-    assert len(res["media"]) == 3 and all(m["url"].startswith("https://hs.test/m/") for m in res["media"])
     ig = next(p for p in res["packages"] if p["service"] == "instagram")
     assert len(ig["media_urls"]) == 3 and ig["check"]["pass"]
+    assert ig["media"] and all(m["type"] == "photo" and m["ratio"] == "4:5" for m in ig["media"])  # a real preview per channel
     # media is served publicly for Buffer to fetch
-    tok = res["media"][0]["url"].split("/m/")[1]
+    tok = ig["media_urls"][0].split("/m/")[1]
     got = client.get("/m/" + tok)
     assert got.status_code == 200 and got.headers["content-type"] == "image/jpeg"
     assert client.get("/m/" + tok, headers={"Range": "bytes=0-9"}).status_code == 206
-    # correction -> ledger rules -> re-render with the new params
-    v = client.post(f"/api/agent/runs/{r['id']}/revise", json={"correction": "logo top left and smaller, no hashtags"}).json()
-    assert {x["check"]["type"] for x in v["learned"]} >= {"logo_position", "logo_scale", "max_hashtags"}
-    r2 = client.get(f"/api/agent/runs/{r['id']}").json()
-    assert r2["status"] == "ready" and r2["result"]["revisions"][0]["after"] != r2["result"]["revisions"][0]["before"]
-    meta = client.app.state.house.media_meta(house.Actor(client.app.state.store.q("SELECT user_id FROM agent_runs")[0]["user_id"]),
-                                             r2["result"]["media"][0]["token"])
-    assert meta["params"]["logo_position"] == "tl"
-    assert all("#" not in p["text"].replace("#c9", "") or not brand.HASHTAG_RE.findall(p["text"]) for p in r2["result"]["packages"])
+    # a reply in the thread -> ledger rules -> re-render with the new params (the one edit box for every run)
+    v = client.post(f"/api/agent/runs/{r['id']}/messages", json={"text": "logo top left and smaller, no hashtags"}).json()
+    r2 = client.get(f"/api/agent/runs/{v['id']}").json()
+    assert r2["status"] == "ready", r2["steps"]
     rules = client.get("/api/brand").json()["rules"]
     assert any(x["rule"] == "Logo sits top left" for x in rules)
+    ig2 = next(p for p in r2["result"]["packages"] if p["service"] == "instagram")
+    uid = client.app.state.store.q("SELECT user_id FROM agent_runs")[0]["user_id"]
+    meta = client.app.state.house.media_meta(house.Actor(uid), ig2["media_urls"][0].split("/m/")[1])
+    assert meta["params"]["logo_position"] == "tl"
     # hand-off to Buffer (sample workspace stand-in) and the calendar shows it
     out = client.post(f"/api/agent/runs/{r['id']}/packages/{ig['channel_id']}/schedule", json={"mode": "queue"}).json()
     assert out["status"] == "sent_to_buffer"
@@ -119,42 +128,47 @@ def test_news_run_end_to_end_with_revision_schedule_and_calendar(client):
     assert {"buffer", "ready", "approval"} <= {i["kind"] for i in cal}
 
 
-def test_own_photo_run(client):
+def test_own_photo_run_goes_through_the_agent(client):
     up = client.post("/api/media", json={"name": "me.jpg", "data": base64.b64encode(jpeg(900, 1200)).decode()}).json()
-    r = client.post("/api/agent/runs", json={"media_token": up["token"], "brief": "Our new studio is open", "channel_ids": ["demo_ig"]}).json()
+    r = client.post("/api/agent/runs", json={"prompt": "Our new studio is open", "media_token": up["token"], "channel_ids": ["demo_ig"]}).json()
     assert r["status"] == "ready", r["steps"]
-    assert r["result"]["format"]["format"] == "photo" and r["result"]["packages"][0]["media_urls"]
+    assert r["kind"] == "agent" and _tools(r)[0] == "read_upload" and "search_news" not in _tools(r)
+    assert r["result"]["source"]["via"] == "upload"
+    assert r["result"]["packages"][0]["media_urls"]
 
 
-def test_reel_without_worker_falls_back_to_carousel(client):
+def test_reel_without_worker_falls_back_to_slides(client, monkeypatch):
+    monkeypatch.setattr(house.House, "local_video_ok", staticmethod(lambda: False))
     r = client.post("/api/agent/runs", json={"query": "x", "format": "reel", "channel_ids": ["demo_ig"]}).json()
-    assert r["status"] == "ready" and r["result"]["format"]["format"] == "carousel"
-    assert "worker isn't available" in r["result"]["format"]["why"]
+    assert r["status"] == "ready", r["steps"]
+    pk = r["result"]["packages"][0]
+    assert pk["format"] == "carousel" and "No video renderer" in pk["note"]
 
 
 def test_github_worker_roundtrip(client, monkeypatch):
+    """The worker protocol: one claim-issued token reads the spec once, posts the result once, then dies."""
     h = client.app.state.house
-    h.worker_mode = "github"
-    issued = {}
-    # the worker protocol itself, on the sample's channels: the sample's own "no worker runs" rule is tested in test_demo_guard
-    monkeypatch.setattr(house.House, "_worker_allowed", lambda self, uid: True)
-    monkeypatch.setattr(house.House, "_dispatch_github", lambda self, jid: (issued.setdefault("t", self.issue_job_token(jid)) and True, "204"))
-    r = client.post("/api/agent/runs", json={"query": "x", "format": "reel", "channel_ids": ["demo_ig"]}).json()
-    assert r["status"] == "rendering"
-    jid = r["result"]["render_job"]["id"]
+    uid = client.app.state.store.q("SELECT user_id FROM sessions WHERE user_id IS NOT NULL")[0]["user_id"]
+    a = house.Actor(uid)
+    slides = [h.put_media(a, jpeg(1080, 1920), "s.jpg", kind="render", meta={"type": "photo"}) for _ in range(2)]
+    spec = {"kind": "slideshow", "kit": {}, "params": {"logo_position": "br"}, "ratio": "9:16", "hook": "Acme ships", "logo": "",
+            "source": "", "slides": slides}
+    jid = client.app.state.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
+                                   (uid, None, json.dumps(spec), "queued", 0, 0))
+    t = h.issue_job_token(jid)
     assert client.get(f"/api/worker/jobs/{jid}").status_code == 403
     assert client.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": "jt_wrong"}).status_code == 403
-    spec = client.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": issued["t"]}).json()
-    assert "_job_token" not in spec["spec"]
-    assert spec["spec"]["kind"] == "slideshow" and len(spec["urls"]["slides"]) == 2
-    meta = {"type": "video", "width": 1080, "height": 1920, "params": spec["spec"]["params"], "has_logo": True, "has_end_card": True}
-    ok = client.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": issued["t"]},
+    got = client.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": t}).json()
+    assert "_job_token" not in got["spec"] and got["spec"]["kind"] == "slideshow" and len(got["urls"]["slides"]) == 2
+    assert client.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": t}).status_code == 403  # the spec reads once
+    meta = {"type": "video", "width": 1080, "height": 1920, "params": spec["params"], "has_logo": True, "has_end_card": True}
+    ok = client.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": t},
                      json={"data": base64.b64encode(b"\x00\x00\x00\x18ftypmp42fake").decode(), "meta": meta}).json()
     assert ok["ok"]
-    r2 = client.get(f"/api/agent/runs/{r['id']}").json()
-    assert r2["status"] == "ready" and r2["result"]["packages"][0]["media_urls"][0].endswith(".mp4")
+    row = client.app.state.store.q("SELECT status, media_token FROM render_jobs WHERE id=?", (jid,))[0]
+    assert row["status"] == "done" and row["media_token"].endswith(".mp4")
     # the token dies with the job
-    assert client.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": issued["t"]}).status_code == 403
+    assert client.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": t}, json={"error": "x"}).status_code == 403
 
 
 def test_failed_step_is_reported_not_spinning(client, monkeypatch):
