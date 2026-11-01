@@ -500,7 +500,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         except thumbs.ThumbError as e:
             return JSONResponse({"error": str(e)}, status_code=e.status)
         if not data:
-            return JSONResponse({"error": "no image"}, status_code=404, headers={"Cache-Control": "private, max-age=3600"})
+            return Response(status_code=204, headers={"Cache-Control": "private, max-age=3600"})  # no picture: the page shows the favicon
         return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
 
     @app.get("/api/radar")

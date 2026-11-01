@@ -365,7 +365,7 @@ _DESC = {
     "GET /api/takes": "Your One take runs", "POST /api/takes": "Start a One take: one long video into clips",
     "POST /api/takes/sample": "Run One take on the sample talk", "GET /api/takes/{rid}": "One take run with its clips",
     "PATCH /api/takes/{rid}/clips/{clip_id}": "Adjust a clip's start, end or caption", "POST /api/takes/{rid}/place": "Place the clips into your Buffer week",
-    "GET /api/thumb": "A story picture (og:image read and re-encoded server-side, cached); 404 means use the favicon", "GET /api/radar": "The For you news feed", "POST /api/radar/feeds": "Follow a feed", "DELETE /api/radar/feeds/{feed_id}": "Unfollow a feed",
+    "GET /api/thumb": "A story picture (og:image read and re-encoded server-side, cached); 204 means no picture, use the favicon", "GET /api/radar": "The For you news feed", "POST /api/radar/feeds": "Follow a feed", "DELETE /api/radar/feeds/{feed_id}": "Unfollow a feed",
     "GET /api/sources": "Story scan sources and settings", "POST /api/sources/draft": "Write posts for the picked stories",
     "GET /api/sources/runs/{rid}": "One story scan run", "POST /api/sources/scan": "Scan every source you turned on",
     "POST /api/sources/settings": "Turn sources on or off", "GET /api/brand": "Your brand kit and Style Ledger rules", "POST /api/brand": "Save your brand kit",

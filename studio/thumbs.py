@@ -3,7 +3,7 @@
 The browser never fetches a third-party page or image: ``GET /api/thumb?url=<story>&img=<hint>`` reads the story's
 og:image / twitter:image (or the feed's own image hint) server-side through netguard (no auto-redirects, every hop
 re-checked against private / loopback / link-local / metadata ranges, bytes capped: SECURITY_RULES 1 and 6), shrinks it
-to a 640x360 JPEG with Pillow (so the bytes we serve are always ours) and caches it. No image -> 404, and the page shows
+to a 640x360 JPEG with Pillow (so the bytes we serve are always ours) and caches it. No image -> 204, and the page shows
 the site's favicon monogram instead. Per-account rate limit; the free sample gets a smaller one (SECURITY_RULES 3).
 """
 from __future__ import annotations
