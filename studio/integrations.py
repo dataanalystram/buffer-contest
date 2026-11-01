@@ -25,7 +25,7 @@ import os
 import re
 import secrets
 import time
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 
 import httpx
 
@@ -290,7 +290,7 @@ background:{'#1f3d2b' if ok else '#3d2a1f'};color:{'#6ee7a0' if ok else '#ffb37a
 code{{background:#24242b;padding:2px 6px;border-radius:6px;word-break:break-all}} a.btn{{display:inline-block;margin-top:16px;padding:10px 16px;border-radius:10px;
 background:#ff5a1f;color:#fff;text-decoration:none;font-weight:600}} .muted{{color:#a6a6b0;font-size:14px}}</style></head>
 <body><main data-testid="ph-callback"><div class="mark" aria-hidden="true">{'✓' if ok else '!'}</div><h1>{t}</h1>{b}
-<a class="btn" href="/app?tab=settings#integrations" data-testid="ph-callback-settings">Open Settings → Integrations</a></main></body></html>"""
+<a class="btn" href="/?tab=settings&amp;sub=integrations" data-testid="ph-callback-settings">Open Settings → Integrations</a></main></body></html>"""
 
 
 def created_body(redirect_uri: str) -> str:
@@ -303,9 +303,95 @@ def created_body(redirect_uri: str) -> str:
             f"<p class=\"muted\">The Redirect URI for your application is <code>{html.escape(redirect_uri)}</code>.</p>")
 
 
-def safe_host(url: str) -> str:
-    return (urlparse(url).hostname or "").lower()
-
-
 def new_state() -> str:
     return secrets.token_urlsafe(24)
+
+
+# ================================================================================================ routes
+STATE_COOKIE = "hq_ph_state"
+STATE_TTL = 600
+
+
+def add_routes(app, house, actor, cookie_name: str, public_url: str, secure_cookies: bool = True) -> Integrations:
+    """REST for the cards (person-only) and the two Product Hunt browser routes. Registered from app.create_app."""
+    import secrets as _secrets
+
+    from fastapi import Body, Request
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    from .actions import ActionError
+
+    integ = Integrations(house, public_url)
+    house.integrations = integ
+    store = house.store
+
+    def call(fn, *args):
+        try:
+            return fn(*args)
+        except IntegrationError as e:
+            raise ActionError(str(e), e.status)
+
+    @app.get("/api/integrations")
+    def integ_list(request: Request):
+        return integ.view(actor(request))
+
+    @app.post("/api/integrations/{key}")
+    def integ_save(key: str, request: Request, body: dict = Body(default={})):
+        return call(integ.save, actor(request, write=True), key, body)
+
+    @app.post("/api/integrations/{key}/test")
+    def integ_test(key: str, request: Request, body: dict = Body(default={})):
+        return call(integ.test, actor(request, write=True), key, body)
+
+    @app.delete("/api/integrations/{key}")
+    def integ_remove(key: str, request: Request):
+        return call(integ.remove, actor(request, write=True), key)
+
+    def _uid(request: Request) -> str:
+        sess = store.session(request.cookies.get(cookie_name))
+        uid = (sess or {}).get("user_id") or ""
+        return uid if uid and store.user(uid) else ""
+
+    def _page(title: str, body: str, ok: bool = True, status: int = 200) -> HTMLResponse:
+        r = HTMLResponse(callback_page(title, body, ok), status_code=status)
+        r.headers["Cache-Control"] = "no-store"
+        r.headers["X-Robots-Tag"] = "noindex"
+        return r
+
+    @app.get(PH_CONNECT_PATH, include_in_schema=False)
+    def ph_connect(request: Request):
+        uid = _uid(request)
+        if not uid:
+            return _page("Sign in first", "<p>Open HuhQueue and connect your Buffer account, then try again from Settings → Integrations.</p>", False, 401)
+        if not integ.ph_configured() or demo_guard.is_demo(uid):
+            return _page("Use your Developer Token", created_body(integ.cards["ph"]["redirect_uri"]), True)
+        nonce = new_state()
+        resp = RedirectResponse(integ.ph_authorize_url(nonce), 302)
+        resp.set_cookie(STATE_COOKIE, store.seal({"n": nonce, "uid": uid, "exp": time.time() + STATE_TTL}), max_age=STATE_TTL,
+                        httponly=True, secure=secure_cookies, samesite="lax", path="/integrations/producthunt")
+        return resp
+
+    @app.get(PH_CALLBACK_PATH, include_in_schema=False)
+    def ph_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+        redirect_uri = integ.cards["ph"]["redirect_uri"]
+        if error:
+            return _page("Product Hunt didn't connect", f"<p>Product Hunt answered: {html.escape(error[:80])}. You can still paste your "
+                         "Developer Token in Settings → Integrations.</p>" + created_body(redirect_uri), False)
+        if not code:
+            return _page("Product Hunt app created", created_body(redirect_uri))
+        uid = _uid(request)
+        pending = store.unseal(request.cookies.get(STATE_COOKIE)) or {}
+        valid = (bool(uid) and bool(state) and pending.get("uid") == uid and float(pending.get("exp") or 0) > time.time()
+                 and _secrets.compare_digest(str(pending.get("n") or ""), state))
+        if not valid or not integ.ph_configured():
+            if uid:
+                store.audit(uid, "system", "integration_failed", "auth", {"integration": "ph", "reason": "state mismatch or not configured"}, ok=False)
+            r = _page("Almost there", "<p>This sign-in didn't start from your HuhQueue session, so it wasn't used.</p>" + created_body(redirect_uri), False)
+        else:
+            ok, msg = integ.ph_exchange(uid, code)
+            r = _page("Product Hunt connected" if ok else "Product Hunt didn't connect",
+                      f"<p>{html.escape(msg)}</p>" + ("<p>Today's launches now show up in News → Sources.</p>" if ok else created_body(redirect_uri)), ok)
+        r.delete_cookie(STATE_COOKIE, path="/integrations/producthunt")
+        return r
+
+    return integ
