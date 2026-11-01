@@ -149,3 +149,19 @@ def test_theme_gallery_assets_exist_for_every_look():
     d = Path("studio/static/themes")
     missing = [t for t in styles.ALL_IDS if not ((d / f"{t}.jpg").exists() and (d / f"{t}.mp4").exists())]
     assert not missing, f"run scripts/theme_shots.py --gallery for {missing}"
+
+
+def test_weekly_recap_template_is_the_recap_look(tmp_path):
+    """The HuhByte weekly_recap template registers with the longform recap (studio/media/recap.py RecapLayout) and draws
+    its cover and closing card at exactly the recap's frame sizes; story overlays keep the base layout."""
+    from studio.media import recap
+    lay = recap.layout_for(None)
+    assert lay.name == "huhbyte_weekly_recap" and recap.layout_for("minimal").name == "minimal"
+    still = Image.new("RGB", (1280, 720), (90, 60, 40))
+    for W, H in recap.SIZES.values():
+        cov, fol = tmp_path / f"c{H}.png", tmp_path / f"f{H}.png"
+        assert lay.cover(str(cov), W, H, compose.DEFAULT_BRAND, recap.COVER_TEXT, still)["template"] == "weekly_recap"
+        lay.follow(str(fol), W, H, compose.DEFAULT_BRAND)
+        for p in (cov, fol):
+            im = Image.open(p)
+            assert im.size == (W, H) and im.convert("L").getextrema()[1] > 60  # the right frame, never a blank card

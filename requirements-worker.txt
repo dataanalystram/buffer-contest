@@ -1,5 +1,5 @@
 # One take video worker (GitHub Actions `take.yml`, or a self-hosted box with FFmpeg). Not installed on the web dyno.
-# Licences: faster-whisper MIT, scenedetect BSD-3-Clause, mediapipe Apache-2.0, httpx BSD-3-Clause, Pillow MIT-CMU (HPND).
+# Licences: yt-dlp Unlicense (YouTube/Vimeo/X posts + their captions), faster-whisper MIT, scenedetect BSD-3-Clause, mediapipe Apache-2.0, httpx BSD-3-Clause, Pillow MIT-CMU (HPND).
 httpx>=0.27
 pillow>=11.3.0
 fonttools>=4.60.2
@@ -7,3 +7,4 @@ numpy>=1.26
 faster-whisper>=1.1
 scenedetect>=0.6.4
 mediapipe>=0.10.14
+yt-dlp>=2026.10.26

@@ -25,7 +25,7 @@ jobs:
       - name: Worker dependencies
         env: {HQ_KIND: "${{ github.event.inputs.kind }}"}
         run: |
-          if [ "$HQ_KIND" = "take_analyze" ]; then pip install -q -r requirements-worker.txt; else pip install -q httpx pillow fonttools; fi
+          if [ "$HQ_KIND" = "take_analyze" ]; then pip install -q -r requirements-worker.txt; else pip install -q httpx pillow fonttools "numpy>=2.0" "yt-dlp>=2026.10.26"; fi
       - uses: actions/cache@v4
         if: github.event.inputs.kind == 'take_analyze'
         with: {path: ~/.cache/huggingface, key: whisper-small-v1}

@@ -74,6 +74,20 @@ def _pill(d: ImageDraw.ImageDraw, text: str, cx: int, y: int, brand: dict, size:
     return box
 
 
+def _outline_pill(d: ImageDraw.ImageDraw, text: str, cx: int, y: int, brand: dict, height: int = 60, maxw: int = 900) -> tuple:
+    """A quiet outlined pill (source / 'reported by' lines): accent outline, text in the brand's text colour."""
+    size = max(16, int(height * 0.42))
+    r = textfit.fit(text, "Inter-SemiBold.ttf", maxw - size * 2, height, max_size=size, min_size=14, max_lines=1)
+    f = textfit.font("Inter-SemiBold.ttf", r.size)
+    tw = f.getlength(r.lines[0])
+    pw = int(tw + r.size * 2.2)
+    box = (cx - pw // 2, y, cx + pw // 2, y + height)
+    d.rounded_rectangle(box, height // 2, fill=(0, 0, 0, 110), outline=_rgb(brand["accent"]) + (255,), width=3)
+    a, de = f.getmetrics()
+    d.text((cx - tw / 2, y + (height - (a + de)) / 2), r.lines[0], font=f, fill=_rgb(brand.get("text", "#FFFFFF")))
+    return box
+
+
 def _text_block(d, text, font_name, box, *, max_size, min_size=20, max_lines=4, fill="#FFFFFF", align="center",
                 valign="middle", upper=False, accent_words=None, accent="#C9ACFA", spacing=1.08, stroke=0):
     x0, y0, x1, y1 = box
@@ -124,6 +138,79 @@ def detect_burned_subs(src: str, duration: float, samples: int = 6) -> bool:
             if bottom > 0.005 and bottom > 2 * top + 0.002:  # tuned on the Aarush launch video (subs) vs Axonnic demos (none)
                 hits += 1
     return hits >= max(2, samples // 2)
+
+
+def _band_rows(a, lo: float = 0.55, hi: float = 0.95, thr: float = 0.06) -> tuple[float, float] | None:
+    """Rows in [lo, hi] of a greyscale frame dense with sharp vertical edges (text / a graphic bar), as (top, bottom)
+    fractions of the frame height, or None. The densest contiguous run of at least 3% of the height wins."""
+    import numpy as np
+    h, w = a.shape
+    dens = (np.abs(np.diff(a, axis=1)) > 50).mean(axis=1)
+    top_ref = float(np.median(dens[int(h * 0.05):int(h * 0.45)]))  # a busy picture has edges everywhere: not a band
+    best, run = None, None
+    for r in range(int(h * lo), int(h * hi)):
+        on = dens[r] > max(thr, 2.5 * top_ref + 0.01)
+        if on and run is None:
+            run = r
+        if (not on or r == int(h * hi) - 1) and run is not None:
+            end = r if not on else r + 1
+            if end - run >= max(3, int(h * 0.03)) and (best is None or end - run > best[1] - best[0]):
+                best = (run, end)
+            run = None
+    return (best[0] / h, best[1] / h) if best else None
+
+
+def detect_lower_third(src: str, start: float = 0.0, end: float | None = None, samples: int = 6) -> dict | None:
+    """A lower-third graphic band in the source (a name strap, a news ticker, a product caption bar): rows in the lower
+    part of most sampled frames dense with text edges, at the same height each time, far denser than the top of the
+    picture. Returns {"top", "bottom"} as fractions of the source height (min top / max bottom seen), or None.
+    Our captions are then placed above it (render_style), in every ratio."""
+    import numpy as np
+    if end is None:
+        end = ff.probe(src)["duration"]
+    span = max(0.1, end - start)
+    bands = []
+    with tempfile.TemporaryDirectory() as td:
+        for i in range(samples):
+            t = start + span * (i + 1) / (samples + 1)
+            p = Path(td) / f"l{i}.png"
+            try:
+                ff.run(["-y", "-v", "error", "-ss", f"{t:.2f}", "-i", src, "-frames:v", "1", "-vf", "scale=480:-2",
+                        "-update", "1", str(p)], timeout=60)
+            except ff.MediaError:
+                continue
+            b = _band_rows(np.asarray(Image.open(p).convert("L"), dtype=np.int16))
+            if b:
+                bands.append(b)
+    if len(bands) < max(2, samples // 3):
+        return None
+    tops = sorted(b[0] for b in bands)
+    med = tops[len(tops) // 2]
+    same = [b for b in bands if abs(b[0] - med) <= 0.05]  # a strap sits at one height; moving texture doesn't
+    if len(same) < max(2, samples // 3):
+        return None
+    return {"top": round(min(b[0] for b in same), 3), "bottom": round(max(b[1] for b in same), 3), "frames": len(same)}
+
+
+def band_in_output(band: dict, sw: int, sh: int, W: int, H: int, reframe: dict | None = None, burned_subs: bool = False) -> int | None:
+    """Where a source band's top lands in the output frame (pixels) for the full-bleed styles, or None when it is cropped
+    away. Mirrors _main_graph: the burned-subtitle crop, then track (full height), pad (fit + centre) or cover crop."""
+    top = band["top"]
+    if burned_subs:
+        if top >= 0.84:
+            return None
+        top = top / 0.84
+        sh = int(sh * 0.84)
+    mode = (reframe or {}).get("mode")
+    if mode == "track":
+        y = top * H
+    elif mode == "pad":
+        k = min(W / sw, H / sh)
+        y = (H - sh * k) / 2 + top * sh * k
+    else:
+        k = max(W / sw, H / sh)
+        y = top * sh * k - (sh * k - H) / 2
+    return int(y) if 0 < y < H else None
 
 
 def pick_clip(words: list[dict], duration: float, lo: float = 20.0, hi: float = 45.0) -> tuple[float, float, str]:
@@ -375,11 +462,14 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  images: list[str] | None = None, music_mood: str = "auto", names: list[str] | None = None,
                  burned_subs: bool | None = None, captions_mode: str = "auto", accent_words: list[str] | None = None,
                  crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
-                 brand_colors: bool = False) -> dict:
+                 brand_colors: bool = False, reframe: dict | None = None, lower_third_mode="auto") -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     ``style`` is a base style or a theme (styles.THEMES: its grade, effects, captions, cards and chrome on a base
     layout); brand_colors=True keeps the brand's accent inside a theme.
+    reframe: a crop plan for the full-bleed styles (``longform.reframe_plan`` / ``take.crop_plan``): ``track`` follows
+    the face, ``pad`` shows the whole frame over a blurred copy, anything else (or None) is the centre crop.
+    lower_third_mode: auto (detect a lower-third band and lift the captions above it) | off | a band dict.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from . import theme_cards
     from .styles import ALL_IDS, apply_palette, config, resolve
@@ -430,6 +520,20 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         if cfg.get("tall_aspect") and H / W > 1.6:  # vertical is its own layout: a square crop fills the stage
             lsw, lsh = cfg["tall_aspect"]
         L = layout(cfg["layout"], W, H, lsw, lsh, brand, hook, caps_on)
+        lower_third = None
+        if caps_on and source and cfg["fill"] == "fill" and "captions_center" in L and lower_third_mode != "off":
+            # a lower-third graphic in the source (name strap, ticker): our captions go above it, in every ratio
+            lower_third = lower_third_mode if isinstance(lower_third_mode, dict) else detect_lower_third(source, c0, c1)
+            y_band = band_in_output(lower_third, sw, sh, W, H, reframe, bool(burned_subs)) if lower_third else None
+            if y_band is not None:
+                cst = captions.STYLES[cfg["captions"]]
+                half = int(H * cst.size_frac * 1.25 * cst.max_lines / 2) + int(H * 0.02)
+                cy = min(L["captions_center"], y_band - half)
+                L["captions_center"] = max(int(H * 0.30), cy)
+                if cfg["layout"] == "hype" and "hook" in L:  # the giant first-beat hook stays clear of the lifted line
+                    hx0, hy0, hx1, hy1 = L["hook"]
+                    L["hook"] = (hx0, hy0, hx1, max(hy0 + int(H * 0.08), min(hy1, L["captions_center"] - int(H * 0.09))))
+                lower_third = {**lower_third, "out_top": y_band}
         if cfg.get("chrome"):
             ov, boxes = theme_cards.overlay(cfg, W, H, brand, hook, credit, L, acc)
         else:
@@ -471,7 +575,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
 
         main = str(wd / "s1_main.mp4")
         args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand,
-                               hook_path=hook_path, stage_path=stage_path, L=L, wd=wd)
+                               hook_path=hook_path, stage_path=stage_path, L=L, wd=wd, reframe=reframe)
         ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}",
                 *_venc(crf, preset), main], timeout=1800)
         segs.append(main)
@@ -497,7 +601,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         return {"path": str(outp), "style": style, "theme": cfg.get("theme"), "ratio": ratio, "width": got["width"], "height": got["height"],
                 "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), why], "boxes": boxes,
                 "layout": {k: v for k, v in L.items()}, "safe_area": safe_area(W, H), "caption_problems": cap_problems,
-                "captions": caps_on, "burned_subs": burned_subs, "music": mood if wav else "none", "source_silent": silent,
+                "captions": caps_on, "burned_subs": burned_subs, "lower_third": lower_third,
+                "captions_center": L.get("captions_center"), "music": mood if wav else "none", "source_silent": silent,
                 "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit}
     finally:
         if own:
@@ -505,7 +610,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
 
 
 def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand, hook_path=None,
-                stage_path=None, L=None, wd=None):
+                stage_path=None, L=None, wd=None, reframe=None):
     args: list[str] = []
     n = 0
     if source:
@@ -540,7 +645,15 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
         src = f"[0:v]setpts=PTS-STARTPTS,fps={FPS},setsar=1"
         if burned_subs and cfg["fill"] == "fill":  # crop the burned-in subtitle band so captions never double up
             src += ",crop=iw:trunc(ih*0.84/2)*2:0:0"
-        if cfg["fill"] == "fill":
+        mode = (reframe or {}).get("mode")
+        if cfg["fill"] == "fill" and mode == "track":  # subject-aware: the crop window follows the face (take.crop_plan)
+            from ..take import crop_expr
+            parts.append(f"{src},crop={int(reframe['crop_w'])}:ih:x='{crop_expr(reframe)}':y=0,scale={W}:{H},setsar=1{look}[base]")
+        elif cfg["fill"] == "fill" and mode == "pad":  # no one on camera: the whole frame over a blurred copy of itself
+            parts.append(f"{src},split[s1][s2];[s1]scale={W // 8}:{H // 8}:force_original_aspect_ratio=increase,"
+                         f"crop={W // 8}:{H // 8},gblur=sigma=6,scale={W}:{H},eq=brightness=-0.2:saturation=0.85[bgv];"
+                         f"[s2]scale={W}:{H}:force_original_aspect_ratio=decrease[fgv];[bgv][fgv]overlay=(W-w)/2:(H-h)/2{look}[base]")
+        elif cfg["fill"] == "fill":
             parts.append(f"{src},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}{look}[base]")
         elif cfg["fill"] == "blurpanel":
             parts.append(f"{src},split[s1][s2];[s1]scale={W // 8}:{H // 8}:force_original_aspect_ratio=increase,"

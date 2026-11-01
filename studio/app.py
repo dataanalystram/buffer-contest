@@ -758,6 +758,11 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "clip", clip_id):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         body = await reqlimits.read_json(request, reqlimits.WORKER_MAX)
+        if house.job_kind(jid) == "media_recap":  # the weekly recap: cover, story slides, Follow card, Reel (no cover frame)
+            try:
+                return house.on_recap_file(jid, clip_id, base64.b64decode(body["data"]), body.get("meta") or {})
+            except ActionError as e:
+                return JSONResponse({"error": str(e)}, status_code=e.status)
         return house.takes.on_clip(jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]), body.get("meta") or {})
 
     # ------------------------------------------------------------ Brand studio + Sources agent (UI = REST = MCP)

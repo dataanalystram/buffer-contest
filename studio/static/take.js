@@ -93,7 +93,8 @@ function showTake(t) {
   $("#tkHead").innerHTML = `<b>${esc(src.title || t.input.name || "Your take")}</b>`
     + (src.duration ? `<span class="muted sm">${secs(src.duration)} long</span>` : "")
     + (t.sample ? `<span class="pill sm" data-testid="take-sample-badge">Sample · ${esc(src.credit || "")}</span>` : "")
-    + (t.picked_by ? `<span class="muted sm">Moments picked by ${esc(t.picked_by)}</span>` : "");
+    + (t.picked_by ? `<span class="muted sm">Moments picked by ${esc(t.picked_by)}</span>` : "")
+    + (t.transcript_source && t.transcript_source !== "whisper" ? `<span class="pill sm" data-testid="take-captions-reused">Reused existing captions (no transcription)</span>` : "");
   const grid = $("#clipGrid");
   const clips = t.clips || [];
   if (!clips.length) {
@@ -126,6 +127,8 @@ function clipCard(c, i) {
     <div class="clip-body">
       <p class="clip-hook" data-testid="clip-hook">“${esc(c.hook)}”</p>
       <p class="muted xs clip-meta"><span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span> · ${Math.round(c.duration || 0)} s${c.layout ? ` · ${esc(LAYOUT[c.layout] || c.layout)}` : ""}${c.score != null ? ` · score ${Math.round(c.score)}` : ""}</p>
+      ${c.why ? `<p class="xs clip-why" data-testid="clip-why">${c.rank ? `<b>#${c.rank}</b> · ` : ""}Why this moment: ${esc(c.why)}</p>` : ""}
+      ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${esc(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
       ${st}
       <div class="clip-pf">${pfMini(c)}</div>
       ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${p.status === "draft" ? "Buffer draft" : "waiting for approval"}`).join("<br>")}</p>` : ""}

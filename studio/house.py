@@ -32,6 +32,7 @@ MEDIA_STEPS = [("upload", "Read your media"), ("format", "Pick the format"), ("r
 MAX_UPLOAD = 40 * 1024 * 1024
 MAX_IMAGE_FETCH = 8 * 1024 * 1024
 VIDEO_ONLY = {"tiktok", "youtube"}
+
 STALE_RUN = int(os.environ.get("HQ_RUN_STALE", "900"))  # a run silent this long (seconds) is reported as stopped
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="house-agent")
 
@@ -998,7 +999,8 @@ class House:
                 return False
             t["read"] = True
         elif use == "clip":
-            ids = {str(c.get("id")) for c in spec.get("clips") or []}
+            ids = {str(c.get("id")) for c in spec.get("clips") or []} | \
+                {str(v) for c in spec.get("clips") or [] for v in c.get("variant_ids") or []}  # other ratios of a clip
             if clip_id not in ids or clip_id in (t.get("clips") or []):
                 return False
             t["clips"] = list(t.get("clips") or []) + [clip_id]
@@ -1032,6 +1034,70 @@ class House:
                          "slides": [base + t for t in spec.get("slides", [])],
                          "front": base + spec["front"] if spec.get("front") else "", "end": base + spec["end"] if spec.get("end") else ""}}
 
+    # ---- the weekly recap (job kind media_recap): cover + one video slide per story + Follow card (4:5) and one Reel (9:16)
+    RECAP_KINDS = {"cover": ("photo", "png"), "follow": ("photo", "png"), "reel": ("video", "mp4")}
+
+    def job_kind(self, jid: int) -> str:
+        rows = self.store.q("SELECT spec FROM render_jobs WHERE id=?", (jid,))
+        return json.loads(rows[0]["spec"]).get("kind", "") if rows else ""
+
+    def on_recap_file(self, jid: int, clip_id: str, data: bytes, meta: dict | None = None) -> dict:
+        """One recap file from the worker (token-checked per file by the route). Checked to be what its id says (a PNG
+        for the cards, an MP4 for slides and the Reel) before it is stored."""
+        typ, ext = self.RECAP_KINDS.get(clip_id, ("video", "mp4"))
+        is_png = data[:8] == b"\x89PNG\r\n\x1a\n"
+        is_mp4 = len(data) > 12 and data[4:8] == b"ftyp"
+        if (ext == "png" and not is_png) or (ext == "mp4" and not is_mp4):
+            raise ActionError(f"{clip_id}: not a {ext.upper()} file.", 415)
+        rows = self.store.q("SELECT user_id, result FROM render_jobs WHERE id=?", (jid,))
+        if not rows:
+            raise ActionError("No such job.", 404)
+        m = {k: v for k, v in (meta or {}).items() if k in ("width", "height", "duration", "ratio", "credit") and
+             isinstance(v, (int, float, str))}
+        m["ratio"] = "9:16" if clip_id == "reel" else "4:5"
+        tok = self.put_media(Actor(rows[0]["user_id"]), data, f"recap_{clip_id}.{ext}", kind="render", meta={"type": typ, **m})
+        res = json.loads(rows[0]["result"] or "{}")
+        res.setdefault("files", {})[clip_id] = tok
+        self.store.x("UPDATE render_jobs SET result=?, updated=? WHERE id=?", (json.dumps(res), _now(), jid))
+        return {"ok": True, "token": tok}
+
+    def recap_media(self, jid: int) -> dict:
+        """The finished recap as agent media: {"carousel": [cover, s1..sN, follow], "reel": [reel]}."""
+        rows = self.store.q("SELECT spec, result FROM render_jobs WHERE id=?", (jid,))
+        if not rows:
+            return {}
+        files = json.loads(rows[0]["result"] or "{}").get("files") or {}
+        order = [c["id"] for c in json.loads(rows[0]["spec"]).get("clips") or [] if c["id"] != "reel"]
+
+        def item(cid):
+            typ, ext = self.RECAP_KINDS.get(cid, ("video", "mp4"))
+            return {"token": files[cid], "url": self.media_url(files[cid]), "type": typ, "name": f"recap_{cid}.{ext}"}
+        car = [item(c) for c in order if c in files]
+        return {"carousel": car if len(car) == len(order) else [], "reel": [item("reel")] if "reel" in files else []}
+
+    def render_recap_local(self, jid: int, spec: dict) -> None:
+        """Off the hosted app only (video_mode local): render the recap in this process, store it like the worker would."""
+        import shutil
+        import tempfile
+
+        from .media import tools as media_tools
+        from .media.worker import brand_from_kit
+        tmp = tempfile.mkdtemp(prefix="hq_recap_job_")
+        try:
+            logo_path = None
+            lm = self.get_media(spec["logo"]) if spec.get("logo") else None
+            if lm:
+                logo_path = os.path.join(tmp, "logo.png")
+                with open(logo_path, "wb") as fh:
+                    fh.write(lm["data"])
+            out = media_tools.media_recap(spec["plan"], True, brand_from_kit(spec.get("kit"), logo_path), run_dir=tmp, http=self.http)
+            for cid, path, meta in media_tools.recap_files(out):
+                with open(path, "rb") as fh:
+                    self.on_recap_file(jid, cid, fh.read(), meta)
+            self.finish_video(jid, None, None, run_inline=False)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def _job_media(self, jid: int) -> dict:
         tok = self.store.q("SELECT media_token FROM render_jobs WHERE id=?", (jid,))[0]["media_token"]
         return {"token": tok, "url": self.media_url(tok), "type": "video", "name": "reel.mp4"}
@@ -1049,6 +1115,15 @@ class House:
             self.store.x("UPDATE render_jobs SET status=?, error=?, result=?, updated=? WHERE id=?",
                          ("done" if ok else "failed", (error or ("" if ok else "no transcript"))[:500],
                           json.dumps({"text": str(tr.get("text") or "")[:20000], "language": str(tr.get("language") or "")[:8]}) if ok else None,
+                          _now(), jid))
+            return {"ok": ok}
+        if kind == "media_recap":  # the files already arrived one by one (on_recap_file); this closes the job
+            files = json.loads(job.get("result") or "{}").get("files") or {}
+            spec = json.loads(job["spec"])
+            want = {c["id"] for c in spec.get("clips") or []}
+            ok = not error and want <= set(files)
+            self.store.x("UPDATE render_jobs SET status=?, error=?, updated=? WHERE id=?",
+                         ("done" if ok else "failed", (error or ("" if ok else f"missing {', '.join(sorted(want - set(files)))}"))[:500],
                           _now(), jid))
             return {"ok": ok}
         if kind == "take_analyze":

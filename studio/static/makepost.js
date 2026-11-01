@@ -170,6 +170,7 @@
     for (const s of r.steps || []) { const d = s.data || {};
       if (s.tool === "read_url" || s.tool === "x_oembed") add(d.url); (d.leads || []).forEach((l) => add(l.url)); if (d.best_video) add(d.best_video.page || d.best_video.url); }
     (res.other_outlets || []).forEach((o) => add(o.url));
+    (((res.recap || {}).plan || {}).segments || []).forEach((sg) => add(sg.url));  // the weekly recap's stories
     return urls.slice(0, 8);
   }
   window.mpOnRun = (r) => {
@@ -183,7 +184,8 @@
     $("#mpTraceSum").textContent = busy ? `Working · ${done} of ${Math.max(steps.length, done + 1)} steps` : `${steps.length} step${steps.length === 1 ? "" : "s"} · ${r.status === "failed" ? "stopped" : "done"}`;
     $("#mpTrace").open = busy || r.status === "failed";
     $("#mpStatus").innerHTML = busy ? `<span class="spin" aria-hidden="true"></span>${esc(cur ? cur.label + (cur.detail ? ": " + cur.detail.slice(0, 80) : "") + "…" : "Thinking…")}`
-      : r.status === "failed" ? `<span class="mp-dot bad" aria-hidden="true"></span>Stopped. Reply below to try again.` : pk.length ? `<span class="mp-dot ok" aria-hidden="true"></span>Ready for review` : "";
+      : r.status === "failed" ? `<span class="mp-dot bad" aria-hidden="true"></span>Stopped. Reply below to try again.`
+      : res.recap && res.recap.awaiting_rights ? `<span class="mp-dot" aria-hidden="true"></span>Needs your answer below` : pk.length ? `<span class="mp-dot ok" aria-hidden="true"></span>Ready for review` : "";
     const src = sources(r);
     $("#mpSources").hidden = !src.length;
     $("#mpSources").innerHTML = src.length ? `<span class="mp-src-h">Sources</span>${src.map(hostIcon).join("")}` : "";
@@ -192,12 +194,27 @@
     $("#mpActs").hidden = busy || !pk.length || legacy || !pk.some((p) => p.status === "ready");
     mountTheme();
   };
+  // "split this into 5 shorts": the request and the agent's answer stay in this chat thread; the clips themselves are
+  // picked in One take (scores, reasons, hook titles), opened from here
+  window.mpOnTake = (t, said) => {
+    root.classList.add("mp-in-thread"); $("#runView").hidden = false; setStep("create");
+    const inp = t.input || {}, n = inp.count;
+    $("#mpUser").innerHTML = `<div class="mp-bubble"><p>${esc(said || "(your video)")}</p></div>`;
+    $("#mpStatus").innerHTML = `<span class="spin" aria-hidden="true"></span>Splitting the video into clips…`;
+    ["#agentPlan", "#mpSources", "#pkgHead", "#pkgHelp", "#mpActs", "#replyForm"].forEach((k) => { const el = $(k); if (el) el.hidden = true; });
+    $("#timeline").innerHTML = ""; $("#mediaBox").innerHTML = ""; $("#packages").innerHTML = "";
+    $("#mpTraceSum").textContent = "One take: transcript (captions reused when the video has them), best moments, reframing";
+    $("#agentThread").hidden = false;
+    $("#agentThread").innerHTML = `<div class="msg agent" data-testid="thread-msg"><b>Agent</b><span>I'm splitting it into ${n ? n + " clips" : "its best moments"}, each with a score, why it was picked and a hook title.
+      <button type="button" class="btn2 sm" data-testid="mp-open-take">Open the clips</button></span></div>`;
+    $("[data-testid=mp-open-take]").onclick = () => window.openTake && window.openTake(t.id);
+  };
   $("#mpApprove").onclick = () => { const b = $("[data-testid=save-drafts]"); if (b) b.click(); else toast("Nothing left to approve in this post."); };
   $("#mpEdit").onclick = () => { $("#replyIn").focus(); $("#replyForm").scrollIntoView({ behavior: "smooth", block: "end" }); };
   $("#mpRegen").onclick = async () => {
     if (!H_STATE.run) return;
     const b = $("#mpRegen"); b.disabled = true;
-    try { const r = await api(`/api/agent/runs/${H_STATE.run.id}/messages`, { method: "POST", body: { text: "Regenerate the media and captions with a fresh angle" } }); showRun(r); watchRun(r.id); }
+    try { const r = await api(`/api/agent/runs/${H_STATE.run.id}/messages`, { method: "POST", body: { text: (H_STATE.run.result || {}).recap ? "redo the recap" : "Regenerate the media and captions with a fresh angle" } }); showRun(r); watchRun(r.id); }
     catch (e) { toast(e.message, 5000); } finally { b.disabled = false; }
   };
   const ri = $("#replyIn");  // the sticky composer grows with its text and sends on Enter (Shift+Enter: new line)

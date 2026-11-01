@@ -20,6 +20,8 @@ from .actions import ActionError
 VIDEO_ONLY = {"tiktok", "youtube"}
 TEXT_FIRST = {"twitter", "threads", "bluesky", "mastodon"}
 VIDEO_WAIT = int(os.environ.get("HQ_VIDEO_WAIT", "300"))
+RECAP_WAIT = int(os.environ.get("HQ_RECAP_WAIT", "1800"))  # the recap fetches 5-7 stories' media and renders ~8 videos
+RECAP_CAROUSEL = {"instagram", "threads"}  # networks whose carousels take video slides; everyone else posts the Reel
 
 S = {"type": "string"}
 IDS = {"type": "array", "items": {"type": "string"}, "description": "Channel ids; omit for every channel in the run"}
@@ -84,6 +86,16 @@ SPECS = [
     {"name": "render_template", "description": "Render a post template in the brand for the run's channels (each at its frame) instead of the default "
                                             "carousel, using the story's facts and hero image unless data says otherwise. data: the template's fields.",
      "input_schema": {"type": "object", "required": ["template"], "properties": {"template": S, "data": {"type": "object"}, "channel_ids": IDS}}},
+    {"name": "recap_plan", "description": "Weekly recap ('make a 7 days what happened in AI recap with videos', 'weekly recap'): the week's top AI stories "
+                                       "from the news sources, each with its official video/image and a credit line. Returns ONE rights question when "
+                                       "some media isn't the company's own: finish and ask it, then call render_recap with the answer.",
+     "input_schema": {"type": "object", "properties": {"prompt": S, "n": {"type": "integer", "description": "stories, 3-7"},
+                                                        "days": {"type": "integer", "description": "the window, default 7"}}}},
+    {"name": "render_recap", "description": "Render the planned weekly recap on the video worker: a 4:5 carousel (cover, one video slide per story with its "
+                                         "credit, the Follow card only at the end) plus one 9:16 Reel. rights_confirmed: true, false (title cards "
+                                         "instead of other people's media) or the story numbers the person OK'd. Then write_captions and check.",
+     "input_schema": {"type": "object", "properties": {"rights_confirmed": {"description": "true, false or a list of story numbers"},
+                                                        "channel_ids": IDS}}},
     {"name": "finish", "description": "Stop: everything the person asked for is rendered, captioned and checked. message: one or two sentences for the person.",
      "input_schema": {"type": "object", "required": ["message"], "properties": {"message": S}}},
 ]
@@ -95,9 +107,9 @@ LABELS = {"read_upload": "Read your upload", "read_url": "Read your link", "x_oe
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
           "find_media": "Find media", "generate_images": "Make images", "check": "Check everything", "finish": "Done",
           "list_themes": "Look at the themes", "set_theme": "Set the video theme", "list_templates": "Look at the templates",
-          "render_template": "Render a template"}
-WRITES = {"generate_images", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media", "write_captions",
-          "save_buffer_drafts", "remember_rule", "set_theme", "render_template"}
+          "render_template": "Render a template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap"}
+WRITES = {"generate_images", "render_recap", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media",
+          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template"}
 
 
 # Tone drives the caption prompt (QA: "short punchy explainer" came out as plain explainers). Several tones can combine.
@@ -838,6 +850,106 @@ class Tools:
         self.save(run)
         return out
 
+    # ---------------------------------------------------------------- weekly recap (studio/media/recap.py)
+    def t_recap_plan(self, prompt: str = "", n: int | None = None, days: int | None = None) -> dict:
+        from .media import recap as recap_mod
+        from .media import tools as media_tools
+        run = self.state()
+        res = run["result"]
+        prompt = prompt or (run.get("input") or {}).get("prompt", "")
+        want = recap_mod.wants_recap(prompt)
+        days = int(days or want["days"])
+        plan = media_tools.media_recap_plan(prompt, n=n or want["n"], days=days, http=self.h.http)
+        segs = plan.get("segments") or []
+        if not segs:
+            raise ActionError("I couldn't find this week's AI stories (the news sources didn't answer). Try again in a minute.")
+        res["recap"] = {"plan": plan, "days": days, "awaiting_rights": bool(plan.get("needs_confirmation"))}
+        outlets = sorted({o for sg in segs for o in sg.get("outlets") or [] if o})
+        res["story"] = {"headline": f"What happened in AI in the last {days} days", "facts": [sg["headline"] for sg in segs],
+                        "why": f"The {len(segs)} AI stories that mattered most this week, with the launch videos.",
+                        "url": segs[0]["url"], "source": ", ".join(outlets[:3]) or "the news", "label": "WEEKLY RECAP", "company": "",
+                        "image": ""}
+        if plan.get("question"):
+            res["rights_question"] = plan["question"]
+        else:
+            res.pop("rights_question", None)
+        self.save(run)
+        return {"stories": [{"i": sg["i"], "headline": sg["headline"], "media": (sg.get("media") or {}).get("kind") or "title card",
+                             "credit": (sg.get("media") or {}).get("credit") or "", "official": bool((sg.get("media") or {}).get("official"))}
+                            for sg in segs],
+                "needs_confirmation": bool(plan.get("needs_confirmation")), "question": plan.get("question") or ""}
+
+    def t_render_recap(self, rights_confirmed=None, channel_ids: list | None = None) -> dict:
+        from .media import recap as recap_mod
+        run = self.state()
+        res = run["result"]
+        rc = res.get("recap") or {}
+        if not rc.get("plan"):
+            raise ActionError("Plan the recap first (recap_plan).")
+        if isinstance(rights_confirmed, list):
+            rights_confirmed = [int(x) for x in rights_confirmed if str(x).isdigit()]
+        if rc["plan"].get("needs_confirmation") and rights_confirmed is None:
+            return {"needs_confirmation": True, "question": rc["plan"].get("question") or ""}
+        p = recap_mod.apply_rights(json.loads(json.dumps(rc["plan"])), True if rights_confirmed is None else rights_confirmed)
+        rc.update(awaiting_rights=False, rights=rights_confirmed)
+        res.pop("rights_question", None)
+        self.save(run)
+        out, note = self._recap_job(run, p)
+        run = self.state()
+        carousel, reel = out.get("carousel") or [], out.get("reel") or []
+        if not (carousel or reel):
+            raise ActionError(note)
+        chans = self.channels(run, channel_ids)
+        car_ids = [c["id"] for c in chans if c["service"] in RECAP_CAROUSEL and carousel]
+        reel_ids = [c["id"] for c in chans if c["id"] not in car_ids and reel]
+        if car_ids:
+            self._set_media(run, car_ids, carousel, "carousel",
+                            {"recap": True, "ratio": "4:5", "reel": reel,
+                             "note": note + (" The same stories as a Reel are below, ready as their own post." if reel else "")})
+        if reel_ids:
+            self._set_media(run, reel_ids, reel, "reel", {"recap": True, "ratio": "9:16", "note": note})
+        credits = [f"#{sg['i']} {sg['media']['credit']}" for sg in p["segments"] if sg.get("media") and sg["media"].get("credit")]
+        run["result"].setdefault("recap", rc).update(credits=credits, awaiting_rights=False, rights=rights_confirmed)
+        self.save(run)
+        return {"channels": car_ids + reel_ids, "carousel": len(carousel), "reel": bool(reel), "note": note,
+                "titles_only": [sg["i"] for sg in p["segments"] if not sg.get("media")]}
+
+    def _recap_job(self, run, plan: dict) -> tuple[dict, str]:
+        """Queue the recap render (local FFmpeg off the hosted app, else the GitHub render worker, job kind media_recap) and
+        wait. Returns ({"carousel": [...], "reel": [...]}, note). Never on the free sample (SECURITY_RULES 3)."""
+        kit = self._ctx()[0]
+        mode = "none" if self.demo else self.h.video_mode()
+        if mode == "none":
+            return {}, ("The weekly recap with videos needs the video worker, which the free sample doesn't run." if self.demo else
+                        "The weekly recap with videos needs a video renderer, and this server has none (set up the free render worker).")
+        ids = ["cover"] + [f"s{sg['i']}" for sg in plan["segments"]] + ["follow", "reel"]
+        spec = {"kind": "media_recap", "plan": plan, "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "logo": kit.get("logo") or "",
+                "clips": [{"id": i} for i in ids]}
+        jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
+                           (self.a.uid, self.rid, json.dumps(spec), "queued", time.time(), time.time()))
+        if mode == "local":
+            try:
+                self.h.render_recap_local(jid, spec)
+            except Exception as e:  # noqa: BLE001
+                self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (str(e)[:500], time.time(), jid))
+                return {}, f"The recap render failed ({str(e)[:160]})."
+            return self.h.recap_media(jid), "Rendered on this server."
+        ok, why = self.h._dispatch_github(jid, ttl=RECAP_WAIT + 600)
+        if not ok:
+            self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (why, time.time(), jid))
+            return {}, f"The render worker didn't start ({why})."
+        t0 = time.time()
+        while time.time() - t0 < RECAP_WAIT:
+            time.sleep(0.05 if self.h.sync else 4)
+            row = self.store.q("SELECT status, error FROM render_jobs WHERE id=?", (jid,))[0]
+            self.store.x("UPDATE agent_runs SET updated=? WHERE id=?", (time.time(), self.rid))
+            if row["status"] == "done":
+                return self.h.recap_media(jid), "Rendered by the video worker."
+            if row["status"] == "failed":  # never a half carousel (no Follow card): say what failed instead
+                return {}, f"The recap render failed ({(row['error'] or '')[:160]})."
+        self.store.x("UPDATE render_jobs SET status='failed', error='timed out', updated=? WHERE id=?", (time.time(), jid))
+        return {}, "The video worker took too long with the recap. Reply “redo the recap” to try again."
+
     # ---------------------------------------------------------------- edits
     def t_add_end_card(self, text: str) -> dict:
         out = self.h.remember(self.a, f"End every video with {text}")
@@ -992,7 +1104,8 @@ class Tools:
                 status = "hold" if res.get("conflicts") else "ready"
             pk = {"channel_id": c["id"], "service": c["service"], "channel_name": c["name"], "text": cap["text"],
                   "length": drafter.count(c["service"], cap["text"]), "limit": drafter.limit_for(c["service"]),
-                  "media_urls": self._urls_for(c["service"], media), "format": cm["format"], "note": cm.get("note", ""),
+                  "media_urls": ([m["url"] for m in media][:10] if cm.get("recap") and cm["format"] == "carousel" else
+                                 self._urls_for(c["service"], media)), "format": cm["format"], "note": cm.get("note", ""),
                   "ratio": cm.get("ratio") or ("9:16" if cm["format"] == "reel" else "4:5"),
                   "check": chk, "clipped": clipped, "status": status,
                   "idempotency_key": hashlib.sha256(f"{self.rid}:{c['id']}".encode()).hexdigest()[:16]}
@@ -1001,6 +1114,8 @@ class Tools:
             if prev.get("sent"):
                 pk["sent"] = prev["sent"]
             pk["media"] = self._media_info(media, pk["media_urls"], pk["ratio"])
+            if cm.get("reel"):  # the weekly recap: the same stories as one 9:16 Reel, ready as its own post
+                pk["reel"] = self._media_info(cm["reel"], [m["url"] for m in cm["reel"]], "9:16")
             packages.append(pk)
         res["packages"] = packages
         src_url = ((res.get("source") or {}).get("url") or "").split("?")[0].rstrip("/")

@@ -53,6 +53,26 @@ SPECS = [
          "clip": {"type": "array", "items": {"type": "number"}, "description": "[start, end] seconds; omit for the style default"},
          "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]}, "brand": BRAND,
          "official": {"type": "boolean"}, "rights_confirmed": {"type": "boolean"}, "run_dir": S}}},
+    {"name": "media_moments", "worker": False,
+     "description": "Long video -> the best moments to clip (Opus-style): N non-overlapping spans of whole sentences with a score, the reason each was picked and a hook title. Needs the transcript (words_path from media_transcribe, or caption text from an .srt/.vtt the source already has).",
+     "input_schema": {"type": "object", "properties": {"words_path": S, "captions": {"type": "string", "description": "SRT or WebVTT text"},
+                                                        "prompt": S, "n": {"type": "integer"}, "duration": {"type": "number"}}}},
+    {"name": "media_split", "worker": True,
+     "description": "Split a long video into N short clips ('split this into 5 shorts', 'find the best moments'): picks the moments, reuses the source's captions when it has them (else Whisper), reframes each clip around the speaker per ratio, hook title, word captions (skipped over burned-in subtitles), credit and Follow end card. Third-party video needs rights_confirmed.",
+     "input_schema": {"type": "object", "required": ["source_path"], "properties": {
+         "source_path": S, "url": {"type": "string", "description": "the post the video came from (its captions are reused)"},
+         "captions": {"type": "string", "description": "SRT or WebVTT text the person uploaded"}, "prompt": S,
+         "n": {"type": "integer"}, "ratios": {"type": "array", "items": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}},
+         "credit": S, "official": {"type": "boolean"}, "rights_confirmed": {"type": "boolean"}, "brand": BRAND,
+         "names": {"type": "array", "items": S}, "run_dir": S}}},
+    {"name": "media_recap_plan", "worker": False,
+     "description": "Weekly recap ('make a 7 days what happened in AI recap with videos'): the week's top AI stories from the news sources, each with its official video/image (X posts through the free X reader), credit lines, and the one rights question for media that isn't the company's own.",
+     "input_schema": {"type": "object", "properties": {"prompt": S, "n": {"type": "integer"}, "days": {"type": "integer"}}}},
+    {"name": "media_recap", "worker": True,
+     "description": "Render a recap plan (after media_recap_plan and the person's answer): HuhByte weekly-recap format, cover 'DO YOU REALIZE WHAT JUST HAPPENED IN AI IN THE LAST 7 DAYS?', one branded segment per story with its credit, Follow card only at the end; a 4:5 carousel of video slides plus one 9:16 Reel.",
+     "input_schema": {"type": "object", "required": ["plan"], "properties": {"plan": {"type": "object"},
+                                                                            "rights_confirmed": {"description": "true, false, or the story numbers OK'd"},
+                                                                            "brand": BRAND, "run_dir": S}}},
     {"name": "media_generate_images", "worker": True,
      "description": "No usable video or photo: generate n images for the story (configured image model, else on-brand cards). Labelled as AI-generated.",
      "input_schema": {"type": "object", "required": ["prompt"], "properties": {"prompt": S, "headline": S, "n": {"type": "integer"},
@@ -100,15 +120,21 @@ def ratios_for(channels: list[str] | None) -> dict:
 
 
 def media_plan(prompt: str, channels: list[str] | None = None, http=None, find: bool = True) -> dict:
+    from .longform import parse_request
     style, why = _styles.pick_theme(prompt)
     m = re.search(r"(\d{2,3})\s*(?:s\b|sec|seconds)", prompt or "")
+    sp = parse_request(prompt)
     plan = {"style": style, "style_about": _styles.config(style)["about"], "theme_why": why, "ratios": ratios_for(channels),
             "target_seconds": int(m.group(1)) if m else None, "links": urls_in(prompt)}
+    if sp["split"]:
+        plan["style"], plan["style_about"] = "opus", _styles.STYLE_PRESETS["opus"]["about"]
+        plan["split"] = {"clips": sp["n"] or "3-5", "seconds": [sp["lo"], sp["hi"]]}
     if find and plan["links"]:
         plan["media"] = media_find(prompt, http=http)
         bv = plan["media"]["best_downloadable"]
         plan["needs_rights_confirmation"] = bool(bv and not bv.get("official"))
-        plan["next"] = ("media_fetch -> media_transcribe -> media_render" if bv else "media_generate_images -> media_render")
+        plan["next"] = ("media_fetch -> media_split" if sp["split"] and bv else
+                        "media_fetch -> media_transcribe -> media_render" if bv else "media_generate_images -> media_render")
     return plan
 
 
@@ -154,6 +180,84 @@ def media_render(style: str, hook: str, source_path: str | None = None, images: 
     return {"renders": outs}
 
 
+def media_moments(words_path: str | None = None, captions: str | None = None, prompt: str = "", n: int | None = None,
+                  duration: float | None = None) -> dict:
+    from . import longform, subtitles
+    if captions:
+        words = subtitles.parse_captions(captions)
+    elif words_path:
+        words = json.loads(Path(words_path).read_text())["words"]
+    else:
+        return {"error": "Give words_path (media_transcribe) or captions (SRT/WebVTT text)."}
+    sp = longform.parse_request(prompt)
+    r = longform.pick_moments(words, duration, n or sp["n"], sp["lo"], sp["hi"])
+    keep = ("id", "rank", "start", "end", "duration", "score", "reason", "hook")
+    return {"moments": [{k: m[k] for k in keep} for m in r["moments"]], "picked_by": r["picked_by"], "sentences": r["sentences"]}
+
+
+def media_split(source_path: str, url: str | None = None, captions: str | None = None, prompt: str = "", n: int | None = None,
+                ratios: list[str] | None = None, credit: str = "", official: bool = False, rights_confirmed: bool = False,
+                brand: dict | None = None, names: list[str] | None = None, run_dir: str | None = None) -> dict:
+    from . import longform
+    d = _run_dir({"run_dir": run_dir}) / "clips"
+    man = longform.split_video(source_path, out_dir=str(d), url=url, caption_text=captions, prompt=prompt, n=n, ratios=ratios,
+                               brand=brand, credit=credit, official=official, rights_confirmed=rights_confirmed, names=names)
+    if man.get("needs_confirmation") or man.get("error"):
+        return man
+    return {"transcript": man["transcript"], "burned_subs": man["burned_subs"], "picked_by": man["picked_by"],
+            "clips": [{k: c[k] for k in ("id", "rank", "start", "end", "score", "reason", "hook")} |
+                      {"renders": [{k: r[k] for k in ("path", "ratio", "duration", "captions")} | {"reframe": r["reframe"]["mode"]}
+                                   for r in c["renders"]]} for c in man["clips"]]}
+
+
+def media_recap_plan(prompt: str = "", n: int | None = None, days: int | None = None, http=None) -> dict:
+    from . import recap
+    want = recap.wants_recap(prompt)
+    stories = recap.gather_week(http=http, days=days or want["days"], n=n or want["n"] or 5)
+    return recap.plan(stories, find=lambda u: media_find(u, http=http), video=True, http=http)
+
+
+def media_recap(plan: dict, rights_confirmed=None, brand: dict | None = None, run_dir: str | None = None, http=None) -> dict:
+    from . import recap
+    from .download import DownloadError, download_video
+    if plan.get("needs_confirmation") and rights_confirmed is None:
+        return {"needs_confirmation": True, "question": plan.get("question")}
+    p = recap.apply_rights(dict(plan), rights_confirmed if rights_confirmed is not None else True)
+    d = _run_dir({"run_dir": run_dir}) / "recap"
+    d.mkdir(parents=True, exist_ok=True)
+    media: dict[int, str | None] = {}
+    for s in p["segments"]:
+        m = s.get("media")
+        media[s["i"]] = None
+        if not m:
+            continue
+        ext = ".mp4" if m["kind"] == "video" else ".jpg"
+        try:  # videos: direct files through netguard, platform posts through single-extractor yt-dlp, then vetted;
+            # images: netguard (every hop checked, 15 MB cap), then recap.usable() checks they really are images
+            if m["kind"] == "video":
+                media[s["i"]] = download_video(m.get("candidate") or m["url"], d / f"src_{s['i']}{ext}", http=http)["path"]
+            else:
+                from .. import netguard
+                f = d / f"src_{s['i']}{ext}"
+                f.write_bytes(netguard.safe_get(m["url"], http=http, limit=15_000_000, timeout=30).content)
+                media[s["i"]] = str(f)
+        except (DownloadError, Exception):  # noqa: BLE001 - that story gets its title plate
+            media[s["i"]] = None
+    out = recap.compose(p, media, str(d), brand=brand)
+    return {k: v for k, v in out.items() if k != "boxes"}
+
+
+def recap_files(out: dict) -> list[tuple[str, str, dict]]:
+    """studio.media.tools.media_recap's result -> [(file id, path, meta)] in the order the worker posts them."""
+    files = [("cover", out["cover"], {"ratio": "4:5"})]
+    files += [(f"s{sl['i']}", sl["path"], {"duration": sl.get("duration"), "ratio": "4:5", "credit": sl.get("credit") or ""})
+              for sl in out.get("slides") or []]
+    files.append(("follow", out["follow"], {"ratio": "4:5"}))
+    if out.get("reel"):
+        files.append(("reel", out["reel"]["path"], {"duration": out["reel"].get("duration"), "ratio": "9:16"}))
+    return files
+
+
 def media_generate_images(prompt: str, headline: str = "", n: int = 3, ratio: str = "9:16", brand: dict | None = None,
                           run_dir: str | None = None, http=None) -> dict:
     from .imagegen import generate_images
@@ -183,6 +287,14 @@ def call(name: str, args: dict | None = None, http=None) -> dict:
         return media_transcribe(a["path"], a.get("names"), a.get("model"), a.get("run_dir"))
     if name == "media_render":
         return media_render(**{k: v for k, v in a.items() if k in media_render.__code__.co_varnames})
+    if name == "media_moments":
+        return media_moments(a.get("words_path"), a.get("captions"), a.get("prompt", ""), a.get("n"), a.get("duration"))
+    if name == "media_split":
+        return media_split(**{k: v for k, v in a.items() if k in media_split.__code__.co_varnames})
+    if name == "media_recap_plan":
+        return media_recap_plan(a.get("prompt", ""), a.get("n"), a.get("days"), http=http)
+    if name == "media_recap":
+        return media_recap(a["plan"], a.get("rights_confirmed"), a.get("brand"), a.get("run_dir"), http=http)
     if name == "media_generate_images":
         return media_generate_images(a["prompt"], a.get("headline", ""), int(a.get("n") or 3), a.get("ratio", "9:16"),
                                      a.get("brand"), a.get("run_dir"), http=http)

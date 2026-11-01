@@ -95,7 +95,7 @@ pre.code{white-space:pre-wrap;word-break:break-word}
   .chk{min-height:44px}
   .chip,.pl-ch,.seg button,[role=tab],.pf-fix,.pf-jump,.pl-slotmark,.pl-more,.pl-chip,.ib-chip,.menu button{min-height:44px}
   .pl-ch,.chip,.ib-chip{padding:0 14px}
-  .pl-more{min-width:44px}  /* '+1 more' in a narrow month cell at 360 px was 40 px wide */
+  .pl-more{display:block;width:100%;min-width:44px;box-sizing:border-box}  /* month view "+N more": a full-width 44 px tap */
   .pf-jump .pf-chip{min-height:44px}
   .brand{min-height:44px;min-width:44px}
   .btn2.icon,.btn.icon{min-width:44px}
