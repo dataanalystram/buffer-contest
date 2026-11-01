@@ -138,8 +138,7 @@ def test_planner_views_filters_and_drag_to_reschedule(live, chromium):
         dt = page.evaluate_handle("new DataTransfer()")
         draft.dispatch_event("dragstart", {"dataTransfer": dt})
         cell.dispatch_event("dragover", {"dataTransfer": dt})
-        cell.dispatch_event("drop", {"dataTransfer": dt})
-        draft.dispatch_event("dragend", {"dataTransfer": dt})
+        cell.dispatch_event("drop", {"dataTransfer": dt})  # (no dragend: the card has already left the No date list)
         page.get_by_test_id("toast").get_by_text("Draft moved").wait_for()
         page.locator(f"[data-testid=planner-slot][data-day='{day}'][data-hour='14'] [data-ref='{ref}']").wait_for()
         # sent posts are locked

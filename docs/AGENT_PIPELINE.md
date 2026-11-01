@@ -79,7 +79,8 @@ renders in-process on the hosted app: Render's free instance has 512 MB and an F
 The worker claims its job once with its GitHub OIDC identity (no token in the dispatch inputs), reads the spec once,
 posts the MP4 back, and the job token dies with the result (`studio/worker_auth.py`, `studio/render_worker.py`). Job
 kinds: `slideshow` and `brand_video` (Make a post Reels), `template_video` (Brand studio template Reels, in the person's
-brand; `GET /api/templates/video/{id}` / MCP `get_template_video` while it renders), `take_*` (One take). One take,
+brand, at most `HQ_TEMPLATE_VIDEO_DAILY` (default 6) a day per account; `GET /api/templates/video/{id}` / MCP
+`get_template_video` while it renders), `take_*` (One take). One take,
 Make a post and the Brand studio all use the same `video_mode()`.
 
 ### Check and fact hold (`studio/factcheck.py`)
