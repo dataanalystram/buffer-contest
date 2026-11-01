@@ -54,6 +54,8 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
                http=None) -> tuple[bytes, dict]:
     """Run one media_render job. ``get(url)`` fetches an app media URL (the worker passes its netguard getter);
     ``urls`` is the job's URL map from the app (source / slides). Returns (mp4 bytes, meta)."""
+    from ..headline import spec_hook
+    spec = spec_hook(dict(spec))  # render time: a URL or the person's request is never burned in as the hook
     urls = urls or {}
     style = styles.resolve(spec.get("style") or "huhbyte_news")
     if style not in styles.STYLE_PRESETS:

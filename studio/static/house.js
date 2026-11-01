@@ -82,11 +82,22 @@ $("#agentForm").addEventListener("submit", async (ev) => {
       b.innerHTML = `<span class="spin" aria-hidden="true"></span>Uploading…`;
       body.media_token = await uploadFile(H.upload); body.media_name = H.upload.name;
     } else if (H.attach) { body.media_token = H.attach.media_token; body.media_name = H.attach.name; }
+    await addKeyframes(body);
     const run = await api("/api/agent/runs", { method: "POST", body });
     showRun(run); watch(run.id);
   } catch (e) { toast(e.message, 5000); }
   finally { b.disabled = false; b.textContent = "Make it"; }
 });
+
+// the agent sees the video, not only hears it: 4 keyframes from the browser (keyframes.js), sent with the run
+async function addKeyframes(body) {
+  const vid = H.upload ? /^video\//.test(H.upload.type) : H.attach && H.attach.kind === "video";
+  if (!vid || !window.hqKeyframes) return;
+  const kf = await window.hqKeyframes(H.upload || H.attach.url);
+  if (kf.frames.length) body.keyframes = kf.frames;
+  if (kf.duration) body.media_duration = Math.round(kf.duration * 100) / 100;
+}
+window.hqAddKeyframes = addKeyframes;
 
 function watch(id) {
   // keeps polling through a failed request (a deploy, a cold start): one error used to stop the UI at "Write captions"
@@ -115,6 +126,12 @@ function showRun(r) {
   const res = r.result || {}, media = res.media || [], busy = ["running", "rendering"].includes(r.status);
   const pk = res.packages || [];
   let html = "";
+  const legacy = ["media", "news"].includes(r.kind);
+  if (legacy && !busy) {  // owner P0: a run from the old pipeline is shown as such and remade by the agent, never re-run
+    html += `<div class="st warn legacy-run" data-testid="legacy-run"><span><b>Made before the agent (old pipeline).</b> Its video and captions may repeat your request instead of telling the story.</span>
+      ${res.superseded_by ? `<button type="button" class="btn2 sm" data-testid="legacy-open-new" data-run="${res.superseded_by}">Open the new version</button>`
+        : `<button type="button" class="btn sm" data-testid="legacy-redo">Redo with the agent</button>`}</div>`;
+  }
   if (res.upload) {
     const u = res.upload;
     html += `<div class="run-upload" data-testid="run-upload">${u.type === "video" ? `<video src="${esc(u.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${esc(u.url)}" alt="">`}
@@ -126,6 +143,12 @@ function showRun(r) {
       : `<a href="${esc(m.url)}" target="_blank" rel="noopener"><img src="${esc(m.url)}" alt="Slide ${i + 1}" data-testid="media-img"></a>`).join("")}</div>`;
   } else if (busy && !pk.length) html += `<div class="ph" aria-hidden="true"><span class="spin"></span></div>`;
   $("#mediaBox").innerHTML = html;
+  const redo = $("[data-testid=legacy-redo]");
+  if (redo) redo.onclick = async () => { redo.disabled = true;
+    try { const n = await api(`/api/agent/runs/${r.id}/messages`, { method: "POST", body: { text: "redo" } }); showRun(n); watch(n.id); loadRuns(); }
+    catch (e) { toast(e.message, 5000); redo.disabled = false; } };
+  const opn = $("[data-testid=legacy-open-new]");
+  if (opn) opn.onclick = async () => { const n = await api(`/api/agent/runs/${opn.dataset.run}`); showRun(n); if (["running", "rendering"].includes(n.status)) watch(n.id); };
   agentExtras(r, busy);
   const ready = ["ready"].includes(r.status) || (!busy && pk.length);
   $("#pkgHead").hidden = !pk.length || !ready;
@@ -187,16 +210,26 @@ function checkList(chk) {
 }
 
 const FMT_NAME = { reel: "Reel", carousel: "Carousel", photo: "Image", video: "Video" };
+// one list of files per card, whatever shape the package has (older runs only have media_urls)
+const pkgFiles = (p) => (p.media && p.media.length ? p.media : (p.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo", ratio: p.ratio })));
+const RATIOS = [["9:16", 9 / 16], ["4:5", 0.8], ["1:1", 1], ["16:9", 16 / 9]];
+const ratioOf = (w, h) => (w && h ? RATIOS.reduce((b, r) => (Math.abs(r[1] - w / h) < Math.abs(b[1] - w / h) ? r : b))[0] : "");
+// owner P0: a video was labelled "Image". A video is always "Video · ratio · length"; the ratio and length come from the
+// file itself when the server didn't record them.
 function mediaLabel(p) {
-  const m = p.media || [], first = m[0] || {};
-  const parts = [p.format === "carousel" && m.length > 1 ? `Carousel · ${m.length} slides` : (first.type === "video" ? (p.format === "reel" ? "Reel" : "Video") : FMT_NAME[p.format] || "Image")];
+  const m = pkgFiles(p), first = m[0] || {};
+  if (first.type === "video" || isVid(first.url)) {
+    const parts = ["Video", first.ratio || ratioOf(first.width, first.height) || "…", first.duration ? fmtDur(first.duration) : "…"];
+    if (first.role === "original") parts.push("your file");
+    return parts.join(" · ");
+  }
+  const parts = [p.format === "carousel" && m.length > 1 ? `Carousel · ${m.length} slides` : FMT_NAME[p.format] || "Image"];
   if (first.ratio) parts.push(first.ratio);
-  if (first.type === "video") parts.push(first.duration ? fmtDur(first.duration) : "…");
-  if (first.role === "original") parts.push("your file");
   return parts.join(" · ");
 }
+window.HQ_MEDIA_LABEL = mediaLabel;
 function pkgMedia(p) {
-  const m = p.media && p.media.length ? p.media : (p.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo", ratio: p.ratio }));
+  const m = pkgFiles(p);
   if (!m.length) return `<div class="pkg-media empty" data-testid="pkg-media"><span class="muted sm">${p.service === "youtube" || p.service === "tiktok" ? "Needs a video" : "Text only"}</span></div>`;
   const ar = (r) => (r ? `aspect-ratio:${r.replace(":", " / ")}` : "");
   const first = m[0];
@@ -215,7 +248,7 @@ function pkgCard(p) {
   return `<article class="pkg" data-testid="package" data-ch="${esc(p.channel_id)}">
     <header>${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : avatar(ch)}<div><b>${esc(p.channel_name)}</b><small>${esc(netName(p.service))}</small></div><span class="cnt ${p.length > p.limit ? "over" : ""}" data-testid="pkg-count">${p.length}/${p.limit}</span></header>
     ${pkgMedia(p)}
-    ${sent ? "" : `<div class="pm-acts"><button type="button" class="btn2 sm" data-testid="pkg-replace">Replace</button><button type="button" class="btn2 sm" data-testid="pkg-regen">Regenerate</button></div>`}
+    ${sent || H.run && ["media", "news"].includes(H.run.kind) ? "" : `<div class="pm-acts"><button type="button" class="btn2 sm" data-testid="pkg-replace">Replace</button><button type="button" class="btn2 sm" data-testid="pkg-regen">Regenerate</button></div>`}
     ${p.note ? `<small class="muted sm" data-testid="pkg-note">${esc(p.note)}</small>` : ""}
     <label class="sr" for="pt-${esc(p.channel_id)}">Caption for ${esc(p.channel_name)}</label>
     <textarea id="pt-${esc(p.channel_id)}" data-testid="pkg-text" rows="5" ${sent ? "disabled" : ""}>${esc(p.text)}</textarea>
@@ -237,7 +270,11 @@ function wirePackages(r) {
         el.querySelector(".chk-res").outerHTML = checkList(p.check); } catch (e) { toast(e.message); } }, 450); };
     // a video's length when the server didn't record it: read from the file itself
     const v = el.querySelector("[data-testid=pkg-video]");
-    const setDur = () => { const f = el.querySelector("[data-testid=pkg-format]"); if (f && f.textContent.includes("…") && isFinite(v.duration)) f.textContent = f.textContent.replace("…", fmtDur(v.duration)); };
+    const setDur = () => { const f = el.querySelector("[data-testid=pkg-format]"); if (!f || !f.textContent.includes("…")) return;
+      const parts = f.textContent.split(" · ");
+      if (parts[1] === "…" && v.videoWidth) parts[1] = ratioOf(v.videoWidth, v.videoHeight);
+      if (parts[2] === "…" && isFinite(v.duration)) parts[2] = fmtDur(v.duration);
+      f.textContent = parts.join(" · "); };
     if (v) { v.addEventListener("loadedmetadata", setDur); if (v.readyState >= 1) setDur(); }
     el.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => window.openMedia && window.openMedia((pk.media && pk.media.length ? pk.media : (pk.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo" }))), +b.dataset.open, `${netName(pk.service)} · ${mediaLabel(pk)}`)));
     const busyBtn = (b, txt) => { b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>${txt}`; };

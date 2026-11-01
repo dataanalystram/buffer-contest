@@ -41,6 +41,8 @@ def _download(c: httpx.Client, url: str, dest: Path) -> None:
 def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
     from . import take
     spec, urls = j["spec"], j["urls"]
+    from .headline import spec_hook
+    spec_hook(spec)  # the worker cleans the hook itself too: the app's guard is not the only one (owner P0, 1 Nov 2026)
     tmp = Path(tempfile.mkdtemp(prefix="hq_worker_"))
     src = tmp / "source.mp4"
     try:

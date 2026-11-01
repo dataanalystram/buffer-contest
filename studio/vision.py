@@ -22,12 +22,12 @@ PROVIDERS = [("jev", "https://api.typesafe.ai/v1/systemone", "jev-latest", "TYPE
              ("subq", "https://api.subq.ai/v1/systemone", "subq-snap-1.1", "SUBQ_API_KEY")]
 
 
-def prepare(data: bytes) -> bytes | None:
-    """Upright baseline JPEG, 280..1568 px per side (System One's limits)."""
+def prepare(data: bytes, max_side: int = 1568) -> bytes | None:
+    """Upright baseline JPEG, 280..max_side px per side (System One's limits: 1568)."""
     try:
         from PIL import Image, ImageOps
         im = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
-        im.thumbnail((1568, 1568))
+        im.thumbnail((max_side, max_side))
         if min(im.size) < 280:
             s = 280 / min(im.size)
             im = im.resize((max(280, int(im.width * s)), max(280, int(im.height * s))))
@@ -132,3 +132,52 @@ def _pixel_rules(image: bytes) -> dict:
                 "width": w, "height": h}
     except Exception:
         return {"on_topic": 0.0, "good": 0.0, "burned_text": 0.5, "kind": "scene", "width": 0, "height": 0}
+
+
+# ---------------------------------------------------------------- the person's own video, from its keyframes
+# Owner P0 (1 Nov 2026): captions described the request ("finding a ready-made Reel") instead of the video. Render has no
+# FFmpeg, so the browser grabs 3-4 keyframes from the <video> element at upload time (canvas -> JPEG) and the agent looks at
+# them: Claude vision through the brain's engine (budgeted), the person's own vision-capable key, then TypeSafe / SubQ
+# System One (structured questions), then nothing (the transcript and their own words still count).
+FRAME_SYSTEM = ("You look at keyframes from a person's OWN video, taken in order, and say plainly what the video shows: who or what "
+                "is on screen, where, what happens, any readable on-screen text or product. Never guess names you can't read or "
+                "hear; never describe the person's request. Reply with JSON only.")
+FRAME_ASK = ("These are {n} keyframes from the video, in order. Context from the person and their link (may be empty): {ctx}\n"
+             "Return JSON {{\"summary\": \"2-3 plain sentences on what the video shows and is about\", \"subject\": \"3-8 words\", "
+             "\"people\": <int>, \"setting\": \"a few words\", \"on_screen_text\": \"readable text or empty\"}}")
+KINDS = {"interview": "Two or more people talking: an interview, podcast or panel", "talking_head": "One person talking to the camera",
+         "demo": "A product, device or app being shown or used", "screen": "A screen recording of software or a website",
+         "stage": "A stage, keynote or event", "scene": "An outdoor scene, place or activity", "graphics": "Slides, text or animated graphics"}
+
+
+def frames_message(engine: dict, frames: list[bytes], ctx: str) -> list:
+    """One user message carrying the frames as images, in the engine's own format."""
+    imgs = [base64.b64encode(f).decode() for f in frames]
+    text = FRAME_ASK.format(n=len(imgs), ctx=(ctx or "")[:1200])
+    if engine.get("style") == "anthropic":
+        return [{"role": "user", "content": [*({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}} for b in imgs),
+                                             {"type": "text", "text": text}]}]
+    return [{"role": "user", "content": [*({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b}} for b in imgs),
+                                         {"type": "text", "text": text}]}]
+
+
+def describe_frames_systemone(frames: list[bytes], ctx: str = "", http=None) -> dict | None:
+    """The structured fallback: what kind of video, how many people, is it about the context. No free text from it."""
+    refs = {f"frame-{uuid.uuid4()}": f for f in frames[:4]}
+    first = next(iter(refs))
+    got = _ask({"frames": list(refs), "context": (ctx or "")[:600]}, {
+        "kind": {"type": "choice", "instructions": f"What is the video in `frames` (keyframes in order), mainly? Look at `{first}` and the rest.",
+                 "criteria": KINDS},
+        "people": {"type": "choice", "instructions": "How many people are on screen in `frames`?",
+                   "criteria": {"0": "No people", "1": "One person", "2": "Two people", "3": "Three or more people"}},
+        "on_topic": {"type": "noul", "instructions": "Is `frames` about the subject described in `context`?"},
+    }, refs, http)
+    if not got:
+        return None
+    a, prov = got
+    kind = (a.get("kind") or {}).get("choice") or "scene"
+    people = (a.get("people") or {}).get("choice") or ""
+    who = {"0": "", "1": "one person", "2": "two people", "3": "three or more people"}.get(people, "")
+    summary = KINDS.get(kind, "A video").split(":")[0] + (f", with {who} on screen" if who else "") + "."
+    return {"summary": summary, "subject": "", "people": int(people) if people.isdigit() else None, "setting": kind,
+            "on_screen_text": "", "on_topic": _noul(a, "on_topic"), "provider": prov}
