@@ -286,7 +286,7 @@ class Tools:
         up["read"] = True
         it = run["input"]["intake"]
         sents = [x.strip() for x in re.split(r"(?<=[.!?])\s+", up.get("transcript") or "") if len(x.split()) >= 3][:12]
-        desc = (run["input"].get("brief") or "").strip() or it.get("topic") or ""
+        desc = (run["input"].get("brief") or "").strip() or intake.describe(run["input"].get("prompt", ""), it.get("rules")) or it.get("topic") or ""
         if not res.get("source") and not it.get("source_url") and not (it.get("research") and it.get("topic")) and (sents or desc):
             # no link and nothing to research: the upload itself is the story (its words, and the person's own line about it)
             what = "video" if up["type"] == "video" else "photo"
@@ -900,7 +900,7 @@ class Tools:
                 continue
             meta = (self.h.media_meta(self.a, m["token"]) if m.get("token") else None) or {}
             w, h = meta.get("width"), meta.get("height")
-            r = ratio
+            r = None if m.get("role") == "original" else ratio  # their own file as uploaded: its shape isn't known here
             if w and h:
                 q = w / h
                 r = min((("9:16", 9 / 16), ("4:5", 0.8), ("1:1", 1.0), ("16:9", 16 / 9)), key=lambda x: abs(x[1] - q))[0]

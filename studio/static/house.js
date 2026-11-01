@@ -198,11 +198,11 @@ function mediaLabel(p) {
 function pkgMedia(p) {
   const m = p.media && p.media.length ? p.media : (p.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo", ratio: p.ratio }));
   if (!m.length) return `<div class="pkg-media empty" data-testid="pkg-media"><span class="muted sm">${p.service === "youtube" || p.service === "tiktok" ? "Needs a video" : "Text only"}</span></div>`;
-  const ar = (r) => (r || "4:5").replace(":", " / ");
+  const ar = (r) => (r ? `aspect-ratio:${r.replace(":", " / ")}` : "");
   const first = m[0];
-  const main = first.type === "video"
-    ? `<video src="${esc(first.url)}" controls playsinline preload="metadata" data-testid="pkg-video" style="aspect-ratio:${ar(first.ratio)}"></video>`
-    : `<button type="button" class="pm-img" data-open="0" data-testid="pkg-media-open" aria-label="Open full size" style="aspect-ratio:${ar(first.ratio)}"><img src="${esc(first.url)}" alt="${esc(netName(p.service))} ${esc(p.format)}, slide 1"></button>`;
+  const main = first.type === "video"  // #t: the browser shows a real frame before play, never a black tile
+    ? `<video src="${esc(first.url)}#t=0.1" controls playsinline preload="metadata" data-testid="pkg-video" style="${ar(first.ratio)}"></video>`
+    : `<button type="button" class="pm-img" data-open="0" data-testid="pkg-media-open" aria-label="Open full size" style="${ar(first.ratio || "4:5")}"><img src="${esc(first.url)}" alt="${esc(netName(p.service))} ${esc(p.format)}, slide 1"></button>`;
   const strip = m.length > 1 ? `<div class="pm-strip" data-testid="pkg-slides">${m.map((x, i) => `<button type="button" data-open="${i}" data-testid="pkg-slide" aria-label="Slide ${i + 1}"><img src="${esc(x.url)}" alt=""></button>`).join("")}</div>` : "";
   return `<div class="pkg-media" data-testid="pkg-media">${main}${strip}
     <div class="pm-meta"><span class="pm-fmt" data-testid="pkg-format">${esc(mediaLabel(p))}</span>
@@ -237,7 +237,8 @@ function wirePackages(r) {
         el.querySelector(".chk-res").outerHTML = checkList(p.check); } catch (e) { toast(e.message); } }, 450); };
     // a video's length when the server didn't record it: read from the file itself
     const v = el.querySelector("[data-testid=pkg-video]");
-    if (v) v.addEventListener("loadedmetadata", () => { const f = el.querySelector("[data-testid=pkg-format]"); if (f && f.textContent.endsWith("…") && isFinite(v.duration)) f.textContent = f.textContent.replace(/…$/, fmtDur(v.duration)); });
+    const setDur = () => { const f = el.querySelector("[data-testid=pkg-format]"); if (f && f.textContent.includes("…") && isFinite(v.duration)) f.textContent = f.textContent.replace("…", fmtDur(v.duration)); };
+    if (v) { v.addEventListener("loadedmetadata", setDur); if (v.readyState >= 1) setDur(); }
     el.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => window.openMedia && window.openMedia((pk.media && pk.media.length ? pk.media : (pk.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo" }))), +b.dataset.open, `${netName(pk.service)} · ${mediaLabel(pk)}`)));
     const busyBtn = (b, txt) => { b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>${txt}`; };
     const rep = el.querySelector("[data-testid=pkg-replace]");

@@ -14,7 +14,8 @@ function libThumb(it, cls = "") {
 function libCard(it) {
   const { fmtDur, fmtSize } = window.HQ_FMT;
   const used = it.used_in || [];
-  const meta = [KIND_NAME[it.kind] + (it.kind === "carousel" && it.slides ? ` · ${it.slides.length} slides` : ""), fmtSize(it.size), libWhen(it.created)];
+  const meta = [KIND_NAME[it.kind] + (it.kind === "carousel" && it.slides ? ` · ${it.slides.length} slides` : ""), fmtSize(it.size)];
+  if (it.created) meta.push(libWhen(it.created));
   if (it.duration) meta.splice(1, 0, fmtDur(it.duration));
   return `<article class="lib-card" data-testid="library-item" data-id="${esc(it.id)}" data-kind="${esc(it.kind)}">
     <button type="button" class="lib-th" data-act="open" data-testid="library-open" aria-label="Open ${esc(it.name)} full size">${libThumb(it)}${it.kind === "video" ? '<span class="lib-play" aria-hidden="true">▶</span>' : ""}<span class="lib-kind">${esc(KIND_NAME[it.kind])}</span></button>

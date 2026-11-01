@@ -128,6 +128,25 @@ def topic_of(prompt: str, rules: list[str] | None = None) -> str:
     return t if re.search(r"[A-Za-z0-9$€£₹]{2,}", t) else ""
 
 
+def describe(prompt: str, rules: list[str] | None = None) -> str:
+    """The person's own words about their content, with the instructions taken out but their grammar kept: clauses that
+    only say what to do ("make a reel", "post on all my channels", "search it") are dropped whole, links removed.
+    "Our studio opens Monday. Make a reel and post it everywhere" -> "Our studio opens Monday." Used as the person's line
+    about an upload (context for the captions), never as a headline."""
+    t = URL_RE.sub(" ", prompt or "")
+    t = BARE_RE.sub(" ", t)
+    for r in rules or standing_rules(prompt or ""):
+        t = t.replace(r, " ")
+    keep = []
+    for sent in re.split(r"(?<=[.!?])\s+|\n+", t):
+        parts = [p for p in re.split(r",\s*|\s+(?:and|then|also|so)\s+", sent) if p and p.strip()]
+        kept = [p.strip() for p in parts if topic_of(p)]
+        if kept:
+            s = ", ".join(kept)
+            keep.append(s if re.search(r"[.!?]$", s) else s + ".")
+    return re.sub(r"\s+", " ", " ".join(keep)).strip()[:600]
+
+
 def asks_research(prompt: str) -> bool:
     """Did the person ask the agent to look things up ("search it", "research", "find out", "look up", "online")?"""
     return bool(re.search(r"\b(?:search|research|look (?:it )?up|google|find out|dig into|online)\b", prompt or "", re.I))
