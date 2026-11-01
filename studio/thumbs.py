@@ -4,7 +4,7 @@ The browser never fetches a third-party page or image: ``GET /api/thumb?url=<sto
 og:image / twitter:image (or the feed's own image hint) server-side through netguard (no auto-redirects, every hop
 re-checked against private / loopback / link-local / metadata ranges, bytes capped: SECURITY_RULES 1 and 6), shrinks it
 to a 640x360 JPEG with Pillow (so the bytes we serve are always ours) and caches it. No image -> 204, and the page shows
-the site's favicon monogram instead. Per-account rate limit; the free sample gets a smaller one (SECURITY_RULES 3).
+the site's favicon monogram instead. Per-account rate limit; the free sample never fetches at all (SECURITY_RULES 3).
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from . import netguard
 PAGE_MAX = 700_000          # the head of an article is enough to find its og:image
 IMAGE_MAX = 6_000_000       # bytes, checked while streaming, before Pillow decodes anything
 TTL, MISS_TTL, KEEP = 24 * 3600, 3600, 400
-PER_MIN, DEMO_PER_MIN = 90, 20
+PER_MIN = 90  # per account per minute; the free sample gets none (it never fetches)
 SIZE = (640, 360)
 _OG = re.compile(r"<meta[^>]+(?:property|name)=[\"'](?:og:image(?::secure_url)?|twitter:image(?::src)?)[\"'][^>]*>", re.I)
 _CONTENT = re.compile(r"content=[\"']([^\"']+)[\"']", re.I)
@@ -44,11 +44,11 @@ def _ok_url(u: str) -> bool:
     return p.scheme in ("http", "https") and bool(p.hostname) and len(u) <= 2000
 
 
-def allow(uid: str, demo: bool = False) -> bool:
+def allow(uid: str) -> bool:
     now = time.time()
     with _lock:
         h = [t for t in _hits.get(uid, []) if t > now - 60]
-        if len(h) >= (DEMO_PER_MIN if demo else PER_MIN):
+        if len(h) >= PER_MIN:
             _hits[uid] = h
             return False
         h.append(now)

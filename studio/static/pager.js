@@ -19,4 +19,6 @@ window.hqPager = function (el, o) {
   el.querySelectorAll("[data-pg]").forEach((b) => (b.onclick = () => { const n = +b.dataset.pg; if (n >= 1 && n <= pages && n !== cur) o.onPage(n); }));
 };
 // a story picture through our own server (studio/thumbs.py); the caller shows the favicon monogram on error
-window.hqThumb = (url, img) => `/api/thumb?url=${encodeURIComponent(url || "")}${img ? "&img=" + encodeURIComponent(img) : ""}`;
+// The free sample never makes the server fetch anything (SECURITY_RULES 3): it shows the feed's own picture, if any.
+window.hqThumb = (url, img) => (window.S && S.session && S.session.demo ? (img || "data:,")
+  : `/api/thumb?url=${encodeURIComponent(url || "")}${img ? "&img=" + encodeURIComponent(img) : ""}`);

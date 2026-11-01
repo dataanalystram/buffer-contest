@@ -493,7 +493,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         """A story's picture, read and re-encoded server-side (studio/thumbs.py); 404 -> the page shows the favicon."""
         from . import thumbs
         a = actor(request)
-        if not thumbs.allow(a.uid, demo_guard.is_demo(a.uid)):
+        if demo_guard.is_demo(a.uid):  # the free sample never makes this server fetch a page (SECURITY_RULES 3)
+            return Response(status_code=204, headers={"Cache-Control": "private, max-age=3600"})
+        if not thumbs.allow(a.uid):
             return JSONResponse({"error": "Too many thumbnails at once. They load again in a minute."}, status_code=429)
         try:
             data = thumbs.get(url, img, http=house.http)
