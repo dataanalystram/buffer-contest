@@ -40,7 +40,7 @@ INSTRUCTIONS = (
 )
 
 # Tools that spend HuhQueue's own model key. Over MCP they need server_ai: true (the person's explicit choice).
-SERVER_AI_TOOLS = {"run_agent", "revise", "edit_media", "make_post", "reply_post", "replace_channel_media", "edit_brand"}
+SERVER_AI_TOOLS = {"run_agent", "revise", "edit_media", "make_post", "reply_post"}
 SERVER_AI_NOTE = " Uses HuhQueue's server AI (counts against your HuhQueue AI allowance): pass server_ai: true to run it."
 SEQUENCES = {
     "run_agent": "research_link(url) or find_media(query) -> write the slides/hook yourself -> render_carousel / render_reel -> "

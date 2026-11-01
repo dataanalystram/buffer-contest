@@ -191,7 +191,7 @@ def test_mcp_agent_tools(client):
     names = {t["name"] for t in client.post("/mcp", headers=h, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}).json()["result"]["tools"]}
     assert {"run_agent", "edit_media", "get_run", "revise", "remember_rule", "brand_check", "get_brand", "schedule_package",
             "list_calendar"} <= names
-    run = call("run_agent", {"query": "travel agents", "channel_ids": ["demo_x"]})
+    run = call("run_agent", {"query": "travel agents", "channel_ids": ["demo_x"], "server_ai": True})  # the person chose server AI
     assert run["status"] == "ready"
     call("remember_rule", {"correction": "never say travel"})
     chk = call("brand_check", {"text": "Travel is great"})

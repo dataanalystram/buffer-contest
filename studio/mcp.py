@@ -278,6 +278,10 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
             activity.note(model_hint=str(meta.get("model") or meta.get("huhqueue/model"))[:80])
         name, args = p.get("name", ""), p.get("arguments") or {}
         if name in _cb.SERVER_AI_TOOLS and not (isinstance(args, dict) and args.get("server_ai") is True):
+            try:  # the kill switch answers first, for every tool that would act (SECURITY_RULES 4)
+                studio.kill_switch_check(actor, name)
+            except (ActionError, BufferError) as e:
+                return ok({"content": [{"type": "text", "text": str(e)}], "isError": True})
             hint = _cb.server_ai_hint(name)  # no model call: the client is the brain unless the person chose server AI
             return ok({"content": [{"type": "text", "text": json.dumps(hint, indent=1)}], "structuredContent": hint, "isError": False})
         from . import brain_llm

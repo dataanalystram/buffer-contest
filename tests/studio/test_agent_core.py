@@ -198,7 +198,7 @@ def test_brand_edit_and_mcp_parity(owner):
     names = {t["name"] for t in mcp.TOOLS}
     assert {"make_post", "reply_post", "edit_brand", "get_onboarding", "set_onboarding", "get_recommendations", "post_read_url",
             "post_render_reel", "post_write_captions", "post_save_buffer_drafts", "post_check"} <= names
-    res, run = conftest.mcp_call(owner, tok, "make_post", {"prompt": f"post this {TWEET}", "brain": "external"})
+    res, run = conftest.mcp_call(owner, tok, "make_post", {"prompt": f"post this {TWEET}", "brain": "external", "server_ai": True})
     assert not res["isError"] and run["kind"] == "agent"
     res, got = conftest.mcp_call(owner, tok, "post_read_url", {"run_id": run["id"], "url": TWEET})
     assert not res["isError"] and got["handle"] == "AarushYadav47"
