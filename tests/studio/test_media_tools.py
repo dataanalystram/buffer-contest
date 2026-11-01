@@ -131,3 +131,78 @@ def test_music_is_a_real_wav_of_the_asked_length(tmp_path):
     with wave.open(r["path"]) as w:
         assert abs(w.getnframes() / w.getframerate() - 3) < 0.6
     assert "royalty-free" in r["licence"]
+
+
+# ------------------------------------------------------------------ the worker job (studio/media/worker.py)
+from studio.media import worker  # noqa: E402
+
+KIT = {"name": "HuhByte AI", "handle": "huhbyte.ai", "colors": {"primary": "#0E0E10", "accent": "#FF5A1F", "text": "#FFFFFF"},
+       "end_card": {"on": True, "line": "AI news, simply.", "cta": "Follow"}}
+
+
+def test_brand_from_kit_maps_agent_core_kit():
+    b = worker.brand_from_kit(KIT, "/tmp/logo.png")
+    assert b == {"name": "HuhByte AI", "handle": "@huhbyte.ai", "accent": "#FF5A1F", "bg": "#0E0E10", "text": "#FFFFFF",
+                 "end_line": "AI news, simply.", "logo": "/tmp/logo.png"}
+    assert worker.brand_from_kit({}) == {}
+
+
+@pytest.fixture
+def stub_tools(monkeypatch, tmp_path):
+    seen = {}
+
+    def fetch(cand, run_dir=None, http=None):
+        p = tmp_path / "fetched.mp4"
+        p.write_bytes(b"v")
+        seen["fetch"] = cand
+        return {"path": str(p), "credit": cand.get("credit", "")}
+
+    def transcribe(path, names=None, model=None, run_dir=None):
+        seen["transcribe"] = path
+        wp = tmp_path / "w.json"
+        wp.write_text(json.dumps({"words": [{"w": "x", "s": 0, "e": 1}]}))
+        return {"words_path": str(wp), "words": 1}
+
+    def render(style, hook, **kw):
+        seen["render"] = {"style": style, "hook": hook, **kw}
+        if kw.get("source_path") and not (kw.get("rights_confirmed") or kw.get("official")):
+            return {"needs_confirmation": True, "question": "OK to use it?"}
+        out = tmp_path / "out.mp4"
+        out.write_bytes(b"MP4DATA")
+        return {"renders": [{"path": str(out), "ratio": kw["ratios"][0], "width": 1080, "height": 1920, "duration": 12.0,
+                             "clip": [0, 9, "given"], "captions": True, "burned_subs": False, "music": "pulse", "caption_problems": []}]}
+    monkeypatch.setattr(tools, "media_fetch", fetch)
+    monkeypatch.setattr(tools, "media_transcribe", transcribe)
+    monkeypatch.setattr(tools, "media_render", render)
+    return seen
+
+
+def test_job_with_an_uploaded_source(stub_tools):
+    spec = {"kind": "media_render", "style": "news", "hook": "Hook", "credit": "Video: @a on X", "rights_confirmed": True, "kit": KIT}
+    data, meta = worker.render_job(spec, get=lambda u: b"SRC" if u == "https://app/m/src" else None,
+                                   urls={"source": "https://app/m/src"}, logo=b"PNG")
+    assert data == b"MP4DATA" and meta["style"] == "huhbyte_news" and meta["renderer"] == "studio.media"
+    r = stub_tools["render"]
+    assert r["style"] == "huhbyte_news" and r["words_path"] and r["brand"]["handle"] == "@huhbyte.ai" and r["brand"]["logo"]
+    assert "fetch" not in stub_tools
+
+
+def test_job_fetches_the_found_candidate_and_keeps_its_credit(stub_tools):
+    cand = {"url": "https://cdn.example/launch.mp4", "official": True, "credit": "Video: Subvocal"}
+    data, meta = worker.render_job({"style": "opus", "hook": "H", "candidate": cand}, get=lambda u: None)
+    assert stub_tools["fetch"]["url"] == cand["url"] and meta["credit"] == "Video: Subvocal" and stub_tools["render"]["official"]
+
+
+def test_job_refuses_unconfirmed_third_party_video(stub_tools):
+    with pytest.raises(worker.JobError, match="Rights not confirmed"):
+        worker.render_job({"style": "hype", "hook": "H", "candidate": {"url": "https://x.com/a/status/1", "credit": "Video: @a"}},
+                          get=lambda u: None)
+
+
+def test_job_without_media_generates_images(stub_tools, monkeypatch):
+    for k in ("POLLINATIONS_KEY", "HF_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    data, meta = worker.render_job({"style": "minimal", "hook": "Talk without talking", "kit": KIT}, get=lambda u: None)
+    r = stub_tools["render"]
+    assert r["source_path"] is None and len(r["images"]) == 3 and meta["credit"] == "Graphic: brand card"
+    assert "transcribe" not in stub_tools
