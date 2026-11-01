@@ -994,6 +994,8 @@ class House:
                 main = next((m for m in res["media"] if m["type"] == "video"), None) or (res["media"][0] if res["media"] else None)
                 pk["text"] = text
                 pk["length"] = drafter.count(pk["service"], text)
+                if channel_id in (res.get("captions") or {}):  # agent runs: the edit survives the next check
+                    res["captions"][channel_id]["text"] = text
                 pk["check"] = brand.brand_check(text, self.media_meta(a, main["token"]) if main else None, self.rules(a), self.kit(a))
                 self._save(rid, run["steps"], res)
                 return pk

@@ -12,7 +12,7 @@ window.HS_TABS = Object.assign(window.HS_TABS || {}, { agent: loadAgent, brand: 
 window.wireStories = function (box) {
   box.querySelectorAll("[data-testid=story-write]").forEach((b) => {
     b.textContent = "Make a post";
-    b.onclick = () => { showTab("agent"); setSrc("link"); $("#agUrl").value = b.dataset.url; $("#agentForm").requestSubmit(); };
+    b.onclick = () => { showTab("agent"); setSrc("topic"); $("#agQuery").value = "Post this on all my channels " + b.dataset.url; countPrompt(); $("#agentForm").requestSubmit(); };
   });
 };
 
@@ -20,8 +20,10 @@ window.wireStories = function (box) {
 function setSrc(src) {
   H.src = src;
   document.querySelectorAll(".seg [data-src]").forEach((b) => { const on = b.dataset.src === src; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
-  $("#fTopic").hidden = src !== "topic"; $("#fLink").hidden = src !== "link"; $("#fMedia").hidden = src !== "media";
+  $("#fTopic").hidden = src !== "topic"; $("#fMedia").hidden = src !== "media";
 }
+function countPrompt() { const n = $("#agQuery").value.length; $("#agCount").textContent = `${n.toLocaleString()} / 4,000`; $("#agCount").classList.toggle("over", n > 3800); }
+$("#agQuery").addEventListener("input", countPrompt);
 document.querySelectorAll(".seg [data-src]").forEach((b) => (b.onclick = () => setSrc(b.dataset.src)));
 
 function agentChips() {
@@ -55,8 +57,7 @@ $("#agentForm").addEventListener("submit", async (ev) => {
   const body = { channel_ids: [...H.sel], format: $("#agFormat").value };
   const b = $("#agGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
   try {
-    if (H.src === "topic") { body.query = $("#agQuery").value.trim(); if (!body.query) throw new Error("Give the agent a topic"); }
-    if (H.src === "link") { body.url = $("#agUrl").value.trim(); if (!body.url) throw new Error("Paste a link"); }
+    if (H.src === "topic") { body.prompt = $("#agQuery").value.trim(); if (!body.prompt) throw new Error("Tell the agent what to post, or paste a link"); }
     if (H.src === "media") {
       if (!H.upload) throw new Error("Choose a photo or video first");
       b.innerHTML = `<span class="spin" aria-hidden="true"></span>Uploading…`;
@@ -70,13 +71,19 @@ $("#agentForm").addEventListener("submit", async (ev) => {
 });
 
 function watch(id) {
+  // keeps polling through a failed request (a deploy, a cold start): one error used to stop the UI at "Write captions"
   clearTimeout(H.poll);
+  let errs = 0;
   const tick = async () => {
     try {
-      const r = await api(`/api/agent/runs/${id}`); showRun(r);
+      const r = await api(`/api/agent/runs/${id}`); errs = 0; showRun(r);
       if (["running", "rendering"].includes(r.status)) H.poll = setTimeout(tick, 1400);
       else { loadRuns(); readyBadge(); }
-    } catch (e) { toast(e.message); }
+    } catch (e) {
+      errs += 1;
+      if (errs === 3) toast("Reconnecting to the agent…");
+      H.poll = setTimeout(tick, Math.min(15000, 1500 * 2 ** Math.min(errs, 4)));
+    }
   };
   H.poll = setTimeout(tick, 900);
 }
@@ -102,14 +109,39 @@ function showRun(r) {
   $("#mediaBox").innerHTML = html;
   const ba = $("#mediaBox .ba input");
   if (ba) ba.oninput = () => ($("#mediaBox .ba-before").style.width = ba.value + "%");
+  const agent = r.kind === "agent", busy = ["running", "rendering"].includes(r.status);
   const done = ["ready", "failed"].includes(r.status) && res.format;
-  $("#reviseForm").hidden = !done || r.status === "failed";
+  $("#reviseForm").hidden = agent || !done || r.status === "failed";
+  agentExtras(r, agent, busy);
   $("#quickfix").innerHTML = QUICK_FIXES.map((q) => `<button type="button" class="chip mini" data-fix="${esc(q)}">${esc(q)}</button>`).join("");
   $("#quickfix").querySelectorAll("[data-fix]").forEach((b) => (b.onclick = () => { $("#reviseIn").value = b.dataset.fix.toLowerCase(); $("#reviseForm").requestSubmit(); }));
   const pk = res.packages || [];
   $("#pkgHead").hidden = !pk.length || r.status !== "ready";
-  $("#packages").innerHTML = r.status === "ready" ? pk.map(pkgCard).join("") : "";
+  $("#packages").innerHTML = r.status === "ready" ? pk.map(pkgCard).join("") + (r.kind === "agent" && pk.some((p) => p.status === "ready")
+    ? `<div class="pkg-all"><button class="btn" data-testid="save-drafts">Save all as Buffer drafts</button></div>` : "") : "";
+  const sd = $("[data-testid=save-drafts]");
+  if (sd) sd.onclick = async () => {
+    sd.disabled = true;
+    try { const out = await api(`/api/agent/runs/${r.id}/tools/save_buffer_drafts`, { method: "POST", body: {} });
+      toast(out.drafts.map((d) => `${netName(d.service)}: ${d.status.replaceAll("_", " ")}`).join(" · "), 6000); showRun(await api(`/api/agent/runs/${r.id}`)); readyBadge(); }
+    catch (e) { toast(e.message, 6000); sd.disabled = false; }
+  };
   wirePackages(r);
+}
+
+function agentExtras(r, agent, busy) {
+  const res = r.result || {}, br = res.brain || {};
+  $("#agentBrain").hidden = !agent || !br.mode;
+  if (agent && br.mode) $("#agentBrain").textContent = (br.mode === "tools" ? "Planned and run by " : "Standard plan, written with ") + (br.model || br.provider || "the built-in writer") +
+    ((res.notes || []).length ? " · " + res.notes[res.notes.length - 1] : "");
+  const plan = res.plan || [];
+  $("#agentPlan").hidden = !agent || !plan.length;
+  $("#agentPlan").innerHTML = plan.map((p) => `<li>${esc(p)}</li>`).join("");
+  const th = (res.thread || []).slice(1);
+  $("#agentThread").hidden = !agent || !th.length;
+  $("#agentThread").innerHTML = th.map((m) => `<div class="msg ${m.role}" data-testid="thread-msg"><b>${m.role === "user" ? "You" : "Agent"}</b><span>${esc(m.text)}</span></div>`).join("") +
+    ((res.conflicts || []).length ? `<div class="st warn" data-testid="agent-question">${esc(res.conflicts[0].question)}</div>` : "");
+  $("#replyForm").hidden = !agent || busy;
 }
 
 function stepExtra(s) {
@@ -117,6 +149,8 @@ function stepExtra(s) {
   if (s.key === "find" && d.leads) return `<ul class="leads">${d.leads.slice(0, 3).map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a> <span class="muted">${esc(l.source || "")}</span></li>`).join("")}</ul>`;
   if (s.key === "verify" && d.url) return `<ul class="leads"><li>Read: <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.site)}</a></li>${(d.other_outlets || []).map((o) => `<li>Also: <a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.source)}</a></li>`).join("")}</ul>`;
   if (s.key === "structure" && d.facts) return `<ul class="facts">${d.facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
+  if (s.tool === "extract_facts" && d.facts) return `<ul class="facts">${d.facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
+  if (s.tool === "search_news" && d.leads) return `<ul class="leads">${d.leads.slice(0, 3).map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a></li>`).join("")}</ul>`;
   return "";
 }
 
@@ -136,7 +170,8 @@ function pkgCard(p) {
     <div class="thumbs">${thumbs || `<span class="muted sm">Text only</span>`}</div>
     <textarea data-testid="pkg-text" rows="5" ${sent ? "disabled" : ""}>${esc(p.text)}</textarea>
     ${checkList(p.check)}
-    ${sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
+    ${p.note ? `<small class="muted sm" data-testid="pkg-note">${esc(p.note)}</small>` : ""}
+    ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.mode === "draft" ? " as a draft" : ""}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
       : `<div class="pkg-act"><select data-testid="pkg-mode">${modeOptions("queue")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
         <button class="btn sm" data-testid="pkg-send">Send to Buffer</button></div>`}
   </article>`;
@@ -176,6 +211,14 @@ $("#reviseForm").addEventListener("submit", async (ev) => {
     $("#reviseIn").value = ""; showRun(r); watch(r.id);
   } catch (e) { toast(e.message, 5000); }
   finally { b.disabled = false; }
+});
+
+$("#replyForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const t = $("#replyIn").value.trim(); if (!t || !H.run) return;
+  const b = $("[data-testid=reply-go]"); b.disabled = true;
+  try { const r = await api(`/api/agent/runs/${H.run.id}/messages`, { method: "POST", body: { text: t } }); $("#replyIn").value = ""; showRun(r); watch(r.id); }
+  catch (e) { toast(e.message, 5000); } finally { b.disabled = false; }
 });
 
 async function loadRuns() {
