@@ -35,6 +35,8 @@
     <button class="status" id="killPill" data-testid="kill-pill" title="Agent kill switch">Agents on</button>
     <div class="acct"><button class="btn2" id="acctBtn" data-testid="account-menu" aria-haspopup="true" aria-expanded="false"></button>
       <div class="menu" id="acctMenu" hidden>
+        <button type="button" data-go="settings" data-testid="menu-settings">Settings</button>
+        <button type="button" data-go="settings" data-testid="menu-channels">Connected channels</button>
         <button id="deviceBtn" data-testid="device-link">Open on another device</button>
         <button id="logoutBtn" data-testid="logout">Sign out</button>
         <button id="disconnectBtn" data-testid="disconnect" class="danger">Disconnect and delete my data</button>
@@ -57,21 +59,18 @@
 <main id="main">
   <div id="app" class="shell" hidden>
     <nav class="rail" id="rail" aria-label="Sections">
-      <button data-tab="inbox" data-testid="tab-inbox" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Inbox</span><span class="badge hot" id="inboxBadge" data-testid="inbox-badge" hidden>0</span></button>
-      <button data-tab="agent" data-testid="tab-agent" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Make a post</span></button>
-      <button data-tab="take" data-testid="tab-take" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M14 10l4-2.5v9L14 14"/><path d="M19.5 4.5v3M21 6h-3"/></svg><span>One take<span class="long"> → a week</span></span></button>
-      <button data-tab="planner" data-testid="tab-planner" data-primary="1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8 14h3M8 17h6"/></svg><span>Planner</span><span class="badge" id="readyBadge" data-testid="ready-badge" hidden>0</span></button>
-      <button type="button" class="rail-more-btn" id="moreBtn" data-testid="nav-more" aria-expanded="false" aria-controls="railMore"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>More</span><span class="badge hot" id="moreBadge" data-testid="more-badge" hidden>0</span></button>
+      <button data-tab="inbox" data-testid="tab-inbox" data-primary="1" style="order:1"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L20 12v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6z"/></svg><span>Inbox</span><span class="badge hot" id="inboxBadge" data-testid="inbox-badge" hidden>0</span></button>
+      <button data-tab="agent" data-testid="tab-agent" data-primary="1" style="order:2"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Make a post</span></button>
+      <button data-tab="planner" data-testid="tab-planner" data-primary="1" style="order:4"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8 14h3M8 17h6"/></svg><span>Planner</span><span class="badge" id="readyBadge" data-testid="ready-badge" hidden>0</span></button>
+      <button data-tab="news" data-testid="tab-news" data-primary="1" style="order:5"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19a2 2 0 1 0 0-.01"/><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/></svg><span>News</span></button>
+      <button type="button" class="rail-more-btn" id="moreBtn" data-testid="nav-more" aria-expanded="false" aria-controls="railMore" style="order:20"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>Menu</span><span class="badge hot" id="moreBadge" data-testid="more-badge" hidden>0</span></button>
       <div class="rail-more" id="railMore" data-testid="nav-more-sheet" role="group" aria-label="More sections">
-        <div class="rail-more-head"><b>More</b><button type="button" class="btn2 sm" id="moreClose" data-testid="nav-more-close">Close</button></div>
-        <button data-tab="brand" data-testid="tab-brand"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.7 1.5-1.5 0-.9-.7-1.2-.7-2 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/></svg><span>Brand &amp; ledger</span></button>
-        <button data-tab="studio" data-testid="tab-studio"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg><span>Write from a link</span></button>
-        <button data-tab="radar" data-testid="tab-radar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19a2 2 0 1 0 0-.01"/><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/></svg><span>News radar</span></button>
-        <button data-tab="approvals" data-testid="tab-approvals"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span>Approvals</span><span class="badge" id="apprBadge" data-testid="approvals-badge" hidden>0</span></button>
-        <button data-tab="connect" data-testid="tab-connect"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></svg><span>Connect AI apps</span></button>
-        <button data-tab="agents" data-testid="tab-agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg><span>Agents</span></button>
-        <button data-tab="ai" data-testid="tab-ai"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></svg><span>AI engine</span></button>
-        <button data-tab="activity" data-testid="tab-activity"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg><span>Activity</span></button>
+        <div class="rail-more-head"><b>Menu</b><button type="button" class="btn2 sm" id="moreClose" data-testid="nav-more-close">Close</button></div>
+        <button data-tab="take" data-testid="tab-take" style="order:3"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M14 10l4-2.5v9L14 14"/><path d="M19.5 4.5v3M21 6h-3"/></svg><span>One take<span class="long"> → a week</span></span></button>
+        <button data-tab="brand" data-testid="tab-brand" style="order:6"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.7 1.5-1.5 0-.9-.7-1.2-.7-2 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/></svg><span>Brand</span></button>
+        <button data-tab="apps" data-testid="tab-apps" style="order:7"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></svg><span>AI apps</span></button>
+        <button data-tab="activity" data-testid="tab-activity" class="rail-sep" style="order:8"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg><span>Activity</span></button>
+        <button data-tab="settings" data-testid="tab-settings" style="order:9"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
       </div>
     </nav>
     <div class="rail-scrim" id="railScrim" data-testid="nav-more-scrim" hidden></div>
@@ -79,7 +78,12 @@
     <div class="pane">
       <div class="tab" id="tab-agent">
         <h1 class="page-title">Make a post</h1>
-        <p class="intro">One agent does the whole job: finds the story, checks it on the source, renders it in your brand, writes a caption per channel and checks every rule you've taught it. You approve what goes to Buffer.</p>
+        <p class="intro" id="agentIntro">One agent does the whole job: finds the story, checks it on the source, renders it in your brand, writes a caption per channel and checks every rule you've taught it. You approve what goes to Buffer.</p>
+        <div class="seg pg-tabs" role="tablist" aria-label="How to make it" data-testid="agent-tabs">
+          <button type="button" role="tab" data-sub="agent" data-testid="agent-mode-agent" aria-selected="true" class="on">With the agent</button>
+          <button type="button" role="tab" data-sub="quick" data-testid="agent-mode-quick" aria-selected="false">Quick text posts</button>
+        </div>
+        <section class="sub" data-sub="agent" data-testid="agent-main">
         <div class="panel compose" id="agentCompose">
           <div class="seg" role="tablist" aria-label="Start from">
             <button type="button" role="tab" class="on" data-src="topic" data-testid="src-topic" aria-selected="true">Research a topic</button>
@@ -118,8 +122,41 @@
         </section>
         <h2 class="sec">Recent runs</h2>
         <div id="runList" class="runlist" data-testid="run-list"></div>
+      </section>
+        <section class="sub" id="quickPane" data-sub="quick" data-testid="agent-quick" hidden>
+        <p class="intro">Text posts for every channel from one link, without images or video. Fast, and checked by preflight before anything reaches Buffer.</p>
+        <div class="panel compose">
+          <label class="label" for="urlInput">Link</label>
+          <form class="row" id="draftForm">
+            <input id="urlInput" data-testid="url-input" type="url" placeholder="A news story, blog post or launch page" required>
+            <button class="btn" id="draftBtn" data-testid="draft-btn" type="submit">Write posts</button>
+          </form>
+          <div class="opts">
+            <div class="field"><label class="label" for="toneSelect">Tone</label>
+              <select id="toneSelect" data-testid="tone-select">
+                <option value="">Natural</option><option value="punchy and energetic">Punchy</option>
+                <option value="professional and insightful">Professional</option><option value="friendly and simple, explain like to a friend">Simple</option>
+              </select></div>
+            <label class="chk" id="threadOpt"><input type="checkbox" id="threadChk" data-testid="thread-toggle"> Write X, Bluesky, Threads and Mastodon posts as threads</label>
+          </div>
+          <div class="chips-head"><span class="label" id="chLbl">Channels</span></div>
+          <div class="chips" id="chips" data-testid="channel-chips" role="group" aria-labelledby="chLbl"></div>
+          <p class="muted capture">Write posts from any page you're reading: drag <a id="bookmarklet" class="bm" data-testid="bookmarklet" href="#">Post with HuhQueue</a> to your bookmarks bar, then click it on any article.</p>
+        </div>
+        <div id="article" data-testid="article-card" hidden></div>
+        <div class="bulk" id="bulk" hidden>
+          <label for="bulkMode">Send every post as</label>
+          <select id="bulkMode" data-testid="bulk-mode"></select>
+          <span class="bulk-act">
+            <button class="btn2" id="saveIdea" data-testid="save-idea">Save as a Buffer idea</button>
+            <button class="btn" id="sendAll" data-testid="send-all">Send all to Buffer</button>
+          </span>
+        </div>
+        <div class="pf-strip" id="pfStrip" data-testid="preflight-strip" role="group" aria-label="Preflight for each channel" hidden></div>
+        <div id="drafts" class="drafts" data-testid="drafts"></div>
+        <div class="empty" id="studioEmpty" data-testid="studio-empty"><b>No drafts yet</b><span>Paste a link above. You'll get one post per channel, previewed the way each network shows it. You decide what goes to Buffer.</span></div>
+      </section>
       </div>
-
       <div class="tab" id="tab-take" data-testid="take" hidden>
         <h1 class="page-title">One take → a week</h1>
         <p class="intro">Drop one long video you recorded: a talk, a podcast, a tutorial. HuhQueue finds the best things you already said, cuts 3 to 7 vertical clips with your captions, cover and end card, checks each one, and spreads them into the open posting times of your week as Buffer drafts. It only uses your words.</p>
@@ -240,50 +277,22 @@
         </dialog>
       </div>
 
-      <div class="tab" id="tab-brand" hidden>
-        <h1 class="page-title">Brand &amp; Style Ledger</h1>
-        <p class="intro">Your kit is how posts look. The ledger is what HuhQueue has learned from your corrections. Every render and caption follows both, and the brand check cites the rule when something's off.</p>
-        <div class="brand-grid">
-          <form class="panel" id="kitForm">
-            <h2 class="card-title">Brand kit</h2>
-            <div class="row"><input id="kitSite" data-testid="kit-site" placeholder="yourbrand.com" aria-label="Your website"><button class="btn2" type="button" id="kitImport" data-testid="kit-import">Import from website</button></div>
-            <div class="two"><div class="field"><label class="label" for="kitName">Name</label><input id="kitName" data-testid="kit-name" maxlength="60"></div>
-              <div class="field"><label class="label" for="kitHandle">Handle</label><input id="kitHandle" data-testid="kit-handle" placeholder="@yourbrand" maxlength="40"></div></div>
-            <div class="three"><div class="field"><label class="label" for="cPrimary">Ground</label><input type="color" id="cPrimary" data-testid="kit-primary"></div>
-              <div class="field"><label class="label" for="cAccent">Accent</label><input type="color" id="cAccent" data-testid="kit-accent"></div>
-              <div class="field"><label class="label" for="cText">Text</label><input type="color" id="cText" data-testid="kit-text"></div></div>
-            <div class="two"><div class="field"><label class="label" for="kitFont">Headline font</label><select id="kitFont" data-testid="kit-font"><option value="anton">Anton (bold, condensed)</option><option value="poppins">Poppins (round, friendly)</option><option value="inter">Inter (clean, neutral)</option></select></div>
-              <div class="field"><label class="label" for="kitLogo">Logo (PNG with transparency is best)</label><input type="file" id="kitLogo" data-testid="kit-logo" accept="image/png,image/jpeg,image/webp"></div></div>
-            <div class="two"><div class="field"><label class="label" for="ecCta">End card</label><input id="ecCta" data-testid="kit-cta" placeholder="Follow" maxlength="20"></div>
-              <div class="field"><label class="label" for="ecLine">End card line</label><input id="ecLine" data-testid="kit-line" placeholder="AI news made simple" maxlength="60"></div></div>
-            <label class="chk"><input type="checkbox" id="ecOn" data-testid="kit-endcard"> End every video with the end card</label>
-            <div class="field"><label class="label" for="kitVoice">Voice (how you write)</label><textarea id="kitVoice" data-testid="kit-voice" rows="2" maxlength="300" placeholder="Plain, specific, a little dry. No hype."></textarea></div>
-            <div><button class="btn" data-testid="kit-save" type="submit">Save kit</button></div>
-          </form>
-          <div class="panel preview-panel"><h2 class="card-title">How your posts look now</h2><div class="kit-preview" id="kitPreview" data-testid="kit-preview"></div><div id="kitCheck"></div></div>
+      <div class="tab bs" id="tab-brand" data-testid="brand" hidden>
+        <div class="pg-head"><div><h1 class="page-title">Brand</h1>
+          <p class="intro">One kit for every post: logo, colours, fonts, voice and the cards that open and close your videos. Templates use it, and the Style Ledger remembers every correction.</p></div></div>
+        <ol class="bs-steps" data-testid="bs-steps" aria-label="Get started"></ol>
+        <div class="seg pg-tabs" role="tablist" aria-label="Brand" data-testid="brand-tabs">
+          <button type="button" role="tab" data-sub="kit" data-testid="brand-tab-kit" aria-selected="true" class="on">Kit</button>
+          <button type="button" role="tab" data-sub="templates" data-testid="brand-tab-templates" aria-selected="false">Templates</button>
+          <button type="button" role="tab" data-sub="ledger" data-testid="brand-tab-ledger" aria-selected="false">Style Ledger</button>
         </div>
-        <h2 class="sec">Style Ledger</h2>
-        <form class="quick" id="ruleForm"><label class="sr" for="ruleIn">New rule</label><input id="ruleIn" data-testid="rule-input" placeholder="Teach a rule in plain words: “never say game-changer”, “logo bottom right”, “max 2 hashtags”"><button class="btn2 big" data-testid="rule-add" type="submit">Add rule</button></form>
-        <div id="ledger" data-testid="ledger"></div>
-      </div>
-
-      <div class="tab" id="tab-ai" hidden>
-        <h1 class="page-title">AI engine</h1>
-        <p class="intro">HuhQueue never needs our AI budget. Pick how your agent thinks.</p>
-        <div class="panel"><h2 class="card-title">Right now</h2><p id="aiNow" data-testid="ai-now"></p></div>
-        <div class="engines">
-          <div class="panel"><h2 class="card-title">Use your Claude or ChatGPT</h2>
-            <p class="muted">Add HuhQueue as a connector. Your own subscription does the thinking; HuhQueue supplies the tools (research, render, ledger, brand check, Buffer).</p>
-            <span class="label">Connector URL</span><pre class="code" id="aiMcp" data-testid="ai-mcp"></pre>
-            <p class="muted sm">Claude.ai and ChatGPT sign you in with OAuth. Claude Code: <code>claude mcp add --transport http huhqueue &lt;URL&gt;</code></p></div>
-          <form class="panel" id="aiForm"><h2 class="card-title">Bring your own API key</h2>
-            <p class="muted">Encrypted on the server, used only for your runs, never shown again.</p>
-            <div class="two"><div class="field"><label class="label" for="aiProv">Provider</label><select id="aiProv" data-testid="ai-provider"></select></div>
-              <div class="field"><label class="label" for="aiModel">Model</label><input id="aiModel" data-testid="ai-model"></div></div>
-            <div class="field" id="aiBaseF" hidden><label class="label" for="aiBase">Base URL</label><input id="aiBase" data-testid="ai-base" placeholder="https://…/v1"></div>
-            <div class="field"><label class="label" for="aiKey">API key</label><input id="aiKey" data-testid="ai-key" type="password" autocomplete="off"></div>
-            <div class="row tight"><button class="btn" data-testid="ai-save" type="submit">Test and save</button><button class="btn2" type="button" id="aiRemove" data-testid="ai-remove" hidden>Remove my key</button></div></form>
-        </div>
+        <section class="sub" data-sub="kit" data-testid="brand-kit"><div id="bsKitMount"></div></section>
+        <section class="sub" data-sub="templates" data-testid="brand-templates" hidden><div id="bsTplMount"></div></section>
+        <section class="sub" data-sub="ledger" data-testid="brand-ledger" hidden>
+          <p class="muted">What HuhQueue has learned from your corrections. Every render and caption follows these, and the brand check names the rule when something is off.</p>
+          <form class="quick" id="ruleForm"><label class="sr" for="ruleIn">New rule</label><input id="ruleIn" data-testid="rule-input" placeholder="Teach a rule in plain words: “never say game-changer”, “logo bottom right”, “max 2 hashtags”"><button class="btn2 big" data-testid="rule-add" type="submit">Add rule</button></form>
+          <div id="ledger" data-testid="ledger"></div>
+        </section>
       </div>
       <div class="tab" id="tab-inbox" data-testid="inbox" hidden>
         <div class="ib-head">
@@ -291,119 +300,104 @@
             <h1 class="page-title" id="inboxTitle" data-testid="inbox-title" tabindex="-1">Inbox</h1>
             <p class="muted" id="inboxSummary" data-testid="inbox-summary" aria-live="polite"></p>
           </div>
-          <button class="btn2 sm" type="button" id="inboxRefresh" data-testid="inbox-refresh">Refresh</button>
+          <span class="row tight"><button class="btn2 sm" type="button" id="inboxRefresh" data-testid="inbox-refresh">Refresh</button>
+          <button class="btn sm" type="button" data-go="agent" data-testid="inbox-make">Make a post</button></span>
         </div>
-        <nav class="ib-jump" id="inboxJump" data-testid="inbox-jump" aria-label="Inbox groups"></nav>
+        <div class="ib-stats" id="ibStats" data-testid="inbox-stats" aria-label="At a glance"></div>
         <div class="ib-kill" id="inboxKill" data-testid="inbox-kill" role="status" hidden>
           <span><b>Your agents are paused.</b> The kill switch is on, so agents can't draft or post.</span>
-          <button class="btn2 sm" type="button" data-testid="inbox-kill-open" data-go="agents">Agents</button>
+          <button class="btn2 sm" type="button" data-testid="inbox-kill-open" data-go="apps">AI apps</button>
         </div>
-        <div id="inboxGroups" class="ib-groups" data-testid="inbox-groups" aria-busy="true"></div>
-        <form class="quick" id="quickForm">
-          <label class="label" for="quickUrl">Write from a link</label>
-          <div class="row"><input id="quickUrl" data-testid="quick-url" type="url" placeholder="Paste a link to write a post for every channel" required>
-          <button class="btn" data-testid="quick-go" type="submit">Write posts</button></div>
-        </form>
-        <h2 class="sec">New in your news radar</h2>
-        <div id="homeStories" class="list" data-testid="home-stories"></div>
-        <h2 class="sec">Coming up in Buffer</h2>
-        <div id="upcoming" class="list" data-testid="upcoming"></div>
-      </div>
-
-      <div class="tab" id="tab-radar" hidden>
-        <h1 class="page-title">News radar</h1>
-        <p class="intro">Follow the sites you share from. New stories show up here and on your home screen, one click from a post for every channel. Your agents can read them too.</p>
-        <form class="quick" id="feedForm">
-          <label class="sr" for="feedUrl">Feed address</label>
-          <input id="feedUrl" data-testid="feed-url" type="url" placeholder="A site's RSS or Atom feed, like https://www.theverge.com/rss/index.xml" required>
-          <button class="btn2 big" data-testid="feed-add" type="submit">Follow feed</button>
-        </form>
-        <div class="feeds" id="feeds" data-testid="feed-list"></div>
-        <div id="stories" class="list" data-testid="story-list"></div>
-      </div>
-
-      <div class="tab" id="tab-studio" hidden>
-        <h1 class="page-title">Write from a link</h1>
-        <div class="panel compose">
-          <label class="label" for="urlInput">Link</label>
-          <form class="row" id="draftForm">
-            <input id="urlInput" data-testid="url-input" type="url" placeholder="A news story, blog post or launch page" required>
-            <button class="btn" id="draftBtn" data-testid="draft-btn" type="submit">Write posts</button>
-          </form>
-          <div class="opts">
-            <div class="field"><label class="label" for="toneSelect">Tone</label>
-              <select id="toneSelect" data-testid="tone-select">
-                <option value="">Natural</option><option value="punchy and energetic">Punchy</option>
-                <option value="professional and insightful">Professional</option><option value="friendly and simple, explain like to a friend">Simple</option>
-              </select></div>
-            <label class="chk"><input type="checkbox" id="threadChk" data-testid="thread-toggle"> Write X, Bluesky, Threads and Mastodon posts as threads</label>
+        <div class="ib-dash">
+          <div class="ib-col">
+            <section class="ib-sec" id="ibApprSec" aria-labelledby="ibApprH">
+              <header class="ib-sh"><h2 id="ibApprH">Waiting for your approval</h2><span class="ib-count" id="ibApprN" data-testid="approvals-count">0</span></header>
+              <div id="approvals" class="ib-appr" data-testid="approvals-list"></div>
+            </section>
+            <section class="ib-sec" aria-labelledby="ibTodayH">
+              <header class="ib-sh"><h2 id="ibTodayH">Today's queue</h2><button class="link" type="button" data-go="planner" data-testid="inbox-open-planner">Open Planner</button></header>
+              <ol class="ib-today" id="ibToday" data-testid="inbox-today"></ol>
+            </section>
+            <section class="ib-sec" aria-labelledby="ibAttnH">
+              <header class="ib-sh"><h2 id="ibAttnH">Needs attention</h2></header>
+              <nav class="ib-jump" id="inboxJump" data-testid="inbox-jump" aria-label="Inbox groups"></nav>
+              <div id="inboxGroups" class="ib-groups" data-testid="inbox-groups" aria-busy="true"></div>
+            </section>
           </div>
-          <div class="chips-head"><span class="label" id="chLbl">Channels</span><button class="link" id="refreshCh" data-testid="refresh-channels" type="button">Refresh from Buffer</button></div>
-          <div class="chips" id="chips" data-testid="channel-chips" role="group" aria-labelledby="chLbl"></div>
-          <p class="muted capture">Write posts from any page you're reading: drag <a id="bookmarklet" class="bm" data-testid="bookmarklet" href="#">Post with HuhQueue</a> to your bookmarks bar, then click it on any article.</p>
+          <aside class="ib-col ib-side">
+            <section class="ib-sec" aria-labelledby="ibAgH">
+              <header class="ib-sh"><h2 id="ibAgH">Agent activity</h2><button class="link" type="button" data-go="activity">All activity</button></header>
+              <ul class="ib-agents" id="ibAgents" data-testid="inbox-agents"></ul>
+            </section>
+            <section class="ib-sec" aria-labelledby="ibRecH">
+              <header class="ib-sh"><h2 id="ibRecH">Recommended for you</h2><button class="link" type="button" data-go="news">News</button></header>
+              <div class="ib-recs" id="ibRecs" data-testid="inbox-recs"></div>
+            </section>
+          </aside>
         </div>
-        <div id="article" data-testid="article-card" hidden></div>
-        <div class="bulk" id="bulk" hidden>
-          <label for="bulkMode">Send every post as</label>
-          <select id="bulkMode" data-testid="bulk-mode"></select>
-          <span class="bulk-act">
-            <button class="btn2" id="saveIdea" data-testid="save-idea">Save as a Buffer idea</button>
-            <button class="btn" id="sendAll" data-testid="send-all">Send all to Buffer</button>
-          </span>
-        </div>
-        <div class="pf-strip" id="pfStrip" data-testid="preflight-strip" role="group" aria-label="Preflight for each channel" hidden></div>
-        <div id="drafts" class="drafts" data-testid="drafts"></div>
-        <div class="empty" id="studioEmpty" data-testid="studio-empty"><b>No drafts yet</b><span>Paste a link above. You'll get one post per channel, previewed the way each network shows it. You decide what goes to Buffer.</span></div>
       </div>
-
-      <div class="tab" id="tab-approvals" hidden>
-        <h1 class="page-title">Approvals</h1>
-        <p class="intro">Posts your agents wrote. None of these have reached Buffer.</p>
-        <div id="approvals" class="list" data-testid="approvals-list"></div>
-      </div>
-
-      <div class="tab" id="tab-connect" data-testid="connect" hidden>
-        <h1 class="page-title">Connect AI apps</h1>
-        <p class="intro">Use HuhQueue from the assistant you already pay for. Every app reaches the same tools at one address, and every post it makes waits in your Inbox until you approve it.</p>
-        <div class="cx-addr panel" data-testid="connect-address">
-          <div><span class="label">Your MCP address</span><code id="cxUrl" data-testid="connect-url"></code></div>
-          <button class="btn sm" type="button" id="cxCopy" data-testid="connect-copy">Copy address</button>
-          <p class="muted sm">Apps that sign in with OAuth (Claude, ChatGPT) only need this address. Others use it with an agent token you create here. <a href="/docs/agents">Read the agent guide</a></p>
+      <div class="tab" id="tab-news" data-testid="news" hidden>
+        <div class="pg-head"><div><h1 class="page-title">News</h1>
+          <p class="intro">Stories from the sources you follow, scored for your brand. One click turns a story into a post for every channel.</p></div></div>
+        <div class="seg pg-tabs" role="tablist" aria-label="News" data-testid="news-tabs">
+          <button type="button" role="tab" data-sub="feed" data-testid="news-tab-feed" aria-selected="true" class="on">For you</button>
+          <button type="button" role="tab" data-sub="scan" data-testid="news-tab-scan" aria-selected="false">Story scan</button>
+          <button type="button" role="tab" data-sub="sources" data-testid="news-tab-sources" aria-selected="false">Sources</button>
         </div>
-        <div class="cx-grid" id="cxApps" data-testid="connect-apps" aria-busy="true"></div>
-        <p class="muted xs">Tokens follow the rules on the Agents screen: approval by default, a daily cap, and one kill switch for all of them.</p>
+        <section class="sub" data-sub="feed" data-testid="news-feed">
+          <div id="stories" class="nf-grid" data-testid="story-list"></div>
+          <div class="row nf-pager"><button class="btn2 sm" type="button" id="nfMore" data-testid="news-more" hidden>Show more</button></div>
+        </section>
+        <section class="sub" data-sub="scan" data-testid="news-scan" hidden><div id="saScanMount"></div></section>
+        <section class="sub" data-sub="sources" data-testid="news-sources" hidden>
+          <div class="panel nf-follow">
+            <h2 class="h2">Feeds you follow</h2>
+            <p class="muted sm">One list for the For you feed and the story scan. Most news sites and blogs have one at /feed or /rss.</p>
+            <form class="nf-form" id="feedForm">
+              <label class="sr" for="feedUrl">Feed address</label>
+              <input id="feedUrl" data-testid="feed-url" type="url" placeholder="https://www.theverge.com/rss/index.xml" required>
+              <button class="btn2" data-testid="feed-add" type="submit">Follow feed</button>
+            </form>
+            <ul class="feeds" id="feeds" data-testid="feed-list"></ul>
+          </div>
+          <div id="saSetMount"></div>
+        </section>
       </div>
-
-      <div class="tab" id="tab-agents" hidden>
-        <h1 class="page-title">Agents</h1>
-        <p class="intro">AI tools that draft posts for you over MCP or the REST API.</p>
-        <div class="panel kill" id="killPanel">
-          <div><h2 class="card-title">Pause all agents</h2><p class="muted">Stops every agent action on your account at once. You can still post yourself.</p></div>
-          <label class="switch"><input type="checkbox" role="switch" id="killToggle" data-testid="kill-switch" aria-label="Pause all agents"><span></span></label>
+      <div class="tab" id="tab-apps" data-testid="connect" hidden>
+        <div class="pg-head"><div><h1 class="page-title">AI apps</h1>
+          <p class="intro">Use HuhQueue from the assistant you already pay for. Every app reaches the same tools at one address, and every post it makes waits in your Inbox until you approve it.</p></div></div>
+        <div class="ax-top">
+          <div class="panel kill" id="killPanel">
+            <div><h2 class="card-title">Pause all agents</h2><p class="muted sm">Stops every agent action on your account at once. You can still post yourself.</p></div>
+            <label class="switch"><input type="checkbox" role="switch" id="killToggle" data-testid="kill-switch" aria-label="Pause all agents"><span></span></label>
+          </div>
+          <div class="cx-addr panel" data-testid="connect-address">
+            <div><span class="label">Your MCP address</span><code id="cxUrl" data-testid="connect-url"></code></div>
+            <button class="btn sm" type="button" id="cxCopy" data-testid="connect-copy">Copy address</button>
+            <p class="muted sm">Claude and ChatGPT sign in with OAuth and only need this address. Other apps use it with a token made here. <a href="/docs/agents">Agent guide</a></p>
+          </div>
         </div>
-        <h2 class="sec">Connected agents</h2>
+        <h2 class="sec">Apps with access</h2>
         <div id="tokens" data-testid="token-list"></div>
-        <div class="panel">
-          <h2 class="card-title">Connect an agent</h2>
+        <div id="axUsage" class="act-summary" data-testid="apps-usage"></div>
+        <h2 class="sec">Connect an app</h2>
+        <div class="cx-grid" id="cxApps" data-testid="connect-apps" aria-busy="true"></div>
+        <details class="panel ax-custom" data-testid="token-custom">
+          <summary>Custom token for a script or another agent</summary>
           <form class="token-form" id="tokenForm">
-            <div class="field"><label class="label" for="tokName">Name</label><input id="tokName" data-testid="token-name" placeholder="Claude, Cursor, a script" maxlength="40" required></div>
+            <div class="field"><label class="label" for="tokName">Name</label><input id="tokName" data-testid="token-name" placeholder="A script, n8n, an agent" maxlength="40" required></div>
             <div class="field"><label class="label" for="tokPolicy">May do</label><select id="tokPolicy" data-testid="token-policy">
               <option value="review">Write posts that need my approval</option>
               <option value="draft">Save Buffer drafts only</option>
               <option value="trusted">Schedule without asking</option>
             </select></div>
             <div class="field"><label class="label" for="tokCap">Posts per day</label><input id="tokCap" data-testid="token-cap" type="number" min="1" max="100" value="10"></div>
-            <div><button class="btn" data-testid="create-token" type="submit">Create agent token</button></div>
+            <div><button class="btn" data-testid="create-token" type="submit">Create token</button></div>
           </form>
           <div id="tokenReveal" data-testid="token-reveal" hidden></div>
-          <div class="snips">
-            <span class="label">Claude Code</span><pre class="code" id="snipClaude" data-testid="snip-claude"></pre>
-            <span class="label">Claude Desktop or Cursor (mcp.json)</span><pre class="code" id="snipJson" data-testid="snip-json"></pre>
-            <p class="muted">Plain REST works too: the endpoints the interface uses accept <code>Authorization: Bearer hq_…</code>. <a href="/api/docs" target="_blank" rel="noopener">API docs</a></p>
-          </div>
-        </div>
+          <p class="muted sm">Plain REST works too: send <code>Authorization: Bearer hq_…</code> to the same endpoints the app uses. <a href="/api/docs" target="_blank" rel="noopener">API reference</a></p>
+        </details>
       </div>
-
       <div class="tab" id="tab-activity" hidden>
         <h1 class="page-title">Activity</h1>
         <p class="intro">Every action on your account: your sign-ins, each AI agent and the model it used, and every Buffer API call. Kept <span id="actRetention">90</span> days; secrets are never logged.</p>
@@ -425,6 +419,38 @@
         <div id="audit" data-testid="audit-list"></div>
         <div class="row act-pager"><button class="btn2 sm" type="button" id="actPrev" data-testid="act-prev" disabled>Newer</button><span class="muted sm" id="actPage" data-testid="act-page"></span><button class="btn2 sm" type="button" id="actNext" data-testid="act-next" disabled>Older</button></div>
       </div>
+
+      <div class="tab" id="tab-settings" data-testid="settings" hidden>
+        <div class="pg-head"><div><h1 class="page-title">Settings</h1>
+          <p class="intro">Your setup, your channels, the model your agent writes with, and your account.</p></div></div>
+        <div class="set-grid">
+          <section class="panel" aria-labelledby="setUpH"><h2 class="card-title" id="setUpH">Setup</h2>
+            <p class="muted sm" id="setOnbState" data-testid="settings-onboarding-state"></p>
+            <button class="btn2 sm" type="button" id="setOnbOpen" data-testid="settings-onboarding">Open setup again</button></section>
+          <section class="panel" aria-labelledby="setChH"><h2 class="card-title" id="setChH">Connected channels</h2>
+            <ul class="set-ch" id="setChannels" data-testid="settings-channels"></ul>
+            <div class="row tight"><button class="btn2 sm" type="button" id="refreshCh" data-testid="refresh-channels">Refresh from Buffer</button><a class="link sm" id="setBufferLink" href="https://publish.buffer.com/channels" target="_blank" rel="noopener">Add a channel in Buffer</a></div></section>
+        </div>
+        <h2 class="sec" id="aiH">AI engine</h2>
+        <div class="set-grid">
+          <div class="panel"><h2 class="card-title">Right now</h2><p id="aiNow" data-testid="ai-now"></p>
+            <p class="muted sm">Prefer your Claude or ChatGPT subscription? Connect it in <button class="link" type="button" data-go="apps">AI apps</button>; it does the thinking and HuhQueue supplies the tools.</p></div>
+          <form class="panel" id="aiForm"><h2 class="card-title">Bring your own API key</h2>
+            <p class="muted sm">Encrypted on the server, used only for your runs, never shown again.</p>
+            <div class="two"><div class="field"><label class="label" for="aiProv">Provider</label><select id="aiProv" data-testid="ai-provider"></select></div>
+              <div class="field"><label class="label" for="aiModel">Model</label><input id="aiModel" data-testid="ai-model"></div></div>
+            <div class="field" id="aiBaseF" hidden><label class="label" for="aiBase">Base URL</label><input id="aiBase" data-testid="ai-base" placeholder="https://…/v1"></div>
+            <div class="field"><label class="label" for="aiKey">API key</label><input id="aiKey" data-testid="ai-key" type="password" autocomplete="off"></div>
+            <div class="row tight"><button class="btn" data-testid="ai-save" type="submit">Test and save</button><button class="btn2" type="button" id="aiRemove" data-testid="ai-remove" hidden>Remove my key</button></div></form>
+        </div>
+        <h2 class="sec">Account</h2>
+        <div class="panel set-acct">
+          <p class="muted sm" id="setWho" data-testid="settings-who"></p>
+          <div class="row tight"><button class="btn2 sm" type="button" id="setDevice" data-testid="settings-device">Open on another device</button>
+          <button class="btn2 sm" type="button" id="setLogout" data-testid="settings-logout">Sign out</button>
+          <button class="btn2 sm danger" type="button" id="setDisconnect" data-testid="settings-disconnect">Disconnect and delete my data</button></div>
+        </div>
+      </div>
     </div>
   </div>
 </main>
@@ -435,6 +461,8 @@
   <span class="foot-links"><a href="/docs">Docs</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/security">Security</a><a id="repoLink" href="https://github.com/dataanalystram/buffer-contest" target="_blank" rel="noopener">Source code</a></span></div></footer>
 <div id="toast" data-testid="toast" role="status" aria-live="polite" hidden></div>
 <script src="/static/oauth-open.js"></script>
+<script src="/static/ai-logos.js"></script>
+<script src="/static/ai-mark.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/house.js"></script>
 <script src="/static/planner.js"></script>

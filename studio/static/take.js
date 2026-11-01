@@ -5,17 +5,14 @@
 "use strict";
 const T = { src: "upload", file: null, take: null, poll: null, sel: new Set(), plan: null, edit: null };
 const T_VIDEO = new Set(["instagram", "tiktok", "youtube", "twitter", "linkedin", "threads", "facebook", "bluesky"]);
-const T_FIRST = new Set(["instagram", "tiktok", "youtube"]);
 const reducedMotion = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const secs = (s) => { s = Math.max(0, +s || 0); const m = Math.floor(s / 60); return `${m}:${String((s % 60).toFixed(1)).padStart(4, "0")}`; };
 const LAYOUT = { track: "Face-tracked", mixed: "Face-tracked + full frame", pad: "Full frame, blurred sides", fit: "Already vertical" };
 
 function takeChips() {
   const chans = S.channels.filter((c) => !c.isDisconnected && T_VIDEO.has(c.service));
-  if (!T.sel.size) {
-    const first = chans.filter((c) => T_FIRST.has(c.service));
-    (first.length ? first : chans).forEach((c) => T.sel.add(c.id));
-  }
+  // the same default as Make a post (your setup's channels, else every connected one), minus channels without video
+  if (!T.sel.size) defaultChannels().filter((c) => T_VIDEO.has(c.service)).forEach((c) => T.sel.add(c.id));
   const box = $("#takeChips");
   box.innerHTML = chans.length ? "" : `<p class="muted sm">Connect a channel that takes video (Instagram, TikTok, YouTube, X, LinkedIn, Threads) in Buffer.</p>`;
   for (const c of chans) {

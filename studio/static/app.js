@@ -137,6 +137,7 @@ async function boot() {
   if (p.get("error")) toast("Buffer: " + p.get("error"), 6000);
   if (p.get("connected")) toast("Connected to Buffer");
   const shared = p.get("url"); // from the bookmarklet: /?url=<page you were reading>
+  const justConnected = p.has("connected");
   if (p.has("error") || p.has("connected") || shared) history.replaceState({}, "", "/");
   const s = await api("/api/session");
   S.csrf = s.csrf; S.session = s;
@@ -150,12 +151,12 @@ async function boot() {
   document.body.classList.add("in-app"); document.body.classList.toggle("is-demo", !!s.demo);
   $("#acctBtn").textContent = (s.user.name || s.user.email || "Account") + (s.user.organization ? " · " + s.user.organization : "");
   setKill(s.user.kill_switch);
-  snippets(s.mcp_url);
   await loadChannels();
-  budget();
+  budget(); refreshBadge(); if (typeof readyBadge === "function") readyBadge();
   api("/api/inbox").then((d) => ibBadge(d.waiting)).catch(() => {});
   if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
-  else showTab(new URLSearchParams(location.search).get("tab") || "agent");
+  else showTab(p.get("tab") || "inbox", p.get("sub") || "");
+  if (window.onbMaybeOpen) onbMaybeOpen({ justConnected, demo: !!s.demo });
 }
 
 $("#bookmarklet").href = `javascript:location.href='${location.origin}/?url='+encodeURIComponent(location.href)`;
@@ -165,6 +166,7 @@ function setKill(on) {
   $("#killToggle").checked = !!on;
 }
 async function budget() {
+  if (S.session?.demo) { $("#budgetPill").textContent = "Sample · 0 API calls"; $("#budgetPill").title = "The sample workspace never calls Buffer"; return; }
   try {
     const l = await api("/api/limits"); const w = (l.buffer_api.windows || [])[0];
     $("#budgetPill").textContent = w ? `API ${w.remaining}/${w.quota ?? "?"} · ${w.window}` : "API budget ok";
@@ -172,11 +174,20 @@ async function budget() {
 }
 
 // ---------------------------------------------------------------- channels
+// One default for every composer (Make a post, Quick text posts, One take): the channels picked in setup, else every
+// connected channel. One take then drops the ones that can't take video.
+function defaultChannels() {
+  const live = S.channels.filter((c) => !c.isDisconnected);
+  const pick = (S.onb && Array.isArray(S.onb.channels) ? S.onb.channels : []).filter((id) => live.some((c) => c.id === id));
+  return pick.length ? live.filter((c) => pick.includes(c.id)) : live;
+}
+// "Write as threads" only means something for X, Bluesky, Threads and Mastodon: show it only when one is picked.
+function threadOpt() { const o = $("#threadOpt"); if (!o) return; const on = [...S.selected].some((id) => THREADS.has(chOf(id).service)); o.hidden = !on; if (!on) $("#threadChk").checked = false; }
 async function loadChannels(refresh = false) {
   const box = $("#chips");
   try { S.channels = await api("/api/channels" + (refresh ? "?refresh=1" : "")); }
   catch (e) { box.innerHTML = `<span class="st err">${esc(e.message)}</span>`; return; }
-  if (!S.selected.size) S.channels.filter((c) => !c.isDisconnected).forEach((c) => S.selected.add(c.id));
+  if (!S.selected.size) defaultChannels().forEach((c) => S.selected.add(c.id));
   box.innerHTML = S.channels.length ? "" : `<span class="muted">No channels in this Buffer organization yet. Add one in Buffer, then refresh.</span>`;
   for (const c of S.channels) {
     const el = document.createElement("button");
@@ -184,9 +195,10 @@ async function loadChannels(refresh = false) {
     el.dataset.testid = "channel-chip"; el.setAttribute("data-testid", "channel-chip"); el.dataset.id = c.id;
     el.classList.add("svc-" + c.service); el.setAttribute("aria-pressed", S.selected.has(c.id));
     el.innerHTML = `${avatar(c)}<span>${esc(c.displayName || c.name)}</span><small>${esc(netName(c.service))}</small>`;
-    el.onclick = () => { if (c.isDisconnected) return toast("Reconnect this channel in Buffer first"); S.selected.has(c.id) ? S.selected.delete(c.id) : S.selected.add(c.id); el.classList.toggle("on"); el.setAttribute("aria-pressed", S.selected.has(c.id)); };
+    el.onclick = () => { if (c.isDisconnected) return toast("Reconnect this channel in Buffer first"); S.selected.has(c.id) ? S.selected.delete(c.id) : S.selected.add(c.id); el.classList.toggle("on"); el.setAttribute("aria-pressed", S.selected.has(c.id)); threadOpt(); };
     box.appendChild(el);
   }
+  threadOpt();
 }
 
 // ---------------------------------------------------------------- drafting
@@ -291,9 +303,20 @@ $("#saveIdea").onclick = async () => {
 };
 $("#refreshCh").onclick = () => loadChannels(true);
 
-// ---------------------------------------------------------------- tabs
+// ---------------------------------------------------------------- navigation
+// Nine screens, each job in exactly one place (docs/IA.md has the old -> new map). Old names keep working: a saved link
+// or a ⌘K command for "approvals", "studio", "radar", "sources", "brandstudio", "connect", "agents" or "ai" lands on the
+// screen and sub-tab that now does that job.
+const TAB_ALIAS = {
+  home: ["inbox"], approvals: ["inbox", ""], calendar: ["planner"], queue: ["planner"],
+  studio: ["agent", "quick"], radar: ["news", "feed"], sources: ["news", "scan"],
+  brandstudio: ["brand", "kit"], ledger: ["brand", "ledger"], templates: ["brand", "templates"],
+  connect: ["apps"], agents: ["apps"], ai: ["settings", ""],
+};
+const SUB_DEFAULT = { agent: "agent", news: "feed", brand: "kit" };
 document.querySelectorAll(".rail button[data-tab]").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
-// phone and tablet: a bottom bar with the four everyday tabs, the rest in a "More" sheet (Esc or Close returns focus)
+// phone: a bottom bar with the four everyday screens and a Menu sheet for the rest (Esc or Close returns focus).
+// On a desktop the sheet is just the lower part of the rail, so nothing is listed twice.
 function moreSheet(open) {
   const btn = $("#moreBtn"), rail = $("#rail");
   rail.classList.toggle("more-open", open); btn.setAttribute("aria-expanded", open); $("#railScrim").hidden = !open;
@@ -303,27 +326,58 @@ $("#moreBtn").onclick = () => moreSheet(!$("#rail").classList.contains("more-ope
 $("#moreClose").onclick = () => moreSheet(false);
 $("#railScrim").onclick = () => moreSheet(false);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#rail").classList.contains("more-open")) moreSheet(false); });
-function showTab(name) {
-  if (name === "home") name = "inbox"; // the old name, for links people saved
-  if (name === "calendar" || name === "queue") { // both live in the Planner now
+// one generic "go to" for links between screens: <button data-go="planner"> or data-go="brand:ledger"
+document.addEventListener("click", (e) => {
+  const g = e.target.closest("[data-go]"); if (!g || g.dataset.act || !g.dataset.go) return;
+  e.preventDefault(); ibGo(g.dataset.go);
+});
+function subTab(tab, sub) {
+  const root = document.getElementById("tab-" + tab); if (!root) return "";
+  const subs = [...root.querySelectorAll(":scope > .sub[data-sub]")]; if (!subs.length) return "";
+  if (!subs.some((x) => x.dataset.sub === sub)) sub = SUB_DEFAULT[tab] || subs[0].dataset.sub;
+  subs.forEach((x) => (x.hidden = x.dataset.sub !== sub));
+  root.querySelectorAll(":scope > .pg-tabs [data-sub]").forEach((b) => { const on = b.dataset.sub === sub; b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
+  root.dataset.sub = sub;
+  (window.HS_SUBS || {})[tab + ":" + sub]?.();
+  return sub;
+}
+document.querySelectorAll(".pg-tabs").forEach((seg) => {
+  const tab = seg.closest(".tab").id.slice(4);
+  seg.querySelectorAll("[data-sub]").forEach((b) => (b.onclick = () => { const sub = subTab(tab, b.dataset.sub); urlFor(tab, sub); }));
+  seg.addEventListener("keydown", (e) => { // arrow keys move between sub-tabs (WAI-ARIA tabs)
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const bs = [...seg.querySelectorAll("[data-sub]")], i = bs.indexOf(document.activeElement); if (i < 0) return;
+    const n = bs[(i + (e.key === "ArrowRight" ? 1 : bs.length - 1)) % bs.length]; n.click(); n.focus(); e.preventDefault();
+  });
+});
+function urlFor(name, sub) {
+  if (name === "planner") return;
+  const demo = S.session?.demo ? "demo=1&" : "";
+  const q = name === "inbox" ? "" : `tab=${name}${sub && sub !== SUB_DEFAULT[name] ? "&sub=" + sub : ""}`;
+  history.replaceState(null, "", q || demo ? "/?" + (demo + q).replace(/&$/, "") : "/");
+}
+function showTab(name, sub = "") {
+  if (TAB_ALIAS[name]) {
     if (name === "queue") { try { const s = JSON.parse(localStorage.getItem("hq_planner") || "{}"); s.view = "list"; localStorage.setItem("hq_planner", JSON.stringify(s)); } catch (_) {} }
-    name = "planner";
+    const [t, sb] = TAB_ALIAS[name]; if (name === "approvals") setTimeout(() => $("#ibApprSec")?.scrollIntoView({ block: "start" }), 300);
+    name = t; sub = sub || sb || "";
   }
-  if (!document.getElementById("tab-" + name)) name = "agent";
-  if (name !== "planner") history.replaceState(null, "", name === "agent" ? "/" + (S.session?.demo ? "?demo=1" : "") : "/?tab=" + name);
+  if (!document.getElementById("tab-" + name)) name = "inbox";
   if ($("#rail").classList.contains("more-open")) moreSheet(false);
   const primary = !!document.querySelector(`.rail [data-tab="${name}"][data-primary]`);
   $("#moreBtn").classList.toggle("on", !primary);
   document.querySelectorAll(".rail button[data-tab]").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("on", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   window.scrollTo({ top: 0 });
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
-  ({ inbox: loadInbox, radar: loadRadar, approvals: loadApprovals, agents: loadTokens }[name] || (window.HS_TABS || {})[name] || (() => {}))();
+  sub = subTab(name, sub);
+  urlFor(name, sub);
+  ({ inbox: loadInbox, news: loadNews, apps: loadApps, settings: loadSettings }[name] || (window.HS_TABS || {})[name] || (() => {}))();
 }
+window.showTab = showTab;
 
-// ---------------------------------------------------------------- Inbox: what needs a person, grouped by urgency
-// One read (/api/inbox, the same as MCP get_inbox). "Now" groups first, then "Soon", then "This week" (fyi). Groups with
-// nothing in them fold into one calm "All clear" line, so the page is short when life is quiet.
-$("#quickForm").addEventListener("submit", (ev) => { ev.preventDefault(); $("#urlInput").value = $("#quickUrl").value; showTab("studio"); $("#draftForm").requestSubmit(); });
+// ---------------------------------------------------------------- Inbox: a dashboard of what needs you today
+// Stats tiles, the agent posts waiting for approval (as cards with each channel's media), today's queue, what needs
+// attention (/api/inbox, the same as MCP get_inbox), agent activity with each app's mark, and posts recommended for you.
 const IB_URG = { now: "Now", soon: "Soon", fyi: "This week" };
 const IB_ICON = {
   approvals: '<path d="M5 12l5 5 9-10"/>', channels: '<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M4 4l16 16"/>',
@@ -331,15 +385,16 @@ const IB_ICON = {
   undated: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>', open_slots: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M12 13v4M10 15h4"/>',
   plan: '<path d="M4 19h16M7 16V9M12 16V5M17 16v-4"/>' };
 const ibWhen = (iso) => { if (!iso) return ""; const d = new Date(iso); return d.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); };
+const hhmm = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 function ibItem(g, it) {
   const acts = (it.actions || []).map((a) => a.href
     ? `<a class="btn2 sm" data-testid="inbox-action" data-act="${esc(a.id)}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
     : `<button type="button" class="${a.id === "approve" || a.id === "fix" ? "btn accent sm" : "btn2 sm"}" data-testid="inbox-action" data-act="${esc(a.id)}" data-go="${esc(a.go || "")}" data-id="${esc(it.id ?? "")}">${esc(a.label)}</button>`).join("");
   if (g.key === "open_slots") return `<li class="ib-item" data-testid="inbox-item" data-group="${g.key}">${netBadge(it.service)}<div class="ib-what"><b>${esc(it.channel)}</b><small>${it.count} open · next ${esc(ibWhen(it.next))}</small></div></li>`;
   if (g.key === "plan") return "";
-  const meta = [it.channel, it.agent ? "from " + it.agent : "", ibWhen(it.when)].filter(Boolean).map(esc).join(" · ");
+  const meta = [it.channel, ibWhen(it.when)].filter(Boolean).map(esc).join(" · ");
   return `<li class="ib-item" data-testid="inbox-item" data-group="${g.key}" data-ref="${esc(it.ref || "")}">${netBadge(it.service)}
-    <div class="ib-what"><small class="ib-meta">${meta}</small>${it.text ? `<span class="ib-text">${esc(it.text)}</span>` : ""}
+    <div class="ib-what"><small class="ib-meta">${it.agent ? aiWho(it.agent, 14) + " · " : ""}${meta}</small>${it.text ? `<span class="ib-text">${esc(it.text)}</span>` : ""}
       ${it.reason ? `<span class="ib-reason${it.status === "warning" ? " warn" : ""}" data-testid="inbox-reason"><b class="sr">${it.status === "warning" ? "Warning" : "Problem"}: </b>${esc(it.reason)}</span>` : ""}</div>
     ${acts ? `<div class="ib-acts">${acts}</div>` : ""}</li>`;
 }
@@ -351,65 +406,105 @@ function ibGroup(g) {
   const more = g.count > (g.items || []).length && g.key !== "plan" && g.key !== "open_slots" ? `<p class="muted sm ib-more">and ${g.count - g.items.length} more</p>` : "";
   return `<section class="ib-group u-${g.urgency}" id="ib-${g.key}" data-testid="inbox-group" data-group="${g.key}" data-urgency="${g.urgency}" data-count="${g.count}" aria-labelledby="ibh-${g.key}">
     <header class="ib-gh"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IB_ICON[g.key] || ""}</svg>
-      <h2 id="ibh-${g.key}" tabindex="-1">${esc(g.title)}</h2><span class="ib-count" data-testid="inbox-count" aria-label="${g.count} item${g.count === 1 ? "" : "s"}">${g.count}</span>
+      <h3 id="ibh-${g.key}" tabindex="-1">${esc(g.title)}</h3><span class="ib-count" data-testid="inbox-count" aria-label="${g.count} item${g.count === 1 ? "" : "s"}">${g.count}</span>
       <span class="ib-urg">${IB_URG[g.urgency]}</span></header>
     <p class="ib-sum" data-testid="inbox-group-summary">${esc(g.summary)}</p>
     ${g.key === "plan" ? `<div class="plan" id="planBox" data-testid="plan-box"></div>` : ""}
     ${(g.items || []).length && g.key !== "plan" ? `<ul class="ib-items">${g.items.map((it) => ibItem(g, it)).join("")}</ul>` : ""}${more}
     ${acts ? `<div class="ib-gacts">${acts}</div>` : ""}</section>`;
 }
-async function ibGo(go, el) {
+async function ibGo(go) {
   if (!go) return;
   if (go.startsWith("planner:")) { if (typeof plOpenRef === "function") return plOpenRef(go.slice(8)); return showTab("planner"); }
-  showTab(go);
+  const [t, sub] = go.split(":"); showTab(t, sub || "");
+}
+function ibTile(key, label, value, sub, tone = "", go = "") {
+  return `<${go ? `button type="button" data-go="${go}"` : "div"} class="ib-tile ${tone}" data-testid="inbox-stat" data-stat="${key}"><span class="ib-tl">${esc(label)}</span><b class="ib-tv">${esc(value)}</b><span class="ib-ts">${esc(sub)}</span></${go ? "button" : "div"}>`;
 }
 async function loadInbox() {
-  const box = $("#inboxGroups");
-  let d;
-  try { d = await api("/api/inbox"); } catch (e) { box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(e.message)}</div>`; box.removeAttribute("aria-busy"); return; }
+  const box = $("#inboxGroups"), demo = !!S.session?.demo;
+  const [d, sched, lim] = await Promise.all([api("/api/inbox").catch((e) => ({ error: e.message })), api("/api/queue?status=scheduled").catch(() => []), api("/api/limits").catch(() => null)]);
   box.removeAttribute("aria-busy");
+  if (d.error) { box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(d.error)}</div>`; return; }
   ibBadge(d.waiting);
-  const live = d.groups.filter((g) => g.count > 0), clear = d.groups.filter((g) => !g.count);
-  const now = live.filter((g) => g.urgency !== "fyi").reduce((n, g) => n + g.count, 0);
-  $("#inboxTitle").textContent = d.waiting ? `Inbox · ${d.waiting}` : "Inbox";
-  $("#inboxSummary").textContent = d.waiting ? `${d.waiting} thing${d.waiting === 1 ? "" : "s"} need${d.waiting === 1 ? "s" : ""} you, most urgent first.` : "You're all caught up. Nothing is waiting on you right now.";
+  const G = Object.fromEntries(d.groups.map((g) => [g.key, g]));
+  // the dashboard shows approvals as cards above, and the Buffer plan only where it is real (never in the sample)
+  const groups = d.groups.filter((g) => g.key !== "approvals" && !(demo && g.key === "plan"));
+  const live = groups.filter((g) => g.count > 0), clear = groups.filter((g) => !g.count);
+  const waiting = d.waiting - (demo && G.plan && G.plan.urgency === "now" ? 1 : 0);
+  $("#inboxTitle").textContent = "Inbox";
+  $("#inboxSummary").textContent = waiting ? `${waiting} thing${waiting === 1 ? "" : "s"} need${waiting === 1 ? "s" : ""} you, most urgent first.` : "You're all caught up. Nothing is waiting on you right now.";
   $("#inboxKill").hidden = !d.kill_switch;
-  $("#inboxJump").innerHTML = live.map((g) => `<a class="ib-chip u-${g.urgency}" href="#ib-${g.key}" data-testid="inbox-jump-chip" data-group="${g.key}"><span>${esc(g.title)}</span><b>${g.count}</b></a>`).join("");
+  // stats tiles
+  const today = new Date(), endDay = new Date(today); endDay.setHours(23, 59, 59, 999);
+  const w = lim && (lim.buffer_api.windows || [])[0];
+  $("#ibStats").innerHTML =
+    ibTile("scheduled", "Scheduled", String(sched.length), sched.length ? `next ${hhmm(sched.map((p) => p.dueAt).filter(Boolean).sort()[0] || today.toISOString())}` : "nothing queued", "", "planner") +
+    ibTile("approval", "Awaiting approval", String(G.approvals?.count || 0), G.approvals?.count ? "from your agents" : "none waiting", G.approvals?.count ? "hot" : "") +
+    ibTile("failed", "Failed", String(G.failed?.count || 0), G.failed?.count ? "fix and reschedule" : "all delivered", G.failed?.count ? "bad" : "ok") +
+    ibTile("budget", "Buffer requests left", demo ? "Sample" : w ? `${w.remaining}` : "OK", demo ? "0 used: nothing reaches Buffer" : w ? `of ${w.quota ?? "?"} this ${w.window}` : "plenty left");
+  // today's queue: what Buffer will send in the next 24 hours
+  const next = sched.filter((p) => p.dueAt && new Date(p.dueAt) - today < 864e5).sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+  const soon = next.length ? next : sched.filter((p) => p.dueAt).sort((a, b) => a.dueAt.localeCompare(b.dueAt)).slice(0, 4);
+  $("#ibTodayH").textContent = next.length ? "Today's queue" : "Coming up";
+  $("#ibToday").innerHTML = soon.length ? soon.slice(0, 6).map(todayRow).join("")
+    : `<li class="ib-none">Nothing scheduled. <button class="link" type="button" data-go="agent">Make a post</button> or <button class="link" type="button" data-go="take">turn one video into a week</button>.</li>`;
+  // needs attention
+  $("#inboxJump").innerHTML = live.length > 2 ? live.map((g) => `<a class="ib-chip u-${g.urgency}" href="#ib-${g.key}" data-testid="inbox-jump-chip" data-group="${g.key}"><span>${esc(g.title)}</span><b>${g.count}</b></a>`).join("") : "";
   box.innerHTML = (live.length ? live.map(ibGroup).join("") : "")
-    + (!now ? `<div class="ib-empty" data-testid="inbox-empty"><span class="calm-dot" aria-hidden="true"></span><div><b>All caught up</b><span>No approvals, bounces, warnings or undated drafts. Paste a link below, or let an agent draft for you.</span></div></div>` : "")
+    + (!live.some((g) => g.urgency !== "fyi") ? `<div class="ib-empty" data-testid="inbox-empty"><span class="calm-dot" aria-hidden="true"></span><div><b>All caught up</b><span>No bounces, warnings or undated drafts.</span></div></div>` : "")
     + (clear.length ? `<details class="ib-clear" data-testid="inbox-clear"><summary data-testid="inbox-clear-toggle">All clear: ${clear.map((g) => esc(g.title.toLowerCase())).join(", ")}</summary><ul>${clear.map((g) => `<li data-testid="inbox-clear-item" data-group="${g.key}"><span class="calm-dot" aria-hidden="true"></span>${esc(g.summary)}</li>`).join("")}</ul></details>` : "");
   $("#inboxJump").querySelectorAll("a").forEach((a) => (a.onclick = (e) => { e.preventDefault(); const h = $("#ibh-" + a.dataset.group); h.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); h.focus({ preventScroll: true }); }));
   box.querySelectorAll("button[data-act]").forEach((b) => (b.onclick = async () => {
     const act = b.dataset.act;
-    if (act === "approve") {
-      b.disabled = true;
-      try { await api(`/api/approvals/${b.dataset.id}/approve`, { method: "POST", body: {} }); toast("Approved. It's in your Buffer queue."); refreshBadge(); loadInbox(); }
-      catch (e) { toast(e.message, 6000); b.disabled = false; }
-      return;
-    }
     if (act === "refresh") return loadChannels(true).then(loadInbox);
-    ibGo(b.dataset.go, b);
+    ibGo(b.dataset.go);
   }));
-  loadPlan();
-  const up = $("#upcoming");
-  api("/api/queue?status=scheduled").then((upcoming) => {
-    up.innerHTML = upcoming.length ? "" : `<div class="empty"><b>Nothing scheduled yet</b><span>Posts you send to your Buffer queue show up here.</span></div>`;
-    upcoming.slice(0, 4).forEach((p) => up.insertAdjacentHTML("beforeend", postItem(p)));
-  }).catch(() => (up.innerHTML = ""));
-  const hs = $("#homeStories");
-  api("/api/radar").then((r) => {
-    hs.innerHTML = r.stories.length ? r.stories.slice(0, 3).map(storyItem).join("")
-      : `<div class="empty"><b>No feeds yet</b><span>Follow the sites you share from in News radar, and new stories land here.</span></div>`;
-    wireStories(hs);
-  }).catch(() => (hs.innerHTML = ""));
+  if (G.plan && !demo) loadPlan(); else $("#limitBar").hidden = true;
+  loadApprovals(); ibAgents(); ibRecs();
+}
+function todayRow(p) {
+  const ch = chOf(p.channelId), a = (p.assets || [])[0], vid = a && /video/.test((a.type || "") + (a.mimeType || ""));
+  const th = a && (a.thumbnail || (!vid && a.source));
+  return `<li class="ib-trow svc-${esc(ch.service)}" data-testid="inbox-today-item"><time datetime="${esc(p.dueAt)}">${esc(hhmm(p.dueAt))}<small>${esc(new Date(p.dueAt).toLocaleDateString([], { weekday: "short" }))}</small></time>
+    ${netBadge(ch.service)}<span class="ib-ttext"><b>${esc(ch.displayName || ch.name)}</b><span>${esc(p.text)}</span></span>
+    ${th ? `<img class="ib-tth" src="${esc(th)}" alt="" loading="lazy">` : vid ? `<span class="ib-tth vid" aria-label="Video"></span>` : ""}</li>`;
+}
+async function ibAgents() {
+  const box = $("#ibAgents");
+  let r; try { r = await api("/api/activity?tab=agent&limit=6"); } catch (_) { box.innerHTML = `<li class="ib-none">Agent activity shows here once an app connects.</li>`; return; }
+  box.innerHTML = r.items.length ? r.items.map((x) => { const who = x.app_label || x.token_label || "Agent";
+    return `<li class="ib-arow${x.ok ? "" : " bad"}" data-testid="inbox-agent-row">${aiMark(x.app || who, 28)}<span><b>${esc(who)}</b> ${esc(actionWords(x.action))}${x.model ? `<small>${aiMark(x.model, 12)} ${esc(x.model)}</small>` : ""}</span><time>${esc(timeAgo(x.ts * 1000))}</time></li>`; }).join("")
+    : `<li class="ib-none">No agent has acted yet. <button class="link" type="button" data-go="apps">Connect Claude, ChatGPT or Cursor</button>.</li>`;
+}
+const ACTION_WORDS = { submit_post: "wrote a post", approve_post: "had a post approved", preview_post: "checked a post", draft: "drafted posts", list_channels: "read your channels",
+  get_inbox: "read your Inbox", agent_run: "ran the agent", sources_scan: "scanned sources", sources_draft: "drafted from sources", render: "rendered media", get_calendar: "read your Planner" };
+const actionWords = (a) => ACTION_WORDS[a] || String(a || "").replace(/_/g, " ");
+// Recommended for you: GET /api/recommendations (backend, docs/ONBOARDING.md). Until that ships, the newest stories from
+// your feeds stand in, clearly labelled.
+async function getRecs() {
+  try { const r = await api("/api/recommendations"); if (Array.isArray(r.items)) return { items: r.items, live: true }; } catch (_) {}
+  try { const r = await api("/api/radar"); return { items: r.stories.slice(0, 4).map((s) => ({ id: s.url, title: s.title, why: whyLine(s), source: s.source, url: s.url, image: s.image, published: s.published })), live: false }; }
+  catch (_) { return { items: [], live: false }; }
+}
+async function ibRecs() {
+  const box = $("#ibRecs"), r = await getRecs();
+  box.innerHTML = r.items.length ? r.items.slice(0, 4).map((x) => recCard(x)).join("") + (r.live ? "" : `<p class="muted xs">From your feeds. Personal picks arrive after setup.</p>`)
+    : `<p class="ib-none">Follow a few feeds in <button class="link" type="button" data-go="news:sources">News</button> and posts worth making show up here.</p>`;
+  wireMake(box); favicons(box);
+}
+function recCard(x) {
+  const host = hostOf(x.url);
+  return `<article class="rec" data-testid="rec-card">${x.image ? `<img class="rec-img" src="${esc(x.image)}" alt="" loading="lazy">` : ""}
+    <div class="rec-b"><span class="nf-src">${fav(host)}${esc(x.source || host)}</span><b class="rec-t">${esc(x.title)}</b>${x.why ? `<span class="rec-why">${esc(x.why)}</span>` : ""}
+    <span class="row tight">${x.run_id ? `<button class="btn sm" type="button" data-run="${esc(x.run_id)}" data-testid="rec-review">Review</button>` : `<button class="btn sm" type="button" data-make="${esc(x.url)}" data-testid="rec-make">Make post</button>`}</span></div></article>`;
 }
 function ibBadge(n) { const b = $("#inboxBadge"); b.textContent = n; b.hidden = !n; }
 $("#inboxRefresh").onclick = () => loadInbox();
-$("[data-testid=inbox-kill-open]").onclick = () => showTab("agents");
-// ---------------------------------------------------------------- plan limits: warn before Buffer says no
+// ---------------------------------------------------------------- plan limits: warn before Buffer says no (never in the sample)
 async function loadPlan() {
   let p; try { p = await api("/api/plan"); } catch (_) { return; }
-  const box = $("#planBox");
+  const box = $("#planBox"); if (!box) return;
   const meter = (m) => { const lvl = m.pct >= 100 ? "over" : m.pct >= 80 ? "near" : "";
     return `<div class="pm" data-testid="plan-meter"><div class="row"><span>${esc(m.label)}</span><span class="${lvl}">${m.used.toLocaleString()} of ${m.limit.toLocaleString()}</span></div><div class="bar ${lvl}" aria-hidden="true"><i style="width:${Math.min(100, m.pct)}%"></i></div></div>`; };
   box.innerHTML = p.meters.length ? p.meters.map(meter).join("") + (p.locked_channels.length ? `<div class="st err">Locked in Buffer: ${esc(p.locked_channels.join(", "))}. Posts to these channels won't go out until you unlock them.</div>` : "")
@@ -417,27 +512,45 @@ async function loadPlan() {
   const api_ = (p.buffer_api.windows || []).find((w) => w.quota && w.remaining / w.quota < 0.1);
   const worst = p.near_limit.sort((x, y) => y.pct - x.pct)[0];
   let msg = "";
-  if (worst) msg = worst.pct >= 100 ? `You've used all ${worst.limit} ${worst.label.toLowerCase()} your Buffer plan allows. New posts won't be accepted until some go out or you upgrade.`
-    : `You've used ${worst.used} of ${worst.limit} ${worst.label.toLowerCase()} on your Buffer plan.`;
+  if (worst && worst.pct >= 100) msg = `You've used all ${worst.limit} ${worst.label.toLowerCase()} your Buffer plan allows. New posts won't be accepted until some go out.`;
   else if (p.locked_channels.length) msg = `${p.locked_channels.length} channel${p.locked_channels.length > 1 ? "s are" : " is"} locked in Buffer because of your plan.`;
   const bar = $("#limitBar"), key = "hq_limit_dismissed:" + msg;
   let dismissed = false; try { dismissed = sessionStorage.getItem(key) === "1"; } catch (_) {}
-  if (msg && !dismissed) { $("#limitText").textContent = msg; $("#limitUpgrade").hidden = false; bar.hidden = false; }
+  if (S.session?.demo) bar.hidden = true;
+  else if (msg && !dismissed) { $("#limitText").textContent = msg; $("#limitUpgrade").hidden = false; bar.hidden = false; }
   else if (api_ && !dismissed) { $("#limitText").textContent = `HuhQueue has ${api_.remaining} Buffer API requests left for the next ${api_.window}. Reading may pause briefly; sending still works.`; $("#limitUpgrade").hidden = true; bar.hidden = false; }
   else bar.hidden = true;
   $("#limitUpgrade").href = p.upgrade_url;
   $("#limitDismiss").onclick = () => { try { sessionStorage.setItem(key, "1"); } catch (_) {} bar.hidden = true; };
 }
 
-// ---------------------------------------------------------------- news radar
+// ---------------------------------------------------------------- News: scannable story cards
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (_) { return ""; } };
+// The site's own favicon (no third-party favicon service); a monogram until it loads, and if it never does.
+const fav = (host) => `<span class="fav" data-host="${esc(host)}" aria-hidden="true"><i>${esc((host || "?")[0].toUpperCase())}</i></span>`;
+function favicons(box) {
+  box.querySelectorAll(".fav[data-host]:not([data-done])").forEach((f) => {
+    f.dataset.done = "1"; const h = f.dataset.host; if (!h) return;
+    const img = new Image(); img.alt = ""; img.referrerPolicy = "no-referrer"; img.width = 16; img.height = 16;
+    img.onload = () => { if (img.naturalWidth > 1) { f.innerHTML = ""; f.append(img); f.classList.add("ok"); } };
+    img.src = `https://${h}/favicon.ico`;
+  });
+}
+// one plain line on why a story matters: the feed's own summary minus link-aggregator boilerplate ("Article URL: …")
+function whyLine(st) {
+  let s = String(st.summary || "").replace(/(Article URL|Comments URL|Points|# Comments):\s*\S*/gi, " ").replace(/https?:\/\/\S+/g, " ").replace(/\s+/g, " ").trim();
+  if (s.length < 25) return "";
+  const m = s.match(/^.{25,140}?[.!?](\s|$)/); s = m ? m[0].trim() : s.slice(0, 140).replace(/\s\S*$/, "") + "…";
+  return s;
+}
 function storyItem(st) {
-  const ago = st.published ? timeAgo(st.published * 1000) : "";
-  return `<article class="item story" data-testid="story-item">
-    <div class="pv-body"><div class="meta">${esc(st.source)}${ago ? `, ${esc(ago)}` : ""}</div>
-      <a class="story-title" href="${esc(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
-      ${st.summary ? `<p class="muted story-sum">${esc(st.summary)}</p>` : ""}
-      <div class="pv-foot"><span></span><button class="btn2 sm" data-testid="story-write" data-url="${esc(st.url)}">Write posts</button></div></div>
-    ${st.image ? `<span class="pv-media"><img src="${esc(st.image)}" alt="" loading="lazy"></span>` : ""}</article>`;
+  const host = hostOf(st.url), ago = st.published ? timeAgo(st.published * 1000) : "", why = whyLine(st);
+  return `<article class="nf-card" data-testid="story-item">
+    ${st.image ? `<img class="nf-img" src="${esc(st.image)}" alt="" loading="lazy">` : ""}
+    <div class="nf-b"><div class="nf-meta">${fav(host)}<span class="nf-src">${esc(st.source || host)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}</div>
+      <a class="nf-t" href="${esc(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
+      ${why ? `<p class="nf-why">${esc(why)}</p>` : ""}
+      <div class="nf-act"><button class="btn sm" type="button" data-make="${esc(st.url)}" data-testid="story-write">Make post</button></div></div></article>`;
 }
 function timeAgo(ms) {
   const m = Math.round((Date.now() - ms) / 60000);
@@ -445,26 +558,56 @@ function timeAgo(ms) {
   const h = Math.round(m / 60); if (h < 24) return `${h} h ago`;
   return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
 }
-function wireStories(box) {
-  box.querySelectorAll("[data-testid=story-write]").forEach((b) => (b.onclick = () => { $("#urlInput").value = b.dataset.url; showTab("studio"); $("#draftForm").requestSubmit(); }));
+// "Make post" opens Make a post with the link filled in; the person picks the format and presses Make it.
+function wireMake(box) {
+  box.querySelectorAll("[data-make]").forEach((b) => (b.onclick = () => {
+    showTab("agent", "agent");
+    document.querySelector("#agentCompose [data-src=link]")?.click();
+    const u = $("#agUrl"); if (u) { u.value = b.dataset.make; u.focus(); }
+    toast("Link added. Pick a format and press Make it.");
+  }));
+  box.querySelectorAll("[data-run]").forEach((b) => (b.onclick = async () => { showTab("agent", "agent"); try { const r = await api(`/api/agent/runs/${b.dataset.run}`); window.showRun && showRun(r); } catch (e) { toast(e.message); } }));
 }
-async function loadRadar() {
-  const box = $("#stories"), fl = $("#feeds");
-  box.innerHTML = `<p class="muted">Checking your feeds…</p>`;
+const NF = { stories: [], shown: 12 };
+async function loadNews() { if ((document.getElementById("tab-news").dataset.sub || "feed") === "feed") loadFeed(); }
+async function loadFeed() {
+  const box = $("#stories");
+  if (!NF.stories.length) box.innerHTML = `<div class="nf-skel" aria-busy="true"><span></span><span></span><span></span></div>`;
   try {
-    const r = await api("/api/radar");
-    fl.innerHTML = r.feeds.map((f) => `<span class="feed" data-testid="feed-row"><span>${esc(new URL(f.url).hostname.replace(/^www\./, ""))}</span><button class="link danger" data-testid="feed-remove" data-id="${f.id}" aria-label="Stop following ${esc(f.url)}">Remove</button></span>`).join("");
-    fl.querySelectorAll("[data-testid=feed-remove]").forEach((b) => (b.onclick = async () => { await api(`/api/radar/feeds/${b.dataset.id}`, { method: "DELETE" }); loadRadar(); }));
-    box.innerHTML = (r.errors || []).map((e) => `<div class="st err">${esc(new URL(e.feed).hostname)}: ${esc(e.error)}</div>`).join("")
-      + (r.stories.length ? r.stories.map(storyItem).join("") : `<div class="empty"><b>No stories yet</b><span>Follow a site's feed above. Most news sites and blogs have one at /feed or /rss.</span></div>`);
-    wireStories(box);
+    const r = await api("/api/radar"); NF.stories = r.stories; NF.feeds = r.feeds;
+    box.innerHTML = (r.errors || []).map((e) => `<div class="st err">${esc(hostOf(e.feed))}: ${esc(e.error)}</div>`).join("")
+      + (r.stories.length ? r.stories.slice(0, NF.shown).map(storyItem).join("") : `<div class="empty"><b>No stories yet</b><span>Follow a site in <button class="link" type="button" data-go="news:sources">Sources</button>. Most news sites and blogs have a feed at /feed or /rss.</span></div>`);
+    $("#nfMore").hidden = r.stories.length <= NF.shown;
+    wireMake(box); favicons(box);
   } catch (e) { box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+}
+$("#nfMore").onclick = () => { NF.shown += 12; loadFeed(); };
+window.HS_SUBS = Object.assign(window.HS_SUBS || {}, { "news:feed": loadFeed, "news:sources": loadFeeds });
+// One list of followed feeds: the For you feed (news radar) and the story scan (sources agent) read the same list.
+async function loadFeeds() {
+  const fl = $("#feeds");
+  let r, sa; try { [r, sa] = await Promise.all([api("/api/radar"), api("/api/sources").catch(() => null)]); } catch (e) { fl.innerHTML = `<li class="st err">${esc(e.message)}</li>`; return; }
+  const scan = (sa && sa.settings && sa.settings.rss) || [];
+  const rows = r.feeds.map((f) => ({ id: f.id, url: f.url, title: f.title }));
+  for (const u of scan) if (!rows.some((x) => x.url === u)) rows.push({ id: null, url: u, title: hostOf(u) });
+  fl.innerHTML = rows.length ? rows.map((f) => `<li class="feed" data-testid="feed-row">${fav(hostOf(f.url))}<span><b>${esc(f.title || hostOf(f.url))}</b><small>${esc(hostOf(f.url))}</small></span><button class="link danger" type="button" data-testid="feed-remove" data-id="${f.id ?? ""}" data-url="${esc(f.url)}" aria-label="Stop following ${esc(f.url)}">Remove</button></li>`).join("")
+    : `<li class="muted sm">No feeds yet.</li>`;
+  favicons(fl);
+  fl.querySelectorAll("[data-testid=feed-remove]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true;
+    try { if (b.dataset.id) await api(`/api/radar/feeds/${b.dataset.id}`, { method: "DELETE" });
+      if (scan.includes(b.dataset.url)) await api("/api/sources/settings", { method: "POST", body: { rss: scan.filter((u) => u !== b.dataset.url) } });
+      NF.stories = []; loadFeeds(); } catch (e) { toast(e.message, 5000); b.disabled = false; }
+  }));
 }
 $("#feedForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  const b = $("[data-testid=feed-add]"); b.disabled = true;
-  try { const f = await api("/api/radar/feeds", { method: "POST", body: { url: $("#feedUrl").value.trim() } }); toast(`Following ${f.title}`); $("#feedUrl").value = ""; loadRadar(); }
-  catch (e) { toast(e.message, 5000); }
+  const b = $("[data-testid=feed-add]"), url = $("#feedUrl").value.trim(); b.disabled = true;
+  try {
+    const f = await api("/api/radar/feeds", { method: "POST", body: { url } });
+    try { const sa = await api("/api/sources"); const rss = sa.settings.rss || []; if (!rss.includes(url) && rss.length < 8) await api("/api/sources/settings", { method: "POST", body: { rss: [...rss, url] } }); } catch (_) {}
+    toast(`Following ${f.title}`); $("#feedUrl").value = ""; NF.stories = []; loadFeeds();
+  } catch (e) { toast(e.message, 5000); }
   finally { b.disabled = false; }
 });
 
@@ -487,50 +630,61 @@ function postItem(p) {
     ${media}</article>`;
 }
 
-// ---------------------------------------------------------------- approvals
+// ---------------------------------------------------------------- approvals (cards on the Inbox)
 async function refreshBadge() {
   try {
     const r = await api("/api/approvals");
-    for (const b of [$("#apprBadge"), $("#moreBadge")]) { b.textContent = r.length; b.hidden = !r.length; } // Approvals lives under More on a phone
+    const n = $("#ibApprN"); if (n) { n.textContent = r.length; n.classList.toggle("hot", !!r.length); }
     return r;
   } catch (_) { return []; }
 }
+const isVidUrl = (u) => /\.(mp4|mov|m4v|webm)(\?|$)/i.test(u || "");
 async function loadApprovals() {
   const box = $("#approvals"), rows = await refreshBadge();
-  if (!rows.length) { box.innerHTML = `<div class="empty"><b>Nothing waiting</b><span>When an agent writes a post, it shows up here for you to read before anything reaches Buffer.</span></div>`; return; }
+  $("#ibApprSec").classList.toggle("is-empty", !rows.length);
+  if (!rows.length) { box.innerHTML = `<div class="ib-none" data-testid="approvals-empty">Nothing waiting. When an agent writes a post, it shows up here before anything reaches Buffer.</div>`; return; }
   box.innerHTML = "";
   for (const r of rows) {
-    const ch = chOf(r.payload.channel_id);
+    const ch = chOf(r.payload.channel_id), media = (r.payload.media_urls && r.payload.media_urls.length ? r.payload.media_urls : [r.payload.media_url]).filter(Boolean);
     const el = document.createElement("article"); el.className = `appr svc-${ch.service}`; el.setAttribute("data-testid", "approval-item");
-    el.innerHTML = `<div class="appr-head"><span><b>${esc(r.agent_name)}</b> wrote this for ${esc(ch.displayName || ch.name)} on ${esc(netName(ch.service))}</span><small>${new Date(r.created * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</small></div>
-      <div class="appr-body"><div class="dh">${avatar(ch)}<div class="who"><b>${esc(ch.displayName || ch.name)}</b><small>${esc(ch.name ? "@" + ch.name : "")} on ${esc(netName(ch.service))}</small></div></div>
-      <textarea data-testid="approval-text" aria-label="Post text">${esc(r.payload.text)}</textarea></div>
-      <div class="appr-act"><button class="btn2 danger" data-testid="reject">Reject</button>
+    const thumb = media.length ? `<div class="appr-media${media.length > 1 ? " multi" : ""}">${isVidUrl(media[0]) ? `<video src="${esc(media[0])}" muted playsinline preload="metadata"></video><span class="play" aria-hidden="true"></span>` : `<img src="${esc(media[0])}" alt="" loading="lazy">`}${media.length > 1 ? `<span class="more">+${media.length - 1}</span>` : ""}</div>` : "";
+    el.innerHTML = `<div class="appr-head">${aiMark(r.agent_name, 22)}<span><b>${esc(r.agent_name)}</b> for ${netBadge(ch.service)} <b>${esc(ch.displayName || ch.name)}</b></span><small>${esc(timeAgo(r.created * 1000))}</small></div>
+      <div class="appr-body">${thumb}<textarea data-testid="approval-text" aria-label="Post text" rows="4">${esc(r.payload.text)}</textarea></div>
+      <div class="appr-act"><button class="btn2 sm danger" data-testid="reject">Reject</button>
       <span class="right"><select data-testid="approval-mode" aria-label="How to send">${modeOptions(r.payload.mode === "schedule" ? "queue" : r.payload.mode)}</select>
-      <button class="btn accent" data-testid="approve">Approve and send to Buffer</button></span></div><div data-testid="approval-status"></div>`;
+      <button class="btn accent sm" data-testid="approve">Approve</button></span></div><div data-testid="approval-status"></div>`;
     $("[data-testid=approve]", el).onclick = async () => {
+      const b = $("[data-testid=approve]", el); b.disabled = true;
       try { const res = await api(`/api/approvals/${r.id}/approve`, { method: "POST", body: { text: $("textarea", el).value, mode: $("select", el).value } });
-        $("[data-testid=approval-status]", el).innerHTML = `<div class="st ok">Sent to Buffer (${esc(res.mode)})</div>`; el.classList.add("sent"); setTimeout(loadApprovals, 1200); refreshBadge(); }
-      catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+        $("[data-testid=approval-status]", el).innerHTML = `<div class="st ok">Sent to Buffer (${esc(res.mode)})</div>`; el.classList.add("sent"); setTimeout(loadInbox, 1400); }
+      catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; b.disabled = false; }
     };
-    $("[data-testid=reject]", el).onclick = async () => { await api(`/api/approvals/${r.id}/reject`, { method: "POST" }); toast("Rejected. Nothing was sent."); loadApprovals(); };
+    $("[data-testid=reject]", el).onclick = async () => { await api(`/api/approvals/${r.id}/reject`, { method: "POST" }); toast("Rejected. Nothing was sent."); loadInbox(); };
     box.appendChild(el);
   }
 }
 
-// ---------------------------------------------------------------- agents & safety
-function snippets(url, token = "hq_YOUR_TOKEN") {
-  $("#snipClaude").textContent = `claude mcp add --transport http huhqueue ${url} \\\n  --header "Authorization: Bearer ${token}"`;
-  $("#snipJson").textContent = JSON.stringify({ mcpServers: { huhqueue: { command: "npx", args: ["-y", "mcp-remote", url, "--header", `Authorization: Bearer ${token}`] } } }, null, 2);
-}
+// ---------------------------------------------------------------- AI apps: who has access, what they did, connect more
+const POL = { review: "Needs my approval", draft: "Buffer drafts only", trusted: "Can schedule" };
 async function loadTokens() {
   const r = await api("/api/safety"); setKill(r.kill_switch);
-  const box = $("#tokens");
-  if (!r.tokens.length) { box.innerHTML = `<p class="muted">No agents yet. Create a token below and paste the setup line into your agent.</p>`; return; }
-    const POL = { review: "Needs my approval", draft: "Buffer drafts only", trusted: "Can schedule" };
-  box.innerHTML = `<div class="wrap-x"><table class="data"><thead><tr><th scope="col">Agent</th><th scope="col">May do</th><th scope="col" class="num">Per day</th><th scope="col">Last used</th><th scope="col"><span class="sr">Actions</span></th></tr></thead><tbody>${r.tokens.map((t) => `<tr data-testid="token-row"><td><b>${esc(t.name)}</b></td><td class="muted">${esc(POL[t.policy] || t.policy)}</td><td class="num">${t.daily_cap}</td><td class="muted">${t.last_used ? new Date(t.last_used * 1000).toLocaleString() : "Never"}</td><td class="num">${t.revoked ? `<span class="tag">Revoked</span>` : `<button class="link danger" data-testid="revoke-token" data-id="${t.id}">Revoke</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+  const box = $("#tokens"), toks = r.tokens.filter((t) => !t.revoked);
+  box.innerHTML = toks.length ? `<ul class="ax-list">${toks.map((t) => `<li class="ax-row" data-testid="token-row">${aiMark(t.name, 32)}<span class="ax-name"><b>${esc(t.name)}</b><small>${esc(POL[t.policy] || t.policy)} · ${t.daily_cap} posts a day</small></span>
+      <span class="ax-used ${t.last_used ? "on" : ""}">${t.last_used ? "Last used " + esc(timeAgo(t.last_used * 1000)) : "Not used yet"}</span>
+      <button class="link danger" type="button" data-testid="revoke-token" data-id="${t.id}">Revoke</button></li>`).join("")}</ul>`
+    : `<p class="muted ib-none">No app has a token yet. Claude and ChatGPT sign in with OAuth and appear in the activity below once they act.</p>`;
   box.querySelectorAll("[data-testid=revoke-token]").forEach((b) => (b.onclick = async () => { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "DELETE" }); loadTokens(); }));
 }
+async function loadAppUsage() {
+  const box = $("#axUsage");
+  try {
+    const r = await api("/api/activity?tab=agent&limit=25");
+    box.innerHTML = r.agents && r.agents.length ? `<h2 class="sec">What each app did</h2><div class="ax-usage">${r.agents.map((g) => `<button type="button" class="ax-u" data-go="activity" data-testid="apps-usage-card">
+      <span class="ax-uh">${aiMark(g.app || g.label, 24)}<b>${esc(g.label)}</b></span><span class="ax-un"><b>${g.actions.toLocaleString()}</b> actions${g.failed ? ` · <em>${g.failed} failed</em>` : ""}</span>
+      <span class="ax-um">${g.models.length ? g.models.slice(0, 3).map((m) => `${aiMark(m.model || m.provider, 12)} ${esc(m.model || "unknown model")} ×${m.calls}`).join("<br>") : "model not reported by the app"}</span></button>`).join("")}</div>` : "";
+  } catch (_) { box.innerHTML = ""; }
+}
+function loadApps() { loadTokens(); loadAppUsage(); (window.HS_TABS || {}).connect?.(); }
 $("#tokenForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {
@@ -538,12 +692,24 @@ $("#tokenForm").addEventListener("submit", async (ev) => {
     const rv = $("#tokenReveal"); rv.hidden = false;
     rv.innerHTML = `<b>Copy this token now. It is shown once.</b>${t.sample ? `<span class="sample-note" data-testid="token-sample">Sample token</span><span class="muted sm">${esc(t.note)}</span>` : ""}<code data-testid="token-value">${esc(t.token)}</code><span><button class="btn2 sm" data-testid="copy-token">Copy token</button></span>`;
     $("[data-testid=copy-token]", rv).onclick = () => navigator.clipboard.writeText(t.token).then(() => toast("Copied"));
-    snippets(S.session.mcp_url, t.token); loadTokens();
+    loadTokens();
   } catch (e) { toast(e.message, 5000); }
 });
 async function toggleKill(on) { const r = await api("/api/safety/kill", { method: "POST", body: { on } }); setKill(r.kill_switch); toast(on ? "Kill switch on. No agent can draft or post until you turn it off." : "Agents can act again"); }
 $("#killToggle").onchange = (e) => toggleKill(e.target.checked);
 $("#killPill").onclick = () => toggleKill(!$("#killToggle").checked);
+
+// ---------------------------------------------------------------- Settings
+function loadSettings() {
+  const s = S.session || {};
+  $("#setWho").textContent = `Signed in with Buffer as ${s.user?.name || s.user?.email || "you"}${s.user?.organization ? ", organization " + s.user.organization : ""}.`;
+  $("#setChannels").innerHTML = S.channels.length ? S.channels.map((c) => `<li data-testid="settings-channel">${avatar(c)}<span><b>${esc(c.displayName || c.name)}</b><small>${esc(netName(c.service))}${c.isDisconnected ? " · reconnect in Buffer" : ""}</small></span></li>`).join("")
+    : `<li class="muted sm">No channels in this Buffer organization yet.</li>`;
+  if (window.onbState) onbState().then((st) => ($("#setOnbState").textContent = st.done ? "Setup is done. Open it again to change what you post, your channels or your brand." : st.skipped ? "You skipped setup. It takes about a minute." : "Setup isn't finished yet."));
+  (window.HS_TABS || {}).ai?.();
+}
+$("#setOnbOpen").onclick = () => window.onbOpen && onbOpen();
+$("#refreshCh").onclick = () => loadChannels(true).then(() => { loadSettings(); toast("Channels refreshed from Buffer"); });
 
 // ---------------------------------------------------------------- audit: see activity.js (HS_TABS.activity)
 
@@ -551,12 +717,16 @@ $("#killPill").onclick = () => toggleKill(!$("#killToggle").checked);
 $("#acctBtn").onclick = () => { const m = $("#acctMenu"); m.hidden = !m.hidden; $("#acctBtn").setAttribute("aria-expanded", !m.hidden); };
 document.addEventListener("click", (e) => { if (!e.target.closest(".acct")) { $("#acctMenu").hidden = true; $("#acctBtn").setAttribute("aria-expanded", "false"); } });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#acctMenu").hidden) { $("#acctMenu").hidden = true; $("#acctBtn").focus(); } });
-$("#deviceBtn").onclick = async () => {
+async function deviceLink() {
   $("#acctMenu").hidden = true;
   try { const r = await api("/api/device-link", { method: "POST" }); await navigator.clipboard.writeText(r.url).catch(() => {}); toast("One-time link, valid 10 min (copied): " + r.url, 20000); }
   catch (e) { toast(e.message, 5000); }
-};
-$("#logoutBtn").onclick = async () => { await api("/api/logout", { method: "POST" }); location.href = "/"; };
-$("#disconnectBtn").onclick = async () => { if (!confirm("Disconnect Buffer and delete everything HuhQueue stored for you?")) return; await api("/api/disconnect", { method: "POST" }); location.href = "/"; };
+}
+async function logout() { await api("/api/logout", { method: "POST" }); location.href = "/"; }
+async function disconnect() { if (!confirm("Disconnect Buffer and delete everything HuhQueue stored for you?")) return; await api("/api/disconnect", { method: "POST" }); location.href = "/"; }
+$("#deviceBtn").onclick = deviceLink; $("#setDevice").onclick = deviceLink;
+$("#logoutBtn").onclick = logout; $("#setLogout").onclick = logout;
+$("#disconnectBtn").onclick = disconnect; $("#setDisconnect").onclick = disconnect;
+document.querySelectorAll("#acctMenu [data-go]").forEach((b) => b.addEventListener("click", () => ($("#acctMenu").hidden = true)));
 
 boot().catch((e) => toast(e.message, 6000));
