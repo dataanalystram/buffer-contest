@@ -31,6 +31,19 @@ TITLE = "Everything You Need to Know Before Buffer Commit Starts"
 CREDIT = "Video: Buffer — Everything You Need to Know Before Buffer Commit Starts"
 MOMENTS = [(2043.9, 2085.5), (2132.7, 2173.8), (2827.9, 2869.8), (4528.4, 4559.4), (5209.5, 5237.4)]
 PAD = 25.0
+# The speakers' names as the slides spell them (Whisper hears "Justina" as "Yestina"): fixed in the words before scoring,
+# so the hook title and the captions both carry the right name.
+NAMES = {"yestina": "Justina", "justina": "Justina", "sabrina": "Sabreen", "sabreen": "Sabreen"}
+
+
+def fix_words(words: list[dict]) -> list[dict]:
+    out = []
+    for x in words:
+        core = x["w"].strip(".,!?;:\"'…").lower()
+        if core in NAMES:
+            x = {**x, "w": x["w"].replace(x["w"].strip(".,!?;:\"'…"), NAMES[core])}
+        out.append(x)
+    return out
 
 
 def sh(cmd: list[str], timeout: int = 900) -> None:
@@ -80,6 +93,7 @@ def main() -> int:
             "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "128k", str(win)])
         t = time.time()
         words, lang, how = take.transcribe(str(win), args.model)
+        words = fix_words(words)
         if lang != "en":  # the source must carry the speakers' own (English) audio, never an auto-dub track
             raise SystemExit(f"moment {k}: transcript language is {lang!r}, expected 'en' (wrong audio track in the source?)")
         timings["transcribe"] += time.time() - t
