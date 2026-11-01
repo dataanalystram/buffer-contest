@@ -45,8 +45,8 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `weekly_recap_plan` | client brain | Client brain (no HuhQueue AI): the week's top AI stories from the news sources, each with its official video/image and credit line. |
 | `render_carousel` | client brain | Render a carousel YOU wrote in the user's brand kit. |
 | `hero_edit` | client brain | The premium cover edit of an official image (no HuhQueue AI): saliency crop to the frame, colour match to the brand ground, vignette and fade; optional product cut-out tilted with a shadow. |
-| `edit_video` | client brain | Edit or cut a video on the HuhQueue server (no HuhQueue AI): trim to start_s..end_s or cut_first_s seconds off the start, reframe to 9:16 / 4:5 / 1:1 (speaker-aware), burned-in word captions on or off (transcribed with W |
-| `render_reel` | client brain | Make a branded 9:16 Reel (no HuhQueue AI): from a video (same options as edit_video) or from slides (image URLs, e.g. |
+| `edit_video` | client brain | Edit or cut a video on the HuhQueue server (no HuhQueue AI): trim to start_s..end_s or cut_first_s seconds off the start, reframe to 9:16 / 4:5 / 1:1 (speaker-aware), burned-in word captions on or off (transcribed with Whisper on… |
+| `render_reel` | client brain | Make a branded 9:16 Reel (no HuhQueue AI): from a video (same options as edit_video) or from slides (image URLs, e.g. render_carousel's media_urls) as a slideshow with the end card. |
 | `split_video` | client brain | Split a long video into 3-7 short vertical clips on the video worker (no HuhQueue AI: Whisper transcript, built-in moment scorer, face-tracked reframe, captions, cover and end card). |
 | `render_status` | client brain | Status of a video job: job_id (edit_video / render_reel / render_template video) or take_id (split_video). |
 | `create_package` | client brain | Stage a post YOU wrote: captions per channel (channel id or service name -> text) and the media URLs (render_carousel / render_status). |
@@ -71,8 +71,8 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `whoami` | no model | The Buffer account and organization this token acts for, its policy, and whether the kill switch is on. |
 | `list_channels` | no model | Buffer channels you may post to, with each network's character limit and media needs. |
 | `get_limits` | no model | Buffer API budget left for this app, per-network character limits, and how close the Buffer plan is to its limits (scheduled posts, channels, weekly caps). |
-| `preflight_post` | no model | Dry run (read-only): check a post against every chosen channel's real Buffer and network rules before you preview or submit it: text length counted the way Buffer counts it (UTF-16, Instagram line breaks 2, LinkedIn URLs |
-| `autofix_post` | no model | Apply preflight fixes for one channel (fixes: list of fix ids from preflight_post, or omit for all): trim or thread the caption under the network's count, keep the first N media, crop/convert/recompress images to the net |
+| `preflight_post` | no model | Dry run (read-only): check a post against every chosen channel's real Buffer and network rules before you preview or submit it: text length counted the way Buffer counts it (UTF-16, Instagram line breaks 2, LinkedIn URLs 24, X… |
+| `autofix_post` | no model | Apply preflight fixes for one channel (fixes: list of fix ids from preflight_post, or omit for all): trim or thread the caption under the network's count, keep the first N media, crop/convert/recompress images to the network's… |
 | `list_rules` | no model | The preflight rule pack: every limit HuhQueue enforces per network, with the official doc URL it was verified against and the date, plus rules that could not be verified (not enforced). |
 | `preview_post` | no model | Validate a post for one channel and get a single-use confirm_token. |
 | `submit_post` | no model | Submit exactly what preview_post validated. |
@@ -98,8 +98,8 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `edit_brand` | client brain \* | Change the brand kit in plain words: 'make the logo smaller', 'use #FF5A1F', 'switch font to Poppins'. |
 | `list_brand_examples` | no model | The example brands in the sample workspace (HuhByte AI; Buffer, a concept example not affiliated with Buffer) with their palettes, fonts, channels and pre-rendered example gallery. |
 | `apply_brand_example` | no model | Switch the workspace's brand kit to an example brand (huhbyte or buffer): logo, colours, fonts, front and end cards, hashtags, channels. |
-| `list_themes` | no model | Every video look for Make a post: the four edit styles (opus, huhbyte_news, minimal, hype) and the video themes (caption_news, news_package, newsreel, dark_keynote, glass_studio, swiss, kino, silent_film, risograph, holo |
-| `set_theme` | no model | Set a post run's video theme and re-render its video channels in it (e.g. |
+| `list_themes` | no model | Every video look for Make a post: the four edit styles (opus, huhbyte_news, minimal, hype) and the video themes (caption_news, news_package, newsreel, dark_keynote, glass_studio, swiss, kino, silent_film, risograph, hologram_hud… |
+| `set_theme` | no model | Set a post run's video theme and re-render its video channels in it (e.g. 'cinematic', 'news_package'). |
 | `replace_channel_media` | no model | Change ONE channel's media in a post run: media_token (a Library item's media_token from list_library / use_library_item, or an upload) uses the person's own file; omit it to regenerate that channel's media. |
 
 ### One take (your own long video -> a week of clips)
@@ -108,7 +108,7 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 |---|---|---|
 | `clips_from_video` | no model | One take -> a week. |
 | `list_clips` | no model | Without take_id: the user's takes. |
-| `adjust_clip` | no model | Edit one clip of a take: trim (start_ms/end_ms in the source video; re-renders on the worker), a new hook for the cover (must be at least 3 words quoted from the clip), or the post caption (caption, optionally for one se |
+| `adjust_clip` | no model | Edit one clip of a take: trim (start_ms/end_ms in the source video; re-renders on the worker), a new hook for the cover (must be at least 3 words quoted from the clip), or the post caption (caption, optionally for one service). |
 | `place_clips_in_week` | no model | The Spread: put a take's ready clips into the open Buffer posting slots of a week as DRAFTS (never published). |
 
 ### Library
@@ -125,13 +125,13 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 |---|---|---|
 | `list_stories` | client brain * | Newest stories from the news feeds your user follows in HuhQueue (news radar). |
 | `draft_from_link` | client brain * | Read an article URL and draft one caption per channel, each within that network's Buffer character limit. |
-| `sources_scan` | client brain * | The Sources agent: read the user's sources (YC launches, Hacker News front page, RSS/Atom lab blogs, Product Hunt with the user's free developer token, and X only with the user's own X API key), dedupe, cluster the same  |
-| `sources_draft` | client brain * | Turn clusters from a sources_scan run into one package per channel in the brand: the caption written for the channel (length, hashtag count, format), a breaking-news cover rendered in the brand kit at the channel's frame |
+| `sources_scan` | client brain * | The Sources agent: read the user's sources (YC launches, Hacker News front page, RSS/Atom lab blogs, Product Hunt with the user's free developer token, and X only with the user's own X API key), dedupe, cluster the same story… |
+| `sources_draft` | client brain * | Turn clusters from a sources_scan run into one package per channel in the brand: the caption written for the channel (length, hashtag count, format), a breaking-news cover rendered in the brand kit at the channel's frame. |
 | `sources_settings` | client brain * | Read (no arguments) or change which sources the agent reads: on {yc, hn, rss, ph, x}, rss (feed URLs, up to 8), x_query, hn_query. |
 | `list_templates` | client brain * | The brand's post templates (weekly recap, mid-week recap, breaking cover, launch carousel, quote/CEO clip, free-way-to tutorial), the channel frames and slide limits, and the front/end card styles. |
 | `render_template` | client brain * | Render a template in the user's brand for each channel (front card first, end card last). |
 | `get_template_video` | client brain * | Status of a template Reel the video worker is rendering (render_template's video_job.id), with its URL when done. |
-| `schedule_template_slot` | client brain * | Add a recurring Planner slot for a template (e.g. |
+| `schedule_template_slot` | client brain * | Add a recurring Planner slot for a template (e.g. weekly_recap every mon 20:00 Europe/Dublin). |
 | `templates_slot_run` | client brain * | Fire a recurring template slot now: render it from this week's posts and put one Buffer DRAFT per channel at the slot's next time. |
 
 ### Onboarding and the in-app brain
@@ -139,7 +139,7 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | Tool | Brain | What it does |
 |---|---|---|
 | `get_onboarding` | client brain * | The person's content types, channels, website, tone and X watchlist, with the options to choose from. |
-| `set_onboarding` | client brain * | Save onboarding choices: content_types (ai_news, product_launches, yc_startups, tutorials, dev_tools, memes, india_tech, research, funding, open_source), channel_ids, tone, website (builds the brand kit), x_watchlist (ha |
+| `set_onboarding` | client brain * | Save onboarding choices: content_types (ai_news, product_launches, yc_startups, tutorials, dev_tools, memes, india_tech, research, funding, open_source), channel_ids, tone, website (builds the brand kit), x_watchlist (handles or… |
 | `get_recommendations` | client brain * | A feed tailored to the person's content types plus up to three ready-to-approve posts in their brand (cover + captions). |
 | `get_brain` | client brain * | Which AI runs the in-app agent for this account (Claude, their own key, the free model or the rule writer) and the included budget left. |
 
@@ -149,7 +149,7 @@ These act on one post run (`run_id`), the same steps HuhQueue's in-app agent tak
 
 | Tool | Brain | What it does |
 |---|---|---|
-| `post_add_end_card` | client brain \* | Set the end card line for every future video (a Style Ledger rule), e.g. |
+| `post_add_end_card` | client brain \* | Set the end card line for every future video (a Style Ledger rule), e.g. 'Follow @huhbyte'. |
 | `post_check` | client brain \* | Check every channel (brand rules, clipped text, about the source, fact conflicts) and build the packages. |
 | `post_edit_brand` | client brain \* | Change the brand kit from plain words: 'make the logo smaller', 'use #FF5A1F', 'switch font to Poppins'. |
 | `post_edit_channel_media` | client brain \* | Re-render ONLY one channel's media: seconds (Reel length), format (reel/carousel/photo), captions on/off. |
