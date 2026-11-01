@@ -132,6 +132,15 @@ class FakeBuffer:
         return httpx.Response(200, headers=h, json={"errors": [{"message": "unknown"}]})
 
 
+@pytest.fixture(autouse=True)
+def _fresh_app_keys():
+    """App-level research keys cache tokens and results globally (studio/appkeys.py): start every test clean."""
+    from studio import appkeys
+    appkeys.reset()
+    yield
+    appkeys.reset()
+
+
 @pytest.fixture
 def fake():
     return FakeBuffer()

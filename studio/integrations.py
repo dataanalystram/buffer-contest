@@ -48,25 +48,31 @@ class IntegrationError(ValueError):
         self.status = status
 
 
+def ph_redirect_uri(public_url: str) -> str:
+    """PH_REDIRECT_URI from the env when set (the value registered on the Product Hunt app), else ours."""
+    env = os.environ.get("PH_REDIRECT_URI", "").strip()
+    return env if env.startswith("https://") else public_url.rstrip("/") + PH_CALLBACK_PATH
+
+
 def catalog(public_url: str) -> dict[str, dict]:
-    cb = public_url.rstrip("/") + PH_CALLBACK_PATH
+    cb = ph_redirect_uri(public_url)
     return {
         "ph": {"field": "ph_token", "pattern": r"[A-Za-z0-9_\-.=]{20,200}", "name": "Product Hunt", "what": "developer token",
-               "unlocks": "Today's top Product Hunt launches in News → Sources and the story scan.",
+               "unlocks": "Today's top Product Hunt launches in News → Sources and the story scan. HuhQueue reads Product Hunt for everyone; your own token is optional.",
                "get_url": "https://api.producthunt.com/v2/oauth/applications",
                "steps": ["Open api.producthunt.com/v2/oauth/applications and choose Add an application.",
                          "Name it HuhQueue, paste the Redirect URI below, pick Confidential, and create it.",
                          "On the application page choose Create Token, copy the Developer Token and paste it here."],
                "redirect_uri": cb, "source": "ph"},
         "x": {"field": "x_bearer", "pattern": r"[A-Za-z0-9%_\-.=]{20,200}", "name": "X / Twitter", "what": "API bearer token",
-              "unlocks": "Reads X posts and their media through the official API (Make a post with an X link, and the X source in News).",
+              "unlocks": "Your own X API key reads the X source in News and post media with your quota. Optional when HuhQueue's X lookup is on.",
               "get_url": "https://developer.x.com/en/portal/dashboard",
               "steps": ["Open the X developer portal and pick (or create) a project and app.",
                         "Under Keys and tokens, generate the Bearer Token.",
                         "Copy it and paste it here. HuhQueue never scrapes logged-in X."],
               "source": "x"},
         "yt": {"field": "yt_key", "pattern": r"[A-Za-z0-9_\-]{30,60}", "name": "YouTube Data API", "what": "key",
-               "unlocks": "Find media searches YouTube for a launch or demo video with your own quota.",
+               "unlocks": "Find media searches YouTube for a launch or demo video with your own quota (optional).",
                "get_url": "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
                "steps": ["In Google Cloud console, enable the YouTube Data API v3 for a project.",
                          "Go to APIs & Services → Credentials → Create credentials → API key.",
@@ -167,9 +173,30 @@ class Integrations:
             raise IntegrationError("Unknown integration.", 404)
         return self.cards[key]
 
+    def app_status(self) -> dict:
+        """App-level keys (Render env): whether each is on, never a value."""
+        from . import appkeys
+        st = appkeys.status()
+        return {"ph": {"on": st["ph"]["app"], "label": "Connected by HuhQueue ✓" if st["ph"]["app"] else "Shared by HuhQueue ✓ (public feed)",
+                       "detail": "Everyone gets today's launches from HuhQueue's own Product Hunt app, refreshed every 20 minutes. Nothing to do."
+                       if st["ph"]["app"] else "Everyone gets today's launches from Product Hunt's public feed, refreshed every 20 minutes. Nothing to do."},
+                "x": {"on": st["x"]["app"], "label": "Connected by HuhQueue ✓" if st["x"]["app"] else "",
+                      "detail": "Photos and videos of pasted X posts come through HuhQueue's own X key (shared, cached). Post text always comes from X's public embed."
+                      if st["x"]["app"] else "Post text comes from X's public embed. Add your own key to also get a post's photo or video."},
+                "yt": {"on": bool(os.environ.get("YOUTUBE_API_KEY")), "label": "Connected by HuhQueue ✓" if os.environ.get("YOUTUBE_API_KEY") else "",
+                       "detail": "Find media searches YouTube with HuhQueue's key." if os.environ.get("YOUTUBE_API_KEY")
+                       else "Find media works without it; a key adds YouTube search."}}
+
+    def redirects(self) -> list[dict]:
+        return [{"name": "Product Hunt app Redirect URI", "url": ph_redirect_uri(self.public_url)},
+                {"name": "Buffer app Callback URL (sign-in)", "url": self.public_url + "/callback"},
+                {"name": "MCP server URL (Claude, ChatGPT, Cursor)", "url": self.public_url + "/mcp"},
+                {"name": "MCP OAuth discovery", "url": self.public_url + "/.well-known/oauth-authorization-server"}]
+
     def view(self, a) -> dict:
         cfg, sec = _row(self.store, a.uid)
         meta = cfg.get("integrations") or {}
+        app = self.app_status()
         out = []
         for k, c in self.cards.items():
             val = sec.get(c["field"]) or ""
@@ -179,8 +206,9 @@ class Integrations:
                         "hint": ("…" + val[-4:]) if val else "", "tested": m.get("tested") if val else None,
                         "tested_ok": m.get("ok") if val else None, "test_message": m.get("message", "") if val else "",
                         "saved": m.get("saved") if val else None,
-                        "oauth": k == "ph" and bool(os.environ.get("PH_CLIENT_ID") and os.environ.get("PH_CLIENT_SECRET"))})
-        return {"integrations": out, "ai_keys": "settings#aiH", "sample": demo_guard.is_demo(a.uid)}
+                        "app": app[k], "optional": True,
+                        "oauth": False})  # the app-level key covers Product Hunt; per-user OAuth stays available at /integrations/producthunt/connect
+        return {"integrations": out, "redirects": self.redirects(), "ai_keys": "settings#aiH", "sample": demo_guard.is_demo(a.uid)}
 
     def _valid(self, c: dict, value: str) -> str:
         value = (value or "").strip()
@@ -216,7 +244,8 @@ class Integrations:
         c = self._card(key)
         cfg, sec = _row(self.store, a.uid)
         sec.pop(c["field"], None)
-        if c["source"]:
+        from .sources_agent import ADAPTERS
+        if c["source"] and ADAPTERS[c["source"]].needs_key:  # Product Hunt keeps the shared app-level read
             cfg.setdefault("on", {})[c["source"]] = False
         (cfg.get("integrations") or {}).pop(key, None)
         _write(self.store, a.uid, cfg, sec)
@@ -249,7 +278,7 @@ class Integrations:
         return bool(os.environ.get("PH_CLIENT_ID") and os.environ.get("PH_CLIENT_SECRET"))
 
     def ph_authorize_url(self, state: str) -> str:
-        return PH_AUTHORIZE + "?" + urlencode({"client_id": os.environ.get("PH_CLIENT_ID", ""), "redirect_uri": self.public_url + PH_CALLBACK_PATH,
+        return PH_AUTHORIZE + "?" + urlencode({"client_id": os.environ.get("PH_CLIENT_ID", ""), "redirect_uri": ph_redirect_uri(self.public_url),
                                                 "response_type": "code", "scope": "public", "state": state})
 
     def ph_exchange(self, uid: str, code: str) -> tuple[bool, str]:
@@ -258,7 +287,7 @@ class Integrations:
         try:
             r = netguard.safe_post(PH_TOKEN, http=self.http, json={
                 "client_id": os.environ.get("PH_CLIENT_ID", ""), "client_secret": os.environ.get("PH_CLIENT_SECRET", ""),
-                "redirect_uri": self.public_url + PH_CALLBACK_PATH, "code": code, "grant_type": "authorization_code"},
+                "redirect_uri": ph_redirect_uri(self.public_url), "code": code, "grant_type": "authorization_code"},
                 headers={**UA, "Accept": "application/json"}, timeout=15, allowed_hosts={"api.producthunt.com"}, limit=100_000)
         except (netguard.FetchError, httpx.HTTPError):
             return False, "Product Hunt couldn't be reached to finish connecting."

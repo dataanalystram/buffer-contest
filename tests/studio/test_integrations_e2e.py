@@ -49,7 +49,7 @@ def test_settings_integrations_cards_save_test_remove(demo_live, chromium):
         msg = page.inner_text("[data-testid=integ-msg-ph]"); assert "sample" in msg.lower(), msg
         page.on("dialog", lambda d: d.accept())
         page.click("[data-testid=integ-remove-ph]")
-        _until(lambda: "Not connected" in page.inner_text("[data-testid=integ-card-ph] [data-testid=integ-status]"))
+        _until(lambda: "by HuhQueue" in page.inner_text("[data-testid=integ-card-ph] [data-testid=integ-status]"))  # the shared app-level read
         if SHOTS:
             os.makedirs(SHOTS, exist_ok=True)
             page.locator("#integrations").scroll_into_view_if_needed()

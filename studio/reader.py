@@ -168,6 +168,12 @@ def read_post(url: str, http: httpx.Client | None = None, x_bearer: str = "") ->
             media = [g for g in got if g["type"] != "text"]
         except ReadError as e:
             note = str(e)
+    elif post["has_media"] and _app_x():  # HuhQueue's own X bearer (X_BEARER_TOKEN), cached + rate-limited (appkeys)
+        from . import appkeys
+        try:
+            media = [g for g in appkeys.x_media_shared(sid, http) if g["type"] != "text"]
+        except ReadError as e:
+            note = str(e)
     elif post["has_media"]:
         note = ("This post has a photo or video. X only shares media through its API, so add your X API key in Sources, "
                 "or upload the clip here and I'll edit it into the Reel.")
@@ -178,6 +184,11 @@ def read_post(url: str, http: httpx.Client | None = None, x_bearer: str = "") ->
             "image": next((m["url"] for m in media if m["type"] == "photo"), next((m.get("poster", "") for m in media if m["type"] == "video"), "")),
             "site": "X", "paragraphs": paras, "via": "x_oembed", "post": {**post, "credit": f"X @{handle}"}, "media": media,
             "media_note": note}
+
+
+def _app_x() -> bool:
+    from . import appkeys
+    return bool(appkeys.x_app_bearer())
 
 
 def read_url(url: str, http: httpx.Client | None = None, x_bearer: str = "") -> dict:

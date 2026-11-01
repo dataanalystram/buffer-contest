@@ -126,7 +126,7 @@ def test_real_account_scan_reads_live_sources_and_drafts_into_buffer_as_drafts_o
     d = r.json()
     assert d["sample"] is False and any(s["mode"] == "live" for s in d["status"])
     assert any("ycombinator.com" in u for u in calls) and any("algolia" in u for u in calls)
-    assert not any("api.x.com" in u or "producthunt" in u for u in calls)  # no keys, no calls
+    assert not any("api.x.com" in u or "api.producthunt.com" in u for u in calls)  # no keys: no API calls (PH reads its public feed)
     cid = next(cl["id"] for cl in d["clusters"] if cl["lane"] == "postable")
     dry = c.post("/api/sources/draft", json={"run_id": d["run_id"], "cluster_ids": [cid]}).json()
     assert dry["dry_run"] and {p["service"] for p in dry["packages"]} == {ch["service"] for ch in CHANNELS}

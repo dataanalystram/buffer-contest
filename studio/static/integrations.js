@@ -13,15 +13,19 @@
     return `${Math.round(s / 86400)} d ago`;
   };
   function status(c) {
-    if (!c.connected) return `<span class="integ-st none" data-testid="integ-status">Not connected</span>`;
+    if (!c.connected) {
+      const app = c.app || {};
+      return app.label ? `<span class="integ-st ok app" data-testid="integ-status">${esc(app.label)}</span>` : `<span class="integ-st none" data-testid="integ-status">Not connected</span>`;
+    }
     const tested = c.tested ? ` · ${c.tested_ok ? "tested" : "test failed"} ${ago(c.tested)}` : " · not tested yet";
-    return `<span class="integ-st ${c.tested && !c.tested_ok ? "bad" : "ok"}" data-testid="integ-status">Connected · ${esc(c.hint)}${esc(tested)}</span>`;
+    return `<span class="integ-st ${c.tested && !c.tested_ok ? "bad" : "ok"}" data-testid="integ-status">Your key · ${esc(c.hint)}${esc(tested)}</span>`;
   }
   function card(c) {
     return `<section class="panel integ-card" id="integ-${c.key}" data-key="${c.key}" data-testid="integ-card-${c.key}" aria-labelledby="integH-${c.key}">
       <div class="integ-top"><h3 class="card-title" id="integH-${c.key}">${esc(c.name)}</h3>${status(c)}</div>
-      <p class="sm">${esc(c.unlocks)}</p>
-      <details class="integ-how"${c.connected ? "" : " open"}><summary>Get a key</summary>
+      ${c.app && c.app.detail ? `<p class="sm integ-app" data-testid="integ-app-${c.key}">${esc(c.app.detail)}</p>` : ""}
+      <p class="muted sm">${esc(c.unlocks)}</p>
+      <details class="integ-how"${c.connected || (c.app && c.app.label) ? "" : " open"}><summary>${c.app && c.app.label ? "Optional: use your own key" : "Get a key"}</summary>
         <ol class="sm">${c.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
         <p class="sm"><a class="link" href="${esc(c.get_url)}" target="_blank" rel="noopener" data-testid="integ-get-${c.key}">Open ${esc(new URL(c.get_url).host)} ↗</a></p>
         ${c.redirect_uri ? `<p class="muted xs">Redirect URI: <code class="integ-code" data-testid="integ-redirect">${esc(c.redirect_uri)}</code> <button class="link xs" type="button" data-copy="${esc(c.redirect_uri)}">Copy</button></p>` : ""}
@@ -42,6 +46,10 @@
     I.data = d;
     const box = document.getElementById("integCards"); if (!box) return;
     box.innerHTML = d.integrations.map(card).join("");
+    const rd = document.getElementById("integRedirects");
+    if (rd) rd.innerHTML = `<h3 class="card-title">Callback and redirect URLs</h3><p class="muted sm">For the developer apps behind HuhQueue. Paste these exactly where each service asks.</p>
+      <ul class="integ-urls">${(d.redirects || []).map((r) => `<li data-testid="integ-url"><span class="sm"><b>${esc(r.name)}</b></span><code class="integ-code">${esc(r.url)}</code><button class="btn2 sm" type="button" data-copy="${esc(r.url)}" data-testid="integ-copy">Copy</button></li>`).join("")}</ul>`;
+    document.querySelectorAll("#integRedirects [data-copy]").forEach((b) => (b.onclick = () => navigator.clipboard?.writeText(b.dataset.copy).then(() => toast("Copied"), () => toast("Copy failed; select the text instead"))));
     box.querySelectorAll(".integ-form").forEach(wire);
     box.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => navigator.clipboard?.writeText(b.dataset.copy).then(() => toast("Copied"), () => {})));
   }
