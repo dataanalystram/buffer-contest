@@ -39,9 +39,16 @@ with sync_playwright() as p:
     pg.screenshot(path=str(out / "03_agent_running.png"), full_page=True)
     pg.wait_for_selector("[data-testid=package]", timeout=90000)
     pg.screenshot(path=str(out / "04_agent_ready.png"), full_page=True)
-    pg.fill("[data-testid=revise-input]", "logo top left and smaller, headlines in sentence case")
-    pg.click("[data-testid=revise-go]")
-    pg.wait_for_selector("[data-testid=before-after]", timeout=90000)
+    # Make a post runs are agent runs: changes are a reply in the run's thread (the old "Fix and remember" form is for
+    # media runs). Wait for the agent's answer and the rebuilt packages.
+    n = pg.locator("[data-testid=thread-msg]").count()
+    pg.fill("[data-testid=reply-input]", "make the logo smaller")
+    pg.click("[data-testid=reply-go]")
+    end = time.time() + 90  # polled in Python: the app's CSP forbids the string evaluation wait_for_function uses
+    while pg.locator("[data-testid=thread-msg]").count() < n + 2 and time.time() < end:
+        time.sleep(0.5)
+    assert pg.locator("[data-testid=thread-msg]").count() >= n + 2, "the agent didn't answer the reply"
+    pg.wait_for_selector("[data-testid=package]", timeout=90000)
     time.sleep(1.5)
     pg.screenshot(path=str(out / "05_revised.png"), full_page=True)
     pg.locator("[data-testid=pkg-send]").first.click()
