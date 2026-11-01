@@ -570,12 +570,14 @@ function timeAgo(ms) {
   const h = Math.round(m / 60); if (h < 24) return `${h} h ago`;
   return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
 }
-// "Make post" opens Make a post with the link filled in; the person picks the format and presses Make it.
+// "Make post" opens Make a post with the story's link in the one prompt box (Prompt or link); the person picks the
+// format and presses Make it.
 function wireMake(box) {
   box.querySelectorAll("[data-make]").forEach((b) => (b.onclick = () => {
     showTab("agent", "agent");
-    document.querySelector("#agentCompose [data-src=link]")?.click();
-    const u = $("#agUrl"); if (u) { u.value = b.dataset.make; u.focus(); }
+    document.querySelector("#agentCompose [data-src=topic]")?.click();
+    const q = $("#agQuery");
+    if (q) { q.value = ("Post this on all my channels " + (b.dataset.make || "")).trim(); q.dispatchEvent(new Event("input")); q.focus(); }
     toast("Link added. Pick a format and press Make it.");
   }));
   box.querySelectorAll("[data-run]").forEach((b) => (b.onclick = async () => { showTab("agent", "agent"); try { const r = await api(`/api/agent/runs/${b.dataset.run}`); window.showRun && showRun(r); } catch (e) { toast(e.message); } }));

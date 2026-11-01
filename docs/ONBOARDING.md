@@ -3,7 +3,7 @@
 What you post → your channels → your brand → your feed. Skippable at every step (Esc or "Skip setup"), re-openable from
 Settings → Setup. Never opens over the sample's guided tour. Frontend: `studio/static/onboarding.js`.
 
-## Backend contract (owned by the agent pipeline, `studio/onboarding.py` on feat/agent-core; the UI degrades gracefully until it ships)
+## Backend contract (`studio/onboarding.py`, shipped with the agent pipeline in #27; the UI reads these routes)
 
 `GET /api/onboarding` → `{"profile": {"content_types": [...], "channel_ids": [...], "website": "", "tone": "plain", "x_watchlist": [], "done": false},
 "options": {"content_types": [{"id": "ai_news", "label": "AI news"}, ...], "tones": [...], "channels": [...]}, "brand": {...}, "x_key": false}`.
@@ -20,5 +20,5 @@ selection in Make a post, Quick text posts and One take (One take keeps the chan
 Skipping is remembered in the browser (`hq_onb.skipped`): the server only knows done or not done, so a skipped setup stays
 closed on this browser and Settings → Setup opens it again.
 
-Where the routes are missing (404) the UI keeps the whole state in `localStorage` (`hq_onb`) and fills "Recommended for you"
+If the routes fail (an old self-hosted build without them) the UI keeps the whole state in `localStorage` (`hq_onb`) and fills "Recommended for you"
 from the newest followed-feed stories, labelled "From your feeds". Logo upload uses `POST /api/media` + `POST /api/brand-studio`.

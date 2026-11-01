@@ -38,7 +38,10 @@ def cover(img: Image.Image, w: int, h: int, cx: float = 0.5, cy: float = 0.4) ->
 
 
 # ---- text that the bundled fonts can actually draw (no tofu boxes for emoji or symbols they lack)
-_SUBS = str.maketrans({"\u2192": "->", "\u2190": "<-", "\u2022": "-", "\u2026": "...", "\u00a0": " "})
+# Unicode hyphens/dashes/quotes a model likes to emit (U+2011 non-breaking hyphen made "noise-free" render as
+# "noisefree" because the fonts lack it) are mapped to the plain glyphs every bundled font has.
+_SUBS = str.maketrans({"\u2192": "->", "\u2190": "<-", "\u2022": "-", "\u2026": "...", "\u00a0": " ", "\u2010": "-",
+                       "\u2011": "-", "\u2012": "-", "\u2013": "\u2013", "\u2212": "-", "\u202f": " ", "\u2009": " "})
 _CMAPS: dict[str, set[int] | None] = {}
 
 
@@ -162,123 +165,37 @@ def _gradient(canvas: Image.Image, color, start: float, strength: float) -> None
 
 
 def news_card(headline: str, kit: dict, p: dict, *, image: bytes | None = None, logo: bytes | None = None,
-              ratio: str = "4:5", label: str = "", credit: str = "", n: tuple[int, int] | None = None) -> tuple[bytes, dict]:
-    """Cover slide: photo with a brand-colored fade, the headline, the source credit, the logo bug."""
-    W, H = SIZES.get(ratio, SIZES["4:5"])
-    prim, acc, txt = (hex_to_rgb(p["colors"][k]) for k in ("primary", "accent", "text"))
-    if image:
-        try:
-            canvas = cover(Image.open(io.BytesIO(image)), W, H)
-        except Exception:
-            canvas = Image.new("RGB", (W, H), prim)
-            image = None
-    else:
-        canvas = Image.new("RGB", (W, H), prim)
-    if image:
-        _gradient(canvas, prim, 0.30, max(0.35, float(p.get("overlay", 0.55)) + 0.4))
-    d = ImageDraw.Draw(canvas)
-    m = int(p.get("safe_margin", 64))
-    head = shape_headline(headline, p)
-    hf_name = FONTS.get(p.get("font"), "Anton.ttf")
-    size = int(W * (0.1 if p.get("font") == "anton" else 0.078))
-    while True:
-        f = font(hf_name, size)
-        lines = wrap(d, head, f, W - 2 * m)
-        if len(lines) <= 5 or size < 40:
-            break
-        size = int(size * 0.92)
-    lh = int(size * (1.04 if p.get("font") == "anton" else 1.14))
-    bottom = H - m - (int(W * 0.075) if (credit and p.get("source_credit", True)) else 0) - int(H * 0.04)
-    y = bottom - lh * len(lines)
-    if label:
-        lf = font(BODY_FONTS.get(p.get("font"), "Inter-SemiBold.ttf"), int(W * 0.03))
-        lt = label.upper()
-        tw = _tlen(d, lt, font=lf)
-        d.rounded_rectangle((m, y - int(W * 0.08), m + tw + 36, y - int(W * 0.08) + lf.size + 22), 8, fill=acc)
-        _draw(d, (m + 18, y - int(W * 0.08) + 9), lt, font=lf, fill=prim)
-    for i, line in enumerate(lines):
-        col = acc if i == 0 and len(lines) > 1 else txt
-        _draw(d, (m, y + i * lh), line, font=f, fill=col)
-    meta_credit = ""
-    if credit and p.get("source_credit", True):
-        cf = font(BODY_FONTS.get(p.get("font"), "Inter-Regular.ttf"), int(W * 0.026))
-        meta_credit = f"Source: {credit}"
-        _draw(d, (m, H - m - cf.size), meta_credit, font=cf, fill=txt + (200,))
-    handle = (kit.get("handle") or "").lstrip("@")
-    if handle:
-        hf = font(BODY_FONTS.get(p.get("font"), "Inter-SemiBold.ttf"), int(W * 0.026))
-        t = "@" + handle
-        _draw(d, (W - m - _tlen(d, t, font=hf), H - m - hf.size), t, font=hf, fill=acc)
-    if n:
-        nf = font(BODY_FONTS.get(p.get("font"), "Inter-SemiBold.ttf"), int(W * 0.024))
-        t = f"{n[0]}/{n[1]}"
-        x = m if p.get("logo_position") in ("tr", "br") else W - m - _tlen(d, t, font=nf)
-        _draw(d, (x, m), t, font=nf, fill=txt)
-    has_logo = place_logo(canvas, load_logo(logo), p, kit)
-    return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), "has_logo": has_logo,
-                           "headline": head, "credit": meta_credit}
+              ratio: str = "4:5", label: str = "", credit: str = "", n: tuple[int, int] | None = None,
+              inset: bytes | None = None, hi=()) -> tuple[bytes, dict]:
+    """Cover slide in the editorial look (hbstyle.cover): hero band, divider, auto-fit headline that never clips."""
+    from . import hbstyle
+    canvas, m = hbstyle.cover(headline, kit, p, image=image, inset=inset, logo=logo, ratio=ratio, label=label, credit=credit, n=n, hi=hi)
+    W, H = canvas.size
+    return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), **m}
 
 
 def fact_slide(title: str, bullets: list[str], kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5",
+               n: tuple[int, int] | None = None, image: bytes | None = None, headline: str = "") -> tuple[bytes, dict]:
+    from . import hbstyle
+    canvas, m = hbstyle.facts(title, bullets, kit, p, image=image, logo=logo, ratio=ratio, n=n, headline=headline)
+    W, H = canvas.size
+    return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), **m}
+
+
+def post_slide(post: dict, kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5", headline: str = "",
                n: tuple[int, int] | None = None) -> tuple[bytes, dict]:
-    W, H = SIZES.get(ratio, SIZES["4:5"])
-    prim, acc, txt = (hex_to_rgb(p["colors"][k]) for k in ("primary", "accent", "text"))
-    canvas = Image.new("RGB", (W, H), prim)
-    d = ImageDraw.Draw(canvas)
-    m = int(p.get("safe_margin", 64))
-    tf = font(FONTS.get(p.get("font"), "Anton.ttf"), int(W * 0.07))
-    bf = font(BODY_FONTS.get(p.get("font"), "Inter-Regular.ttf"), int(W * 0.04))
-    y = int(H * 0.2)
-    t = shape_headline(title, {**p, "headline_max_words": 8})
-    for line in wrap(d, t, tf, W - 2 * m):
-        _draw(d, (m, y), line, font=tf, fill=acc)
-        y += int(tf.size * 1.1)
-    y += int(H * 0.04)
-    for b in bullets[:4]:
-        d.ellipse((m, y + bf.size * 0.35, m + bf.size * 0.4, y + bf.size * 0.75), fill=acc)
-        for line in wrap(d, b, bf, W - 2 * m - 40):
-            _draw(d, (m + 40, y), line, font=bf, fill=txt)
-            y += int(bf.size * 1.35)
-        y += int(bf.size * 0.6)
-    if n:
-        nf = font(BODY_FONTS.get(p.get("font"), "Inter-SemiBold.ttf"), int(W * 0.024))
-        tt = f"{n[0]}/{n[1]}"
-        x = m if p.get("logo_position") in ("tr", "br") else W - m - _tlen(d, tt, font=nf)
-        _draw(d, (x, m), tt, font=nf, fill=txt)
-    has_logo = place_logo(canvas, load_logo(logo), p, kit)
-    return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), "has_logo": has_logo,
-                           "headline": t, "credit": "x"}
+    """A social post (X via oEmbed) as a brand-styled quote card."""
+    from . import hbstyle
+    canvas, m = hbstyle.post_card(post, kit, p, logo=logo, ratio=ratio, headline=headline, n=n)
+    W, H = canvas.size
+    return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), **m}
 
 
 def end_card(kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5") -> tuple[bytes, dict]:
-    W, H = SIZES.get(ratio, SIZES["4:5"])
-    prim, acc, txt = (hex_to_rgb(p["colors"][k]) for k in ("primary", "accent", "text"))
-    canvas = Image.new("RGB", (W, H), prim)
-    d = ImageDraw.Draw(canvas)
-    ec = kit.get("end_card") or {}
-    big = font(FONTS.get(p.get("font"), "Anton.ttf"), int(W * 0.16))
-    cta = (ec.get("cta") or "Follow").strip()[:20]
-    handle = ("@" + kit["handle"].lstrip("@")) if kit.get("handle") else (kit.get("name") or "")
-    hf = font(FONTS.get(p.get("font"), "Anton.ttf"), int(W * 0.09))
-    while _tlen(d, handle, font=hf) > W * 0.86 and hf.size > 30:
-        hf = font(FONTS.get(p.get("font"), "Anton.ttf"), int(hf.size * 0.92))
-    lf = font(BODY_FONTS.get(p.get("font"), "Inter-Regular.ttf"), int(W * 0.036))
-    lg = load_logo(logo)
-    y = int(H * 0.3)
-    if lg is not None:
-        l2 = lg.copy()
-        l2.thumbnail((int(W * 0.22), int(W * 0.22)), Image.LANCZOS)
-        canvas.paste(l2, ((W - l2.width) // 2, y - l2.height - 40), l2)
-    t = cta.upper() if p.get("headline_case") == "upper" else cta
-    _draw(d, ((W - _tlen(d, t, font=big)) / 2, y), t, font=big, fill=txt)
-    y += int(big.size * 1.1)
-    _draw(d, ((W - _tlen(d, handle, font=hf)) / 2, y), handle, font=hf, fill=acc)
-    y += int(hf.size * 1.4)
-    line = (ec.get("line") or "").strip()[:60]
-    if line:
-        _draw(d, ((W - _tlen(d, line, font=lf)) / 2, y), line, font=lf, fill=txt)
-    return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), "has_logo": lg is not None,
-                           "headline": t, "credit": "x", "end_card": True}
+    from . import hbstyle
+    canvas, m = hbstyle.end_card(kit, p, logo=logo, ratio=ratio)
+    W, H = canvas.size
+    return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), **m}
 
 
 def brand_photo(photo: bytes, kit: dict, p: dict, *, logo: bytes | None = None, ratio: str = "4:5", caption: str = "",
@@ -337,7 +254,7 @@ def probe(path: str) -> dict:
 
 
 def slideshow_reel(slides: list[bytes], kit: dict, p: dict, *, logo: bytes | None = None, secs: float = 3.2,
-                   ratio: str = "9:16") -> tuple[bytes, dict]:
+                   ratio: str = "9:16", total: float | None = None) -> tuple[bytes, dict]:
     """A Reel from rendered slides: slow push-in on each slide, quick crossfades, the end card last (if the ledger
     wants one). Silent by design: the person adds licensed music in the network's app."""
     W, H = SIZES[ratio]
@@ -347,6 +264,8 @@ def slideshow_reel(slides: list[bytes], kit: dict, p: dict, *, logo: bytes | Non
         has_end = bool(p.get("end_card", True))
         if has_end:
             frames.append(end_card(kit, p, logo=logo, ratio=ratio)[0])
+        if total and len(slides):  # a target length: the story slides share it, the end card keeps its 2.6 s
+            secs = max(1.5, min(20.0, (float(total) - (2.6 if has_end else 0) + 0.35 * (len(frames) - 1)) / len(slides)))
         parts = []
         for i, b in enumerate(frames):
             src = tmp / f"s{i}.jpg"
@@ -359,7 +278,7 @@ def slideshow_reel(slides: list[bytes], kit: dict, p: dict, *, logo: bytes | Non
                   f"crop=w='{W * 1.06}-{W * 0.06}*n/{fr}':h='{H * 1.06}-{H * 0.06}*n/{fr}':x='(in_w-out_w)/2':y='(in_h-out_h)/2',"
                   f"scale={W}:{H},setsar=1,fps=30,format=yuv420p")
             _run(["ffmpeg", "-y", "-loop", "1", "-t", f"{dur}", "-i", str(src), "-vf", vf, "-frames:v", str(fr),
-                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-an", str(out)])
+                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", "2", "-an", str(out)])
             parts.append((out, dur))
         # crossfade chain
         fade = 0.35
@@ -372,7 +291,7 @@ def slideshow_reel(slides: list[bytes], kit: dict, p: dict, *, logo: bytes | Non
             fc.append(f"[{prev}][{i}:v]xfade=transition=fade:duration={fade}:offset={off:.3f}[{lab}]")
             prev = lab
         final = tmp / "reel.mp4"
-        silent = ["-f", "lavfi", "-t", "60", "-i", "anullsrc=r=44100:cl=stereo"]
+        silent = ["-f", "lavfi", "-t", "180", "-i", "anullsrc=r=44100:cl=stereo"]
         cmd = ["ffmpeg", "-y", *inputs, *silent]
         ai = len(parts)
         if fc:
@@ -390,49 +309,44 @@ def slideshow_reel(slides: list[bytes], kit: dict, p: dict, *, logo: bytes | Non
 
 
 def brand_video(video: bytes, kit: dict, p: dict, *, logo: bytes | None = None, hook: str = "", ratio: str = "9:16",
-                max_secs: float = 58.0) -> tuple[bytes, dict]:
-    """A person's own clip: crop to the frame, logo bug, a hook headline for the first 3 s, the end card at the end."""
+                max_secs: float = 58.0, captions: list[dict] | None = None) -> tuple[bytes, dict]:
+    """A clip (the person's own, or one read from a post) in the editorial Reel layout (hb.py build_reel): the hook
+    headline and logo stay on screen from the first frame to the last, the whole clip plays in a band under it (never
+    cropped to death), and the brand end card is appended last. Without a hook: full-frame crop + logo bug."""
+    from . import hbstyle
     W, H = SIZES[ratio]
     tmp = Path(tempfile.mkdtemp(prefix="hs_vid_"))
     try:
         src = tmp / "in.mp4"
         src.write_bytes(video)
         info = probe(str(src))
-        dur = min(info["duration"] or max_secs, max_secs - (2.6 if p.get("end_card", True) else 0))
-        # overlay: transparent frame with logo bug (+ handle), and a separate hook overlay
-        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        place_logo(ov, load_logo(logo), p, kit)
-        ov.save(tmp / "logo.png")
-        head = ""
+        has_end = bool(p.get("end_card", True))
+        dur = min(info["duration"] or max_secs, max_secs - (2.6 if has_end else 0))
+        head, boxes = "", []
         if hook:
-            hk = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            d = ImageDraw.Draw(hk)
-            m = int(p.get("safe_margin", 64))
-            head = shape_headline(hook, {**p, "headline_max_words": min(10, int(p.get("headline_max_words", 14)))})
-            f = font(FONTS.get(p.get("font"), "Anton.ttf"), int(W * 0.085))
-            lines = wrap(d, head, f, W - 2 * m - 40)[:3]
-            lh = int(f.size * 1.12)
-            y = int(H * 0.16)
-            box_h = lh * len(lines) + 40
-            d.rounded_rectangle((m, y - 20, W - m, y - 20 + box_h), 24, fill=hex_to_rgb(p["colors"]["primary"]) + (220,))
-            for i, line in enumerate(lines):
-                _draw(d, (m + 24, y + i * lh), line, font=f, fill=hex_to_rgb(p["colors"]["accent" if i == 0 else "text"]))
-            hk.save(tmp / "hook.png")
-        vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30[b];"
-              f"[b][1:v]overlay=0:0[l]")
-        inputs = ["-t", f"{dur:.2f}", "-i", str(src), "-i", str(tmp / "logo.png")]
-        last = "l"
-        if hook:
-            inputs += ["-i", str(tmp / "hook.png")]
-            vf += ";[l][2:v]overlay=0:0:enable='lt(t,3)'[h]"
-            last = "h"
-        vf += f";[{last}]format=yuv420p[v]"
+            sw, sh = info.get("width") or 16, info.get("height") or 9
+            vw = W
+            vh = int(round(W * sh / sw / 2)) * 2
+            if vh > 1000:  # tall source: fit a box and keep the headline visible
+                vh = 1000
+                vw = int(round(1000 * sw / sh / 2)) * 2
+            ov, (vx, vy), boxes = hbstyle.reel_overlay(hook, kit, p, band=(vw, vh), logo=logo, ratio=ratio)
+            ov.save(tmp / "ov.png")
+            head = shape_headline(hook, p)
+            vf = (f"[0:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,crop={vw}:{vh},setsar=1,fps=30[sv];"
+                  f"color=c=black:s={W}x{H}:r=30[bg];[bg][sv]overlay={vx}:{vy}:shortest=1[b];[b][1:v]overlay=0:0,format=yuv420p[v]")
+        else:
+            ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            place_logo(ov, load_logo(logo), p, kit)
+            ov.save(tmp / "ov.png")
+            vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30[b];"
+                  f"[b][1:v]overlay=0:0,format=yuv420p[v]")
         body = tmp / "body.mp4"
         amap = ["-map", "0:a?", "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"] if info["audio"] else []
-        _run(["ffmpeg", "-y", *inputs, "-filter_complex", vf, "-map", "[v]", *amap, "-c:v", "libx264", "-preset", "veryfast",
-              "-crf", "22", "-movflags", "+faststart", str(body)])
+        _run(["ffmpeg", "-y", "-t", f"{dur:.2f}", "-i", str(src), "-loop", "1", "-t", f"{dur:.2f}", "-i", str(tmp / "ov.png"),
+              "-filter_complex", vf, "-map", "[v]", *amap, "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-threads", "2",
+              "-movflags", "+faststart", str(body)])
         final = body
-        has_end = bool(p.get("end_card", True))
         if has_end:
             ec = tmp / "end.jpg"
             ec.write_bytes(end_card(kit, p, logo=logo, ratio=ratio)[0])
@@ -448,11 +362,12 @@ def brand_video(video: bytes, kit: dict, p: dict, *, logo: bytes | None = None, 
             final = tmp / "final.mp4"
             _run(["ffmpeg", "-y", "-i", str(body), "-i", str(endv), "-filter_complex",
                   "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]", "-map", "[v]", "-map", "[a]", "-c:v", "libx264",
-                  "-preset", "veryfast", "-crf", "22", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(final)])
+                  "-preset", "veryfast", "-crf", "22", "-threads", "2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+                  str(final)])
         out = probe(str(final))
         return final.read_bytes(), {"type": "video", "width": W, "height": H, "duration": round(out["duration"], 2),
                                     "params": _pub(p), "has_logo": True, "has_end_card": has_end, "headline": head,
-                                    "credit": "own video"}
+                                    "credit": "own video", "text_boxes": boxes}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

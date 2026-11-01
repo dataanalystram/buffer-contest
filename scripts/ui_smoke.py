@@ -17,14 +17,9 @@ with sync_playwright() as p:
     pg = b.new_page(viewport={"width": 1366, "height": 900}, device_scale_factor=1)
     pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
-    # a failed request is recorded by its URL (the console only says "Failed to load resource"), so the one allowance
-    # below can be exact: /api/onboarding and /api/recommendations come from hq-agent-core (feat/agent-core,
-    # docs/ONBOARDING.md); until that merges the browser falls back on a 404, by design. Drop the allowance after it merges.
-    PENDING = ("/api/onboarding", "/api/recommendations")
+    # a failed request is recorded by its URL (the console only says "Failed to load resource"); no 4xx/5xx is allowed
     pg.on("console", lambda m: m.type == "error" and not m.text.startswith("Failed to load resource") and errors.append(m.text))
-    pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base)
-          and not (r.status == 404 and r.url.split("?")[0][len(base):] in PENDING)
-          and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
+    pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base) and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
     pg.goto(base + "/")
     pg.screenshot(path=str(out / "00_landing.png"), full_page=True)
     pg.goto(base + "/demo")
@@ -47,9 +42,16 @@ with sync_playwright() as p:
     pg.screenshot(path=str(out / "03_agent_running.png"), full_page=True)
     pg.wait_for_selector("[data-testid=package]", timeout=90000)
     pg.screenshot(path=str(out / "04_agent_ready.png"), full_page=True)
-    pg.fill("[data-testid=revise-input]", "logo top left and smaller, headlines in sentence case")
-    pg.click("[data-testid=revise-go]")
-    pg.wait_for_selector("[data-testid=before-after]", timeout=90000)
+    # Make a post runs are agent runs: changes are a reply in the run's thread (the old "Fix and remember" form is for
+    # media runs). Wait for the agent's answer and the rebuilt packages.
+    n = pg.locator("[data-testid=thread-msg]").count()
+    pg.fill("[data-testid=reply-input]", "make the logo smaller")
+    pg.click("[data-testid=reply-go]")
+    end = time.time() + 90  # polled in Python: the app's CSP forbids the string evaluation wait_for_function uses
+    while pg.locator("[data-testid=thread-msg]").count() < n + 2 and time.time() < end:
+        time.sleep(0.5)
+    assert pg.locator("[data-testid=thread-msg]").count() >= n + 2, "the agent didn't answer the reply"
+    pg.wait_for_selector("[data-testid=package]", timeout=90000)
     time.sleep(1.5)
     pg.screenshot(path=str(out / "05_revised.png"), full_page=True)
     pg.locator("[data-testid=pkg-send]").first.click()
