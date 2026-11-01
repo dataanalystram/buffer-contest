@@ -21,7 +21,7 @@ jobs:
       # studio.media (docs/MEDIA_PIPELINE.md): yt-dlp, faster-whisper, numpy. Video runs here, never on the 512 MB web dyno.
       - run: pip install -q httpx pillow fonttools -r requirements-media.txt
       - uses: actions/cache@v4
-        with: {path: ~/.cache/huggingface, key: whisper-media-tiny-base-v1}
+        with: {path: ~/.cache/huggingface, key: whisper-media-tiny-v1}
       - name: Render job ${{ github.event.inputs.job_id }}
-        env: {HQ_JOB_ID: "${{ github.event.inputs.job_id }}", HQ_APP: "${{ github.event.inputs.app }}", HQ_WHISPER_MODEL: base}
+        env: {HQ_JOB_ID: "${{ github.event.inputs.job_id }}", HQ_APP: "${{ github.event.inputs.app }}"}
         run: python -m studio.render_worker --job "$HQ_JOB_ID" --app "$HQ_APP"

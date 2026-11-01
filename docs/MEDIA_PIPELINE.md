@@ -71,7 +71,7 @@ it fetch an arbitrary page. Downloads are size- and height-capped and then vette
 |---|---|---|---|
 | Video edit | **FFmpeg** (libx264, libass) as a subprocess | one dependency for cut / scale / overlay / captions / mix / loudnorm; segment renders + `concat` keep memory flat | LGPL/GPL program, not linked |
 | Platform fetch | **yt-dlp** with `allowed_extractors` | covers X, YouTube, Vimeo, Loom, TikTok, IG, Wistia; one extractor per host closes the SSRF door | Unlicense |
-| Transcript | **faster-whisper** (CTranslate2 int8 CPU) + Silero VAD | word timestamps on CPU; `tiny` fits small boxes, `base` on the worker (`HQ_WHISPER_MODEL`) | MIT (model weights MIT) |
+| Transcript | **faster-whisper** (CTranslate2 int8 CPU) + Silero VAD | word timestamps on CPU; `tiny` by default (`HQ_WHISPER_MODEL` to change it; see the memory section on `base`) | MIT (model weights MIT) |
 | Captions | **ASS via libass**, measured with Pillow on the same font files | no clipping by construction; WrapStyle 2 so libass never re-wraps | own code |
 | Text cards | **Pillow** + `textfit` | auto-fit inside the platform safe area; boxes returned for tests | HPND |
 | Music | **numpy** synthesis | no licence questions, ever | BSD-3 |
@@ -137,11 +137,33 @@ Measured on the Aarush launch video (1920×1080, 77 s, H.264) with `memrun.py`, 
 whole process tree (Python + every FFmpeg child) every 0.1 s, i.e. what a container limit sees. 2 vCPU, libx264
 `veryfast`, CRF 21.
 
-MEMORY_TABLE
+| Render | Output | Peak RSS, whole tree | Largest single process | Wall |
+|---|---|---|---|---|
+| opus 9:16, 1080×1920 (clip 28.2–67.2 s) | 42 s | **890 MB** | 841 MB | 98 s |
+| hype 9:16, 1080×1920 (clip 28.2–55.2 s, with the first-beat hook layer) | 30 s | **1,040 MB** | 985 MB | 62–98 s |
+| hype 9:16, 1080×1920, before the hook layer | 30 s | 828 MB | 782 MB | 80 s |
+| news 9:16, 1080×1920 (full video in a panel) | 84 s | **621 MB** | 547 MB | 206 s |
+| news 4:5, 1080×1350 | 84 s | 493 MB | 426 MB | 119 s |
+| news 1:1, 1080×1080 | 84 s | 418–423 MB | 352–357 MB | 111 s |
+| minimal 9:16, 1080×1920 (blurred backdrop) | 84 s | **612 MB** | 566 MB | 296 s |
+| minimal 4:5, 1080×1350 | 84 s | 473 MB | 430 MB | 137 s |
+| minimal 1:1, 1080×1080 | 84 s | 406 MB | 364 MB | 146 s |
+| **opus 9:16, 720×1280** | 42 s | **484 MB** | 441 MB | 66 s |
+| **hype 9:16, 720×1280** | 30 s | **546 MB** | 499 MB | 33 s |
+| **news 9:16, 720×1280** | 84 s | **354 MB** | 316 MB | 85 s |
+
+Transcription is a separate step on the same video: faster-whisper `tiny` int8 peaked at **337 MB** (6 s, 201 words);
+`base` peaked at **571 MB** (19 s) but returned only **77 words** for the same 77 s of speech, so the worker stays on
+`tiny` (the `HQ_WHISPER_MODEL` default) until `base`'s dropped segments are understood (likely VAD / no-speech
+thresholds; open item).
 
 **Decision: video renders on the GitHub Actions worker (`render.yml`, 7 GB runner), never on the Render free web
-instance (512 MB).** 1080×1920 sits in the ~520–820 MB range once the 1080p decode, libass and x264 lookahead are
-all live, which a 512 MB instance would OOM-kill mid-render. 720×1280 is MEM720_NOTE. The web app only runs the
+instance (512 MB).** 1080×1920 measured 610–1,040 MB depending on the style (full-bleed opus/hype decode and
+scale the 1080p source to a 1080×1920 canvas with libass and x264 lookahead live; panel styles are lighter), so every
+1080p Reel would be OOM-killed on a 512 MB instance. 720×1280 is lighter but **not safe either**: the panel style fits
+(354 MB) while full-bleed opus (484 MB) and hype (546 MB) sit at or over 512 MB before the web app's own ~150 MB is
+counted. 4:5 and 1:1 at 1080 wide (406–493 MB) are also too close. So 720p is not a way to render on the free web
+instance; it only helps on a 1 GB box. The web app only runs the
 light tools (`media_plan`, `media_find`, `media_styles`) and queues the rest. A paid Render instance with ≥1 GB, or a
 self-hosted worker (`JOB_TOKEN=... python -m studio.render_worker`), can run the same job.
 
@@ -161,7 +183,7 @@ self-hosted worker (`JOB_TOKEN=... python -m studio.render_worker`), can run the
 - **Burned-in subtitle detection** is a heuristic; a miss means double captions, a false hit means none.
   `captions_mode="on"/"off"` overrides it.
 - **Small Whisper models mishear names**: pass `names` (product, company, founder) and `captions.fix_names` repairs
-  them; the worker uses `base`.
+  them. The worker uses `tiny`; `base` dropped most words on the test video (see section 5).
 - **Cost and abuse**: every worker tool runs inside agent-core's kill switch, daily caps and budgets
   (SECURITY_RULES 3–4); downloads are byte-capped and vetted before decoding (SECURITY_RULES 6).
 
