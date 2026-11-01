@@ -314,6 +314,9 @@ class Store:
         """One activity row: categorised and attributed from the request context, with every secret scrubbed first."""
         from . import activity
         detail = activity.scrub(detail or {})
+        run_id = (activity._ctx.get() or {}).get("run_id")
+        if action == "ai_call" and run_id and "run" not in detail:  # ties the call to its Make a post run (Inbox groups by it)
+            detail["run"] = run_id
         e = activity.enrich(uid, actor, action, risk, detail)
         cols = ("category", "surface", "app", "client_id", "token_id", "token_label", "provider", "model", "tokens_in",
                 "tokens_out", "cost_usd", "ip", "ua")

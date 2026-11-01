@@ -401,7 +401,8 @@ function ibItem(g, it) {
       ${it.reason ? `<span class="ib-reason${it.status === "warning" ? " warn" : ""}" data-testid="inbox-reason"><b class="sr">${it.status === "warning" ? "Warning" : "Problem"}: </b>${esc(it.reason)}</span>` : ""}</div>
     ${acts ? `<div class="ib-acts">${acts}</div>` : ""}</li>`;
 }
-function netBadge(svc) { return `<span class="net svc-${esc(svc || "")}" aria-hidden="true">${esc((typeof NET_MARK !== "undefined" && NET_MARK[svc]) || (svc || "?").slice(0, 2))}</span>`; }
+// network marks live in net-logos.js (simple-icons); `label` names the network for screen readers when no text says it
+function netBadge(svc, label) { return window.netIcon ? netIcon(svc, label) : `<span class="net svc-${esc(svc || "")}" aria-hidden="true">${esc((svc || "?").slice(0, 2))}</span>`; }
 function ibGroup(g) {
   const acts = (g.actions || []).map((a) => a.href
     ? `<a class="btn2 sm" data-testid="inbox-group-action" data-act="${esc(a.id)}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
@@ -470,15 +471,37 @@ function todayRow(p) {
   const ch = chOf(p.channelId), a = (p.assets || [])[0], vid = a && /video/.test((a.type || "") + (a.mimeType || ""));
   const th = a && (a.thumbnail || (!vid && a.source));
   return `<li class="ib-trow svc-${esc(ch.service)}" data-testid="inbox-today-item"><time datetime="${esc(p.dueAt)}">${esc(hhmm(p.dueAt))}<small>${esc(new Date(p.dueAt).toLocaleDateString([], { weekday: "short" }))}</small></time>
-    ${netBadge(ch.service)}<span class="ib-ttext"><b>${esc(ch.displayName || ch.name)}</b><span>${esc(p.text)}</span></span>
+    ${window.chMark ? chMark(ch, true) : netBadge(ch.service, true)}<span class="ib-ttext"><b>${esc(ch.displayName || ch.name)}</b><span>${esc(p.text)}</span></span>
     ${th ? `<img class="ib-tth" src="${esc(th)}" alt="" loading="lazy">` : vid ? `<span class="ib-tth vid" aria-label="Video"></span>` : ""}</li>`;
 }
 async function ibAgents() {
   const box = $("#ibAgents");
-  let r; try { r = await api("/api/activity?tab=agent&limit=25"); } catch (_) { box.innerHTML = `<li class="ib-none">Agent activity shows here once an app connects.</li>`; return; }
-  box.innerHTML = r.items.length ? r.items.slice(0, 6).map((x) => { const who = x.app_label || x.token_label || "Agent";
-    return `<li class="ib-arow${x.ok ? "" : " bad"}" data-testid="inbox-agent-row">${aiMark(x.app || who, 28)}<span><b>${esc(who)}</b> ${esc(actionWords(x.action))}${x.model ? `<small>${aiMark(x.model, 12)} ${esc(x.model)}</small>` : ""}</span><time>${esc(timeAgo(x.ts * 1000))}</time></li>`; }).join("")
+  // group=run: a Make a post run's AI calls come back as one row ("HuhQueue agent made a post · 11 AI calls · $0.13"),
+  // with each call kept for the expandable detail
+  let r; try { r = await api("/api/activity?tab=agent&limit=100&group=run"); } catch (_) { box.innerHTML = `<li class="ib-none">Agent activity shows here once an app connects.</li>`; return; }
+  box.innerHTML = r.items.length ? r.items.slice(0, 6).map((x) => (x.group === "run" ? ibRunRow(x) : ibAgentRow(x))).join("")
     : `<li class="ib-none">No agent has acted yet. <button class="link" type="button" data-go="apps" data-testid="inbox-empty-apps">Connect Claude, ChatGPT or Cursor</button>.</li>`;
+  box.querySelectorAll("[data-open-run]").forEach((b) => (b.onclick = async () => {
+    showTab("agent", "agent");
+    try { const run = await api(`/api/agent/runs/${b.dataset.openRun}`); window.showRun && showRun(run); } catch (e) { toast(e.message); }
+  }));
+}
+function ibAgentRow(x) {
+  const who = x.app_label || x.token_label || "Agent";
+  return `<li class="ib-arow${x.ok ? "" : " bad"}" data-testid="inbox-agent-row">${aiMark(x.app || who, 28)}<span><b>${esc(who)}</b> ${esc(actionWords(x.action))}${x.model ? `<small>${aiMark(x.model, 12)} ${esc(x.model)}</small>` : ""}</span><time>${esc(timeAgo(x.ts * 1000))}</time></li>`;
+}
+const usd = (v) => (v == null ? "" : v < 0.01 ? "<$0.01" : "$" + v.toFixed(2));
+function ibRunRow(x) {
+  const n = x.n_calls || (x.calls || []).length, cost = usd(x.cost_usd);
+  const line = [`${n} AI call${n === 1 ? "" : "s"}`, cost].filter(Boolean).join(" · ");
+  const calls = (x.calls || []).map((c) => { const d = c.detail || {}, tok = c.tokens_in != null ? `${(c.tokens_in || 0) + (c.tokens_out || 0)} tokens` : "";
+    return `<li data-testid="inbox-agent-call" title="${esc([c.model, tok].filter(Boolean).join(" · "))}">${aiMark(c.model || "huhqueue", 12)}<span>${esc(d.for || d.task || c.model || "AI call")}</span>`
+      + `<span class="muted">${esc(c.cost_usd != null ? usd(c.cost_usd) : (c.model || ""))}</span><time>${esc(timeAgo(c.ts * 1000))}</time></li>`; }).join("");
+  return `<li class="ib-arow ib-arun${x.ok ? "" : " bad"}" data-testid="inbox-agent-row" data-run="${esc(x.run)}">${aiMark("huhqueue", 28)}
+    <details class="ib-arun-d"><summary data-testid="inbox-agent-run"><span><b>${esc(x.app_label || "HuhQueue agent")}</b> ${esc(x.words || "made a post")} <span class="ib-arun-n">· ${esc(line)}</span>${x.model ? `<small>${aiMark(x.model, 12)} ${esc(x.model)}</small>` : ""}</span></summary>
+      <ul class="ib-acalls" data-testid="inbox-agent-calls">${calls}</ul>
+      ${x.can_open ? `<button class="link sm" type="button" data-open-run="${esc(x.run)}" data-testid="inbox-open-run">Open this run</button>` : ""}</details>
+    <time>${esc(timeAgo(x.ts * 1000))}</time></li>`;
 }
 const ACTION_WORDS = { submit_post: "wrote a post", approve_post: "had a post approved", preview_post: "checked a post", draft: "drafted posts", list_channels: "read your channels",
   get_inbox: "read your Inbox", agent_run: "ran the agent", sources_scan: "scanned sources", sources_draft: "drafted from sources", render: "rendered media", get_calendar: "read your Planner", ai_call: "made an AI call", preflight: "checked a post", get_posts: "read your posts", create_idea: "saved an idea",

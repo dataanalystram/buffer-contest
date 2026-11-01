@@ -277,8 +277,62 @@ def page(store, uid: str, f: dict, *, show_ip: bool = True) -> dict:
     more = len(rows) > size
     rows = rows[:size]
     items = [_row(r, show_ip) for r in rows]
+    if f.get("group") == "run":
+        items = group_runs(store, uid, items)
     return {"items": items, "limit": size, "next_cursor": _cursor_encode(rows[-1]["id"]) if more and rows else None,
             "counts": counts(store, uid, f), "retention_days": RETENTION_DAYS}
+
+
+RUN_KINDS = {"news": "made a post", "media": "made a post"}
+
+
+def group_runs(store, uid: str, items: list[dict]) -> list[dict]:
+    """One row per Make a post run instead of one per AI call (the Inbox's Agent activity). AI calls carry their run id
+    (detail.run) since Nov 2026; older calls are matched to the run whose lifetime covers them. A group row reads
+    "HuhQueue agent made a post · 11 AI calls · $0.13 · claude-sonnet-4-5" and keeps every call in ``calls``."""
+    calls = [x for x in items if x.get("action") == "ai_call"]
+    if not calls:
+        return items
+    lo = min(x["ts"] for x in calls) - 3600
+    runs = {r["id"]: dict(r) for r in store.q("SELECT id, kind, status, created, updated FROM agent_runs WHERE user_id=? AND updated>=?",
+                                               (uid, lo))}
+
+    def run_of(x: dict):
+        rid = (x.get("detail") or {}).get("run")
+        if rid in runs:
+            return rid
+        if rid is not None and x.get("app") == "huhqueue-agent":  # a run since deleted (or the sample's): still one row
+            runs.setdefault(rid, {"id": rid, "kind": "news", "status": "done", "created": x["ts"], "updated": x["ts"], "gone": True})
+            return rid
+        if rid is None and x.get("app") in ("huhqueue", "huhqueue-agent", ""):  # older rows: the run that was working then
+            for r in runs.values():
+                if (r["created"] or 0) - 2 <= x["ts"] <= (r["updated"] or 0) + 5:
+                    return r["id"]
+        return None
+    out, groups = [], {}
+    for x in items:
+        rid = run_of(x) if x.get("action") == "ai_call" else None
+        if rid is None:
+            out.append(x)
+            continue
+        g = groups.get(rid)
+        if g is None:
+            r = runs[rid]
+            g = groups[rid] = {"id": f"run-{rid}", "group": "run", "run": rid, "action": "agent_run_calls", "category": "agent",
+                               "app": "huhqueue-agent", "app_label": APPS["huhqueue-agent"], "ok": True, "ts": x["ts"],
+                               "words": RUN_KINDS.get(r["kind"], "worked on a run") if r["status"] != "running" else "is making a post",
+                               "cost_usd": None, "model": "", "calls": [], "can_open": not r.get("gone")}
+            out.append(g)
+        g["calls"].append(x)
+        g["ts"] = max(g["ts"], x["ts"])
+        g["ok"] = g["ok"] and x.get("ok", True)
+        if x.get("cost_usd") is not None:
+            g["cost_usd"] = round((g["cost_usd"] or 0) + x["cost_usd"], 6)
+    for g in groups.values():
+        models = [c.get("model") for c in g["calls"] if c.get("model")]
+        g["model"] = max(set(models), key=models.count) if models else ""
+        g["n_calls"] = len(g["calls"])
+    return out
 
 
 def counts(store, uid: str, f: dict) -> dict:

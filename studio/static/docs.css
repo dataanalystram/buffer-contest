@@ -53,3 +53,9 @@ kbd{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 
 .dk-table code{white-space:nowrap}
 .dk-ex{margin:16px 0}.dk-ex img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:12px;background:var(--sunken)}
 .dk-ex figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
+/* API reference (/docs/api) */
+.api-m{display:inline-block;min-width:56px;text-align:center;padding:2px 6px;border-radius:6px;font:700 11px/1.6 var(--mono);letter-spacing:.02em;background:var(--sunken);color:var(--ink)}
+.api-m.m-get{background:color-mix(in srgb,#2f80ed 16%,transparent)}.api-m.m-post{background:color-mix(in srgb,#27ae60 18%,transparent)}
+.api-m.m-patch,.api-m.m-put{background:color-mix(in srgb,#f2994a 20%,transparent)}.api-m.m-delete{background:color-mix(in srgb,#eb5757 18%,transparent)}
+.api-tools summary{cursor:pointer;font-weight:600;margin:8px 0}
+.dk-body td code{white-space:nowrap}

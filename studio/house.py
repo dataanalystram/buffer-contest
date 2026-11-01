@@ -370,8 +370,21 @@ class House:
         rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
                            (a.uid, kind, json.dumps(inp), "running", json.dumps(steps), json.dumps({}), _now(), _now()))
         self.store.audit(a.uid, a.label, "agent_run", "read", {"run": rid, "kind": kind})
-        self._spawn(self._execute, a, rid)
+        self._spawn_run(rid, self._execute, a, rid)
         return self.run(a, rid)
+
+    def _spawn_run(self, rid: int, fn, *args):
+        """Run part of a Make a post run in the background with its activity attribution: every AI call it makes is
+        logged as the "HuhQueue agent" with this run's id, so the Inbox can show one row per run, not one per call."""
+        from . import activity
+
+        def attributed(*xs):
+            tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
+            try:
+                fn(*xs)
+            finally:
+                activity.end(tok)
+        self._spawn(attributed, *args)
 
     def _spawn(self, fn, *args):
         if self.sync:
@@ -1027,7 +1040,7 @@ class House:
         tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta or {"type": "video"})
         self.store.x("UPDATE render_jobs SET status='done', media_token=?, updated=? WHERE id=?", (tok, _now(), jid))
         if run_inline and job["run_id"] and self._run_kind(job["run_id"]) != "agent":  # the agent brain waits on its own job
-            self._spawn(self._resume_after_video, a, job["run_id"], jid)
+            self._spawn_run(job["run_id"], self._resume_after_video, a, job["run_id"], jid)
         return {"ok": True, "token": tok}
 
     def _run_kind(self, rid: int) -> str:
@@ -1083,7 +1096,7 @@ class House:
             except ActionError as e:
                 self._step(steps, "render", "failed", str(e))
                 self._save(rid, steps, res, "failed")
-        self._spawn(go)
+        self._spawn_run(rid, go)
         out = self.run(a, rid)
         out["learned"] = learned["added"]
         out["message"] = learned.get("message", "")

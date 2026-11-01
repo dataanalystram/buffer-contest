@@ -143,6 +143,14 @@ class Brain:
     def channel_media(self, a: Actor, rid: int, channel_id: str, token: str = "") -> dict:
         """One channel's media: replace it with the person's own file (a Library item or an upload), or regenerate it
         (token empty). Then the check runs again, so the package, its preview and its brand check stay true."""
+        # attributed to this run in Activity, like every other agent action on it (house._spawn_run)
+        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
+        try:
+            return self._channel_media(a, rid, channel_id, token)
+        finally:
+            activity.end(tok)
+
+    def _channel_media(self, a: Actor, rid: int, channel_id: str, token: str = "") -> dict:
         self.h.studio._guard_write(a, "agent_channel_media")
         run = self.h.run(a, rid)
         if run["kind"] != "agent":
@@ -195,7 +203,7 @@ class Brain:
         with _rlock:
             _running.add(rid)
         # Activity labels this run's model calls "HuhQueue agent" (Make a post), not the Sources agent
-        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent"})
+        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
         tools = Tools(self.h, a, rid)
         try:
             if message is None and (self.h.run(a, rid)["result"].get("upload") or {}).get("read") is None \
