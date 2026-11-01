@@ -1,0 +1,1261 @@
+{
+ "feed": [
+  {
+   "id": "404e00850d",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.553,
+   "story": {
+    "headline": "Mirrors: Fix recurring AI agent mistakes with real",
+    "line": "Stop playing whack-a-mole with your agents.",
+    "facts": [
+     "Mirrors is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WGV-mirrors-fix-recurring-ai-agent-mistakes-with-real-time-guidance",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/e98a564b21ba044528e16126406d35b7464044b7.png",
+    "company": "Mirrors",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "bc61c6b6c093",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Mirrors: Fix recurring AI agent mistakes with real-time guidance",
+     "url": "https://www.ycombinator.com/launches/WGV-mirrors-fix-recurring-ai-agent-mistakes-with-real-time-guidance",
+     "published": 1793372400.126,
+     "engagement": 17
+    }
+   ],
+   "cover": "/static/sample_recs/rec-1.jpg"
+  },
+  {
+   "id": "7c1880bab9",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "postable",
+   "score": 0.45,
+   "story": {
+    "headline": "How we detect frontier model misalignment",
+    "line": "OpenAI uses layered monitoring to detect frontier model misalignment and unauthorized agent behavior so responders can intervene before incidents escalate.",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch. Also covered by Google DeepMind News.",
+    "url": "https://openai.com/index/how-we-detect-frontier-model-misalignment",
+    "source": "OpenAI News",
+    "also": [
+     "Google DeepMind News"
+    ],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "0f01adb2acab",
+     "adapter": "rss",
+     "source": "OpenAI News",
+     "title": "How we detect frontier model misalignment",
+     "url": "https://openai.com/index/how-we-detect-frontier-model-misalignment",
+     "published": 1793264400.0,
+     "engagement": 0
+    },
+    {
+     "id": "e8e0cb1d0e68",
+     "adapter": "rss",
+     "source": "Google DeepMind News",
+     "title": "Gemini 4 Carbon: Our next frontier model",
+     "url": "https://deepmind.google/blog/gemini-4-carbon-our-next-frontier-model/",
+     "published": 1793206858.0,
+     "engagement": 0
+    }
+   ],
+   "cover": "/static/sample_recs/rec-2.jpg"
+  },
+  {
+   "id": "1d631eac19",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.418,
+   "story": {
+    "headline": "Sample Notes AI: Sample: meeting notes that write your follow",
+    "line": "Sample: meeting notes that write your follow-up email.",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://example.com/sample/ph-notes",
+    "source": "Product Hunt",
+    "also": [],
+    "image": "",
+    "company": "Sample Notes AI",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "843f1ae8548f",
+     "adapter": "ph",
+     "source": "Product Hunt",
+     "title": "Sample Notes AI: Sample: meeting notes that write your follow-up email",
+     "url": "https://example.com/sample/ph-notes",
+     "published": 1793430060.0,
+     "engagement": 412
+    }
+   ],
+   "cover": "/static/sample_recs/rec-3.jpg"
+  },
+  {
+   "id": "fdbfebf6a4",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.37,
+   "story": {
+    "headline": "Introducing AnySpeechRecognizer and AnyDecisionModel: Open Models for Speech and Decisions on Apple Platforms",
+    "line": "",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://huggingface.co/blog/anydecisionmodel",
+    "source": "Hugging Face - Blog",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "6394645bd510",
+     "adapter": "rss",
+     "source": "Hugging Face - Blog",
+     "title": "Introducing AnySpeechRecognizer and AnyDecisionModel: Open Models for Speech and Decisions on Apple Platforms",
+     "url": "https://huggingface.co/blog/anydecisionmodel",
+     "published": 1793232000.0,
+     "engagement": 0
+    }
+   ],
+   "cover": "/static/sample_recs/rec-4.jpg"
+  },
+  {
+   "id": "c028c53c0b",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.359,
+   "story": {
+    "headline": "Sample: agents in our app now ask before they post. A kill switch pauses every agent action at once.",
+    "line": "",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://example.com/sample/agents-ask-first",
+    "source": "X @sampleapp",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "2628f013ef52",
+     "adapter": "x",
+     "source": "X @sampleapp",
+     "title": "Sample: agents in our app now ask before they post. A kill switch pauses every agent action at once.",
+     "url": "https://example.com/sample/agents-ask-first",
+     "published": 1793446800.0,
+     "engagement": 796
+    }
+   ],
+   "cover": "/static/sample_recs/rec-5.jpg"
+  },
+  {
+   "id": "3293f43155",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "postable",
+   "score": 0.355,
+   "story": {
+    "headline": "Sample: our new open model is live today. Free weights, 128k context, runs on a single GPU.",
+    "line": "",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://example.com/sample/open-model",
+    "source": "X @samplelab",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "0868dd1dbf89",
+     "adapter": "x",
+     "source": "X @samplelab",
+     "title": "Sample: our new open model is live today. Free weights, 128k context, runs on a single GPU.",
+     "url": "https://example.com/sample/open-model",
+     "published": 1793437920.0,
+     "engagement": 2660
+    }
+   ],
+   "cover": "/static/sample_recs/rec-6.jpg"
+  },
+  {
+   "id": "c6ba51c678",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.311,
+   "story": {
+    "headline": "Sample: a YC team launched an agent swarm that tests your product like real users.",
+    "line": "Catch bugs before your users do.",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem. Also covered by YC Launches.",
+    "url": "https://www.ycombinator.com/launches/WdS-composal-a-swarm-of-agents-that-tests-your-product-like-real-users",
+    "source": "X @sampledev",
+    "also": [
+     "YC Launches"
+    ],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "82652cf5db6e",
+     "adapter": "x",
+     "source": "X @sampledev",
+     "title": "Sample: a YC team launched an agent swarm that tests your product like real users.",
+     "url": "https://www.ycombinator.com/launches/WdS-composal-a-swarm-of-agents-that-tests-your-product-like-real-users",
+     "published": 1793452800.0,
+     "engagement": 444
+    }
+   ],
+   "cover": "/static/sample_recs/rec-7.jpg"
+  },
+  {
+   "id": "f77018af6a",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.291,
+   "story": {
+    "headline": "Wingman Law: AI-native personal injury law firm where attorneys direct AI agents",
+    "line": "Wingman Law: AI-native personal injury law firm",
+    "facts": [
+     "Wingman Law is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WdJ-wingman-law-ai-native-personal-injury-law-firm-where-attorneys-direct-ai-agents",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/2127606306fa68c80f746873e01b87bbfb011128.png",
+    "company": "Wingman Law",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "c85896fbf7c0",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Wingman Law: AI-native personal injury law firm where attorneys direct AI agents",
+     "url": "https://www.ycombinator.com/launches/WdJ-wingman-law-ai-native-personal-injury-law-firm-where-attorneys-direct-ai-agents",
+     "published": 1793318400.266,
+     "engagement": 4
+    }
+   ],
+   "cover": "/static/sample_recs/rec-8.jpg"
+  },
+  {
+   "id": "18f971149b",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.284,
+   "story": {
+    "headline": "Durable Actors: The perfect primitive for Multiplayer AI and Agent Coordination",
+    "line": "OSS alternative to Durable Objects.",
+    "facts": [
+     "Terse is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WbG-durable-actors-the-perfect-primitive-for-multiplayer-ai-and-agent-coordination",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/cd6be2cf6a34817d94716dd43cba7de917787b78.png",
+    "company": "Terse",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "e275f057aaef",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Durable Actors: The perfect primitive for Multiplayer AI and Agent Coordination",
+     "url": "https://www.ycombinator.com/launches/WbG-durable-actors-the-perfect-primitive-for-multiplayer-ai-and-agent-coordination",
+     "published": 1793302200.301,
+     "engagement": 4
+    }
+   ],
+   "cover": "/static/sample_recs/rec-9.jpg"
+  },
+  {
+   "id": "d3103ce40c",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "postable",
+   "score": 0.28,
+   "story": {
+    "headline": "GPT-5.6 Sol can beat Factorio on peaceful mode",
+    "line": "",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://ryanmadden.net/gpt-56-beats-factorio/",
+    "source": "Hacker News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "9b602871ebeb",
+     "adapter": "hn",
+     "source": "Hacker News",
+     "title": "GPT-5.6 Sol can beat Factorio on peaceful mode",
+     "url": "https://ryanmadden.net/gpt-56-beats-factorio/",
+     "published": 1793472634.0,
+     "engagement": 87
+    }
+   ]
+  },
+  {
+   "id": "a2852e8ea5",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.274,
+   "story": {
+    "headline": "Granite Switch 4.1.1 — Update models like you update software",
+    "line": "",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://huggingface.co/blog/ibm-granite/granite-switch-4-1-1",
+    "source": "Hugging Face - Blog",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "e508e29ae812",
+     "adapter": "rss",
+     "source": "Hugging Face - Blog",
+     "title": "Granite Switch 4.1.1 — Update models like you update software",
+     "url": "https://huggingface.co/blog/ibm-granite/granite-switch-4-1-1",
+     "published": 1793281027.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "4ab0ffe9a7",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.265,
+   "story": {
+    "headline": "The Impact of Generative AI on Critical Thinking: Self",
+    "line": "",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://dl.acm.org/doi/full/10.1145/3706598.3713778",
+    "source": "Hacker News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "d004c37dd3b3",
+     "adapter": "hn",
+     "source": "Hacker News",
+     "title": "The Impact of Generative AI on Critical Thinking: Self-Reported (2025)",
+     "url": "https://dl.acm.org/doi/full/10.1145/3706598.3713778",
+     "published": 1793469749.0,
+     "engagement": 61
+    }
+   ]
+  },
+  {
+   "id": "5f68be1a25",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.246,
+   "story": {
+    "headline": "AI, Lean, and the Future of Formal Verification, with Lean Creator Leo de Moura",
+    "line": "",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://thedataexchange.media/leo-de-moura-lean-aws/",
+    "source": "Hacker News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "7e8069f52fd9",
+     "adapter": "hn",
+     "source": "Hacker News",
+     "title": "AI, Lean, and the Future of Formal Verification, with Lean Creator Leo de Moura",
+     "url": "https://thedataexchange.media/leo-de-moura-lean-aws/",
+     "published": 1793287788.0,
+     "engagement": 172
+    }
+   ]
+  },
+  {
+   "id": "836b9d7966",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.237,
+   "story": {
+    "headline": "ernd: the credit card for the AI stack",
+    "line": "Get faster inference, better access to GPUs, and 4% back on AI.",
+    "facts": [
+     "ernd is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/Whe-ernd-the-credit-card-for-the-ai-stack",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/0abccc9bf2a6589b531983e558b31a32246f63fb.png",
+    "company": "ernd",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "d2ecc9bafb32",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "ernd: the credit card for the AI stack",
+     "url": "https://www.ycombinator.com/launches/Whe-ernd-the-credit-card-for-the-ai-stack",
+     "published": 1793475000.165,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "828b889df0",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.235,
+   "story": {
+    "headline": "Fleety: The AI dispatcher for plumbing and HVAC companies",
+    "line": "Sends the right tech to the right job, and rebuilds the schedule all day.",
+    "facts": [
+     "Fleety is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WhC-fleety-the-ai-dispatcher-for-plumbing-and-hvac-companies",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/db07ec09ef8192bbc52f5bc207031df3e5646dac.png",
+    "company": "Fleety",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "7096d1c72f50",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Fleety: The AI dispatcher for plumbing and HVAC companies",
+     "url": "https://www.ycombinator.com/launches/WhC-fleety-the-ai-dispatcher-for-plumbing-and-hvac-companies",
+     "published": 1793469600.141,
+     "engagement": 1
+    }
+   ]
+  },
+  {
+   "id": "d91d9afaf3",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "postable",
+   "score": 0.233,
+   "story": {
+    "headline": "Google DeepMind and Singapore Government collaborate to build fine-tuned AI model for scam detection",
+    "line": "Learn how Google DeepMind and GovTech Singapore uses lightweight on-device Gemma models to intercept conversational scams in private chats with zero cloud data egress.",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://deepmind.google/blog/on-device-ai-scam-detection-mddi/",
+    "source": "Google DeepMind News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "36a7e1c23fbb",
+     "adapter": "rss",
+     "source": "Google DeepMind News",
+     "title": "Google DeepMind and Singapore Government collaborate to build fine-tuned AI model for scam detection",
+     "url": "https://deepmind.google/blog/on-device-ai-scam-detection-mddi/",
+     "published": 1791943214.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "22cfc1d6ad",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.21,
+   "story": {
+    "headline": "Cardinal Square: AI",
+    "line": "Personalized education for every student.",
+    "facts": [
+     "Cardinal Square is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WfT-cardinal-square-ai-native-schools",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/87a9ad77df8ff03bf6998f4f2007f263b31dbba5.png",
+    "company": "Cardinal Square",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "867efdb5209f",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Cardinal Square: AI-Native Schools",
+     "url": "https://www.ycombinator.com/launches/WfT-cardinal-square-ai-native-schools",
+     "published": 1793401200.081,
+     "engagement": 6
+    }
+   ]
+  },
+  {
+   "id": "9d25448539",
+   "topic": "How-to",
+   "category": "howto_tools",
+   "lane": "postable",
+   "score": 0.208,
+   "story": {
+    "headline": "Build specialized multimodal models with LFM3",
+    "line": "",
+    "facts": [],
+    "why": "Free, and you can try it today.",
+    "url": "https://huggingface.co/blog/LiquidAI/lfm3",
+    "source": "Hugging Face - Blog",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#AITools"
+   },
+   "items": [
+    {
+     "id": "1c5b51464767",
+     "adapter": "rss",
+     "source": "Hugging Face - Blog",
+     "title": "Build specialized multimodal models with LFM3",
+     "url": "https://huggingface.co/blog/LiquidAI/lfm3",
+     "published": 1793121412.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "4b34440ae8",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.207,
+   "story": {
+    "headline": "Hickory: AI-native compliance operating system for banks and fintechs",
+    "line": "Replace legacy financial crime software with agent-first fraud and AML workflows.",
+    "facts": [
+     "Hickory & Company is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WgV-hickory-ai-native-compliance-operating-system-for-banks-and-fintechs",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/99defc038609729a80c544eca98af6bec719647d.png",
+    "company": "Hickory & Company",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "cb6bd9a80aee",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Hickory: AI-native compliance operating system for banks and fintechs",
+     "url": "https://www.ycombinator.com/launches/WgV-hickory-ai-native-compliance-operating-system-for-banks-and-fintechs",
+     "published": 1793397600.162,
+     "engagement": 3
+    }
+   ]
+  },
+  {
+   "id": "cf49cb0719",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "postable",
+   "score": 0.206,
+   "story": {
+    "headline": "Genie 4: A new generation of world simulation",
+    "line": "Genie 4: our new world model unlocking unprecedented realism in real-time simulation.",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://deepmind.google/blog/genie-4-a-new-generation-of-world-simulation/",
+    "source": "Google DeepMind News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "393575ee7d83",
+     "adapter": "rss",
+     "source": "Google DeepMind News",
+     "title": "Genie 4: A new generation of world simulation",
+     "url": "https://deepmind.google/blog/genie-4-a-new-generation-of-world-simulation/",
+     "published": 1793116898.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "10f9c40aef",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.202,
+   "story": {
+    "headline": "Reconero: AI that does police paperwork so officers can keep their communities safe",
+    "line": "Reconero automates administrative workflows for law enforcement with AI.",
+    "facts": [
+     "Reconero is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WdX-reconero-ai-that-does-police-paperwork-so-officers-can-keep-their-communities-safe",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/b80e05ae693ed71f511c4061b98e40ea8c93e882.png",
+    "company": "Reconero",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "0d9405b0ad3c",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Reconero: AI that does police paperwork so officers can keep their communities safe",
+     "url": "https://www.ycombinator.com/launches/WdX-reconero-ai-that-does-police-paperwork-so-officers-can-keep-their-communities-safe",
+     "published": 1793383200.226,
+     "engagement": 5
+    }
+   ]
+  },
+  {
+   "id": "52c0c3a777",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.201,
+   "story": {
+    "headline": "Dydema: Personal, programmable brain",
+    "line": "Control your computer with a thought, no surgery required.",
+    "facts": [
+     "Dydema is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WdW-dydema-personal-programmable-brain-computer-interfaces",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/85eacc9eef1101a2060cf6b9873797fd43445325.png",
+    "company": "Dydema",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "ea751ec2e0f3",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Dydema: Personal, programmable brain-computer interfaces",
+     "url": "https://www.ycombinator.com/launches/WdW-dydema-personal-programmable-brain-computer-interfaces",
+     "published": 1793379600.28,
+     "engagement": 7
+    }
+   ]
+  },
+  {
+   "id": "4a38012d82",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.186,
+   "story": {
+    "headline": "Making it easier for websites to express AI training preferences",
+    "line": "OpenAI will honor a shared robots.txt signal to help website operators communicate their AI training preferences to participating providers.",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://openai.com/index/helping-websites-express-ai-training-preferences",
+    "source": "OpenAI News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "84abd1857de5",
+     "adapter": "rss",
+     "source": "OpenAI News",
+     "title": "Making it easier for websites to express AI training preferences",
+     "url": "https://openai.com/index/helping-websites-express-ai-training-preferences",
+     "published": 1793352600.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "4b17160c1b",
+   "topic": "Policy",
+   "category": "policy_law",
+   "lane": "postable",
+   "score": 0.172,
+   "story": {
+    "headline": "Fair use benefits everyone",
+    "line": "OpenAI shares excerpts from court briefs by creators, academics, accessibility advocates, and legal experts, among others, on how fair use supports AI training and innovation.",
+    "facts": [],
+    "why": "Rules like this change what products can ship, and where.",
+    "url": "https://openai.com/index/fair-use-benefits-everyone",
+    "source": "OpenAI News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#AIPolicy"
+   },
+   "items": [
+    {
+     "id": "574dbaf7fc87",
+     "adapter": "rss",
+     "source": "OpenAI News",
+     "title": "Fair use benefits everyone",
+     "url": "https://openai.com/index/fair-use-benefits-everyone",
+     "published": 1793318400.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "49cb77de30",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.168,
+   "story": {
+    "headline": "Capveon — AI for finding, understanding, and winning government work",
+    "line": "AI for finding, understanding, and winning government work for manufacturers and contractors.",
+    "facts": [
+     "Capveon is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WZJ-capveon-ai-for-finding-understanding-and-winning-government-work",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/55acb7275a696cdf957737bce96b338f2da2d45f.png",
+    "company": "Capveon",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "c651f8868310",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Capveon — AI for finding, understanding, and winning government work",
+     "url": "https://www.ycombinator.com/launches/WZJ-capveon-ai-for-finding-understanding-and-winning-government-work",
+     "published": 1793298600.224,
+     "engagement": 8
+    }
+   ]
+  },
+  {
+   "id": "b8a620ef03",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.147,
+   "story": {
+    "headline": "How Ropes & Gray is developing AI for transactional diligence",
+    "line": "Ropes & Gray is developing AI for transactional diligence with OpenAI.",
+    "facts": [
+     "Lawyers review grouped documents, summaries, and reports before advising clients."
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://openai.com/index/ropes-gray-ai-diligence",
+    "source": "OpenAI News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "d948735545c2",
+     "adapter": "rss",
+     "source": "OpenAI News",
+     "title": "How Ropes & Gray is developing AI for transactional diligence",
+     "url": "https://openai.com/index/ropes-gray-ai-diligence",
+     "published": 1793257200.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "17ed4c3aa9",
+   "topic": "Research",
+   "category": "research",
+   "lane": "postable",
+   "score": 0.137,
+   "story": {
+    "headline": "Announcing Project ProtoStar: Making Publicly Funded Science AI",
+    "line": "",
+    "facts": [],
+    "why": "Early work, but it shows where the field is heading.",
+    "url": "https://huggingface.co/blog/announcing-project-protostar",
+    "source": "Hugging Face - Blog",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#AIResearch"
+   },
+   "items": [
+    {
+     "id": "718617961cab",
+     "adapter": "rss",
+     "source": "Hugging Face - Blog",
+     "title": "Announcing Project ProtoStar: Making Publicly Funded Science AI-Ready",
+     "url": "https://huggingface.co/blog/announcing-project-protostar",
+     "published": 1793232000.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "cab23ab712",
+   "topic": "Research",
+   "category": "research",
+   "lane": "postable",
+   "score": 0.053,
+   "story": {
+    "headline": "Our newest AI Quest: Mapping the human brain",
+    "line": "An illustration of a planet rotating to show various cartoon figures waving.",
+    "facts": [
+     "At the top is the text \"AI Quests\""
+    ],
+    "why": "Early work, but it shows where the field is heading.",
+    "url": "https://blog.google/products-and-platforms/products/education/ai-quests-polar-peaks/",
+    "source": "AI",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#AIResearch"
+   },
+   "items": [
+    {
+     "id": "b1d7eb2dedce",
+     "adapter": "rss",
+     "source": "AI",
+     "title": "Our newest AI Quest: Mapping the human brain",
+     "url": "https://blog.google/products-and-platforms/products/education/ai-quests-polar-peaks/",
+     "published": 1793030400.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "757f837e54",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "postable",
+   "score": 0.0,
+   "story": {
+    "headline": "Developing Gemini 4 Argon responsibly and safely",
+    "line": "",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://deepmind.google/blog/developing-gemini-4-argon-responsibly-and-safely/",
+    "source": "Google DeepMind News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "8b1ab1df41ac",
+     "adapter": "rss",
+     "source": "Google DeepMind News",
+     "title": "Developing Gemini 4 Argon responsibly and safely",
+     "url": "https://deepmind.google/blog/developing-gemini-4-argon-responsibly-and-safely/",
+     "published": 1791920587.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "ca1f094bc4",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "postable",
+   "score": 0.0,
+   "story": {
+    "headline": "Gemini 4 Argon: Built to solve your hardest problems",
+    "line": "TBD.",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/",
+    "source": "AI",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "74c9e10c0254",
+     "adapter": "rss",
+     "source": "AI",
+     "title": "Gemini 4 Argon: Built to solve your hardest problems",
+     "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/",
+     "published": 1791907200.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "543a18a053",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "postable",
+   "score": 0.0,
+   "story": {
+    "headline": "The latest AI news we announced in September 2026",
+    "line": "A video showing the September AI updates.",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://blog.google/innovation-and-ai/technology/ai/google-ai-updates-september-2026/",
+    "source": "AI",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "6a7bb4e3e69d",
+     "adapter": "rss",
+     "source": "AI",
+     "title": "The latest AI news we announced in September 2026",
+     "url": "https://blog.google/innovation-and-ai/technology/ai/google-ai-updates-september-2026/",
+     "published": 1790953200.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "ece8e8e63f",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "idea_bank",
+   "score": 0.33,
+   "story": {
+    "headline": "Sample: free way to caption a podcast: an open speech model, three commands, works offline. Thread below.",
+    "line": "",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://example.com/sample/free-captions",
+    "source": "X @sampledev",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "99ad120a34e2",
+     "adapter": "x",
+     "source": "X @sampledev",
+     "title": "Sample: free way to caption a podcast: an open speech model, three commands, works offline. Thread below.",
+     "url": "https://example.com/sample/free-captions",
+     "published": 1793376300.0,
+     "engagement": 3700
+    }
+   ]
+  },
+  {
+   "id": "6f08d1f426",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "idea_bank",
+   "score": 0.279,
+   "story": {
+    "headline": "An updated Model Spec for more capable and beneficial AI",
+    "line": "OpenAI’s updated Model Spec outlines five core values to guide more capable AI toward sound judgment, human agency, and faithfulness to human intent.",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://openai.com/index/updated-model-spec",
+    "source": "OpenAI News",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "9349f418e7bc",
+     "adapter": "rss",
+     "source": "OpenAI News",
+     "title": "An updated Model Spec for more capable and beneficial AI",
+     "url": "https://openai.com/index/updated-model-spec",
+     "published": 1793293200.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "7c7f1e7163",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "low",
+   "score": 0.352,
+   "story": {
+    "headline": "Sample Clip: Sample: turn a long video into captioned shorts",
+    "line": "Sample: turn a long video into captioned shorts.",
+    "facts": [],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://example.com/sample/ph-clip",
+    "source": "Product Hunt",
+    "also": [],
+    "image": "",
+    "company": "Sample Clip",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "d5a6c4eeafe1",
+     "adapter": "ph",
+     "source": "Product Hunt",
+     "title": "Sample Clip: Sample: turn a long video into captioned shorts",
+     "url": "https://example.com/sample/ph-clip",
+     "published": 1793430060.0,
+     "engagement": 268
+    }
+   ]
+  },
+  {
+   "id": "e89d76c72d",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "low",
+   "score": 0.264,
+   "story": {
+    "headline": "Aviern: Unmanned cargo airplanes for autonomous airports",
+    "line": "Fixed-wing drones for regional air freight and defense logistics.",
+    "facts": [
+     "Aviern is in YC Fall 2026",
+     "1000lbs carried over 1000 miles under $1000."
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WdT-aviern-unmanned-cargo-airplanes-for-autonomous-airports",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/906b7c01faee6d9632f1f941bfe737812ec7d0b9.png",
+    "company": "Aviern",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "86df36f16a61",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Aviern: Unmanned cargo airplanes for autonomous airports",
+     "url": "https://www.ycombinator.com/launches/WdT-aviern-unmanned-cargo-airplanes-for-autonomous-airports",
+     "published": 1793314800.165,
+     "engagement": 187
+    }
+   ]
+  },
+  {
+   "id": "130d65eb41",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "low",
+   "score": 0.233,
+   "story": {
+    "headline": "Axonnic: Muscle-sensing sleeves for robot training",
+    "line": "Track finger movement and estimate fingertip force while people work.",
+    "facts": [
+     "Axonnic is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WfE-axonnic-muscle-sensing-sleeves-for-robot-training",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/f269fdfc703083f216ecc708a1d72e1eec821657.png",
+    "company": "Axonnic",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "57d17a17ff23",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Axonnic: Muscle-sensing sleeves for robot training",
+     "url": "https://www.ycombinator.com/launches/WfE-axonnic-muscle-sensing-sleeves-for-robot-training",
+     "published": 1793365200.29,
+     "engagement": 83
+    }
+   ]
+  },
+  {
+   "id": "b5145cc531",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "low",
+   "score": 0.206,
+   "story": {
+    "headline": "Shire Intelligence: Giving restaurants software eyes",
+    "line": "Shire uses CCTV to run restaurants in real time.",
+    "facts": [
+     "Shire Intelligence is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/WfG-shire-intelligence-giving-restaurants-software-eyes",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/ddb902daa9bf41440f3e332ac02be9ee50de271c.png",
+    "company": "Shire Intelligence",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "76f6cfb6bcb8",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "Shire Intelligence: Giving restaurants software eyes",
+     "url": "https://www.ycombinator.com/launches/WfG-shire-intelligence-giving-restaurants-software-eyes",
+     "published": 1793394000.081,
+     "engagement": 4
+    }
+   ]
+  },
+  {
+   "id": "dff2653ecb",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "low",
+   "score": 0.204,
+   "story": {
+    "headline": "SPM: Batteries are the bottleneck to American Energy Dominance",
+    "line": "SPM builds highest performance battery packs and power systems to mobilize energy.",
+    "facts": [
+     "Super Powers Mobility (SPM) is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/Wdz-spm-batteries-are-the-bottleneck-to-american-energy-dominance",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/a5c35648a3ac00d7da1ce27b5b0a62372c6a5f2e.png",
+    "company": "Super Powers Mobility (SPM)",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "9c53101d274c",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "SPM: Batteries are the bottleneck to American Energy Dominance",
+     "url": "https://www.ycombinator.com/launches/Wdz-spm-batteries-are-the-bottleneck-to-american-energy-dominance",
+     "published": 1793390400.106,
+     "engagement": 4
+    }
+   ]
+  },
+  {
+   "id": "3276698083",
+   "topic": "Models",
+   "category": "model_release",
+   "lane": "low",
+   "score": 0.199,
+   "story": {
+    "headline": "nemotron",
+    "line": "",
+    "facts": [],
+    "why": "Another model to weigh up: check the licence, the size and the price before you switch.",
+    "url": "https://huggingface.co/blog/nvidia/nemotron-halloween",
+    "source": "Hugging Face - Blog",
+    "also": [],
+    "image": "",
+    "company": "",
+    "topic_tag": "#OpenModels"
+   },
+   "items": [
+    {
+     "id": "037154e824aa",
+     "adapter": "rss",
+     "source": "Hugging Face - Blog",
+     "title": "nemotron-halloween",
+     "url": "https://huggingface.co/blog/nvidia/nemotron-halloween",
+     "published": 1793383044.0,
+     "engagement": 0
+    }
+   ]
+  },
+  {
+   "id": "0a8aa72afb",
+   "topic": "Launch",
+   "category": "product_feature",
+   "lane": "low",
+   "score": 0.198,
+   "story": {
+    "headline": "The Subvocal Company: Talk without talking",
+    "line": "Glasses that let you talk to your computer without talking out loud.",
+    "facts": [
+     "The Subvocal Company is in YC Fall 2026"
+    ],
+    "why": "A new tool to try if you have this exact problem.",
+    "url": "https://www.ycombinator.com/launches/Wf9-the-subvocal-company-talk-without-talking",
+    "source": "YC Launches",
+    "also": [],
+    "image": "https://bookface-images.s3.amazonaws.com/small_logos/932b2d47f36f3bce67a23cc2ce77599b9f364edd.png",
+    "company": "The Subvocal Company",
+    "topic_tag": "#Startups"
+   },
+   "items": [
+    {
+     "id": "fcf33d331ddb",
+     "adapter": "yc",
+     "source": "YC Launches",
+     "title": "The Subvocal Company: Talk without talking",
+     "url": "https://www.ycombinator.com/launches/Wf9-the-subvocal-company-talk-without-talking",
+     "published": 1793368870.977,
+     "engagement": 10
+    }
+   ]
+  }
+ ]
+}
