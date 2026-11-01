@@ -52,6 +52,7 @@ def test_each_style_renders_a_complete_branded_short(clips, style, tmp_path):
     assert abs(m["duration"] - want) < 0.2, (m["duration"], want)
     assert ff.probe(m["path"])["has_audio"] and not ff.is_silent(m["path"])
     assert m["captions"] is True
+    assert "hook" in m["boxes"], "every style shows the hook in the first second"
     _check_layout(m)
     last = str(tmp_path / "last.png")
     ff.run(["-y", "-v", "error", "-sseof", "-0.5", "-i", m["path"], "-frames:v", "1", "-update", "1", last])

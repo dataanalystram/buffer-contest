@@ -33,6 +33,7 @@ from . import captions, ff, music, textfit
 SIZES = {"9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080)}
 FPS = 30
 CARD_SECS = 3.0
+HYPE_HOOK_SECS = 1.4  # hype: the giant hook holds for the first beat, then the one-word captions take over
 DEFAULT_BRAND = {"name": "HuhByte AI", "handle": "@huhbyte.ai", "accent": "#C9ACFA", "bg": "#0E0E10", "text": "#FFFFFF",
                  "muted": "#A0A0A8", "logo": None, "head_font": "Anton.ttf", "body_font": "Poppins-Medium.ttf",
                  "bold_font": "Poppins-Bold.ttf", "end_line": "AI news made simple, every day."}
@@ -240,6 +241,9 @@ def layout(style: str, W: int, H: int, sw: int, sh: int, brand: dict, hook: str,
     if style in ("opus", "hype"):
         hb = (l, t, r, t + int(H * (0.12 if tall else 0.15)))
         L.update(panel=(0, 0, W, H), hook=hb, captions_center=int(H * (0.60 if tall else 0.70)))
+        if style == "hype":  # giant hook under the credit chip for the first beat, clear of the caption line
+            y0 = t + int(H * (0.045 if tall else 0.07))
+            L["hook"] = (l, y0, r, min(y0 + int(H * (0.24 if tall else 0.26)), L["captions_center"] - int(H * 0.09)))
         return L
     logo_h = int(H * 0.032) if (style == "huhbyte_news" and brand.get("logo")) else 0
     hook_font = brand["head_font"] if style == "huhbyte_news" else "Inter-SemiBold.ttf"
@@ -334,6 +338,16 @@ def _overlay(style: str, W: int, H: int, brand: dict, hook: str, credit: str, L:
     return o, boxes
 
 
+def _hype_hook(W: int, H: int, brand: dict, hook: str, L: dict, accent_words) -> tuple[Image.Image, tuple]:
+    """Hype's first-beat title: giant uppercase head font with a heavy outline, auto-fitted in L["hook"]."""
+    o = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(o)
+    stroke = max(4, W // 150)
+    bb, _ = _text_block(d, hook, brand["head_font"], L["hook"], max_size=150, min_size=40, max_lines=3, upper=True,
+                        accent_words=accent_words, accent=brand["accent"], stroke=stroke)
+    return o, bb
+
+
 # ------------------------------------------------------------------------------------------------ encode helpers
 def _venc(crf: int, preset: str) -> list[str]:
     # identical settings for every segment (no per-segment -tune: the joined MP4 keeps only the FIRST segment's SPS/PPS,
@@ -409,6 +423,11 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             boxes["cap_band"] = L["cap_band"]
         ov_path = wd / "overlay.png"
         ov.save(ov_path)
+        hook_path = None
+        if cfg["layout"] == "hype" and hook.strip():
+            hk, boxes["hook"] = _hype_hook(W, H, brand, hook, L, acc)
+            hook_path = wd / "hook.png"
+            hk.save(hook_path)
         segs = []
         if cover_s:
             cover_card(str(wd / "cover.png"), W, H, brand, hook, still, label=cfg["cover_label"], accent_words=acc)
@@ -426,7 +445,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             ass_path.write_text(ass)
 
         main = str(wd / "s1_main.mp4")
-        args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand)
+        args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand,
+                               hook_path=hook_path)
         ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}",
                 *_venc(crf, preset), main], timeout=1800)
         segs.append(main)
@@ -456,7 +476,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             shutil.rmtree(wd, ignore_errors=True)
 
 
-def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand):
+def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand, hook_path=None):
     args: list[str] = []
     n = 0
     if source:
@@ -468,6 +488,8 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
         n = len(images)
     ov_i = n
     args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", str(ov_path)]
+    if hook_path:
+        args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{min(D, HYPE_HOOK_SECS):.3f}", "-i", str(hook_path)]
     bg = brand["bg"].lstrip("#")
     px0, py0, px1, py1 = panel
     pw, ph = px1 - px0, py1 - py0
@@ -496,6 +518,8 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
             segs.append(f"[k{i}]")
         parts.append(f"{''.join(segs)}concat=n={len(images)}:v=1:a=0[base]")
     chain = f"[base][{ov_i}:v]overlay=0:0:shortest=1"
+    if hook_path:
+        chain += f"[b1];[b1][{ov_i + 1}:v]overlay=0:0:eof_action=pass:enable='lt(t,{HYPE_HOOK_SECS})'"
     if cfg.get("flash") and source:
         chain += ",fade=t=in:st=0:d=0.2:color=white"
     if ass_path:
