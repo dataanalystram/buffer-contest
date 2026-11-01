@@ -48,6 +48,7 @@ def test_brand_studio_first_run_preview_examples_and_slot(demo_live, chromium):
         page.fill("[data-testid=bs-color-accent]", "#ff5a1f")
         page.locator("[data-testid=bs-color-accent]").dispatch_event("input")
         _until(lambda: page.locator("[data-testid=bs-slide]").first.get_attribute("src") != first)
+        page.click("[data-testid=brand-tab-templates]")  # one Brand screen: Kit, Templates, Style Ledger
         page.click("[data-testid=bs-use-buffer]")
         _until(lambda: page.input_value("[data-testid=bs-name]") == "Buffer")
         page.wait_for_timeout(600)
@@ -72,8 +73,9 @@ def test_sources_agent_scan_to_buffer_drafts(demo_live, chromium):
     base, buffer_calls = demo_live
     ctx, page = _page(chromium, base)
     try:
-        page.goto(base + "/?tab=sources")
-        page.wait_for_selector("[data-testid=sa-src-yc]")
+        page.goto(base + "/?tab=sources")  # the old name lands on News > Story scan
+        page.wait_for_selector("[data-testid=sa-scan]")
+        page.wait_for_selector("[data-testid=sa-src-yc]", state="attached")
         page.click("[data-testid=sa-scan]")
         page.wait_for_selector("[data-testid=sa-cluster]")
         assert page.locator("[data-testid=sa-src-status]").count() == 5
