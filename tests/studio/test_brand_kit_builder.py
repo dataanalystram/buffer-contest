@@ -280,6 +280,10 @@ def test_a_sample_kit_saved_under_a_new_name_drops_the_sample_badge(human):
     mine = human.patch(f"/api/brand-kits/{k['id']}", json={"name": "Acme Audio", "handle": "acmeaudio"}).json()
     assert mine["name"] == "Acme Audio" and not mine["kit"].get("label")
     assert mine["kit"]["source"]["derived_from"] == "Nothing"
+    assert not mine["kit"].get("logo") and not mine["logo_url"], "the sample's logo isn't theirs: it goes with the name"
+    still = human.post("/api/brand-kits", json={"sample": "nothing"}).json()
+    assert still["kit"]["logo"] == "sample:nothing" and still["logo_url"], "the sample itself keeps its logo"
+    human.delete(f"/api/brand-kits/{still['id']}")
     act = human.post(f"/api/brand-kits/{k['id']}/activate").json()
     assert act["applied"] and not human.get("/api/brand-studio").json()["kit"].get("label")
     lst = human.get("/api/brand-kits").json()
@@ -287,6 +291,7 @@ def test_a_sample_kit_saved_under_a_new_name_drops_the_sample_badge(human):
     # created from a sample but named differently in the same call: never badged
     own = human.post("/api/brand-kits", json={"sample": "linear", "name": "Orbit"}).json()
     assert own["name"] == "Orbit" and not own["kit"].get("label") and own["kit"]["source"]["derived_from"] == "Linear"
+    assert not own["kit"].get("logo")
     # the sample itself, renamed back to its own name, stays a sample
     lin = human.post("/api/brand-kits", json={"sample": "linear", "name": "linear"}).json()
     assert lin["kit"]["label"] == brand_onboard.SAMPLE_LABEL

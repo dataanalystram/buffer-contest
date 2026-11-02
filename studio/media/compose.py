@@ -30,6 +30,13 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from . import captions, ff, textfit  # music (numpy) is imported where a video gets a bed: the web dyno has no numpy
 
+def _hl(brand: dict) -> str:
+    """The colour of the highlighted headline words (covers, hooks) and the theme progress bar: the brand kit's Accent
+    (the builder's fourth colour, kit colors.secondary) when it reads on the ground, else the brand accent. Burned-in
+    captions keep the brand accent: they sit on moving footage, where only the strongest colour reads."""
+    return brand.get("highlight") or brand["accent"]
+
+
 SIZES = {"9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080)}
 FPS = 30
 CARD_SECS = 3.0
@@ -390,7 +397,7 @@ def cover_card(path: str, W: int, H: int, brand: dict, hook: str, still: Image.I
         boxes["logo"] = (l, t, l + lg.width, t + lg.height)
     hook_box = (l, int(H * 0.52), r, b - int(H * 0.09))
     bb, _ = _text_block(d, hook, brand["head_font"], hook_box, max_size=150, min_size=40, max_lines=4, upper=True,
-                        accent_words=accent_words, accent=brand["accent"], valign="bottom")
+                        accent_words=accent_words, accent=_hl(brand), valign="bottom")
     boxes["hook"] = bb
     boxes["label"] = _pill(d, label, (l + r) // 2, bb[3] + int(H * 0.03), brand, size=30)  # clear gap under the last line
     im.save(path)
@@ -474,7 +481,7 @@ def _overlay(style: str, W: int, H: int, brand: dict, hook: str, credit: str, L:
                 o.paste(lg, (x, L["logo"][1]), lg)
                 boxes["logo"] = (x, L["logo"][1], x + lg.width, L["logo"][1] + lg.height)
         bb, _ = _text_block(d, hook, brand["head_font"], L["hook"], max_size=96, min_size=30, max_lines=3, upper=True,
-                            accent_words=accent_words, accent=brand["accent"], valign="bottom")
+                            accent_words=accent_words, accent=_hl(brand), valign="bottom")
         boxes["hook"] = bb
         d.rectangle(L["panel"], fill=(0, 0, 0, 0))
         boxes["panel"] = L["panel"]
@@ -510,7 +517,7 @@ def _hype_hook(W: int, H: int, brand: dict, hook: str, L: dict, accent_words) ->
     d = ImageDraw.Draw(o)
     stroke = max(4, W // 150)
     bb, _ = _text_block(d, hook, brand["head_font"], L["hook"], max_size=150, min_size=40, max_lines=3, upper=True,
-                        accent_words=accent_words, accent=brand["accent"], stroke=stroke)
+                        accent_words=accent_words, accent=_hl(brand), stroke=stroke)
     return o, bb
 
 
@@ -919,7 +926,7 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
             fade.append(f"fade=t=out:st={max(t0, t1 - 0.3):.2f}:d=0.3:alpha=1")
         parts.append(f"[{k}:v]format=rgba" + ("," + ",".join(fade) if fade else "") + f"[bp{k}]")
         chain += f"[bq{k}];[bq{k}][bp{k}]overlay=0:0:eof_action=pass:enable='between(t,{t0:.2f},{t1:.2f})'"
-    chain += _theme_text(cfg, L or {}, D)
+    chain += _theme_text(cfg, L or {}, D, brand.get("highlight"))
     tr = _st.transition_chain(cfg) if source else ""
     if tr:
         chain += "," + tr
@@ -930,8 +937,9 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
     return args, ";".join(parts)
 
 
-def _theme_text(cfg: dict, L: dict, D: float) -> str:
-    """Live text the theme draws with FFmpeg: the countdown's T-minus clock + progress bar, the investigation timecode."""
+def _theme_text(cfg: dict, L: dict, D: float, highlight: str | None = None) -> str:
+    """Live text the theme draws with FFmpeg: the countdown's T-minus clock + progress bar (in the highlight colour: the
+    brand kit's Accent when the brand accent stays, else the theme's), the investigation timecode."""
     out = ""
     mono = _esc(str(Path(__file__).resolve().parent.parent / "fonts" / "IBMPlexMono-SemiBold.ttf"))
     if "clock_text" in L:
@@ -942,7 +950,7 @@ def _theme_text(cfg: dict, L: dict, D: float) -> str:
         out += f",drawtext=fontfile='{mono}':text='{txt}':x={x}:y={y}:fontsize={sz}:fontcolor=0x{col}"
     if "progress" in L:
         x, y, w, h = L["progress"]
-        acc = (cfg.get("palette") or {}).get("accent", "#FF5B1F").lstrip("#")
+        acc = (highlight or (cfg.get("palette") or {}).get("accent", "#FF5B1F")).lstrip("#")
         n = 24
         for i in range(n):
             out += (f",drawbox=x={x + w * i // n}:y={y}:w={w // n + 1}:h={h}:color=0x{acc}@1:t=fill"

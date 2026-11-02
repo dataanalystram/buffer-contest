@@ -1055,7 +1055,8 @@ class Tools(EditorialTools):
         res.pop("rights_question", None)
         if rights_confirmed and not official:
             res["rights_confirmed"] = True
-        spec = {"kind": "media_render", "style": sid, "brand_colors": bool((run.get("input") or {}).get("brand_colors")), "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
+        from . import brand_kits
+        spec = {"kind": "media_render", "style": sid, "brand_colors": bool((run.get("input") or {}).get("brand_colors")) or brand_kits.brand_accent_wins(self.h, self.a), "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
                 "credit": credit, "names": [n for n in (st.get("company"), (cand or {}).get("company")) if n], "music": music or "auto",
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "logo": kit.get("logo") or "", "source": clip_tok, "candidate": cand,

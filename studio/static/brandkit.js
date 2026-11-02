@@ -97,6 +97,7 @@
     $("#bkCapAbout").textContent = (K.meta?.caption_styles || {})[f.caption_style] || "";
     const img = $("#bkLogoImg");
     img.hidden = !K.logoUrl; $("#bkLogoNone").hidden = !!K.logoUrl;
+    if (K.logoUrl) $("#bkLogoNone").textContent = "No logo";
     if (K.logoUrl) { img.src = K.logoUrl; img.alt = `${f.name || "Brand"} logo`; }
 
     $("#bkPal").disabled = !K.logo; $("#bkLogoClear").hidden = !K.logo;
@@ -275,7 +276,8 @@
         : await api(`/api/brand-kits/${K.id}`, { method: "PATCH", body: { ...body(), activate: true } });
       K.dirty = false;
       await load(r.id);
-      state(`Saved. ${r.name} is the active kit: every template, theme, carousel, thumbnail and end card uses it.`);
+      state(`Saved. ${r.name} is the active kit: every template, theme, carousel, thumbnail and end card uses it.` +
+        (!r.logo_url && r.kit && r.kit.source && r.kit.source.derived_from ? " Upload your logo to put it on them." : ""));
       toast("Brand kit saved"); refreshOthers();
     } catch (err) { state(err.message); }
     finally { K.busy = false; $("#bkSave").disabled = false; }
@@ -309,6 +311,16 @@
     } catch (err) { state(err.message); }
     finally { $("#bkUrlGo").disabled = false; }
   }
+  // A sample brand renamed is the person's own brand: the sample's logo is not theirs, so it goes (the server does the
+  // same on save and in previews) and the logo box asks for their own.
+  function ownName() {
+    const id = String(K.logo || "").startsWith("sample:") ? K.logo.slice(7) : null; if (!id) return;
+    const s = ((K.meta && K.meta.samples) || []).find((x) => x.id === id);
+    const n = K.form.name.trim().toLowerCase();
+    if (!s || !n || n === String(s.name || "").trim().toLowerCase()) return;
+    K.logo = ""; K.logoUrl = ""; fill();
+    $("#bkLogoNone").textContent = "Add your logo";
+  }
   function edited() {
     K.dirty = true;
     if (K.id === null) bar();
@@ -338,7 +350,7 @@
     $("#bkUrlForm").onsubmit = fromUrl;
     $("#bkPal").onclick = palette;
     $("#bkLogoClear").onclick = () => { K.logo = ""; K.logoUrl = ""; fill(); edited(); };
-    document.querySelectorAll("#bkForm [data-f]").forEach((el) => (el.oninput = () => { K.form[el.dataset.f] = el.value; edited(); }));
+    document.querySelectorAll("#bkForm [data-f]").forEach((el) => (el.oninput = () => { K.form[el.dataset.f] = el.value; if (el.dataset.f === "name") ownName(); edited(); }));
     document.querySelectorAll("#bkForm [data-bkcol]").forEach((el) => (el.oninput = () => {
       const v = el.value.toUpperCase(); K.form.colors[el.dataset.bkcol] = v; $(`[data-bkhex=${el.dataset.bkcol}]`).value = v;
 

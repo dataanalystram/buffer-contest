@@ -135,6 +135,15 @@ def normalize(body: dict, base: dict | None = None) -> dict:
     return k
 
 
+def not_this_samples_logo(ref, name) -> bool:
+    """True for a sample brand's logo (sample:<id>) on a kit that is no longer called that sample's name."""
+    ref = str(ref or "")
+    if not ref.startswith("sample:") or not (name or "").strip():  # mid-edit (an empty name) keeps it
+        return False
+    s = brand_onboard.sample(ref[7:])
+    return not s or (name or "").strip().casefold() != str(s["kit"].get("name") or "").strip().casefold()
+
+
 def _drop_sample_badge(k: dict, sample_name: str | None) -> None:
     """A kit started from a sample brand keeps the "Sample brand, not affiliated" badge only while it is still that brand.
     Saved under another name it is the person's own kit, so the badge (and the sample's logo) no longer describe it:
@@ -144,6 +153,8 @@ def _drop_sample_badge(k: dict, sample_name: str | None) -> None:
     if (k.get("name") or "").strip().casefold() == str(sample_name).strip().casefold():
         return
     k.pop("label", None)
+    if not_this_samples_logo(k.get("logo"), k.get("name")):
+        k["logo"] = ""  # the sample's logo isn't theirs: the builder asks for their own
     src = dict(k.get("source") or {})
     src["derived_from"] = sample_name
     k["source"] = src
@@ -162,6 +173,7 @@ def compose_brand(kit: dict, logo_path: str | None) -> dict:
     another brand's defaults."""
     c = kit.get("colors") or {}
     bg, text = c.get("primary") or "#111114", c.get("text") or "#FFFFFF"
+    from .media import styles
     head = templates.HEAD_FONTS.get(kit.get("font") or "inter", "Inter-Bold.ttf")
     body = templates.BODY_FONTS.get(kit.get("body_font") or "inter", "Inter-Regular.ttf")
     bold = {"Inter-Regular.ttf": "Inter-Bold.ttf", "Poppins-Medium.ttf": "Poppins-Bold.ttf", "Figtree-Medium.ttf": "Figtree-ExtraBold.ttf"}.get(body, body)
@@ -169,7 +181,7 @@ def compose_brand(kit: dict, logo_path: str | None) -> dict:
     acc = c.get("accent") or brand.NEUTRAL_ACCENT
     return {"name": kit.get("name") or "", "handle": ("@" + kit["handle"]) if kit.get("handle") else "", "accent": acc,
             "bg": bg, "text": text, "muted": "#%02X%02X%02X" % mixed, "logo": logo_path, "head_font": head, "body_font": body,
-            "bold_font": bold, "end_line": (kit.get("end_card") or {}).get("line") or "",
+            "bold_font": bold, "end_line": (kit.get("end_card") or {}).get("line") or "", "highlight": styles.highlight_for(c),
             "on_accent": "#111114" if templates._lum(templates.hex_rgb(acc)) > 0.35 else "#FFFFFF"}
 
 
@@ -588,6 +600,8 @@ class BrandKits:
         else:
             k = normalize(body.get("kit") if isinstance(body.get("kit"), dict) else {})
         ref = str(body.get("logo") if body.get("logo") is not None else k.get("logo") or "")
+        if not_this_samples_logo(ref, k.get("name")):  # a renamed sample previews without the sample's logo
+            ref = ""
         logo = self.logo_bytes(a, ref)
         part = body.get("part") if body.get("part") in ("kit", "themes") else "all"
         w = max(120, min(int(body.get("width") or (420 if part == "kit" else 240)), 420))
@@ -655,6 +669,15 @@ def caption_style_for(house, a) -> str:
     except Exception:
         v = None
     return v if v in CAPTION_STYLES else "opus"
+
+
+def brand_accent_wins(house, a) -> bool:
+    """The one accent rule, shared by the Video style gallery and a default render: with an active brand kit the kit's
+    accent stays inside every theme (the theme keeps its ground and type); with none, a theme brings its own accent."""
+    try:
+        return bool(attach(house).bs.extras(a).get("active_kit"))
+    except Exception:
+        return False
 
 
 def active_caption_style(house, a) -> str | None:

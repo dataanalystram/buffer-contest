@@ -345,6 +345,31 @@ def config(style: str | None) -> dict:
     return cfg
 
 
+HIGHLIGHT_MIN_CONTRAST = 3.0  # WCAG large text: headline words are set big
+
+
+def _lin(c: float) -> float:
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio of two #RRGGBB colours (1 = same, 21 = black on white); 1.0 for anything unreadable."""
+    try:
+        la, lb = ((0.2126 * _lin(int(h[1:3], 16) / 255) + 0.7152 * _lin(int(h[3:5], 16) / 255)
+                   + 0.0722 * _lin(int(h[5:7], 16) / 255)) for h in (a, b))
+    except (TypeError, ValueError, IndexError):
+        return 1.0
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def highlight_for(colors: dict, bg: str | None = None) -> str | None:
+    """The kit's Accent (colors.secondary) when it reads on the ground (bg, default the kit's primary), else None (the
+    renderer then marks words in the brand accent)."""
+    sec, ground = (colors or {}).get("secondary"), bg or (colors or {}).get("primary") or "#000000"
+    return sec if sec and contrast(sec, ground) >= HIGHLIGHT_MIN_CONTRAST else None
+
+
 def apply_palette(brand: dict, cfg: dict, keep_brand: bool = False) -> dict:
     """The brand dict with the theme's colours and fonts on top (logo, name and @handle always stay the brand's).
     keep_brand=True keeps the brand's own accent with the theme's ground and type."""
@@ -355,6 +380,10 @@ def apply_palette(brand: dict, cfg: dict, keep_brand: bool = False) -> dict:
             out[k] = pal[k]
     if pal.get("accent") and not keep_brand:
         out["accent"] = pal["accent"]
+        out["highlight"] = pal["accent"]  # the theme's accent marks the words too
+    else:
+        hl = out.get("highlight")  # the brand kit's Accent (builder) marks the words while it reads on the theme's ground
+        out["highlight"] = hl if hl and contrast(hl, out.get("bg") or "#000000") >= HIGHLIGHT_MIN_CONTRAST else out.get("accent")
     out["on_accent"] = pal.get("on_accent") or out.get("bg", "#0E0E10")
     out.update(cfg.get("fonts") or {})
     return out
