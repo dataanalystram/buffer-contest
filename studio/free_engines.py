@@ -97,6 +97,10 @@ def _gemini_schema(s):
 
 def adapt_request(engine_: dict, body: dict) -> dict:
     """Per-provider tweaks on an OpenAI chat body whose tools are already in function form."""
+    if engine_.get("id") == "nvidia" and "nemotron" in str(body.get("model") or "").lower():
+        # Nemotron 3 / 3.5 reason before answering by default: an editorial JSON step spent ~2,700 reasoning tokens and 64 s
+        # (past the 60 s step timeout) on Lightning. Thinking off: the same step takes ~4 s and tool calling still works.
+        body.setdefault("chat_template_kwargs", {"enable_thinking": False})
     if engine_.get("id") == "gemini-studio":
         for t in body.get("tools") or []:
             fn = t.get("function") or {}
