@@ -103,7 +103,10 @@ def theme_stills(b: templates.Brand, story: dict | None = None) -> list[tuple[st
     reel = templates.front_card(b, "9:16", "Reel", st["reel"], st["sub"])
     cover = templates.front_card(b, "4:5", st["kicker"], st["title"], st["sub"], n=(1, 4))
     voice = (b.kit.get("voice") or "").strip()
-    quote_txt = st.get("quote") or (re.split(r"(?<=[.!?])\s+", voice)[0][:140] if voice else "") \
+    first = re.split(r"(?<=[.!?])\s+", voice)[0] if voice else ""
+    if len(first) > 96:
+        first = first[:96].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+    quote_txt = st.get("quote") or first \
         or "Agents should draft. People should decide what goes out."
     square = templates.quote_card(b, "1:1", quote_txt, b.name or "Your brand", "In our own words")
     return [("9:16", "Reel cover", reel), ("4:5", "Carousel cover", cover), ("1:1", "Square post", square)]
