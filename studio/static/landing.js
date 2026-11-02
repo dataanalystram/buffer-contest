@@ -110,11 +110,26 @@ $("#copyB").onclick = async () => { try { await navigator.clipboard.writeText($(
 // ---- server state: an error from Buffer's sign-in, an unconfigured server
 const p = new URLSearchParams(location.search);
 if (p.get("error")) { toast("Buffer: " + p.get("error")); history.replaceState({}, "", "/"); }
-fetch("/api/session", { credentials: "same-origin" }).then((r) => r.json()).then((s) => {
+if (p.get("connecting")) history.replaceState({}, "", "/");
+// A sign-in Buffer's rate limit deferred: show the wait, and ask /api/session ONCE when Retry-After has passed (the server
+// finishes the sign-in then). No polling: one timer per answer, and the server only calls Buffer when the wait is over.
+let retried = 0;
+const session = () => fetch("/api/session", { credentials: "same-origin" }).then((r) => r.json()).then((s) => {
   if (s.repo) $("#repoLink").href = s.repo;
   if (s.connected) { location.replace("/"); return; }
   if (!s.configured) { $("#configNote").hidden = false; $("#connectBtn").classList.add("off"); $("#connectBtn").setAttribute("aria-disabled", "true"); }
+  const c = s.connecting;
+  if (c && c.message) {
+    let bar = document.getElementById("connectingBar");
+    if (!bar) { bar = document.createElement("div"); bar.id = "connectingBar"; bar.setAttribute("role", "status");
+      bar.style.cssText = "position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:50;padding:10px 16px;border-radius:10px;" +
+        "background:var(--ink,#111);color:var(--paper,#fff);font:500 14px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.25)";
+      document.body.appendChild(bar); }
+    bar.textContent = c.message;  // textContent: server text is never parsed as HTML
+    if (c.retry_in && retried < 2) { retried++; setTimeout(session, Math.min(c.retry_in, 3600) * 1000); }
+  }
 }).catch(() => {});
+session();
 })();
 
 // ---- the hero Reel and the render wall: pause when off screen, never move under reduced motion

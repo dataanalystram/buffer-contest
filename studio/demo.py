@@ -289,6 +289,10 @@ class BufferRouter:
     def posts(self, uid, *a, **k):
         return self._pick(uid).posts(uid, *a, **k)
 
+    def prefetch_posts(self, uid, *a, **k):
+        if not is_demo(uid):  # the sample's in-memory Buffer needs no prefetch (and must never reach the real one)
+            return self.real.prefetch_posts(uid, *a, **k)
+
     def create_post(self, uid, *a, **k):
         return self._pick(uid).create_post(uid, *a, **k)
 
