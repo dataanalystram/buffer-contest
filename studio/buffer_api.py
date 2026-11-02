@@ -310,6 +310,39 @@ class BufferClient:
     def _drop_posts(self, uid: str | None = None) -> None:
         self._cache = {k: v for k, v in self._cache.items() if not (k[0] == "posts" and (uid is None or k[1] == uid))}
 
+    # ---- Instagram music for Reels (experimental Buffer API; needs the IG channel connected through a Facebook Page)
+    AUDIO_FIELDS = "id title displayArtist creatorUsername duration type previewUrl coverArtworkUrl"
+
+    def search_instagram_audio(self, uid: str, channel_id: str, query: str = "") -> dict:
+        """Licensed music + original sounds for one Instagram channel: searchInstagramAudioCatalog (or the trending catalog
+        when query is blank). A channel connected with Instagram Login gets {"needs_facebook": True} (Buffer's
+        ChannelRefreshRequired); a channel that isn't Instagram gets Buffer's BAD_USER_INPUT as a BufferError."""
+        sel = ("... on InstagramAudioCatalogSuccess { failedAudioTypes audio { %s } } "
+               "... on ChannelRefreshRequired { message channelIds }") % self.AUDIO_FIELDS
+        if (query or "").strip():
+            q = "query($c: ChannelId!, $q: String!) { r: searchInstagramAudioCatalog(input: {channelId: $c, query: $q}) { __typename %s } }" % sel
+            v = {"c": channel_id, "q": query.strip()[:100]}
+        else:
+            q = "query($c: ChannelId!) { r: instagramAudioCatalog(input: {channelId: $c}) { __typename %s } }" % sel
+            v = {"c": channel_id}
+        r = self.gql(q, v, uid=uid)["r"] or {}
+        if r.get("__typename") == "ChannelRefreshRequired":
+            return {"audio": [], "needs_facebook": True, "message": r.get("message") or ""}
+        return {"audio": r.get("audio") or [], "needs_facebook": False, "failed_types": r.get("failedAudioTypes") or []}
+
+    def post_audio(self, uid: str, post_id: str) -> dict | None:
+        """The music Buffer stored on a post (InstagramSelectedAudio), or None. Buffer answers FORBIDDEN on this field for
+        personal API keys (checked 2 Nov 2026), so None also means "Buffer won't say"."""
+        q = """query($i: PostInput!) { post(input: $i) { id status metadata { ... on InstagramPostMetadata { type
+                 audio { id title duration type displayArtist creatorUsername audioVolume videoVolume } } } } }"""
+        try:
+            p = self.gql(q, {"i": {"id": post_id}}, uid=uid)["post"] or {}
+        except BufferError as e:
+            if "FORBIDDEN" in str(e) or "Not authorized" in str(e):
+                return None
+            raise
+        return (p.get("metadata") or {}).get("audio")
+
     # ---- writes
     def create_post(self, uid: str, inp: dict) -> dict:
         q = """mutation($input: CreatePostInput!) { createPost(input: $input) {

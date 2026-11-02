@@ -1,0 +1,42 @@
+/* Instagram music on Reels: the package card row and the picker dialog (studio/static/reelmusic.js) */
+.pkg-music{display:flex;flex-direction:column;gap:6px}
+.pkg-music .rm-add{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;min-height:44px}
+.rm-chosen,.rm-track{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+.rm-chosen img,.rm-track img,.rm-art{width:44px;height:44px;border-radius:8px;object-fit:cover;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent-ink)}
+.rm-txt{min-width:0;display:flex;flex-direction:column;gap:2px}
+.rm-txt b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rm-txt small{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rm-chosen .row{display:flex;gap:8px;align-items:center}
+dialog.rm-dialog{width:min(680px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto}
+.rm-form{display:flex;flex-direction:column;gap:14px}
+.rm-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.rm-head h2{margin:0 0 4px;font-size:20px}
+.rm-head p{margin:0}
+.rm-head .icon-btn{min-width:44px;min-height:44px;border:1px solid var(--line);border-radius:10px;background:var(--raised);color:var(--ink);cursor:pointer}
+.rm-search{display:flex;gap:8px}
+.rm-search input{flex:1;min-height:44px;border:1px solid var(--line-strong);border-radius:10px;padding:0 12px;font:inherit;background:var(--paper);color:var(--ink)}
+.rm-status{font-size:13px;color:var(--muted);min-height:18px}
+.rm-status.warn{color:var(--ink);background:var(--accent-soft);border-radius:8px;padding:10px 12px}
+.rm-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:min(300px,38vh);overflow:auto}
+.rm-track{grid-template-columns:44px minmax(0,1fr) auto auto auto}
+.rm-track.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.rm-kind{font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--sunken);color:var(--muted);white-space:nowrap}
+.rm-kind.orig{background:transparent;border:1px solid var(--line)}
+.rm-track .btn2{min-height:36px}
+.rm-nopv{white-space:nowrap}
+.rm-mix{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:12px 18px}
+.rm-mix[disabled]{opacity:.55}
+.rm-mix legend{font-weight:600;font-size:13px;padding:0 4px}
+.rm-mix label{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.rm-lab{display:flex;justify-content:space-between;gap:8px}
+.rm-mix label output{color:var(--muted);font-variant-numeric:tabular-nums}
+.rm-mix input[type=range]{width:100%;accent-color:var(--accent)}
+.rm-start{display:inline-flex;align-items:center;gap:6px}
+.rm-start input{width:90px;min-height:40px;border:1px solid var(--line-strong);border-radius:8px;padding:0 8px;font:inherit;background:var(--paper);color:var(--ink)}
+.rm-mix > small{grid-column:1 / -1}
+@media (max-width:600px){
+  .rm-mix{grid-template-columns:1fr}
+  .rm-track{grid-template-columns:44px minmax(0,1fr) auto;row-gap:8px}
+  .rm-track .rm-kind{display:none}
+}
+.rm-chosen .rm-txt small{white-space:normal}

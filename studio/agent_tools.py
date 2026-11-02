@@ -1478,6 +1478,9 @@ class Tools(EditorialTools):
                 pk["thumbnail"] = (cm["covers"][ci].get("urls") or {}).get("16:9", "")
                 if cm.get("thumbnail_offset_ms") is not None and c["service"] in ("instagram", "tiktok", "pinterest"):
                     pk.setdefault("options", {})["thumbnail_offset_ms"] = int(cm["thumbnail_offset_ms"])
+            pa = (prev.get("options") or {}).get("ig_audio")  # the Reel's music survives a re-check while the video is still there
+            if pa and c["service"] == "instagram" and any(u.lower().split("?")[0].endswith((".mp4", ".mov", ".m4v", ".webm")) for u in pk["media_urls"]):
+                pk.setdefault("options", {}).update(ig_audio=pa, ig_type="reel")
             if prev.get("sent"):
                 pk["sent"] = prev["sent"]
             pk["media"] = self._media_info(media, pk["media_urls"], pk["ratio"])
