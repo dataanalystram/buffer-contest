@@ -320,6 +320,8 @@ def test_research_link_ranks_share_images_ahead_of_logos():
     assert imgs[:2] == ["https://ernd.ai/og/share.jpg", "https://ernd.ai/art/hero.webp"]
     assert set(logos) == {"https://ernd.ai/brand/logo.png", "https://ernd.ai/favicon.ico", "https://cdn.x.com/icons/x.svg"}
     assert imgs[2:] == logos and len(imgs) == 5  # deduped; logos last, kept as a fallback
+    yc = "https://bookface-images.s3.us-west-2.amazonaws.com/logos/ecba2f.png?X-Amz-Date=1&X-Amz-Signature=abc"
+    assert rank_images(yc, ["https://cdn.ernd.ai/hero.jpg?logo=1"]) == (["https://cdn.ernd.ai/hero.jpg?logo=1", yc], [yc])
     imgs, logos = rank_images("https://site.com/og-image.png", ["https://site.com/wp/logo-dark.png"])
     assert imgs[0] == "https://site.com/og-image.png" and logos == ["https://site.com/wp/logo-dark.png"]
 

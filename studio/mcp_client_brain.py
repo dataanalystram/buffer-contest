@@ -295,7 +295,7 @@ def rank_images(share: str, photos: list[str]) -> tuple[list[str], list[str]]:
         if not u or u in seen:
             continue
         seen.add(u)
-        (logos if _LOGO_LIKE.search(u.split("#")[0]) else pics).append(u)
+        (logos if _LOGO_LIKE.search(u.split("#")[0].split("?")[0]) else pics).append(u)
     return pics + logos, logos
 
 
