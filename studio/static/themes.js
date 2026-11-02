@@ -193,8 +193,7 @@
       const id = st.pending; if (id === "auto") return;
       const f = favs(), has = f.includes(id);
       setFavs(has ? f.filter((x) => x !== id) : [...f, id]);
-      drawRail(); drawGrid(); drawPreview();
-      if (window.toast) toast(has ? "Removed from favourites" : "Saved to favourites");
+      drawRail(); drawGrid(); drawPreview();  // the button's own label says it (a toast would sit under the modal)
     });
     apply.addEventListener("click", commit);
     dlg.querySelector(".hqt-x").addEventListener("click", () => close());

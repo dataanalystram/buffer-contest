@@ -65,7 +65,7 @@ dialog.hqt-dlg::backdrop{background:rgba(10,10,12,.5);backdrop-filter:blur(2px)}
 .hqt-tc-n{font-weight:650;font-size:14px;line-height:1.3;padding:2px 4px 0}
 .hqt-tc-d{font-size:12.5px;line-height:1.35;color:var(--muted,#585d62);padding:0 4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .hqt-prev{grid-area:prev;padding:16px;border-left:1px solid var(--line,#e2e4e5);overflow:auto;min-height:0;display:flex;flex-direction:column;gap:14px}
-.hqt-pv-frame{position:relative;width:min(100%,200px);aspect-ratio:9/16;margin:0 auto;border-radius:12px;overflow:hidden;background:var(--well,#0b0c0d);flex:none}
+.hqt-pv-frame{position:relative;width:min(100%,156px);aspect-ratio:9/16;margin:0 auto;border-radius:12px;overflow:hidden;background:var(--well,#0b0c0d);flex:none}
 .hqt-pv-frame img,.hqt-pv-frame video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .hqt-pv-frame video{opacity:0;transition:opacity var(--base,200ms)}.hqt-pv-frame video.on{opacity:1}
 .hqt-pv-frame .hqt-auto-pic span{font-size:2.6rem}

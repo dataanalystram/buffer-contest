@@ -207,5 +207,7 @@
 .mp-lp-err{color:var(--bad);font-size:14px;margin:0}
 @media (max-width:560px){.mp-lp-card{flex-direction:column;gap:0}.mp-lp-pic{width:100%}.mp-lp-b{padding:10px 12px}}
 /* the Video style card (themes.js): its own row under the tools, never an inline gallery (owner, 2 Nov 2026) */
-.mp-theme{padding:0 18px 14px;background:var(--raised)}
+.mp-theme{flex:1 1 100%;width:100%;padding:0 18px 14px;background:var(--raised)}
+.agent-form .mp-tools .mp-fmt{width:auto}
+@media (max-width:720px){.agent-form .mp-tools .mp-fmt{flex:1;min-width:0}}
 @media (max-width:640px){.mp-theme{padding:0 12px 12px}}
