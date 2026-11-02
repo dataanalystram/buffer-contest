@@ -1,0 +1,21 @@
+name: brand-live-check
+# Live check of /demo Brand > Kit on the deployed app (timings + screenshots). Runs only on pushes to ops/brand-live-check.
+on:
+  push:
+    branches: ["ops/brand-live-check"]
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q playwright && python -m playwright install --with-deps chromium >/dev/null
+      - name: wait for a new instance
+        run: python scripts/brand_live_check.py wait
+      - name: live check
+        run: python scripts/brand_live_check.py run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: brand-live, path: out}
