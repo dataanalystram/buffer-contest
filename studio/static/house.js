@@ -256,7 +256,16 @@ function checkList(chk) {
 
 const FMT_NAME = { reel: "Reel", carousel: "Carousel", photo: "Image", video: "Video" };
 // one list of files per card, whatever shape the package has (older runs only have media_urls)
-const pkgFiles = (p) => (p.media && p.media.length ? p.media : (p.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo", ratio: p.ratio })));
+// files deleted from the Library (the server's media_missing) are left out, so a card never shows a broken image
+const pkgFiles = (p) => { const gone = new Set(p.media_missing || []);
+  return (p.media && p.media.length ? p.media : (p.media_urls || []).map((u) => ({ url: u, type: isVid(u) ? "video" : "photo", ratio: p.ratio }))).filter((x) => !gone.has(x.url)); };
+const MEDIA_GONE = "This post's media was deleted from your Library, so it can't be sent. Make the post again (or upload the files) to get new media.";
+function pkgMissing(p) {
+  if (!p.media_state || p.media_state === "ok") return "";
+  const n = (p.media_missing || []).length;
+  return `<div class="st warn" role="status" data-testid="pkg-media-missing">${p.media_state === "missing" ? esc(MEDIA_GONE)
+    : `${n} of this post's files ${n === 1 ? "was" : "were"} deleted from your Library. It can't be sent until you make it again.`}</div>`;
+}
 const RATIOS = [["9:16", 9 / 16], ["4:5", 0.8], ["1:1", 1], ["16:9", 16 / 9]];
 const ratioOf = (w, h) => (w && h ? RATIOS.reduce((b, r) => (Math.abs(r[1] - w / h) < Math.abs(b[1] - w / h) ? r : b))[0] : "");
 // owner P0: a video was labelled "Image". A video is always "Video · ratio · length"; the ratio and length come from the
@@ -275,6 +284,7 @@ function mediaLabel(p) {
 window.HQ_MEDIA_LABEL = mediaLabel;
 function pkgMedia(p) {
   const m = pkgFiles(p);
+  if (!m.length && p.media_state === "missing") return `<div class="pkg-media empty" data-testid="pkg-media"><span class="muted sm" data-testid="pkg-media-gone">Media deleted</span></div>`;
   if (!m.length) return `<div class="pkg-media empty" data-testid="pkg-media"><span class="muted sm">${p.service === "youtube" || p.service === "tiktok" ? "Needs a video" : "Text only"}</span></div>`;
   const ar = (r) => (r ? `aspect-ratio:${r.replace(":", " / ")}` : "");
   const first = m[0];
@@ -312,6 +322,7 @@ function pkgCard(p) {
   return `<article class="pkg" data-testid="package" data-ch="${esc(p.channel_id)}">
     <header>${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : avatar(ch)}<div><b>${esc(p.channel_name)}</b><small>${esc(netName(p.service))}</small></div><span class="cnt ${p.length > p.limit ? "over" : ""}" data-testid="pkg-count">${p.length}/${p.limit}</span></header>
     ${pkgMedia(p)}
+    ${sent ? "" : pkgMissing(p)}
     ${pkgCovers(p, sent)}
     ${sent || H.run && ["media", "news"].includes(H.run.kind) ? "" : `<div class="pm-acts"><button type="button" class="btn2 sm" data-testid="pkg-replace">Replace</button><button type="button" class="btn2 sm" data-testid="pkg-regen">Regenerate</button></div>`}
     ${p.note ? `<small class="muted sm" data-testid="pkg-note">${esc(p.note)}</small>` : ""}
@@ -320,7 +331,7 @@ function pkgCard(p) {
     ${checkList(p.check)}
     ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.mode === "draft" ? " as a draft (not posted)" : ""}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
       : `<div class="pkg-act"><select data-testid="pkg-mode" aria-label="What to do with this post">${PKG_MODES.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
-        <button class="btn sm" data-testid="pkg-send">${PKG_MODES[0][3]}</button></div><small class="muted sm pkg-help" data-testid="pkg-help">${esc(help)}</small>`}
+        <button class="btn sm" data-testid="pkg-send"${p.media_state && p.media_state !== "ok" ? ` disabled title="${esc(MEDIA_GONE)}"` : ""}>${PKG_MODES[0][3]}</button></div><small class="muted sm pkg-help" data-testid="pkg-help">${esc(help)}</small>`}
   </article>`;
 }
 
