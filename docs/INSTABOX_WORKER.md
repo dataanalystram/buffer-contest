@@ -34,9 +34,24 @@ Projected: a 60-min video ≈ 5.5 min to transcribe, far inside the 480-min run 
 ## Dispatch flow (studio/instabox_worker.py)
 1. App mints the job token (`House.issue_job_token`), same single-job token an OIDC claim gives.
 2. Resume/start `HQ_INSTABOX_MACHINE`, wait for ready (~1–3 s).
-3. One `exec`: `git fetch` `HQ_INSTABOX_REF` into `/data/hq`, then `flock /data/hq.lock python -m studio.render_worker`
-   detached. The token goes in **stdin**, never in the command (exec commands are kept in machine history).
+3. One `exec`: `git fetch` `HQ_INSTABOX_REF` into `/data/hq`, then `HQ_LOCK=/data/hq.lock python -m studio.render_worker`
+   detached (the worker takes the one-job lock itself, after its heartbeat starts). The token goes in **stdin**, never
+   in the command (exec commands are kept in machine history).
 4. Worker posts results back to the app as today (the app's media store); the box pauses itself after 30 idle min.
+
+## Failures never hang a job (2 Nov 2026, after job 15)
+Job 15 (source `https://example.com/not-a-video`, 404) left a traceback in `/data/logs/job-15.log` and the job could
+stay "running". Now, on both the InstaBox and the GitHub Actions path:
+- **Any exception** in the worker (`studio/render_worker.py`, `main`) posts `{"status": "failed", "error": <short human
+  message>, "log_tail": <last ~4 KB of the worker's output, job tokens redacted>}` to `POST /api/worker/jobs/{id}` with
+  the job's own token (3 tries, so a sleeping Render instance still gets it), then exits 1. Messages look like
+  "Couldn't download the video: the link returned 404". The app shows the message on the run/take step and keeps the
+  log tail on the job (`render_jobs.result.log_tail`, server side) and in the app log.
+- **Heartbeat**: the worker pings `POST /api/worker/jobs/{id}/heartbeat` every `HQ_HEARTBEAT_S` (60 s) while it runs.
+- **Watchdog** (app): a worker job (one handed a job token) with no heartbeat for `HQ_JOB_HEARTBEAT_MIN` (10) minutes
+  is failed ("The video worker stopped responding ..."), its token burned, the run/take marked failed. It runs every
+  `HQ_WATCHDOG_S` (60 s; 0 = off) in the app and, throttled, whenever a run or take is read. This covers what the worker
+  can't report itself: OOM kill, box paused, runner cancelled, a claim that never happened.
 
 ## The box: `huhqueue-worker` (created 2 Nov 2026, template agent-browser, free 4 vCPU / 8 GiB)
 A dedicated machine; the old `huhqueue` machine (the self-hosted HuhQueue) is not used or touched.

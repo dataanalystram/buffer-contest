@@ -351,6 +351,7 @@ _DESC = {
     "GET /api/queue": "Posts in your Buffer queue", "POST /api/check": "Check a caption (and media) against your brand kit and Style Ledger rules",
     "POST /api/draft": "Read a link and draft one caption per channel (nothing is posted)", "POST /api/ideas": "Save an idea (title and text) to Buffer",
     "POST /api/media": "Upload an image or video (multipart; size checked before parsing)",
+    "GET /api/media/health": "Ready posts whose files were deleted (the startup and periodic missing-media check)",
     "POST /api/posts/preview": "Validate a post for one channel and get a single-use confirm token",
     "POST /api/posts/submit": "Submit exactly what the preview validated", "DELETE /api/posts/{post_id}": "Delete a Buffer post",
     "PATCH /api/posts/{post_id}": "Edit a Buffer post's text or time", "POST /api/posts/{post_id}/reschedule": "Move a post to a new time",

@@ -84,7 +84,10 @@ def recap_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict, get) -> in
     spec, urls = j["spec"], j["urls"]
     tmp = Path(tempfile.mkdtemp(prefix="hq_recap_"))
     try:
-        logo = get(urls.get("logo"))
+        try:
+            logo = get(urls.get("logo"))
+        except httpx.HTTPStatusError:  # the logo is optional: a dead logo link renders without it
+            logo = None
         logo_path = None
         if logo:
             logo_path = str(tmp / "logo.png")
@@ -123,14 +126,172 @@ def claim(c: httpx.Client, base: str, jid: int) -> str:
     return jt
 
 
+# ---- failure reporting + heartbeat (2 Nov 2026: job 15 died on a 404 source link and the app kept showing it running)
+LOG_TAIL = 4000  # characters of the worker's own output sent back with a failure
+_JT = __import__("re").compile(r"jt_[A-Za-z0-9_\-]{8,}")
+
+
+class _Tail:
+    """Tee for stdout/stderr that keeps the last LOG_TAIL characters, so a failure report carries the log tail on both
+    paths (the InstaBox box logs to /data/logs/job-<id>.log, the GitHub runner to its run log)."""
+
+    def __init__(self, inner):
+        self.inner, self.buf = inner, ""
+
+    def write(self, s):
+        self.buf = (self.buf + s)[-LOG_TAIL * 2:]
+        return self.inner.write(s)
+
+    def flush(self):
+        self.inner.flush()
+
+    def __getattr__(self, k):
+        return getattr(self.inner, k)
+
+
+_tails: list = []
+
+
+def _install_tail() -> None:
+    if not _tails:
+        _tails.extend([_Tail(sys.stdout), _Tail(sys.stderr)])
+        sys.stdout, sys.stderr = _tails
+
+
+def log_tail() -> str:
+    """The last lines this worker printed (stdout + stderr), job tokens redacted."""
+    out = "".join(t.buf for t in _tails)[-LOG_TAIL:]
+    return _JT.sub("jt_[redacted]", out)
+
+
+def friendly(e: BaseException, base: str = "") -> str:
+    """A short message a person understands, e.g. "Couldn't download the video: the link returned 404"."""
+    from urllib.parse import urlparse
+    app_host = urlparse(base).hostname or ""
+    if isinstance(e, httpx.HTTPStatusError):
+        code, host = e.response.status_code, e.request.url.host
+        if app_host and host == app_host:
+            return f"The video worker couldn't talk to HuhQueue (HTTP {code})."
+        return f"Couldn't download the video: the link returned {code}"
+    if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return "Couldn't download the video: the link didn't answer"
+    if isinstance(e, httpx.TimeoutException):
+        return "Couldn't download the video: the link timed out"
+    try:
+        from . import netguard
+        if isinstance(e, netguard.FetchError):
+            return f"Couldn't download the video: {e}"[:300]
+    except Exception:  # noqa: BLE001  a worker venv without netguard's deps still reports
+        pass
+    if isinstance(e, MemoryError):
+        return "The video worker ran out of memory on this video."
+    if isinstance(e, (SystemExit, KeyboardInterrupt)):
+        return "The video worker was stopped before it finished."
+    msg = str(e).strip()
+    if e.__class__.__name__ in ("TakeError", "RuntimeError", "MediaError") and msg:
+        return msg[:300]
+    return f"The video worker hit an error ({e.__class__.__name__}{': ' + msg if msg else ''})"[:300]
+
+
+def report_failure(c: httpx.Client, base: str, h: dict, jid: int, e: BaseException, tries: int = 3) -> bool:
+    """POST status=failed with the short message and the log tail on the job's own token. Never raises."""
+    import time
+    tail = log_tail()  # main() printed the traceback through the tee, so it is in here
+    if not tail:  # called outside main(): send the traceback itself
+        import traceback
+        tail = _JT.sub("jt_[redacted]", "".join(traceback.format_exception(type(e), e, e.__traceback__)))[-LOG_TAIL:]
+    body = {"status": "failed", "error": friendly(e, base), "log_tail": tail}
+    for i in range(tries):
+        try:
+            r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json=body, timeout=30)
+            print(f"failure reported: HTTP {r.status_code} {r.text[:200]}", flush=True)
+            if r.status_code < 500:  # 200, or 403 (token spent / job already closed): retrying can't help
+                return r.status_code == 200
+        except Exception as x:  # noqa: BLE001  the app asleep or unreachable: try again
+            print(f"failure report attempt {i + 1} failed: {x.__class__.__name__}", flush=True)
+        time.sleep(min(2 ** i, 5))
+    return False
+
+
+class Heartbeat:
+    """Pings the app every HQ_HEARTBEAT_S seconds while the job runs; the app fails a job that goes silent
+    (House.sweep_stale_jobs), so a worker killed outright (OOM, box paused, runner cancelled) can't leave it running."""
+
+    def __init__(self, base: str, h: dict, jid: int, every: float | None = None):
+        import threading
+        self.url, self.h = f"{base}/api/worker/jobs/{int(jid)}/heartbeat", dict(h)
+        self.every = float(os.environ.get("HQ_HEARTBEAT_S", "60")) if every is None else every
+        self.stop = threading.Event()
+        self.t = threading.Thread(target=self._loop, name="hq-heartbeat", daemon=True)
+
+    def beat(self) -> int:
+        try:
+            with httpx.Client(timeout=15, follow_redirects=False) as hc:
+                return hc.post(self.url, headers=self.h).status_code
+        except Exception:  # noqa: BLE001  a missed beat is fine; the app allows several
+            return 0
+
+    def _loop(self):
+        while not self.stop.is_set():
+            self.beat()
+            self.stop.wait(self.every)
+
+    def __enter__(self):
+        if self.every > 0:
+            self.t.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        return False
+
+
+def _lock():
+    """HQ_LOCK=/data/hq.lock (InstaBox): one job at a time on the box, taken after the heartbeat starts so a job waiting
+    its turn still looks alive to the app."""
+    path = os.environ.get("HQ_LOCK")
+    if not path:
+        return None
+    import fcntl
+    fh = open(path, "a")
+    fcntl.flock(fh, fcntl.LOCK_EX)
+    return fh
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--job", required=True, type=int)
     ap.add_argument("--app", required=True)
     args = ap.parse_args(argv)
     base = args.app.rstrip("/")
+    saved = sys.stdout, sys.stderr
+    _install_tail()
+    try:
+        return _main(args, base)
+    finally:
+        sys.stdout, sys.stderr = saved
+        _tails.clear()
+
+
+def _main(args, base: str) -> int:
     c = httpx.Client(timeout=300, follow_redirects=False)
-    h = {"x-job-token": os.environ.get("JOB_TOKEN") or claim(c, base, args.job)}
+    h = {"x-job-token": os.environ.get("JOB_TOKEN") or claim(c, base, args.job)}  # no token: nothing can be reported;
+    # the app's watchdog fails the job when no heartbeat arrives
+    with Heartbeat(base, h, args.job):
+        lock = _lock()
+        try:
+            return _run(c, base, h, args)
+        except BaseException as e:  # ANY failure (bad link, crash, Ctrl-C, SystemExit) is reported, then the run fails
+            import traceback
+            traceback.print_exc()
+            report_failure(c, base, h, args.job, e)
+            return 1
+        finally:
+            if lock:
+                lock.close()
+
+
+def _run(c: httpx.Client, base: str, h: dict, args) -> int:
     job = c.get(f"{base}/api/worker/jobs/{args.job}", headers=h)
     job.raise_for_status()
     j = job.json()
@@ -140,52 +301,53 @@ def main(argv=None) -> int:
     from .media import yt_fallback
     yt_fallback.apply(spec.get("yt_fallback"))  # the app's opt-in YouTube route (HQ_YT_FALLBACK), for this job only
 
-    def get(u):
+    def get(u, optional: bool = False):
         if not u:
             return None
         from . import netguard
-        return netguard.safe_get(u, http=c, limit=200 * 1024 * 1024, timeout=300).content
-    try:
-        if str(spec.get("kind", "")).startswith("take_"):
-            return take_job(c, base, h, args.job, j)
-        if spec["kind"] == "transcribe":  # the person's own upload -> words, so the post is about what is said in it
-            from .media import transcribe as tr
-            tmp = Path(tempfile.mkdtemp(prefix="hq_tr_"))
-            try:
-                _download(c, urls["source"], tmp / "in.mp4")
-                out = tr.transcribe(str(tmp / "in.mp4"), model=spec.get("model") or "tiny")
-            finally:
-                import shutil
-                shutil.rmtree(tmp, ignore_errors=True)
-            r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h,
-                       json={"transcript": {"text": out.get("text", "")[:20000], "language": out.get("language", "")}})
-            print("transcript posted:", len(out.get("text", "")), "chars:", r.status_code)
-            return 0 if r.status_code == 200 else 1
-        if spec["kind"] == "media_recap":  # the weekly recap: carousel slides + one Reel, several files
-            return recap_job(c, base, h, args.job, j, get)
-        logo = get(urls.get("logo"))
-        if spec["kind"] == "cover_swap":  # another cover variant as the Reel's opening frames (studio.media.worker.cover_swap)
-            from .media.worker import cover_swap
-            data, meta = cover_swap(get(urls["source"]), get(urls["cover"]), spec.get("secs") or 0.6, spec.get("replace"))
-        elif spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
-            from .media.worker import render_job
-            data, meta = render_job(spec, get, urls=urls, logo=logo)
-        elif spec["kind"] == "template_video":  # a Brand studio template's Reel, in the person's own brand
-            from . import templates
-            b = templates.Brand(spec["kit"], logo, get(urls.get("front")), get(urls.get("end")))
-            data, meta = templates.video(spec["template"], spec.get("data"), b, spec.get("ratio", "9:16")), {"type": "video", "template": spec["template"]}
-        elif spec["kind"] == "brand_video":
-            data, meta = render.brand_video(get(urls["source"]), spec["kit"], spec["params"], logo=logo, hook=spec.get("hook", ""),
-                                            ratio=spec.get("ratio", "9:16"))
-        else:
-            data, meta = render.slideshow_reel([get(u) for u in urls["slides"]], spec["kit"], spec["params"], logo=logo,
-                                               ratio=spec.get("ratio", "9:16"), total=spec.get("total"))
-        r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h, json={"data": base64.b64encode(data).decode(), "meta": meta})
-        print("posted", len(data), "bytes:", r.status_code, r.text[:200])
+        r = netguard.safe_get(u, http=c, limit=200 * 1024 * 1024, timeout=300)
+        if r.status_code >= 400:  # a 404 page is not a video: fail with "the link returned 404", not an FFmpeg error
+            if optional:
+                return None
+            r.raise_for_status()
+        return r.content
+    if str(spec.get("kind", "")).startswith("take_"):
+        return take_job(c, base, h, args.job, j)
+    if spec["kind"] == "transcribe":  # the person's own upload -> words, so the post is about what is said in it
+        from .media import transcribe as tr
+        tmp = Path(tempfile.mkdtemp(prefix="hq_tr_"))
+        try:
+            _download(c, urls["source"], tmp / "in.mp4")
+            out = tr.transcribe(str(tmp / "in.mp4"), model=spec.get("model") or "tiny")
+        finally:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
+        r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h,
+                   json={"transcript": {"text": out.get("text", "")[:20000], "language": out.get("language", "")}})
+        print("transcript posted:", len(out.get("text", "")), "chars:", r.status_code)
         return 0 if r.status_code == 200 else 1
-    except Exception as e:  # report the failure so the run stops spinning
-        c.post(f"{base}/api/worker/jobs/{args.job}", headers=h, json={"error": f"{e.__class__.__name__}: {e}"[:500]})
-        raise
+    if spec["kind"] == "media_recap":  # the weekly recap: carousel slides + one Reel, several files
+        return recap_job(c, base, h, args.job, j, get)
+    logo = get(urls.get("logo"), optional=True)
+    if spec["kind"] == "cover_swap":  # another cover variant as the Reel's opening frames (studio.media.worker.cover_swap)
+        from .media.worker import cover_swap
+        data, meta = cover_swap(get(urls["source"]), get(urls["cover"]), spec.get("secs") or 0.6, spec.get("replace"))
+    elif spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
+        from .media.worker import render_job
+        data, meta = render_job(spec, get, urls=urls, logo=logo)
+    elif spec["kind"] == "template_video":  # a Brand studio template's Reel, in the person's own brand
+        from . import templates
+        b = templates.Brand(spec["kit"], logo, get(urls.get("front")), get(urls.get("end")))
+        data, meta = templates.video(spec["template"], spec.get("data"), b, spec.get("ratio", "9:16")), {"type": "video", "template": spec["template"]}
+    elif spec["kind"] == "brand_video":
+        data, meta = render.brand_video(get(urls["source"]), spec["kit"], spec["params"], logo=logo, hook=spec.get("hook", ""),
+                                        ratio=spec.get("ratio", "9:16"))
+    else:
+        data, meta = render.slideshow_reel([get(u) for u in urls["slides"]], spec["kit"], spec["params"], logo=logo,
+                                           ratio=spec.get("ratio", "9:16"), total=spec.get("total"))
+    r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h, json={"data": base64.b64encode(data).decode(), "meta": meta})
+    print("posted", len(data), "bytes:", r.status_code, r.text[:200])
+    return 0 if r.status_code == 200 else 1
 
 
 if __name__ == "__main__":

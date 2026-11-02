@@ -108,6 +108,84 @@ def test_without_product_hunt_the_slug_and_site_still_work(offline):
     assert r["status"] == "found" and r["maker"] == "Screen Studio"
 
 
+
+# ------------------------------------------------------------------------------------------------ Product Hunt /r/ redirects
+PH_REDIRECT = "https://www.producthunt.com/r/ABC123XYZ?utm_campaign=producthunt-api&utm_medium=api-v2"
+
+
+def _ph_json_redirect():
+    d = json.loads(json.dumps(PH_JSON))
+    d["data"]["p0"]["website"] = PH_REDIRECT
+    return d
+
+
+def _redir_client(redirect_status: int, location: str = "", seen: list | None = None, extra: dict | None = None) -> httpx.Client:
+    routes = {video_first.PH_GRAPHQL: (200, _ph_json_redirect(), "application/json"),
+              "https://screen.example/": (200, SITE_HTML, "text/html"), **(extra or {})}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        u = str(req.url)
+        if seen is not None:
+            seen.append((u, req.headers.get("user-agent", "")))
+        if u.startswith("https://www.producthunt.com/r/"):
+            h = {"content-type": "text/html"}
+            if location:
+                h["location"] = location
+            return httpx.Response(redirect_status, content=b"", headers=h)
+        for prefix, (status, body, ctype) in routes.items():
+            if u.startswith(prefix):
+                raw = json.dumps(body).encode() if isinstance(body, dict) else body.encode()
+                return httpx.Response(status, content=raw, headers={"content-type": ctype})
+        return httpx.Response(404, content=b"{}", headers={"content-type": "application/json"})
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_ph_redirect_helpers():
+    assert video_first.is_ph_redirect(PH_REDIRECT)
+    assert not video_first.is_ph_redirect("https://screen.studio/")
+    assert not video_first.is_ph_redirect(PH)  # a product page is not the website redirect
+    assert not video_first.is_ph_redirect("")
+    assert video_first.resolve_site("https://screen.studio/", "Screen Studio") == ("https://screen.studio/", "")
+
+
+def test_ph_redirect_is_followed_to_the_makers_site_before_youtube(offline):
+    seen: list = []
+    http = _redir_client(302, "https://screen.example/?ref=producthunt", seen)
+    r = video_first.research_video(PROMPT, http=http, ph_token="tok")
+    assert r["website"] == "https://screen.example/"
+    assert r["status"] == "found" and r["video"]["url"] == "https://screen.example/videos/hero-demo.mp4"
+    assert r["video"]["official"] and r["credit"] == "Video: Screen Studio"
+    urls = [u for u, _ in seen]
+    i_redirect = next(i for i, u in enumerate(urls) if u.startswith("https://www.producthunt.com/r/"))
+    i_site = next(i for i, u in enumerate(urls) if u.startswith("https://screen.example/"))
+    assert i_redirect < i_site
+    assert "Chrome/" in seen[i_redirect][1]  # a browser User-Agent on the redirect hop
+    site_step = next(s for s in r["steps"] if s["step"] == "website")
+    assert site_step["ok"] and site_step["found"] >= 1 and site_step["url"] == "https://screen.example/"
+
+
+def test_ph_redirect_403_falls_back_to_a_search_for_the_site(offline, monkeypatch):
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test")
+    search = {"success": True, "data": [{"url": "https://www.producthunt.com/products/screen-studio", "title": "PH"},
+                                        {"url": "https://screen.example/pricing", "title": "Screen Studio"}]}
+    http = _redir_client(403, extra={"https://api.firecrawl.dev/v1/search": (200, search, "application/json")})
+    r = video_first.research_video(PROMPT, http=http, ph_token="tok")
+    assert r["website"] == "https://screen.example/"
+    assert r["status"] == "found" and r["video"]["url"] == "https://screen.example/videos/hero-demo.mp4"
+    site_step = next(s for s in r["steps"] if s["step"] == "website")
+    assert "found by search" in site_step["note"]
+
+
+def test_ph_redirect_403_without_search_says_so_and_never_fetches_producthunt_as_the_site(offline):
+    seen: list = []
+    http = _redir_client(403, seen=seen)
+    r = video_first.research_video(PROMPT, http=http, ph_token="tok")
+    assert r["website"] == "" and r["status"] == "youtube_only"
+    site_step = next(s for s in r["steps"] if s["step"] == "website")
+    assert not site_step["ok"] and "blocked" in site_step["note"]
+    assert sum(1 for u, _ in seen if u.startswith("https://www.producthunt.com/r/")) == 1
+
+
 # ------------------------------------------------------------------------------------------------ covers
 def _frame(color, w=1280, h=720, shapes=True):
     im = Image.new("RGB", (w, h), color)
