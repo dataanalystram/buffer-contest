@@ -87,3 +87,7 @@
   .bk-col{align-items:stretch}
   .bk-col>span{grid-template-rows:auto 1fr}
 }
+/* brand kit v2: "Style taken from <site>" and its DESIGN.md */
+.bk-design{margin:6px 0 10px;font-size:13px}
+.bk-design summary{cursor:pointer;min-height:24px}
+.bk-design pre{white-space:pre-wrap;max-height:320px;overflow:auto;background:var(--sunken);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:12px;margin-top:8px}

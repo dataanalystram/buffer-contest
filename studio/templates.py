@@ -32,16 +32,21 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 FONT_DIR = Path(__file__).parent / "fonts"
 SIZES = {"4:5": (1080, 1350), "9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1600, 900)}
 HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
-              "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf"}
+              "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf",
+              # brand kit v2 (owner, 2 Nov 2026): the nearest Google Fonts for serif and Roboto sites
+              "garamond": "EBGaramond-SemiBold.ttf", "sourceserif": "SourceSerif4-SemiBold.ttf", "roboto": "Roboto-Bold.ttf"}
 BODY_FONTS = {"poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "inter-semibold": "Inter-SemiBold.ttf",
               "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf", "serif": "Inter-Regular.ttf",
-              "dot": "Inter-Regular.ttf"}
+              "dot": "Inter-Regular.ttf", "roboto": "Roboto-Regular.ttf", "sourceserif": "SourceSerif4-Regular.ttf",
+              "garamond": "SourceSerif4-Regular.ttf"}
 STYLES = {  # what a brand can pick for its front and end card instead of uploading one
     "bold": "Solid ground, a thick accent bar and the headline set big",
     "glow": "Dark ground with a soft accent glow behind the headline",
     "grid": "A fine grid on the ground, like an editor's layout sheet",
     "minimal": "Light ground, dark text, the accent only on the kicker",
 }
+
+LAYOUTS = ("bold_news", "editorial", "minimal", "playful")  # brand kit v2 base layouts (see studio/design_system.py)
 
 # Per channel: the frame Buffer and the network take best, the most images in one post, and whether it wants video.
 CHANNELS = {
@@ -152,6 +157,14 @@ class Brand:
         self.cta = (ec.get("cta") or "Follow for more").strip()[:28]
         self.end_line = (ec.get("line") or "").strip()[:70]
         self.label = (kit.get("label") or "").strip()[:60]  # e.g. "Concept example, not affiliated"
+        # brand kit v2: a generated theme (studio/design_system.py) picks the layout, surface, radius and headline scale.
+        # A kit without one draws exactly as before.
+        th = kit.get("theme") if isinstance(kit.get("theme"), dict) else {}
+        self.layout = th.get("layout") if th.get("layout") in LAYOUTS else ""
+        self.radius = int(th.get("radius") or 0) if self.layout else None
+        self.surface = hex_rgb(th.get("surface") or "", mix(self.bg, self.text, 0.06)) if self.layout else None
+        self.scale = float(th.get("scale") or 1.0) if self.layout else 1.0
+        self.accent_usage = th.get("accent_usage") or "line"
         self.logo = _open_logo(logo)
         self.front_img = _open(front)
         self.end_img = _open(end)
@@ -163,7 +176,8 @@ class Brand:
         f = self.body_file
         if strong:
             f = {"Inter-Regular.ttf": "Inter-SemiBold.ttf", "Poppins-Medium.ttf": "Poppins-Bold.ttf",
-                 "Figtree-Medium.ttf": "Figtree-ExtraBold.ttf"}.get(f, f)
+                 "Figtree-Medium.ttf": "Figtree-ExtraBold.ttf", "Roboto-Regular.ttf": "Roboto-Medium.ttf",
+                 "SourceSerif4-Regular.ttf": "SourceSerif4-SemiBold.ttf"}.get(f, f)
         return ImageFont.truetype(str(FONT_DIR / f), max(8, int(size)))
 
     def headline(self, s: str) -> str:
@@ -321,13 +335,14 @@ def _logo(canvas: Image.Image, b: Brand, box_w: int, xy: tuple[int, int], style:
     return int(f.size * 1.1)
 
 
-def _pill(d, xy, text: str, f, fill, ink, pad=(22, 12)) -> tuple[int, int]:
+def _pill(d, xy, text: str, f, fill, ink, pad=(22, 12), radius: int | None = None) -> tuple[int, int]:
     t = _clean(text, f)
     w = int(d.textlength(t, font=f))
     bb = d.textbbox((0, 0), t, font=f)
     h = bb[3] - bb[1]
     x, y = xy
-    d.rounded_rectangle((x, y, x + w + pad[0] * 2, y + h + pad[1] * 2), radius=(h + pad[1] * 2) // 2, fill=fill)
+    full = (h + pad[1] * 2) // 2
+    d.rounded_rectangle((x, y, x + w + pad[0] * 2, y + h + pad[1] * 2), radius=full if radius is None else min(full, radius), fill=fill)
     d.text((x + pad[0], y + pad[1] - bb[1]), t, font=f, fill=ink)
     return w + pad[0] * 2, h + pad[1] * 2
 
@@ -366,6 +381,9 @@ def front_card(b: Brand, ratio: str, kicker: str, title: str, sub: str = "", n=N
     """The brand's front card: an uploaded card image, or the chosen style with the title set big."""
     W, H, m, wide = _frame(ratio)
     style = b.front_style
+    if b.layout and b.front_img is None:
+        from . import layouts
+        return layouts.front(b, ratio, kicker, title, sub, n)
     if b.front_img is not None:
         im = _cover(b.front_img, W, H)
         shade = Image.new("L", (W, H), 0)
@@ -409,6 +427,9 @@ def end_card(b: Brand, ratio: str, n=None) -> Image.Image:
     W, H, m, wide = _frame(ratio)
     if b.end_img is not None:
         return _cover(b.end_img, W, H)
+    if b.layout:
+        from . import layouts
+        return layouts.end(b, ratio, n)
     style = b.end_style
     im = _ground(W, H, b, style)
     d = ImageDraw.Draw(im)
