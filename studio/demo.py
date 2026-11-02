@@ -251,6 +251,19 @@ class DemoBuffer:
             out.append({"channelId": cid, "limit": limit, "scheduled": n, "sent": 0, "isAtLimit": bool(limit and n >= limit)})
         return out
 
+    # the sample workspace has no Meta connection: a few made-up tracks so the music picker can be tried (no previews)
+    SAMPLE_AUDIO = [("Sample track: Soft Focus", "HuhQueue samples", None, 30000, "music"),
+                    ("Sample track: Launch Day", "HuhQueue samples", None, 45000, "music"),
+                    ("Sample track: Late Night Build", "HuhQueue samples", None, 60000, "music"),
+                    ("Sample sound: Keyboard clicks", None, "huhqueue.sample", 15000, "originalSound")]
+
+    def search_instagram_audio(self, uid: str, channel_id: str, query: str = "") -> dict:
+        q = (query or "").lower().strip()
+        rows = [{"id": str(900000000000001 + i), "title": t, "displayArtist": art, "creatorUsername": cu, "duration": d, "type": ty,
+                 "previewUrl": None, "coverArtworkUrl": None}
+                for i, (t, art, cu, d, ty) in enumerate(self.SAMPLE_AUDIO) if not q or any(w in t.lower() for w in q.split())]
+        return {"audio": rows, "needs_facebook": False, "failed_types": []}
+
     def create_idea(self, uid: str, org_id: str, title: str, text: str) -> dict:
         return {"id": "demo_idea", "content": {"title": title, "text": text}}
 
@@ -276,6 +289,10 @@ class BufferRouter:
     def posts(self, uid, *a, **k):
         return self._pick(uid).posts(uid, *a, **k)
 
+    def prefetch_posts(self, uid, *a, **k):
+        if not is_demo(uid):  # the sample's in-memory Buffer needs no prefetch (and must never reach the real one)
+            return self.real.prefetch_posts(uid, *a, **k)
+
     def create_post(self, uid, *a, **k):
         return self._pick(uid).create_post(uid, *a, **k)
 
@@ -296,3 +313,6 @@ class BufferRouter:
 
     def daily_limits(self, uid, *a, **k):
         return self._pick(uid).daily_limits(uid, *a, **k)
+
+    def search_instagram_audio(self, uid, *a, **k):
+        return self._pick(uid).search_instagram_audio(uid, *a, **k)

@@ -97,6 +97,11 @@ def build(studio, a, now: datetime | None = None) -> dict:
         except Exception:
             return []
 
+    try:  # the Inbox reads three statuses: one Buffer request, not three
+        studio.buffer.prefetch_posts(a.uid, org, ("error", "scheduled", "draft"))
+    except Exception:  # noqa: BLE001
+        pass
+
     groups = []
 
     # now: approvals (humans only; an agent sees its own submissions through list_approvals)

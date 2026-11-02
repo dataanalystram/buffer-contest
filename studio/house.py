@@ -1638,6 +1638,10 @@ class House:
         items = []
         u = self.store.user(a.uid)
         chans = {c["id"]: c for c in self.studio.channels(a)}
+        try:  # one Buffer request for all four statuses, not four
+            self.studio.buffer.prefetch_posts(a.uid, u["org_id"], ("scheduled", "sent", "draft", "error"))
+        except Exception:  # noqa: BLE001
+            pass
         for status in ("scheduled", "sent", "draft", "error"):
             try:
                 posts = self.studio.buffer.posts(a.uid, u["org_id"], [status], first=60)

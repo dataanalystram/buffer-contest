@@ -241,8 +241,13 @@ def detect_lower_third(src: str, start: float = 0.0, end: float | None = None, s
     picture. Returns {"top", "bottom"} as fractions of the source height (min top / max bottom seen), or None.
     Our captions are then placed above it (render_style), in every ratio."""
     import numpy as np
-    if end is None:
-        end = ff.probe(src)["duration"]
+    try:
+        dur = ff.probe(src)["duration"]
+    except Exception:  # noqa: BLE001  no probe: sample the range we were given
+        dur = 0.0
+    if end is None and not dur:
+        return None
+    end = dur if end is None or (dur and end > dur) else end  # cut_first_s sends [cut, cut + 600]: never sample past the end
     span = max(0.1, end - start)
     bands = []
     with tempfile.TemporaryDirectory() as td:
@@ -253,6 +258,8 @@ def detect_lower_third(src: str, start: float = 0.0, end: float | None = None, s
                 ff.run(["-y", "-v", "error", "-ss", f"{t:.2f}", "-i", src, "-frames:v", "1", "-vf", "scale=480:-2",
                         "-update", "1", str(p)], timeout=60)
             except ff.MediaError:
+                continue
+            if not p.exists():  # ffmpeg writes nothing for a seek past the end and still exits 0
                 continue
             b = _band_rows(np.asarray(Image.open(p).convert("L"), dtype=np.int16))
             if b:

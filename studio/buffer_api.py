@@ -3,8 +3,12 @@
 * Tokens live only in the server-side store; the browser holds an opaque session id.
 * Refresh tokens rotate: every refresh stores the replacement before the call continues, under a
   per-user lock so two requests never spend the same refresh token.
-* Rate limits are per app client (shared by every user): we read the RateLimit headers on every
-  response, cache org/channel lists, wait out a short Retry-After once and surface longer ones.
+* Rate limits are per app client (shared by every user; developers.buffer.com/guides/api-limits.md: 15 min 100 +10/user,
+  24 h 500 +25/user, 30 days 15,000 +100/user). We read the RateLimit headers on every response, cache the org (24 h),
+  channel lists and posts, wait out a short Retry-After once and surface longer ones. A 429 blocks only the account that
+  got it (it costs nothing and carries Retry-After), and sign-in never waits on anyone's block (login=True).
+* Throttle: with ~10% of any window left (LOW_SHARE), cached reads are served even when stale, so the budget that is left
+  goes to sign-ins and the posts people make.
 """
 from __future__ import annotations
 
@@ -24,8 +28,10 @@ from .config import API_URL, AUTH_URL, SCOPES, TOKEN_URL, Settings
 from .store import Store
 
 MAX_BACKOFF = 5
-CHANNEL_TTL = 300  # seconds; channel lists change rarely, so cache them per user
-POSTS_TTL = int(os.environ.get("HQ_POSTS_TTL", "120"))  # one read per status per account per 2 minutes
+CHANNEL_TTL = int(os.environ.get("HQ_CHANNEL_TTL", "900"))  # seconds; channel lists change rarely (our own writes and Refresh clear it)
+ACCOUNT_TTL = 86400  # the account, its organizations and plan limits: once a day per user
+POSTS_TTL = int(os.environ.get("HQ_POSTS_TTL", "300"))  # one read per account per 5 minutes for all the statuses a page needs
+LOW_SHARE = 0.10  # throttle (serve stale caches) once any window has 10% or less left
 POSTS_PAGE = 100
 
 
@@ -113,7 +119,19 @@ class RateBudget:
 
     def __init__(self):
         self.windows: dict[int, dict] = {}
-        self.blocked_until = 0.0
+        self.blocked: dict[str, float] = {}  # per account ("uid" or "token"): a 429 never locks out anyone else
+
+    @property
+    def blocked_until(self) -> float:
+        return max(self.blocked.values(), default=0.0)
+
+    def block(self, key: str, seconds: float) -> None:
+        now = time.time()
+        self.blocked = {k: v for k, v in self.blocked.items() if v > now}
+        self.blocked[key] = now + seconds
+
+    def blocked_for(self, key: str) -> int:
+        return max(0, int(self.blocked.get(key, 0) - time.time()))
 
     def read(self, headers: httpx.Headers) -> None:
         live = ",".join(headers.get_list("ratelimit")) if hasattr(headers, "get_list") else headers.get("ratelimit", "")
@@ -143,8 +161,14 @@ class RateBudget:
                 "blocked_for": max(0, int(self.blocked_until - time.time()))}
 
     def low(self) -> bool:
-        w = self.windows.get(900)
-        return bool(w and w["remaining"] is not None and w["remaining"] < 5)
+        """True when any window (15 min, 24 h, 30 days) has LOW_SHARE or less of its quota left."""
+        for w in self.windows.values():
+            rem, q = w.get("remaining"), w.get("quota")
+            if rem is None:
+                continue
+            if rem <= max(4, int((q or 50) * LOW_SHARE)):
+                return True
+        return False
 
 
 # ---------------------------------------------------------------- GraphQL client
@@ -182,9 +206,10 @@ class BufferClient:
             return new["access_token"]
 
     def gql(self, query: str, variables: dict | None = None, *, uid: str | None = None,
-            token: str | None = None, _retried: bool = False) -> dict:
-        if self.budget.blocked_until > time.time():
-            wait = int(self.budget.blocked_until - time.time()) + 1
+            token: str | None = None, _retried: bool = False, login: bool = False) -> dict:
+        key = uid or "token"
+        if not login and self.budget.blocked_for(key):
+            wait = self.budget.blocked_for(key) + 1
             raise BufferError(f"Buffer API rate limit reached; try again in {wait}s", 429, wait)
         bearer = token or self.access_token(uid)
         _counted()
@@ -203,11 +228,16 @@ class BufferClient:
                 return self.gql(query, variables, uid=uid, _retried=True)
             raise NotConnected("Buffer rejected the access token. Connect again.")
         if r.status_code == 429:
-            ra = int(float(r.headers.get("retry-after") or 0))
+            try:
+                ra = int(float(r.headers.get("retry-after") or 0))
+            except ValueError:
+                ra = 0
+            if login:  # the sign-in decides what to do (finish later); it never blocks anyone
+                raise BufferError(f"Buffer API rate limit reached; try again in {ra or 60}s", 429, ra or 60)
             if not _retried and 0 < ra <= MAX_BACKOFF:
                 time.sleep(ra)
                 return self.gql(query, variables, uid=uid, token=token, _retried=True)
-            self.budget.blocked_until = time.time() + (ra or 30)
+            self.budget.block(key, ra or 30)
             raise BufferError(f"Buffer API rate limit reached; try again in {ra or 30}s", 429, ra or 30)
         try:
             j = r.json()
@@ -232,9 +262,16 @@ class BufferClient:
         for k in [k for k in self._cache if k[1] == uid]:
             self._cache.pop(k, None)
 
-    def account(self, *, uid: str | None = None, token: str | None = None) -> dict:
+    def account(self, *, uid: str | None = None, token: str | None = None, login: bool = False) -> dict:
+        """The Buffer account and its organizations. Sign-in passes login=True: it skips every block, and the answer is
+        cached for the account for a day (ACCOUNT_TTL)."""
         q = "query { account { id email name organizations { id name } } }"
-        return self.gql(q, uid=uid, token=token)["account"]
+        if uid and not login:
+            return self._cached(("account", uid), ACCOUNT_TTL, lambda: self.gql(q, uid=uid)["account"])
+        acct = self.gql(q, uid=uid, token=token, login=login)["account"]
+        if acct.get("id"):
+            self._cache[("account", acct["id"])] = (time.time(), acct)
+        return acct
 
     def _gql_or(self, rich: str, plain: str | None, variables: dict, uid: str):
         """Ask for the richer field set; if Buffer refuses it (schema change, plan), fall back instead of breaking."""
@@ -269,7 +306,7 @@ class BufferClient:
                     raise
                 return None
             return next((o for o in orgs if o["id"] == org_id), orgs[0] if orgs else None)
-        return self._cached(("org", uid), CHANNEL_TTL, fetch)
+        return self._cached(("org", uid), ACCOUNT_TTL, fetch)
 
     def daily_limits(self, uid: str, channel_ids: list[str], date: str | None = None) -> list[dict]:
         """Buffer's daily posting limit status per channel at the intended time ([] if unavailable)."""
@@ -293,22 +330,80 @@ class BufferClient:
         are per app client and shared by every HuhQueue user). Our own writes clear this account's cache at once;
         refresh() forces a re-read (the Refresh buttons)."""
         out: list[dict] = []
+        self.prefetch_posts(uid, org_id, statuses)
         for st in statuses:
-            def fetch(st=st):
-                i = {"organizationId": org_id, "filter": {"status": [st]}, "sort": [{"field": "dueAt", "direction": "asc"}]}
-                q = """query($i: PostsInput!, $n: Int) { posts(first: $n, input: $i) { edges { node { %s } } } }"""
-                data = self._gql_or(q % self.POST_FIELDS, q % "id text status dueAt channelId", {"i": i, "n": POSTS_PAGE}, uid)
-                return [e["node"] for e in data["posts"]["edges"]]
-            out += self._cached(("posts", uid, st), POSTS_TTL, fetch)
+            out += self._cached(("posts", uid, st), POSTS_TTL, lambda st=st: self._read_posts(uid, org_id, [st]))
         if len(statuses) > 1:
             out.sort(key=lambda p: p.get("dueAt") or "")
         return out[:first]
+
+    def _read_posts(self, uid: str, org_id: str, sts: list[str]) -> list[dict]:
+        q = """query($i: PostsInput!, $n: Int) { posts(first: $n, input: $i) { edges { node { %s } } } }"""
+        i = {"organizationId": org_id, "filter": {"status": sts}, "sort": [{"field": "dueAt", "direction": "asc"}]}
+        data = self._gql_or(q % self.POST_FIELDS, q % "id text status dueAt channelId", {"i": i, "n": POSTS_PAGE}, uid)
+        return [e["node"] for e in data["posts"]["edges"]]
+
+    def prefetch_posts(self, uid: str, org_id: str, statuses: list[str] | tuple[str, ...]) -> None:
+        """Every status a page is about to read that isn't cached, in ONE Buffer request (pages used to spend one per
+        status: the Planner 4, the Inbox 5). Only a page that came back incomplete (fewer than POSTS_PAGE posts) and whose
+        posts all carry a status we asked for is split into the per-status caches; otherwise each status is read alone."""
+        now = time.time()
+        stale = [st for st in dict.fromkeys(statuses) if not ((h := self._cache.get(("posts", uid, st)))
+                                                               and (now - h[0] < POSTS_TTL or self.budget.low()))]
+        if len(stale) < 2:
+            return
+        try:
+            nodes = self._read_posts(uid, org_id, stale)
+        except NotConnected:
+            raise
+        except BufferError as e:
+            if e.status == 429:
+                raise
+            return
+        want = {st.lower() for st in stale}
+        if len(nodes) >= POSTS_PAGE or any((n.get("status") or "").lower() not in want for n in nodes):
+            return
+        for st in stale:
+            self._cache[("posts", uid, st)] = (now, [n for n in nodes if (n.get("status") or "").lower() == st.lower()])
 
     def refresh(self, uid: str) -> None:
         self.invalidate(uid)
 
     def _drop_posts(self, uid: str | None = None) -> None:
         self._cache = {k: v for k, v in self._cache.items() if not (k[0] == "posts" and (uid is None or k[1] == uid))}
+
+    # ---- Instagram music for Reels (experimental Buffer API; needs the IG channel connected through a Facebook Page)
+    AUDIO_FIELDS = "id title displayArtist creatorUsername duration type previewUrl coverArtworkUrl"
+
+    def search_instagram_audio(self, uid: str, channel_id: str, query: str = "") -> dict:
+        """Licensed music + original sounds for one Instagram channel: searchInstagramAudioCatalog (or the trending catalog
+        when query is blank). A channel connected with Instagram Login gets {"needs_facebook": True} (Buffer's
+        ChannelRefreshRequired); a channel that isn't Instagram gets Buffer's BAD_USER_INPUT as a BufferError."""
+        sel = ("... on InstagramAudioCatalogSuccess { failedAudioTypes audio { %s } } "
+               "... on ChannelRefreshRequired { message channelIds }") % self.AUDIO_FIELDS
+        if (query or "").strip():
+            q = "query($c: ChannelId!, $q: String!) { r: searchInstagramAudioCatalog(input: {channelId: $c, query: $q}) { __typename %s } }" % sel
+            v = {"c": channel_id, "q": query.strip()[:100]}
+        else:
+            q = "query($c: ChannelId!) { r: instagramAudioCatalog(input: {channelId: $c}) { __typename %s } }" % sel
+            v = {"c": channel_id}
+        r = self.gql(q, v, uid=uid)["r"] or {}
+        if r.get("__typename") == "ChannelRefreshRequired":
+            return {"audio": [], "needs_facebook": True, "message": r.get("message") or ""}
+        return {"audio": r.get("audio") or [], "needs_facebook": False, "failed_types": r.get("failedAudioTypes") or []}
+
+    def post_audio(self, uid: str, post_id: str) -> dict | None:
+        """The music Buffer stored on a post (InstagramSelectedAudio), or None. Buffer answers FORBIDDEN on this field for
+        personal API keys (checked 2 Nov 2026), so None also means "Buffer won't say"."""
+        q = """query($i: PostInput!) { post(input: $i) { id status metadata { ... on InstagramPostMetadata { type
+                 audio { id title duration type displayArtist creatorUsername audioVolume videoVolume } } } } }"""
+        try:
+            p = self.gql(q, {"i": {"id": post_id}}, uid=uid)["post"] or {}
+        except BufferError as e:
+            if "FORBIDDEN" in str(e) or "Not authorized" in str(e):
+                return None
+            raise
+        return (p.get("metadata") or {}).get("audio")
 
     # ---- writes
     def create_post(self, uid: str, inp: dict) -> dict:

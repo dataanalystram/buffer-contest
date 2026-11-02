@@ -339,31 +339,82 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                         {"via": "buffer oauth", "reason": (error or "")[:60]}, ok=False)
             return RedirectResponse("/?error=" + quote(error_description or error), 302)
         pending = store.unseal(sess["oauth"]) if sess else None
-        if not pending or not state or not secrets.compare_digest(state, pending["state"]):
+        if not pending or not state or not secrets.compare_digest(state, pending.get("state") or ""):
             store.audit((sess or {}).get("user_id") or "", "system", "signin_failed", "auth",
                         {"via": "buffer oauth", "reason": "state mismatch or expired"}, ok=False)
             return RedirectResponse("/?error=" + quote("Sign-in expired or didn't start here. Try Connect again."), 302)
         store.update_session(sid, oauth=None)
         try:
             tokens = buffer_api.exchange_code(s, buffer.http, code, pending["verifier"])
-            acct = buffer.account(token=tokens["access_token"])
         except BufferError as e:
             store.audit((sess or {}).get("user_id") or "", "system", "signin_failed", "auth",
                         {"via": "buffer oauth", "reason": "code exchange failed"}, ok=False)
             return RedirectResponse("/?error=" + quote(str(e)), 302)
-        orgs = acct.get("organizations") or [{}]
-        store.upsert_user(acct["id"], acct.get("email") or "", acct.get("name") or "", orgs[0].get("id", ""),
-                          orgs[0].get("name", ""), tokens)
-        buffer.invalidate(acct["id"])
         # rotate the session id at login (fixation defence)
         store.drop_session(sid)
         new_sid = secrets.token_urlsafe(32)
         store.new_session(new_sid, secrets.token_urlsafe(24))
-        store.update_session(new_sid, user_id=acct["id"])
-        store.audit(acct["id"], "you", "connect_buffer", "auth", {"scopes": tokens.get("scope", "")})
+        try:
+            # login=True: never waits on a block another account's 429 set; Buffer's own 429 is handled below
+            acct = buffer.account(token=tokens["access_token"], login=True)
+        except BufferError as e:
+            if e.status != 429:
+                store.audit("", "system", "signin_failed", "auth", {"via": "buffer oauth", "reason": "account lookup failed"}, ok=False)
+                resp = RedirectResponse("/?error=" + quote(str(e)), 302)
+                set_cookie(resp, new_sid)
+                return resp
+            # Buffer is busy (its limits are shared by every HuhQueue user). Keep the tokens sealed on this session as a
+            # pending sign-in and finish it once, after Retry-After + jitter, the next time the page asks /api/session.
+            wait = _signin_wait(e.retry_after)
+            store.update_session(new_sid, oauth=store.seal({"signin": {"tokens": tokens, "retry_at": time.time() + wait,
+                                                                       "next": pending.get("next") or "", "tries": 0}}))
+            store.audit("", "system", "signin_deferred", "auth", {"via": "buffer oauth", "reason": "buffer rate limit",
+                                                                  "retry_in": int(wait)}, ok=True)
+            resp = RedirectResponse("/?connecting=" + str(int(wait)), 302)
+            set_cookie(resp, new_sid)
+            return resp
+        _finish_signin(new_sid, tokens, acct)
         resp = RedirectResponse(pending.get("next") or "/?connected=1", 302)
         set_cookie(resp, new_sid)
         return resp
+
+    def _signin_wait(retry_after: int | None) -> float:
+        """Buffer's Retry-After plus 5-30 s of jitter, so sign-ins deferred together don't all retry in the same second."""
+        return float(max(1, int(retry_after or 60))) + 5 + secrets.randbelow(26)
+
+    def _finish_signin(sid: str, tokens: dict, acct: dict) -> None:
+        orgs = acct.get("organizations") or [{}]
+        store.upsert_user(acct["id"], acct.get("email") or "", acct.get("name") or "", orgs[0].get("id", ""),
+                          orgs[0].get("name", ""), tokens)
+        for k in [k for k in buffer._cache if len(k) > 1 and k[1] == acct["id"] and k[0] != "account"]:
+            buffer._cache.pop(k, None)  # a fresh sign-in re-reads channels and posts; the account it just read stays cached
+        store.update_session(sid, user_id=acct["id"], oauth=None)
+        store.audit(acct["id"], "you", "connect_buffer", "auth", {"scopes": tokens.get("scope", "")})
+
+    def _pending_signin(sid: str, sess: dict) -> dict | None:
+        """A sign-in Buffer's rate limit deferred: finish it now if Retry-After has passed (one Buffer call, only when the
+        page asks: no polling), else say how long is left. Returns the banner state, or None once there is nothing pending."""
+        box = store.unseal(sess.get("oauth")) if sess.get("oauth") else None
+        p = (box or {}).get("signin")
+        if not p:
+            return None
+        left = p["retry_at"] - time.time()
+        if left <= 0:
+            try:
+                acct = buffer.account(token=p["tokens"]["access_token"], login=True)
+            except BufferError as e:
+                if e.status != 429:
+                    store.update_session(sid, oauth=None)
+                    store.audit("", "system", "signin_failed", "auth", {"via": "buffer oauth", "reason": "deferred lookup failed"}, ok=False)
+                    return {"failed": True, "message": "Buffer didn't finish the sign-in. Connect again."}
+                left = _signin_wait(e.retry_after)
+                p.update(retry_at=time.time() + left, tries=int(p.get("tries") or 0) + 1)
+                store.update_session(sid, oauth=store.seal({"signin": p}))
+            else:
+                _finish_signin(sid, p["tokens"], acct)
+                return {"done": True, "next": p.get("next") or ""}
+        mins = max(1, int((left + 59) // 60))
+        return {"retry_in": int(left) + 1, "message": f"Buffer is busy; finishing connecting in {mins} min."}
 
     # try-it workspace: sample channels and an agent post waiting for approval; nothing reaches Buffer
     # at most CAPS['workspace'] new sample workspaces per IP a day; stale demo users are purged after a day on each new demo
@@ -441,12 +492,17 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/api/session")
     def session(request: Request):
         sid, sess, fresh = ensure_session(request)
+        signin = None if sess["user_id"] else _pending_signin(sid, sess)
+        if signin and signin.get("done"):
+            sess = store.session(sid) or sess
         connected = bool(sess["user_id"] and store.user(sess["user_id"]) and store.tokens(sess["user_id"]))
         body = {"configured": s.configured, "connected": connected, "csrf": sess["csrf"],
                 "user": studio.me(Actor(sess["user_id"])) if connected else None, "mcp_url": s.public_url + "/mcp",
                 "repo": s.repo_url, "demo": connected and demo.is_demo(sess["user_id"])}
         if body["demo"]:
             body["demo_left"] = demo_guard.left(store, sess["user_id"])  # what the free sample may still spend today
+        if signin and not connected:
+            body["connecting"] = signin  # {"retry_in", "message"} or {"failed", "message"}: the landing's banner
         resp = JSONResponse(body)
         if fresh:
             set_cookie(resp, sid)
@@ -858,6 +914,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     brand_kits.add_routes(app, house, actor)
     from . import agent_routes  # agent brain, natural-language edits, onboarding, recommendations (UI = REST = MCP)
     agent_routes.add_routes(app, house, actor)
+    from . import reel_audio  # Instagram music on Reels (search + pick per package; UI = REST = MCP)
+    reel_audio.add_routes(app, house, actor)
     from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)
     library_mod.add_routes(app, house, actor)
     from . import uploads as uploads_mod  # one-time upload URLs + chunked uploads (UI = REST = MCP)

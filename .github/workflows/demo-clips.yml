@@ -1,13 +1,12 @@
 name: demo-clips
 # Renders the "Split a long video" demo bundle (Buffer's Buffer Commit kickoff Q&A -> 5 opus-style 9:16 clips) on the
 # free GitHub worker: faster-whisper per moment window, built-in scorer, MediaPipe reframe, FFmpeg. No AI spend, no
-# secrets: the source is a public file on the HuhByte media bucket. The bundle is uploaded as an artifact and committed
-# to studio/sample_take/ by hand after the contact sheets are checked.
+# secrets. Nothing hosts the 89-minute source for you any more: pass its URL when you dispatch the run. The bundle is
+# uploaded as an artifact and committed to studio/sample_take/ by hand after the contact sheets are checked.
 on:
   workflow_dispatch:
-  push:
-    branches: [feat/mcp-video-demo]
-    paths: [scripts/demo_buffer_split.py, .github/workflows/demo-clips.yml]
+    inputs:
+      source: {description: "https URL of the source video (not stored anywhere by this repo)", required: true}
 permissions: {contents: read}
 jobs:
   clips:
@@ -23,7 +22,7 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with: {path: ~/.cache/huggingface, key: whisper-small-v1}
       - name: Split the Buffer Commit kickoff into 5 clips
-        env: {HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite"}
-        run: python scripts/demo_buffer_split.py --out demo_out --model small
+        env: {HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite", HQ_SOURCE: "${{ github.event.inputs.source }}"}
+        run: python scripts/demo_buffer_split.py --source "$HQ_SOURCE" --out demo_out --model small
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: {name: demo-split-bundle, path: demo_out/, retention-days: 14}

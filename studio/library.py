@@ -107,7 +107,9 @@ def _sample_items() -> list[dict]:
                     "size": f.stat().st_size, "created": 0, "url": f"/sample/{c['file']}",
                     "thumb": f"/sample/{c['cover']}" if c.get("cover") else "", "used_in": [], "read_only": True})
     src = meta.get("source") or {}
-    if src.get("media_url", "").startswith("https://") and meta.get("clips"):  # the long video the sample clips were cut from
+    # the long video the sample clips were cut from: only when a bundle hosts it (the bundled sample doesn't any more; its
+    # YouTube credit travels with each clip)
+    if src.get("media_url", "").startswith("https://") and meta.get("clips"):
         out.append({"id": "sample-source", "name": f"{src.get('title') or 'Sample source video'}.mp4", "kind": "video",
                        "mime": "video/mp4", "source": "sample", "size": int(src.get("bytes") or 0), "created": 0,
                        "url": src["media_url"], "thumb": f"/sample/{src['poster']}" if src.get("poster") else "",
