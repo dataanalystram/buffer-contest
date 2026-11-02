@@ -125,3 +125,11 @@
 .ag-eng-sel{height:34px;min-height:34px;border-radius:8px;padding:0 8px;font-size:13px;max-width:220px}
 @media (max-width:1023px){.ag-eng-sel{height:44px;min-height:44px}}  /* touch: 44 px taps */
 @media (max-width:640px){.ag-eng{width:100%;justify-content:flex-start}.ag-eng-sel{flex:1;max-width:none}}
+/* touch sizes: under 1024 px the (i) and the log filters are 44 px to tap; the (i) keeps its small ring inside the hit area */
+@media (max-width:1023px){
+  .info-i:not(.static){width:44px;height:44px;margin:-6px 0;border-color:transparent;
+    background:radial-gradient(circle,transparent 0 13px,var(--line-strong) 13px 14px,transparent 14.5px)}
+  .info-i:not(.static):hover,.info-i:not(.static)[aria-expanded=true]{border-color:transparent;
+    background:radial-gradient(circle,transparent 0 13px,var(--ink) 13px 14px,transparent 14.5px)}
+  .ai-logs-f select,.ai-logs-f input{min-height:44px;height:auto}
+}
