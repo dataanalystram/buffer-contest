@@ -436,3 +436,29 @@ def test_local_worker_mode_runs_the_whole_take_in_process(human, app, monkeypatc
     assert len(t["clips"]) == 1 and t["clips"][0]["url"].startswith("https://hq.test/m/")
     assert t["providers"]["stt"] == "test transcriber"
     assert len(sents) > 5
+
+
+def test_worker_download_errors_are_plain_words(human, app, monkeypatch):
+    """Live test 2 Nov 2026: a One take link that 404s showed the raw httpx error on the Transcribe step."""
+    from studio.house import plain_worker_error
+    raw = ("HTTPStatusError: Client error '404 Not Found' for url 'https://example.com/not-a-video'\n"
+           "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404")
+    msg = plain_worker_error(raw)
+    assert "HTTPStatusError" not in msg and "example.com answered 404 Not Found" in msg and "upload the file" in msg
+    assert "answered 403" in plain_worker_error("HTTPStatusError: Client error '403 Forbidden' for url 'https://x.example/v.mp4'")
+    assert plain_worker_error("ConnectTimeout: timed out").startswith("Couldn't reach the video link")
+    assert plain_worker_error("TakeError: This video has no audio track") == "TakeError: This video has no audio track"
+    assert plain_worker_error("") == ""
+    # and on a real take, through the worker callback
+    _public_hosts(monkeypatch)
+    house = app.state.house
+    toks = {}
+    monkeypatch.setattr(house, "_dispatch_github", lambda jid, workflow="", inputs=None, ttl=1800: (toks.setdefault(jid, house.issue_job_token(jid, ttl)), (True, ""))[1])
+    monkeypatch.setattr(house.takes, "_mode", lambda: "github")
+    t = human.post("/api/takes", json={"url": "https://cdn.example.com/not-a-video", "owns": True}).json()
+    jid, jt = next(iter(toks.items()))
+    w = TestClient(app, base_url="https://hq.test")
+    w.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt}, json={"error": raw})
+    t = human.get(f"/api/takes/{t['id']}").json()
+    assert t["status"] == "failed"
+    assert "HTTPStatusError" not in t["steps"][1]["detail"] and "404 Not Found" in t["steps"][1]["detail"]

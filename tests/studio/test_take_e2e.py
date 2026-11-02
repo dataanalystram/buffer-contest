@@ -112,3 +112,43 @@ def test_spread_respects_reduced_motion(live, chromium):
     page.get_by_test_id("toast").filter(has_text="Nothing was saved").wait_for()
     assert page.locator("[data-ref^='ghost:']").count() == 0
     ctx.close()
+
+
+def test_make_clips_errors_stay_on_the_page(live, chromium):
+    """Live test 2 Nov 2026: Make clips with the rights box unticked, no channel or a bad link only flashed a toast."""
+    ctx = chromium.new_context(viewport={"width": 1440, "height": 900})
+    ctx.add_init_script(NO_TOUR)
+    page = ctx.new_page()
+    page.goto(live + "/demo")
+    page.get_by_test_id("tab-take").click()
+    page.get_by_test_id("take-chip").first.wait_for()
+    err = page.get_by_test_id("take-error")
+    page.get_by_test_id("take-go").click()
+    assert "Tick" in err.inner_text()
+    page.get_by_test_id("take-owns").check()
+    for chip in page.get_by_test_id("take-chip").all():
+        if chip.get_attribute("aria-pressed") == "true":
+            chip.click()
+    page.get_by_test_id("take-go").click()
+    assert "Pick at least one channel" in err.inner_text()
+    page.get_by_test_id("take-chip").first.click()
+    page.get_by_test_id("take-go").click()
+    assert "Choose a video first" in err.inner_text()
+    page.get_by_test_id("take-src-link").click()
+    page.get_by_test_id("take-url").fill("https://example.com")
+    page.get_by_test_id("take-go").click()
+    assert "direct https:// link" in err.inner_text()
+    ctx.close()
+
+
+def test_sample_take_in_a_real_account_says_it_cannot_spread(live, chromium):
+    """The server refuses to spread the sample's clips into a real Buffer (403); the page now says so instead of a dead button."""
+    ctx = chromium.new_context(viewport={"width": 1440, "height": 900})
+    ctx.add_init_script(NO_TOUR)
+    page = ctx.new_page()
+    _open_sample(page, live)
+    assert page.get_by_test_id("spread-go").is_visible() and page.get_by_test_id("spread-sample-note").is_hidden()
+    page.evaluate("() => { S.session.demo = false; showTake(T.take); }")  # what a signed-in Buffer account sees
+    assert page.get_by_test_id("spread-go").is_hidden()
+    assert "can't go to your Buffer" in page.get_by_test_id("spread-sample-note").inner_text()
+    ctx.close()

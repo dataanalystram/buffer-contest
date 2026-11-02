@@ -111,7 +111,17 @@ def add_routes(app: FastAPI, house, actor) -> None:
     @app.post("/api/agent/runs/{rid}/messages")
     def run_message(rid: int, request: Request, body: dict = Body(...)):
         """Reply in a run's thread: "make the hook stronger", "redo YouTube at 30s", "it's $1.3M"."""
-        return house.brain.reply(actor(request, write=True), rid, body.get("text", ""))
+        return house.brain.reply(actor(request, write=True), rid, body.get("text", ""), str(body.get("media_token") or ""))
+
+    @app.post("/api/agent/runs/{rid}/packages/{channel_id}/cover")
+    def run_channel_cover(rid: int, channel_id: str, request: Request, body: dict = Body(...)):
+        """Use another cover variant ({"index": 0-2}) for one channel: its Reel's opening frame is swapped."""
+        a = actor(request, write=True)  # sign-in first: an anonymous call is a 401, never a validation message
+        try:
+            idx = int((body or {}).get("index"))
+        except (TypeError, ValueError):
+            raise ActionError("Give the cover index (0-2).")
+        return house.brain.set_cover(a, rid, channel_id, idx)
 
     @app.post("/api/agent/runs/{rid}/packages/{channel_id}/media")
     def run_channel_media(rid: int, channel_id: str, request: Request, body: dict = Body(default={})):
@@ -198,10 +208,11 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "make_post", "description": "Make on-brand posts from one prompt (prose + links, up to 4,000 characters). A pasted link is THE source (X posts are read through X's public oEmbed). 'all my channels' = every connected channel. HuhQueue's agent plans, renders (carousel/Reel/cover), writes per-channel captions and checks them; poll get_run(run_id). brain='external' creates the run without running HuhQueue's agent, so YOU drive it with the post_* tools. Nothing is published.",
      "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "channel_ids": {"type": "array", "items": {"type": "string"}},
                                                                             "format": {"type": "string", "enum": ["auto", "reel", "carousel", "photo"]},
-                                                                            "theme": {"type": "string", "description": "A video theme id from list_themes, or auto (the agent picks from the content)"},
+                                                                            "theme": {"type": "string", "description": "A video theme id from list_themes, auto (the agent picks from the content) or none (post the video as it is)"},
+                                                                            "add_logo": {"type": "boolean", "description": "With theme none: put the brand logo on the video (default true)"},
                                                                             "brain": {"type": "string", "enum": ["huhqueue", "external"]}}}},
-    {"name": "reply_post", "description": "Refine a post run in plain words, like replying in its thread: 'make the hook stronger', 'redo YouTube at 30s', 'LinkedIn more formal', 'logo smaller', 'it's $1.3M' (answers a fact question). Standing instructions become Style Ledger rules.",
-     "inputSchema": {"type": "object", "required": ["run_id", "text"], "properties": {"run_id": {"type": "integer"}, "text": {"type": "string"}}}},
+    {"name": "reply_post", "description": "Refine a post run in plain words, like replying in its thread: 'make the hook stronger', 'redo YouTube at 30s', 'LinkedIn more formal', 'logo smaller', 'it's $1.3M' (answers a fact question). Standing instructions become Style Ledger rules. When the run asked for a video upload (result.video_ask), pass media_token (a video from library_upload_url / list_library) and the agent brands it as the Reel.",
+     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}, "text": {"type": "string"}, "media_token": {"type": "string"}}}},
     {"name": "replace_channel_media", "description": "Change ONE channel's media in a post run: media_token (a Library item's media_token from list_library / use_library_item, or an upload) uses the person's own file; omit it to regenerate that channel's media. The check runs again.",
      "inputSchema": {"type": "object", "required": ["run_id", "channel"], "properties": {"run_id": {"type": "integer"}, "channel": {"type": "string", "description": "channel id or network name"},
                                                                                        "media_token": {"type": "string"}}}},
@@ -216,8 +227,11 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}}},
     {"name": "list_themes", "description": "Every video look for Make a post: the four edit styles (opus, huhbyte_news, minimal, hype) and the video themes (caption_news, news_package, newsreel, dark_keynote, glass_studio, swiss, kino, silent_film, risograph, hologram_hud, screencast, investigation, countdown, crt, tilt_shift, game_show, cinematic) with what each looks like, what it is best for, its gallery category (news, startups, clips, explainers, cinematic), a one-line description, a typical length and its gallery thumbnail.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "set_theme", "description": "Set a post run's video theme and re-render its video channels in it (e.g. 'cinematic', 'news_package'). Same as replying 'switch to the X theme'.",
-     "inputSchema": {"type": "object", "required": ["run_id", "theme"], "properties": {"run_id": {"type": "integer"}, "theme": {"type": "string"}}}},
+    {"name": "set_theme", "description": "Set a post run's video theme and re-render its video channels in it (e.g. 'cinematic', 'news_package'). Same as replying 'switch to the X theme'. theme 'none' = no style: post the video as it is (fit to the frame, logo, end card; no captions, theme or music).",
+     "inputSchema": {"type": "object", "required": ["run_id", "theme"], "properties": {"run_id": {"type": "integer"}, "theme": {"type": "string", "description": "A theme id from list_themes, 'auto' or 'none'"}}}},
+    {"name": "set_cover", "description": "Pick another of the 3 branded cover variants (index 0-2, in the run's package covers) for one channel: its Reel's opening frame becomes that cover (Instagram/TikTok use it as the cover via the thumbnail offset); the 1280x720 variant is the YouTube thumbnail.",
+     "inputSchema": {"type": "object", "required": ["run_id", "channel", "index"], "properties": {"run_id": {"type": "integer"}, "channel": {"type": "string", "description": "channel id or network name"},
+                                                                                                "index": {"type": "integer", "minimum": 0, "maximum": 2}}}},
     {"name": "get_ai_engine", "description": "The AI engine HuhQueue's in-app agent uses first (gemini-studio, nvidia, hf, claude, own, free or auto), which one will actually run, and each engine's credit in plain words (e.g. 'NVIDIA (free developer credits): 3 of your 150 calls today', 'Claude: $0.34 of your $1 used') plus the app-wide pools. If the chosen engine is out of credit or erroring, the agent falls back to the next one automatically.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "set_ai_engine", "description": "Choose the in-app agent's AI engine: gemini-studio (Gemini on Google AI Studio's free tier), nvidia (NVIDIA NIM, free developer credits), hf (Hugging Face, free monthly credits), claude (Anthropic, included allowance), own (the person's saved API key), free (the free starter model) or auto (free engines first, then Claude, your key, then the free starter model). A key the person saved for an engine runs that engine. Returns the same status as get_ai_engine.",
@@ -245,14 +259,18 @@ def call_tool(studio, actor, name: str, args: dict):
     ob = attach(h)
     try:
         if name == "make_post":
-            return h.brain.start(actor, {k: args.get(k) for k in ("prompt", "channel_ids", "format", "brain", "theme") if args.get(k)} | {"prompt": args.get("prompt", "")})
+            return h.brain.start(actor, {k: args.get(k) for k in ("prompt", "channel_ids", "format", "brain", "theme") if args.get(k)}
+                                 | {"prompt": args.get("prompt", "")} | ({"add_logo": bool(args["add_logo"])} if "add_logo" in args else {}))
         if name == "list_themes":
             from .media import styles as media_styles
             return {"themes": media_styles.describe_themes(), "categories": media_styles.theme_categories(), "default": "auto"}
         if name == "set_theme":
             return h.brain.tool(actor, int(args.get("run_id") or 0), "set_theme", {"theme": str(args.get("theme") or ""), "why": "you picked it"})
+        if name == "set_cover":
+            return h.brain.tool(actor, int(args.get("run_id") or 0), "set_cover", {"channel": str(args.get("channel") or ""),
+                                                                                    "index": int(args.get("index") or 0)})
         if name == "reply_post":
-            return h.brain.reply(actor, int(args.get("run_id") or 0), args.get("text", ""))
+            return h.brain.reply(actor, int(args.get("run_id") or 0), args.get("text", ""), str(args.get("media_token") or ""))
         if name == "replace_channel_media":
             return h.brain.channel_media(actor, int(args.get("run_id") or 0), str(args.get("channel") or ""), str(args.get("media_token") or ""))
         if name == "edit_brand":

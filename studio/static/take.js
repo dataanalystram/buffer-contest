@@ -43,8 +43,16 @@ function tkPick(f) {
 
 $("#takeForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  if (!$("#tkOwns").checked) return toast("Tick “This is my video” first. One take only clips videos you own.");
-  if (!T.sel.size) return toast("Pick at least one channel");
+  // errors stay on the page under the button (a toast alone was easy to miss: live test 2 Nov 2026)
+  const say = (m) => { $("#tkErr").textContent = m; if (m) toast(m, 6000); };
+  say("");
+  if (!$("#tkOwns").checked) return say("Tick “This is my video, or I have the rights to it” first. One take only clips videos you own.");
+  if (!T.sel.size) return say("Pick at least one channel for the clips (below).");
+  if (T.src === "upload" && !T.file) return say("Choose a video first (MP4, MOV or WebM up to 40 MB), or try the sample take.");
+  if (T.src === "link") {
+    const u = $("#tkUrl").value.trim();
+    if (!/^https:\/\/[^\s/]+\.[^\s/]+\/\S+/.test(u)) return say("Paste a direct https:// link to your video file, e.g. https://your-storage.example.com/talk.mp4.");
+  }
   const body = { owns: true, channel_ids: [...T.sel] };
   const n = $("#tkCount").value; if (n) body.count = +n;
   const b = $("#tkGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
@@ -60,7 +68,7 @@ $("#takeForm").addEventListener("submit", async (ev) => {
     }
     const t = await api("/api/takes", { method: "POST", body });
     showTake(t); watchTake(t.id);
-  } catch (e) { toast(e.message, 6000); }
+  } catch (e) { say(e.message); }
   finally { b.disabled = false; b.textContent = "Make clips"; }
 });
 $("#tkSample").onclick = async () => {
@@ -111,6 +119,11 @@ function showTake(t) {
   }
   const ready = clips.filter((c) => c.status === "ready").length;
   $("#spreadBar").hidden = !(t.status === "ready" && ready);
+  // the sample's clips only spread in the sample workspace (the server refuses them in a real account): say so up front
+  const sampleOnly = !!t.sample && !(S.session && S.session.demo);
+  $("#spreadGo").hidden = sampleOnly; $("#spreadWeek").hidden = sampleOnly; $("#spreadHelp").hidden = sampleOnly;
+  $("#spreadSampleNote").hidden = !sampleOnly;
+  $("#spreadErr").textContent = "";
   $("#spreadCount").textContent = `${ready} clip${ready === 1 ? "" : "s"} ready`;
   if (T.edit) openEditor(T.edit);
 }
@@ -201,9 +214,10 @@ $("#spreadGo").onclick = async () => {
   try {
     const out = await api(`/api/takes/${T.take.id}/place`, { method: "POST", body: { dry_run: true, week_of: $("#spreadWeek").value } });
     T.plan = out;
-    if (!out.plan.placements.length) { toast(out.plan.unplaced[0]?.why || "No open posting slots that week.", 6000); return; }
+    $("#spreadErr").textContent = "";
+    if (!out.plan.placements.length) { const m = out.plan.unplaced[0]?.why || "No open posting slots that week."; $("#spreadErr").textContent = m; toast(m, 6000); return; }
     await spread(out);
-  } catch (e) { toast(e.message, 6000); }
+  } catch (e) { $("#spreadErr").textContent = e.message; toast(e.message, 6000); }
   finally { b.disabled = false; b.textContent = "Spread into my week"; }
 };
 async function spread(out) {

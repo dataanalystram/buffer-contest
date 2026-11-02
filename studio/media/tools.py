@@ -156,16 +156,17 @@ def media_render(style: str, hook: str, source_path: str | None = None, images: 
                  ratios: list[str] | None = None, facts: list[str] | None = None, credit: str = "", words_path: str | None = None,
                  names: list[str] | None = None, clip: list[float] | None = None, music: str = "auto", brand: dict | None = None,
                  official: bool = False, rights_confirmed: bool = False, run_dir: str | None = None,
-                 brand_colors: bool = False, captions_mode: str = "auto", detect_own_captions: bool = False) -> dict:
+                 brand_colors: bool = False, captions_mode: str = "auto", detect_own_captions: bool = False,
+                 brand_pass=False, cover_png: str | None = None, logo: bool = True) -> dict:
     from .compose import render_style
     style = _styles.resolve(style)
     if not _styles.known(style):
         return {"error": f"Unknown style {style!r}. Pick one of: {', '.join(_styles.ALL_IDS)}."}
-    if source_path and not (rights_confirmed or official):
+    if source_path and not (rights_confirmed or official) and style != "none":
         return {"needs_confirmation": True,
                 "question": f"This uses someone else's video{(' (' + credit + ')') if credit else ''}. I'll credit it on screen "
                             "and in the caption. Do you have the right to repost it (or is it fair commentary)?"}
-    if source_path and not credit:
+    if source_path and not credit and style != "none":
         return {"error": "A credit line is required for any video you didn't make (e.g. 'Video: @handle on X')."}
     words = json.loads(Path(words_path).read_text())["words"] if words_path else []
     d = _run_dir({"run_dir": run_dir})
@@ -174,9 +175,11 @@ def media_render(style: str, hook: str, source_path: str | None = None, images: 
         out = d / f"{style}_{r.replace(':', 'x')}.mp4"
         m = render_style(source_path, style, out=str(out), ratio=r, hook=hook, facts=facts, brand=brand, words=words,
                          credit=credit, clip=tuple(clip) if clip else None, images=images, music_mood=music, names=names,
-                         brand_colors=brand_colors, captions_mode=captions_mode, detect_own_captions=detect_own_captions)
+                         brand_colors=brand_colors, captions_mode=captions_mode, detect_own_captions=detect_own_captions,
+                         brand_pass=brand_pass, cover_png=cover_png, logo=logo)
         outs.append({k: m.get(k) for k in ("path", "ratio", "width", "height", "duration", "clip", "captions", "burned_subs",
-                                           "music", "caption_problems", "captions_note", "source_captions")})
+                                           "music", "caption_problems", "captions_note", "source_captions", "thumbnail_offset_ms",
+                                           "cover_frame_secs", "brand_pass", "fit", "logo")})
     return {"renders": outs}
 
 

@@ -727,6 +727,26 @@ class Studio:
                             "WHERE user_id=? ORDER BY id DESC", (a.uid,))
         return [dict(r) | {"channels": json.loads(r["channels"]) if r["channels"] else None} for r in rows]
 
+    def set_agent_cap(self, a: Actor, token_id: int, daily_cap: int) -> dict:
+        """Change a token's daily cap (1-100 actions a day) without minting a new one. Humans only: an agent can never raise
+        its own limit (SECURITY_RULES 4). Sample-workspace tokens stay at 10."""
+        if a.kind != "human":
+            raise ActionError("Only a human can change a token's daily limit.", 403)
+        try:
+            cap = int(daily_cap)
+        except (TypeError, ValueError):
+            raise ActionError("daily_cap must be a whole number from 1 to 100.")
+        if not 1 <= cap <= 100:
+            raise ActionError("daily_cap must be a whole number from 1 to 100.")
+        if demo.is_demo(a.uid):
+            cap = min(cap, 10)
+        rows = self.store.q("SELECT id,daily_cap FROM agent_tokens WHERE id=? AND user_id=? AND revoked=0", (token_id, a.uid))
+        if not rows:
+            raise ActionError("No such token.", 404)
+        self.store.x("UPDATE agent_tokens SET daily_cap=? WHERE id=? AND user_id=?", (cap, token_id, a.uid))
+        self.store.audit(a.uid, a.label, "set_agent_cap", "safety", {"id": token_id, "from": rows[0]["daily_cap"], "to": cap})
+        return {"id": token_id, "daily_cap": cap}
+
     def revoke_agent_token(self, a: Actor, token_id: int) -> dict:
         if a.kind != "human":
             raise ActionError("Only a human can revoke tokens.", 403)

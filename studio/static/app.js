@@ -712,9 +712,15 @@ async function loadTokens() {
   const box = $("#tokens"), toks = r.tokens.filter((t) => !t.revoked);
   box.innerHTML = toks.length ? `<ul class="ax-list">${toks.map((t) => `<li class="ax-row" data-testid="token-row">${aiMark(t.name, 32)}<span class="ax-name"><b>${esc(t.name)}</b><small>${esc(POL[t.policy] || t.policy)} · ${t.daily_cap} posts a day</small></span>
       <span class="ax-used ${t.last_used ? "on" : ""}">${t.last_used ? "Last used " + esc(timeAgo(t.last_used * 1000)) : "Not used yet"}</span>
+      <button class="link" type="button" data-testid="token-cap-edit" data-id="${t.id}" data-cap="${t.daily_cap}">Change limit</button>
       <button class="link danger" type="button" data-testid="revoke-token" data-id="${t.id}">Revoke</button></li>`).join("")}</ul>`
     : `<p class="muted ib-none">No app has a token yet. Claude and ChatGPT sign in with OAuth and appear in the activity below once they act.</p>`;
   box.querySelectorAll("[data-testid=revoke-token]").forEach((b) => (b.onclick = async () => { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "DELETE" }); loadTokens(); }));
+  box.querySelectorAll("[data-testid=token-cap-edit]").forEach((b) => (b.onclick = async () => {
+    const v = prompt("Actions a day for this app (1 to 100)", b.dataset.cap); if (v === null) return;
+    try { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "PATCH", body: { daily_cap: +v } }); toast("Daily limit changed"); } catch (e) { toast(e.message, 5000); }
+    loadTokens();
+  }));
 }
 async function loadAppUsage() {
   const box = $("#axUsage");

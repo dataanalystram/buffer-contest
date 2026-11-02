@@ -18,7 +18,7 @@ def test_command_has_no_token_and_quotes():
     cmd = ib.command(42, "https://x.example/app?a=1;rm -rf /", "take_render", "main")
     assert "jt_" not in cmd and "read -r JOB_TOKEN" in cmd
     assert "--job 42" in cmd and "'https://x.example/app?a=1;rm -rf /'" in cmd
-    assert "flock /data/hq.lock" in cmd
+    assert "HQ_LOCK=/data/hq.lock" in cmd and "flock" not in cmd  # the worker locks after its heartbeat starts
 
 
 class _House:

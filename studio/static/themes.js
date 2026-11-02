@@ -25,20 +25,29 @@
   const AUTO = { id: "auto", label: "Let the agent choose", short: "Picks the best style from your story and your words.", category: "auto",
     duration: "Auto", popularity: 0, about: "The agent reads your story and your words, picks the style that fits, and says why in the plan.",
     best_for: ["Reads your story and your words", "Picks from every style in the gallery", "Says why in the plan, so you can switch"] };
+  // "No style: post my video as it is" (owner, 2 Nov 2026): only trimmed / fitted to 9:16, the logo (toggle, on by default)
+  // and the end card. The agent respects it; MCP set_theme takes "none".
+  const NONE = { id: "none", label: "No style", short: "Post my video as it is: fitted to the frame, your logo, the end card.", category: "auto",
+    duration: "As is", popularity: 0, about: "Your video exactly as you made it, only lightly finished: trimmed and fitted to 9:16 (blurred sides when the shape differs), your logo if you want it, and the Follow end card. No captions, no theme, no music.",
+    best_for: ["Videos you already edited", "Keeps your own captions and sound", "Add my logo: on by default"] };
+  const LOGO_KEY = "hq_add_logo";
+  const logoOn = () => { try { return localStorage.getItem(LOGO_KEY) !== "0"; } catch (_) { return true; } };
   const CATS = [["all", "All styles"], ["news", "News"], ["startups", "Startups"], ["clips", "Clips"], ["explainers", "Explainers"],
     ["cinematic", "Cinematic"], ["saved", "Saved"]];
   const CHECK = `<svg class="hqt-ck" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg>`;
   const STAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>`;
   let dlgSeq = 0;
 
+  const SPECIAL = (id) => id === "auto" || id === "none";
+  const specialPic = (t) => `<span class="${t.id === "none" ? "hqt-auto-pic hqt-none-pic" : "hqt-auto-pic"}" aria-hidden="true"><span>${t.id === "none" ? "▢" : "✦"}</span></span>`;
   function thumb(t, cls) {
-    if (t.id === "auto") return `<span class="${cls} hqt-auto-pic" aria-hidden="true"><span>✦</span></span>`;
+    if (SPECIAL(t.id)) return `<span class="${cls}">${specialPic(t)}</span>`;
     return `<span class="${cls}"><img loading="lazy" alt="" src="${esc(t.thumb)}"></span>`;
   }
 
   function mount(el, opts = {}) {
     let value = opts.value || "auto";
-    let items = [AUTO];
+    let items = [AUTO, NONE];
     let ready = false;
     const uid = "hqt" + (++dlgSeq) + Math.random().toString(36).slice(2, 6);
     el.classList.add("hqt");
@@ -48,16 +57,24 @@
           <b class="hqt-now" data-testid="video-style-name" aria-live="polite">Let the agent choose</b>
           <span class="hqt-vs-d" data-testid="video-style-about"></span></span>
         <span class="hqt-fmt" data-testid="video-style-format"></span>
+        <label class="hqt-logo" data-testid="theme-none-logo-wrap" hidden><input type="checkbox" data-testid="theme-none-logo" checked> Add my logo</label>
         <button type="button" class="btn2 sm hqt-change" data-testid="theme-change" aria-haspopup="dialog" aria-describedby="${uid}K">Change</button>
       </div>`;
     const now = el.querySelector(".hqt-now"), about = el.querySelector(".hqt-vs-d"), pic = el.querySelector(".hqt-vs-pic");
     const fmt = el.querySelector(".hqt-fmt"), change = el.querySelector(".hqt-change");
+    const logoWrap = el.querySelector(".hqt-logo"), logoBox = el.querySelector("[data-testid=theme-none-logo]");
+    logoBox.checked = logoOn();
+    logoBox.addEventListener("change", () => {
+      try { localStorage.setItem(LOGO_KEY, logoBox.checked ? "1" : "0"); } catch (_) {}
+      if (typeof opts.onLogo === "function") opts.onLogo(logoBox.checked);
+    });
 
     function paintCard() {
       const t = items.find((x) => x.id === value) || AUTO;
       now.textContent = t.label;
       about.textContent = t.short || "";
-      pic.innerHTML = t.id === "auto" ? `<span class="hqt-auto-pic"><span>✦</span></span>` : `<img alt="" src="${esc(t.thumb)}">`;
+      pic.innerHTML = SPECIAL(t.id) ? specialPic(t) : `<img alt="" src="${esc(t.thumb)}">`;
+      logoWrap.hidden = t.id !== "none";
       const f = typeof opts.formatLabel === "function" ? opts.formatLabel() : "";
       fmt.textContent = f || ""; fmt.hidden = !f;
     }
@@ -101,14 +118,15 @@
     }
     function list() {
       const q = st.q.trim().toLowerCase();
-      let out = items.filter((t) => t.id !== "auto" && inCat(t, st.cat) &&
+      let out = items.filter((t) => !SPECIAL(t.id) && inCat(t, st.cat) &&
         (!q || [t.label, t.short, t.about, (t.best_for || []).join(" "), t.category_label].join(" ").toLowerCase().includes(q)));
       out = out.sort(st.sort === "az" ? (a, b) => a.label.localeCompare(b.label) : (a, b) => (a.popularity || 99) - (b.popularity || 99));
       const showAuto = st.cat === "all" && (!q || (AUTO.label + " " + AUTO.short + " auto agent").toLowerCase().includes(q));
-      return showAuto ? [AUTO, ...out] : out;
+      const showNone = st.cat === "all" && (!q || (NONE.label + " " + NONE.short + " none as is plain original").toLowerCase().includes(q));
+      return [...(showAuto ? [AUTO] : []), ...(showNone ? [NONE] : []), ...out];
     }
     function drawRail() {
-      const themes = items.filter((t) => t.id !== "auto"), f = favs();
+      const themes = items.filter((t) => !SPECIAL(t.id)), f = favs();
       rail.innerHTML = CATS.map(([k, l]) => {
         const n = k === "all" ? themes.length : k === "saved" ? themes.filter((t) => f.includes(t.id)).length : themes.filter((t) => t.category === k).length;
         return `<button type="button" class="hqt-cat${st.cat === k ? " on" : ""}" data-cat="${k}" data-testid="theme-cat-${k}" aria-pressed="${st.cat === k}">
@@ -120,7 +138,7 @@
       const on = t.id === st.pending;
       return `<button type="button" role="radio" class="hqt-tc${on ? " on" : ""}" data-theme="${esc(t.id)}" aria-checked="${on}" tabindex="-1"
         data-testid="theme-${esc(t.id)}" aria-label="${esc(t.label)}. ${esc(t.short || "")}">
-        <span class="hqt-tc-pic">${t.id === "auto" ? `<span class="hqt-auto-pic" aria-hidden="true"><span>✦</span></span>` : `<img loading="lazy" alt="" src="${esc(t.thumb)}">`}
+        <span class="hqt-tc-pic">${SPECIAL(t.id) ? specialPic(t) : `<img loading="lazy" alt="" src="${esc(t.thumb)}">`}
           <span class="hqt-dur" aria-hidden="true">${esc(t.duration || "")}</span>${on ? CHECK : ""}${favs().includes(t.id) ? `<span class="hqt-star" aria-hidden="true">${STAR}</span>` : ""}</span>
         <span class="hqt-tc-n">${esc(t.label)}</span><span class="hqt-tc-d">${esc(t.short || "")}</span></button>`;
     }
@@ -128,7 +146,7 @@
       st.shown = list();
       grid.innerHTML = st.shown.map(cardHtml).join("");
       empty.hidden = st.shown.length > 0;
-      const n = st.shown.filter((t) => t.id !== "auto").length;
+      const n = st.shown.filter((t) => !SPECIAL(t.id)).length;
       countEl.textContent = `${n} ${n === 1 ? "style" : "styles"}${st.cat !== "all" || st.q ? " shown" : ""}`;
       const cur = grid.querySelector(".hqt-tc.on") || grid.querySelector(".hqt-tc");
       if (cur) cur.tabIndex = 0;
@@ -139,18 +157,18 @@
     }
     function drawPreview() {
       const t = items.find((x) => x.id === st.pending) || AUTO;
-      const vid = t.id !== "auto" && t.loop && !reduced();
-      prev.innerHTML = `<div class="hqt-pv-frame">${t.id === "auto" ? `<span class="hqt-auto-pic"><span>✦</span></span>` :
+      const vid = !SPECIAL(t.id) && t.loop && !reduced();
+      prev.innerHTML = `<div class="hqt-pv-frame">${SPECIAL(t.id) ? specialPic(t) :
           `<img alt="" src="${esc(t.thumb)}">${vid ? `<video muted loop playsinline autoplay preload="none" src="${esc(t.loop)}" aria-hidden="true"></video>` : ""}`}
           <span class="hqt-pv-ratio" aria-hidden="true">9:16</span></div>
         <div class="hqt-pv-t"><h3 data-testid="theme-preview-name">${esc(t.label)}</h3>
           ${t.category_label ? `<span class="hqt-pv-cat">${esc(t.category_label)} · ${esc(t.duration || "")}</span>` : ""}
           <p>${esc(t.about || t.short || "")}</p>
-          <ul class="hqt-pv-list">${(t.best_for || []).slice(0, 3).map((b) => `<li>${CHECK}<span>${t.id === "auto" ? "" : "Great for "}${esc(b)}</span></li>`).join("")}</ul></div>`;
+          <ul class="hqt-pv-list">${(t.best_for || []).slice(0, 3).map((b) => `<li>${CHECK}<span>${SPECIAL(t.id) ? "" : "Great for "}${esc(b)}</span></li>`).join("")}</ul></div>`;
       const v = prev.querySelector("video");
       if (v) { v.addEventListener("canplay", () => v.classList.add("on"), { once: true }); v.play().catch(() => {}); }
-      const fav = t.id !== "auto" && favs().includes(t.id);
-      favBtn.disabled = t.id === "auto";
+      const fav = !SPECIAL(t.id) && favs().includes(t.id);
+      favBtn.disabled = SPECIAL(t.id);
       favBtn.setAttribute("aria-pressed", String(fav));
       favBtn.querySelector("span").textContent = fav ? "Saved to favourites" : "Save to favourites";
       apply.textContent = t.id === value ? "Keep this style" : "Apply theme";
@@ -190,7 +208,7 @@
     search.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { e.preventDefault(); (grid.querySelector(".hqt-tc.on") || grid.querySelector(".hqt-tc"))?.focus(); } });
     sort.addEventListener("change", () => { st.sort = sort.value; drawGrid(); });
     favBtn.addEventListener("click", () => {
-      const id = st.pending; if (id === "auto") return;
+      const id = st.pending; if (SPECIAL(id)) return;
       const f = favs(), has = f.includes(id);
       setFavs(has ? f.filter((x) => x !== id) : [...f, id]);
       drawRail(); drawGrid(); drawPreview();  // the button's own label says it (a toast would sit under the modal)
@@ -243,13 +261,13 @@
     change.addEventListener("click", open);
     paintCard();
     load().then((themes) => {
-      items = [AUTO, ...themes];
+      items = [AUTO, NONE, ...themes];
       ready = true;
       if (!items.some((t) => t.id === value)) value = "auto";
       paintCard();
       if (dlg.open) { drawRail(); drawGrid(); drawPreview(); }
     }).catch(() => { about.textContent = "Styles didn't load; the agent will choose."; change.disabled = true; });
-    return { get: () => value, set: (id) => (ready ? pick(id, false) : (value = id || "auto")), open, close, refresh: paintCard,
+    return { get: () => value, logo: () => logoBox.checked, set: (id) => (ready ? pick(id, false) : (value = id || "auto")), open, close, refresh: paintCard,
       destroy: () => { close(); dlg.remove(); el.innerHTML = ""; el.classList.remove("hqt"); } };
   }
   window.HQThemes = { mount, load };
