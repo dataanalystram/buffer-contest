@@ -1141,14 +1141,7 @@ class House:
         from . import instabox_worker
         if instabox_worker.enabled():  # opt-in (HQ_RENDER_BACKEND=instabox): a warm InstaBox VM, docs/INSTABOX_WORKER.md
             ok, why = instabox_worker.dispatch(self, jid, workflow, inputs, ttl)
-            if ok:
-                return ok, why
-            if not instabox_worker.actions_fallback():
-                # Opt-in only (HQ_ACTIONS_FALLBACK=1): while GitHub Actions can't start jobs (billing, 2 Nov 2026) a fallback
-                # run would only sit queued, so the job fails now with the box's own reason.
-                print(f"render: InstaBox dispatch failed for job {jid} ({why}); GitHub Actions fallback is off", flush=True)
-                return False, f"The InstaBox render worker didn't start ({why})"
-            if not os.environ.get("GH_DISPATCH_TOKEN"):
+            if ok or not os.environ.get("GH_DISPATCH_TOKEN"):
                 return ok, why
             # InstaBox failed or timed out: fall back to the GitHub Actions run. open_claim below replaces the job token
             # the box was given, so a box job that did start late can no longer read or write this job.

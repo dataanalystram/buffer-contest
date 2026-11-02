@@ -67,19 +67,7 @@ python3 -m venv /data/venv && /data/venv/bin/pip install -r /data/hq/requirement
 /data/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
 ```
 Jobs log to `/data/logs/job-<id>.log` on the box.
-App env on Render: `HQ_RENDER_BACKEND=instabox`, `INSTABOX_API_KEY` (secret), `HQ_INSTABOX_MACHINE`, `HQ_INSTABOX_REF`,
-and optionally `HQ_ACTIONS_FALLBACK` (see below).
-
-## GitHub Actions fallback: off by default (`HQ_ACTIONS_FALLBACK=0`)
-Since 2 Nov 2026 GitHub Actions refuses to start jobs on this repo (billing / spending limit). A fallback run would only
-sit queued, so the job looked stuck instead of failed. Until billing is fixed the fallback is **opt-in**:
-
-- `HQ_ACTIONS_FALLBACK` unset or `0` (default): when InstaBox fails, times out or answers non-200, the job fails at once
-  with the box's reason ("The InstaBox render worker didn't start (InstaBox answered 503)"), and GitHub is never called.
-- `HQ_ACTIONS_FALLBACK=1`: the old behaviour; `House._dispatch_github` starts the GitHub Actions run (needs
-  `GH_DISPATCH_TOKEN`), and its `open_claim` kills the token the box was given.
-
-Turn it back on (Render env `HQ_ACTIONS_FALLBACK=1`) once GitHub Actions runs jobs again.
+App env on Render: `HQ_RENDER_BACKEND=instabox`, `INSTABOX_API_KEY` (secret), `HQ_INSTABOX_MACHINE`, `HQ_INSTABOX_REF`.
 
 ## Cost per video
 Free plan: **$0**. On Pro (if ever needed): ~1–2 min of a 4/8 box per Reel ≈ $0.001; a 60-min One take
@@ -87,9 +75,8 @@ Free plan: **$0**. On Pro (if ever needed): ~1–2 min of a 4/8 box per Reel ≈
 
 ## Notes
 - Free plan after 1 Dec 2026: only one free machine *runs* at a time (paused ones are kept). The worker box
-  resumes per job and pauses after 30 idle minutes; if another free box is running then, a resume can fail; the job
-  then fails with that reason (or falls back to GitHub Actions when `HQ_ACTIONS_FALLBACK=1`).
+  resumes per job and pauses after 30 idle minutes; if another free box is running then, a resume can fail and the
+  job falls back to GitHub Actions.
 - Checked 2 Nov 2026: `GET /v1/machines/{id}/history` (`instabox history`) keeps the command string and byte counts,
   **not the exec stdin**, so the job token (stdin) is not in the machine's history; the command string has no secret.
-- Fallback to GitHub Actions: done, opt-in with `HQ_ACTIONS_FALLBACK=1` (`House._dispatch_github`, tests in
-  tests/studio/test_instabox_worker.py).
+- Fallback to GitHub Actions: done (`House._dispatch_github`, tests in tests/studio/test_instabox_worker.py).

@@ -21,11 +21,8 @@ Env (all on the web app):
   HQ_INSTABOX_MACHINE            the machine id (m_...)
   HQ_INSTABOX_REF                git ref the box runs (default main)
   HQ_INSTABOX_WAKE_S             seconds to wait for the box to be ready (default 60)
-  HQ_ACTIONS_FALLBACK=1          opt in to the GitHub Actions fallback (default 0, off: 2 Nov 2026, Actions can't start
-                                 jobs until GitHub billing is fixed, so a fallback run would only sit queued)
-Fallback (only with HQ_ACTIONS_FALLBACK=1): when InstaBox fails, times out or answers non-200, House._dispatch_github
-starts the GitHub Actions run instead (if GH_DISPATCH_TOKEN is set); its open_claim replaces the box's job token, so a late
-box job can't act. With the fallback off, the job fails at once with the box's reason.
+Fallback: when InstaBox fails, times out or answers non-200, House._dispatch_github starts the GitHub Actions run
+instead (if GH_DISPATCH_TOKEN is set); its open_claim replaces the box's job token, so a late box job can't act.
 One-time box setup (docs/INSTABOX_WORKER.md): /data/hq checkout (read access through an InstaBox Org Secret for
 github.com, so no GitHub token is stored on the box), apt ffmpeg, /data/venv with requirements-worker*.txt.
 """
@@ -38,11 +35,6 @@ import uuid
 import httpx
 
 API = "https://api.instabox.sh/v1"
-
-
-def actions_fallback() -> bool:
-    """Fall back to a GitHub Actions run when InstaBox fails? Off unless HQ_ACTIONS_FALLBACK is 1/true/yes/on."""
-    return (os.environ.get("HQ_ACTIONS_FALLBACK") or "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def enabled() -> bool:
