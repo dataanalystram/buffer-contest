@@ -19,8 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRIES = ["studio.render_worker"]  # the GitHub Actions take / render / recap worker
 STDLIB = set(sys.stdlib_module_names)
 # Reachable but not needed by the worker: the Postgres store only opens for a postgres DATABASE_URL (web dyno); rembg is
-# an optional cut-out that falls back to the plain photo.
-WEB_ONLY = {"psycopg", "rembg"}
+# an optional cut-out that falls back to the plain photo; requests is only patched by the demo's no-outbound guard
+# (studio/demo_view.py, guarded) for the Oracle SDK, which only the web dyno loads.
+WEB_ONLY = {"psycopg", "rembg", "requests"}
 # import name -> requirements-worker.txt name. Guarded (try/except ImportError) imports count too: the worker needs
 # yt-dlp, faster-whisper, PySceneDetect and MediaPipe for real, it only degrades without them.
 PIP_NAME = {"PIL": "pillow", "yt_dlp": "yt-dlp", "faster_whisper": "faster-whisper", "imageio_ffmpeg": "imageio-ffmpeg",

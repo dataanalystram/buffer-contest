@@ -149,6 +149,10 @@ class BrandOnboard:
         if sid and demo:  # the sample workspace gets the cached extraction: instant, no network
             return self._from_sample(sid, t0)
         if demo and not demo_guard.take(self.store, a.uid, "import"):
+            from .demo_view import view_only
+            if view_only():
+                raise OnboardError("The demo doesn't import live websites (it makes no outbound calls). Try the Linear or "
+                                   "Notion sample brands, or connect Buffer to import any site.")
             raise OnboardError("Live website import is limited in the free sample (3 a day). Try the Linear or Notion sample "
                                "brands, or connect Buffer to import any site.")
         got = self._live(url)

@@ -46,6 +46,11 @@ ALLOW = [
     ("POST", r"/api/brand/preview"), ("POST", r"/api/brand/themes-preview"), ("POST", r"/api/brand-kits/preview"),
     ("POST", r"/api/brand-kits/palette"), ("POST", r"/api/brand-studio/preview"),
     ("PUT", r"/api/onboarding"),  # the guided tour's progress in this demo session, nothing else
+    # Looking at the sample brands: switch between the bundled kits / example brands (this visitor's own demo rows only),
+    # the cached sample extraction (a draft, nothing saved; live sites stay off), and template previews (the bundled
+    # example Reel: the video spend kind is closed, so nothing reaches the worker).
+    ("POST", r"/api/brand-kits/[^/]+/activate"), ("POST", r"/api/brand-studio/examples/[^/]+"),
+    ("POST", r"/api/brand/extract"), ("POST", r"/api/templates/render"),
 ]
 # Agent tools that change settings or send: refused in the demo however they are reached (button, REST or the agent).
 BLOCKED_TOOLS = {
@@ -65,13 +70,11 @@ WOULD = [
     (r"^/api/approvals/[^/]+/reschedule$", None, "move this post to a new time"),
     (r"^/api/ai/keys/", None, "save or remove your own AI key"),
     (r"^/api/ai(/engine)?$", None, "change your AI engine"),
-    (r"^/api/brand/(from-website|extract|onboard)$", None, "import your brand from your website"),
+    (r"^/api/brand/(from-website|onboard)$", None, "import your brand from your website"),
     (r"^/api/brand/samples/[^/]+/schedule$", None, "schedule this sample in your Buffer queue"),
-    (r"^/api/brand-kits/[^/]+/activate$", None, "switch your active brand kit"),
     (r"^/api/brand-kits/[^/]+$", "DELETE", "delete this brand kit"),
     (r"^/api/brand", None, "save your brand kit"),
     (r"^/api/templates/slots", None, "schedule a template to post on a timetable"),
-    (r"^/api/templates/render$", None, "render this template on the video worker"),
     (r"^/api/device-link$", None, "make a one-time link to open your account on another device"),
     (r"^/api/disconnect$", None, "disconnect Buffer and delete everything HuhQueue keeps for you"),
     (r"^/api/ideas$", None, "save this idea to your Buffer"),
