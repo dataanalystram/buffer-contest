@@ -100,11 +100,11 @@ def test_credit_lines_in_plain_words_and_warnings(app, human, oci_env, claude_en
     assert st["claude_pool"]["label"].startswith("App-wide Claude pool: $59.66 of $60")
     assert st["oracle_pool"]["label"] == "App-wide Gemini pool: $200.00 of $200 left"
     budget.record(app.state.store, uid, 0.40)  # 74%: the 70% warning
-    c = human.get("/api/ai/engine").json()["engines"][1]["credit"]
+    c = human.get("/api/ai/engine").json()["engines"][0]["credit"]
     assert c["level"] == "low" and c["used_pct"] == 74
     budget.record(app.state.store, uid, 0.30)  # past 100%: out, and Claude hands over
     st = human.get("/api/ai/engine").json()
-    assert st["engines"][1]["credit"]["level"] == "out" and not st["engines"][1]["available"]
+    assert st["engines"][0]["credit"]["level"] == "out" and not st["engines"][0]["available"]
     assert st["runs"] == "gemini-flash"
     # the existing allowance meter (70% / 100% nudges) is unchanged
     assert human.get("/api/agent/brain").json()["meter"]["out"]
@@ -218,16 +218,18 @@ def test_agent_falls_back_engine_by_engine_with_a_note(app, human, monkeypatch):
             raise budget.BudgetExceeded("Your $1.00 of included Claude usage is used up. Add your own key")
         raise llm.LLMError("Oracle Cloud answered HTTP 429: quota")
     monkeypatch.setattr(agent_brain.Brain, "_llm_loop", loop)
+    planned = []
+    monkeypatch.setattr(agent_brain.Brain, "_planner", lambda self, a, rid, tools, message, engs: planned.append(rid))
     h = app.state.house
     h.sync = True
     r = human.post("/api/agent/runs", json={"prompt": "Write a short post about a new AI launch https://news.example.com/ai-launch",
                                             "format": "text"}).json()
     run = human.get(f"/api/agent/runs/{r['id']}").json()
-    assert tried == ["claude", "gemini-flash"]
+    assert tried == ["claude", "gemini-flash"] and planned == [r["id"]]  # then the standard plan
     notes = run["result"].get("notes") or []
     assert any(n.startswith("Claude is out of credit") and n.endswith("so I switched to Gemini Flash.") for n in notes), notes
     assert any(n.startswith("Gemini Flash didn't answer") and n.endswith("so I switched to the standard plan.") for n in notes), notes
-    assert run["status"] in ("ready", "failed", "running") and "Unexpected error" not in json.dumps(run["result"].get("thread"))
+    assert "Unexpected error" not in json.dumps(run["result"].get("thread"))
 
 
 # ------------------------------------------------------------------ REST and MCP parity
@@ -239,7 +241,7 @@ def test_rest_and_mcp_get_and_set(app, human, oci_env, claude_env):
     assert human.get("/api/agent/brain").json()["engine"]["selected"] == "gemini-pro"
     names = {t["name"] for t in agent_routes.TOOLS}
     assert {"get_ai_engine", "set_ai_engine"} <= names and "get_ai_engine" in mcp.READ_ONLY
-    tok = agent_token(human, policy="auto")
+    tok = agent_token(human)
     _, got = mcp_call(human, tok, "get_ai_engine")
     assert got["selected"] == "gemini-pro" and any(o["id"] == "claude" for o in got["engines"])
     _, got = mcp_call(human, tok, "set_ai_engine", {"engine": "claude"})
