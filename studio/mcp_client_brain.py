@@ -115,7 +115,10 @@ TOOLS: list[dict[str, Any]] = [
          "start_s": {"type": "number"}, "end_s": {"type": "number"},
          "cut_first_s": {"type": "number", "description": "Remove this many seconds from the start"},
          "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]},
-         "captions": {"type": "boolean", "description": "Burn in word-by-word captions (default true)"},
+         "captions": {"type": ["boolean", "string"], "enum": [True, False, "auto", "replace", "on", "off"],
+                      "description": "Word-by-word captions. Default (true / auto): added unless the video already has captions "
+                                     "burned in (then none are added, so they never double; render_status says so). "
+                                     "\"replace\": crop the old captions off and caption it again. \"on\": caption it anyway. false: none."},
          "caption_style": {"type": "string", "enum": ["opus", "huhbyte_news", "minimal", "hype"], "description": "Caption/edit style"},
          "theme": {"type": "string", "description": "A video theme id from list_themes (overrides caption_style's look)"},
          "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
@@ -126,7 +129,7 @@ TOOLS: list[dict[str, Any]] = [
      "from slides (image URLs, e.g. render_carousel's media_urls) as a slideshow with the end card. Returns a job id; poll "
      "render_status(job_id).",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC, "images": {"type": "array", "items": S, "maxItems": 10},
-         "hook": S, "theme": S, "captions": {"type": "boolean"}, "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
+         "hook": S, "theme": S, "captions": {"type": ["boolean", "string"], "enum": [True, False, "auto", "replace", "on", "off"]}, "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
          "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}, "rights_confirmed": {"type": "boolean"}, "credit": S}}},
     {"name": "split_video", "description": "Split a long video into 3-7 short vertical clips on the video worker (no HuhQueue AI: "
      "Whisper transcript, built-in moment scorer, face-tracked reframe, captions, cover and end card). Give media_token / "
@@ -429,6 +432,15 @@ def t_hero_edit(studio, a, args):
     return {"url": m["url"], "media_token": m["token"], "edit": how, "report": report, "spent_usd": 0}
 
 
+def _captions_mode(v) -> str:
+    """edit_video's captions argument -> the worker's mode (owner bug 2 Nov 2026: a captioned clip got captioned again)."""
+    if v is False or v == "off":
+        return "off"
+    if v in ("replace", "on"):
+        return v
+    return "auto"  # true, missing or "auto": caption it unless captions are already burned in
+
+
 def _video_spec(h, a, args, tok, meta) -> dict:
     from .media import styles as media_styles
     style = str(args.get("theme") or args.get("caption_style") or "opus")
@@ -452,7 +464,8 @@ def _video_spec(h, a, args, tok, meta) -> dict:
             "hook": str(args.get("hook") or "")[:120], "facts": [], "credit": str(args.get("credit") or "")[:160], "names": [],
             "music": args.get("music") or "auto", "official": False,
             "rights_confirmed": bool(args.get("rights_confirmed", owned)), "source": tok, "candidate": None, "slides": [],
-            "captions": args.get("captions") is not False,
+            "captions": args.get("captions") not in (False, "off"),
+            "captions_mode": _captions_mode(args.get("captions")),
             "brand_colors": True, **_kit_spec(h, a), "via": SOURCE}
     if clip:
         spec["clip"] = clip
@@ -467,7 +480,7 @@ def t_edit_video(studio, a, args):
         raise ActionError("That media is not a video.")
     spec = _video_spec(h, a, args, tok, meta)
     out = _queue_video(h, a, spec)
-    return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "music")}}
+    return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "captions_mode", "music")}}
 
 
 def t_render_reel(studio, a, args):
@@ -526,7 +539,10 @@ def t_render_status(studio, a, args):
         out["download_url"] = h.media_url(r["media_token"])
         out["media_token"] = r["media_token"]
         m = h.media_meta(a, r["media_token"]) or {}
-        out["meta"] = {k: m.get(k) for k in ("width", "height", "duration", "ratio", "style", "captions", "clip") if m.get(k) is not None}
+        out["meta"] = {k: m.get(k) for k in ("width", "height", "duration", "ratio", "style", "captions", "clip", "captions_note")
+                       if m.get(k) not in (None, "")}
+        if m.get("captions_note"):
+            out["note"] = m["captions_note"]  # e.g. it already had captions, so none were added
     if st == "failed":
         out["error"] = (r["error"] or "")[:300]
     if st == "queued":

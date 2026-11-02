@@ -146,3 +146,75 @@ def test_import_failure_says_why(human, monkeypatch, status, needle):
     monkeypatch.setattr(netguard, "safe_stream", stream)
     res, out = mcp_call(human, agent_token(human), "library_upload_url", {"url": "https://raw.githubusercontent.com/o/private/main/a.png"})
     assert res["isError"] and needle in out, out
+
+
+# ---- Bug 3: edit_video double-captioned a clip that already had captions burned in ----
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs FFmpeg")
+CLIP4 = ROOT / "studio/sample_take/clip4.mp4"  # a finished 9:16 clip with Opus-style captions burned in at ~75%
+
+
+def _plain_video(path: Path, text: str | None = None, x: str = "(w-text_w)/2"):
+    font = ROOT / "studio/fonts/Inter-Bold.ttf"
+    vf = "format=yuv420p"
+    if text:
+        vf = (f"drawtext=fontfile={font}:text='{text}':x={x}:y=h*0.8:fontsize=48:fontcolor=white:borderw=3:bordercolor=black,"
+              + vf)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=8:r=10", "-vf", vf, str(path)],
+                   check=True, timeout=120)
+    return path
+
+
+@needs_ffmpeg
+def test_detects_captions_already_burned_in():
+    from studio.media.compose import detect_burned_captions
+    band = detect_burned_captions(str(CLIP4), 0, 30)
+    assert band and 0.6 <= band["top"] <= 0.8, band
+
+
+@needs_ffmpeg
+def test_no_captions_and_static_strap_are_not_captions(tmp_path):
+    from studio.media.compose import detect_burned_captions
+    assert detect_burned_captions(str(_plain_video(tmp_path / "plain.mp4"))) is None
+    assert detect_burned_captions(str(_plain_video(tmp_path / "strap.mp4", "Jane Doe - CEO", x="40"))) is None  # static, left
+
+
+@needs_ffmpeg
+def test_render_skips_captions_on_a_captioned_clip_with_a_note(tmp_path):
+    from studio.media.compose import render_style
+    words = [{"w": w, "s": 2.2 + i * 0.4, "e": 2.5 + i * 0.4} for i, w in enumerate("this clip already has captions".split())]
+    out = render_style(str(CLIP4), "opus", out=str(tmp_path / "o.mp4"), ratio="1:1", words=words, clip=(2.0, 5.0),
+                       music_mood="none", detect_own_captions=True, credit="Video: Buffer")
+    assert out["captions"] is False
+    assert "already has captions" in out["captions_note"]
+    assert out["source_captions"]["top"] >= 0.6
+
+
+def test_edit_video_spec_maps_captions_modes(human, monkeypatch):
+    from studio import mcp_client_brain as mcb
+    assert mcb._captions_mode(None) == "auto" and mcb._captions_mode(True) == "auto"
+    assert mcb._captions_mode(False) == "off" and mcb._captions_mode("off") == "off"
+    assert mcb._captions_mode("replace") == "replace" and mcb._captions_mode("on") == "on"
+    from studio.media.worker import _captions_args
+    assert _captions_args({"captions_mode": "auto"}) == {"captions_mode": "auto", "detect_own_captions": True}
+    assert _captions_args({"captions_mode": "replace"}) == {"captions_mode": "replace", "detect_own_captions": False}
+    assert _captions_args({"captions": True}) == {}  # older specs: unchanged behaviour
+
+
+def test_edit_video_tool_schema_offers_replace(human):
+    r = human.post("/mcp", headers={"Authorization": f"Bearer {agent_token(human)}"},
+                   json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    tools = {t["name"]: t for t in r.json()["result"]["tools"]}
+    cap = tools["edit_video"]["inputSchema"]["properties"]["captions"]
+    assert "replace" in cap["enum"] and "already has captions" in cap["description"].replace("already have captions", "already has captions")
+
+
+@needs_ffmpeg
+def test_render_replace_crops_the_old_captions_and_captions_again(tmp_path):
+    from studio.media.compose import render_style
+    words = [{"w": w, "s": 2.2 + i * 0.4, "e": 2.5 + i * 0.4} for i, w in enumerate("new captions go here now".split())]
+    out = render_style(str(CLIP4), "opus", out=str(tmp_path / "r.mp4"), ratio="1:1", words=words, clip=(2.0, 5.0),
+                       music_mood="none", captions_mode="replace", credit="Video: Buffer")
+    assert out["captions"] is True and "cropped off" in out["captions_note"]
