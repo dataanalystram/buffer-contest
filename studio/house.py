@@ -177,6 +177,11 @@ class House:
 
     def save_kit(self, a: Actor, patch: dict) -> dict:
         self.studio._guard_write(a, "save_brand_kit")  # SECURITY_RULES 4: kill switch + daily cap for agents
+        from .userlocks import held
+        with held(a.uid):  # B2: read-modify-write of the kit row
+            return self._save_kit_locked(a, patch)
+
+    def _save_kit_locked(self, a: Actor, patch: dict) -> dict:
         cur = self.kit(a)
         allowed = {"name", "handle", "website", "font", "logo", "voice"}
         for k in allowed & set(patch):

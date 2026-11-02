@@ -81,6 +81,13 @@ VIDEO_SRC = {"media_token": {"type": "string", "description": "A HuhQueue media 
              "library_id": {"type": "integer", "description": "A Library item id (list_library)"},
              "url": {"type": "string", "description": "A public https link to a video file you own (imported first)"}}
 
+COVER = {"type": ["boolean", "object"], "description": "Branded cover (thumbnail): true, or {title (cover hook, max ~10 words), "
+         "image_url (an official image for the cover), index (0-2, which of the 3 variants opens the Reel), opening_frame "
+         "(default true: the cover is the Reel's first frames, so Instagram and TikTok show it as the thumbnail)}. render_status "
+         "returns the 3 cover variants (covers[].urls) and cover_url.",
+         "properties": {"title": {"type": "string"}, "image_url": {"type": "string"}, "index": {"type": "integer", "minimum": 0, "maximum": 2},
+                        "opening_frame": {"type": "boolean"}}}
+
 TOOLS: list[dict[str, Any]] = [
     {"name": "research_link", "description": "Client brain (no HuhQueue AI). Read an article, launch page or post URL: title, site, "
      "description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos, and "
@@ -140,7 +147,7 @@ TOOLS: list[dict[str, Any]] = [
          "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
          "hook": {"type": "string", "description": "On-screen title you wrote (max ~12 words, facts only)"},
          "credit": {"type": "string", "description": "Credit line for a video the user didn't make"},
-         "rights": RIGHTS,
+         "rights": RIGHTS, "cover": COVER,
          "rights_confirmed": {"type": "boolean", "description": "Older form of rights=own/permission"}}}},
     {"name": "render_reel", "description": "Make a branded 9:16 Reel (no HuhQueue AI): from a video (same options as edit_video) or "
      "from slides (image URLs, e.g. render_carousel's media_urls) as a slideshow with the end card. Returns a job id; poll "
@@ -167,12 +174,11 @@ TOOLS: list[dict[str, Any]] = [
          "media_urls": {"type": "array", "items": S, "maxItems": 10}, "title": S,
          "format": {"type": "string", "enum": ["carousel", "reel", "photo", "text"]},
          "rights": RIGHTS, "credit": {"type": "string", "description": "Credit line, e.g. 'Video: OpenAI on YouTube'"},
-         "source_url": {"type": "string", "description": "Where the media came from (used for the credit when credit is empty)"}}}},
-    {"name": "update_brand_kit", "description": "Change the brand kit directly (no HuhQueue AI): name, handle, website, font, voice, "
-     "colors {primary, accent, text} as hex, end_card {on, line, cta}.",
-     "inputSchema": {"type": "object", "properties": {"name": S, "handle": S, "website": S, "font": S, "voice": S,
-         "colors": {"type": "object", "properties": {"primary": S, "accent": S, "text": S}},
-         "end_card": {"type": "object", "properties": {"on": {"type": "boolean"}, "line": S, "cta": S}}}}},
+         "source_url": {"type": "string", "description": "Where the media came from (used for the credit when credit is empty)"},
+         "cover": {"type": "object", "description": "The post's cover: {url (render_status cover_url or any https image; shown on "
+                   "the Planner and in previews), frame_s (thumbnail frame in seconds; default 0 = the opening frame, which is "
+                   "the branded cover when edit_video made one)}. Instagram, TikTok and Pinterest get it as Buffer's thumbnailOffset.",
+                   "properties": {"url": S, "frame_s": {"type": "number", "minimum": 0}}}}}},
     {"name": "library_upload_url", "description": "Only for a photo or video that is ALREADY at a public https URL (up to 40 MB; "
      "a Google Drive, Dropbox, OneDrive or iCloud share link goes through import_from_link, up to the Library's per-file "
      "limit): adds it to the user's Library and returns media_token and library_id for edit_video / split_video / "
@@ -589,6 +595,22 @@ def _video_spec(h, a, args, tok, meta) -> dict:
             "brand_colors": True, **_kit_spec(h, a), "via": SOURCE}
     if clip:
         spec["clip"] = clip
+    cv = args.get("cover")
+    if cv:  # branded cover variants from the worker (studio/media/covers.py), the chosen one as the opening frames
+        cv = cv if isinstance(cv, dict) else {}
+        spec["covers"] = True
+        spec["cover_hook"] = str(cv.get("title") or args.get("hook") or "")[:120]
+        try:
+            spec["cover_index"] = max(0, min(2, int(cv.get("index") or 0)))
+        except (TypeError, ValueError):
+            spec["cover_index"] = 0
+        if cv.get("opening_frame") is False:
+            spec["cover_frame"] = False
+        if cv.get("image_url"):
+            raw = _img_bytes(h, str(cv["image_url"]))
+            if not raw:
+                raise ActionError("Couldn't read cover.image_url (a public https image).")
+            spec["cover_image"] = h.put_media(a, raw, "cover-hero.jpg", kind="render", meta={"type": "photo", "role": "cover_image"})
     return spec
 
 
@@ -600,7 +622,8 @@ def t_edit_video(studio, a, args):
         raise ActionError("That media is not a video.")
     spec = _video_spec(h, a, args, tok, meta)
     out = _queue_video(h, a, spec)
-    return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "captions_mode", "music")}}
+    return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "captions_mode", "music", "covers", "cover_hook")
+                            if spec.get(k) is not None}}
 
 
 def t_render_reel(studio, a, args):
@@ -669,6 +692,17 @@ def t_render_status(studio, a, args):
                        if m.get(k) not in (None, "")}
         if m.get("captions_note"):
             out["note"] = m["captions_note"]  # e.g. it already had captions, so none were added
+        if m.get("covers"):  # edit_video(cover=...): the 3 branded variants; the chosen one opens the Reel
+            ratio = m.get("ratio") or "9:16"
+            out["covers"] = [{"variant": c.get("variant"), "layout": c.get("layout"), "frame_t": c.get("frame_t"),
+                              "urls": {rr: h.media_url(t) for rr, t in (c.get("files") or {}).items()}} for c in m["covers"]]
+            try:
+                idx = int(json.loads(r["spec"] or "{}").get("cover_index") or 0)
+            except (ValueError, TypeError):
+                idx = 0
+            pick = out["covers"][min(idx, len(out["covers"]) - 1)]["urls"]
+            out["cover_url"] = pick.get(ratio) or next(iter(pick.values()), "")
+            out["cover"] = {"url": out["cover_url"], "frame_s": 0}
     if st == "failed":
         out["error"] = (r["error"] or "")[:300]
     if st == "queued":
@@ -691,6 +725,16 @@ def t_create_package(studio, a, args):
     if credit:  # news_credit: the credit line goes in every caption (once)
         line = credit_line(credit)
         caps = {k: (v if credit.lower() in str(v).lower() else f"{str(v).rstrip()}\n\n{line}") for k, v in caps.items()}
+    cover = args.get("cover") if isinstance(args.get("cover"), dict) else {}
+    cover_url = str(cover.get("url") or "")[:500]
+    if cover_url and not cover_url.startswith("https://"):
+        raise ActionError("cover.url must be an https image URL (render_status gives cover_url).")
+    thumb_ms = None
+    if cover:
+        try:
+            thumb_ms = max(0, int(round(float(cover.get("frame_s") or 0) * 1000)))
+        except (TypeError, ValueError):
+            raise ActionError("cover.frame_s is a number of seconds.")
     pk, unknown = [], []
     for key, text in caps.items():
         hits = [c for c in chans if c["id"] == key] or [c for c in chans if c.get("service") == key]
@@ -704,6 +748,10 @@ def t_create_package(studio, a, args):
                        "text": str(text)[:5000], "media_urls": media_urls, "format": fmt, "status": "ready",
                        "media": [{"url": u, "type": "video" if u.lower().split("?")[0].endswith((".mp4", ".mov")) else "photo"}
                                  for u in media_urls], "check": h.check(a, str(text))})
+            if cover_url:
+                pk[-1]["cover_url"] = cover_url
+            if thumb_ms is not None and fmt == "reel" and c.get("service") in ("instagram", "tiktok", "pinterest"):
+                pk[-1]["options"] = {**(pk[-1].get("options") or {}), "thumbnail_offset_ms": thumb_ms}
     if not pk:
         raise ActionError(f"No connected channel matches {', '.join(unknown)}. list_channels gives ids and services.")
     inp = {"prompt": str(args.get("title") or "Post from your AI app")[:200], "via": SOURCE,
@@ -716,6 +764,8 @@ def t_create_package(studio, a, args):
             "next": "Show the user. On their yes: schedule_package(run_id, channel_id, mode='draft')."}
 
 
+# update_brand_kit is ONE tool, in studio/brand_kits.py (B1, 2 Nov 2026: two tools had the name; kit_id omitted = the
+# active kit). This helper stays for in-process callers.
 def t_update_brand_kit(studio, a, args):
     patch = {k: args[k] for k in ("name", "handle", "website", "font", "voice", "colors", "end_card") if k in args}
     if not patch:

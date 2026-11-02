@@ -90,9 +90,16 @@ class BrandStudio:
                           "buffer": not demo_guard.is_demo(a.uid)}
         return k
 
-    def save(self, a, patch: dict) -> dict:
-        """Save base fields through House (name, handle, colours, logo, voice, end card text) and the template extras here."""
+    def save(self, a, patch: dict, extra: dict | None = None) -> dict:
+        """Save base fields through House (name, handle, colours, logo, voice, end card text) and the template extras here.
+        The whole read-modify-write runs under the workspace's brand lock (B2), and `extra` (keys set straight on the
+        extras row, e.g. activate()'s active_kit) lands in the same single write."""
         self.studio._guard_write(a, "save_brand_studio")
+        from .userlocks import held
+        with held(a.uid):
+            return self._save_locked(a, patch, extra)
+
+    def _save_locked(self, a, patch: dict, extra: dict | None) -> dict:
         base = {k: patch[k] for k in ("name", "handle", "website", "logo", "voice") if k in patch}
         if isinstance(patch.get("colors"), dict):
             base["colors"] = {k: v for k, v in patch["colors"].items() if k in ("primary", "accent", "text")}
@@ -146,6 +153,8 @@ class BrandStudio:
                 ex["theme"] = th
             else:
                 ex.pop("theme", None)
+        if extra:
+            ex.update(extra)
         self._put(a, ex)
         self.store.audit(a.uid, a.label, "save_brand_studio", "read", {"fields": sorted(patch)[:20]})
         return self.kit(a)
@@ -155,6 +164,15 @@ class BrandStudio:
         if tok and not self.house.media_meta(a, tok):
             raise StudioError("Unknown media token. Upload the card image first.")
         return tok
+
+    def update_extras(self, a, change: dict) -> dict:
+        """Merge keys into the extras row under the brand lock (never a blind read-then-write from a caller)."""
+        from .userlocks import held
+        with held(a.uid):
+            ex = self.extras(a)
+            ex.update(change)
+            self._put(a, ex)
+            return ex
 
     def _put(self, a, ex: dict) -> None:
         self.store.x("INSERT INTO brand_studio(user_id,data,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data,"
@@ -187,30 +205,77 @@ class BrandStudio:
         self.save(a, {"name": k["name"], "handle": k["handle"], "website": k["website"], "voice": k["voice"], "logo": logo_tok,
                       "colors": k["colors"], "font": k["font"], "body_font": k["body_font"], "headline_case": k["headline_case"],
                       "front_card": {**k["front_card"], "image": ""}, "end_card": {**k["end_card"], "image": ""},
-                      "hashtags": k["hashtags"], "label": k["label"], "channels": ex["channels"], "theme": _example_theme(k)})
-        cur = self.extras(a)
-        cur["example"] = example_id
-        self._put(a, cur)
+                      "hashtags": k["hashtags"], "label": k["label"], "channels": ex["channels"], "theme": _example_theme(k)},
+                  extra={"example": example_id})
         return {"kit": self.kit(a), "example": brand_examples.listing()[list(brand_examples.EXAMPLES).index(example_id)]}
 
     # ================================================================ templates
-    def list_templates(self) -> dict:
-        return {"templates": [{"id": k, **v} for k, v in templates.TEMPLATES.items()], "channels": templates.CHANNELS,
-                "styles": templates.STYLES}
+    def list_templates(self, a=None) -> dict:
+        """Built-in templates, then this workspace's custom ones (id custom:<slug>, custom: true) when an actor is given."""
+        out = [{"id": k, **v} for k, v in templates.TEMPLATES.items()]
+        if a is not None:
+            from . import custom_templates
+            out += custom_templates.attach(self.house).list(a)
+        return {"templates": out, "channels": templates.CHANNELS, "styles": templates.STYLES}
+
+    def _known(self, a, tpl: str) -> bool:
+        from . import custom_templates
+        if custom_templates.is_custom(tpl):
+            try:
+                custom_templates.attach(self.house).spec(a, tpl)
+                return True
+            except custom_templates.TemplateError:
+                return False
+        return tpl in templates.TEMPLATES
+
+    def tpl_slides(self, a, tpl: str, data, b, ratio: str, max_slides: int | None = None) -> list:
+        """A template's slides, built-in or custom, in brand b."""
+        from . import custom_templates
+        if custom_templates.is_custom(tpl):
+            return custom_templates.render_slides(custom_templates.attach(self.house).spec(a, tpl), data, b, ratio, max_slides)
+        return templates.slides(tpl, data, b, ratio, max_slides=max_slides)
+
+    def kit_brand(self, a, kit_id) -> tuple:
+        """(kit, Brand) for a render: the active kit, or the library kit kit_id WITHOUT activating it, so one session can
+        render in kit B while another works in the active kit A (nothing switches under anyone)."""
+        if not kit_id:
+            kit = self.kit(a)
+            return kit, self.brand_obj(a, kit)
+        from . import brand_kits
+        bk = brand_kits.attach(self.house)
+        try:
+            row = bk._get(a, int(kit_id))
+        except (brand_kits.KitError, ValueError, TypeError):
+            raise StudioError("No such brand kit (list_brand_kits gives the ids).")
+        k = json.loads(row["data"] or "{}")
+        kit = dict(self.kit(a))
+        font = k.get("font") or "inter"
+        ec = k.get("end_card") or {}
+        kit.update({"name": k.get("name", ""), "handle": str(k.get("handle", "")).lstrip("@"), "website": k.get("website", ""),
+                    "voice": k.get("voice", ""), "colors": dict(k.get("colors") or {}), "font": font,
+                    "body_font": k.get("body_font") or ("inter" if font in ("anton", "serif", "dot") else font),
+                    "headline_case": k.get("headline_case") or ("upper" if font in ("anton", "dot") else "title"),
+                    "front_card": {"style": (k.get("front_card") or {}).get("style") or "glow", "kicker": "", "image": ""},
+                    "end_card": {**(kit.get("end_card") or {}), "style": ec.get("style") or "glow", "cta": ec.get("cta") or "Follow for more",
+                                 "line": ec.get("line") or "", "image": ""},
+                    "hashtags": k.get("hashtags") or [], "label": k.get("label") or "", "kit_id": row["id"]})
+        if isinstance(k.get("theme"), dict) and k["theme"].get("layout"):
+            kit["theme"] = k["theme"]
+        else:
+            kit.pop("theme", None)
+        return kit, templates.Brand(kit, bk.logo_bytes(a, str(k.get("logo") or "")))
 
     def preview(self, a, body: dict) -> dict:
         """Live preview while editing: the template in the kit as it is now, with any unsaved changes in `kit` laid over it.
         Small JPEGs as data: URLs, nothing stored."""
         tpl = body.get("template") or "weekly_recap"
-        if tpl not in templates.TEMPLATES:
+        if not self._known(a, tpl):
             raise StudioError("Unknown template.")
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
             raise StudioError(demo_guard.WHY["run"])
-        now = time.time()
-        hits = [t for t in _previews.get(a.uid, []) if now - t < 60]
-        if len(hits) >= PREVIEWS_PER_MIN:
+        from .userlocks import rate_hit
+        if not rate_hit(_previews, a.uid, time.time(), PREVIEWS_PER_MIN):  # B4: one lock for the shared window
             raise StudioError("Too many preview redraws this minute. Pause for a moment.")
-        _previews[a.uid] = hits + [now]
         kit = self.kit(a)
         over = body.get("kit") or {}
         if isinstance(over.get("colors"), dict):
@@ -232,7 +297,7 @@ class BrandStudio:
         ratio = body.get("ratio") or templates.CHANNELS.get(body.get("service") or "instagram", templates.CHANNELS["instagram"])["ratio"]
         b = self.brand_obj(a, kit)
         data = body.get("data") if isinstance(body.get("data"), dict) else None
-        ims = templates.slides(tpl, data, b, ratio)
+        ims = self.tpl_slides(a, tpl, data, b, ratio)
         w = max(120, min(int(body.get("width") or 360), 540))
         out = []
         for im in ims[: int(body.get("max") or 10)]:
@@ -262,13 +327,13 @@ class BrandStudio:
         `data` gives the content; recaps without data are built from the week's posts. video: true adds an MP4 (where
         FFmpeg runs; the free sample shows the pre-rendered example Reels instead)."""
         tpl = body.get("template") or ""
-        if tpl not in templates.TEMPLATES:
-            raise StudioError(f"Unknown template. Pick one of {', '.join(templates.TEMPLATES)}.")
+        if not self._known(a, tpl):
+            raise StudioError(f"Unknown template. Pick one of {', '.join(templates.TEMPLATES)} or a custom:<slug> from list_templates.")
         self.studio._guard_write(a, "render_template")
         demo = demo_guard.is_demo(a.uid)
         if demo and not demo_guard.take(self.store, a.uid, "run"):
             raise StudioError(demo_guard.WHY["run"])
-        kit = self.kit(a)
+        kit, b = self.kit_brand(a, body.get("kit_id"))
         services = [s for s in (body.get("services") or kit.get("channels") or ["instagram"]) if s in templates.CHANNELS][:6]
         data = body.get("data") if isinstance(body.get("data"), dict) else None
         src = "your data"
@@ -280,8 +345,8 @@ class BrandStudio:
                 src = "sample stories (no posts in this window yet)"
         elif data is None:
             src = "sample content"
-        b = self.brand_obj(a, kit)
-        out = {"template": tpl, "content": src, "channels": [], "video": None}
+        out = {"template": tpl, "content": src, "channels": [], "video": None,
+               "kit": {"id": kit.get("kit_id") or self.extras(a).get("active_kit"), "name": kit.get("name")}}
         ratios: dict[str, list[str]] = {}
         for svc in services:
             spec = templates.CHANNELS[svc]
@@ -290,7 +355,7 @@ class BrandStudio:
                                         "note": "Video-only network: use the Reel."})
                 continue
             if spec["ratio"] not in ratios:
-                ims = templates.slides(tpl, data, b, spec["ratio"], max_slides=spec["max_slides"] or 10)
+                ims = self.tpl_slides(a, tpl, data, b, spec["ratio"], max_slides=spec["max_slides"] or 10)
                 ratios[spec["ratio"]] = [self.house.media_url(self.house.put_media(a, templates.jpeg(im), f"{tpl}-{i + 1}.jpg", kind="template",
                                                                                    meta={"type": "photo", "template": tpl}))
                                          for i, im in enumerate(ims)]
@@ -298,7 +363,7 @@ class BrandStudio:
             if len(urls) < len(ratios[spec["ratio"]]):
                 urls = urls[:-1] + [ratios[spec["ratio"]][-1]]  # always keep the end card last
             out["channels"].append({"service": svc, "label": spec["label"], "ratio": spec["ratio"], "slides": urls})
-        want_video = bool(body.get("video")) and templates.TEMPLATES[tpl]["video"]
+        want_video = bool(body.get("video")) and bool(templates.TEMPLATES.get(tpl, {}).get("video"))
         if want_video:
             mode = "none" if os.environ.get("HQ_TEMPLATE_VIDEO", "1") == "0" else self.house.video_mode()
             if not demo and mode == "local":

@@ -64,7 +64,7 @@ def add_routes(app: FastAPI, house, actor) -> None:
     @app.get("/api/brand-studio")
     def bs_get(request: Request):
         a = actor(request)
-        return {"kit": bs.kit(a), **bs.list_templates(), **bs.examples(a), "slots": bs.slots(a)}
+        return {"kit": bs.kit(a), **bs.list_templates(a), **bs.examples(a), "slots": bs.slots(a)}
 
     @app.post("/api/brand-studio")
     def bs_save(request: Request, body: dict = Body(...)):
@@ -84,8 +84,7 @@ def add_routes(app: FastAPI, house, actor) -> None:
 
     @app.get("/api/templates")
     def tpl_list(request: Request):
-        actor(request)
-        return bs.list_templates()
+        return bs.list_templates(actor(request))
 
     @app.get("/api/templates/recap")
     def tpl_recap(request: Request, template: str = "weekly_recap"):
@@ -172,11 +171,12 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["source_id", "enabled"], "properties": {"source_id": {"type": "string"}, "enabled": {"type": "boolean"}}}},
     {"name": "templates_slot_run", "description": "Fire a recurring template slot now: render it from this week's posts and put one Buffer DRAFT per channel at the slot's next time. Never publishes.",
      "inputSchema": {"type": "object", "required": ["slot_id"], "properties": {"slot_id": {"type": "integer"}}}},
-    {"name": "list_templates", "description": "The brand's post templates (weekly recap, mid-week recap, breaking cover, launch carousel, quote/CEO clip, free-way-to tutorial), the channel frames and slide limits, and the front/end card styles.",
+    {"name": "list_templates", "description": "The brand's post templates (weekly recap, mid-week recap, breaking cover, launch carousel, quote/CEO clip, free-way-to tutorial, the HuhByte formats) plus this workspace's custom templates (id custom:<slug>, custom: true, with their fields), the channel frames and slide limits, and the front/end card styles. create_template builds a new one.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "render_template", "description": "Render a template in the user's brand for each channel (front card first, end card last). data gives the content (recaps without data are built from the week's sent and scheduled posts). video: true adds the person's own 9:16 Reel (rendered here, or on the video worker for the hosted app; when it is still rendering, video is null and video_job.id goes to get_template_video). In the sample workspace video is a pre-rendered example with example: true, never the person's content. Returns media URLs; pass them to preview_post.",
-     "inputSchema": {"type": "object", "required": ["template"], "properties": {"template": {"type": "string"},
-         "services": {"type": "array", "items": {"type": "string"}}, "data": {"type": "object"}, "video": {"type": "boolean"}}}},
+     "inputSchema": {"type": "object", "required": ["template"], "properties": {"template": {"type": "string", "description": "a built-in id or custom:<slug>"},
+         "services": {"type": "array", "items": {"type": "string"}}, "data": {"type": "object"}, "video": {"type": "boolean"},
+         "kit_id": {"type": "integer", "description": "Render in this brand kit without making it active (omit = the active kit)"}}}},
     {"name": "get_template_video", "description": "Status of a template Reel the video worker is rendering (render_template's video_job.id), with its URL when done.",
      "inputSchema": {"type": "object", "required": ["job_id"], "properties": {"job_id": {"type": "integer"}}}},
     {"name": "list_brand_examples", "description": "The example brands in the sample workspace (HuhByte AI; Buffer, a concept example not affiliated with Buffer) with their palettes, fonts, channels and pre-rendered example gallery.",
@@ -218,7 +218,7 @@ def _tool(bs, sa, actor, name: str, args: dict):
         if name == "set_source_enabled":
             return sa.set_source_enabled(actor, args)
         if name == "list_templates":
-            return bs.list_templates()
+            return bs.list_templates(actor)
         if name == "templates_slot_run":
             return bs.run_slot(actor, int(args.get("slot_id") or 0))
         if name == "render_template":

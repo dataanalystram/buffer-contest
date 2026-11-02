@@ -126,6 +126,9 @@ from . import brand_kits as _brand_kits  # noqa: E402  create / update / list / 
 
 TOOLS += _brand_kits.TOOLS
 READ_ONLY |= _brand_kits.READ_ONLY
+from . import custom_templates as _custom_tpl  # noqa: E402  create / update / delete custom post templates
+
+TOOLS += _custom_tpl.TOOLS
 from . import agent_routes as _agent_routes  # noqa: E402
 
 TOOLS += _agent_routes.TOOLS
@@ -253,6 +256,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _brand_kits.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
+    extra = _custom_tpl.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
     extra = _brand_onboard.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
@@ -292,13 +298,34 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
         from . import activity
         activity.note(client_sampling=bool(isinstance(caps, dict) and caps.get("sampling") is not None))
         return ok({"protocolVersion": msg.get("params", {}).get("protocolVersion") or PROTOCOL,
-                   "capabilities": {"tools": {"listChanged": False}},
+                   "capabilities": {"tools": {"listChanged": False}, "prompts": {"listChanged": False},
+                                    "resources": {"subscribe": False, "listChanged": False}},
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
                    "instructions": _cb.INSTRUCTIONS + " Also: HuhQueue edits posts to the user's brand. One take -> a week: clips_from_video -> poll list_clips(take_id) -> adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Typical post loop: run_agent (topic or link) or edit_media (their photo/video) -> poll get_run until ready -> show the media and captions -> turn any feedback into revise(run_id, correction), which saves a Style Ledger rule -> schedule_package. Posts wait for human approval unless the token policy says otherwise."})
     if method == "ping":
         return ok({})
     if method == "tools/list":
         return ok({"tools": TOOLS})
+    if method in ("prompts/list", "prompts/get", "resources/list", "resources/read", "resources/templates/list"):
+        from . import mcp_prompts
+        p = msg.get("params") or {}
+        if method == "prompts/list":
+            return ok({"prompts": mcp_prompts.PROMPTS})
+        if method == "resources/list":
+            return ok({"resources": mcp_prompts.RESOURCES})
+        if method == "resources/templates/list":
+            return ok({"resourceTemplates": []})
+        try:
+            if method == "prompts/get":
+                return ok(mcp_prompts.get_prompt(str(p.get("name") or ""), p.get("arguments") or {}))
+            return ok(mcp_prompts.read_resource(studio, actor, str(p.get("uri") or "")))
+        except KeyError:
+            what = "prompt" if method == "prompts/get" else "resource"
+            return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": f"Unknown {what}: {p.get('name') or p.get('uri')}"}}
+        except ValueError as e:
+            return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": str(e)}}
+        except (ActionError, BufferError) as e:
+            return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32603, "message": str(e)}}
     if method == "tools/call":
         p = msg.get("params") or {}
         meta = p.get("_meta") or {}
