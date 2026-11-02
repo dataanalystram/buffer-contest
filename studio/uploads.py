@@ -39,23 +39,34 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
 CREATE TABLE IF NOT EXISTS upload_parts (upload_id TEXT, n INTEGER, data BLOB, PRIMARY KEY (upload_id, n));
 """
 
+# What an AI app should do when its sandbox can't reach our upload URL (owner bug, 2 Nov 2026: Claude.ai's sandbox is
+# network-blocked, and 2 MB base64 chunks of a 27 MB video are too much for a chat). Said in the tool descriptions, in
+# create_upload's answer and in every chunk-upload error, so the app suggests a way that works.
+BLOCKED = ("If your sandbox can't reach this URL (Claude.ai, ChatGPT and most chat apps block outside hosts), don't send a "
+           "big file as base64 chunks. Instead: (1) create_send_code, and ask the user to open its link on any device and "
+           "drag the file in, then list_recent_uploads; or (2) ask the user for a Google Drive, Dropbox, OneDrive or iCloud "
+           "share link (\"anyone with the link\") and call import_from_link.")
+CHUNK_FIT = 4 * 1024 * 1024   # beyond this, chunks through a chat are slow and fragile: say so up front
+
 S = {"type": "string"}
 TOOLS = [
-    {"name": "create_upload", "description": "USE THIS FIRST for a photo or video that is on the user's computer or in your "
-     "sandbox (a local file, an artifact, an attachment): returns a one-time upload URL on HuhQueue's own domain (valid 15 "
-     "minutes, one use, up to the Library's per-file limit) and the exact curl command. Run it from your sandbox with the "
-     "file's path: curl -X PUT --data-binary @file.mp4 '<upload_url>'. The answer is the Library item with its media_token "
-     "for edit_video / render_reel / split_video / create_package. If you can't run curl or reach the URL, use "
-     "upload_media_chunk instead. Only use library_upload_url for a file that is already at a public https link.",
+    {"name": "create_upload", "description": "USE THIS FIRST for a photo or video that is on the user's computer or in your sandbox (a local "
+     "file, an artifact, an attachment), when you can run curl: returns a one-time upload URL on HuhQueue's own domain "
+     "(valid 15 minutes, one use, up to the Library's per-file limit, max_mb) and the exact curl command: "
+     "curl -X PUT --data-binary @file.mp4 '<upload_url>'. The answer is the Library item with its media_token for "
+     "edit_video / render_reel / split_video / create_package. " + BLOCKED + " upload_media_chunk is only for small files "
+     "(a few MB). Use library_upload_url / import_from_link for a file that is already at a link.",
      "inputSchema": {"type": "object", "properties": {"name": {"type": "string", "description": "File name, e.g. launch.mp4"},
          "size": {"type": "integer", "description": "File size in bytes, if you know it (checked against the limit now)"}}}},
-    {"name": "upload_media_chunk", "description": "Fallback when create_upload's URL can't be reached from your sandbox: send the "
-     "file as base64 chunks of at most 2 MB each (decoded size), in order (index 0, 1, 2 ...). Leave upload_id empty on the "
-     "first chunk; pass the upload_id it returns on every later chunk. Then call finish_upload(upload_id). Parts expire after "
-     "15 minutes.",
+    {"name": "upload_media_chunk", "description": "Last resort for SMALL files (up to ~4 MB) when create_upload's URL can't be "
+     "reached: send the file as base64 chunks of at most 2 MB each (decoded size), in order (index 0, 1, 2 ...). Leave "
+     "upload_id empty on the first chunk; pass the upload_id it returns on every later chunk. Then call "
+     "finish_upload(upload_id). Parts expire after 15 minutes. For a bigger file (a video), use create_send_code (the user "
+     "drags the file in on any device) or import_from_link (a Drive / Dropbox / OneDrive / iCloud share link) instead.",
      "inputSchema": {"type": "object", "required": ["index", "data"], "properties": {
          "upload_id": S, "index": {"type": "integer", "minimum": 0}, "data": {"type": "string", "description": "base64 of this chunk (<= 2 MB decoded)"},
-         "name": {"type": "string", "description": "File name (first chunk), e.g. launch.mp4"}}}},
+         "name": {"type": "string", "description": "File name (first chunk), e.g. launch.mp4"},
+         "total_size": {"type": "integer", "description": "The whole file's size in bytes, if you know it (first chunk)"}}}},
     {"name": "finish_upload", "description": "Join the chunks sent with upload_media_chunk into one Library item. Returns "
      "library_id, media_token, url, kind and bytes.",
      "inputSchema": {"type": "object", "required": ["upload_id"], "properties": {"upload_id": S}}},
@@ -120,10 +131,12 @@ class Uploads:
         from .library import FILE_MAX, MB
         fname = (name or "file.mp4").replace("'", "")
         return {"upload_id": uid_, "upload_url": url, "method": "PUT", "expires_in": TTL, "max_bytes": FILE_MAX,
-                "curl": f"curl -sS --fail-with-body -X PUT --data-binary @'{fname}' '{url}'",
+                "max_mb": FILE_MAX // MB, "curl": f"curl -sS --fail-with-body -X PUT --data-binary @'{fname}' '{url}'",
                 "note": f"One use, 15 minutes, up to {FILE_MAX // MB} MB. The body is the raw file (not base64, not a form). "
-                        "The answer is the Library item (media_token, url). If this URL can't be reached from your sandbox, "
-                        "use upload_media_chunk."}
+                        "The answer is the Library item (media_token, url).",
+                "if_unreachable": BLOCKED,
+                "alternatives": {"send_page": f"{self.h.s.public_url.rstrip('/')}/send (create_send_code gives the code)",
+                                 "share_link": "import_from_link(url) for Google Drive, Dropbox, OneDrive or iCloud links"}}
 
     def _session(self, a: Actor | None, upload_id: str = "", token: str = "") -> dict:
         rows = (self.store.q("SELECT * FROM upload_sessions WHERE token_hash=?", (sha(token),)) if token else
@@ -151,7 +164,16 @@ class Uploads:
         it = await self.lib.save_stream(a, row["name"], request.stream(), declared, "upload")
         return _item_out(self._with_public(it))
 
-    def chunk(self, a: Actor, upload_id: str, index, data: str, name: str = "") -> dict:
+    def chunk(self, a: Actor, upload_id: str, index, data: str, name: str = "", total_size=None) -> dict:
+        try:
+            return self._chunk(a, upload_id, index, data, name, total_size)
+        except ActionError as e:
+            if BLOCKED in str(e):
+                raise
+            raise ActionError(f"{e} {BLOCKED}", e.status) from None
+
+    def _chunk(self, a: Actor, upload_id: str, index, data: str, name: str = "", total_size=None) -> dict:
+        advice = ""
         try:
             index = int(index)
         except (TypeError, ValueError):
@@ -167,7 +189,14 @@ class Uploads:
         if not upload_id:
             if index != 0:
                 raise ActionError("Start with index 0 and no upload_id; later chunks pass the upload_id it returns.")
-            upload_id, _ = self._open(a, name, "chunks", None)
+            try:
+                total = int(total_size) if total_size not in (None, "") else None
+            except (TypeError, ValueError):
+                total = None
+            upload_id, _ = self._open(a, name, "chunks", total)
+            if total and total > CHUNK_FIT:
+                advice = (f"This file is {total / 1048576:.0f} MB, about {-(-total // CHUNK_MAX)} chunks through the chat. "
+                          "Faster and safer: " + BLOCKED.split("Instead: ", 1)[1])
         row = self._session(a, upload_id)
         if row["mode"] != "chunks":
             raise ActionError("This upload is a PUT URL (create_upload), not a chunk upload.", 409)
@@ -185,7 +214,8 @@ class Uploads:
         self.store.x("UPDATE upload_sessions SET size=?, parts=?, expires=? WHERE id=?",
                      (size, max(parts, index + 1), time.time() + TTL, upload_id))
         return {"upload_id": upload_id, "received": index, "chunks": max(parts, index + 1), "bytes_so_far": size,
-                "next_index": max(parts, index + 1), "next": "Send the next chunk with this upload_id, or finish_upload(upload_id)."}
+                "next_index": max(parts, index + 1), "next": "Send the next chunk with this upload_id, or finish_upload(upload_id).",
+                **({"advice": advice} if advice else {})}
 
     def finish(self, a: Actor, upload_id: str) -> dict:
         row = self._session(a, upload_id)
@@ -223,7 +253,8 @@ def call_tool(studio, actor, name: str, args: dict):
     if name == "create_upload":
         return up.create(actor, str(args.get("name") or ""), args.get("size"))
     if name == "upload_media_chunk":
-        return up.chunk(actor, str(args.get("upload_id") or ""), args.get("index"), args.get("data"), str(args.get("name") or ""))
+        return up.chunk(actor, str(args.get("upload_id") or ""), args.get("index"), args.get("data"), str(args.get("name") or ""),
+                        args.get("total_size"))
     return up.finish(actor, str(args.get("upload_id") or ""))
 
 
