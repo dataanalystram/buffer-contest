@@ -291,7 +291,7 @@ def _queue_video(h, a: Actor, spec: dict) -> dict:
         if not ok:
             h.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (why, time.time(), jid))
             raise ActionError(f"The video worker didn't start ({why}).", 502)
-        where = "the GitHub video worker"
+        where = h.backend_label(why)
     return {"job_id": jid, "status": "queued", "rendered_by": where, "poll": f"render_status(job_id={jid}) every 10-20 s",
             "spent_usd": 0}
 
@@ -583,7 +583,7 @@ def _video_spec(h, a, args, tok, meta) -> dict:
     spec = {"kind": "media_render", "style": sid, "ratio": args.get("ratio") if args.get("ratio") in ("9:16", "4:5", "1:1") else "9:16",
             "hook": str(args.get("hook") or "")[:120], "facts": [], "credit": rg["credit"], "names": [],  # credit: the lower-third
             "music": args.get("music") or "auto", "official": False,
-            "rights_confirmed": rg["rights_confirmed"], "source": tok, "candidate": None, "slides": [],
+            "rights_confirmed": rg["rights_confirmed"], "owns": bool(rg["owns"]), "source": tok, "candidate": None, "slides": [],
             "captions": args.get("captions") not in (False, "off"),
             "captions_mode": _captions_mode(args.get("captions")),
             "brand_colors": True, **_kit_spec(h, a), "via": SOURCE}

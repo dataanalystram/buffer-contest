@@ -157,16 +157,17 @@ def media_render(style: str, hook: str, source_path: str | None = None, images: 
                  names: list[str] | None = None, clip: list[float] | None = None, music: str = "auto", brand: dict | None = None,
                  official: bool = False, rights_confirmed: bool = False, run_dir: str | None = None,
                  brand_colors: bool = False, captions_mode: str = "auto", detect_own_captions: bool = False,
-                 brand_pass=False, cover_png: str | None = None, logo: bool = True) -> dict:
+                 brand_pass=False, cover_png: str | None = None, logo: bool = True, owns: bool = False) -> dict:
+    """owns: the person made this video (edit_video rights "own"): no rights question and no credit line needed."""
     from .compose import render_style
     style = _styles.resolve(style)
     if not _styles.known(style):
         return {"error": f"Unknown style {style!r}. Pick one of: {', '.join(_styles.ALL_IDS)}."}
-    if source_path and not (rights_confirmed or official) and style != "none":
+    if source_path and not (rights_confirmed or official or owns) and style != "none":
         return {"needs_confirmation": True,
                 "question": f"This uses someone else's video{(' (' + credit + ')') if credit else ''}. I'll credit it on screen "
                             "and in the caption. Do you have the right to repost it (or is it fair commentary)?"}
-    if source_path and not credit and style != "none":
+    if source_path and not credit and style != "none" and not owns:
         return {"error": "A credit line is required for any video you didn't make (e.g. 'Video: @handle on X')."}
     words = json.loads(Path(words_path).read_text())["words"] if words_path else []
     d = _run_dir({"run_dir": run_dir})
