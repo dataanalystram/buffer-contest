@@ -625,6 +625,12 @@ class Brain:
 
     def _plan(self, a, rid, items: list[str], brain: dict):
         run = self.h.run(a, rid)
+        vr = run["result"].get("video_research") or {}
+        line = (vr.get("plan_line") or "") if vr.get("status") != "uploaded" else ""
+        items = [p for p in items if not str(p).lower().startswith(("video found", "launch video is on", "no video found"))] \
+            if line else list(items)
+        if line:  # find_video ran before the plan: its outcome stays the first line
+            items.insert(0, line)
         run["result"]["plan"] = items
         run["result"]["brain"] = brain
         self.h._save(rid, run["steps"], run["result"])

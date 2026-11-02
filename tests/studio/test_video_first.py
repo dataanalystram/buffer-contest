@@ -301,6 +301,7 @@ def test_youtube_only_asks_for_the_upload_then_brands_it(owner, research, monkey
 def test_theme_none_is_respected(owner, research, monkeypatch, tmp_path):  # noqa: F811
     if not shutil.which("ffmpeg"):
         pytest.skip("needs FFmpeg")
+    monkeypatch.setattr(media_tools, "media_transcribe", lambda path, names=None, model=None, run_dir=None: {"words": 0})
     clip = _clip(tmp_path, secs=3)
     tok = owner.post("/api/media", json={"name": "mine.mp4", "data": "data:video/mp4;base64," + base64.b64encode(open(clip, "rb").read()).decode()}).json()["token"]
     rid, run = _start(owner, prompt="post my video", chans=("ch_ig",), theme="none", add_logo=False, media_token=tok)
