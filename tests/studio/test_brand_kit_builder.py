@@ -358,3 +358,28 @@ def test_preview_images_do_not_eat_the_sample_rate_limit(client):
     for _ in range(30):
         assert client.get(url).status_code == 200
     assert sum(len(v) for v in rate._hits.values()) == before, "image reads are not counted against the per-IP budget"
+
+
+def test_the_warm_up_waits_for_requests_and_never_holds_one_up(client, tmp_path, monkeypatch):
+    """The start-up warm-up runs at low priority: while a request is drawing it draws nothing, and a request never
+    queues behind a warm-up card (separate locks)."""
+    import threading
+    import time
+    monkeypatch.setattr(brand_kits, "_disk_dir", str(tmp_path))
+    monkeypatch.setattr(brand_kits, "WARM_YIELD_S", 0.2)
+    brand_kits.cache_clear()
+    kit = brand_kits.normalize({"name": "Warm Co", "colors": {"accent": "#ff5500"}})
+    brand_kits._demand_add(1)  # a request is drawing
+    done = {}
+    t = threading.Thread(target=lambda: done.update(brand_kits.render_cards(kit, None, ["thumbnail"], 240, "webp", background=True)))
+    t.start()
+    time.sleep(0.6)
+    assert not done and brand_kits.cache_get(brand_kits.card_key(kit, None, "thumbnail", 240, "webp")) is None
+    brand_kits._demand_add(-1)  # the request finished: the warm-up goes on
+    t.join(30)
+    assert "bytes" in done["thumbnail"]
+    with brand_kits._warm_lock:  # a warm-up card in flight does not block a request's card
+        t0 = time.time()
+        got = brand_kits.render_cards(kit, None, ["end_card"], 240, "webp")
+        assert "bytes" in got["end_card"] and time.time() - t0 < 20
+    assert not brand_kits.requests_drawing() or brand_kits._demand == 0

@@ -251,8 +251,43 @@ DISK_MAX = 3000
 _mem: "OrderedDict[str, bytes]" = OrderedDict()
 _mem_lock = threading.Lock()
 _render_lock = threading.Lock()  # one card at a time: a small instance gets no faster drawing two at once
+_warm_lock = threading.Lock()  # the background warm-up's own lock (see render_cards)
 _disk_dir: str | None = None
 _warmed = False  # the sample kits are drawn once per process
+# Requests come first: a request that has a card to draw counts itself here while it draws, and the background warm-up
+# (low priority) waits between cards until no request has drawn for WARM_YIELD_S, so it never holds a request up.
+_demand = 0
+_demand_lock = threading.Lock()
+_last_demand = 0.0
+WARM_YIELD_S = 0.4
+
+
+def _demand_add(n: int) -> None:
+    global _demand, _last_demand
+    with _demand_lock:
+        _demand += n
+        _last_demand = time.monotonic()
+
+
+def requests_drawing() -> bool:
+    """True while a request draws cards, or did in the last WARM_YIELD_S (the warm-up then waits)."""
+    with _demand_lock:
+        return _demand > 0 or time.monotonic() - _last_demand < WARM_YIELD_S
+
+
+def _yield_to_requests(max_wait: float = 120.0) -> None:
+    end = time.monotonic() + max_wait
+    while requests_drawing() and time.monotonic() < end:
+        time.sleep(0.05)
+
+
+def _low_priority_thread() -> None:
+    """Best effort: drop this thread's OS priority (Linux nice is per thread), so drawing that runs outside the GIL
+    (Pillow) loses the CPU to request threads."""
+    try:
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 19)
+    except (AttributeError, OSError):
+        pass
 
 
 def cache_dir() -> str:
@@ -349,16 +384,35 @@ def theme_size(w: int) -> tuple[int, int]:
     return W, round(W * 16 / 9)
 
 
-def render_cards(kit: dict, logo: bytes | None, ids: list[str], w: int, fmt: str, stats: dict | None = None) -> dict[str, dict]:
-    """The asked-for cards as encoded bytes, from the cache or drawn now (each drawn card is cached at once)."""
+def render_cards(kit: dict, logo: bytes | None, ids: list[str], w: int, fmt: str, stats: dict | None = None,
+                 background: bool = False) -> dict[str, dict]:
+    """The asked-for cards as encoded bytes, from the cache or drawn now (each drawn card is cached at once). A request
+    (background False) counts as demand while it draws; the warm-up (background True) waits for requests before each
+    card it has to draw, so the cards a request asks for are drawn first."""
     from .media import styles
     out: dict[str, dict] = {}
     labels = {**KIT_LABELS, **{i: (styles.THEMES.get(i) or styles.STYLE_PRESETS.get(i) or {}).get("label", i) for i in styles.ALL_IDS}}
+    keys = {cid: card_key(kit, logo, cid, w, fmt) for cid in ids}
+    demand = not background and any(cache_get(k) is None for k in keys.values())
+    if demand:
+        _demand_add(1)
+    try:
+        return _render_cards(kit, logo, ids, w, fmt, stats, background, out, labels, keys)
+    finally:
+        if demand:
+            _demand_add(-1)
+
+
+def _render_cards(kit, logo, ids, w, fmt, stats, background, out, labels, keys) -> dict[str, dict]:
     for cid in ids:
-        key = card_key(kit, logo, cid, w, fmt)
+        key = keys[cid]
         v = cache_get(key)
         if v is None:
-            with _render_lock:
+            if background:
+                _yield_to_requests()
+            # requests draw one at a time under _render_lock; the warm-up has its own lock, so a request never queues
+            # behind a warm-up card (at worst both draw the same card once and the cache keeps one)
+            with (_warm_lock if background else _render_lock):
                 v = cache_get(key)  # drawn by another request (or the warm-up) while this one waited
                 if v is None:
                     t0 = time.perf_counter()
@@ -640,7 +694,8 @@ class BrandKits:
 
     def warm(self) -> dict:
         """Draw the two sample-workspace kits (Nothing, HuhByte AI) into the preview cache at start-up, every kit's own
-        cards first, so the builder's first preview on a fresh instance comes from the cache."""
+        cards first, so the builder's first preview on a fresh instance comes from the cache. Runs at low priority: it
+        waits before each card while a request is drawing (render_cards background=True)."""
         from .media import styles
         t0, n = time.time(), 0
         kits = []
@@ -655,9 +710,9 @@ class BrandKits:
                 lb = None
             kits.append((normalize({**hb["kit"], "logo": "example:huhbyte", "caption_style": "news"}), lb))
         for k, lb in kits:
-            n += len(render_cards(k, lb, list(KIT_CARDS), 420, "webp"))
+            n += len(render_cards(k, lb, list(KIT_CARDS), 420, "webp", background=True))
         for k, lb in kits:
-            n += len(render_cards(k, lb, list(styles.ALL_IDS), 240, "webp"))
+            n += len(render_cards(k, lb, list(styles.ALL_IDS), 240, "webp", background=True))
         return {"cards": n, "ms": int((time.time() - t0) * 1000)}
 
 
@@ -709,6 +764,8 @@ def add_routes(app, house, actor) -> None:
         _warmed = True
 
         def _warm():
+            _low_priority_thread()
+            time.sleep(float(os.environ.get("HUHQ_PREVIEW_WARM_DELAY", "2")))  # let start-up and the first requests go first
             try:
                 print("brand kit previews warmed:", bk.warm(), flush=True)
             except Exception as e:  # warming is best effort; the builder draws on demand
