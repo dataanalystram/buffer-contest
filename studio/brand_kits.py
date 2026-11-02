@@ -22,6 +22,8 @@ from nothing.tech, "Sample brand, not affiliated") and HuhByte AI.
 """
 from __future__ import annotations
 
+from fastapi import Body, Request  # module level: FastAPI resolves the string annotations here
+
 import base64
 import hashlib
 import io
@@ -413,7 +415,6 @@ def attach(house):
 
 
 def add_routes(app, house, actor) -> None:
-    from fastapi import Body, Request
     from fastapi.responses import Response
     from .actions import ActionError
     bk = attach(house)

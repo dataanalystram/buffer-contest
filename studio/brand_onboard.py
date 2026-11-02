@@ -19,6 +19,8 @@ previews are rate-limited per workspace (CPU guard) and store nothing; agent wri
 """
 from __future__ import annotations
 
+from fastapi import Body, Request  # module level: FastAPI resolves the string annotations here
+
 import base64
 import concurrent.futures as cf
 import json
@@ -320,7 +322,6 @@ def attach(house):
 
 
 def add_routes(app, house, actor) -> None:
-    from fastapi import Body, Request
     from .actions import ActionError
     ob = attach(house)
 
