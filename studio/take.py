@@ -175,6 +175,7 @@ def heuristic_moments(sents: list[dict], n: int, scenes: list[float] | None = No
     return chosen
 
 
+SCORER_FALLBACK = "built-in scorer (the AI engine couldn't answer this time)"
 MINER_SYSTEM = ("You are a short-form video editor. You find the moments in a creator's own talk that work as standalone "
                 "vertical clips. You never invent words: hooks are quoted exactly from the transcript.")
 
@@ -249,7 +250,8 @@ def mine_moments(analysis: dict, want: int | None = None, engine: dict | None = 
             picks = validate_llm(data, sents, n)
             how = engine.get("source", "AI model")
         except Exception as e:  # noqa: BLE001 - any model failure falls back to the deterministic scorer
-            how = f"built-in scorer (model failed: {str(e)[:80]})"
+            print(f"take moments: model failed, built-in scorer used: {str(e)[:200]}", flush=True)  # server log only
+            how = SCORER_FALLBACK  # never the engine's raw error on screen
             picks = []
     if len(picks) < min(n, 3):
         extra = heuristic_moments(sents, n, analysis.get("scenes"))

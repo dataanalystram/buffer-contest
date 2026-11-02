@@ -235,7 +235,8 @@ def pick_moments(words: list[dict], duration: float | None = None, n: int | None
             picks = [m for m in take.validate_llm(data, sents, n) if lo - 5 <= m["e"] - m["s"] <= hi + 5]
             how = engine.get("source", "AI model")
         except Exception as e:  # noqa: BLE001 - a model failure falls back to the deterministic scorer
-            picks, how = [], f"built-in scorer (model failed: {str(e)[:80]})"
+            print(f"longform moments: model failed, built-in scorer used: {str(e)[:200]}", flush=True)  # server log only
+            picks, how = [], take.SCORER_FALLBACK  # never the engine's raw error on screen
     if len(picks) < n:
         cands = []
         for a, b in take.candidates(sents, lo, hi):

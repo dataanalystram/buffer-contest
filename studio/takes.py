@@ -30,6 +30,8 @@ from . import brand, demo, drafter, llm, netguard, sources, take
 from .actions import CONFIRM_TTL, ActionError, Actor
 from .store import sha
 
+MOMENTS_AI = "AI engine"  # placeholder source while the engine order runs; replaced by the engine that answered
+
 STEPS = [("upload", "Read your video"), ("transcribe", "Transcribe"), ("moments", "Find the best moments"),
          ("reframe", "Reframe to 9:16"), ("captions", "Burn in brand captions"), ("covers", "Branded covers + end card"),
          ("preflight", "Preflight every clip"), ("ready", "Ready to spread")]
@@ -72,6 +74,38 @@ class Takes:
         if r["kind"] != "take":
             raise ActionError("No such take.", 404)
         return r
+
+    def _moment_chat(self, a: Actor):
+        """(engine, chat_json, used) for picking moments. The model is tried in the person's automatic engine order
+        (brain_llm.engines: their pick, the free engines on HuhQueue's keys, Claude, their own key, the free starter): an
+        engine that refuses (the free starter's "model exhausted", a rate limit, a cap) hands over to the next one, and only
+        when none answers does the built-in scorer pick. Raw engine errors go to the server log, never to the page."""
+        from . import brain_llm
+        try:
+            order = brain_llm.engines(self.store, a.uid, self.s, http=self.h.http, demo=demo.is_demo(a.uid))
+        except Exception as e:  # noqa: BLE001 - the engine list must never stop a take
+            print(f"take moments: engine list failed: {str(e)[:160]}", flush=True)
+            order = []
+        if not order:
+            return None, None, {}
+        used: dict = {}
+
+        def chat(_engine, system, user):
+            for e in order:
+                if e.get("id") == "free" and not self.h._ai_reserve(a, e):  # the free sample's daily AI allowance
+                    continue
+                try:
+                    out = brain_llm.call(e, self.store, a.uid, a.label, system=system + " Reply with JSON only.",
+                                         messages=[{"role": "user", "content": user}], max_tokens=1500, fast=True,
+                                         purpose="One take moments", http=self.h.http, timeout=60)
+                    data = llm.parse_json(out["text"])
+                except Exception as ex:  # noqa: BLE001 - next engine
+                    print(f"take moments: {e.get('id')} failed: {str(ex)[:200]}", flush=True)
+                    continue
+                used.update(engine=e.get("id"), label=brain_llm.label(e))
+                return data
+            raise llm.LLMError("No AI engine answered.")
+        return {"source": MOMENTS_AI}, chat, used
 
     def _save(self, rid, steps, res, status=None):
         self.h._save(rid, steps, res, status)
@@ -345,8 +379,7 @@ class Takes:
                    f"{len(analysis.get('silences') or [])} pauses")
         self._step(steps, "moments", "running", "Scoring every stretch of the talk")
         self._save(rid, steps, res)
-        eng = self.h._ai_reserve(a, llm.resolve(self.store, a.uid, self.s))
-        chat = lambda e, sy, us: llm.chat_json(e, sy, us, http=self.h.http, max_tokens=1500)  # noqa: E731
+        eng, chat, used = self._moment_chat(a)
         try:
             if run["input"].get("style") == "opus":
                 from .media import longform
@@ -362,8 +395,8 @@ class Takes:
             self._step(steps, "moments", "failed", str(e))
             self._save(rid, steps, res, "failed")
             return {"ok": False}
-        if eng:
-            self.h._ai_audit(a, eng, "moments")
+        if used.get("label") and mined["picked_by"].startswith(MOMENTS_AI):
+            mined["picked_by"] = used["label"] + mined["picked_by"][len(MOMENTS_AI):]
         res["moments"], res["picked_by"] = mined["moments"], mined["picked_by"]
         self._step(steps, "moments", "done", f"{len(mined['moments'])} moments from {mined['sentences']} sentences · picked by {mined['picked_by']}",
                    {"moments": [{k: m[k] for k in ("id", "start", "end", "hook", "score")} for m in mined["moments"]]})

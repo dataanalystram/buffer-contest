@@ -64,7 +64,8 @@ def test_model_failure_falls_back_to_the_built_in_scorer():
     def boom(*a):
         raise RuntimeError("HTTP 429")
     out = take.mine_moments(ANALYSIS, engine={"source": "free starter"}, chat_json=boom)
-    assert out["picked_by"].startswith("built-in scorer") and "429" in out["picked_by"]
+    assert out["picked_by"] == take.SCORER_FALLBACK  # friendly note, never the engine's raw error
+    assert "429" not in out["picked_by"] and "HTTP" not in out["picked_by"]
     assert out["moments"] == take.mine_moments(ANALYSIS)["moments"]
 
 

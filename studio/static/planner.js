@@ -423,7 +423,7 @@ async function plAct(act, ref, el) {
     return;
   }
   if (act === "delete") {
-    if (!confirm("Delete this draft from Buffer? This can't be undone.")) return;
+    if (!(await hqConfirm("Delete this draft from Buffer? This can't be undone.", { ok: "Delete draft", danger: true }))) return;
     try { await api(`/api/posts/${encodeURIComponent(i.id)}`, { method: "DELETE" }); toast("Draft deleted"); loadPlanner(); }
     catch (e) { toast(e.message, 6000); }
   }
