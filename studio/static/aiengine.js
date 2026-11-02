@@ -80,7 +80,7 @@ function paintComposer(st) {
   if (note) { note.hidden = !st.note; note.textContent = st.note || ""; }
   if (runs && q("#agEngine")) q("#agEngine").textContent = `Writing with: ${runs.short}`;
 }
-function paint(st) { E.st = st; paintSettings(st); paintComposer(st); }
+function paint(st) { E.st = st; paintSettings(st); paintComposer(st); if (window.HQ_INTEGRATIONS) window.HQ_INTEGRATIONS.redraw(); }
 async function refresh() {
   try { paint(await api("/api/ai/engine")); } catch (_) { const b = q("#aiEngines"); if (b && !E.st) b.innerHTML = `<span class="muted sm">Models didn't load. The agent keeps its default order.</span>`; }
 }
