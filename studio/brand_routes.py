@@ -20,7 +20,7 @@ EXAMPLES_DIR = Path(__file__).parent / "static" / "examples"
 
 def _err(e: Exception, status: int = 400):
     from .actions import ActionError
-    raise ActionError(str(e), status)
+    raise ActionError(str(e), getattr(e, "status", status))
 
 
 def counted(fn, a, *args):
@@ -130,6 +130,19 @@ def add_routes(app: FastAPI, house, actor) -> None:
     def src_scan(request: Request, body: dict = Body(default={})):
         return call(sa.scan, actor(request, write=True), body)
 
+    # the source library (News › Sources): list = list_sources, refresh = refresh_sources, toggle = set_source_enabled
+    @app.get("/api/sources/library")
+    def src_library(request: Request, category: str = "", limit: int = 120):
+        return call(sa.list_sources, actor(request), {"category": category, "limit": limit})
+
+    @app.post("/api/sources/refresh")
+    def src_refresh(request: Request, body: dict = Body(default={})):
+        return call(sa.refresh_sources, actor(request, write=True), body)
+
+    @app.post("/api/sources/enabled")
+    def src_enabled(request: Request, body: dict = Body(...)):
+        return call(sa.set_source_enabled, actor(request, write=True), body)
+
     @app.get("/api/sources/runs/{rid}")
     def src_run(rid: int, request: Request):
         return call(sa.get_run, actor(request), rid)
@@ -142,7 +155,7 @@ def add_routes(app: FastAPI, house, actor) -> None:
 # ==================================================================================================== MCP
 TOOLS: list[dict[str, Any]] = [
     {"name": "sources_scan", "description": "The Sources agent: read the user's sources (YC launches, Hacker News front page, RSS/Atom lab blogs, Product Hunt with the user's free developer token, and X only with the user's own X API key), dedupe, cluster the same story across sources, and rank each cluster with a lane (postable, idea_bank, low, hidden) and what an agent may do (agent_ok, verify_first, person_only). Returns a run_id and clusters. The sample workspace reads recorded fixtures only. Nothing is posted.",
-     "inputSchema": {"type": "object", "properties": {"sources": {"type": "array", "items": {"type": "string", "enum": ["yc", "hn", "rss", "ph", "x"]}}}}},
+     "inputSchema": {"type": "object", "properties": {"sources": {"type": "array", "items": {"type": "string", "enum": ["yc", "hn", "rss", "ph", "x", "library"]}}}}},
     {"name": "sources_draft", "description": "Turn clusters from a sources_scan run into one package per channel in the brand: the caption written for the channel (length, hashtag count, format), a breaking-news cover rendered in the brand kit at the channel's frame. dry_run (default true) returns the packages; dry_run false sends each as a Buffer DRAFT through preview/submit (a 'review' token waits in Approvals). Never publishes.",
      "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"},
          "cluster_ids": {"type": "array", "items": {"type": "string"}}, "channel_ids": {"type": "array", "items": {"type": "string"}},
@@ -150,6 +163,13 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "sources_settings", "description": "Read (no arguments) or change which sources the agent reads: on {yc, hn, rss, ph, x}, rss (feed URLs, up to 8), x_query, hn_query. The X key and the Product Hunt token can only be added by a person in the app.",
      "inputSchema": {"type": "object", "properties": {"on": {"type": "object"}, "rss": {"type": "array", "items": {"type": "string"}},
          "x_query": {"type": "string"}, "hn_query": {"type": "string"}}}},
+    {"name": "list_sources", "description": "The free source library (News › Sources): every source with its category (Launches, AI labs, Tech news, Research, Videos, Open source), on/off for this workspace, a status (ok, slow, failing, unchecked) and when it was last checked; plus the fresh items (default last 48 h) from the sources that are on, deduplicated across sources, each with source, published time, type (research papers are labelled 'Research paper — not a product'), and also (other sources with the same story). Video items carry the official URL, embed and thumbnail with reuse 'permission unknown': link or embed only. Reading never fetches.",
+     "inputSchema": {"type": "object", "properties": {"category": {"type": "string", "enum": ["Launches", "AI labs", "Tech news", "Research", "Videos", "Open source"]},
+         "limit": {"type": "integer", "default": 120}, "fresh_hours": {"type": "number", "default": 48}}}},
+    {"name": "refresh_sources", "description": "Re-read this workspace's source library now (the same as the Refresh button): once a minute per workspace; a source checked in the last 2 minutes is reused; one failing source never stops the others. Returns the list_sources view plus failing (labels). Not available in the signed-out sample.",
+     "inputSchema": {"type": "object", "properties": {"category": {"type": "string"}}}},
+    {"name": "set_source_enabled", "description": "Turn one library source on or off for this workspace (the toggle in News › Sources). source_id comes from list_sources.",
+     "inputSchema": {"type": "object", "required": ["source_id", "enabled"], "properties": {"source_id": {"type": "string"}, "enabled": {"type": "boolean"}}}},
     {"name": "templates_slot_run", "description": "Fire a recurring template slot now: render it from this week's posts and put one Buffer DRAFT per channel at the slot's next time. Never publishes.",
      "inputSchema": {"type": "object", "required": ["slot_id"], "properties": {"slot_id": {"type": "integer"}}}},
     {"name": "list_templates", "description": "The brand's post templates (weekly recap, mid-week recap, breaking cover, launch carousel, quote/CEO clip, free-way-to tutorial), the channel frames and slide limits, and the front/end card styles.",
@@ -167,7 +187,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {"template": {"type": "string"}, "weekday": {"type": "string"}, "time": {"type": "string"},
          "tz": {"type": "string"}, "channel_ids": {"type": "array", "items": {"type": "string"}}}}},
 ]
-READ_ONLY = {"list_templates", "list_brand_examples", "get_template_video"}
+READ_ONLY = {"list_templates", "list_brand_examples", "get_template_video", "list_sources"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
@@ -191,6 +211,12 @@ def _tool(bs, sa, actor, name: str, args: dict):
         if name == "sources_settings":
             body = {k: args[k] for k in ("on", "rss", "x_query", "hn_query") if k in args}
             return sa.save_settings(actor, body) if body else sa.settings(actor)
+        if name == "list_sources":
+            return sa.list_sources(actor, {k: args[k] for k in ("category", "limit", "fresh_hours") if k in args})
+        if name == "refresh_sources":
+            return sa.refresh_sources(actor, {k: args[k] for k in ("category",) if k in args})
+        if name == "set_source_enabled":
+            return sa.set_source_enabled(actor, args)
         if name == "list_templates":
             return bs.list_templates()
         if name == "templates_slot_run":

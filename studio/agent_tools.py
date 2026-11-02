@@ -386,7 +386,7 @@ class Tools(EditorialTools):
 
     def t_search_news(self, query: str) -> dict:
         run = self.state()
-        leads = sources.search(query, self.studio.feeds(self.a), http=self.h.http)
+        leads = sources.search(query, self.studio.feeds(self.a), http=self.h.http, store=self.h.store, uid=self.a.uid)
         run["result"]["leads"] = leads[:6]
         self.save(run)
         if not leads:

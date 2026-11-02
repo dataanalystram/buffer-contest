@@ -569,13 +569,13 @@ class House:
             self._step(steps, "structure", "done", story["headline"], story)
             return self._after_story(a, rid, steps, inp, res, eng)
         # 1 find
-        self._step(steps, "find", "running", "Searching Bing News, Hacker News and your feeds")
+        self._step(steps, "find", "running", "Searching Bing News, Hacker News, the source library and your feeds")
         self._save(rid, steps, res)
         if inp.get("url"):
             leads = [{"title": "", "url": inp["url"].strip(), "source": urlparse(inp["url"]).hostname or "", "via": "your_link",
                       "published": 0}]
         else:
-            leads = sources.search(inp["query"], self.studio.feeds(a), http=self.http)
+            leads = sources.search(inp["query"], self.studio.feeds(a), http=self.http, store=self.store, uid=a.uid)
         if not leads:
             raise ActionError(f"No recent stories found for “{inp.get('query')}”. Try a broader topic or paste a link.")
         res["leads"] = leads[:6]
