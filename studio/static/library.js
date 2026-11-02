@@ -67,12 +67,12 @@ function wireLibCard(el) {
   const del = el.querySelector("[data-act=del]");
   if (del) del.onclick = async () => {
     const used = (it.used_in || []).filter((u) => !u.sent);
-    if (!confirm(`Delete “${it.name}”? The file is removed for good.` + (used.length ? `\n\nIt's used in ${used.length} post${used.length > 1 ? "s" : ""} that hasn't gone out yet; those posts lose this media.` : ""))) return;
+    if (!(await hqConfirm(`Delete “${it.name}”? The file is removed for good.` + (used.length ? `\n\nIt's used in ${used.length} post${used.length > 1 ? "s" : ""} that hasn't gone out yet; those posts lose this media.` : ""), { ok: "Delete", danger: true }))) return;
     try {
       await api(`/api/library/${it.id}?force=${used.length ? 1 : 0}`, { method: "DELETE" });
       toast("Deleted"); loadLibrary();
     } catch (e) {
-      if (e.status === 409 && confirm(e.message)) { await api(`/api/library/${it.id}?force=1`, { method: "DELETE" }); toast("Deleted"); loadLibrary(); }
+      if (e.status === 409 && (await hqConfirm(e.message, { ok: "Delete anyway", danger: true }))) { await api(`/api/library/${it.id}?force=1`, { method: "DELETE" }); toast("Deleted"); loadLibrary(); }
       else if (e.status !== 409) toast(e.message, 5000);
     }
   };
