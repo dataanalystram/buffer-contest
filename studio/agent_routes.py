@@ -39,7 +39,26 @@ def brain_status(house, a) -> dict:
             "fallbacks": [e["source"] for e in engs[1:]] + ["built-in writer"],
             "budget": budget.remaining(house.store, a.uid) if brain_llm.operator_key() else None,
             "meter": budget.meter(house.store, a.uid) if brain_llm.operator_key() else None,
-            "operator_key": bool(brain_llm.operator_key())}
+            "operator_key": bool(brain_llm.operator_key()),
+            "engine": ai_engine(house, a)}
+
+
+def ai_engine(house, a) -> dict:
+    """The AI engine picker (Settings > AI engine, the composer switch, MCP get_ai_engine): every engine with its credit."""
+    from . import ai_engines, demo_guard
+    budget.ensure(house.store)
+    return ai_engines.status(house.store, a.uid, house.s, house.http, demo=demo_guard.is_demo(a.uid))
+
+
+def set_ai_engine(house, a, engine: str) -> dict:
+    from . import ai_engines
+    budget.ensure(house.store)
+    try:
+        chosen = ai_engines.set_pref(house.store, a.uid, engine)
+    except ai_engines.EngineError as e:
+        raise ActionError(str(e))
+    house.store.audit(a.uid, a.label, "set_ai_engine", "write", {"engine": chosen})
+    return ai_engine(house, a)
 
 
 def add_routes(app: FastAPI, house, actor) -> None:
@@ -70,7 +89,7 @@ def add_routes(app: FastAPI, house, actor) -> None:
         """Every video look (the four edit styles + the themes) with its gallery still and loop, for the theme picker."""
         actor(request)
         from .media import styles as media_styles
-        return {"themes": media_styles.describe_themes(), "default": "auto"}
+        return {"themes": media_styles.describe_themes(), "categories": media_styles.theme_categories(), "default": "auto"}
 
     @app.post("/api/agent/runs/{rid}/theme")
     def run_theme(rid: int, request: Request, body: dict = Body(...)):
@@ -85,6 +104,16 @@ def add_routes(app: FastAPI, house, actor) -> None:
     @app.get("/api/agent/brain")
     def brain_get(request: Request):
         return brain_status(house, actor(request))
+
+    @app.get("/api/ai/engine")
+    def ai_engine_get(request: Request):
+        """Which AI engine the agent uses first, each engine's credit in plain words, and the app-wide pools."""
+        return ai_engine(house, actor(request))
+
+    @app.put("/api/ai/engine")
+    def ai_engine_put(request: Request, body: dict = Body(...)):
+        """Pick the agent's engine: {"engine": "claude" | "gemini-flash" | "gemini-pro" | "own" | "free" | "auto"}."""
+        return set_ai_engine(house, actor(request, write=True), str((body or {}).get("engine") or ""))
 
     @app.get("/api/onboarding")
     def onboarding_get(request: Request):
@@ -128,14 +157,18 @@ TOOLS: list[dict[str, Any]] = [
                                                       "tone": {"type": "string"}, "website": {"type": "string"}, "x_watchlist": {"type": "array", "items": {"type": "string"}}}}},
     {"name": "get_recommendations", "description": "A feed tailored to the person's content types plus up to three ready-to-approve posts in their brand (cover + captions). Cached for an hour; refresh=true rescans.",
      "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}}},
-    {"name": "list_themes", "description": "Every video look for Make a post: the four edit styles (opus, huhbyte_news, minimal, hype) and the video themes (caption_news, news_package, newsreel, dark_keynote, glass_studio, swiss, kino, silent_film, risograph, hologram_hud, screencast, investigation, countdown, crt, tilt_shift, game_show, cinematic) with what each looks like, what it is best for and its gallery thumbnail.",
+    {"name": "list_themes", "description": "Every video look for Make a post: the four edit styles (opus, huhbyte_news, minimal, hype) and the video themes (caption_news, news_package, newsreel, dark_keynote, glass_studio, swiss, kino, silent_film, risograph, hologram_hud, screencast, investigation, countdown, crt, tilt_shift, game_show, cinematic) with what each looks like, what it is best for, its gallery category (news, startups, clips, explainers, cinematic), a one-line description, a typical length and its gallery thumbnail.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "set_theme", "description": "Set a post run's video theme and re-render its video channels in it (e.g. 'cinematic', 'news_package'). Same as replying 'switch to the X theme'.",
      "inputSchema": {"type": "object", "required": ["run_id", "theme"], "properties": {"run_id": {"type": "integer"}, "theme": {"type": "string"}}}},
+    {"name": "get_ai_engine", "description": "The AI engine HuhQueue's in-app agent uses first (claude, gemini-flash, gemini-pro, own, free or auto), which one will actually run, and each engine's credit in plain words (e.g. 'Claude: $0.34 of your $1 used', 'Gemini (Oracle): free during the contest, $0.00 of your $3 used') plus the app-wide pools. If the chosen engine is out of credit or erroring, the agent falls back to the next one automatically.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "set_ai_engine", "description": "Choose the in-app agent's AI engine: claude (Anthropic, included allowance), gemini-flash or gemini-pro (Gemini via Oracle Cloud, free during the contest), own (the person's saved API key), free (the free starter model) or auto (the default order). Returns the same status as get_ai_engine.",
+     "inputSchema": {"type": "object", "required": ["engine"], "properties": {"engine": {"type": "string", "enum": ["auto", "claude", "gemini-flash", "gemini-pro", "own", "free"]}}}},
     {"name": "get_brain", "description": "Which AI runs the in-app agent for this account (Claude, their own key, the free model or the rule writer) and the included budget left.",
      "inputSchema": {"type": "object", "properties": {}}},
 ] + agent_brain.tool_specs_for_mcp()
-READ_ONLY = {"get_onboarding", "get_brain", "list_themes"}
+READ_ONLY = {"get_onboarding", "get_brain", "list_themes", "get_ai_engine"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
@@ -148,7 +181,7 @@ def call_tool(studio, actor, name: str, args: dict):
             return h.brain.start(actor, {k: args.get(k) for k in ("prompt", "channel_ids", "format", "brain", "theme") if args.get(k)} | {"prompt": args.get("prompt", "")})
         if name == "list_themes":
             from .media import styles as media_styles
-            return {"themes": media_styles.describe_themes(), "default": "auto"}
+            return {"themes": media_styles.describe_themes(), "categories": media_styles.theme_categories(), "default": "auto"}
         if name == "set_theme":
             return h.brain.tool(actor, int(args.get("run_id") or 0), "set_theme", {"theme": str(args.get("theme") or ""), "why": "you picked it"})
         if name == "reply_post":
@@ -165,6 +198,10 @@ def call_tool(studio, actor, name: str, args: dict):
             return ob.recommendations(actor, bool(args.get("refresh")))
         if name == "get_brain":
             return brain_status(h, actor)
+        if name == "get_ai_engine":
+            return ai_engine(h, actor)
+        if name == "set_ai_engine":
+            return set_ai_engine(h, actor, str(args.get("engine") or ""))
         if name.startswith("post_"):
             rid = int(args.pop("run_id", 0) or 0)
             return h.brain.tool(actor, rid, name[5:], args)

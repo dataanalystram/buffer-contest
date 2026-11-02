@@ -71,23 +71,55 @@ def resolve_models(key: str, http: httpx.Client | None = None, force: bool = Fal
         return dict(_models)
 
 
+def _gemini(eid: str) -> dict:
+    """Gemini on Oracle Cloud (oci_genai): the model names are what the person sees and what the ledger prices; the call
+    goes to the routing profile OCID when OCI_GEMINI_*_MODEL sets one (a region without local Gemini routes to one that has
+    it), else to the model name."""
+    from . import oci_genai
+    flash, pro = "google.gemini-2.5-flash", "google.gemini-2.5-pro"
+    targets = {flash: os.environ.get("OCI_GEMINI_FLASH_MODEL", "").strip() or flash,
+               pro: os.environ.get("OCI_GEMINI_PRO_MODEL", "").strip() or pro}
+    model = pro if eid == "gemini-pro" else flash
+    return {"id": eid, "source": "huhqueue gemini", "provider": "oci", "base_url": f"https://{oci_genai.host()}", "api_key": "",
+            "model": model, "fast_model": flash, "style": "oci", "tools": True, "budgeted": True, "ledger": "oci",
+            "oci_targets": targets}
+
+
 def engines(store, uid: str, settings, http=None, demo: bool = False) -> list[dict]:
-    """Brains in order: the operator's Claude key (budgeted; never for the free sample), the person's own key, the free
-    starter model (planner mode, simpler plan), then none (rules)."""
-    out = []
+    """Brains in the person's try-order (ai_engines.order): the engine they picked in Settings > AI engine first, then
+    Claude on the operator key (budgeted; never for the free sample), Gemini on Oracle Cloud (budgeted on its own ledger),
+    the person's own key, and the free starter model (planner mode). An engine that is not set up, out of credit or marked
+    down is left out, so the next one takes over."""
+    from . import ai_engines, oci_genai
+    avail: dict[str, dict] = {}
+    server_ok = not demo and not client_brain_active()  # an MCP call without server_ai never reaches the operator's keys
     k = operator_key()
-    if k and not demo and not client_brain_active():  # an MCP call without server_ai never reaches the operator key
+    if k and server_ok and not ai_engines.down("claude"):
         m = resolve_models(k, http)
         if m["plan"]:
-            out.append({"source": "huhqueue claude", "provider": "anthropic", "base_url": ANTHROPIC, "api_key": k, "model": m["plan"],
-                        "fast_model": m["fast"] or m["plan"], "style": "anthropic", "tools": True, "budgeted": True})
+            avail["claude"] = {"id": "claude", "source": "huhqueue claude", "provider": "anthropic", "base_url": ANTHROPIC, "api_key": k,
+                               "model": m["plan"], "fast_model": m["fast"] or m["plan"], "style": "anthropic", "tools": True,
+                               "budgeted": True}
+    if server_ok and oci_genai.configured():
+        for eid in ("gemini-flash", "gemini-pro"):
+            if not ai_engines.down(eid):
+                avail[eid] = _gemini(eid)
     own = llm.resolve(store, uid, settings)
     if own and own["source"] == "your key":
-        out.append({**own, "tools": own.get("provider") in ("anthropic", "openai", "groq", "openrouter", "gemini", "custom"),
-                    "fast_model": own["model"], "budgeted": False})
+        avail["own"] = {**own, "id": "own", "tools": own.get("provider") in ("anthropic", "openai", "groq", "openrouter", "gemini", "custom"),
+                        "fast_model": own["model"], "budgeted": False}
     elif own:
-        out.append({**own, "tools": False, "fast_model": own["model"], "budgeted": False})
-    return out
+        avail["free"] = {**own, "id": "free", "tools": False, "fast_model": own["model"], "budgeted": False}
+    try:
+        pref = ai_engines.get_pref(store, uid)
+    except Exception:  # the preference table is optional: never let it stop the agent
+        pref = "auto"
+    return [avail[e] for e in ai_engines.order(pref) if e in avail]
+
+
+def label(engine: dict) -> str:
+    from . import ai_engines
+    return ai_engines.SHORT.get(engine.get("id") or "", engine.get("provider") or "The AI model")
 
 
 def _est_tokens(obj) -> int:
@@ -103,10 +135,16 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
     if engine.get("budgeted") and client_brain_active():  # belt and braces: the client is the brain on this call
         raise budget.BudgetExceeded("This request came from an AI app over MCP: the app's own model is the brain, so "
                                     "HuhQueue's AI isn't used (pass server_ai: true to use it).")
-    if engine.get("budgeted"):
+    oci = engine.get("style") == "oci"
+    if engine.get("budgeted") and oci:
+        budget.oci_check(store, uid, model, _est_tokens([system, messages, tools]), max_tokens)
+    elif engine.get("budgeted"):
         budget.check(store, uid, model, _est_tokens([system, messages, tools]), max_tokens)
     elif engine.get("source") == "your key":
         budget.byo_check(store, uid)
+    if oci:
+        return _call_oci(engine, store, uid, label, model, system=system, messages=messages, tools=tools,
+                         max_tokens=max_tokens, purpose=purpose, http=http, timeout=timeout)
     base = llm.check_engine(engine)
     hosts = llm.allowed_hosts(engine)
     try:
@@ -120,6 +158,9 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
             r = netguard.safe_post(base + "/messages", http=http, json=body, timeout=timeout, allowed_hosts=hosts,
                                    headers=anthropic_headers(engine["api_key"]))
             if r.status_code >= 400:
+                if engine.get("id") == "claude" and (r.status_code in (401, 403) or "credit balance" in r.text):
+                    from . import ai_engines
+                    ai_engines.mark_down("claude", "Anthropic refused the app's key" if r.status_code != 400 else "the app's Anthropic credit is used up")
                 raise llm.LLMError(f"{engine['provider']} answered HTTP {r.status_code}: {r.text[:200]}")
             j = r.json()
             u = j.get("usage") or {}
@@ -170,15 +211,45 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
     return {"text": text, "tool_calls": calls, "assistant": assistant, "usage": usage, "model": model, "stop_reason": stop}
 
 
+def _call_oci(engine, store, uid, label, model, *, system, messages, tools, max_tokens, purpose, http, timeout) -> dict:
+    """One Gemini turn on Oracle Cloud. History stays in the OpenAI shape (tool results are role=tool), so the agent loop is
+    the same as for any OpenAI-compatible key. A hard failure marks the engine down for a few minutes (ai_engines)."""
+    from . import ai_engines, oci_genai
+    target = (engine.get("oci_targets") or {}).get(model, model)
+    try:
+        res = oci_genai.chat(system, messages, model=target, tools=tools, max_tokens=max_tokens, http=http, timeout=timeout)
+    except oci_genai.OCIError as e:
+        msg = str(e)
+        if any(f"HTTP {c}" in msg for c in (400, 401, 403, 404, 429)) or "set up" in msg:
+            short = ("Oracle's Gemini quota for this account is 0" if "limit" in msg and "set to 0" in msg else msg.split(":")[0])
+            ai_engines.mark_down(engine.get("id") or "gemini-flash", short)
+        raise llm.LLMError(msg[:240])
+    usage = {"in": res["in"], "out": res["out"], "cw": 0, "cr": 0}
+    usage["cost"] = oci_genai.price(model, usage["in"], usage["out"])
+    budget.oci_record(store, uid, usage["cost"])
+    calls = []
+    for tc in res["tool_calls"]:
+        try:
+            args = json.loads(tc["function"].get("arguments") or "{}")
+        except (ValueError, TypeError):
+            args = {}
+        calls.append({"id": tc.get("id") or tc["function"]["name"], "name": tc["function"]["name"], "input": args if isinstance(args, dict) else {}})
+    assistant = {"role": "assistant", "content": res["text"], **({"tool_calls": res["tool_calls"]} if res["tool_calls"] else {})}
+    _log(engine, store, uid, label, model, usage, purpose)
+    stop = "max_tokens" if res["finish"] == "length" else res["finish"]
+    return {"text": res["text"], "tool_calls": calls, "assistant": assistant, "usage": usage, "model": model, "stop_reason": stop}
+
+
 def _log(engine, store, uid, label, model, usage, purpose):
     """Activity: provider, model, tokens and cost on an ai_call row (never the key or the prompt)."""
     from . import activity
-    prov = {"huhqueue claude": "Anthropic (HuhQueue)", "your key": f"{engine.get('provider')} (your key)",
-            "free starter": "free starter"}.get(engine.get("source"), engine.get("provider"))
+    prov = {"huhqueue claude": "Anthropic (HuhQueue)", "huhqueue gemini": "Gemini (Oracle Cloud)",
+            "your key": f"{engine.get('provider')} (your key)", "free starter": "free starter"}.get(engine.get("source"), engine.get("provider"))
     activity.set_usage(prov, model, usage["in"] + usage["cw"] + usage["cr"], usage["out"], engine.get("source", ""))
     store.audit(uid, label, "ai_call", "read", {"engine": "own" if engine.get("source") == "your key" else
                                                 ("free" if engine.get("source") == "free starter" else "app"),
                                                 "for": purpose, "provider": engine.get("provider"), "model": model,
+                                                "source": "oci" if engine.get("style") == "oci" else engine.get("provider"),
                                                 "cost_usd": usage.get("cost"), "cache_read": usage["cr"], "cache_write": usage["cw"]})
 
 

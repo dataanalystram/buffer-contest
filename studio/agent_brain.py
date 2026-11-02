@@ -411,15 +411,18 @@ class Brain:
                     and self.h.run(a, rid)["result"].get("upload"):
                 self.call(a, rid, tools, "read_upload", {})  # the upload is an input tool, read first whatever the brain
             engs = brain_llm.engines(self.store, a.uid, self.h.s, self.h.http, demo=tools.demo)
-            eng = next((e for e in engs if e.get("tools")), None)
             done = False
-            if eng:
+            tool_engs = [e for e in engs if e.get("tools")]
+            # the person's chosen engine first; one that is out of credit or erroring hands over to the next (never a crash)
+            for i, eng in enumerate(tool_engs):
+                nxt = brain_llm.label(tool_engs[i + 1]) if i + 1 < len(tool_engs) else "the standard plan"
                 try:
                     done = self._llm_loop(a, rid, tools, eng, message)
+                    break
                 except budget.BudgetExceeded as e:
-                    self._note(a, rid, str(e))
+                    self._note(a, rid, f"{brain_llm.label(eng)} is out of credit ({str(e).split('.')[0][:90]}), so I switched to {nxt}.")
                 except llm.LLMError as e:
-                    self._note(a, rid, f"The AI brain didn't answer ({str(e)[:120]}), so I followed the standard plan.")
+                    self._note(a, rid, f"{brain_llm.label(eng)} didn't answer ({str(e)[:100]}), so I switched to {nxt}.")
             if not done:
                 self._planner(a, rid, tools, message, engs)
             run = self.h.run(a, rid)
