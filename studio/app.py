@@ -12,7 +12,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import Body, FastAPI, Query, Request
 from starlette.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 import base64
 import hmac
@@ -20,6 +20,7 @@ import json
 import os
 
 from . import activity as activity_mod
+from . import staticver
 from . import buffer_api, demo, demo_guard, house as house_mod, inbox as inbox_mod, limits as reqlimits, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
@@ -178,7 +179,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.middleware("http")
     async def _headers(request: Request, call_next):
         resp = await call_next(request)
-        if request.url.path in PAGES or request.url.path.startswith(("/static/", "/docs")):
+        if request.url.path.startswith("/static/") and resp.status_code == 200 and request.query_params.get("v") and \
+                staticver.cache_header(request.url.path[len("/static/"):], request.query_params.get("v")):
+            resp.headers["Cache-Control"] = staticver.IMMUTABLE  # a versioned URL (staticver): a deploy changes the URL
+        elif request.url.path in PAGES or request.url.path.startswith(("/static/", "/docs", "/send")):
             resp.headers["Cache-Control"] = "no-cache"  # always revalidate, so a deploy is picked up at once
         elif request.url.path.startswith("/api/") and "cache-control" not in resp.headers:
             resp.headers["Cache-Control"] = "no-store"  # API answers carry CSRF tokens and private data: never cached
@@ -215,15 +219,15 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.get("/", include_in_schema=False)
     def index(request: Request):
-        return FileResponse(STATIC / ("index.html" if _connected(request) else "landing.html"))
+        return HTMLResponse(staticver.page("index.html" if _connected(request) else "landing.html"))
 
     @app.get("/app", include_in_schema=False)
     def app_page(request: Request):
-        return RedirectResponse("/", 302) if not _connected(request) else FileResponse(STATIC / "index.html")
+        return RedirectResponse("/", 302) if not _connected(request) else HTMLResponse(staticver.page("index.html"))
 
     for _path, _file in (("/privacy", "privacy.html"), ("/terms", "terms.html"), ("/security", "security.html")):
         def _legal(_f=_file):
-            return FileResponse(STATIC / _f)
+            return HTMLResponse(staticver.page(_f))
         app.add_api_route(_path, _legal, methods=["GET"], include_in_schema=False)
 
     @app.get("/favicon.ico", include_in_schema=False)
@@ -273,7 +277,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         html = docs_mod.page(slug)
         if html is None:
             return Response(docs_mod.missing(), status_code=404, media_type="text/html")
-        return Response(html, media_type="text/html")
+        return Response(staticver.rewrite(html), media_type="text/html")
 
     @app.get("/static/{name:path}", include_in_schema=False)
     def static(name: str):

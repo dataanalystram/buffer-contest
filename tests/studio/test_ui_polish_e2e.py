@@ -2,7 +2,7 @@
 Settings > AI engine shows one clean card per engine (logo, name, Free/Paid badge, status, usage bar), Automatic is one
 line with an (i) popover, Your keys lists every provider, the Logs panel shows the ai_call rows and filters/pages them;
 Settings > Integrations is a logo grid with Connected / Connect, a one-line value and (i) details, and a key opens in a
-dialog; the landing page carries the "Works with" strip with accessible names. Never sideways overflow, no console or
+dialog; the landing page carries the integrations section with named cards. Never sideways overflow, no console or
 page errors. HQ_SHOTS=<dir> keeps screenshots."""
 import os
 from pathlib import Path
@@ -134,21 +134,32 @@ def test_settings_integrations_logo_grid(live, chromium, close_contexts, w, h, s
 
 
 @pytest.mark.parametrize("w,h,scheme", VIEWS)
-def test_landing_works_with_strip(live, chromium, close_contexts, w, h, scheme):
+def test_landing_integrations_section(live, chromium, close_contexts, w, h, scheme):
+    """The landing's integrations section (owner, 2 Nov 2026: "a proper integrations-with-logos section"): the heading, four
+    groups of cards (Publish, Create & research, AI engines, AI apps over MCP), each card a coloured logo tile, a name and
+    a one-line value; the marks are decorative (the name is the text). No sideways scroll, no errors."""
     base = live[0]
     ctx, page, errors = _ctx(chromium, base, w, h, scheme, signed=False)
     page.goto(base + "/")
-    strip = page.get_by_test_id("works-with")
-    strip.wait_for()
-    assert page.locator("[data-testid=works-with] li").count() >= 13
-    labels = page.evaluate("[...document.querySelectorAll('[data-testid=works-with] svg')].map(s => s.getAttribute('aria-label'))")
-    assert all(labels) and {"Buffer", "Instagram", "YouTube", "TikTok", "LinkedIn", "Facebook", "X", "Product Hunt", "Hugging Face",
-                            "NVIDIA", "Google Gemini", "Claude", "GitHub"} <= set(labels)
+    sec = page.get_by_test_id("works-with")
+    sec.wait_for()
+    assert page.locator("#wwH").inner_text().strip() == "Works with the tools you already use"
+    groups = page.evaluate("[...document.querySelectorAll('[data-testid^=integ-group-] h3')].map(h => h.textContent)")
+    assert groups == ["Publish", "Create & research", "AI engines", "AI apps over MCP"]
+    names = page.evaluate("[...document.querySelectorAll('[data-testid=works-with] .ig-card b')].map(b => b.textContent)")
+    assert {"Buffer", "Instagram", "YouTube", "TikTok", "LinkedIn", "Facebook", "X", "Threads", "Pinterest", "Product Hunt",
+            "Hugging Face", "GitHub", "Claude", "Gemini", "NVIDIA", "OpenAI", "Groq & OpenRouter", "ChatGPT", "Cursor"} <= set(names)
+    cards = page.evaluate("""[...document.querySelectorAll('[data-testid=works-with] .ig-card')].map(c => ({
+        value: c.querySelector('.ig-txt span').textContent.trim(), hidden: c.querySelector('svg').getAttribute('aria-hidden'),
+        tile: getComputedStyle(c.querySelector('.ig-tile')).backgroundColor, w: c.getBoundingClientRect().right}))""")
+    assert len(cards) >= 24 and all(c["value"] and c["hidden"] == "true" for c in cards)
+    assert len({c["tile"] for c in cards}) >= 8  # colourful: brand tiles, not one grey
+    assert max(c["w"] for c in cards) <= w
     assert _no_sideways(page)
+    # versioned static URLs (staticver): the landing's CSS and JS carry ?v=<hash>
+    assert page.evaluate("[...document.querySelectorAll('link[rel=stylesheet],script[src]')].every(e => /[?]v=[0-9a-f]{10}$/.test(e.href || e.src))")
     if SHOTS:
         Path(SHOTS).mkdir(parents=True, exist_ok=True)
-        page.evaluate("document.getElementById('works-with').scrollIntoView({block: 'center'})")
-        page.wait_for_timeout(300)
-        page.screenshot(path=str(Path(SHOTS) / f"home-works-with-{w}-{scheme}.png"))
+        sec.screenshot(path=str(Path(SHOTS) / f"landing-integrations-{w}-{scheme}.png"))
     assert not errors, errors
     ctx.close()
