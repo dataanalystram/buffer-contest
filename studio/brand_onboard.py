@@ -46,7 +46,7 @@ UA = {"User-Agent": "Mozilla/5.0 (compatible; HuhQueueBrandReader/1.0; +https://
 # The one story every brand tells in the demo (made up; the same words in every style is the point)
 STORY = {"kicker": "Product update", "title": "Three things we shipped this week",
          "sub": "Faster search, a calmer inbox and one new shortcut.",
-         "bullets": ["Search answers in under 100 ms", "The inbox groups what needs you", "Press / to jump anywhere"],
+         "bullets": ["Search answers in under 100 ms", "The inbox groups what needs a reply", "Press / to jump anywhere"],
          "reel": "What we shipped this week, in 30 seconds"}
 
 
