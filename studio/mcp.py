@@ -137,6 +137,10 @@ READ_ONLY |= _library.READ_ONLY
 from . import uploads as _uploads  # noqa: E402  create_upload, upload_media_chunk, finish_upload
 
 TOOLS += _uploads.TOOLS
+from . import reel_audio as _reel_audio  # noqa: E402  search_instagram_audio, set_reel_audio
+
+TOOLS += _reel_audio.TOOLS
+READ_ONLY |= _reel_audio.READ_ONLY
 from . import send as _send  # noqa: E402  create_send_code, list_recent_uploads (the Send a file page)
 from . import share_import as _share  # noqa: E402  import_from_link (Drive, Dropbox, OneDrive, iCloud share links)
 
@@ -260,6 +264,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _library.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _reel_audio.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     extra = _uploads.call_tool(studio, actor, name, args)

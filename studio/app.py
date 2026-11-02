@@ -857,6 +857,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     brand_kits.add_routes(app, house, actor)
     from . import agent_routes  # agent brain, natural-language edits, onboarding, recommendations (UI = REST = MCP)
     agent_routes.add_routes(app, house, actor)
+    from . import reel_audio  # Instagram music on Reels (search + pick per package; UI = REST = MCP)
+    reel_audio.add_routes(app, house, actor)
     from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)
     library_mod.add_routes(app, house, actor)
     from . import uploads as uploads_mod  # one-time upload URLs + chunked uploads (UI = REST = MCP)

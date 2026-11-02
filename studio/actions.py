@@ -29,7 +29,8 @@ REQUIRED_METADATA = {"instagram": {"type": "post", "shouldShareToFeed": True}, "
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
 CONFIRM_TTL = 15 * 60
 PROBE_MAX = 60 * 1024 * 1024  # media preflight downloads at most this much per file
-OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts", "ig_type", "thumbnail_offset_ms")
+OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts", "ig_type", "thumbnail_offset_ms", "ig_audio")
+AUDIO_TYPES = ("music", "originalSound")  # Buffer's InstagramAudioType
 THUMB_OFFSET_SERVICES = ("instagram", "tiktok", "pinterest")  # Buffer honours video.metadata.thumbnailOffset here only
 
 
@@ -87,6 +88,12 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
     meta = dict(REQUIRED_METADATA.get(svc, {}))
     if svc == "instagram" and options.get("ig_type") in ("reel", "story", "post"):
         meta["type"] = options["ig_type"]
+    au = options.get("ig_audio") if svc == "instagram" else None
+    if au and any("video" in a for a in inp["assets"]):
+        # Instagram music on a Reel: metadata.instagram.audio (InstagramAudioSelectionInput, experimental and not in
+        # Buffer's introspection). Buffer only auto-publishes it for channels connected through a Facebook Page.
+        meta["type"] = "reel"
+        meta["audio"] = audio_input(au)
     parts = drafter.split_thread(svc, text)
     if len(parts) > 1:
         inp["text"] = parts[0]
@@ -109,6 +116,53 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
     return inp
 
 
+def clean_audio(raw) -> dict | None:
+    """A Reel's music choice as HuhQueue keeps it in a post package (options.ig_audio). None when it isn't usable.
+    music_volume / original_volume are 0-100 (Buffer's audioVolume / videoVolume). start_ms is kept with the package
+    but Buffer's API has no start-time field yet, so it is not sent (Instagram starts the track at its default)."""
+    if not isinstance(raw, dict):
+        return None
+    aid = str(raw.get("audio_id") or raw.get("id") or "").strip()
+    title = str(raw.get("title") or "").strip()
+    typ = str(raw.get("type") or "music")
+    try:
+        dur = int(raw.get("duration_ms") if raw.get("duration_ms") is not None else raw.get("duration"))
+    except (TypeError, ValueError):
+        return None
+    if not aid or not aid.isdigit() or len(aid) > 40 or not title or typ not in AUDIO_TYPES or dur <= 0:
+        return None
+
+    def vol(k, d):
+        try:
+            return max(0, min(100, int(raw.get(k, d))))
+        except (TypeError, ValueError):
+            return d
+    out = {"audio_id": aid, "title": title[:200], "type": typ, "duration_ms": dur,
+           "music_volume": vol("music_volume", 100), "original_volume": vol("original_volume", 100)}
+    for k in ("display_artist", "creator_username", "cover_url"):
+        v = str(raw.get(k) or raw.get({"display_artist": "displayArtist", "creator_username": "creatorUsername",
+                                       "cover_url": "coverArtworkUrl"}[k]) or "").strip()
+        if v:
+            out[k] = v[:500] if k == "cover_url" else v[:200]
+    try:
+        st = int(raw.get("start_ms") or 0)
+    except (TypeError, ValueError):
+        st = 0
+    out["start_ms"] = max(0, min(st, max(0, dur - 1000)))
+    return out
+
+
+def audio_input(au: dict) -> dict:
+    """The exact InstagramAudioSelectionInput Buffer takes (probed against api.buffer.com, 2 Nov 2026)."""
+    i = {"audioId": au["audio_id"], "title": au["title"], "duration": int(au["duration_ms"]), "type": au["type"],
+         "audioVolume": int(au.get("music_volume", 100)), "videoVolume": int(au.get("original_volume", 100))}
+    if au.get("display_artist"):
+        i["displayArtist"] = au["display_artist"]
+    if au.get("creator_username"):
+        i["creatorUsername"] = au["creator_username"]
+    return i
+
+
 def clean_options(raw) -> dict:
     """Network options a post may carry (YouTube title/category, Pinterest board/title, Threads topic, X long posts)."""
     if not isinstance(raw, dict):
@@ -128,6 +182,10 @@ def clean_options(raw) -> dict:
         elif k == "ig_type":
             if str(v) in ("reel", "story", "post"):
                 out[k] = str(v)
+        elif k == "ig_audio":
+            au = clean_audio(v)
+            if au:
+                out[k] = au
         else:
             out[k] = str(v).strip()[:300]
     return out
@@ -471,6 +529,14 @@ class Studio:
         if ch.get("isQueuePaused") and mode in ("queue", "next"):
             warnings.append("This channel's queue is paused in Buffer, so it won't go out until you resume it.")
         opts = clean_options(p.get("options"))
+        raw_audio = (p.get("options") or {}).get("ig_audio") if isinstance(p.get("options"), dict) else None
+        if raw_audio and not opts.get("ig_audio"):
+            raise ActionError("That music choice is incomplete: pick the track again (it needs its id, title, type and length).")
+        if opts.get("ig_audio"):
+            if ch["service"] != "instagram":
+                raise ActionError("Music can only be added to Instagram Reels.")
+            if not any(u.lower().split("?")[0].endswith(VIDEO_EXT) for u in ([media] if media else []) + media_urls):
+                raise ActionError("Music goes on a Reel: this Instagram post has no video, so remove the music or add a video.")
         override = bool(p.get("override_warnings"))
         pf = self._preflight(ch, text, media_urls or ([media] if media else []), mode, opts)
         msg = preflight_error([pf], override)
