@@ -37,7 +37,9 @@ def until(fn, timeout=10.0, page=None):
 
 
 def cats(page):
-    return [r.get_attribute("data-category") for r in page.get_by_test_id("audit-row").all()]
+    # short timeout: a row that re-renders away mid-read (the list swapped to another tab) must fail fast and be re-polled;
+    # the default 30 s wait for a vanished nth() row outlived until()'s 10 s budget (the CI smoke timeout)
+    return [r.get_attribute("data-category", timeout=1000) for r in page.get_by_test_id("audit-row").all()]
 
 
 @pytest.fixture
