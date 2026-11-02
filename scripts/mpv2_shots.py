@@ -43,7 +43,7 @@ with sync_playwright() as p:
     ctx = b.new_context(viewport={"width": 1440, "height": 1000})
     ctx.add_init_script("localStorage.setItem('hq_tour_done', '1')")
     pg = ctx.new_page(); watch(pg)
-    pg.goto(base + "/demo"); pg.wait_for_selector("[data-testid=inbox-title]")
+    pg.goto(base + "/demo"); pg.wait_for_selector("[data-testid=bk-builder]")  # the sample opens on Brand > Kit
     pg.click("[data-testid=tab-agent]"); pg.wait_for_selector("[data-testid=mp-discover]")
     # one real run in the sample workspace; keep a mid-run snapshot for the "working" thread
     pg.fill("[data-testid=agent-query]", "Find trending AI news and make a carousel for all my channels")

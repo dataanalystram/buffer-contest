@@ -22,7 +22,10 @@ with sync_playwright() as p:
     pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base) and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
     pg.goto(base + "/")
     pg.screenshot(path=str(out / "00_landing.png"), full_page=True)
-    pg.goto(base + "/demo")
+    pg.goto(base + "/demo")  # the sample opens on Brand > Kit, the builder filled with the Nothing sample brand
+    pg.wait_for_selector("[data-testid=bk-card-carousel_cover] img", timeout=60000)
+    pg.screenshot(path=str(out / "00b_brand_kit.png"))
+    pg.click("[data-testid=tab-inbox]")
     pg.wait_for_selector("[data-testid=inbox-title]")
     pg.screenshot(path=str(out / "01_inbox.png"))
     # brand kit first (one Brand screen: Kit, Templates, Style Ledger)
