@@ -51,7 +51,7 @@ def test_demo_opens_on_the_builder_filled_with_the_nothing_sample(demo_live, chr
         assert page.locator("[data-testid=bk-add-linear]").count() == 1 and page.locator("[data-testid=bk-add-notion]").count() == 1
         for c in ("carousel_cover", "thumbnail", "end_card"):
             assert page.locator(f"[data-testid=bk-card-{c}] img").count() == 1
-        assert page.locator("[data-testid=bk-themes] [data-card] img").count() >= 20
+        _until(lambda: page.locator("[data-testid=bk-themes] [data-card] img").count() >= 20)  # the rest load after the visible ones
         assert _overflow(page) <= 0
         assert not errors, errors
     finally:

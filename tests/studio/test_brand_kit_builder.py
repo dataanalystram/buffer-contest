@@ -248,7 +248,13 @@ def test_preview_in_parts_kit_cards_then_every_theme(human):
            "head_font": "dot", "body_font": "inter", "caption_style": "hype", "end_text": "Rockets weekly", "end_cta": "Book a launch"}
     a = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "kit"}).json()
     assert [c["id"] for c in a["cards"]] == ["carousel_cover", "thumbnail", "end_card"] and a["part"] == "kit"
-    assert all(c["group"] == "kit" and c["url"].startswith("data:image/jpeg") for c in a["cards"])
+    assert all(c["group"] == "kit" and c["url"].startswith("/api/brand-kits/preview-img/") and c["url"].endswith(".webp")
+               for c in a["cards"])
+    img = human.get(a["cards"][0]["url"])
+    assert img.status_code == 200 and img.headers["content-type"] == "image/webp" and "immutable" in img.headers["cache-control"]
+    assert len(img.content) < 60_000, "a small WebP thumbnail, not a full-size render"
+    inline = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "kit", "inline": True}).json()
+    assert all(c["url"].startswith("data:image/webp;base64,") for c in inline["cards"])
     b = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "themes"}).json()
     assert [c["id"] for c in b["cards"]] == list(styles.ALL_IDS) and all(c.get("url") for c in b["cards"])
     again = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "themes"}).json()
@@ -295,3 +301,40 @@ def test_the_news_style_is_labelled_newsroom_and_keeps_its_id():
     g = next(t for t in styles.describe_themes() if t["id"] == "huhbyte_news")
     assert g["label"] == "Newsroom" and "HuhByte" not in g["label"] + g["about"] + g["short"]
     assert "HuhByte" not in styles.pick_theme("a launch")[1]
+
+
+def test_preview_cards_are_cached_one_by_one_in_memory_and_on_disk(human, tmp_path, monkeypatch):
+    monkeypatch.setattr(brand_kits, "_disk_dir", str(tmp_path))
+    brand_kits.cache_clear()
+    kit = {"name": "Cachey", "colors": {"background": "#101820", "primary": "#FEE715", "accent": "#21B3FF", "text": "#FFFFFF"},
+           "head_font": "anton"}
+    first = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "themes", "ids": ["opus", "crt"]}).json()
+    assert [c["id"] for c in first["cards"]] == ["opus", "crt"] and not first["cached"] and set(first["drawn_ms"]) == {"opus", "crt"}
+    assert len([f for f in tmp_path.iterdir() if not f.name.startswith(".")]) == 2, "each drawn card goes to the disk cache"
+    rest = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "themes"}).json()
+    assert "opus" not in rest["drawn_ms"] and "crt" not in rest["drawn_ms"] and len(rest["cards"]) == 21
+    with brand_kits._mem_lock:  # memory gone (a restart): the disk still answers and nothing is drawn
+        brand_kits._mem.clear()
+    again = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "themes"}).json()
+    assert again["cached"] and again["drawn_ms"] == {}
+    assert human.get(again["cards"][0]["url"]).status_code == 200
+    # an edit that changes the renders misses; one that doesn't (the voice) hits
+    assert not human.post("/api/brand-kits/preview", json={"kit": {**kit, "head_font": "serif"}, "part": "themes", "ids": ["opus"]}).json()["cached"]
+    assert human.post("/api/brand-kits/preview", json={"kit": {**kit, "voice": "calm"}, "part": "themes", "ids": ["opus"]}).json()["cached"]
+    assert human.get("/api/brand-kits/preview-img/" + "0" * 40 + ".webp").status_code == 404
+    assert human.get("/api/brand-kits/preview-img/..%2Fetc.webp").status_code == 404
+
+
+def test_the_sample_kits_are_warmed_so_the_demo_builder_opens_from_the_cache(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(brand_kits, "_disk_dir", str(tmp_path))
+    brand_kits.cache_clear()
+    w = brand_kits.attach(client.app.state.studio.house).warm()
+    assert w["cards"] == 2 * (3 + 21)
+    client.get("/demo")
+    client.headers["X-HQ-CSRF"] = client.get("/api/session").json()["csrf"]
+    lst = client.get("/api/brand-kits").json()
+    assert [t["id"] for t in lst["themes"]][:4] == ["opus", "huhbyte_news", "minimal", "hype"] and len(lst["kit_cards"]) == 3
+    for kit in lst["kits"]:  # how the builder asks on landing: the saved kit by id
+        k = client.post("/api/brand-kits/preview", json={"kit_id": kit["id"], "part": "kit", "width": 420}).json()
+        t = client.post("/api/brand-kits/preview", json={"kit_id": kit["id"], "part": "themes", "width": 240}).json()
+        assert k["cached"] and t["cached"], kit["name"]

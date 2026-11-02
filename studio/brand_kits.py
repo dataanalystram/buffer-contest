@@ -31,7 +31,9 @@ import io
 import json
 import os
 import tempfile
+import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 from . import brand, brand_examples, brand_onboard, demo_guard, templates
@@ -42,7 +44,6 @@ CAPTION_STYLES = {"opus": "Opus: big word-by-word captions", "news": "News: a se
                   "minimal": "Minimal: calm lower captions", "hype": "Hype: one huge word at a time"}
 GALLERY_PER_MIN = 40  # the builder redraws as you type (debounced); kit cards and themes are separate calls
 _gallery: dict[str, list[float]] = {}
-_cache: dict[str, dict] = {}
 HOOK = "Shipped this week"
 KIT_CARDS = ("carousel_cover", "thumbnail", "end_card")
 FONT_LABELS = {"anton": "Anton", "poppins": "Poppins", "inter": "Inter", "figtree": "Figtree", "serif": "DM Serif Display",
@@ -172,12 +173,16 @@ def compose_brand(kit: dict, logo_path: str | None) -> dict:
             "on_accent": "#111114" if templates._lum(templates.hex_rgb(acc)) > 0.35 else "#FFFFFF"}
 
 
-def theme_cards_for(kit: dict, logo: bytes | None, W: int = 360, H: int = 640, hook: str = HOOK) -> list[dict]:
+def theme_cards_for(kit: dict, logo: bytes | None, W: int = 360, H: int = 640, hook: str = HOOK, ids=None) -> list[dict]:
     """Every look in the Video style gallery (the four edit styles and every theme), its title card drawn in this kit:
-    the kit's logo, name, @handle, fonts and accent; a theme keeps its own ground and type (that is the theme)."""
+    the kit's logo, name, @handle, fonts and accent; a theme keeps its own ground and type (that is the theme).
+    ids limits it to some looks (the builder asks for the cards scrolled into view)."""
     from PIL import Image
     from .media import compose, styles, theme_cards
     out = []
+    want = [i for i in styles.ALL_IDS if ids is None or i in ids]
+    if not want:
+        return out
     with tempfile.TemporaryDirectory(prefix="hqkit-") as td:
         lp = None
         if logo:
@@ -185,7 +190,7 @@ def theme_cards_for(kit: dict, logo: bytes | None, W: int = 360, H: int = 640, h
             with open(lp, "wb") as f:
                 f.write(logo)
         b0 = compose_brand(kit, lp)
-        for sid in styles.ALL_IDS:
+        for sid in want:
             try:
                 cfg = styles.config(sid)
                 b = styles.apply_palette(dict(b0), cfg, keep_brand=True) if cfg.get("theme") else dict(b0)
@@ -202,18 +207,175 @@ def theme_cards_for(kit: dict, logo: bytes | None, W: int = 360, H: int = 640, h
     return out
 
 
-def kit_cards(kit: dict, logo: bytes | None) -> list[dict]:
+KIT_LABELS = {"carousel_cover": "Carousel cover 4:5", "thumbnail": "Thumbnail 16:9", "end_card": "End card"}
+
+
+def kit_cards(kit: dict, logo: bytes | None, ids=None) -> list[dict]:
     b = brand_onboard.brand_for(kit, logo)
     st = brand_onboard.STORY
-    return [{"id": "carousel_cover", "label": "Carousel cover 4:5", "image": templates.front_card(b, "4:5", st["kicker"], st["title"], st["sub"], n=(1, 5))},
-            {"id": "thumbnail", "label": "Thumbnail 16:9", "image": templates.front_card(b, "16:9", "New", st["reel"], "")},
-            {"id": "end_card", "label": "End card", "image": templates.end_card(b, "4:5")}]
+    draw = {"carousel_cover": lambda: templates.front_card(b, "4:5", st["kicker"], st["title"], st["sub"], n=(1, 5)),
+            "thumbnail": lambda: templates.front_card(b, "16:9", "New", st["reel"], ""),
+            "end_card": lambda: templates.end_card(b, "4:5")}
+    out = []
+    for cid in KIT_CARDS:
+        if ids is not None and cid not in ids:
+            continue
+        try:
+            out.append({"id": cid, "label": KIT_LABELS[cid], "image": draw[cid]()})
+        except Exception as e:
+            out.append({"id": cid, "label": KIT_LABELS[cid], "error": e.__class__.__name__})
+    return out
+
+
+# ================================================================================================== preview cache
+# Every preview card is cached on its own, keyed by what it is drawn from (the kit's render fields, the logo's bytes, the
+# card, the size, the format and PREVIEW_VERSION), in memory (LRU) and on disk, so a kit seen once (by anyone: the two
+# sample kits are drawn at start-up) is instant after that, across workers and restarts on the same disk. The builder
+# gets small WebP files by URL (/api/brand-kits/preview-img/<key>.webp) that the browser caches as immutable.
+PREVIEW_VERSION = 2
+RENDER_FIELDS = ("name", "handle", "colors", "font", "body_font", "headline_case", "front_card", "end_card")
+MEM_MAX = 400
+DISK_MAX = 3000
+_mem: "OrderedDict[str, bytes]" = OrderedDict()
+_mem_lock = threading.Lock()
+_render_lock = threading.Lock()  # one card at a time: a small instance gets no faster drawing two at once
+_disk_dir: str | None = None
+_warmed = False  # the sample kits are drawn once per process
+
+
+def cache_dir() -> str:
+    global _disk_dir
+    if _disk_dir is None:
+        d = os.environ.get("HUHQ_PREVIEW_CACHE") or os.path.join(tempfile.gettempdir(), "huhq-kit-previews")
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            d = ""
+        _disk_dir = d
+    return _disk_dir
+
+
+def card_key(kit: dict, logo: bytes | None, card: str, w: int, fmt: str) -> str:
+    src = {f: kit.get(f) for f in RENDER_FIELDS}
+    raw = json.dumps([PREVIEW_VERSION, src, hashlib.sha256(logo or b"").hexdigest(), card, w, fmt], sort_keys=True)
+    return hashlib.sha256(raw.encode()).hexdigest()[:40]
+
+
+def cache_get(key: str) -> bytes | None:
+    with _mem_lock:
+        v = _mem.get(key)
+        if v is not None:
+            _mem.move_to_end(key)
+            return v
+    d = cache_dir()
+    if d:
+        try:
+            with open(os.path.join(d, key), "rb") as f:
+                v = f.read()
+        except OSError:
+            return None
+        _mem_put(key, v)
+        return v
+    return None
+
+
+def _mem_put(key: str, v: bytes) -> None:
+    with _mem_lock:
+        _mem[key] = v
+        _mem.move_to_end(key)
+        while len(_mem) > MEM_MAX:
+            _mem.popitem(last=False)
+
+
+def cache_put(key: str, v: bytes) -> None:
+    _mem_put(key, v)
+    d = cache_dir()
+    if not d:
+        return
+    try:
+        tmp = os.path.join(d, f".{key}.{os.getpid()}.{threading.get_ident()}")
+        with open(tmp, "wb") as f:
+            f.write(v)
+        os.replace(tmp, os.path.join(d, key))
+        if int(key[:4], 16) % 50 == 0:  # now and then, keep the disk cache bounded (oldest first)
+            names = [n for n in os.listdir(d) if not n.startswith(".")]
+            if len(names) > DISK_MAX:
+                names.sort(key=lambda n: os.path.getmtime(os.path.join(d, n)))
+                for n in names[: len(names) - DISK_MAX]:
+                    os.remove(os.path.join(d, n))
+    except OSError:
+        pass
+
+
+def cache_clear() -> None:
+    with _mem_lock:
+        _mem.clear()
+    d = cache_dir()
+    if d:
+        for n in os.listdir(d):
+            try:
+                os.remove(os.path.join(d, n))
+            except OSError:
+                pass
+
+
+def encode(im, w: int | None, fmt: str) -> bytes:
+    t = im
+    if w:
+        t = im.copy()
+        t.thumbnail((w, w * 2))
+    if fmt == "webp":
+        buf = io.BytesIO()
+        t.save(buf, "WEBP", quality=78, method=4)
+        return buf.getvalue()
+    return templates.jpeg(t, 84 if not w else 80)
+
+
+def theme_size(w: int) -> tuple[int, int]:
+    """Theme title cards are drawn at the width they are shown at (9:16), never under 240 px."""
+    W = max(240, min(int(w), 400))
+    return W, round(W * 16 / 9)
+
+
+def render_cards(kit: dict, logo: bytes | None, ids: list[str], w: int, fmt: str, stats: dict | None = None) -> dict[str, dict]:
+    """The asked-for cards as encoded bytes, from the cache or drawn now (each drawn card is cached at once)."""
+    from .media import styles
+    out: dict[str, dict] = {}
+    labels = {**KIT_LABELS, **{i: (styles.THEMES.get(i) or styles.STYLE_PRESETS.get(i) or {}).get("label", i) for i in styles.ALL_IDS}}
+    for cid in ids:
+        key = card_key(kit, logo, cid, w, fmt)
+        v = cache_get(key)
+        if v is None:
+            with _render_lock:
+                v = cache_get(key)  # drawn by another request (or the warm-up) while this one waited
+                if v is None:
+                    t0 = time.perf_counter()
+                    if cid in KIT_CARDS:
+                        got = kit_cards(kit, logo, ids=[cid])
+                    else:
+                        W, H = theme_size(w or 360)
+                        got = theme_cards_for(kit, logo, W=W, H=H, ids=[cid])
+                    c = got[0] if got else {"error": "Missing"}
+                    if "image" not in c:
+                        out[cid] = {"label": labels.get(cid, cid), "error": c.get("error")}
+                        continue
+                    v = encode(c["image"], w, fmt)
+                    cache_put(key, v)
+                    if stats is not None:
+                        stats.setdefault("drawn", {})[cid] = int((time.perf_counter() - t0) * 1000)
+        out[cid] = {"label": labels.get(cid, cid), "key": key, "bytes": v}
+    return out
 
 
 def _jpeg_url(im, w: int) -> str:
     t = im.copy()
     t.thumbnail((w, w * 2))
     return "data:image/jpeg;base64," + base64.b64encode(templates.jpeg(t, 80)).decode()
+
+
+def _theme_list() -> list[dict]:
+    from .media import styles
+    return [{"id": i, "label": (styles.THEMES.get(i) or styles.STYLE_PRESETS.get(i) or {}).get("label", i)} for i in styles.ALL_IDS]
 
 
 # ================================================================================================== the service
@@ -293,7 +455,7 @@ class BrandKits:
                 "body_fonts": {k: FONT_LABELS.get(k, k) for k in BODY_CHOICES}, "styles": templates.STYLES,
                 "samples": [{"id": s["id"], "name": s["kit"].get("name"), "label": brand_onboard.SAMPLE_LABEL,
                              "logo_url": f"/static/brands/{s['id']}/logo.png"} for s in brand_onboard.samples()],
-                "max": MAX_KITS}
+                "max": MAX_KITS, "themes": _theme_list(), "kit_cards": [{"id": i, "label": KIT_LABELS[i]} for i in KIT_CARDS]}
 
     def create(self, a, body: dict) -> dict:
         self.studio._guard_write(a, "create_brand_kit")
@@ -393,8 +555,11 @@ class BrandKits:
         return {"background": bg, "primary": primary, "accent": accent, "text": "#FFFFFF" if dark else "#111114", "palette": pal}
 
     def preview(self, a, body: dict, as_urls: bool = False) -> dict:
-        """Every gallery card in the kit as it is being edited: the video themes, the carousel cover, the thumbnail and
-        the end card. Cached by the kit's content, so switching back and forth between kits is instant."""
+        """Gallery cards in the kit as it is being edited: the carousel cover, the thumbnail and the end card (part "kit"),
+        the video themes (part "themes", or just the ids asked for) or all of them. Each card is cached on its own (see
+        card_key), so switching back to a kit, or opening the builder on a sample kit, is instant. The builder gets
+        WebP URLs; inline: true gives data URLs; MCP (as_urls) gets stored media URLs."""
+        from .media import styles
         t0 = time.time()
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
             raise KitError(demo_guard.WHY["run"])
@@ -404,36 +569,62 @@ class BrandKits:
             k = normalize(body.get("kit") if isinstance(body.get("kit"), dict) else {})
         ref = str(body.get("logo") if body.get("logo") is not None else k.get("logo") or "")
         logo = self.logo_bytes(a, ref)
-        w = max(120, min(int(body.get("width") or 220), 400))
         part = body.get("part") if body.get("part") in ("kit", "themes") else "all"
-        key = hashlib.sha256(json.dumps([k, ref, w, part, hashlib.sha256(logo or b"").hexdigest()], sort_keys=True).encode()).hexdigest()
-        if key in _cache and not as_urls:
-            return {**_cache[key], "cached": True, "ms": int((time.time() - t0) * 1000)}
-        now = time.time()
-        hits = [t for t in _gallery.get(a.uid, []) if now - t < 60]
-        if len(hits) >= GALLERY_PER_MIN:
-            raise KitError("Too many gallery redraws this minute. Pause for a moment.")
-        _gallery[a.uid] = hits + [now]
-        cards = (kit_cards(k, logo) if part != "themes" else []) + (theme_cards_for(k, logo) if part != "kit" else [])
+        w = max(120, min(int(body.get("width") or (420 if part == "kit" else 240)), 420))
+        ids: list[str] = (list(KIT_CARDS) if part != "themes" else []) + (list(styles.ALL_IDS) if part != "kit" else [])
+        if isinstance(body.get("ids"), list) and part == "themes":
+            asked = {str(i) for i in body["ids"]}
+            ids = [i for i in ids if i in asked]
+        fmt, size = ("jpg", 0) if as_urls else (("jpg" if body.get("format") == "jpeg" else "webp"), w)
+        misses = [i for i in ids if cache_get(card_key(k, logo, i, size, fmt)) is None]
+        if misses:
+            now = time.time()
+            hits = [t for t in _gallery.get(a.uid, []) if now - t < 60]
+            if len(hits) >= GALLERY_PER_MIN:
+                raise KitError("Too many gallery redraws this minute. Pause for a moment.")
+            _gallery[a.uid] = hits + [now]
+        stats: dict = {}
+        got = render_cards(k, logo, ids, size, fmt, stats)
         out = []
-        for c in cards:
-            item = {"id": c["id"], "label": c["label"], "group": "kit" if c["id"] in KIT_CARDS else "theme"}
-            if "image" in c:
-                if as_urls:
-                    tok = self.house.put_media(a, templates.jpeg(c["image"], 84), f"kit-{c['id']}.jpg", kind="preview",
-                                               meta={"type": "photo", "template": "brand_kit_preview"})
-                    item["url"] = self.house.media_url(tok)
-                else:
-                    item["url"] = _jpeg_url(c["image"], w)
-            else:
+        for cid in ids:
+            c = got[cid]
+            item = {"id": cid, "label": c["label"], "group": "kit" if cid in KIT_CARDS else "theme"}
+            if "bytes" not in c:
                 item["error"] = c.get("error")
+            elif as_urls:
+                tok = self.house.put_media(a, c["bytes"], f"kit-{cid}.jpg", kind="preview",
+                                           meta={"type": "photo", "template": "brand_kit_preview"})
+                item["url"] = self.house.media_url(tok)
+            elif body.get("inline"):
+                item["url"] = f"data:image/{'webp' if fmt == 'webp' else 'jpeg'};base64," + base64.b64encode(c["bytes"]).decode()
+            else:
+                item["url"] = f"/api/brand-kits/preview-img/{c['key']}.{fmt}"
+                item["bytes"] = len(c["bytes"])
             out.append(item)
-        res = {"cards": out, "kit": builder_view(k), "part": part}
-        if not as_urls:
-            if len(_cache) > 48:
-                _cache.clear()
-            _cache[key] = res
-        return {**res, "ms": int((time.time() - t0) * 1000)}
+        return {"cards": out, "kit": builder_view(k), "part": part, "cached": not misses,
+                "drawn_ms": stats.get("drawn", {}), "ms": int((time.time() - t0) * 1000)}
+
+    def warm(self) -> dict:
+        """Draw the two sample-workspace kits (Nothing, HuhByte AI) into the preview cache at start-up, every kit's own
+        cards first, so the builder's first preview on a fresh instance comes from the cache."""
+        from .media import styles
+        t0, n = time.time(), 0
+        kits = []
+        s = brand_onboard.sample("nothing")
+        if s:
+            kits.append((normalize({**s["kit"], "logo": "sample:nothing"}), brand_onboard.sample_logo("nothing")))
+        hb = brand_examples.EXAMPLES.get("huhbyte")
+        if hb:
+            try:
+                lb = brand_examples.logo_bytes("huhbyte")
+            except Exception:
+                lb = None
+            kits.append((normalize({**hb["kit"], "logo": "example:huhbyte", "caption_style": "news"}), lb))
+        for k, lb in kits:
+            n += len(render_cards(k, lb, list(KIT_CARDS), 420, "webp"))
+        for k, lb in kits:
+            n += len(render_cards(k, lb, list(styles.ALL_IDS), 240, "webp"))
+        return {"cards": n, "ms": int((time.time() - t0) * 1000)}
 
 
 def caption_style_for(house, a) -> str:
@@ -470,6 +661,16 @@ def add_routes(app, house, actor) -> None:
     from fastapi.responses import Response
     from .actions import ActionError
     bk = attach(house)
+    global _warmed
+    if os.environ.get("HUHQ_PREVIEW_WARM", "1") != "0" and not _warmed:
+        _warmed = True
+
+        def _warm():
+            try:
+                print("brand kit previews warmed:", bk.warm(), flush=True)
+            except Exception as e:  # warming is best effort; the builder draws on demand
+                print("brand kit preview warm-up skipped:", e.__class__.__name__, flush=True)
+        threading.Thread(target=_warm, name="brand-kit-warm", daemon=True).start()
 
     def call(fn, *args, **kw):
         try:
@@ -482,6 +683,18 @@ def add_routes(app, house, actor) -> None:
         if eid not in brand_examples.EXAMPLES:
             return Response(status_code=404)
         return Response(brand_examples.logo_bytes(eid), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/api/brand-kits/preview-img/{name}", include_in_schema=False)
+    def kits_preview_img(name: str, request: Request):
+        actor(request)  # signed-in (or sample) workspaces only
+        key, _, ext = name.partition(".")
+        if ext not in ("webp", "jpg") or not key.isalnum() or len(key) != 40:
+            return Response(status_code=404)
+        v = cache_get(key)
+        if v is None:
+            return Response(status_code=404)
+        return Response(v, media_type="image/webp" if ext == "webp" else "image/jpeg",
+                        headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
     @app.get("/api/brand-kits")
     def kits_list(request: Request):

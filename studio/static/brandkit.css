@@ -55,6 +55,11 @@
 .bk-card img{width:100%;height:auto;display:block;border-radius:8px;border:1px solid var(--line);background:var(--sunken)}
 .bk-card.theme img{aspect-ratio:9/16;object-fit:cover}
 .bk-card figcaption{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bk-sk{display:block;border-radius:8px;border:1px solid var(--line);background:linear-gradient(100deg,var(--sunken) 30%,color-mix(in srgb,var(--sunken) 70%,var(--line)) 50%,var(--sunken) 70%);background-size:220% 100%;animation:bk-sk 1.3s ease-in-out infinite}
+.bk-card.theme .bk-sk{aspect-ratio:9/16}.bk-card.k-carousel_cover .bk-sk,.bk-card.k-end_card .bk-sk{aspect-ratio:4/5}.bk-card.k-thumbnail .bk-sk{aspect-ratio:16/9}
+.bk-card.k-carousel_cover img,.bk-card.k-end_card img{aspect-ratio:4/5;object-fit:cover}.bk-card.k-thumbnail img{aspect-ratio:16/9;object-fit:cover}
+@keyframes bk-sk{from{background-position:120% 0}to{background-position:-120% 0}}
+@media (prefers-reduced-motion:reduce){.bk-sk{animation:none}}
 .bk-card.bad span{aspect-ratio:9/16;display:grid;place-items:center;border:1px dashed var(--line-strong);border-radius:8px;font-size:12px;color:var(--muted)}
 .bk-more{margin-top:4px}
 .bk-more>summary{cursor:pointer;font-weight:600;padding:4px 0}

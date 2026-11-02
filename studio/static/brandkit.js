@@ -121,31 +121,93 @@
   }
 
   // ------------------------------------------------------------ the live gallery
+  // Kit cards first, then the theme cards scrolled into view (batched), then the rest in the background. Skeletons hold
+  // the layout until each card lands; edits are debounced (450 ms). Every card is a small cached WebP by URL, and an
+  // unedited saved kit is asked for by id, so the sample kits drawn at start-up come straight from the server's cache.
   function redraw(now) { clearTimeout(K.t); K.t = setTimeout(draw, now ? 0 : 450); }
+  const req = (extra) => (K.id !== null && !K.dirty ? { kit_id: K.id, ...extra } : { kit: body(), logo: K.logo, ...extra });
+  const skel = (id, label, group) => `<figure class="bk-card ${group === "kit" ? "k-" + id : "theme"} sk" data-testid="bk-card-${id}" data-card="${id}" aria-busy="true"><span class="bk-sk" aria-hidden="true"></span><figcaption>${esc(label)}</figcaption></figure>`;
+  function put(el, c) {
+    if (!el) return;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = card(c);
+    el.replaceWith(tmp.firstElementChild);
+  }
+  function skeletons() {
+    const kc = $("#bkKitCards"), th = $("#bkThemes"), m = K.meta || {};
+    if (!kc.querySelector("[data-card]")) kc.innerHTML = (m.kit_cards || []).map((c) => skel(c.id, c.label, "kit")).join("");
+    if (!th.querySelector("[data-card]")) th.innerHTML = (m.themes || []).map((c) => skel(c.id, c.label, "theme")).join("");
+  }
   async function draw() {
     const seq = ++K.seq, t0 = performance.now();
     const kc = $("#bkKitCards"), th = $("#bkThemes");
+    skeletons();
     kc.setAttribute("aria-busy", "true"); th.setAttribute("aria-busy", "true");
     kc.classList.add("stale"); th.classList.add("stale");
-    const kit = body();
+    K.pending = new Set((K.meta?.themes || []).map((t) => t.id)); K.cachedAll = true;
     try {
-      const a = await api("/api/brand-kits/preview", { method: "POST", body: { kit, logo: K.logo, part: "kit", width: 420 } });
+      const a = await api("/api/brand-kits/preview", { method: "POST", body: req({ part: "kit", width: 420 }) });
       if (seq !== K.seq) return;
-      kc.innerHTML = a.cards.map(card).join(""); kc.classList.remove("stale"); kc.setAttribute("aria-busy", "false");
-      const b = await api("/api/brand-kits/preview", { method: "POST", body: { kit, logo: K.logo, part: "themes", width: 240 } });
-      if (seq !== K.seq) return;
-      th.innerHTML = b.cards.map(card).join(""); th.classList.remove("stale"); th.setAttribute("aria-busy", "false");
-      $("#bkThemeN").textContent = `${b.cards.length} themes in ${kit.name || "this kit"}`;
-      $("#bkMs").textContent = `Redrawn in ${((performance.now() - t0) / 1000).toFixed(1)} s${a.cached && b.cached ? " (cached)" : ""}`;
+      a.cards.forEach((c) => put(kc.querySelector(`[data-card="${c.id}"]`), c));
+      kc.classList.remove("stale"); kc.setAttribute("aria-busy", "false");
+      K.cachedAll = !!a.cached;
+      $("#bkMs").textContent = `Kit cards in ${((performance.now() - t0) / 1000).toFixed(1)} s${a.cached ? " (cached)" : ""}`;
+      window.__hqBkFirst = window.__hqBkFirst || Math.round(performance.now());  // ms since navigation: the first preview on screen
+      themesInView(seq, t0);
     } catch (e) {
       if (seq !== K.seq) return;
       $("#bkMs").textContent = e.message;
       kc.classList.remove("stale"); th.classList.remove("stale");
     }
   }
+  function themesInView(seq, t0) {
+    const th = $("#bkThemes");
+    if (K.io) K.io.disconnect();
+    const seen = new Set();
+    let timer = null;
+    const flush = () => { timer = null; const ids = [...seen].filter((i) => K.pending.has(i)); seen.clear(); if (ids.length) fetchThemes(seq, ids, t0); };
+    const io = "IntersectionObserver" in window;
+    if (io) {
+      K.io = new IntersectionObserver((es) => {
+        es.forEach((e) => { if (e.isIntersecting) { seen.add(e.target.dataset.card); K.io.unobserve(e.target); } });
+        if (!timer) timer = setTimeout(flush, 40);
+      }, { rootMargin: "240px 0px" });
+      th.querySelectorAll("[data-card]").forEach((f) => K.io.observe(f));
+    }
+    // whatever is not on screen follows in the background, in small batches, once the visible cards are in
+    const rest = () => {
+      if (seq !== K.seq) return;
+      if (K.busyThemes > 0) { setTimeout(rest, 120); return; }
+      const ids = [...K.pending].slice(0, 6);
+      if (ids.length) fetchThemes(seq, ids, t0).then(() => setTimeout(rest, 30));
+    };
+    setTimeout(rest, io ? 160 : 0);
+  }
+  async function fetchThemes(seq, ids, t0) {
+    ids = ids.filter((i) => K.pending.has(i));
+    if (!ids.length) return;
+    ids.forEach((i) => K.pending.delete(i));
+    K.busyThemes = (K.busyThemes || 0) + 1;
+    const th = $("#bkThemes");
+    try {
+      const b = await api("/api/brand-kits/preview", { method: "POST", body: req({ part: "themes", ids, width: 240 }) });
+      if (seq !== K.seq) return;
+      K.cachedAll = K.cachedAll && !!b.cached;
+      b.cards.forEach((c) => put(th.querySelector(`[data-card="${c.id}"]`), c));
+      if (!th.querySelector(".sk")) {
+        th.classList.remove("stale"); th.setAttribute("aria-busy", "false");
+        $("#bkThemeN").textContent = `${th.querySelectorAll("[data-card]").length} themes in ${K.form.name || "this kit"}`;
+        $("#bkMs").textContent = `Redrawn in ${((performance.now() - t0) / 1000).toFixed(1)} s${K.cachedAll ? " (cached)" : ""}`;
+      }
+    } catch (e) {
+      if (seq !== K.seq) return;
+      ids.forEach((i) => K.pending.add(i));
+      $("#bkMs").textContent = e.message;
+    } finally { K.busyThemes -= 1; }
+  }
   const card = (c) => c.url
-    ? `<figure class="bk-card ${c.group === "kit" ? "k-" + c.id : "theme"}" data-testid="bk-card-${c.id}" data-card="${c.id}"><img src="${c.url}" alt="${esc(c.label)} in ${esc(K.form.name || "your kit")}"><figcaption>${esc(c.label)}</figcaption></figure>`
-    : `<figure class="bk-card theme bad" data-testid="bk-card-${c.id}"><span>Couldn't draw</span><figcaption>${esc(c.label)}</figcaption></figure>`;
+    ? `<figure class="bk-card ${c.group === "kit" ? "k-" + c.id : "theme"}" data-testid="bk-card-${c.id}" data-card="${c.id}"><img src="${c.url}" decoding="async" ${c.group === "kit" ? "" : 'width="240" height="427"'} alt="${esc(c.label)} in ${esc(K.form.name || "your kit")}"><figcaption>${esc(c.label)}</figcaption></figure>`
+    : `<figure class="bk-card ${c.group === "kit" ? "k-" + c.id : "theme"} bad" data-testid="bk-card-${c.id}" data-card="${c.id}"><span>Couldn't draw</span><figcaption>${esc(c.label)}</figcaption></figure>`;
 
   // ------------------------------------------------------------ actions
   async function load(pickId) {
@@ -281,7 +343,7 @@
     $("#bkLogo").onchange = async (e) => {
       const f = e.target.files[0]; if (!f) return;
       state("Uploading the logo…");
-      try { const up = await upload(f); K.logo = up.token; K.logoUrl = up.url; fill(); await palette(); }
+      try { const up = await upload(f); K.dirty = true; K.logo = up.token; K.logoUrl = up.url; fill(); await palette(); }
       catch (err) { state(err.message); }
       e.target.value = "";
     };
