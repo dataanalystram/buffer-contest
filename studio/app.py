@@ -795,6 +795,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     agent_routes.add_routes(app, house, actor)
     from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)
     library_mod.add_routes(app, house, actor)
+    from . import uploads as uploads_mod  # one-time upload URLs + chunked uploads (UI = REST = MCP)
+    uploads_mod.add_routes(app, house, actor)
     from . import integrations as integrations_mod  # Settings -> Integrations: per-user keys + the Product Hunt callback
     integrations_mod.add_routes(app, house, actor, COOKIE, s.public_url, s.secure_cookies)
 

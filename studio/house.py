@@ -107,6 +107,8 @@ class House:
         self.brain = Brain(self)
         from .library import Library
         self.library = Library(self)
+        from .uploads import Uploads
+        self.uploads = Uploads(self)  # create_upload / upload_media_chunk (any MCP client, no public host)
 
     # ================================================================ brand kit
     def kit(self, a: Actor) -> dict:
@@ -345,6 +347,17 @@ class House:
         if not data:
             raise ActionError(IMPORT_WHY.get(why, IMPORT_WHY["unreachable"]) if not why.startswith("http_")
                               else f"Couldn't download that file: the link answered HTTP {why[5:]}.")
+        from .library import not_media, sniff
+        if not sniff(data[:32]):  # say what actually came back (owner bug 2 Nov 2026: a sign-in page read "Upload a JPG, PNG…")
+            word = "video" if ext in ("mp4", "mov", "m4v", "webm") else "photo or video"
+            why = not_media(data[:64])
+            if why.startswith("That file is a web page"):
+                raise ActionError(f"That link returned a web page (probably a sign-in page), not a {word}. "
+                                  "Use create_upload instead: it uploads the file itself, no public link needed.", 415)
+            if why.startswith("That file is JSON"):
+                raise ActionError(f"That link returned JSON text (probably an error), not a {word}. Use create_upload instead.", 415)
+            raise ActionError(f"That link didn't return a JPG, PNG, WebP or GIF image or an MP4, MOV or WebM video. "
+                              "Use create_upload to upload the file itself.", 415)
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             ext = "mp4" if data[4:8] == b"ftyp" else ("png" if data[:4] == b"\x89PNG" else "jpg")
         return self.upload(a, "import." + ext, base64.b64encode(data).decode())
