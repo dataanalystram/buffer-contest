@@ -140,6 +140,74 @@ def detect_burned_subs(src: str, duration: float, samples: int = 6) -> bool:
     return hits >= max(2, samples // 2)
 
 
+def _caption_band(a, lo: float = 0.55, hi: float = 0.95, bh: float = 0.1):
+    """The (top, bottom, mask) of the densest band of centred, bright, sharp-edged text in rows [lo, hi] of a greyscale
+    frame, or None. Burned captions are centred (word-by-word or a line), so the text mass sits around the middle and the
+    outer margins are empty; slide text and name straps are left-aligned and fail the balance test."""
+    import numpy as np
+    h, w = a.shape
+    txt = (a[:, 1:] > 150) & (np.abs(np.diff(a, axis=1)) > 60)  # 150: accent-coloured caption words count too
+    best = None
+    step, size = max(1, int(h * 0.02)), max(4, int(h * bh))
+    for r0 in range(int(h * lo), int(h * hi) - size + 1, step):
+        band = txt[r0:r0 + size]
+        mid = band[:, int(w * 0.1):int(w * 0.9)]
+        sc = float(mid.mean())
+        if sc < 0.012:
+            continue
+        cols = band.sum(axis=0).astype(float)
+        left, right = cols[int(w * 0.1):w // 2].sum(), cols[w // 2:int(w * 0.9)].sum()
+        outer = cols[:int(w * 0.06)].sum() + cols[int(w * 0.94):].sum()
+        if min(left, right) <= 0 or max(left, right) / min(left, right) > 2.2 or outer > 0.08 * cols.sum():
+            continue
+        if best is None or sc > best[0]:
+            best = (sc, r0, band)
+    if best is None:
+        return None
+    return best[1] / h, (best[1] + size) / h, best[2]
+
+
+def detect_burned_captions(src: str, start: float = 0.0, end: float | None = None, samples: int = 10) -> dict | None:
+    """Captions already burned into the picture anywhere in the lower half (an Opus-style word caption at ~75%, a subtitle
+    line at the bottom): centred bright text at about the same height in most sampled frames, whose words CHANGE from
+    frame to frame (a static name strap or logo doesn't). Returns {"top", "bottom", "frames"} as fractions of the source
+    height, or None. Owner bug 2 Nov 2026: edit_video captioned an already-captioned clip and the captions doubled."""
+    import numpy as np
+    if end is None:
+        end = ff.probe(src)["duration"]
+    span = max(0.1, end - start)
+    found = []
+    with tempfile.TemporaryDirectory() as td:
+        for i in range(samples):
+            t = start + span * (i + 0.5) / samples
+            p = Path(td) / f"c{i}.png"
+            try:
+                ff.run(["-y", "-v", "error", "-ss", f"{t:.2f}", "-i", src, "-frames:v", "1", "-vf", "scale=360:-2",
+                        "-update", "1", str(p)], timeout=60)
+            except ff.MediaError:
+                continue
+            b = _caption_band(np.asarray(Image.open(p).convert("L"), dtype=np.int16))
+            if b:
+                found.append(b)
+    need = max(3, int(samples * 0.35 + 0.5))  # captions pause between sentences: about a third of the frames is enough
+    if len(found) < need:
+        return None
+    tops = sorted(b[0] for b in found)
+    med = tops[len(tops) // 2]
+    same = [b for b in found if abs(b[0] - med) <= 0.08]
+    if len(same) < need:
+        return None
+    changed = 0
+    for x, y in zip(same, same[1:]):
+        m1, m2 = x[2], y[2]
+        hh = min(m1.shape[0], m2.shape[0])
+        diff = float((m1[:hh] ^ m2[:hh]).mean())
+        changed += diff > 0.35 * max(float(m1.mean()), float(m2.mean()), 1e-6)
+    if changed < max(2, (len(same) - 1) // 2):  # noqa: SIM102
+        return None  # the same text every time: a strap or a logo, not captions
+    return {"top": round(min(b[0] for b in same), 3), "bottom": round(max(b[1] for b in same), 3), "frames": len(same)}
+
+
 def _band_rows(a, lo: float = 0.55, hi: float = 0.95, thr: float = 0.06) -> tuple[float, float] | None:
     """Rows in [lo, hi] of a greyscale frame dense with sharp vertical edges (text / a graphic bar), as (top, bottom)
     fractions of the frame height, or None. The densest contiguous run of at least 3% of the height wins."""
@@ -192,15 +260,24 @@ def detect_lower_third(src: str, start: float = 0.0, end: float | None = None, s
     return {"top": round(min(b[0] for b in same), 3), "bottom": round(max(b[1] for b in same), 3), "frames": len(same)}
 
 
+def _keep(burned_subs) -> float:
+    """How much of the source height survives the burned-caption crop: 0.84 (a bottom subtitle line) by default, or the
+    detected caption band's top when edit_video replaces the source's own captions (captions="replace")."""
+    if isinstance(burned_subs, float) and 0.3 <= burned_subs < 1.0:
+        return burned_subs
+    return 0.84
+
+
 def band_in_output(band: dict, sw: int, sh: int, W: int, H: int, reframe: dict | None = None, burned_subs: bool = False) -> int | None:
     """Where a source band's top lands in the output frame (pixels) for the full-bleed styles, or None when it is cropped
     away. Mirrors _main_graph: the burned-subtitle crop, then track (full height), pad (fit + centre) or cover crop."""
     top = band["top"]
     if burned_subs:
-        if top >= 0.84:
+        keep = _keep(burned_subs)
+        if top >= keep:
             return None
-        top = top / 0.84
-        sh = int(sh * 0.84)
+        top = top / keep
+        sh = int(sh * keep)
     mode = (reframe or {}).get("mode")
     if mode == "track":
         y = top * H
@@ -462,7 +539,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  images: list[str] | None = None, music_mood: str = "auto", names: list[str] | None = None,
                  burned_subs: bool | None = None, captions_mode: str = "auto", accent_words: list[str] | None = None,
                  crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
-                 brand_colors: bool = False, reframe: dict | None = None, lower_third_mode="auto") -> dict:
+                 brand_colors: bool = False, reframe: dict | None = None, lower_third_mode="auto",
+                 detect_own_captions: bool = False) -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     ``style`` is a base style or a theme (styles.THEMES: its grade, effects, captions, cards and chrome on a base
@@ -470,6 +548,9 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
     reframe: a crop plan for the full-bleed styles (``longform.reframe_plan`` / ``take.crop_plan``): ``track`` follows
     the face, ``pad`` shows the whole frame over a blurred copy, anything else (or None) is the centre crop.
     lower_third_mode: auto (detect a lower-third band and lift the captions above it) | off | a band dict.
+    detect_own_captions: with captions_mode auto, look for captions already burned into the picture anywhere in the
+    lower half (detect_burned_captions) and add none when they are there (edit_video of a finished clip). captions_mode
+    "replace" crops those captions off (full-bleed styles) and captions the video again.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from . import theme_cards
     from .styles import ALL_IDS, apply_palette, config, resolve
@@ -509,7 +590,19 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         if burned_subs is None:
             burned_subs = bool(source) and detect_burned_subs(source, dur)
         caps_on = bool(cw) and bool(cfg["captions"]) and (
-            captions_mode == "on" or (captions_mode == "auto" and not (burned_subs and cfg["fill"] != "fill")))
+            captions_mode in ("on", "replace") or (captions_mode == "auto" and not (burned_subs and cfg["fill"] != "fill")))
+        captions_note, own_caps = "", None
+        if caps_on and source and (captions_mode == "replace" or (captions_mode == "auto" and detect_own_captions)):
+            # captions already burned into the picture (an Opus-style clip): ours would double them (owner bug 2 Nov 2026)
+            own_caps = detect_burned_captions(source, c0, c1)
+            if own_caps and captions_mode == "replace" and cfg["fill"] == "fill" and own_caps["top"] >= 0.45:
+                burned_subs = round(max(0.3, own_caps["top"] - 0.01), 3)  # crop their captions off, then caption it ourselves
+                captions_note = ("This video already had captions burned in, so the bottom of the frame (from "
+                                 f"{int(own_caps['top'] * 100)}% down) was cropped off and new captions added.")
+            elif own_caps:
+                caps_on = False
+                captions_note = ("This video already has captions burned in, so no new captions were added (they would "
+                                 "double up). Ask for captions=\"replace\" to crop the old ones off and caption it again.")
         cover_s = cfg["cover_secs"] if source else 0.0
         facts = [f for f in (facts or []) if f.strip()]
         facts_s = cfg["facts_secs"] if facts else 0.0
@@ -525,15 +618,15 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         if caps_on and source and cfg["fill"] == "fill" and "captions_center" in L and (reframe or {}).get("mode") == "pad":
             # screen recordings / slides (pad): the whole frame sits centred, so the captions go in the empty band under
             # it instead of over the slide (and a name line on the slide is no longer in their way)
-            k = min(W / sw, (H / (sh * 0.84 if burned_subs else sh)))
-            fit_bottom = (H + (sh * 0.84 if burned_subs else sh) * k) / 2
+            k = min(W / sw, (H / (sh * _keep(burned_subs) if burned_subs else sh)))
+            fit_bottom = (H + (sh * _keep(burned_subs) if burned_subs else sh) * k) / 2
             if H - fit_bottom >= H * 0.14:
                 pad_band = int(fit_bottom + (H - fit_bottom) * 0.30)
                 L["captions_center"] = min(pad_band, int(H * 0.80))
         if pad_band is None and caps_on and source and cfg["fill"] == "fill" and "captions_center" in L and lower_third_mode != "off":
             # a lower-third graphic in the source (name strap, ticker): our captions go above it, in every ratio
             lower_third = lower_third_mode if isinstance(lower_third_mode, dict) else detect_lower_third(source, c0, c1)
-            y_band = band_in_output(lower_third, sw, sh, W, H, reframe, bool(burned_subs)) if lower_third else None
+            y_band = band_in_output(lower_third, sw, sh, W, H, reframe, burned_subs) if lower_third else None
             if y_band is not None:
                 cst = captions.STYLES[cfg["captions"]]
                 half = int(H * cst.size_frac * 1.25 * cst.max_lines / 2) + int(H * 0.02)
@@ -610,7 +703,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         return {"path": str(outp), "style": style, "theme": cfg.get("theme"), "ratio": ratio, "width": got["width"], "height": got["height"],
                 "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), why], "boxes": boxes,
                 "layout": {k: v for k, v in L.items()}, "safe_area": safe_area(W, H), "caption_problems": cap_problems,
-                "captions": caps_on, "burned_subs": burned_subs, "lower_third": lower_third,
+                "captions": caps_on, "burned_subs": bool(burned_subs), "lower_third": lower_third,
+                "captions_note": captions_note, "source_captions": {k: own_caps[k] for k in ("top", "bottom")} if own_caps else None,
                 "captions_center": L.get("captions_center"), "music": mood if wav else "none", "source_silent": silent,
                 "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit}
     finally:
@@ -653,7 +747,7 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
     if source:
         src = f"[0:v]setpts=PTS-STARTPTS,fps={FPS},setsar=1"
         if burned_subs and cfg["fill"] == "fill":  # crop the burned-in subtitle band so captions never double up
-            src += ",crop=iw:trunc(ih*0.84/2)*2:0:0"
+            src += f",crop=iw:trunc(ih*{_keep(burned_subs)}/2)*2:0:0"
         mode = (reframe or {}).get("mode")
         if cfg["fill"] == "fill" and mode == "track":  # subject-aware: the crop window follows the face (take.crop_plan)
             from ..take import crop_expr

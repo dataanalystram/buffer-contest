@@ -24,3 +24,23 @@ jobs:
       - name: Studio tests on Postgres (production store)
         env: {STUDIO_TEST_PG: "postgresql://postgres:test@localhost:5432/studio"}
         run: python -m pytest tests/studio -q --ignore-glob="tests/studio/test_media_*"   # media tests use no store; run once above
+  worker-imports:
+    # The video worker runs in its own venv (take.yml / render.yml), not the web app's: import every module it can reach
+    # with only the worker requirements installed (2 Nov 2026: a missing `cryptography` crashed every link -> split).
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: take_analyze, install: "-r requirements-worker.txt", flags: ""}
+          - {name: take_render, install: "-r requirements-worker-core.txt numpy>=2.0", flags: "--hard-only"}
+          - {name: media_render, install: "-r requirements-worker-core.txt -r requirements-media.txt", flags: "--hard-only"}
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Worker-only venv (${{ matrix.name }})
+        run: python -m venv /tmp/w && /tmp/w/bin/pip install -q ${{ matrix.install }}
+      - name: Import every worker module
+        run: /tmp/w/bin/python scripts/worker_imports.py --import ${{ matrix.flags }}

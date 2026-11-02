@@ -156,7 +156,7 @@ def media_render(style: str, hook: str, source_path: str | None = None, images: 
                  ratios: list[str] | None = None, facts: list[str] | None = None, credit: str = "", words_path: str | None = None,
                  names: list[str] | None = None, clip: list[float] | None = None, music: str = "auto", brand: dict | None = None,
                  official: bool = False, rights_confirmed: bool = False, run_dir: str | None = None,
-                 brand_colors: bool = False) -> dict:
+                 brand_colors: bool = False, captions_mode: str = "auto", detect_own_captions: bool = False) -> dict:
     from .compose import render_style
     style = _styles.resolve(style)
     if not _styles.known(style):
@@ -174,9 +174,9 @@ def media_render(style: str, hook: str, source_path: str | None = None, images: 
         out = d / f"{style}_{r.replace(':', 'x')}.mp4"
         m = render_style(source_path, style, out=str(out), ratio=r, hook=hook, facts=facts, brand=brand, words=words,
                          credit=credit, clip=tuple(clip) if clip else None, images=images, music_mood=music, names=names,
-                         brand_colors=brand_colors)
-        outs.append({k: m[k] for k in ("path", "ratio", "width", "height", "duration", "clip", "captions", "burned_subs",
-                                       "music", "caption_problems")})
+                         brand_colors=brand_colors, captions_mode=captions_mode, detect_own_captions=detect_own_captions)
+        outs.append({k: m.get(k) for k in ("path", "ratio", "width", "height", "duration", "clip", "captions", "burned_subs",
+                                           "music", "caption_problems", "captions_note", "source_captions")})
     return {"renders": outs}
 
 

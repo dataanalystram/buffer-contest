@@ -2,7 +2,7 @@
 // Uses app.js helpers ($, esc, api, toast). Same data as GET /api/activity and the MCP tool get_activity.
 "use strict";
 (() => {
-  const A = { tab: "all", cursors: [""], at: 0, app: "", next: null };
+  const A = { tab: "all", cursors: [""], at: 0, app: "", next: null, seq: 0 };
   const fmtTime = (ts) => new Date(ts * 1000).toLocaleString();
   const money = (v) => (v == null ? "" : v === 0 ? "free" : "$" + Number(v).toFixed(v < 0.01 ? 4 : 2));
   const num = (v) => (v == null ? "" : Number(v).toLocaleString());
@@ -51,8 +51,10 @@
     const f = filters();
     $("#actCsv").href = "/api/activity/export.csv?" + qs({ ...f, limit: "", cursor: "" });
     let r;
+    const seq = ++A.seq;  // a slower answer for a tab you already left never overwrites the one you're on
     try { r = await api("/api/activity?" + qs({ ...f, cursor: A.cursors[A.at] })); }
-    catch (e) { $("#audit").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+    catch (e) { if (seq === A.seq) $("#audit").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+    if (seq !== A.seq) return;
     for (const [k, v] of Object.entries(r.counts || {})) { const el = document.querySelector(`[data-count="${k}"]`); if (el) el.textContent = v ? String(v) : ""; }
     $("#actRetention").textContent = r.retention_days;
     $("#actSummary").innerHTML = (A.tab === "agent" ? groups(r.agents) : "") + (A.tab === "system" ? meter(r.buffer) : "");

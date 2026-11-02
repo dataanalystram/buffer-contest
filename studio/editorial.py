@@ -16,6 +16,7 @@ auto-fitted; ``fit`` reports any block that still overflows (the agent rewrites 
 """
 from __future__ import annotations
 
+import contextvars
 import re
 
 from PIL import Image, ImageDraw
@@ -27,6 +28,16 @@ SIZES = {"4:5": (1080, 1350), "1:1": (1080, 1080), "9:16": (1080, 1920)}
 M = 72
 GREY, RULE, BODY = (150, 150, 156), (58, 58, 64), (222, 222, 226)
 MIN_CONTENT = 4  # content slides (not cover / follow) a carousel needs when the sources support it (owner rule)
+MAX_UPSCALE = 1.5  # a cover picture is never blown up past this (owner bug, 2 Nov 2026: the ernd cover was a 4x logo);
+#                    a smaller picture sits as an inset on the brand ground instead
+# Brands whose casing Title Case must not touch (owner bug, 2 Nov 2026: "Ernd"). Words with an inner capital (iPhone,
+# xAI, YC) or a digit are already kept as written; these fix the same names when they come in all lowercase.
+KNOWN_CASE = {w.lower(): w for w in ("iPhone", "iPad", "iOS", "macOS", "xAI", "OpenAI", "ChatGPT", "GitHub", "YouTube",
+                                     "TikTok", "LinkedIn", "eBay", "ernd")}
+_COMMON = set("a an the and or but of in on at to for from with by as is are was were be it its this that these those "
+               "we you they he she i our your their my new now how why what when who just more most all no not "
+               "here there so if then than".split())
+_KEEP: contextvars.ContextVar[dict] = contextvars.ContextVar("editorial_keep_case", default=None)
 
 
 class Fit:
@@ -50,12 +61,33 @@ def _font(file: str, size: int):
     return T.ImageFont.truetype(str(T.FONT_DIR / file), max(8, int(size)))
 
 
-def _title(s: str) -> str:
+def keep_words(*texts: str, extra=()) -> dict:
+    """Words whose casing is the brand's own: the extra list (spec keep_case / company) plus any word the copy writes in
+    lowercase at the START of a sentence ("ernd is the credit card for the AI stack"), which only a stylised name does."""
+    out = {}
+    for w in extra or ():
+        for part in str(w or "").split():
+            part = part.strip(".,:;!?\"'()")
+            if part:
+                out[part.lower()] = part
+    for t in texts:
+        for m in re.finditer(r"(?:^|[.!?]\s+)([a-z][a-z0-9]*[a-z0-9])\b", str(t or "")):
+            if m.group(1) not in _COMMON:
+                out.setdefault(m.group(1).lower(), m.group(1))
+    return out
+
+
+def _title(s: str, keep: dict | None = None) -> str:
     s = " ".join((s or "").split())
     small = {"a", "an", "the", "and", "or", "of", "vs"}
+    keep = {**KNOWN_CASE, **(_KEEP.get() or {}), **(keep or {})}
     out = []
     for i, w in enumerate(s.split(" ")):
-        if any(ch.isupper() for ch in w[1:]) or any(ch.isdigit() for ch in w) or w.startswith(("$", "@", "#")):
+        m = re.match(r"^([^\w]*)(\w[\w'’-]*?)([^\w]*)$", w)
+        core = m.group(2).lower() if m else ""
+        if m and core in keep:
+            out.append(m.group(1) + keep[core] + m.group(3))  # ernd, iPhone, xAI as the brand writes them
+        elif any(ch.isupper() for ch in w[1:]) or any(ch.isdigit() for ch in w) or w.startswith(("$", "@", "#")):
             out.append(w)  # keep 4%, $10K, iPhone, YC as written
         elif i and w.lower() in small:
             out.append(w.lower())
@@ -178,10 +210,31 @@ def _top_vignette(img, h=220, a=150, color=(0, 0, 0)):
 
 
 # ---------------------------------------------------------------------------------------------------- slides
+def upscale_needed(im: Image.Image, W: int, H: int) -> float:
+    """How much a full-bleed crop to W x H would enlarge this picture."""
+    return max(W / max(1, im.width), H / max(1, im.height))
+
+
+def _inset(canvas: Image.Image, im: Image.Image, top: int, bottom: int) -> None:
+    """A small picture centred in [top, bottom] at <= MAX_UPSCALE, rounded corners, on the ground (never pixelated)."""
+    W = canvas.width
+    bw, bh = W - 2 * M, max(40, bottom - top)
+    k = min(MAX_UPSCALE, bw / max(1, im.width), bh / max(1, im.height))
+    w, h = max(1, int(im.width * k)), max(1, int(im.height * k))
+    pic = im.convert("RGBA").resize((w, h), Image.LANCZOS)
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w - 1, h - 1), radius=max(4, min(w, h) // 10), fill=255)
+    if pic.mode == "RGBA":
+        from PIL import ImageChops
+        mask = ImageChops.multiply(mask, pic.getchannel("A"))
+    canvas.paste(pic.convert("RGB"), ((W - w) // 2, top + (bh - h) // 2), mask)
+
+
 def cover(b: T.Brand, hero: Image.Image | None, eyebrow: str, headline: str, dek: str, accent=(), n=None, ratio="4:5",
           fit: Fit | None = None) -> Image.Image:
     W, H = SIZES.get(ratio, SIZES["4:5"])
-    s = hero_edit.crop_to(hero, W, H) if hero is not None else Image.new("RGB", (W, H), b.bg)
+    inset = hero is not None and upscale_needed(hero, W, H) > MAX_UPSCALE
+    s = hero_edit.crop_to(hero, W, H) if hero is not None and not inset else Image.new("RGB", (W, H), b.bg)
     d = ImageDraw.Draw(s)
     maxw = W - 2 * M
     size = 118
@@ -199,6 +252,11 @@ def cover(b: T.Brand, hero: Image.Image | None, eyebrow: str, headline: str, dek
     head_h = int(size * 1.06) * nl
     head_y = sub_y - 40 - head_h
     cat_y = head_y - 58
+    if inset:
+        _inset(s, hero, M + 90, max(M + 190, cat_y - 40))
+        if fit:
+            fit.problems.append(f"cover picture is small ({hero.width}x{hero.height}); shown as an inset, not upscaled "
+                                f"(give a bigger image, e.g. the page's og:image, for a full-bleed cover)")
     _grad(s, max(0, cat_y - 380), cat_y + 120, 0, 252, b.bg)
     _top_vignette(s, color=b.bg)
     d = ImageDraw.Draw(s)
@@ -359,6 +417,15 @@ def render(b: T.Brand, spec: dict, *, hero: Image.Image | None = None, band: Ima
     founders:{eyebrow, blocks, accent, note, names[]}, follow_line}. hero: the hero_edit cover image; band: a picture for
     an idea slide that asks for one (image: true); founders: photos in the order of founders.names."""
     fit = Fit()
+    copy = [spec.get("dek", "")] + [bl.get("body", "") for x in spec.get("slides") or [] for bl in x.get("blocks") or []]
+    tok = _KEEP.set(keep_words(*copy, extra=list(spec.get("keep_case") or []) + [spec.get("company") or ""]))
+    try:
+        return _render(b, spec, hero, band, founders, ratio, fit)
+    finally:
+        _KEEP.reset(tok)
+
+
+def _render(b, spec, hero, band, founders, ratio, fit):
     sl = [x for x in spec.get("slides") or [] if x.get("blocks")]
     fo = spec.get("founders") or {}
     total = 1 + len(sl) + (1 if fo.get("blocks") else 0) + 1
