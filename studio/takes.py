@@ -510,6 +510,7 @@ class Takes:
 
     # ------------------------------------------------------------------ reads
     def get(self, a: Actor, rid: int) -> dict:
+        self.h._sweep_quietly()  # a take whose worker went silent shows as failed, not running forever
         run = self._run(a, rid)
         res = run["result"] or {}
         an = res.get("analysis") or {}
