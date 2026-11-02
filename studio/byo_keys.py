@@ -125,10 +125,17 @@ def save(store, uid: str, provider: str, api_key: str, model: str = "", base_url
     p = norm(provider)
     if p not in PROVIDERS:
         raise KeyError_(f"Unknown provider {provider!r}. Pick one of: {', '.join(PROVIDERS)}.")
+    pre = llm.PRESETS[p]
+    if p != "custom" and (base_url or "").strip() and \
+            (urlparse(base_url.strip()).hostname or "").lower() != urlparse(pre["base_url"]).hostname:
+        raise KeyError_("The AI endpoint isn't allowed: that host doesn't belong to the chosen provider.")
+    pre = llm.PRESETS[p]
+    if p != "custom" and (base_url or "").strip() and \
+            (urlparse(base_url.strip()).hostname or "").lower() != urlparse(pre["base_url"]).hostname:
+        raise KeyError_("The AI endpoint isn't allowed: that host doesn't belong to the chosen provider.")
     key = (api_key or "").strip()
     if not key or len(key) < 8 or len(key) > 400 or any(c.isspace() for c in key):
         raise KeyError_("Paste the whole API key (no spaces).")
-    pre = llm.PRESETS[p]
     base = (base_url or pre["base_url"]).strip().rstrip("/") if p == "custom" else pre["base_url"]
     if not base.startswith("https://"):
         raise KeyError_("A custom endpoint needs an https:// base URL.")
