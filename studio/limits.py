@@ -23,14 +23,14 @@ WORKER_MAX = 240 * MB                # the video worker's clip/reel results (bas
 FORM_MAX = 64 * 1024                 # OAuth forms
 
 
-LIBRARY_MAX = 101 * MB               # /api/library/upload and /u/<token>: one raw file (100 MB cap, checked again with the quota)
+LIBRARY_MAX = 101 * MB               # /api/library/upload, /u/<token> and /send/<code>/file: one raw file (100 MB cap, checked again with the quota)
 MCP_MAX = 4 * MB                     # /mcp: an upload_media_chunk call carries up to 2 MB as base64 (~2.7 MB) plus JSON
 
 
 def cap_for(path: str) -> int:
     if path == "/api/media":
         return MEDIA_MAX
-    if path == "/api/library/upload" or path.startswith("/u/"):
+    if path == "/api/library/upload" or path.startswith("/u/") or (path.startswith("/send/") and path.endswith("/file")):
         return LIBRARY_MAX
     if path == "/mcp" or path == "/api/uploads/chunk":
         return MCP_MAX

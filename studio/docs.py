@@ -186,6 +186,11 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>The xAI API: add <code>{"type": "mcp", "server_url": "https://huhqueue-studio.onrender.com/mcp", "server_label": "huhqueue", "headers": {"Authorization": "Bearer hq_YOUR_TOKEN"}}</code> to the request's <code>tools</code>.</p>
 <h2 id="leash">The leash</h2>
 <ul><li><b>Policy:</b> needs my approval (default), Buffer drafts only, or schedule without asking.</li><li><b>Daily cap</b> per token.</li><li><b>Kill switch:</b> <b>Pause all agents</b> on AI apps stops every agent at once. You can still post yourself.</li><li><b>Activity:</b> every action by you or an agent is logged.</li></ul>
+<h2 id="files">Getting a video in from a chat app</h2>
+<p>Claude.ai and ChatGPT run their code in a sandbox that can't reach outside hosts, so they can't upload a file to HuhQueue themselves. Two ways that work:</p>
+<ul><li><b>Send a file:</b> the app calls <code>create_send_code</code> and gives you a short code and a link. Open <a href="/send">/send</a> on any device (your phone works: scan the QR code), drop the file in, and the app finds it with <code>list_recent_uploads</code>. In HuhQueue: Library, <b>Send from a device</b>.</li>
+<li><b>A share link:</b> share the file from Google Drive, Dropbox, OneDrive or iCloud with "anyone with the link" and give the link to the app (<code>import_from_link</code>), or paste it in Library, <b>From a link</b>.</li></ul>
+<p>Files up to 100 MB each, in a 200 MB Library. Apps that can run curl (Claude Code, Codex, Cursor) use <code>create_upload</code> instead.</p>
 <h2 id="rest">REST</h2>
 <p>The endpoints the interface uses accept the same token as <code>Authorization: Bearer hq_…</code>. The reference is at <a href="/docs/api">/docs/api</a>.</p>"""),
     ("security", "Security and privacy", "How your Buffer connection, data and agents are protected, and how to delete everything.", "activity", """
@@ -338,6 +343,10 @@ _DESC = {
     "POST /api/uploads": "create_upload: a one-time upload URL (PUT /u/<token>, 15 minutes, one use) and the curl command",
     "POST /api/uploads/chunk": "upload_media_chunk: one base64 chunk (at most 2 MB decoded) of a file, in order, under an upload_id",
     "POST /api/uploads/{upload_id}/finish": "finish_upload: join the chunks into one Library item",
+    "GET /api/uploads/limits": "The upload limits: per-file MB, Library quota, chunk size, link imports, send codes",
+    "GET /api/uploads/recent": "list_recent_uploads: the newest files you uploaded, sent from a device or imported from a link",
+    "POST /api/send-codes": "create_send_code: a short code, link and QR for the Send a file page (any device, 30 minutes, 10 files)",
+    "POST /api/library/import": "import_from_link: a Google Drive, Dropbox, OneDrive or iCloud share link (or a direct link) into your Library",
     "GET /api/library/{iid}": "One Library item, with the posts that use it",
     "GET /api/library/{iid}/file": "Stream a Library file (supports range requests for video)",
     "DELETE /api/library/{iid}": "Delete a Library item and its file (warns if an unsent post still uses it)",

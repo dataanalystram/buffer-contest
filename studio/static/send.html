@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Send a file to HuhQueue</title>
+<meta name="description" content="Drop a photo or video into your HuhQueue Library from any device with a short code.">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+<script src="/static/appearance.js"></script>
+<link rel="stylesheet" href="/static/fonts.css">
+<link rel="stylesheet" href="/static/landing.css">
+<link rel="stylesheet" href="/static/send.css">
+<script src="/static/send.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/" data-testid="brand"><img class="hb" src="/static/brand/hb-mark-96.png" width="32" height="32" alt=""><span class="bt"><b>HuhQueue</b><small>by HuhByte AI</small></span></a>
+    <nav aria-label="Main"><a href="/docs" data-testid="nav-docs">Docs</a><a class="btn" href="/" data-testid="send-open-app">Open HuhQueue</a></nav>
+  </header>
+</div>
+<main id="main" class="wrap sd" data-testid="send-page">
+  <div class="sd-head">
+    <p class="ig-eyebrow">Send a file</p>
+    <h1 class="sd-h1">Send a file to HuhQueue</h1>
+    <p class="sub">From your phone, a laptop, any browser: drop a photo or video and it lands in your Library. Your AI app finds it there.</p>
+    <p class="sd-limit" data-testid="send-limit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/></svg><span>Photos (JPG, PNG, WebP, GIF) and videos (MP4, MOV, WebM), up to <b id="sdMax">100 MB</b> each.</span></p>
+  </div>
+
+  <!-- signed in, no code in the link: show a code + QR for another device -->
+  <section class="sd-card sd-code" id="sdMine" data-testid="send-mine" hidden aria-labelledby="sdMineH">
+    <div>
+      <h2 id="sdMineH">Open this on the device that has the file</h2>
+      <p class="muted">Scan the QR code, or go to <b id="sdPage">huhqueue-studio.onrender.com/send</b> and type the code.</p>
+      <p class="sd-bigcode" data-testid="send-code" id="sdCode" aria-live="polite">····-····</p>
+      <p class="sd-meta"><span id="sdExpires">Valid 30 minutes</span> · <span id="sdFiles">up to 10 files</span></p>
+      <div class="sd-acts"><button type="button" class="btn2" id="sdCopy" data-testid="send-copy">Copy link</button><button type="button" class="btn3" id="sdNew" data-testid="send-new">New code</button></div>
+    </div>
+    <figure class="sd-qr"><img id="sdQr" data-testid="send-qr" alt="QR code that opens the Send a file link on your phone" hidden><figcaption>Point your phone's camera here</figcaption></figure>
+  </section>
+
+  <!-- no code and not signed in: type the code -->
+  <form class="sd-card sd-enter" id="sdEnter" data-testid="send-enter" hidden aria-labelledby="sdEnterH">
+    <h2 id="sdEnterH">Enter your code</h2>
+    <p class="muted">You'll find it in HuhQueue (Library, <b>Send from a device</b>) or in your AI app's reply.</p>
+    <div class="sd-row"><label class="sr" for="sdIn">Code</label><input id="sdIn" data-testid="send-code-input" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="ABCD-EFGH"><button class="btn" type="submit" data-testid="send-code-go">Continue</button></div>
+    <p class="sd-err" id="sdEnterErr" role="alert" hidden></p>
+    <p class="aux">Have HuhQueue open on another screen? Library, <b>Send from a device</b> shows a code and a QR code.</p>
+  </form>
+
+  <!-- a code: drop files -->
+  <section class="sd-card" id="sdDropWrap" data-testid="send-drop-wrap" hidden aria-labelledby="sdDropH">
+    <h2 id="sdDropH" class="sr">Choose files to send</h2>
+    <label class="sd-drop" id="sdDrop" data-testid="send-drop" for="sdFile">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+      <b>Drop a photo or video here</b>
+      <span>or <u>choose a file</u> · up to <span class="sd-max">100 MB</span></span>
+      <input id="sdFile" data-testid="send-file" type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" class="sr">
+    </label>
+    <p class="sd-meta" id="sdCodeMeta" data-testid="send-code-meta"></p>
+    <ul class="sd-list" id="sdList" data-testid="send-list" aria-live="polite"></ul>
+    <p class="sd-err" id="sdErr" data-testid="send-error" role="alert" hidden></p>
+  </section>
+
+  <section class="sd-how" aria-labelledby="sdHowH">
+    <h2 id="sdHowH">Other ways in</h2>
+    <ul>
+      <li><b>From a cloud drive</b><span>Paste a Google Drive, Dropbox, OneDrive or iCloud share link in Library, <b>From a link</b>, or ask your AI app to use <code>import_from_link</code>.</span></li>
+      <li><b>From your AI app</b><span>Ask it to make a send code (<code>create_send_code</code>); after you drop the file here it finds it with <code>list_recent_uploads</code>.</span></li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

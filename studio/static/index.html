@@ -223,7 +223,7 @@
           <label class="sr" for="libQ">Search the Library</label><input id="libQ" type="search" data-testid="library-search" placeholder="Search by file name or post">
           <label class="sr" for="libKind">Show</label><select id="libKind" data-testid="library-kind"><option value="">Everything</option><option value="video">Videos</option><option value="image">Images</option><option value="carousel">Carousels</option><option value="draft">Drafts</option><option value="upload">Uploaded by you</option><option value="generated">Made by the agent</option></select>
           <span class="muted sm lib-usage" id="libUsage" data-testid="library-usage"></span>
-          <label class="btn sm lib-up" id="libUpBtn">Upload<input id="libFile" data-testid="library-upload" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" hidden></label>
+          <span class="lib-ins" id="libIns"><label class="btn sm lib-up" id="libUpBtn">Upload<input id="libFile" data-testid="library-upload" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" hidden></label><button type="button" class="btn2 sm" id="libLinkBtn" data-testid="library-from-link">From a link</button><a class="btn2 sm" id="libSendBtn" href="/send" target="_blank" rel="noopener" data-testid="library-send-device">Send from a device</a></span>
         </div>
         <div id="libGrid" class="lib-grid" data-testid="library-grid" aria-live="polite"></div>
         <div id="libPager" class="pg-wrap" data-testid="library-pager" hidden></div>
@@ -571,6 +571,15 @@
   <div class="lb-head"><b id="lbTitle"></b><span class="lb-nav"><button type="button" class="btn2 sm" id="lbPrev" data-testid="lightbox-prev" aria-label="Previous">‹</button><button type="button" class="btn2 sm" id="lbNext" data-testid="lightbox-next" aria-label="Next">›</button>
   <button type="button" class="btn2 sm" id="lbClose" data-testid="lightbox-close">Close</button></span></div>
   <div class="lb-body" id="lbBody"></div>
+</dialog>
+<dialog class="lib-link" id="libLink" data-testid="library-link-dialog" aria-labelledby="libLinkTitle">
+  <form method="dialog" id="libLinkForm">
+    <b id="libLinkTitle">Import from a link</b>
+    <p class="muted sm">A Google Drive, Dropbox, OneDrive or iCloud share link (set to "anyone with the link"), or a direct link to the file. Photos and videos up to <span id="libLinkMax">100 MB</span>.</p>
+    <label class="sr" for="libLinkUrl">Share link</label><input id="libLinkUrl" type="url" inputmode="url" data-testid="library-link-url" placeholder="https://drive.google.com/file/d/…/view" autocomplete="off" spellcheck="false" required>
+    <p class="st err" id="libLinkErr" data-testid="library-link-error" role="alert" hidden></p>
+    <div class="lib-link-acts"><button type="button" class="btn2 sm" id="libLinkCancel">Cancel</button><button type="submit" class="btn sm" id="libLinkGo" data-testid="library-link-go">Import</button></div>
+  </form>
 </dialog>
 <dialog class="lib-pick" id="libPick" data-testid="library-picker" aria-labelledby="libPickTitle">
   <div class="lb-head"><b id="libPickTitle">Choose from your Library</b><span class="lb-nav"><label class="btn sm" id="libPickUpBtn">Upload a file<input id="libPickFile" data-testid="library-picker-upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" hidden></label>

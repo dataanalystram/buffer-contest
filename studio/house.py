@@ -155,6 +155,10 @@ class House:
         self.library = Library(self)
         from .uploads import Uploads
         self.uploads = Uploads(self)  # create_upload / upload_media_chunk (any MCP client, no public host)
+        from .send import Send
+        self.send = Send(self)  # Send a file page: a short code + QR, any device drops a file into the Library
+        from .share_import import Importer
+        self.share_import = Importer(self)  # import_from_link: Drive / Dropbox / OneDrive / iCloud share links
 
     # ================================================================ brand kit
     def kit(self, a: Actor) -> dict:
@@ -399,7 +403,9 @@ class House:
             why = not_media(data[:64])
             if why.startswith("That file is a web page"):
                 raise ActionError(f"That link returned a web page (probably a sign-in page), not a {word}. "
-                                  "Use create_upload instead: it uploads the file itself, no public link needed.", 415)
+                                  "Use create_upload instead (it uploads the file itself), or create_send_code if your "
+                                  "sandbox can't reach it; a Google Drive, Dropbox, OneDrive or iCloud share link works "
+                                  "with import_from_link.", 415)
             if why.startswith("That file is JSON"):
                 raise ActionError(f"That link returned JSON text (probably an error), not a {word}. Use create_upload instead.", 415)
             raise ActionError(f"That link didn't return a JPG, PNG, WebP or GIF image or an MP4, MOV or WebM video. "

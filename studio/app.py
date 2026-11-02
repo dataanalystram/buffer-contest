@@ -861,6 +861,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     library_mod.add_routes(app, house, actor)
     from . import uploads as uploads_mod  # one-time upload URLs + chunked uploads (UI = REST = MCP)
     uploads_mod.add_routes(app, house, actor)
+    from . import send as send_mod  # Send a file page (/send): short code + QR (UI = REST = MCP)
+    send_mod.add_routes(app, house, actor)
+    from . import share_import as share_mod  # import_from_link: cloud-drive share links (UI = REST = MCP)
+    share_mod.add_routes(app, house, actor)
     from . import integrations as integrations_mod  # Settings -> Integrations: per-user keys + the Product Hunt callback
     integrations_mod.add_routes(app, house, actor, COOKIE, s.public_url, s.secure_cookies)
 
