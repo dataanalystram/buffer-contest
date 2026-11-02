@@ -23,6 +23,14 @@ sys.path.insert(0, str(ROOT))
 from studio import brand_extract, brand_onboard, netguard, templates  # noqa: E402
 
 SITES = {
+    "nothing": {"url": "https://nothing.tech/", "hosts": ["nothing.tech", "us.nothing.tech"], "hashtags": ["#Nothing", "#ProductUpdate"],
+                "about": "Black, white and one red dot. Read from nothing.tech.",
+                # what a person would tweak after the import, recorded as a tweak (the site's CSS sets Geist; Nothing's own
+                # dot-matrix face is NDot, which is not public, so the bundled dot-matrix Doto stands in)
+                "tweak": {"font": "dot", "headline_case": "upper", "colors": {"primary": "#000000", "text": "#FFFFFF"},
+                          "front_card": {"style": "grid"}, "end_card": {"style": "grid", "cta": "Follow Nothing", "line": ""}},
+                "tweak_note": "Tweaked after the import: black ground and white text (the site's theme-color is #F4F4F4), headline "
+                              "font Doto, a dot-matrix face like Nothing's NDot (the site's CSS sets Geist), grid cards."},
     "linear": {"url": "https://linear.app/", "hosts": ["linear.app"], "hashtags": ["#ProductUpdate", "#Linear"],
                "about": "Dark, precise, indigo. Read from linear.app."},
     "notion": {"url": "https://www.notion.com/", "hosts": ["notion.com", "notion.so"], "hashtags": ["#ProductUpdate", "#Notion"],
@@ -96,6 +104,11 @@ def main() -> None:
             if got.get("mark_png"):
                 (out_dir / "mark.png").write_bytes(got["mark_png"])
             kit = {**got["kit"], "hashtags": SITES[bid]["hashtags"], "label": brand_onboard.SAMPLE_LABEL}
+            tw = SITES[bid].get("tweak") or {}
+            for k, v in tw.items():
+                kit[k] = {**kit.get(k, {}), **v} if isinstance(v, dict) else v
+            if tw:
+                got["provenance"]["tweak"] = SITES[bid]["tweak_note"]
             rec = {"id": bid, "title": kit["name"], "about": SITES[bid]["about"], "hosts": SITES[bid]["hosts"],
                    "source_url": SITES[bid]["url"], "kit": kit, "provenance": got["provenance"], "fonts": got["fonts"],
                    "found": {**got["found"], "stylesheets": got["stylesheets_read"]}, "label": brand_onboard.SAMPLE_LABEL,

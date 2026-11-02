@@ -34,7 +34,7 @@ from . import brand, brand_extract, demo_guard, netguard, templates
 
 SAMPLE_DIR = Path(__file__).parent / "sample_brands"
 STATIC_BRANDS = Path(__file__).parent / "static" / "brands"
-SAMPLE_IDS = ("linear", "notion")
+SAMPLE_IDS = ("nothing", "linear", "notion")
 SAMPLE_LABEL = "Sample brand, not affiliated"
 PREVIEWS_PER_MIN = 30
 _previews: dict[str, list[float]] = {}
@@ -93,7 +93,7 @@ def brand_for(kit: dict, logo: bytes | None) -> templates.Brand:
     if k.get("font") not in templates.HEAD_FONTS:
         k["font"] = "inter"
     if k.get("body_font") not in templates.BODY_FONTS:
-        k["body_font"] = "inter" if k["font"] in ("anton", "serif") else k["font"]
+        k["body_font"] = "inter" if k["font"] in ("anton", "serif", "dot") else k["font"]
     return templates.Brand(k, logo)
 
 

@@ -15,9 +15,9 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
-         "serif": "DMSerifDisplay-Regular.ttf"}
+         "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf"}
 BODY_FONTS = {"anton": "Inter-SemiBold.ttf", "poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "figtree": "Figtree-Medium.ttf",
-              "serif": "Inter-Regular.ttf"}
+              "serif": "Inter-Regular.ttf", "dot": "Inter-Regular.ttf"}
 # What a kit looks like before the brand is set: neutral greys and Inter, so nothing of the HuhByte sample (black,
 # lavender #C9ACFA, Anton) leaks into another brand's renders (owner, 2 Nov 2026). Set colours win everywhere.
 NEUTRAL_ACCENT = "#E8E8E8"
@@ -232,7 +232,7 @@ RULE_SCHEMA_HINT = (
     'Return JSON {"rules":[{"kind":"text"|"visual","check":{...},"rule":"short human rule"}]}. check.type is one of: '
     'banned_words{words}, no_emoji, max_hashtags{n}, no_exclamation, ends_with{text}, require_text{text}, caption_case{value:"lower"}, '
     'max_length{n}, logo_position{pos:tl|tr|bl|br}, logo_scale{scale:0.05-0.2}, end_card{on, cta?}, headline_case{value:upper|sentence}, '
-    'headline_max_words{n}, accent_color{hex}, font{name:anton|poppins|inter|figtree|serif}, overlay{value:0-0.9}, source_credit{on}. '
+    'headline_max_words{n}, accent_color{hex}, font{name:anton|poppins|inter|figtree|serif|dot}, overlay{value:0-0.9}, source_credit{on}. '
     'Only rules the correction clearly implies; [] if none.')
 
 VALID_TYPES = {"banned_words", "no_emoji", "max_hashtags", "no_exclamation", "ends_with", "require_text", "caption_case",

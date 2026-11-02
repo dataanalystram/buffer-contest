@@ -32,9 +32,10 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 FONT_DIR = Path(__file__).parent / "fonts"
 SIZES = {"4:5": (1080, 1350), "9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1600, 900)}
 HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
-              "serif": "DMSerifDisplay-Regular.ttf"}
+              "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf"}
 BODY_FONTS = {"poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "inter-semibold": "Inter-SemiBold.ttf",
-              "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf", "serif": "Inter-Regular.ttf"}
+              "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf", "serif": "Inter-Regular.ttf",
+              "dot": "Inter-Regular.ttf"}
 STYLES = {  # what a brand can pick for its front and end card instead of uploading one
     "bold": "Solid ground, a thick accent bar and the headline set big",
     "glow": "Dark ground with a soft accent glow behind the headline",

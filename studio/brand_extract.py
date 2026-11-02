@@ -281,8 +281,9 @@ def _close(a, b, d: int = 40) -> bool:
 
 
 # ================================================================================================= fonts
-BUNDLED = {"inter": "Inter", "poppins": "Poppins", "figtree": "Figtree", "anton": "Anton", "serif": "DM Serif Display"}
+BUNDLED = {"inter": "Inter", "poppins": "Poppins", "figtree": "Figtree", "anton": "Anton", "serif": "DM Serif Display", "dot": "Doto"}
 _FONT_MAP = [  # (substring in the family, bundled face)
+    ("ndot", "dot"), ("doto", "dot"), ("dot matrix", "dot"), ("dotmatrix", "dot"), ("lcd", "dot"), ("pixel", "dot"),
     ("inter", "inter"), ("poppins", "poppins"), ("figtree", "figtree"), ("anton", "anton"), ("oswald", "anton"),
     ("bebas", "anton"), ("league gothic", "anton"), ("condensed", "anton"), ("compressed", "anton"), ("druk", "anton"),
     ("dm serif", "serif"), ("serif display", "serif"), ("lyon", "serif"), ("tiempos", "serif"), ("garamond", "serif"),
@@ -360,7 +361,7 @@ def pick_fonts(vars_: dict, css: str, html_styles: str = "") -> dict:
         prov["head_font"] = prov.get("body_font", "")
     hb, hm = map_font(head) if head else ("inter", "closest")
     bb, bm = map_font(body_f) if body_f else ("inter", "closest")
-    if bb in ("anton", "serif"):  # a condensed / display face never sets body copy
+    if bb in ("anton", "serif", "dot"):  # a condensed / display face never sets body copy
         bb = "inter"
     return {"head": {"family": head, "bundled": hb, "match": hm if head else "default"},
             "body": {"family": body_f, "bundled": bb, "match": bm if body_f else "default"},
