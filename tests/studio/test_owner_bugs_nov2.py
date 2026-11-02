@@ -232,3 +232,99 @@ def test_one_bad_source_never_500s_the_scan(human, monkeypatch):
     assert r.status_code == 200, r.text
     rss = next(x for x in r.json()["status"] if x["source"] == "rss")
     assert rss["ok"] is False and "unreadable" in rss["error"]
+
+
+# ---- Bug 4: the ernd carousel cover used the 4x-upscaled logo and wrote "Ernd" (owner, 1-2 Nov 2026) ----
+
+def _brand():
+    from studio import templates as T
+    return T.Brand({"name": "huh byte", "handle": "huhbyte.ai", "colors": {"primary": "#0b0b0e", "accent": "#c9acfa"}})
+
+
+def _red_box(im):
+    from PIL import Image as _I
+    px = im.convert("RGB")
+    mask = _I.eval(px.split()[0], lambda v: 255 if v > 200 else 0)
+    g = _I.eval(px.split()[1], lambda v: 255 if v < 60 else 0)
+    from PIL import ImageChops
+    return ImageChops.multiply(mask, g).getbbox()
+
+
+def test_small_cover_picture_is_an_inset_never_upscaled_past_1_5x():
+    from PIL import Image as _I
+
+    from studio import editorial as E
+    logo = _I.new("RGB", (200, 200), (230, 20, 20))
+    fit = E.Fit()
+    s = E.cover(_brand(), logo, "YC F26", "ernd Is The Card For AI", "One line.", fit=fit)
+    box = _red_box(s)
+    assert box is not None
+    w, h = box[2] - box[0], box[3] - box[1]
+    assert w <= 200 * E.MAX_UPSCALE + 2 and h <= 200 * E.MAX_UPSCALE + 2  # at most 1.5x, not 1350/200 = 6.75x
+    assert abs((box[0] + box[2]) / 2 - 540) < 4  # centred
+    assert any("inset" in p for p in fit.problems)
+
+
+def test_big_cover_picture_stays_full_bleed():
+    from PIL import Image as _I
+
+    from studio import editorial as E
+    hero = _I.new("RGB", (1000, 1250), (230, 20, 20))  # 1.08x to fill 1080x1350: allowed
+    assert E.upscale_needed(hero, 1080, 1350) <= E.MAX_UPSCALE
+    fit = E.Fit()
+    s = E.cover(_brand(), hero, "YC F26", "A Card", "One line.", fit=fit)
+    assert s.getpixel((540, 300))[0] > 150  # the picture fills the top of the slide
+    assert not any("inset" in p for p in fit.problems)
+
+
+@pytest.mark.parametrize("text,want", [
+    ("ernd raises $10M for the AI stack", "ernd Raises $10M For the AI Stack"),
+    ("why xai and iphone matter", "Why xAI and iPhone Matter"),
+    ("xAI ships, iPhone sales up 4%", "xAI Ships, iPhone Sales Up 4%"),
+    ("meet ernd.", "Meet ernd."),
+])
+def test_title_case_keeps_brand_casing(text, want):
+    from studio import editorial as E
+    assert E._title(text) == want
+
+
+def test_title_case_keeps_a_stylised_name_from_the_copy_and_spec():
+    from studio import editorial as E
+    keep = E.keep_words("acmeco is the card for agents. the rest is noise.", extra=["huhQ"])
+    assert keep == {"acmeco": "acmeco", "huhq": "huhQ"}  # 'the' at a sentence start is never taken for a brand
+    assert E._title("acmeco and huhq ship", keep) == "acmeco and huhQ Ship"
+    tok = E._KEEP.set(keep)
+    try:
+        assert E._title("the acmeco card") == "The acmeco Card"
+    finally:
+        E._KEEP.reset(tok)
+
+
+def test_render_applies_keep_case_from_the_spec(monkeypatch):
+    from studio import editorial as E
+    seen = []
+    real = E._title
+    monkeypatch.setattr(E, "_title", lambda s, keep=None: seen.append(real(s, keep)) or seen[-1])
+    spec = {"eyebrow": "X", "headline": "zeta pays you back", "dek": "A card.", "keep_case": ["zeta"],
+            "slides": [{"eyebrow": "A", "blocks": [{"head": "zeta in numbers", "body": "4% back."}]}]}
+    E.render(_brand(), spec)
+    assert "zeta Pays You Back" in seen and "zeta In Numbers" in seen
+    assert not E._KEEP.get()  # reset after the render
+
+
+def test_research_link_ranks_share_images_ahead_of_logos():
+    from studio.mcp_client_brain import rank_images
+    imgs, logos = rank_images("https://ernd.ai/brand/logo.png",
+                              ["https://ernd.ai/favicon.ico", "https://ernd.ai/og/share.jpg", "https://ernd.ai/art/hero.webp",
+                               "https://ernd.ai/og/share.jpg", "https://cdn.x.com/icons/x.svg"])
+    assert imgs[:2] == ["https://ernd.ai/og/share.jpg", "https://ernd.ai/art/hero.webp"]
+    assert set(logos) == {"https://ernd.ai/brand/logo.png", "https://ernd.ai/favicon.ico", "https://cdn.x.com/icons/x.svg"}
+    assert imgs[2:] == logos and len(imgs) == 5  # deduped; logos last, kept as a fallback
+    imgs, logos = rank_images("https://site.com/og-image.png", ["https://site.com/wp/logo-dark.png"])
+    assert imgs[0] == "https://site.com/og-image.png" and logos == ["https://site.com/wp/logo-dark.png"]
+
+
+def test_render_carousel_tool_offers_keep_case(human):
+    from studio.mcp_client_brain import TOOLS
+    rc = next(t for t in TOOLS if t["name"] == "render_carousel")
+    assert rc["inputSchema"]["properties"]["keep_case"]["type"] == "array"
