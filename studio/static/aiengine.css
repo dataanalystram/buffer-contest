@@ -25,6 +25,7 @@
 .ai-eng-note,.ag-eng-note{margin:0 0 12px;padding:8px 12px;border-radius:8px;background:var(--sunken);border:1px solid var(--line);font-size:13px;line-height:1.45}
 .ag-eng-note{margin:8px 0 0}
 .ai-eng-pools{margin:12px 0 0}
+.ai-eng-keys{margin:6px 0 0}
 /* composer: "Model [Claude · $0.66 left ▾]  Writing with: Claude" */
 .chips-head{flex-wrap:wrap}
 .ag-eng{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;justify-content:flex-end}
