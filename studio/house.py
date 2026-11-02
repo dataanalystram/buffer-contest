@@ -291,6 +291,14 @@ class House:
         d["data"] = bytes(d["data"])
         return d
 
+    def media_head(self, token: str) -> dict | None:
+        """Type and length of a media token without reading its bytes (HEAD /m/<token>)."""
+        rows = self.store.q("SELECT mime, size FROM media WHERE token=?", (token,))
+        if rows and rows[0]["size"]:
+            return {"mime": rows[0]["mime"], "size": int(rows[0]["size"])}
+        m = self.get_media(token)
+        return {"mime": m["mime"], "size": len(m["data"])} if m else None
+
     def media_meta(self, a: Actor, token: str) -> dict | None:
         rows = self.store.q("SELECT meta FROM media WHERE token=? AND user_id=?", (token, a.uid))
         return json.loads(rows[0]["meta"]) if rows else self.library.meta(a, token)
