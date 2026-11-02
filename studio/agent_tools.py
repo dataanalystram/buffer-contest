@@ -1200,6 +1200,7 @@ class Tools(EditorialTools):
                 pk["reel"] = self._media_info(cm["reel"], [m["url"] for m in cm["reel"]], "9:16")
             packages.append(pk)
         res["packages"] = packages
+        self._no_video_plan_note(run)
         src_url = ((res.get("source") or {}).get("url") or "").split("?")[0].rstrip("/")
         want = (run["input"].get("source_url") or "").split("?")[0].rstrip("/")
         about = not want or (src_url.lower().replace("twitter.com", "x.com") == want.lower().replace("twitter.com", "x.com"))

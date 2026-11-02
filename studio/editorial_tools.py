@@ -477,6 +477,16 @@ class EditorialTools:
                                                         "note": SKIP_NOTE.format(svc=c["service"].title())}
         (res.get("captions") or {}).pop(c["id"], None)
 
+    def _no_video_plan_note(self, run) -> None:
+        """Any run that ends with no usable video says so in its plan, whatever path got there (format auto, a carousel
+        render, the planner, MCP): "No video found, carousel only", once. The weekly recap has its own plan."""
+        res = run["result"]
+        if res.get("recap") or self._has_video(run):
+            return
+        if any(p.get("format") == "reel" for p in res.get("packages") or []):
+            return
+        self._plan_note(res)
+
     @staticmethod
     def _plan_note(res: dict) -> None:
         plan = res.get("plan") if isinstance(res.get("plan"), list) else []

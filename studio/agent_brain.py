@@ -424,6 +424,8 @@ class Brain:
                 self._planner(a, rid, tools, message, engs)
             run = self.h.run(a, rid)
             res = run["result"]
+            if res.get("packages"):
+                tools._no_video_plan_note(run)  # a plan rewritten after check still says it (deduped)
             status = "ready" if res.get("packages") else "failed"
             if res.get("conflicts"):
                 status = "ready"  # packages are on hold; the question is in the thread
