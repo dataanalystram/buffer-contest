@@ -341,3 +341,15 @@ def test_the_sample_kits_are_warmed_so_the_demo_builder_opens_from_the_cache(cli
         k = client.post("/api/brand-kits/preview", json={"kit_id": kit["id"], "part": "kit", "width": 420}).json()
         t = client.post("/api/brand-kits/preview", json={"kit_id": kit["id"], "part": "themes", "width": 240}).json()
         assert k["cached"] and t["cached"], kit["name"]
+
+
+def test_preview_images_do_not_eat_the_sample_rate_limit(client):
+    client.get("/demo")
+    client.headers["X-HQ-CSRF"] = client.get("/api/session").json()["csrf"]
+    kit = client.get("/api/brand-kits").json()["kits"][0]
+    url = client.post("/api/brand-kits/preview", json={"kit_id": kit["id"], "part": "kit"}).json()["cards"][0]["url"]
+    rate = client.app.state.rate
+    before = sum(len(v) for v in rate._hits.values())
+    for _ in range(30):
+        assert client.get(url).status_code == 200
+    assert sum(len(v) for v in rate._hits.values()) == before, "image reads are not counted against the per-IP budget"
