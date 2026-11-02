@@ -228,7 +228,29 @@ def test_library_delete_warns_when_a_post_uses_it_and_use_in_a_post(owner):
     gone = owner.delete(f"/api/library/{up['id']}?force=1").json()
     assert gone["deleted"] and owner.get(up["url"]).status_code == 404
     assert owner.get("/m/" + up["media_token"]).status_code == 404
+    # the item went to the Trash: gone from the Library and no longer served, bytes kept for a restore
+    assert up["id"] not in [i["id"] for i in owner.get("/api/library").json()["items"]]
+    assert [i["id"] for i in owner.get("/api/library/trash").json()["items"]] == [up["id"]]
+    back = owner.post(f"/api/library/{up['id']}/restore", json={}).json()
+    assert back["restored"] and owner.get("/m/" + up["media_token"]).status_code == 200 and owner.get(up["url"]).status_code == 200
+    owner.delete(f"/api/library/{up['id']}?force=1")
+    assert owner.app.state.house.library.purge_trash(days=0) == 1  # after TRASH_DAYS it's removed for good
     assert owner.app.state.store.q("SELECT COUNT(*) n FROM library_chunks WHERE item_id=?", (up["id"],))[0]["n"] == 0
+    assert owner.post(f"/api/library/{up['id']}/restore", json={}).status_code == 404
+
+
+def test_a_deleted_generated_item_restores_every_posts_files(owner):
+    from studio.actions import Actor
+    h = owner.app.state.house
+    uid = owner.app.state.store.q("SELECT user_id FROM sessions WHERE user_id IS NOT NULL")[0]["user_id"]
+    toks = [h.put_media(Actor(uid), jpeg(400, 500), f"s{i}.jpg", kind="render", meta={"type": "photo"}) for i in range(2)]
+    iid = h.library.register_generated(Actor(uid), [{"token": t, "url": f"/m/{t}", "type": "photo"} for t in toks], "carousel", None)
+    assert iid
+    owner.delete(f"/api/library/{iid}?force=1")
+    assert all(owner.get(f"/m/{t}").status_code == 404 for t in toks)
+    assert h.media_present(toks) == set()  # the posts that used them show "missing", exactly as before
+    owner.post(f"/api/library/{iid}/restore", json={})
+    assert all(owner.get(f"/m/{t}").status_code == 200 for t in toks) and h.media_present(toks) == set(toks)
 
 
 def test_library_mcp_tools(owner):

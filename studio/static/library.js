@@ -63,15 +63,23 @@ function wireLibCard(el) {
   el.querySelectorAll("[data-run]").forEach((b) => (b.onclick = async () => { showTab("agent"); try { const r = await api(`/api/agent/runs/${b.dataset.run}`); if (r.kind === "take") return window.openTake(r.id); window.showRunFromLibrary?.(r); } catch (e) { toast(e.message); } }));
   const use = el.querySelector("[data-act=use]");
   if (use) use.onclick = () => { showTab("agent"); setTimeout(() => window.attachToPost({ media_token: it.media_token, name: it.name, kind: it.kind, url: it.url, thumb: it.thumb }), 50); toast("Attached to a new post. Say what to post and press Make it."); };
+  // a delete goes to the Trash (7 days): the toast offers Undo, which restores the item and every post's files
+  const undoToast = (item, r) => {
+    const t = document.getElementById("toast"); if (!t) return toast("Moved to the Trash");
+    t.innerHTML = `Moved to the Trash for ${(r && r.in_trash_days) || 7} days. <button type="button" class="linkish" data-testid="lib-undo">Undo</button>`;
+    t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 8000);
+    const b = t.querySelector("[data-testid=lib-undo]");
+    if (b) b.onclick = async () => { try { await api(`/api/library/${item.id}/restore`, { method: "POST", body: {} }); toast("Restored"); loadLibrary(); } catch (e) { toast(e.message, 5000); } };
+  };
   const del = el.querySelector("[data-act=del]");
   if (del) del.onclick = async () => {
     const used = (it.used_in || []).filter((u) => !u.sent);
-    if (!(await hqConfirm(`Delete “${it.name}”? The file is removed for good.` + (used.length ? `\n\nIt's used in ${used.length} post${used.length > 1 ? "s" : ""} that hasn't gone out yet; those posts lose this media.` : ""), { ok: "Delete", danger: true }))) return;
+    if (!(await hqConfirm(`Delete “${it.name}”? It moves to the Trash for 7 days, then it's removed for good.` + (used.length ? `\n\nIt's used in ${used.length} post${used.length > 1 ? "s" : ""} that hasn't gone out yet; those posts lose this media until you restore it.` : ""), { ok: "Delete", danger: true }))) return;
+    const done = (r) => { loadLibrary(); undoToast(it, r); };
     try {
-      await api(`/api/library/${it.id}?force=${used.length ? 1 : 0}`, { method: "DELETE" });
-      toast("Deleted"); loadLibrary();
+      done(await api(`/api/library/${it.id}?force=${used.length ? 1 : 0}`, { method: "DELETE" }));
     } catch (e) {
-      if (e.status === 409 && (await hqConfirm(e.message, { ok: "Delete anyway", danger: true }))) { await api(`/api/library/${it.id}?force=1`, { method: "DELETE" }); toast("Deleted"); loadLibrary(); }
+      if (e.status === 409 && (await hqConfirm(e.message, { ok: "Delete anyway", danger: true }))) { done(await api(`/api/library/${it.id}?force=1`, { method: "DELETE" })); }
       else if (e.status !== 409) toast(e.message, 5000);
     }
   };
