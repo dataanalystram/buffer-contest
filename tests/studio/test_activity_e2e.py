@@ -16,8 +16,10 @@ pw = pytest.importorskip("playwright.sync_api")
 NO_TOUR = "localStorage.setItem('hq_tour_done', '1'); localStorage.setItem('hq_onb_seen', '1')"
 
 
-def until(fn, timeout=10.0):
-    """Poll a Python check against the page (the app's CSP has no 'unsafe-eval', so no string wait_for_function)."""
+def until(fn, timeout=10.0, page=None):
+    """Poll a Python check against the page (the app's CSP has no 'unsafe-eval', so no string wait_for_function).
+    Pass page= when the check reads only Python state set by a Playwright callback (a route handler): sync Playwright
+    dispatches callbacks only while it is called, so a bare time.sleep would never let the handler run."""
     end = time.time() + timeout
     while time.time() < end:
         try:
@@ -25,7 +27,10 @@ def until(fn, timeout=10.0):
                 return
         except Exception:  # noqa: BLE001 - the element may be re-rendering
             pass
-        time.sleep(0.1)
+        if page is not None:
+            page.wait_for_timeout(100)
+        else:
+            time.sleep(0.1)
     raise AssertionError("timed out waiting for the page")
 
 
@@ -139,7 +144,7 @@ def test_a_slow_answer_for_a_tab_you_left_never_overwrites_the_list(live, chromi
         page.get_by_test_id("audit-row").first.wait_for()
         page.route(lambda u: "/api/activity?" in u and "tab=agent" in u, lambda r: held.append(r))  # hold the Agents answer
         page.get_by_test_id("act-tab-agent").click()
-        until(lambda: len(held) == 1)
+        until(lambda: len(held) == 1, page=page)
         page.get_by_test_id("act-tab-signin").click()
         until(lambda: set(cats(page)) <= {"signin"})
         held[0].continue_()  # now the old tab's answer lands, last
