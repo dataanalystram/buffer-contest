@@ -130,7 +130,7 @@ function paintKeys(v) {
   }));
   box.querySelectorAll("[data-k-del]").forEach((b) => (b.onclick = async () => {
     const p = b.dataset.kDel;
-    if (!confirm("Delete this key? HuhQueue's own key (if any) runs that engine again.")) return;
+    if (!(await hqConfirm("Delete this key? HuhQueue's own key (if any) runs that engine again.", { ok: "Delete key", danger: true }))) return;
     try { const r = await api(`/api/ai/keys/${p}`, { method: "DELETE" }); paintKeys(r); if (r.engine) paint(r.engine); toast("Key deleted"); }
     catch (e) { toast(e.message, 5000); }
   }));
