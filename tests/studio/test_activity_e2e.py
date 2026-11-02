@@ -121,3 +121,29 @@ def test_activity_tabs_pages_agents_search_and_csv(live, chromium, tmp_path):
         page.screenshot(path=os.environ.get("HQ_ACTIVITY_SHOT") or str(tmp_path / "activity.png"), full_page=True)
     finally:
         ctx.close()
+
+
+def test_a_slow_answer_for_a_tab_you_left_never_overwrites_the_list(live, chromium):
+    """Sweep 2 Nov 2026 (the flaky Sign-ins check in ui-smoke): tab answers arriving out of order showed the old tab's rows."""
+    base, app = live
+    ctx = chromium.new_context(viewport={"width": 1280, "height": 900})
+    try:
+        ctx.add_init_script(NO_TOUR)
+        ctx.add_cookies([{"name": "hq_sid", "value": "sid-act", "url": base}])
+        ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+
+        held = []
+        page = ctx.new_page()
+        page.goto(base)
+        page.get_by_test_id("tab-activity").click()
+        page.get_by_test_id("audit-row").first.wait_for()
+        page.route(lambda u: "/api/activity?" in u and "tab=agent" in u, lambda r: held.append(r))  # hold the Agents answer
+        page.get_by_test_id("act-tab-agent").click()
+        until(lambda: len(held) == 1)
+        page.get_by_test_id("act-tab-signin").click()
+        until(lambda: set(cats(page)) <= {"signin"})
+        held[0].continue_()  # now the old tab's answer lands, last
+        page.wait_for_timeout(1500)
+        assert set(cats(page)) <= {"signin"}, cats(page)
+    finally:
+        ctx.close()

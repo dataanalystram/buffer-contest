@@ -218,3 +218,17 @@ def test_render_replace_crops_the_old_captions_and_captions_again(tmp_path):
     out = render_style(str(CLIP4), "opus", out=str(tmp_path / "r.mp4"), ratio="1:1", words=words, clip=(2.0, 5.0),
                        music_mood="none", captions_mode="replace", credit="Video: Buffer")
     assert out["captions"] is True and "cropped off" in out["captions_note"]
+
+
+# ---- Sweep: GET /api/recommendations 500'd when one source's answer couldn't be parsed (ui-smoke log, 2 Nov 2026) ----
+
+def test_one_bad_source_never_500s_the_scan(human, monkeypatch):
+    from studio import sources_agent as sa
+
+    def boom(self, cfg, secret, http):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")  # what json.loads raises on an HTML error page
+    monkeypatch.setattr(sa.RSS, "live", boom)
+    r = human.post("/api/sources/scan", json={"sources": ["rss"]})
+    assert r.status_code == 200, r.text
+    rss = next(x for x in r.json()["status"] if x["source"] == "rss")
+    assert rss["ok"] is False and "unreadable" in rss["error"]
