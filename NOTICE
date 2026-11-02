@@ -266,3 +266,17 @@ studio/editorial.py, studio/hero_edit.py, studio/assets.py, studio/editorial_too
             its website, Product Hunt when it answers), fetched one company at a time on request through netguard, kept
             with their source URLs and the note "official press/brand image" (used to report on the company, credited in
             the caption). No crawling. Fonts: Oswald, Inter (SIL OFL 1.1, studio/fonts).
+
+studio/fonts/EBGaramond-SemiBold.ttf, studio/fonts/SourceSerif4-SemiBold.ttf, studio/fonts/SourceSerif4-Regular.ttf,
+studio/fonts/Roboto-Bold.ttf, studio/fonts/Roboto-Medium.ttf, studio/fonts/Roboto-Regular.ttf  (copied, unmodified; renamed)
+  Source:   Google Fonts static instances (fonts.gstatic.com) of EB Garamond (c) 2017 The EB Garamond Project Authors,
+            Source Serif 4 (c) 2014 The Source Serif 4 Project Authors (Adobe), Roboto (c) 2011 The Roboto Project Authors
+  Licence:  SIL Open Font License 1.1 (full texts in studio/fonts/OFL-EBGaramond.txt, OFL-SourceSerif4.txt, OFL-Roboto.txt)
+  What:     brand kit v2 (2 Nov 2026): the nearest bundled faces for serif sites (Wispr Flow, YC) and Roboto / YouTube Sans
+            sites, so a kit made from a URL renders in a face close to the site's own.
+
+Brand kit v2 design-system extraction (studio/design_system.py, studio/layouts.py)
+  Engines:  the context.dev Styleguide API (https://docs.context.dev/api-reference/brand-intelligence/styleguide), called
+            over HTTPS when the operator sets CONTEXT_DEV_API_KEY; otherwise HuhQueue's own CSS reader. The open-source
+            extractors dembrandt (MIT, github.com/dembrandt/dembrandt) and design-md-extractor were evaluated; no code from
+            them is included. DESIGN.md files describe third-party sites' public styles; trademarks belong to their owners.

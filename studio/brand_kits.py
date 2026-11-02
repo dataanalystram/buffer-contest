@@ -138,6 +138,12 @@ def normalize(body: dict, base: dict | None = None) -> dict:
         k["theme"] = design_system.clean_theme(th) or th
     if isinstance(base, dict) and isinstance(base.get("design"), dict):
         k["design"] = base["design"]
+    d = body.get("design")
+    if isinstance(d, dict) and isinstance(d.get("md"), str) and len(d["md"]) < 20000:  # a website draft saved from the builder
+        k["design"] = {"engine": str(d.get("engine") or "")[:20], "site": str(d.get("site") or "")[:120], "url": str(d.get("url") or "")[:300],
+                       "md": d["md"], "ms": int(d.get("ms") or 0) if str(d.get("ms") or "0").isdigit() else 0,
+                       "tokens": d.get("tokens") if isinstance(d.get("tokens"), dict) and len(json.dumps(d.get("tokens"))) < 20000 else {},
+                       "extracted_at": int(time.time())}
     k.setdefault("colors", {"primary": "#111114", "accent": brand.NEUTRAL_ACCENT, "text": "#FFFFFF"})
     k.setdefault("font", "inter")
     k.setdefault("caption_style", "opus")
@@ -153,7 +159,7 @@ def normalize(body: dict, base: dict | None = None) -> dict:
 def example_kit(eid: str) -> dict:
     """An example brand (HuhByte AI) as a stored kit, with its generated theme."""
     ex = brand_examples.EXAMPLES[eid]
-    k = normalize({**ex["kit"], "logo": f"example:{eid}", "caption_style": "news"})
+    k = normalize({**ex["kit"], "logo": f"example:{eid}", "caption_style": "news" if eid == "huhbyte" else "minimal"})
     k["theme"] = design_system.theme_for_kit(k)
     return k
 
@@ -571,7 +577,7 @@ class BrandKits:
         return {"kits": [self._out(a, r, act) for r in rows], "active_id": act, "caption_styles": CAPTION_STYLES,
                 "layouts": design_system.LAYOUTS,
                 "examples": [{"id": e["id"], "name": e["kit"]["name"], "logo_url": f"/api/brand-kits/example-logo/{e['id']}"}
-                             for e in brand_examples.EXAMPLES.values() if e["id"] == "huhbyte"],
+                             for e in brand_examples.EXAMPLES.values()],
                 "preview": self._cached_kit_cards(a, next((r for r in rows if r["id"] == act), None)),
                 "fonts": {k: FONT_LABELS.get(k, k) for k in templates.HEAD_FONTS},
                 "body_fonts": {k: FONT_LABELS.get(k, k) for k in BODY_CHOICES}, "styles": templates.STYLES,
@@ -601,8 +607,8 @@ class BrandKits:
         self.studio._guard_write(a, "create_brand_kit")
         base, src = None, None
         if body.get("example"):  # HuhByte AI (the owner's brand) as a kit of its own
-            if body["example"] not in brand_examples.EXAMPLES or body["example"] != "huhbyte":
-                raise KitError("No such example brand. Try huhbyte.")
+            if body["example"] not in brand_examples.EXAMPLES:
+                raise KitError(f"No such example brand. Pick one of {', '.join(brand_examples.EXAMPLES)}.")
             base = example_kit(body["example"])
         elif body.get("sample"):
             s = brand_onboard.sample(str(body["sample"]))
@@ -672,6 +678,7 @@ class BrandKits:
             self.house.save_kit(a, {"logo": ""})
         ex = self.bs.extras(a)
         ex["active_kit"] = row["id"]
+        ex["example"] = next((e for e, v in brand_examples.EXAMPLES.items() if v["kit"]["name"] == k.get("name")), "")
         ex["caption_style"] = k.get("caption_style") or "opus"
         self.bs._put(a, ex)
         self.store.audit(a.uid, a.label, "set_active_brand_kit", "read", {"kit": row["id"]})

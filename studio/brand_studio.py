@@ -47,6 +47,11 @@ def ensure(store) -> None:
             store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
 
 
+def _example_theme(k: dict) -> dict:
+    from . import design_system
+    return design_system.theme_for_kit(k)
+
+
 class BrandStudio:
     def __init__(self, house):
         self.house, self.studio, self.store = house, house.studio, house.store
@@ -182,7 +187,7 @@ class BrandStudio:
         self.save(a, {"name": k["name"], "handle": k["handle"], "website": k["website"], "voice": k["voice"], "logo": logo_tok,
                       "colors": k["colors"], "font": k["font"], "body_font": k["body_font"], "headline_case": k["headline_case"],
                       "front_card": {**k["front_card"], "image": ""}, "end_card": {**k["end_card"], "image": ""},
-                      "hashtags": k["hashtags"], "label": k["label"], "channels": ex["channels"], "theme": None})
+                      "hashtags": k["hashtags"], "label": k["label"], "channels": ex["channels"], "theme": _example_theme(k)})
         cur = self.extras(a)
         cur["example"] = example_id
         self._put(a, cur)

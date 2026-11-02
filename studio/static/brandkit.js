@@ -14,7 +14,9 @@
   const COLS = [["background", "Background"], ["primary", "Primary"], ["accent", "Accent"], ["text", "Text"]];
   const CAPS = { opus: "Opus", news: "News", minimal: "Minimal", hype: "Hype" };
   const BLANK = () => ({ name: "", handle: "", colors: { background: "#111114", primary: "#5B8DEF", accent: "#9AA4B2", text: "#FFFFFF" },
-                         head_font: "inter", body_font: "inter", caption_style: "opus", end_text: "", end_cta: "", website: "", voice: "" });
+                         head_font: "inter", body_font: "inter", caption_style: "opus", end_text: "", end_cta: "", website: "", voice: "",
+                         layout: "", theme: null, design: null });
+  const LAYOUTS = { "": "Classic (no generated theme)", bold_news: "Bold news", editorial: "Editorial", minimal: "Minimal", playful: "Playful" };
 
   const HTML = `
   <section class="panel bk" id="bkBuilder" data-testid="bk-builder" aria-labelledby="bkH">
@@ -30,6 +32,8 @@
       <button class="btn2" type="submit" id="bkUrlGo" data-testid="bk-url-go">Fill from website</button>
     </form>
     <p class="bk-label" id="bkLabel" data-testid="bk-label" hidden></p>
+    <details class="bk-design" id="bkDesign" data-testid="bk-design" hidden><summary>Style taken from <b id="bkDesignSite" data-testid="bk-design-site"></b> <span class="muted xs" id="bkDesignHow"></span> · <span class="link">view DESIGN.md</span></summary>
+      <pre id="bkDesignMd" data-testid="bk-design-md" tabindex="0"></pre></details>
     <div class="bk-grid">
       <form class="bk-form" id="bkForm" data-testid="bk-form" autocomplete="off">
         <div class="bk-row2">
@@ -53,6 +57,8 @@
           <div class="field"><label class="label" for="bkHead">Heading font</label><select id="bkHead" data-f="head_font" data-testid="bk-head-font"></select></div>
           <div class="field"><label class="label" for="bkBody">Body font</label><select id="bkBody" data-f="body_font" data-testid="bk-body-font"></select></div>
         </div>
+        <div class="field"><label class="label" for="bkLayout">Layout</label><select id="bkLayout" data-testid="bk-layout">${Object.entries(LAYOUTS).map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
+          <p class="muted xs" id="bkLayoutAbout">Picked from the website's style when you start from one. Each is a different composition, not a recolour.</p></div>
         <div class="field"><span class="label" id="bkCapL">Caption style</span>
           <div class="seg bk-caps" role="radiogroup" aria-labelledby="bkCapL" id="bkCaps" data-testid="bk-caption-style">${Object.entries(CAPS).map(([v, l]) =>
             `<button type="button" role="radio" data-cap="${v}" data-testid="bk-cap-${v}" aria-checked="false">${l}</button>`).join("")}</div>
@@ -82,9 +88,15 @@
     return { name: k.name || "", handle: k.handle || "", website: k.website || "", voice: k.voice || "",
              colors: { background: c.background || "#111114", primary: c.primary || "#5B8DEF", accent: c.accent || c.primary || "#9AA4B2", text: c.text || "#FFFFFF" },
              head_font: k.font || "inter", body_font: k.body_font || "inter", caption_style: k.caption_style || "opus",
-             end_text: ec.line || "", end_cta: ec.cta || "" };
+             end_text: ec.line || "", end_cta: ec.cta || "", theme: k.theme || null, layout: (k.theme && k.theme.layout) || "",
+             design: k.design || null };
   };
-  const body = () => ({ ...K.form, logo: K.logo });
+  const body = () => {
+    const f = { ...K.form, logo: K.logo };
+    if (!f.layout) { f.theme = null; delete f.layout; }  // Classic: the kit draws as before generated themes
+    if (!(f.design && f.design.md)) delete f.design;   // a saved kit's DESIGN.md stays on the server
+    return f;
+  };
   const hex = (v) => (/^#?[0-9a-f]{6}$/i.test(v || "") ? "#" + v.replace("#", "").toUpperCase() : null);
   const slug = (s) => String(s || "kit").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const state = (t) => { const el = $("#bkState"); if (el) el.textContent = t; };
@@ -106,6 +118,21 @@
     lab.hidden = !(kit && kit.kit.label);
     lab.textContent = kit && kit.kit.label ? `${kit.name}: ${kit.kit.label}` : "";
     $("#bkSave").textContent = kit && kit.active ? "Save changes" : "Save and use this kit";
+    $("#bkLayout").value = f.layout || "";
+    const d = f.design, box = $("#bkDesign");
+    box.hidden = !(d && d.site);
+    if (d && d.site) {
+      $("#bkDesignSite").textContent = d.site;
+      $("#bkDesignHow").textContent = `(${d.engine === "context.dev" ? "context.dev Styleguide" : "CSS reader"}${d.ms ? ", " + (d.ms / 1000).toFixed(1) + " s" : ""})`;
+      if (box.dataset.for !== String(K.id) + d.site) { box.open = false; $("#bkDesignMd").textContent = ""; box.dataset.for = String(K.id) + d.site; }
+    }
+  }
+  async function showDesign() {
+    const d = K.form && K.form.design, pre = $("#bkDesignMd");
+    if (!$("#bkDesign").open || !d || pre.textContent) return;
+    if (d.md) { pre.textContent = d.md; return; }
+    try { const r = await fetch(d.url, { credentials: "same-origin" }); pre.textContent = r.ok ? await r.text() : "Couldn't open the DESIGN.md."; }
+    catch (_) { pre.textContent = "Couldn't open the DESIGN.md."; }
   }
   function bar() {
     const have = new Set(K.kits.map((k) => String(k.kit.logo || "").replace("sample:", "")));
@@ -304,7 +331,8 @@
       K.id = null;
       K.form = { name: d.name || "", handle: d.handle || "", website: d.website || url, voice: d.voice || "",
                  colors: { background: c.primary || "#111114", primary: c.accent || "#5B8DEF", accent: c.secondary || c.accent || "#9AA4B2", text: c.text || "#FFFFFF" },
-                 head_font: d.font || "inter", body_font: d.body_font || "inter", caption_style: "opus", end_text: ec.line || "", end_cta: ec.cta || "" };
+                 head_font: d.font || "inter", body_font: d.body_font || "inter", caption_style: "opus", end_text: ec.line || "", end_cta: ec.cta || "",
+                 theme: d.theme || null, layout: (d.theme && d.theme.layout) || "", design: d.design || null };
       K.logo = r.logo || ""; K.logoUrl = r.logo_url || "";
       bar(); fill(); redraw(true);
       state(`${r.source === "sample" ? "Filled in from the cached sample of " : "Read "}${url}. ${r.label ? r.label + ". " : ""}Check it, then save.`);
@@ -346,6 +374,12 @@
   // ------------------------------------------------------------ wiring
   function wire() {
     $("#bkNew").onclick = startOwn;
+    $("#bkDesign").addEventListener("toggle", showDesign);
+    $("#bkLayout").onchange = () => {
+      const v = $("#bkLayout").value; K.form.layout = v;
+      K.form.theme = v ? { ...(K.form.theme || {}), layout: v } : null;
+      edited();
+    };
     $("#bkForm").onsubmit = save;
     $("#bkUrlForm").onsubmit = fromUrl;
     $("#bkPal").onclick = palette;
