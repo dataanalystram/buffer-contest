@@ -24,7 +24,8 @@ WEB_ONLY = {"psycopg", "rembg"}
 # import name -> requirements-worker.txt name. Guarded (try/except ImportError) imports count too: the worker needs
 # yt-dlp, faster-whisper, PySceneDetect and MediaPipe for real, it only degrades without them.
 PIP_NAME = {"PIL": "pillow", "yt_dlp": "yt-dlp", "faster_whisper": "faster-whisper", "imageio_ffmpeg": "imageio-ffmpeg",
-            "fontTools": "fonttools", "mediapipe": "mediapipe", "scenedetect": "scenedetect"}
+            "fontTools": "fonttools", "mediapipe": "mediapipe", "scenedetect": "scenedetect",
+            "cv2": "opencv-python-headless"}
 
 
 def _path(mod: str) -> Path | None:

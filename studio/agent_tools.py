@@ -856,7 +856,9 @@ class Tools(EditorialTools):
         theme = (run.get("input") or {}).get("theme") or ""
         if not style and theme and theme != "auto" and media_styles.known(theme):
             style = theme  # the theme the person picked in Make a post (or set in the thread) styles every video
-        if not style:  # "Let the agent choose": the theme that fits the story and their words, branded throughout
+        found = run["result"].get("found_media") if isinstance(run["result"].get("found_media"), dict) else {}
+        branded = run["result"].get("clip_owned") or bool((found.get("best_downloadable") or {}).get("official"))
+        if not style and branded:  # "Let the agent choose" on their own / the maker's video: a fitting theme, branded throughout
             inp = run.get("input") or {}
             style = media_styles.pick_theme(" ".join([inp.get("prompt") or "", (inp.get("intake") or {}).get("tone") or ""]),
                                             (inp.get("intake") or {}).get("topic") or "")[0]
