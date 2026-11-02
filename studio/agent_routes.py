@@ -112,7 +112,7 @@ def add_routes(app: FastAPI, house, actor) -> None:
 
     @app.put("/api/ai/engine")
     def ai_engine_put(request: Request, body: dict = Body(...)):
-        """Pick the agent's engine: {"engine": "claude" | "gemini-flash" | "gemini-pro" | "own" | "free" | "auto"}."""
+        """Pick the agent's engine: {"engine": "gemini-studio" | "nvidia" | "hf" | "claude" | "gemini-flash" | "gemini-pro" | "own" | "free" | "auto"}."""
         return set_ai_engine(house, actor(request, write=True), str((body or {}).get("engine") or ""))
 
     @app.get("/api/onboarding")
@@ -161,10 +161,10 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "set_theme", "description": "Set a post run's video theme and re-render its video channels in it (e.g. 'cinematic', 'news_package'). Same as replying 'switch to the X theme'.",
      "inputSchema": {"type": "object", "required": ["run_id", "theme"], "properties": {"run_id": {"type": "integer"}, "theme": {"type": "string"}}}},
-    {"name": "get_ai_engine", "description": "The AI engine HuhQueue's in-app agent uses first (claude, gemini-flash, gemini-pro, own, free or auto), which one will actually run, and each engine's credit in plain words (e.g. 'Claude: $0.34 of your $1 used', 'Gemini (Oracle): free during the contest, $0.00 of your $3 used') plus the app-wide pools. If the chosen engine is out of credit or erroring, the agent falls back to the next one automatically.",
+    {"name": "get_ai_engine", "description": "The AI engine HuhQueue's in-app agent uses first (gemini-studio, nvidia, hf, claude, gemini-flash, gemini-pro, own, free or auto), which one will actually run, and each engine's credit in plain words (e.g. 'NVIDIA (free developer credits): 3 of your 150 calls today', 'Claude: $0.34 of your $1 used') plus the app-wide pools. If the chosen engine is out of credit or erroring, the agent falls back to the next one automatically.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "set_ai_engine", "description": "Choose the in-app agent's AI engine: claude (Anthropic, included allowance), gemini-flash or gemini-pro (Gemini via Oracle Cloud, free during the contest), own (the person's saved API key), free (the free starter model) or auto (the default order). Returns the same status as get_ai_engine.",
-     "inputSchema": {"type": "object", "required": ["engine"], "properties": {"engine": {"type": "string", "enum": ["auto", "claude", "gemini-flash", "gemini-pro", "own", "free"]}}}},
+    {"name": "set_ai_engine", "description": "Choose the in-app agent's AI engine: gemini-studio (Gemini on Google AI Studio's free tier), nvidia (NVIDIA NIM, free developer credits), hf (Hugging Face, free monthly credits), claude (Anthropic, included allowance), gemini-flash or gemini-pro (Gemini via Oracle Cloud), own (the person's saved API key), free (the free starter model) or auto (free engines first, then Claude, then the free starter model). Returns the same status as get_ai_engine.",
+     "inputSchema": {"type": "object", "required": ["engine"], "properties": {"engine": {"type": "string", "enum": ["auto", "gemini-studio", "nvidia", "hf", "claude", "gemini-flash", "gemini-pro", "own", "free"]}}}},
     {"name": "get_brain", "description": "Which AI runs the in-app agent for this account (Claude, their own key, the free model or the rule writer) and the included budget left.",
      "inputSchema": {"type": "object", "properties": {}}},
 ] + agent_brain.tool_specs_for_mcp()

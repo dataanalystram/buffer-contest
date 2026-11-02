@@ -133,6 +133,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <div class="dk-table"><table><thead><tr><th>In the app</th><th>REST</th><th>MCP</th></tr></thead><tbody>
 <tr><td>Settings</td><td><code>GET /api/sources</code>, <code>POST /api/sources/settings</code></td><td><code>sources_settings</code></td></tr>
 <tr><td>Scan now</td><td><code>POST /api/sources/scan</code></td><td><code>sources_scan</code></td></tr>
+<tr><td>Source library (News › Sources)</td><td><code>GET /api/sources/library</code>, <code>POST /api/sources/refresh</code>, <code>POST /api/sources/enabled</code></td><td><code>list_sources</code>, <code>refresh_sources</code>, <code>set_source_enabled</code></td></tr>
 <tr><td>A past scan</td><td><code>GET /api/sources/runs/{id}</code></td><td>-</td></tr>
 <tr><td>Write posts, save as Buffer drafts</td><td><code>POST /api/sources/draft</code> (<code>dry_run</code>, <code>cluster_ids</code>, <code>channel_ids</code>, <code>texts</code>)</td><td><code>sources_draft</code></td></tr></tbody></table></div>"""),
     ("inbox", "Inbox", "Your day on one screen: posts to approve, today's queue, what needs attention, agent activity and posts recommended for you.", "inbox", """
@@ -371,7 +372,8 @@ _DESC = {
     "GET /api/thumb": "A story picture (og:image read and re-encoded server-side, cached); 204 means no picture, use the favicon", "GET /api/radar": "The For you news feed", "POST /api/radar/feeds": "Follow a feed", "DELETE /api/radar/feeds/{feed_id}": "Unfollow a feed",
     "GET /api/sources": "Story scan sources and settings", "POST /api/sources/draft": "Write posts for the picked stories",
     "GET /api/sources/runs/{rid}": "One story scan run", "POST /api/sources/scan": "Scan every source you turned on",
-    "POST /api/sources/settings": "Turn sources on or off", "GET /api/brand": "Your brand kit and Style Ledger rules", "POST /api/brand": "Save your brand kit",
+    "POST /api/sources/settings": "Turn sources on or off", "GET /api/sources/library": "The source library: every source with its status and the fresh items",
+    "POST /api/sources/refresh": "Re-read the source library now (once a minute)", "POST /api/sources/enabled": "Turn one library source on or off", "GET /api/brand": "Your brand kit and Style Ledger rules", "POST /api/brand": "Save your brand kit",
     "GET /api/brand-studio": "Your brand kit, cards and templates", "POST /api/brand-studio": "Save the brand kit and cards",
     "GET /api/brand-studio/examples": "The example brands", "POST /api/brand-studio/examples/{example_id}": "Use an example brand",
     "POST /api/brand-studio/preview": "Live preview of a template in your kit", "POST /api/brand/edit": "Change the brand in plain words",
