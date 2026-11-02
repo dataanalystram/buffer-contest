@@ -26,6 +26,8 @@ import re
 import time
 from typing import Any
 
+from fastapi import Body, Request
+
 from . import templates
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS custom_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, slug TEXT, name TEXT, "
@@ -352,7 +354,6 @@ def call_tool(studio, actor, name: str, args: dict):
 
 
 def add_routes(app, house, actor) -> None:
-    from fastapi import Body, Request
     from .actions import ActionError
     ct = attach(house)
 
