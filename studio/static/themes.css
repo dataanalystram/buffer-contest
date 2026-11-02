@@ -80,7 +80,7 @@ dialog.hqt-dlg::backdrop{background:rgba(10,10,12,.5);backdrop-filter:blur(2px)}
 .hqt-count{font-size:13px;color:var(--muted,#585d62)}
 .hqt-f-act{display:flex;gap:10px;align-items:center}
 .hqt-fav{display:inline-flex;align-items:center;gap:6px;min-height:42px;border-radius:10px}
-.hqt-fav svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2}
+.hqt-fav svg{flex:none;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2}
 .hqt-fav[aria-pressed=true] svg{fill:#ffc21a;stroke:#b98500}
 .hqt-fav:disabled{opacity:.5;cursor:not-allowed}
 .hqt-apply{min-height:42px;border-radius:10px;padding:0 18px;font-weight:650}
@@ -109,7 +109,7 @@ dialog.hqt-dlg::backdrop{background:rgba(10,10,12,.5);backdrop-filter:blur(2px)}
   .hqt-pv-frame{width:80px;margin:0}
   .hqt-pv-list{display:none}
   .hqt-pv-t{min-width:0}
-  .hqt-pv-t p{margin:6px 0 8px;font-size:13px}
+  .hqt-pv-t p{margin:6px 0 0;font-size:13px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
   .hqt-dlg-f{position:sticky;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));flex-wrap:wrap}
   .hqt-count{width:100%}
   .hqt-f-act{width:100%}

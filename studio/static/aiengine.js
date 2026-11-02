@@ -38,6 +38,10 @@ function paintSettings(st) {
   q("#aiEngPools").textContent = pools.join(" · ");
   const note = q("#aiEngNote");
   note.hidden = !st.note; note.textContent = st.note || "";
+  const now = q("#aiNow"), runs = st.engines.find((o) => o.id === st.runs);
+  if (now) now.innerHTML = runs ? `Your agent runs on <b>${escH(runs.label)}</b>${st.selected === "auto" ? " (automatic order)" : ""}.` +
+      (runs.credit && runs.credit.label ? ` ${escH(runs.credit.label)}.` : "")
+    : "Your agent writes with the <b>built-in writer</b> (no AI). Pick a model above, add a key, or connect Claude/ChatGPT.";
   const btns = [...box.querySelectorAll(".ai-eng-o")];
   btns.forEach((b) => (b.onclick = () => choose(b.dataset.eng)));
   box.onkeydown = (e) => {

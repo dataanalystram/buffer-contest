@@ -10,7 +10,7 @@ import pytest
 
 from .test_e2e_studio import NO_TOUR, live  # noqa: F401  (the signed-in live server fixture)
 
-pytest.importorskip("playwright.sync_api")
+pw = pytest.importorskip("playwright.sync_api")
 SHOTS = os.environ.get("HQ_SHOTS", "")
 
 
@@ -170,15 +170,16 @@ def test_e2e_ai_engine_switch(live, chromium, close_contexts, monkeypatch, w):
     assert "App-wide" in page.get_by_test_id("ai-engine-pools").inner_text()
     assert page.get_by_test_id("ai-engine-own").is_disabled()  # no key saved yet
     page.get_by_test_id("ai-engine-gemini-flash").click()
-    page.wait_for_function("document.querySelector('[data-testid=ai-engine-gemini-flash]').getAttribute('aria-checked') === 'true'")
+    pw.expect(page.get_by_test_id("ai-engine-gemini-flash")).to_have_attribute("aria-checked", "true")
     assert _no_sideways(page)
     page.get_by_test_id("ai-engine-picker").scroll_into_view_if_needed()
     _shot(page, f"ai-engine-{w}")
     page.goto(base + "/?tab=agent")
     sel = page.get_by_test_id("agent-engine-switch")
-    page.wait_for_function("document.querySelector('[data-testid=agent-engine-switch]').value === 'gemini-flash'")
+    pw.expect(sel).to_have_value("gemini-flash")
     sel.select_option("claude")
-    page.wait_for_function("document.querySelector('[data-testid=agent-engine-switch]').value === 'claude'")
+    pw.expect(page.get_by_test_id("ai-engine-claude")).to_have_attribute("aria-checked", "true")
+    pw.expect(sel).to_have_value("claude")
     from studio import ai_engines as ae
     assert ae.get_pref(app.state.store, "acc_1") == "claude"
     assert _no_sideways(page)
