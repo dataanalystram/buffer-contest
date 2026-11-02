@@ -1333,7 +1333,7 @@ class House:
             spec["yt_fallback"] = yt_fallback.config()
         base = self.s.public_url.rstrip("/") + "/m/"
         for k in ("logo", "source", "front", "end", "cover_image", "cover"):  # a media token or nothing, never a flag
-            if not isinstance(spec.get(k), str):
+            if k in spec and not isinstance(spec[k], str):
                 spec[k] = ""
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
                 "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",
