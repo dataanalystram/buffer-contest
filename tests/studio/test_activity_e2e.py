@@ -1,6 +1,8 @@
 """Browser flow for the Activity log (Playwright): tabs, cursor pages, agent groups by app and model, search, CSV export."""
+import asyncio
 import json
 import os
+import threading
 import time
 
 import httpx
@@ -45,6 +47,21 @@ def live(tmp_path):
     s = load_settings(client_id="cid", client_secret="sec", public_url=f"http://127.0.0.1:{port}", session_secret="a" * 64,
                       db_path=str(tmp_path / "act.db"), secure_cookies=False, ai_base_url="")
     app = create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
+    # Test hook: hold the Activity tab's Agents answer on the server until the test releases it (a real slow answer).
+    # Holding it with page.route instead depends on sync Playwright dispatching route callbacks, which flaked in CI.
+    app.state.hold_agent = None  # a threading.Event while a test holds; None lets everything through
+    app.state.held_agent = 0
+
+    @app.middleware("http")
+    async def _hold_agent(request, call_next):
+        ev = app.state.hold_agent
+        q = request.url.query
+        if ev is not None and request.url.path == "/api/activity" and "tab=agent" in q and "group=run" not in q:
+            app.state.held_agent += 1
+            while not ev.is_set():
+                await asyncio.sleep(0.05)
+        return await call_next(request)
+
     st = app.state.store
     st.upsert_user("acc_1", "ram@example.com", "Ram", "org_1", "HuhByte",
                    {"access_token": "at_1", "refresh_token": "rt_1", "expires_at": time.time() + 3600})
@@ -137,17 +154,20 @@ def test_a_slow_answer_for_a_tab_you_left_never_overwrites_the_list(live, chromi
         ctx.add_cookies([{"name": "hq_sid", "value": "sid-act", "url": base}])
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
 
-        held = []
         page = ctx.new_page()
         page.goto(base)
         page.get_by_test_id("tab-activity").click()
         page.get_by_test_id("audit-row").first.wait_for()
-        page.route(lambda u: "/api/activity?" in u and "tab=agent" in u, lambda r: held.append(r))  # hold the Agents answer
-        page.get_by_test_id("act-tab-agent").click()
-        until(lambda: len(held) == 1, page=page)
-        page.get_by_test_id("act-tab-signin").click()
-        until(lambda: set(cats(page)) <= {"signin"})
-        held[0].continue_()  # now the old tab's answer lands, last
+        release = threading.Event()
+        app.state.hold_agent = release  # the Agents answer now waits on the server
+        try:
+            page.get_by_test_id("act-tab-agent").click()
+            until(lambda: app.state.held_agent >= 1, page=page)
+            page.get_by_test_id("act-tab-signin").click()
+            until(lambda: set(cats(page)) <= {"signin"}, page=page)
+        finally:
+            release.set()  # now the old tab's answer lands, last
+            app.state.hold_agent = None
         page.wait_for_timeout(1500)
         assert set(cats(page)) <= {"signin"}, cats(page)
     finally:
