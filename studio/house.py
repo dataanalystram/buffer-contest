@@ -35,6 +35,9 @@ MAX_IMAGE_FETCH = 8 * 1024 * 1024
 VIDEO_ONLY = {"tiktok", "youtube"}
 
 STALE_RUN = int(os.environ.get("HQ_RUN_STALE", "900"))  # a run silent this long (seconds) is reported as stopped
+# a worker job (InstaBox or GitHub Actions) with no heartbeat for this many minutes is failed (House.sweep_stale_jobs)
+JOB_STALE_MIN = float(os.environ.get("HQ_JOB_HEARTBEAT_MIN", "10"))
+JOB_STALE_WHY = "The video worker stopped responding (no heartbeat for {n} minutes), so this job was stopped. Try again."
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="house-agent")
 
 
@@ -478,6 +481,7 @@ class House:
             traceback.print_exc()
 
     def run(self, a: Actor, rid: int) -> dict:
+        self._sweep_quietly()
         rows = self.store.q("SELECT * FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
         if not rows:
             raise ActionError("No such agent run.", 404)
@@ -495,6 +499,12 @@ class House:
             d["status"] = "failed"
             self._save(rid, d["steps"], d["result"], "failed")
         return d
+
+    def _sweep_quietly(self) -> None:
+        try:
+            self.sweep_stale_jobs()
+        except Exception:  # noqa: BLE001  the watchdog never breaks a page
+            traceback.print_exc()
 
     def _busy(self, rid: int) -> bool:
         from . import agent_brain
@@ -1099,9 +1109,63 @@ class House:
                 return False
             t["clips"] = list(t.get("clips") or []) + [clip_id]
         else:
-            return True  # the result write itself moves the job out of 'queued'; burn_job_token makes sure
+            return True  # 'write' (and 'beat'): the result write moves the job out of 'queued'; burn_job_token makes sure
         spec["_job_token"] = t
         return self._cas(jid, raw, spec)
+
+    # ---- worker liveness (2 Nov 2026): heartbeat, failure log tail, and the watchdog that fails silent jobs
+    def job_heartbeat(self, jid: int) -> bool:
+        """The worker is alive: bump the job's clock (the watchdog reads `updated`). Only while the job is open."""
+        return bool(self.store.q("UPDATE render_jobs SET updated=? WHERE id=? AND status='queued' RETURNING id", (_now(), jid)))
+
+    def keep_job_log(self, jid: int, tail: str) -> None:
+        """The worker's log tail on a failure: kept on the job (result.log_tail, server side only) and in the app log."""
+        tail = re.sub(r"jt_[A-Za-z0-9_\-]{8,}", "jt_[redacted]", str(tail or ""))[-4000:]
+        if not tail:
+            return
+        rows = self.store.q("SELECT result FROM render_jobs WHERE id=?", (jid,))
+        if not rows:
+            return
+        try:
+            res = json.loads(rows[0]["result"] or "{}")
+        except ValueError:
+            res = {}
+        if not isinstance(res, dict):
+            res = {"value": res}
+        res["log_tail"] = tail
+        self.store.x("UPDATE render_jobs SET result=? WHERE id=?", (json.dumps(res), jid))
+        print(f"render: job {jid} failed on the worker; log tail:\n{tail[-1500:]}", flush=True)
+
+    _swept = 0.0
+
+    def sweep_stale_jobs(self, now: float | None = None, force: bool = False) -> list[int]:
+        """Fail every worker job (one that was handed a job token) that has been silent for JOB_STALE_MIN minutes: the
+        worker was killed, the box paused or the runner never started, so no failure callback will ever come. Runs from
+        the app's watchdog thread and, throttled to once a minute, when a run or take is read. Returns the failed ids."""
+        t = _now() if now is None else now
+        if not force and t - self._swept < 60:
+            return []
+        self._swept = t
+        cutoff = t - JOB_STALE_MIN * 60
+        rows = self.store.q("SELECT id FROM render_jobs WHERE status='queued' AND updated < ? AND spec LIKE ?",
+                            (cutoff, '%"_job_token"%'))
+        why = JOB_STALE_WHY.format(n=int(JOB_STALE_MIN) if JOB_STALE_MIN == int(JOB_STALE_MIN) else JOB_STALE_MIN)
+        failed = []
+        for r in rows:
+            jid = r["id"]
+            # claim the job atomically, so a heartbeat or result landing right now wins and the job is left alone
+            if not self.store.q("UPDATE render_jobs SET updated=? WHERE id=? AND status='queued' AND updated < ? RETURNING id",
+                                (t, jid, cutoff)):
+                continue
+            try:
+                self.finish_video(jid, None, None, why)  # the same path as a worker-reported failure: the run/take shows it
+            except Exception:  # noqa: BLE001  an orphaned job (its run is gone) still gets closed
+                traceback.print_exc()
+            self.store.x("UPDATE render_jobs SET status='failed', error=? WHERE id=? AND status='queued'", (why, jid))
+            self.burn_job_token(jid)
+            print(f"render: watchdog failed job {jid} (no heartbeat for {JOB_STALE_MIN:g} min)", flush=True)
+            failed.append(jid)
+        return failed
 
     def burn_job_token(self, jid: int) -> None:
         st = self._token_state(jid)
