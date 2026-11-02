@@ -65,3 +65,15 @@
   .lib-acts .btn,.lib-acts .btn2{flex:1}
   .pkg-media video,.pkg-media .pm-img{max-height:360px}
 }
+
+/* cover variants under a package's video (house.js pkgCovers) */
+.pkg-covers{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.pkg-covers .pc-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.pkg-covers .pc{position:relative;padding:0;border:2px solid transparent;border-radius:8px;overflow:hidden;background:var(--sunken);cursor:pointer;min-height:44px}
+.pkg-covers .pc img{width:100%;height:100%;object-fit:cover;display:block}
+.pkg-covers .pc.on{border-color:var(--accent,#c2005b)}
+.pkg-covers .pc.busy{opacity:.6}
+.pkg-covers .pc:focus-visible{outline:2px solid var(--focus,#1f5bd6);outline-offset:2px}
+.video-ask .row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px}
+.video-ask .va-up{cursor:pointer;min-height:40px;display:inline-flex;align-items:center}
+.video-ask .va-up.busy{opacity:.7;pointer-events:none}

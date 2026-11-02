@@ -83,9 +83,18 @@ VIDEO_SRC = {"media_token": {"type": "string", "description": "A HuhQueue media 
 
 TOOLS: list[dict[str, Any]] = [
     {"name": "research_link", "description": "Client brain (no HuhQueue AI). Read an article, launch page or post URL: title, site, "
-     "description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos. "
-     "You write the facts, slides and captions from this.",
-     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "max_paragraphs": {"type": "integer", "maximum": 60}}}},
+     "description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos, and "
+     "for a product / launch link the video-first result (video: status found | youtube_only | none, the maker video to use, the "
+     "credit line, and the upload question to ask when it can't be downloaded). You write the facts, slides and captions from this.",
+     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "max_paragraphs": {"type": "integer", "maximum": 60},
+                     "find_video": {"type": "boolean", "description": "Also run the video-first search (always on for Product Hunt links)"}}}},
+    {"name": "find_video", "description": "Client brain (no HuhQueue AI). VIDEO FIRST for a product or launch link (Product Hunt, the maker's "
+     "site, a name): Product Hunt's API (launch media + website) -> the maker's own site (og:video, <video>, YouTube/Vimeo/Loom embeds, "
+     "press kit) -> the official YouTube/X channel. status found = a maker video HuhQueue can fetch (use video.url with render_reel / "
+     "edit_video(url) and the credit 'Video: <maker>' on screen and in the caption); youtube_only = only on YouTube, which blocks "
+     "downloads from servers: ask the user to upload the file (ask has the exact words and upload_limit_mb), then library_upload_url "
+     "-> edit_video; none = no video: make a carousel and offer the upload.",
+     "inputSchema": {"type": "object", "required": ["query"], "properties": {"query": S}}},
     {"name": "read_x_post", "description": "Client brain (no HuhQueue AI). The free X reader: an X/Twitter post's author, handle, text, "
      "date and its photos/videos (direct MP4 when the post has one), without an X API key.",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S}}},
@@ -177,7 +186,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "maximum": 9}, "days": {"type": "integer", "maximum": 14}}}},
 ]
 NAMES = {t["name"] for t in TOOLS}
-READ_ONLY = {"research_link", "read_x_post", "find_media", "scrape_brand_assets", "render_status", "integrations_status",
+READ_ONLY = {"research_link", "read_x_post", "find_media", "find_video", "scrape_brand_assets", "render_status", "integrations_status",
              "weekly_recap_plan"}
 
 
@@ -308,13 +317,55 @@ def rank_images(share: str, photos: list[str]) -> tuple[list[str], list[str]]:
     return pics + logos, logos
 
 
+def _video_first(studio, a, query: str, name: str = "", website: str = "") -> dict:
+    from . import demo_guard
+    from .house import MAX_UPLOAD
+    from .media import video_first
+    try:
+        from . import appkeys
+        ph = appkeys.ph_app_token(studio.house.http)
+    except Exception:  # noqa: BLE001
+        ph = ""
+    limit = (demo_guard.DEMO_FILE_MAX if demo_guard.is_demo(a.uid) else MAX_UPLOAD) // (1024 * 1024)
+    r = video_first.research_video(query, http=studio.house.http, ph_token=ph, upload_limit_mb=limit, name_hint=name, website_hint=website)
+    return {"status": r["status"], "video": r["video"], "launch_video": r["launch_video"], "credit": r["credit"], "maker": r["maker"],
+            "website": r["website"], "product": r["product"], "images": r["images"], "steps": r["steps"], "plan_line": r["plan_line"],
+            "ask": r["ask"], "upload_limit_mb": limit, "upload_accept": r["upload"]["label"]}
+
+
+def t_find_video(studio, a, args):
+    q = str(args.get("query") or "").strip()
+    if not q:
+        raise ActionError("Give find_video a product link or name.")
+    return {**_video_first(studio, a, q), "spent_usd": 0}
+
+
 def t_research_link(studio, a, args):
     from . import intake, netguard, reader
+    from .media import find as media_find, video_first
     h = studio.house
     try:
         url = netguard.check_url(intake.clean_url(str(args.get("url") or "")))
     except netguard.FetchError as e:
         raise ActionError(f"That link isn't allowed: {e}")
+    if video_first.is_product_link(url):  # Product Hunt blocks servers: its API + the maker's site instead of the page
+        vf = _video_first(studio, a, url)
+        prod = vf.get("product") or {}
+        paras = [x for x in [prod.get("tagline"), prod.get("description")] if x]
+        if vf.get("website"):
+            try:
+                site = reader.read_url(netguard.check_url(vf["website"]), h.http, "")
+                paras += (site.get("paragraphs") or [])[:20]
+            except Exception:  # noqa: BLE001
+                pass
+        if not paras and not prod:
+            raise ActionError("Product Hunt blocks servers and its API didn't answer for this product. Give the product's website.")
+        return {"url": url, "site": prod.get("name") or vf.get("maker"), "title": f"{prod.get('name') or vf.get('maker')}: {prod.get('tagline') or ''}".strip(": "),
+                "description": prod.get("tagline") or "", "via": "product_hunt_api" if prod else "website", "paragraphs": paras[:30],
+                "figures": _figures(paras, url), "images": vf.get("images") or [], "logos": [], "videos": [vf["video"]] if vf.get("video") else [],
+                "video": vf, "spent_usd": 0,
+                "next": ("Video found: render_reel / edit_video with video.url and credit '" + vf["credit"] + "'." if vf["status"] == "found"
+                         else "No downloadable video: ask the user exactly: " + vf["ask"])}
     try:
         art = reader.read_url(url, h.http, "")
     except reader.ReadError as e:
@@ -329,6 +380,11 @@ def t_research_link(studio, a, args):
     if art.get("post"):
         p = art["post"]
         out["post"] = {k: p.get(k) for k in ("author_name", "handle", "text", "date") if p.get(k)}
+    if not out["videos"] and not media_find.is_video_post(url) and args.get("find_video") is True:
+        try:  # a launch / product page: the video-first search, so the client knows whether a Reel is possible
+            out["video"] = _video_first(studio, a, url)
+        except Exception:  # noqa: BLE001 - research never fails on the video search
+            pass
     return out
 
 

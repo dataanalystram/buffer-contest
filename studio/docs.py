@@ -332,6 +332,7 @@ _DESC = {
     "POST /api/integrations/{key}/test": "Live-check a pasted or saved key; returns a status only (person only, rate-capped)",
     "DELETE /api/integrations/{key}": "Remove one integration's key",
     "POST /api/agent/runs/{rid}/packages/{channel_id}/media": "Replace or regenerate one channel's media in an agent run",
+    "POST /api/agent/runs/{rid}/packages/{channel_id}/cover": "Use another of the 3 branded cover variants for one channel's Reel",
     "GET /api/library": "List your Library: uploads and generated media, with search and type filters",
     "POST /api/library/upload": "Upload a video or image to your Library (100 MB per file, 200 MB per account)",
     "POST /api/uploads": "create_upload: a one-time upload URL (PUT /u/<token>, 15 minutes, one use) and the curl command",

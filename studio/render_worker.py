@@ -164,7 +164,10 @@ def main(argv=None) -> int:
         if spec["kind"] == "media_recap":  # the weekly recap: carousel slides + one Reel, several files
             return recap_job(c, base, h, args.job, j, get)
         logo = get(urls.get("logo"))
-        if spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
+        if spec["kind"] == "cover_swap":  # another cover variant as the Reel's opening frames (studio.media.worker.cover_swap)
+            from .media.worker import cover_swap
+            data, meta = cover_swap(get(urls["source"]), get(urls["cover"]), spec.get("secs") or 0.6, spec.get("replace"))
+        elif spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
             from .media.worker import render_job
             data, meta = render_job(spec, get, urls=urls, logo=logo)
         elif spec["kind"] == "template_video":  # a Brand studio template's Reel, in the person's own brand

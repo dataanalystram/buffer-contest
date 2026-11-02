@@ -964,12 +964,17 @@ class House:
         if spec["kind"] == "media_render":  # studio.media styled edit (docs/MEDIA_PIPELINE.md); off the hosted app only
             from .media.worker import render_job
             base = self.s.public_url.rstrip("/") + "/m/"
-            urls = {"source": base + spec["source"] if spec.get("source") else "", "slides": [base + t for t in spec.get("slides", [])]}
+            urls = {"source": base + spec["source"] if spec.get("source") else "", "slides": [base + t for t in spec.get("slides", [])],
+                    "cover_image": base + spec["cover_image"] if spec.get("cover_image") else ""}
 
             def _get(u):
                 m = self.get_media(u[len(base):]) if u.startswith(base) else None
                 return m["data"] if m else None
             return render_job(spec, _get, urls=urls, logo=logo, http=self.http)
+        if spec["kind"] == "cover_swap":
+            from .media.worker import cover_swap
+            return cover_swap(self.get_media(spec["source"])["data"], self.get_media(spec["cover"])["data"], spec.get("secs") or 0.6,
+                              spec.get("replace"))
         if spec["kind"] == "brand_video":
             return render.brand_video(self.get_media(spec["source"])["data"], spec["kit"], spec["params"], logo=logo,
                                       hook=spec.get("hook", ""), ratio=spec.get("ratio", "9:16"))
@@ -1124,7 +1129,9 @@ class House:
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
                 "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",
                          "slides": [base + t for t in spec.get("slides", [])],
-                         "front": base + spec["front"] if spec.get("front") else "", "end": base + spec["end"] if spec.get("end") else ""}}
+                         "front": base + spec["front"] if spec.get("front") else "", "end": base + spec["end"] if spec.get("end") else "",
+                         "cover_image": base + spec["cover_image"] if spec.get("cover_image") else "",
+                         "cover": base + spec["cover"] if spec.get("cover") else ""}}
 
     # ---- the weekly recap (job kind media_recap): cover + one video slide per story + Follow card (4:5) and one Reel (9:16)
     RECAP_KINDS = {"cover": ("photo", "png"), "follow": ("photo", "png"), "reel": ("video", "mp4")}
@@ -1230,11 +1237,40 @@ class House:
                 self._step(run["steps"], "render", "failed", f"Video render failed: {error[:200]}")
                 self._save(job["run_id"], run["steps"], run["result"], "failed")
             return {"ok": False}
-        tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta or {"type": "video"})
+        meta = dict(meta or {"type": "video"})
+        if meta.get("covers_b64"):
+            meta["covers"] = self._store_covers(a, meta.pop("covers_b64"))
+        meta.pop("covers_b64", None)
+        tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta)
         self.store.x("UPDATE render_jobs SET status='done', media_token=?, updated=? WHERE id=?", (tok, _now(), jid))
         if run_inline and job["run_id"] and self._run_kind(job["run_id"]) != "agent":  # the agent brain waits on its own job
             self._spawn_run(job["run_id"], self._resume_after_video, a, job["run_id"], jid)
         return {"ok": True, "token": tok}
+
+    def _store_covers(self, a: Actor, covers: list) -> list[dict]:
+        """The worker's cover variants (base64 JPEGs per size) -> media tokens: [{variant, layout, score, frame_t, source,
+        files: {ratio: token}}]. Each file is checked to be a JPEG and capped (SECURITY_RULES 6)."""
+        out = []
+        for c in (covers or [])[:4]:
+            if not isinstance(c, dict):
+                continue
+            files = {}
+            for r, b64 in (c.get("files") or {}).items():
+                if r not in ("9:16", "4:5", "16:9") or not isinstance(b64, str) or len(b64) > 3_000_000:
+                    continue
+                try:
+                    raw = base64.b64decode(b64, validate=True)
+                except (ValueError, TypeError):
+                    continue
+                if raw[:3] != b"\xff\xd8\xff":
+                    continue
+                files[r] = self.put_media(a, raw, f"cover-{c.get('variant', 0)}-{r.replace(':', 'x')}.jpg", kind="render",
+                                          meta={"type": "photo", "role": "cover", "ratio": r})
+            if files:
+                out.append({"variant": int(c.get("variant") or 0), "layout": str(c.get("layout") or "")[:12],
+                            "score": float(c.get("score") or 0), "frame_t": c.get("frame_t"), "source": str(c.get("source") or "")[:8],
+                            "files": files})
+        return out
 
     def _run_prompt(self, rid) -> str:
         rows = self.store.q("SELECT input FROM agent_runs WHERE id=?", (rid,)) if rid else []
@@ -1350,7 +1386,7 @@ class House:
         if pk.get("status") in ("sent_to_buffer", "pending_approval"):
             raise ActionError("That package was already sent.", 409)
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
-                                            "mode": mode, "due_at": due_at,
+                                            "mode": mode, "due_at": due_at, "options": pk.get("options") or {},
                                             "override_warnings": override_warnings})
         out = self.studio.submit_post(a, prev["confirm_token"])
         self.mark_package(a, rid, channel_id, out["status"], {"mode": mode, "due_at": prev["preview"].get("due_at"),

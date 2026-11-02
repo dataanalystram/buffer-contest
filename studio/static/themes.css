@@ -19,6 +19,9 @@
 .hqt-auto-pic{position:absolute;inset:0;display:grid;place-items:center;color:var(--accent,#c2005b);
   background:linear-gradient(160deg,var(--accent-soft,#fbe7f0),var(--sunken,#f1f2f2))}
 .hqt-auto-pic span{font-size:1.25rem;line-height:1}
+.hqt-none-pic{color:var(--ink,#1a1c1e);background:linear-gradient(160deg,var(--sunken,#f1f2f2),var(--raised,#fff))}
+.hqt-logo{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:13px;color:var(--ink,#1a1c1e);cursor:pointer;min-height:40px;white-space:nowrap}
+.hqt-logo input{width:18px;height:18px;accent-color:var(--accent,#c2005b)}
 @media (max-width:480px){.hqt-vs{flex-wrap:wrap}.hqt-vs-t{flex-basis:calc(100% - 56px)}.hqt-fmt{margin-left:52px}.hqt-change{margin-left:auto}}
 
 /* ---------- the modal */
