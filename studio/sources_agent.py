@@ -812,7 +812,7 @@ class SourcesAgent:
             with ThreadPoolExecutor(4) as ex:
                 for g, mj in zip(top, ex.map(lambda g: model_judge(self.store, a.uid, g[0], bstate, self.http), top)):
                     if mj:
-                        judged[id(g)] = mj
+                        judged[id(g)] = dict(mj, category="research") if g[0].get("type") == "paper" else mj
         clusters = []
         for g in groups:
             j = judged[id(g)]
