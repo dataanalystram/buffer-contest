@@ -17,6 +17,7 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -81,6 +82,18 @@ def _run_thumb_src(res: dict, inp: dict) -> dict | None:
     if not (isinstance(url, str) and url.startswith("https://")):
         return None
     return {"url": url, "img": img if isinstance(img, str) and img.startswith("https://") else ""}
+
+_FETCH_WHY = threading.local()  # why the last House._fetch_bytes on this thread returned None
+IMPORT_WHY = {  # media import failures, said plainly (owner bug 2 Nov 2026: every failure read the same)
+    "bad_url": "Couldn't download that file: give a full https:// link to the photo or video.",
+    "not_found": "Couldn't download that file: the link answered 404 (not found). Files in a private repo or drive need "
+                 "a public link, or upload the file instead.",
+    "forbidden": "Couldn't download that file: the link needs a sign-in (HTTP 401/403). Use a public link, or upload the file instead.",
+    "too_large": "Couldn't download that file: it is over 40 MB (or empty). Upload a shorter clip instead.",
+    "private": "Couldn't download that file: the link points to a private address, so it can't be read.",
+    "unreachable": "Couldn't download that file: the link didn't answer. Check it opens in a browser, or upload the file instead.",
+}
+
 
 class House:
     def __init__(self, studio: Studio, http: httpx.Client | None = None):
@@ -318,9 +331,12 @@ class House:
         """For agents: fetch a photo or video the user owns from a public URL into HuhQueue."""
         self.studio._guard_write(a, "import_media")
         ext = urlparse(url).path.rsplit(".", 1)[-1].lower() if "." in urlparse(url).path else ""
+        _FETCH_WHY.v = "unreachable"
         data = self._fetch_bytes(url, MAX_UPLOAD)
+        why = _FETCH_WHY.v or "unreachable"
         if not data:
-            raise ActionError("Couldn't download that file (it must be a public https link, up to 40 MB).")
+            raise ActionError(IMPORT_WHY.get(why, IMPORT_WHY["unreachable"]) if not why.startswith("http_")
+                              else f"Couldn't download that file: the link answered HTTP {why[5:]}.")
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             ext = "mp4" if data[4:8] == b"ftyp" else ("png" if data[:4] == b"\x89PNG" else "jpg")
         return self.upload(a, "import." + ext, base64.b64encode(data).decode())
@@ -1381,22 +1397,70 @@ class House:
         return {"items": items, "slots": slots, "now": datetime.now(timezone.utc).isoformat()}
 
     # ================================================================ helpers
-    def _fetch_bytes(self, url: str, limit: int) -> bytes | None:
-        """Bytes of a public URL (logo, story image, media import, preflight probe), every redirect hop checked."""
-        if not url or not url.startswith(("http://", "https://")):
+    def _own_file(self, url: str, limit: int) -> tuple[bytes | None, str] | None:
+        """A URL on this server's own PUBLIC_URL host (/m/<token>, /sample/<file>, /static/<file>), read straight from the
+        store / package instead of over the network. On Render a request from the service to its own public hostname
+        never arrives (no hairpin), so every self-hosted import failed with "Couldn't download that file" (owner bug,
+        2 Nov 2026). None when the URL is not ours. Same files the public routes serve, same path checks."""
+        p = urlparse(url)
+        own = urlparse(self.s.public_url or "")
+        if not own.hostname or (p.hostname or "").lower().rstrip(".") != own.hostname.lower() or (p.port or None) != (own.port or None):
             return None
+        path = p.path or "/"
+        data = None
+        if path.startswith("/m/"):
+            m = self.get_media(path[3:])
+            data = m["data"] if m else None
+        elif path.startswith("/sample/"):
+            from .takes import SAMPLE_DIR
+            f = (SAMPLE_DIR / path[8:]).resolve()
+            if f.parent == SAMPLE_DIR.resolve() and f.is_file() and f.suffix in (".mp4", ".jpg"):
+                data = f.read_bytes() if f.stat().st_size <= limit else b""
+        elif path.startswith("/static/"):
+            root = (Path(__file__).parent / "static").resolve()
+            f = (root / path[8:]).resolve()
+            if root in f.parents and f.is_file() and f.parent.name != "src":
+                data = f.read_bytes() if f.stat().st_size <= limit else b""
+        if data is None:
+            return None, "not_found"
+        if not data or len(data) > limit:
+            return None, "too_large"
+        return data, ""
+
+    def _fetch_bytes_why(self, url: str, limit: int) -> tuple[bytes | None, str]:
+        """(bytes, "") or (None, why) for a public URL, every redirect hop checked. why: bad_url, not_found (HTTP 404/410),
+        forbidden (401/403: private or signed-in only), http_<code>, too_large, private (netguard refused the host),
+        unreachable (DNS/connect/timeout)."""
+        if not url or not url.startswith(("http://", "https://")):
+            return None, "bad_url"
+        own = House._own_file(self, url, limit) if getattr(self, "s", None) is not None else None
+        if own is not None:
+            return own
+        host = urlparse(url).hostname or "?"
         try:
             with netguard.safe_stream(url, http=self.http, headers=sources.UA) as r:
                 if r.status_code >= 400:
-                    return None
-                buf = b""
+                    why = {404: "not_found", 410: "not_found", 401: "forbidden", 403: "forbidden"}.get(r.status_code, f"http_{r.status_code}")
+                    print(f"fetch: {host} answered HTTP {r.status_code}", flush=True)  # host only: a path can carry a token
+                    return None, why
+                buf = bytearray()
                 for chunk in r.iter_bytes():
                     buf += chunk
                     if len(buf) > limit:
-                        return None
-                return buf
-        except (httpx.HTTPError, netguard.FetchError):
-            return None
+                        return None, "too_large"
+                return bytes(buf), ""
+        except netguard.FetchError as e:
+            print(f"fetch: {host} refused: {e}", flush=True)
+            return None, "private" if "private" in str(e) else "unreachable"
+        except httpx.HTTPError as e:
+            print(f"fetch: {host} failed: {e.__class__.__name__}", flush=True)
+            return None, "unreachable"
+
+    def _fetch_bytes(self, url: str, limit: int) -> bytes | None:
+        """Bytes of a public URL (logo, story image, media import, preflight probe), every redirect hop checked. Why it
+        failed is left in _FETCH_WHY.v for this thread (import_url says it plainly)."""
+        data, _FETCH_WHY.v = House._fetch_bytes_why(self, url, limit)
+        return data
 
     def _logo_bytes(self, kit: dict) -> bytes | None:
         if not kit.get("logo"):

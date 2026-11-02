@@ -66,3 +66,83 @@ def test_scan_follows_function_level_imports(tmp_path, monkeypatch):
     mods, third, hard = wi.scan(["studio.a"])
     assert "studio.b" in mods
     assert "somepkg_xyz" in hard and "optional_xyz" in third and "optional_xyz" not in hard
+
+
+# ---- Bug 2: media import from a URL failed in production for the server's own files ----
+# Root cause (Render logs + live probes, 2 Nov 2026): a request from the Render service to its own public hostname never
+# arrives (no hairpin; no GET /sample/clip4.mp4 from the server in the logs), so /sample/, /static/ and /m/ imports all
+# failed. Public third-party URLs worked (avatars.githubusercontent.com, wikimedia); "GitHub images" failed because the
+# repo is private (raw.githubusercontent.com answers 404), which the old message hid.
+
+from .conftest import agent_token, mcp_call  # noqa: E402
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Any outbound fetch is recorded and fails, as Render's own-host hairpin effectively does."""
+    import httpx
+
+    from studio import netguard
+    seen = []
+
+    def stream(url, *a, **k):
+        seen.append(url)
+        raise httpx.ConnectError("test: no network")
+    monkeypatch.setattr(netguard, "safe_stream", stream)
+    return seen
+
+
+def test_import_of_own_sample_file_reads_it_locally(human, no_network):
+    tok = agent_token(human)
+    res, out = mcp_call(human, tok, "library_upload_url", {"url": "https://hq.test/sample/clip4.mp4"})
+    assert not res["isError"], out
+    assert out["type"] == "video" and out["bytes"] == (ROOT / "studio/sample_take/clip4.mp4").stat().st_size
+    assert no_network == []  # never went over the network
+
+
+def test_import_of_own_static_and_media_urls(human, no_network):
+    tok = agent_token(human)
+    res, out = mcp_call(human, tok, "library_upload_url", {"url": "https://hq.test/sample/poster.jpg"})
+    assert not res["isError"], out
+    res2, out2 = mcp_call(human, tok, "library_upload_url", {"url": out["url"]})  # its own /m/ link
+    assert not res2["isError"], out2 and out2["bytes"] == out["bytes"]
+    static = next(p for p in (ROOT / "studio/static").rglob("*.png") if p.parent.name != "src")
+    rel = static.relative_to(ROOT / "studio/static").as_posix()
+    res3, out3 = mcp_call(human, tok, "library_upload_url", {"url": f"https://hq.test/static/{rel}"})
+    assert not res3["isError"], out3
+    assert no_network == []
+
+
+def test_own_host_paths_are_confined(human, no_network):
+    tok = agent_token(human)
+    for u in ("https://hq.test/sample/../store.py", "https://hq.test/sample/sample.json", "https://hq.test/static/../app.py",
+              "https://hq.test/m/nope.jpg", "https://hq.test/sample/%2e%2e/house.py"):
+        res, out = mcp_call(human, tok, "library_upload_url", {"url": u})
+        assert res["isError"], u
+        assert "404" in out or "not found" in out.lower(), (u, out)
+    assert no_network == []
+
+
+def test_edit_video_with_own_sample_url_queues(human, no_network, monkeypatch):
+    from studio import house as house_mod
+    monkeypatch.setattr(house_mod.House, "media_meta", lambda self, a, t: {"type": "video", "duration": 15})
+    tok = agent_token(human)
+    res, out = mcp_call(human, tok, "edit_video", {"url": "https://hq.test/sample/clip4.mp4", "start_s": 2, "end_s": 10,
+                                                   "rights_confirmed": True})
+    assert not ("Couldn't download" in str(out)), out
+
+
+@pytest.mark.parametrize("status,needle", [(404, "404"), (403, "sign-in"), (500, "HTTP 500")])
+def test_import_failure_says_why(human, monkeypatch, status, needle):
+    from contextlib import contextmanager
+
+    import httpx
+
+    from studio import netguard
+
+    @contextmanager
+    def stream(url, *a, **k):
+        yield httpx.Response(status, request=httpx.Request("GET", url), content=b"x")
+    monkeypatch.setattr(netguard, "safe_stream", stream)
+    res, out = mcp_call(human, agent_token(human), "library_upload_url", {"url": "https://raw.githubusercontent.com/o/private/main/a.png"})
+    assert res["isError"] and needle in out, out
