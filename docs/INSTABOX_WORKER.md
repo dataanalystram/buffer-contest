@@ -55,14 +55,11 @@ stay "running". Now, on both the InstaBox and the GitHub Actions path:
 
 ## The box: `huhqueue-worker` (created 2 Nov 2026, template agent-browser, free 4 vCPU / 8 GiB)
 A dedicated machine; the old `huhqueue` machine (the self-hosted HuhQueue) is not used or touched.
-Read access to this private repo is a **read-only deploy key** (`huhqueue-worker InstaBox (read-only)`, repo
-Settings → Deploy keys) whose private half is `~/.ssh/hq_deploy` on the box; no GitHub token is stored there.
-Revoke it in the repo settings to cut the box off.
+The repo is public (since 2 Nov 2026), so the box clones and fetches over plain HTTPS with no credential at all;
+the read-only deploy key it used while the repo was private was deleted the same day. No GitHub token or key is stored on the box.
 ```
 sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libgles2 git
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/hq_deploy     # add the .pub as a read-only deploy key
-printf 'Host github.com\n  IdentityFile ~/.ssh/hq_deploy\n  IdentitiesOnly yes\n' > ~/.ssh/config
-git clone --depth 1 git@github.com:dataanalystram/buffer-contest.git /data/hq
+git clone --depth 1 https://github.com/dataanalystram/buffer-contest.git /data/hq
 python3 -m venv /data/venv && /data/venv/bin/pip install -r /data/hq/requirements-worker.txt -r /data/hq/requirements-media.txt
 /data/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
 ```

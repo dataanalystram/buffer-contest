@@ -5,13 +5,15 @@ on:
     inputs:
       query: {description: "topic for the agent", required: false, default: "OpenAI"}
   pull_request:
+permissions: {contents: read}
 jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: {python-version: "3.12", cache: pip}
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
       - run: pip install -q -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt playwright pytest-playwright && python -m playwright install --with-deps chromium >/dev/null
@@ -19,7 +21,8 @@ jobs:
         env: {STUDIO_INSECURE_COOKIES: "1", PUBLIC_URL: "http://127.0.0.1:8899", STUDIO_DB: "/tmp/ui.db", RENDER_WORKER: "local", HQ_ANON_RPM: "1000", HQ_DEMO_PER_MIN: "60"}
         run: nohup python -m uvicorn studio.app:create_app --factory --port 8899 > /tmp/uv.log 2>&1 & sleep 5 && curl -sf http://127.0.0.1:8899/healthz
       - name: Drive the UI
-        run: python scripts/ui_smoke.py http://127.0.0.1:8899 shots "${{ github.event.inputs.query || 'OpenAI' }}"
+        env: {HQ_QUERY: "${{ github.event.inputs.query || 'OpenAI' }}"}   # via env, never spliced into the script
+        run: python scripts/ui_smoke.py http://127.0.0.1:8899 shots "$HQ_QUERY"
       - name: Make a post v2 + Story scan screenshots (1440 / 390, light / dark) and layout check
         if: always()
         run: python scripts/mpv2_shots.py http://127.0.0.1:8899 shots/mpv2
@@ -28,6 +31,6 @@ jobs:
         run: python -m pytest tests/studio/test_e2e_studio.py tests/studio/test_take_e2e.py tests/studio/test_browsers.py tests/studio/test_tour_e2e.py tests/studio/test_responsive.py tests/studio/test_activity_e2e.py -q
       - if: always()
         run: cp /tmp/uv.log shots/server.log || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with: {name: ui-shots, path: shots, retention-days: 7}

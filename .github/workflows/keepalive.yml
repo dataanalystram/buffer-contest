@@ -1,11 +1,11 @@
 # Supabase pg_cron pings /healthz every 10 minutes (docs/SUPABASE.md), which keeps Render awake and Supabase active
-# for free. This is only a backstop: the repo is private, so a 10-minute Actions cron would use more than the 2,000
-# free minutes a month.
+# for free. This is only a backstop (every 6 hours); the pg_cron ping does the real work.
 name: keepalive
 on:
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
+permissions: {contents: read}
 jobs:
   ping:
     runs-on: ubuntu-latest
