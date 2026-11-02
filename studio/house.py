@@ -966,6 +966,9 @@ class House:
         owner = self.store.q("SELECT user_id FROM render_jobs WHERE id=?", (jid,))
         if not owner or not self._worker_allowed(owner[0]["user_id"]):  # belt and braces: sample jobs never reach the worker
             return False, "sample workspace: no worker runs"
+        from . import instabox_worker
+        if instabox_worker.enabled():  # opt-in (HQ_RENDER_BACKEND=instabox): a warm InstaBox VM, docs/INSTABOX_WORKER.md
+            return instabox_worker.dispatch(self, jid, workflow, inputs, ttl)
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")
         self.open_claim(jid, ttl, workflow)
