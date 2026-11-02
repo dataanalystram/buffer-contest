@@ -99,7 +99,9 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["slides"], "properties": {
          "slides": {"type": "array", "minItems": 2, "maxItems": 9, "items": SLIDE},
          "template": {"type": "string", "enum": ["editorial", "editorial_story", "text_slides"]},
-         "ratio": {"type": "string", "enum": ["4:5", "1:1", "9:16"]}, "follow_line": S}}},
+         "ratio": {"type": "string", "enum": ["4:5", "1:1", "9:16"]}, "follow_line": S,
+         "keep_case": {"type": "array", "items": S, "description": "Brand names to keep exactly as written in Title Case "
+                       "headlines, e.g. ['ernd', 'iPhone']"}}}},
     {"name": "hero_edit", "description": "The premium cover edit of an official image (no HuhQueue AI): saliency crop to the frame, "
      "colour match to the brand ground, vignette and fade; optional product cut-out tilted with a shadow. Returns the edited "
      "image URL to use as slides[0].image in render_carousel.",
@@ -115,7 +117,10 @@ TOOLS: list[dict[str, Any]] = [
          "start_s": {"type": "number"}, "end_s": {"type": "number"},
          "cut_first_s": {"type": "number", "description": "Remove this many seconds from the start"},
          "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]},
-         "captions": {"type": "boolean", "description": "Burn in word-by-word captions (default true)"},
+         "captions": {"type": ["boolean", "string"], "enum": [True, False, "auto", "replace", "on", "off"],
+                      "description": "Word-by-word captions. Default (true / auto): added unless the video already has captions "
+                                     "burned in (then none are added, so they never double; render_status says so). "
+                                     "\"replace\": crop the old captions off and caption it again. \"on\": caption it anyway. false: none."},
          "caption_style": {"type": "string", "enum": ["opus", "huhbyte_news", "minimal", "hype"], "description": "Caption/edit style"},
          "theme": {"type": "string", "description": "A video theme id from list_themes (overrides caption_style's look)"},
          "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
@@ -126,7 +131,7 @@ TOOLS: list[dict[str, Any]] = [
      "from slides (image URLs, e.g. render_carousel's media_urls) as a slideshow with the end card. Returns a job id; poll "
      "render_status(job_id).",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC, "images": {"type": "array", "items": S, "maxItems": 10},
-         "hook": S, "theme": S, "captions": {"type": "boolean"}, "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
+         "hook": S, "theme": S, "captions": {"type": ["boolean", "string"], "enum": [True, False, "auto", "replace", "on", "off"]}, "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
          "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}, "rights_confirmed": {"type": "boolean"}, "credit": S}}},
     {"name": "split_video", "description": "Split a long video into 3-7 short vertical clips on the video worker (no HuhQueue AI: "
      "Whisper transcript, built-in moment scorer, face-tracked reframe, captions, cover and end card). Give media_token / "
@@ -278,6 +283,22 @@ def _kit_spec(h, a: Actor) -> dict:
 
 
 # ------------------------------------------------------------------------------------------------ tools
+_LOGO_LIKE = re.compile(r"(logo|favicon|apple-touch|/icons?[/._-]|[-_]icon\b|wordmark|brandmark|avatar|sprite|\.svg(\?|$)|\.ico(\?|$))", re.I)
+
+
+def rank_images(share: str, photos: list[str]) -> tuple[list[str], list[str]]:
+    """(images, logos): the page's og/share image first, then its other photos; anything that looks like a logo or icon
+    (owner bug, 2 Nov 2026: the ernd cover used the logo) goes to logos, never ahead of a real picture."""
+    seen, pics, logos = set(), [], []
+    for u in [share] + list(photos or []):
+        u = str(u or "").strip()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        (logos if _LOGO_LIKE.search(u.split("#")[0].split("?")[0]) else pics).append(u)
+    return pics + logos, logos
+
+
 def t_research_link(studio, a, args):
     from . import intake, netguard, reader
     h = studio.house
@@ -291,10 +312,10 @@ def t_research_link(studio, a, args):
         raise ActionError(str(e))
     paras = [p for p in art.get("paragraphs") or [] if p.strip()][: int(args.get("max_paragraphs") or 30)]
     media = [{"type": m.get("type"), "url": m.get("url"), "credit": m.get("credit") or art.get("site")} for m in art.get("media") or []]
-    images = [x for x in [art.get("image")] if x] + [m["url"] for m in media if m["type"] == "photo"]
+    images, logos = rank_images(art.get("image") or "", [m["url"] for m in media if m["type"] == "photo"])
     out = {"url": art.get("url") or url, "site": art.get("site"), "title": art.get("title"), "description": art.get("description"),
            "via": art.get("via"), "paragraphs": paras, "figures": _figures(paras, art.get("url") or url),
-           "images": images[:8], "videos": [m for m in media if m["type"] == "video"][:4], "spent_usd": 0,
+           "images": images[:8], "logos": logos[:4], "videos": [m for m in media if m["type"] == "video"][:4], "spent_usd": 0,
            "next": "Write the slides and captions yourself from these facts (cite source_url), then render_carousel."}
     if art.get("post"):
         p = art["post"]
@@ -342,7 +363,7 @@ def t_scrape_brand_assets(studio, a, args):
     return {"url": str(r.url), **keep, "saved": False, "next": "update_brand_kit with the values you pick", "spent_usd": 0}
 
 
-def _carousel_editorial(h, a, slides, ratio, follow_line):
+def _carousel_editorial(h, a, slides, ratio, follow_line, keep_case=()):
     from . import brand_routes, editorial  # editorial_story (the 'ernd' carousel); ImportError -> text_slides fallback
     from PIL import Image
     b = brand_routes.attach(h)[0].brand_obj(a)
@@ -358,7 +379,8 @@ def _carousel_editorial(h, a, slides, ratio, follow_line):
                    "accent": [s["accent_word"]] if s.get("accent_word") else [], "note": s.get("footnote", ""),
                    "image": bool(s.get("image")) and bool(img)})
     spec = {"eyebrow": cov.get("eyebrow", ""), "headline": cov.get("headline", ""), "dek": cov.get("body", ""),
-            "accent": [cov["accent_word"]] if cov.get("accent_word") else [], "slides": sl, "follow_line": follow_line or ""}
+            "accent": [cov["accent_word"]] if cov.get("accent_word") else [], "slides": sl, "follow_line": follow_line or "",
+            "keep_case": [str(w) for w in keep_case or [] if isinstance(w, str)][:20]}
     problems = list(editorial.check_spec(spec)) if hasattr(editorial, "check_spec") else []
     ims, fit = editorial.render(b, spec, hero=hero_im, band=band, ratio=ratio)
     return ims, problems + list(getattr(fit, "problems", []) or []), "editorial_story"
@@ -386,7 +408,8 @@ def t_render_carousel(studio, a, args):
     ims, problems, used = None, [], ""
     if tpl in ("editorial", "editorial_story"):
         try:
-            ims, problems, used = _carousel_editorial(h, a, slides, ratio, args.get("follow_line"))
+            ims, problems, used = _carousel_editorial(h, a, slides, ratio, args.get("follow_line"),
+                                                          args.get("keep_case") if isinstance(args.get("keep_case"), list) else ())
         except ImportError:
             ims = None
     if ims is None:
@@ -429,6 +452,15 @@ def t_hero_edit(studio, a, args):
     return {"url": m["url"], "media_token": m["token"], "edit": how, "report": report, "spent_usd": 0}
 
 
+def _captions_mode(v) -> str:
+    """edit_video's captions argument -> the worker's mode (owner bug 2 Nov 2026: a captioned clip got captioned again)."""
+    if v is False or v == "off":
+        return "off"
+    if v in ("replace", "on"):
+        return v
+    return "auto"  # true, missing or "auto": caption it unless captions are already burned in
+
+
 def _video_spec(h, a, args, tok, meta) -> dict:
     from .media import styles as media_styles
     style = str(args.get("theme") or args.get("caption_style") or "opus")
@@ -452,7 +484,8 @@ def _video_spec(h, a, args, tok, meta) -> dict:
             "hook": str(args.get("hook") or "")[:120], "facts": [], "credit": str(args.get("credit") or "")[:160], "names": [],
             "music": args.get("music") or "auto", "official": False,
             "rights_confirmed": bool(args.get("rights_confirmed", owned)), "source": tok, "candidate": None, "slides": [],
-            "captions": args.get("captions") is not False,
+            "captions": args.get("captions") not in (False, "off"),
+            "captions_mode": _captions_mode(args.get("captions")),
             "brand_colors": True, **_kit_spec(h, a), "via": SOURCE}
     if clip:
         spec["clip"] = clip
@@ -467,7 +500,7 @@ def t_edit_video(studio, a, args):
         raise ActionError("That media is not a video.")
     spec = _video_spec(h, a, args, tok, meta)
     out = _queue_video(h, a, spec)
-    return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "music")}}
+    return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "captions_mode", "music")}}
 
 
 def t_render_reel(studio, a, args):
@@ -526,7 +559,10 @@ def t_render_status(studio, a, args):
         out["download_url"] = h.media_url(r["media_token"])
         out["media_token"] = r["media_token"]
         m = h.media_meta(a, r["media_token"]) or {}
-        out["meta"] = {k: m.get(k) for k in ("width", "height", "duration", "ratio", "style", "captions", "clip") if m.get(k) is not None}
+        out["meta"] = {k: m.get(k) for k in ("width", "height", "duration", "ratio", "style", "captions", "clip", "captions_note")
+                       if m.get(k) not in (None, "")}
+        if m.get("captions_note"):
+            out["note"] = m["captions_note"]  # e.g. it already had captions, so none were added
     if st == "failed":
         out["error"] = (r["error"] or "")[:300]
     if st == "queued":

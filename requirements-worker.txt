@@ -1,10 +1,16 @@
 # One take video worker (GitHub Actions `take.yml`, or a self-hosted box with FFmpeg). Not installed on the web dyno.
-# Licences: yt-dlp Unlicense (YouTube/Vimeo/X posts + their captions), faster-whisper MIT, scenedetect BSD-3-Clause, mediapipe Apache-2.0, httpx BSD-3-Clause, Pillow MIT-CMU (HPND).
+# Licences: yt-dlp Unlicense (YouTube/Vimeo/X posts + their captions), faster-whisper MIT, scenedetect BSD-3-Clause, mediapipe Apache-2.0, httpx BSD-3-Clause, Pillow MIT-CMU (HPND), cryptography Apache-2.0/BSD.
+# Must cover every import the worker reaches (scripts/worker_imports.py; tests/studio/test_worker_requirements.py and
+# the studio-ci worker-imports job import them all in a venv with only this file installed).
+# cryptography: studio.takes -> studio.demo -> studio.store imports Fernet at module load. Missing it crashed every
+# YouTube link -> split before download (Actions run 41363638009, 1 Nov 2026).
 httpx>=0.27
 pillow>=11.3.0
 fonttools>=4.60.2
+cryptography>=44.0.1
 numpy>=1.26
 faster-whisper>=1.1
 scenedetect>=0.6.4
 mediapipe>=0.10.14
 yt-dlp>=2026.10.26
+imageio-ffmpeg>=0.7.0

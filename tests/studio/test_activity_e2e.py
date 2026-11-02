@@ -1,6 +1,8 @@
 """Browser flow for the Activity log (Playwright): tabs, cursor pages, agent groups by app and model, search, CSV export."""
+import asyncio
 import json
 import os
+import threading
 import time
 
 import httpx
@@ -16,8 +18,10 @@ pw = pytest.importorskip("playwright.sync_api")
 NO_TOUR = "localStorage.setItem('hq_tour_done', '1'); localStorage.setItem('hq_onb_seen', '1')"
 
 
-def until(fn, timeout=10.0):
-    """Poll a Python check against the page (the app's CSP has no 'unsafe-eval', so no string wait_for_function)."""
+def until(fn, timeout=10.0, page=None):
+    """Poll a Python check against the page (the app's CSP has no 'unsafe-eval', so no string wait_for_function).
+    Pass page= when the check reads only Python state set by a Playwright callback (a route handler): sync Playwright
+    dispatches callbacks only while it is called, so a bare time.sleep would never let the handler run."""
     end = time.time() + timeout
     while time.time() < end:
         try:
@@ -25,12 +29,17 @@ def until(fn, timeout=10.0):
                 return
         except Exception:  # noqa: BLE001 - the element may be re-rendering
             pass
-        time.sleep(0.1)
+        if page is not None:
+            page.wait_for_timeout(100)
+        else:
+            time.sleep(0.1)
     raise AssertionError("timed out waiting for the page")
 
 
 def cats(page):
-    return [r.get_attribute("data-category") for r in page.get_by_test_id("audit-row").all()]
+    # short timeout: a row that re-renders away mid-read (the list swapped to another tab) must fail fast and be re-polled;
+    # the default 30 s wait for a vanished nth() row outlived until()'s 10 s budget (the CI smoke timeout)
+    return [r.get_attribute("data-category", timeout=1000) for r in page.get_by_test_id("audit-row").all()]
 
 
 @pytest.fixture
@@ -40,6 +49,21 @@ def live(tmp_path):
     s = load_settings(client_id="cid", client_secret="sec", public_url=f"http://127.0.0.1:{port}", session_secret="a" * 64,
                       db_path=str(tmp_path / "act.db"), secure_cookies=False, ai_base_url="")
     app = create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
+    # Test hook: hold the Activity tab's Agents answer on the server until the test releases it (a real slow answer).
+    # Holding it with page.route instead depends on sync Playwright dispatching route callbacks, which flaked in CI.
+    app.state.hold_agent = None  # a threading.Event while a test holds; None lets everything through
+    app.state.held_agent = 0
+
+    @app.middleware("http")
+    async def _hold_agent(request, call_next):
+        ev = app.state.hold_agent
+        q = request.url.query
+        if ev is not None and request.url.path == "/api/activity" and "tab=agent" in q and "group=run" not in q:
+            app.state.held_agent += 1
+            while not ev.is_set():
+                await asyncio.sleep(0.05)
+        return await call_next(request)
+
     st = app.state.store
     st.upsert_user("acc_1", "ram@example.com", "Ram", "org_1", "HuhByte",
                    {"access_token": "at_1", "refresh_token": "rt_1", "expires_at": time.time() + 3600})
@@ -119,5 +143,34 @@ def test_activity_tabs_pages_agents_search_and_csv(live, chromium, tmp_path):
         page.get_by_test_id("act-tab-agent").click()
         page.get_by_test_id("act-group").first.wait_for()
         page.screenshot(path=os.environ.get("HQ_ACTIVITY_SHOT") or str(tmp_path / "activity.png"), full_page=True)
+    finally:
+        ctx.close()
+
+
+def test_a_slow_answer_for_a_tab_you_left_never_overwrites_the_list(live, chromium):
+    """Sweep 2 Nov 2026 (the flaky Sign-ins check in ui-smoke): tab answers arriving out of order showed the old tab's rows."""
+    base, app = live
+    ctx = chromium.new_context(viewport={"width": 1280, "height": 900})
+    try:
+        ctx.add_init_script(NO_TOUR)
+        ctx.add_cookies([{"name": "hq_sid", "value": "sid-act", "url": base}])
+        ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+
+        page = ctx.new_page()
+        page.goto(base)
+        page.get_by_test_id("tab-activity").click()
+        page.get_by_test_id("audit-row").first.wait_for()
+        release = threading.Event()
+        app.state.hold_agent = release  # the Agents answer now waits on the server
+        try:
+            page.get_by_test_id("act-tab-agent").click()
+            until(lambda: app.state.held_agent >= 1, page=page)
+            page.get_by_test_id("act-tab-signin").click()
+            until(lambda: set(cats(page)) <= {"signin"}, page=page)
+        finally:
+            release.set()  # now the old tab's answer lands, last
+            app.state.hold_agent = None
+        page.wait_for_timeout(1500)
+        assert set(cats(page)) <= {"signin"}, cats(page)
     finally:
         ctx.close()

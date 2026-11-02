@@ -22,6 +22,16 @@ from typing import Callable
 
 from . import styles, tools
 
+def _captions_args(spec: dict) -> dict:
+    """spec["captions"] -> render_style's captions mode. edit_video (via mcp_client_brain) sets captions_mode itself:
+    "auto" (default: caption it unless it already has captions burned in), "replace" (crop the old ones off and caption
+    again), "on" (caption it anyway), "off". Older specs carry only captions: true/false."""
+    mode = spec.get("captions_mode")
+    if mode in ("auto", "replace", "on", "off"):
+        return {"captions_mode": mode, "detect_own_captions": mode == "auto"}
+    return {}
+
+
 CAPTION_STYLES = {"opus", "huhbyte_news", "minimal", "hype"}  # every style captions speech when there is a transcript
 
 
@@ -106,7 +116,7 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
                                facts=spec.get("facts"), credit=credit, words_path=words_path, names=spec.get("names"),
                                clip=spec.get("clip"), music=spec.get("music") or "auto", brand=brand, official=official,
                                rights_confirmed=bool(spec.get("rights_confirmed")), run_dir=str(tmp),
-                               brand_colors=bool(spec.get("brand_colors")))
+                               brand_colors=bool(spec.get("brand_colors")), **_captions_args(spec))
         if r.get("needs_confirmation"):
             raise JobError("Rights not confirmed: " + r["question"])
         if r.get("error"):
@@ -114,7 +124,8 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
         out = r["renders"][0]
         meta = {"type": "video", "renderer": "studio.media", "style": style, "ratio": ratio, "width": out["width"],
                 "height": out["height"], "duration": out["duration"], "clip": out["clip"], "captions": out["captions"],
-                "music": out["music"], "credit": credit, "caption_problems": out["caption_problems"]}
+                "music": out["music"], "credit": credit, "caption_problems": out["caption_problems"],
+                "captions_note": out.get("captions_note") or "", "source_captions": out.get("source_captions")}
         return Path(out["path"]).read_bytes(), json.loads(json.dumps(meta))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

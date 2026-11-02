@@ -697,6 +697,10 @@ class SourcesAgent:
                 items += got
             except SourceError as e:
                 status.append({"source": k, "label": ad.label, "ok": False, "error": str(e), "items": 0})
+            except Exception as e:  # noqa: BLE001 - one source's bad answer (unparseable feed, odd JSON) never 500s the scan
+                print(f"sources: {k} failed: {e.__class__.__name__}", flush=True)
+                status.append({"source": k, "label": ad.label, "ok": False, "items": 0,
+                               "error": f"{ad.label} sent something unreadable ({e.__class__.__name__})."})
         items = items[:MAX_ITEMS]
         now = float(body.get("now") or time.time())
         unique = dedupe(items)
