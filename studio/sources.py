@@ -182,7 +182,7 @@ LIBRARY = [
     _src("yt_anthropic", "Anthropic (YouTube)", "Videos", "youtube", YT + "UCrDwWp7EBBv4NwvScIpBDOA", "video"),
     _src("yt_figure", "Figure (YouTube)", "Videos", "youtube", YT + "UCYlq-KmwPjc1DtsGmthFqSQ", "video"),
     _src("yt_bostondynamics", "Boston Dynamics (YouTube)", "Videos", "youtube", YT + "UC7vVhkEfw4nOGp8TyDk7RcQ", "video"),
-    _src("hackertube", "HackerTube", "Videos", "hackertube", "https://hackertube.org/api/list?area=ai-data&sort=recent&n=20", "video",
+    _src("hackertube", "HackerTube", "Videos", "hackertube", "https://hackertube.org/api/list?area=ai-data&n=20", "video",
          evergreen=True, about="The YouTube videos HN keeps telling each other to watch"),
     _src("github_trending", "GitHub Trending", "Open source", "gh_trending", "https://github.com/trending", "repo"),
     _src("github_blog", "GitHub Blog", "Open source", "rss", "https://github.blog/feed/"),
@@ -316,36 +316,39 @@ def _date(text: str) -> float:
 
 
 def _parse_anthropic(src: dict, body: bytes) -> list[dict]:
-    """anthropic.com/news has no feed; its server-rendered tiles are <time>date</time> then a link with a heading."""
+    """anthropic.com/news has no feed. Its server-rendered page is tiles (<article>) and rows (<li>); each holds a link
+    to /news/slug or /research/slug with a heading, a <time> and a summary paragraph."""
     h = body.decode("utf-8", "replace")
     out, seen = [], set()
-    for m in re.finditer(r'<a[^>]+href="(/(?:news|research)/[a-z0-9][a-z0-9-]*)"[^>]*>(.*?)</a>', h, re.S):
-        path, inner = m.group(1), m.group(2)
-        head = re.search(r"<h\d[^>]*>(.*?)</h\d>", inner, re.S)
-        title = _clean(head.group(1) if head else inner)
-        if path in seen or len(title) < 20:  # category links ("Announcements") are short and have no heading
-            continue
-        seen.add(path)
-        body_p = re.search(r"<p[^>]*>(.*?)</p>", inner, re.S)
-        when = re.findall(r"<time[^>]*>([^<]+)</time>", h[max(0, m.start() - 1500):m.start()] + inner)
-        out.append(lib_item(src, title, "https://www.anthropic.com" + path, _date(when[-1]) if when else 0.0,
-                            body_p.group(1) if body_p else ""))
+    for block in re.split(r"(?=<article\b|<li\b)", h):
+        for m in re.finditer(r'href="(/(?:news|research)/[a-z0-9][a-z0-9-]*)"[^>]*>(.*?)</a>', block, re.S):
+            path, inner = m.group(1), m.group(2)
+            head = re.search(r"<h\d[^>]*>(.*?)</h\d>", inner, re.S)
+            title = _clean(head.group(1) if head else inner)
+            if path in seen or len(title) < 20:  # category links ("Announcements") are short and have no heading
+                continue
+            seen.add(path)
+            when = re.search(r"<time[^>]*>([^<]+)</time>", block)
+            para = re.search(r'href="' + re.escape(path) + r'"[^>]*>\s*<p[^>]*>(.*?)</p>', block, re.S) or re.search(r"<p[^>]*>(.*?)</p>", inner, re.S)
+            out.append(lib_item(src, title, "https://www.anthropic.com" + path, _date(when.group(1)) if when else 0.0,
+                                para.group(1) if para else ""))
+            break
         if len(out) >= PER_SOURCE:
             break
     return out
 
 
 def _parse_anthropic_md(src: dict, md: str) -> list[dict]:
-    """The same page as Firecrawl markdown: [### Title ... date ...](https://www.anthropic.com/news/slug)."""
+    """The same page as Firecrawl markdown: `Oct 26, 2026 [**Title** \\ summary](https://www.anthropic.com/news/slug)`."""
     out, seen = [], set()
-    for m in re.finditer(r"\[([^\]]{8,800})\]\((https://www\.anthropic\.com/(?:news|research)/[a-z0-9][a-z0-9-]*)\)", md):
-        lines = [x.strip(" #*_") for x in m.group(1).splitlines() if x.strip(" #*_")]
-        when = next((_date(x) for x in lines if _date(x)), 0.0)
-        lines = [x for x in lines if not _date(x)]
+    for m in re.finditer(r"\[([^\[\]]{8,800})\]\((https://www\.anthropic\.com/(?:news|research)/[a-z0-9][a-z0-9-]*)\)", md):
+        lines = [x.strip(" #*_\\") for x in m.group(1).splitlines()]
+        lines = [x for x in lines if x]
         if not lines or len(lines[0]) < 20 or m.group(2) in seen:
             continue
         seen.add(m.group(2))
-        out.append(lib_item(src, lines[0], m.group(2), when, " ".join(lines[1:2])))
+        near = re.findall(r"([A-Z][a-z]{2,8} \d{1,2}, \d{4})", md[max(0, m.start() - 40):m.start()])
+        out.append(lib_item(src, lines[0], m.group(2), _date(near[-1]) if near else 0.0, " ".join(lines[1:2])))
     return out[:PER_SOURCE]
 
 
