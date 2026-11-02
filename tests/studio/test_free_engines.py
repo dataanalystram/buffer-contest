@@ -83,7 +83,7 @@ def test_picker_credit_lines_pools_and_ai_studio_link(app, human, monkeypatch, f
     monkeypatch.delenv("GOOGLE_AI_STUDIO_KEY")
     st = human.get("/api/ai/engine").json()
     by = {o["id"]: o for o in st["engines"]}
-    assert [o["id"] for o in st["engines"]] == list(ai_engines.IDS)
+    assert [o["id"] for o in st["engines"]] == list(ai_engines.ids())
     assert by["nvidia"]["credit"]["label"] == "NVIDIA (free developer credits): 0 of your 150 calls today"
     assert by["hf"]["credit"]["label"] == "Hugging Face (free monthly credits): 0 of your 40 calls today"
     assert by["nvidia"]["credit"]["kind"] == "free-credit" and by["nvidia"]["available"]
@@ -173,7 +173,7 @@ def test_gemini_studio_request_shape(app, human, free_keys):
     req = seen[0]
     assert req.url.host == "generativelanguage.googleapis.com" and req.url.path == "/v1beta/openai/chat/completions"
     body = json.loads(req.content)
-    assert body["model"] == "gemini-2.5-flash-lite" and body["reasoning_effort"] == "low"
+    assert body["model"] == "gemini-flash-lite-latest" and body["reasoning_effort"] == "low"
     params = body["tools"][0]["function"]["parameters"]
     assert "additionalProperties" not in params and "$schema" not in params
     assert params["properties"] == {"title": {"type": "string"}}  # a property named "title" stays; its default goes
@@ -241,7 +241,7 @@ def test_agent_loop_runs_on_nvidia_and_says_so(app, human, free_keys, monkeypatc
 # ------------------------------------------------------------------ Oracle: checked every 6 h, never per run
 @pytest.fixture
 def oci_set(monkeypatch):
-    for k, v in {"OCI_USER": "ocid1.user.oc1..u", "OCI_TENANCY": "ocid1.tenancy.oc1..t", "OCI_FINGERPRINT": "aa:bb",
+    for k, v in {"HQ_ORACLE_GEMINI": "1", "OCI_USER": "ocid1.user.oc1..u", "OCI_TENANCY": "ocid1.tenancy.oc1..t", "OCI_FINGERPRINT": "aa:bb",
                  "OCI_PRIVATE_KEY": "pem"}.items():
         monkeypatch.setenv(k, v)
 
@@ -285,3 +285,18 @@ def test_a_real_paris_404_parks_oracle_until_the_next_check(app, human, oci_set,
     st = ai_engines.oracle_state()
     assert st["ok"] is False and "Paris region" in st["reason"]
     assert ai_engines.oracle_reason("tenancy limit gemini-2-5-flash is set to 0") == "Unavailable: Oracle's Gemini quota for this account is 0"
+
+
+def test_oracle_is_off_by_default_no_probe_no_picker_no_order(app, human, monkeypatch, claude_env):
+    for k, v in {"OCI_USER": "u", "OCI_TENANCY": "t", "OCI_FINGERPRINT": "aa:bb", "OCI_PRIVATE_KEY": "pem"}.items():
+        monkeypatch.setenv(k, v)  # Oracle still configured on the server, but the flag is off
+    monkeypatch.delenv("HQ_ORACLE_GEMINI", raising=False)
+    probed = []
+    monkeypatch.setattr(oci_genai, "chat", lambda *a, **k: probed.append(1))
+    st = human.get("/api/ai/engine").json()
+    ids = [o["id"] for o in st["engines"]]
+    assert "gemini-flash" not in ids and "gemini-pro" not in ids
+    assert "gemini-flash" not in st["order"] and "oracle" not in st and "oracle_pool" not in st
+    assert ai_engines.oracle_check(background=False)["ok"] is None and probed == []  # no 6-hourly re-check
+    assert "gemini-flash" not in _ids(app, _uid(app))
+    assert "Gemini (AI Studio)" in st["auto_line"] and "Oracle" not in st["auto_line"]
