@@ -141,7 +141,7 @@ def test_kit_lifecycle_rest_create_preview_activate_and_templates_follow(human):
     assert r.json()["kit"]["builder_colors"]["primary"] == "#FEE715" and r.json()["kit"]["handle"] == "acme"
     pv = human.post("/api/brand-kits/preview", json={"kit": {**r.json()["kit"], "name": "Acme Live"}, "width": 160}).json()
     ids = [c["id"] for c in pv["cards"]]
-    assert ids[:3] == ["carousel_cover", "thumbnail", "end_card"] and "crt" in ids and all(c.get("url", "").startswith("data:image/jpeg") for c in pv["cards"])
+    assert ids[:3] == ["carousel_cover", "thumbnail", "end_card"] and "crt" in ids and all(c.get("url", "").startswith("/api/brand-kits/preview-img/") for c in pv["cards"])
     act = human.post(f"/api/brand-kits/{kid}/activate").json()
     assert act["active"] and act["applied"]
     kit = human.get("/api/brand-studio").json()["kit"]
