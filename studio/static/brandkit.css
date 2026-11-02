@@ -74,3 +74,11 @@
 /* the logo tile: a mid-grey checker, so a white, a black or a coloured logo all read (the cards draw it on the kit's ground) */
 .bk-logo{background:conic-gradient(#a7a7a7 25%,#c4c4c4 0 50%,#a7a7a7 0 75%,#c4c4c4 0) 0 0/12px 12px !important}
 .bk-chip-logo:has(img){background:conic-gradient(#a7a7a7 25%,#c4c4c4 0 50%,#a7a7a7 0 75%,#c4c4c4 0) 0 0/10px 10px;box-shadow:inset 0 -4px 0 var(--g,#111)}
+/* touch widths: every control is at least 44 px tall (tests/studio/test_responsive.py) */
+@media (max-width:1024px){
+  .bk-form .bk-col .bk-hex{min-height:44px;font-size:14px}
+  .bk-col input[type=color]{width:44px;height:44px}
+  .bk-caps button{min-height:44px;min-width:44px}
+  .bk-col{align-items:stretch}
+  .bk-col>span{grid-template-rows:auto 1fr}
+}
