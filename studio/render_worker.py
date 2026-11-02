@@ -84,7 +84,10 @@ def recap_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict, get) -> in
     spec, urls = j["spec"], j["urls"]
     tmp = Path(tempfile.mkdtemp(prefix="hq_recap_"))
     try:
-        logo = get(urls.get("logo"), optional=True)
+        try:
+            logo = get(urls.get("logo"))
+        except httpx.HTTPStatusError:  # the logo is optional: a dead logo link renders without it
+            logo = None
         logo_path = None
         if logo:
             logo_path = str(tmp / "logo.png")
