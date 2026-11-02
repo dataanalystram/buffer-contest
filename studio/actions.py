@@ -641,6 +641,10 @@ class Studio:
 
     def _find_post(self, a: Actor, post_id: str) -> tuple[dict, dict]:
         u = self.store.user(a.uid)
+        try:
+            self.buffer.prefetch_posts(a.uid, u["org_id"], ("scheduled", "draft", "error", "sent"))
+        except Exception:  # noqa: BLE001  (the per-status reads below surface any real error)
+            pass
         for status in ("scheduled", "draft", "error", "sent"):  # error: a failed post can be fixed and rescheduled
             for p in self.buffer.posts(a.uid, u["org_id"], [status], first=100):
                 if p.get("id") == post_id:
