@@ -31,7 +31,6 @@ from urllib.parse import urlparse
 import httpx
 
 from . import brand, brand_extract, demo_guard, netguard, templates
-from . import hb_templates as hb
 
 SAMPLE_DIR = Path(__file__).parent / "sample_brands"
 STATIC_BRANDS = Path(__file__).parent / "static" / "brands"
@@ -101,7 +100,7 @@ def brand_for(kit: dict, logo: bytes | None) -> templates.Brand:
 def theme_stills(b: templates.Brand, story: dict | None = None) -> list[tuple[str, str, Any]]:
     """The three "Your brand" stills: (ratio, label, PIL image). Same story, this brand's look."""
     st = {**STORY, **(story or {})}
-    reel = hb.editorial_cover(b, "9:16", st["reel"], None, None, None, st["sub"], label=st["kicker"].upper(), swipe=False)
+    reel = templates.front_card(b, "9:16", "Reel", st["reel"], st["sub"])
     cover = templates.front_card(b, "4:5", st["kicker"], st["title"], st["sub"], n=(1, 4))
     voice = (b.kit.get("voice") or "").strip()
     quote_txt = st.get("quote") or (re.split(r"(?<=[.!?])\s+", voice)[0][:140] if voice else "") \

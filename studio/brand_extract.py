@@ -581,7 +581,9 @@ def svg_candidates(info: dict) -> list[dict]:
         if score >= 3:
             out.append({**s, "score": score})
     out.sort(key=lambda s: -s["score"])
-    return out
+    # a generic "logo" hint (a customer's logo in a trusted-by strip) never wins over the one that names the brand or goes home
+    best = out[0]["score"] if out else 0
+    return [s for s in out if s["score"] >= max(3.0, best - 2.5)]
 
 
 def raster_candidates(url: str, info: dict) -> list[dict]:
@@ -597,7 +599,10 @@ def raster_candidates(url: str, info: dict) -> list[dict]:
         kind = "touch" if "apple-touch" in ic["rel"] else ("mask" if "mask" in ic["rel"] else "icon")
         rank = {"touch": 0, "icon": 1, "mask": 2}[kind] - (0.5 if is_svg and kind == "icon" else 0) - size / 1000
         icons.append({"url": href, "svg": is_svg, "kind": kind, "size": size or (180 if kind == "touch" else 0), "rank": rank})
+    name = info["name"].lower()
     for im in p.logo_imgs:
+        if not ((im["home"] or im["in_header"]) or (name and name in im["hint"])):
+            continue  # a logo image elsewhere on the page is a customer's or a partner's, not this brand's
         icons.append({"url": urljoin(url, im["src"]), "svg": im["src"].lower().split("?")[0].endswith(".svg"), "kind": "img",
                       "size": 0, "rank": -1 if (im["home"] or im["in_header"]) else 1.5})
     if not any(i["kind"] == "touch" for i in icons):
@@ -626,6 +631,26 @@ def logo_palette(img) -> list[tuple]:
     q.putdata(px)
     pal = q.quantize(colors=4).convert("RGB")
     return [rgb for _, rgb in sorted(pal.getcolors(len(px)) or [], reverse=True)][:3]
+
+
+def lockup(mark, name: str, font_id: str, ink) -> "object":
+    """A square mark + the brand name in the headline face, as one wide logo (transparent PNG)."""
+    from PIL import Image, ImageDraw, ImageFont
+    from .templates import FONT_DIR, HEAD_FONTS
+    if not name:
+        return mark
+    h = 200
+    m = mark.copy()
+    m.thumbnail((h, h), Image.LANCZOS)
+    f = ImageFont.truetype(str(FONT_DIR / HEAD_FONTS.get(font_id, "Inter-Bold.ttf")), int(h * 0.62))
+    d0 = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    bb = d0.textbbox((0, 0), name, font=f)
+    gap = int(h * 0.22)
+    W = m.width + gap + (bb[2] - bb[0]) + 8
+    out = Image.new("RGBA", (W, h), (0, 0, 0, 0))
+    out.paste(m, (0, (h - m.height) // 2), m)
+    ImageDraw.Draw(out).text((m.width + gap - bb[0], (h - (bb[3] - bb[1])) // 2 - bb[1]), name, font=f, fill=tuple(ink) + (255,))
+    return out
 
 
 def _to_png(img) -> bytes:
@@ -697,13 +722,13 @@ def extract(url: str, html: str, css_texts: list[str] | None = None, fetch=None)
                 mark, mark_src = im, f"{c['kind']} icon {c['url'].split('?')[0].rsplit('/', 1)[-1]}"
             elif logo is None and im.width / im.height >= 1.8:
                 logo, logo_src = im, f"logo image {c['url'].split('?')[0].rsplit('/', 1)[-1]}"
-    if logo is None and mark is not None:
-        logo, logo_src = mark, mark_src
+    fonts = pick_fonts(vars_, css)
+    if logo is None and mark is not None:  # only a square mark: set the name beside it, the way a lockup does
+        logo, logo_src = lockup(mark, info["name"], fonts["head"]["bundled"], ink), mark_src + " + the name set in the headline font"
     lp = logo_palette(logo) + (logo_palette(mark) if mark is not None and mark is not logo else []) if logo is not None else []
     if lp and pal["provenance"].get("accent", "").startswith(("monochrome", "most used")):
         pal = pick_palette(info["theme_color"], vars_, css, lp)
     prov.update(pal["provenance"])
-    fonts = pick_fonts(vars_, css)
     prov.update(fonts["provenance"])
     prov["logo"] = logo_src or "none found (the wordmark is set in the headline font)"
     prov["mark"] = mark_src

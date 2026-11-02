@@ -392,7 +392,8 @@ def front_card(b: Brand, ratio: str, kicker: str, title: str, sub: str = "", n=N
         emph = i == len(lines) - 1 and len(lines) > 1
         if emph and style == "minimal":  # a marker-pen band behind the last line, the accent as a highlighter
             bb = d.textbbox((m, y + i * lh), line, font=hf)
-            d.rectangle((bb[0] - 10, bb[1] + (bb[3] - bb[1]) * 0.45, bb[2] + 10, bb[3] + 8), fill=b.accent)
+            band = b.accent if contrast(ink, b.accent) >= 4.5 else mix(b.accent, _ground_rgb(b, style), 0.62)  # text stays readable
+            d.rectangle((bb[0] - 10, bb[1] + (bb[3] - bb[1]) * 0.45, bb[2] + 10, bb[3] + 8), fill=band)
         d.text((m, y + i * lh), line, font=hf, fill=_emph(b, style) if (emph and style != "minimal") else ink)
     y += lh * len(lines) + int(min(W, H) * 0.03) + (int(hf.size * 0.18) if b.upper else 0)
     for s in sub_lines:
