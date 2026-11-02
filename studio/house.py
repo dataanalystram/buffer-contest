@@ -518,35 +518,25 @@ class House:
         return llm.public_view(self.store, a.uid, self.s)
 
     def save_ai(self, a: Actor, body: dict) -> dict:
+        """The older one-key form (POST /api/ai): saves into the per-provider keys (byo_keys), or removes them all."""
+        from . import byo_keys
         if a.kind != "human":
             raise ActionError("Only a human can change AI settings.", 403)
         if body.get("remove"):
             self.store.x("DELETE FROM ai_settings WHERE user_id=?", (a.uid,))
+            self.store.audit(a.uid, a.label, "delete_ai_key", "safety", {"provider": "all"})
             return self.ai_settings(a)
         prov = body.get("provider") or "custom"
-        pre = llm.PRESETS.get(prov)
-        if not pre:
+        if prov not in llm.PRESETS:
             raise ActionError("Unknown provider.")
-        base = (body.get("base_url") or pre["base_url"]).strip().rstrip("/")
-        key = (body.get("api_key") or "").strip()
-        if not base.startswith("https://") or not key:
+        if not (body.get("api_key") or "").strip() or (prov == "custom" and not (body.get("base_url") or "").startswith("https://")):
             raise ActionError("Add an API key (and an https:// base URL for a custom endpoint).")
-        host = urlparse(base).hostname or ""
-        if not drafter._public(host):
-            raise ActionError("That endpoint isn't a public address.")
-        eng = {"source": "your key", "provider": prov, "base_url": base, "api_key": key,
-               "model": (body.get("model") or pre["model"]).strip(), "style": pre["style"]}
         try:
-            llm.check_engine(eng)  # a named provider only talks to its own host; https and public (checked again per call)
-        except llm.LLMError as e:
-            raise ActionError(str(e))
-        try:
-            llm.test_key(eng, http=self.http)
-        except llm.LLMError as e:
-            raise ActionError(f"The key didn't work: {e}")
-        self.store.x("INSERT INTO ai_settings(user_id,data,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data,"
-                     " updated=excluded.updated", (a.uid, self.store.seal({k: eng[k] for k in ("provider", "base_url", "api_key", "model")}), _now()))
-        self.store.audit(a.uid, a.label, "save_ai_key", "safety", {"provider": prov, "model": eng["model"]})
+            byo_keys.save(self.store, a.uid, prov, body.get("api_key") or "", body.get("model") or "", body.get("base_url") or "",
+                          http=self.http)
+        except byo_keys.KeyError_ as e:
+            raise ActionError(str(e), e.status)
+        self.store.audit(a.uid, a.label, "save_ai_key", "safety", {"provider": prov, "model": body.get("model") or llm.PRESETS[prov]["model"]})
         return self.ai_settings(a)
 
     def _ai_reserve(self, a: Actor, eng: dict | None) -> dict | None:

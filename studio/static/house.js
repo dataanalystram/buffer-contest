@@ -461,27 +461,10 @@ $("#ruleForm").addEventListener("submit", async (ev) => {
     if (r.added.length) $("#ruleIn").value = ""; drawLedger(r.ledger); } catch (e) { toast(e.message, 5000); }
 });
 // ---------------------------------------------------------------- AI engine
+// Settings > AI engine (engine cards, Your keys, Logs) is drawn by aiengine.js; this keeps H.ai for the agent screen.
 async function loadAI() {
-  const v = await api("/api/ai"); H.ai = v;
-  if (window.HQ_AI_ENGINE) window.HQ_AI_ENGINE.refresh();  // "Right now" names the engine that will actually run
-  else $("#aiNow").innerHTML = v.own ? `Your agent writes with <b>your ${esc(v.presets[v.own.provider]?.label || v.own.provider)} key</b> (${esc(v.own.model)}, ${esc(v.own.key_hint)}).`
-    : v.free_starter ? `Your agent writes with the <b>free starter model</b> (${v.free_daily} AI calls a day). Add your own key for more, or use HuhQueue from Claude or ChatGPT.`
-    : `Your agent writes with the <b>built-in writer</b> (no AI). Add a key or connect Claude/ChatGPT for richer captions.`;
-  const sel = $("#aiProv");
-  sel.innerHTML = Object.entries(v.presets).map(([k, p]) => `<option value="${k}">${esc(p.label)}</option>`).join("");
-  sel.value = v.own?.provider || "openai";
-  const sync = () => { const p = v.presets[sel.value]; $("#aiModel").value = v.own?.provider === sel.value ? v.own.model : p.model; $("#aiBaseF").hidden = sel.value !== "custom"; $("#aiBase").value = p.base_url || ""; };
-  sel.onchange = sync; sync();
-  $("#aiRemove").hidden = !v.own;
+  try { H.ai = await api("/api/ai"); } catch (_) { H.ai = null; }
 }
-$("#aiForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const b = $("[data-testid=ai-save]"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Testing…`;
-  try { await api("/api/ai", { method: "POST", body: { provider: $("#aiProv").value, model: $("#aiModel").value, base_url: $("#aiBase").value, api_key: $("#aiKey").value } });
-    $("#aiKey").value = ""; toast("Key works and is saved"); loadAI(); }
-  catch (e) { toast(e.message, 6000); } finally { b.disabled = false; b.textContent = "Test and save"; }
-});
-$("#aiRemove").onclick = async () => { await api("/api/ai", { method: "POST", body: { remove: true } }); toast("Key removed"); loadAI(); };
 
 // "split this into 5 shorts <link>": a long video becomes Opus-style clips (a One take run). Someone else's video needs
 // the person's word that they may repost it: asked inline under the composer, once, then the same request goes again.

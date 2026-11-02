@@ -155,33 +155,33 @@ def test_e2e_theme_modal_keyboard(live, chromium, close_contexts):
 def test_e2e_ai_engine_switch(live, chromium, close_contexts, monkeypatch, w):
     base, fake, app = live
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    for k in ("OCI_USER", "OCI_TENANCY", "OCI_FINGERPRINT"):
-        monkeypatch.setenv(k, "ocid1.test")
-    monkeypatch.setenv("OCI_PRIVATE_KEY", "not-a-real-key")  # only "is it set" matters to the picker
+    monkeypatch.delenv("HQ_ORACLE_GEMINI", raising=False)  # Gemini on Oracle Cloud is off: no Oracle cards
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test-not-real")  # only "is it set" matters to the picker
     from studio import ai_engines
     ai_engines.clear_down()
-    ai_engines.oracle_set(True)
     ctx, page = _page(live, chromium, w, 900 if w > 400 else 844, "light")
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base + "/?tab=settings")
     page.get_by_test_id("ai-engine-claude").wait_for()
     assert "Claude: $0.00 of your $1 used" in page.get_by_test_id("ai-engine-credit-claude").inner_text()
-    assert "Gemini (Oracle): free during the contest, $0.00 of your $3 used" in page.get_by_test_id("ai-engine-credit-gemini-flash").inner_text()
+    for eid in ("gemini-flash", "gemini-pro"):  # Oracle Gemini is gone from the picker
+        assert page.get_by_test_id(f"ai-engine-{eid}").count() == 0
+    assert "Oracle" not in page.get_by_test_id("ai-engine-picker").inner_text()
     assert "App-wide" in page.get_by_test_id("ai-engine-pools").inner_text()
     assert "NVIDIA (free developer credits): 0 of your 150 calls today" in page.get_by_test_id("ai-engine-credit-nvidia").inner_text()
     link = page.get_by_test_id("ai-engine-key-link-gemini-studio")  # no AI Studio key on this server: how to add one
     assert link.inner_text() == "Add a free Google AI Studio key" and link.get_attribute("href") == "https://aistudio.google.com/apikey"
     assert page.get_by_test_id("ai-engine-own").is_disabled()  # no key saved yet
-    page.get_by_test_id("ai-engine-gemini-flash").click()
-    pw.expect(page.get_by_test_id("ai-engine-gemini-flash")).to_have_attribute("aria-checked", "true")
+    page.get_by_test_id("ai-engine-nvidia").click()
+    pw.expect(page.get_by_test_id("ai-engine-nvidia")).to_have_attribute("aria-checked", "true")
     assert _no_sideways(page)
     page.get_by_test_id("ai-engine-picker").scroll_into_view_if_needed()
     _shot(page, f"ai-engine-{w}")
     page.goto(base + "/?tab=agent")
     sel = page.get_by_test_id("agent-engine-switch")
-    pw.expect(sel).to_have_value("gemini-flash")
+    pw.expect(sel).to_have_value("nvidia")
+    assert "Oracle" not in sel.inner_text()
     sel.select_option("claude")
     pw.expect(page.get_by_test_id("ai-engine-claude")).to_have_attribute("aria-checked", "true")
     pw.expect(sel).to_have_value("claude")

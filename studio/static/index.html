@@ -521,28 +521,42 @@
         <h2 class="sec" id="aiH">AI engine</h2>
         <section class="panel ai-eng" aria-labelledby="aiEngH" data-testid="ai-engine-picker">
           <div class="ai-eng-head"><h2 class="card-title" id="aiEngH">Which model runs your agent</h2>
-            <p class="muted sm" id="aiEngSub">If your choice runs out of credit or doesn't answer, the agent switches to the next one automatically and tells you in the run.</p></div>
+            <p class="ai-eng-auto muted sm" data-testid="ai-engine-auto-line"><span id="aiEngSub">Automatic picks the first free engine that's ready.</span>
+              <button type="button" class="info-i" id="aiAutoInfo" data-testid="ai-engine-auto-info" aria-label="How Automatic works" aria-expanded="false" aria-controls="aiAutoTip">i</button></p>
+            <div class="hq-tip" id="aiAutoTip" role="tooltip" data-testid="ai-engine-auto-tip" hidden></div></div>
           <p class="ai-eng-note" id="aiEngNote" data-testid="ai-engine-note" role="status" hidden></p>
           <div class="ai-eng-list" id="aiEngines" role="radiogroup" aria-labelledby="aiEngH"><span class="muted sm">Loading models…</span></div>
-          <p class="muted sm ai-eng-pools" id="aiEngPools" data-testid="ai-engine-pools"></p>
+          <p class="muted xs ai-eng-pools" id="aiEngPools" data-testid="ai-engine-pools"></p>
+          <div id="aiMeter" class="bsw-slot" data-testid="ai-meter" aria-live="polite" hidden></div>
+          <p class="muted xs ai-eng-apps">Prefer your Claude or ChatGPT subscription? Connect it in <button class="link" type="button" data-go="apps" data-testid="ai-engine-go-apps">AI apps</button>; it does the thinking, HuhQueue supplies the tools.</p>
         </section>
-        <div class="set-grid">
-          <div class="panel"><h2 class="card-title">Right now</h2><p id="aiNow" data-testid="ai-now"></p>
-            <div id="aiMeter" class="bsw-slot" data-testid="ai-meter" aria-live="polite" hidden></div>
-            <p class="muted sm">Prefer your Claude or ChatGPT subscription? Connect it in <button class="link" type="button" data-go="apps" data-testid="ai-engine-go-apps">AI apps</button>; it does the thinking and HuhQueue supplies the tools.</p></div>
-          <form class="panel" id="aiForm"><h2 class="card-title">Bring your own API key</h2>
-            <p class="muted sm">Encrypted on the server, used only for your runs, never shown again.</p>
-            <div class="two"><div class="field"><label class="label" for="aiProv">Provider</label><select id="aiProv" data-testid="ai-provider"></select></div>
-              <div class="field"><label class="label" for="aiModel">Model</label><input id="aiModel" data-testid="ai-model"></div></div>
-            <div class="field" id="aiBaseF" hidden><label class="label" for="aiBase">Base URL</label><input id="aiBase" data-testid="ai-base" placeholder="https://…/v1"></div>
-            <div class="field"><label class="label" for="aiKey">API key</label><input id="aiKey" data-testid="ai-key" type="password" autocomplete="off"></div>
-            <div class="row tight"><button class="btn" data-testid="ai-save" type="submit">Test and save</button><button class="btn2" type="button" id="aiRemove" data-testid="ai-remove" hidden>Remove my key</button></div></form>
-        </div>
+        <section class="panel ai-keys" aria-labelledby="aiKeysH" data-testid="ai-keys">
+          <div class="ai-sub-head"><h2 class="card-title" id="aiKeysH">Your keys</h2>
+            <span class="muted sm">Your key runs first for its engine. Encrypted, tested on save, never shown again.</span></div>
+          <ul class="ai-keys-list" id="aiKeys" data-testid="ai-keys-list"><li class="muted sm">Loading…</li></ul>
+        </section>
+        <section class="panel ai-logs" aria-labelledby="aiLogsH" data-testid="ai-logs">
+          <div class="ai-sub-head"><h2 class="card-title" id="aiLogsH">Logs</h2><span class="muted sm" id="aiLogSum" data-testid="ai-logs-summary"></span></div>
+          <form class="ai-logs-f" id="aiLogF" data-testid="ai-logs-filters">
+            <label class="sr" for="aiLogEng">Engine</label><select id="aiLogEng" data-testid="ai-logs-engine"><option value="">All engines</option></select>
+            <label class="sr" for="aiLogSt">Status</label><select id="aiLogSt" data-testid="ai-logs-status"><option value="">Any status</option><option value="ok">OK</option><option value="error">Errors</option></select>
+            <label class="sr" for="aiLogTask">Task</label><select id="aiLogTask" data-testid="ai-logs-task"><option value="">All tasks</option></select>
+            <label class="sr" for="aiLogQ">Search</label><input id="aiLogQ" type="search" placeholder="Search model, error…" maxlength="100" data-testid="ai-logs-q">
+            <button class="btn2 sm" type="submit" data-testid="ai-logs-apply">Filter</button></form>
+          <div class="ai-logs-wrap" id="aiLogs" data-testid="ai-logs-table" aria-live="polite"></div>
+          <div class="row tight ai-logs-pager"><button class="btn2 sm" type="button" id="aiLogPrev" data-testid="ai-logs-prev" disabled>Newer</button>
+            <span class="muted sm" id="aiLogPage" data-testid="ai-logs-page"></span>
+            <button class="btn2 sm" type="button" id="aiLogNext" data-testid="ai-logs-next" disabled>Older</button></div>
+        </section>
         <h2 class="sec" id="integrations" data-testid="integrations-head">Integrations</h2>
-        <p class="muted sm integ-intro">HuhQueue brings its own keys for research, so there's nothing you have to add. Your own key is an optional override: encrypted on the server, used only for your account and never shown again. Your AI model key lives in <button class="link" type="button" id="integAiLink" data-testid="integrations-ai-link">AI engine</button> above.</p>
+        <p class="muted sm integ-intro">Everything HuhQueue works with. Tap <span class="info-i static" aria-hidden="true">i</span> for details.</p>
+        <div class="integ-tiles" id="integTiles" data-testid="integrations" aria-live="polite"></div>
         <section class="panel bsw-card" id="useInClaude" data-testid="use-in-claude" aria-labelledby="useInClaudeH"></section>
-        <div class="integ-grid" id="integCards" data-testid="integrations" aria-live="polite"></div>
-        <section class="panel integ-redirects" id="integRedirects" data-testid="integ-redirects"></section>
+        <details class="panel integ-redirects" id="integRedirects" data-testid="integ-redirects"></details>
+        <dialog class="integ-dlg" id="integDlg" data-testid="integ-dialog" aria-labelledby="integDlgT">
+          <div class="lb-head"><b id="integDlgT">Integration</b><button type="button" class="btn2 sm" id="integDlgX" data-testid="integ-dialog-close">Close</button></div>
+          <div id="integCards"></div>
+        </dialog>
         <h2 class="sec">Account</h2>
         <div class="panel set-acct">
           <p class="muted sm" id="setWho" data-testid="settings-who"></p>
@@ -572,6 +586,8 @@
 <div id="toast" data-testid="toast" role="status" aria-live="polite" hidden></div>
 <script src="/static/oauth-open.js"></script>
 <script src="/static/ai-logos.js"></script>
+<script src="/static/brand-logos-data.js"></script>
+<script src="/static/brand-mark.js"></script>
 <script src="/static/ai-mark.js"></script>
 <script src="/static/net-logos-data.js"></script>
 <script src="/static/net-logos.js"></script>

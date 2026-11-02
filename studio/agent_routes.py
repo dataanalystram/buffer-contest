@@ -61,6 +61,44 @@ def set_ai_engine(house, a, engine: str) -> dict:
     return ai_engine(house, a)
 
 
+def ai_logs(house, a, engine: str = "", status: str = "", task: str = "", q: str = "", page: int = 1, limit: int = 25) -> dict:
+    """Recent model calls (Settings > AI engine > Logs, GET /api/ai/logs, MCP get_ai_logs)."""
+    from . import ai_logs as _logs
+    return _logs.logs(house.store, a.uid, engine=engine, status=status, task=task, q=q, page=page, limit=limit)
+
+
+def ai_keys(house, a) -> dict:
+    """The person's own AI keys per provider, masked (Settings > AI engine > Your keys, GET /api/ai/keys, MCP list_ai_keys)."""
+    from . import byo_keys
+    return byo_keys.view(house.store, a.uid)
+
+
+def save_ai_key(house, a, provider: str, body: dict) -> dict:
+    """Test then save one provider key. People only: an agent token can never add or swap a key."""
+    from . import byo_keys
+    if a.kind != "human":
+        raise ActionError("Only a person can add an AI key: open Settings > AI engine > Your keys.", 403)
+    try:
+        out = byo_keys.save(house.store, a.uid, provider, str(body.get("api_key") or ""), str(body.get("model") or ""),
+                            str(body.get("base_url") or ""), http=house.http)
+    except byo_keys.KeyError_ as e:
+        raise ActionError(str(e), e.status)
+    house.store.audit(a.uid, a.label, "save_ai_key", "safety", {"provider": byo_keys.norm(provider), "model": str(body.get("model") or "")[:80]})
+    return {**out, "engine": ai_engine(house, a)}
+
+
+def delete_ai_key(house, a, provider: str) -> dict:
+    from . import byo_keys
+    if a.kind != "human":
+        raise ActionError("Only a person can delete an AI key: open Settings > AI engine > Your keys.", 403)
+    try:
+        out = byo_keys.delete(house.store, a.uid, provider)
+    except byo_keys.KeyError_ as e:
+        raise ActionError(str(e), e.status)
+    house.store.audit(a.uid, a.label, "delete_ai_key", "safety", {"provider": byo_keys.norm(provider)})
+    return {**out, "engine": ai_engine(house, a)}
+
+
 def add_routes(app: FastAPI, house, actor) -> None:
     ob = attach(house)
 
@@ -125,6 +163,25 @@ def add_routes(app: FastAPI, house, actor) -> None:
         """Pick the agent's engine: {"engine": "gemini-studio" | "nvidia" | "hf" | "claude" | "gemini-flash" | "gemini-pro" | "own" | "free" | "auto"}."""
         return set_ai_engine(house, actor(request, write=True), str((body or {}).get("engine") or ""))
 
+    @app.get("/api/ai/logs")
+    def ai_logs_get(request: Request, engine: str = "", status: str = "", task: str = "", q: str = "", page: int = 1, limit: int = 25):
+        """Recent AI calls: time, engine, model, task, latency, tokens, cost, fallback reason, ok/error. Filter + page."""
+        return ai_logs(house, actor(request), engine, status, task, q, page, limit)
+
+    @app.get("/api/ai/keys")
+    def ai_keys_get(request: Request):
+        """Your own AI keys per provider (masked, never returned)."""
+        return ai_keys(house, actor(request))
+
+    @app.post("/api/ai/keys/{provider}")
+    def ai_keys_post(provider: str, request: Request, body: dict = Body(...)):
+        """Test and save your key for one provider: {"api_key": "...", "model": "optional", "base_url": "custom only"}."""
+        return save_ai_key(house, actor(request, write=True), provider, body or {})
+
+    @app.delete("/api/ai/keys/{provider}")
+    def ai_keys_delete(provider: str, request: Request):
+        return delete_ai_key(house, actor(request, write=True), provider)
+
     @app.get("/api/onboarding")
     def onboarding_get(request: Request):
         return call(ob.get, actor(request))
@@ -175,14 +232,24 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "set_cover", "description": "Pick another of the 3 branded cover variants (index 0-2, in the run's package covers) for one channel: its Reel's opening frame becomes that cover (Instagram/TikTok use it as the cover via the thumbnail offset); the 1280x720 variant is the YouTube thumbnail.",
      "inputSchema": {"type": "object", "required": ["run_id", "channel", "index"], "properties": {"run_id": {"type": "integer"}, "channel": {"type": "string", "description": "channel id or network name"},
                                                                                                 "index": {"type": "integer", "minimum": 0, "maximum": 2}}}},
-    {"name": "get_ai_engine", "description": "The AI engine HuhQueue's in-app agent uses first (gemini-studio, nvidia, hf, claude, gemini-flash, gemini-pro, own, free or auto), which one will actually run, and each engine's credit in plain words (e.g. 'NVIDIA (free developer credits): 3 of your 150 calls today', 'Claude: $0.34 of your $1 used') plus the app-wide pools. If the chosen engine is out of credit or erroring, the agent falls back to the next one automatically.",
+    {"name": "get_ai_engine", "description": "The AI engine HuhQueue's in-app agent uses first (gemini-studio, nvidia, hf, claude, own, free or auto), which one will actually run, and each engine's credit in plain words (e.g. 'NVIDIA (free developer credits): 3 of your 150 calls today', 'Claude: $0.34 of your $1 used') plus the app-wide pools. If the chosen engine is out of credit or erroring, the agent falls back to the next one automatically.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "set_ai_engine", "description": "Choose the in-app agent's AI engine: gemini-studio (Gemini on Google AI Studio's free tier), nvidia (NVIDIA NIM, free developer credits), hf (Hugging Face, free monthly credits), claude (Anthropic, included allowance), gemini-flash or gemini-pro (Gemini via Oracle Cloud), own (the person's saved API key), free (the free starter model) or auto (free engines first, then Claude, then the free starter model). Returns the same status as get_ai_engine.",
-     "inputSchema": {"type": "object", "required": ["engine"], "properties": {"engine": {"type": "string", "enum": ["auto", "gemini-studio", "nvidia", "hf", "claude", "gemini-flash", "gemini-pro", "own", "free"]}}}},
+    {"name": "set_ai_engine", "description": "Choose the in-app agent's AI engine: gemini-studio (Gemini on Google AI Studio's free tier), nvidia (NVIDIA NIM, free developer credits), hf (Hugging Face, free monthly credits), claude (Anthropic, included allowance), own (the person's saved API key), free (the free starter model) or auto (free engines first, then Claude, your key, then the free starter model). A key the person saved for an engine runs that engine. Returns the same status as get_ai_engine.",
+     "inputSchema": {"type": "object", "required": ["engine"], "properties": {"engine": {"type": "string", "enum": ["auto", "gemini-studio", "nvidia", "hf", "claude", "own", "free"]}}}},
+    {"name": "get_ai_logs", "description": "Recent AI model calls for this account, newest first: time (unix), engine, model, task, latency_ms, tokens in/out, cost_usd, fallback (why the agent moved to this engine), ok and error. Filters: engine (gemini-studio, nvidia, hf, claude, own, free, client), status (ok | error), task, q (free text). Paged: page (1-based), limit 10, 25, 50 or 100. Never includes prompts, replies or keys.",
+     "inputSchema": {"type": "object", "properties": {"engine": {"type": "string"}, "status": {"type": "string", "enum": ["ok", "error"]}, "task": {"type": "string"},
+                                                      "q": {"type": "string"}, "page": {"type": "integer"}, "limit": {"type": "integer", "enum": [10, 25, 50, 100]}}}},
+    {"name": "list_ai_keys", "description": "The person's own AI keys per provider (anthropic, openai, gemini = Google AI Studio, nvidia, hf, groq, openrouter, custom): saved or not, masked hint (…abcd), model, and which engine each one powers. Key values are never returned.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "save_ai_key", "description": "Test and save the person's own key for one provider (it then runs that provider's engine ahead of HuhQueue's key). People only: an agent token is refused with a pointer to Settings > AI engine, so an agent can never add or swap a key.",
+     "inputSchema": {"type": "object", "required": ["provider", "api_key"], "properties": {"provider": {"type": "string", "enum": ["anthropic", "openai", "gemini", "nvidia", "hf", "groq", "openrouter", "custom"]},
+                                                                                       "api_key": {"type": "string"}, "model": {"type": "string"}, "base_url": {"type": "string"}}}},
+    {"name": "delete_ai_key", "description": "Delete the person's own key for one provider. People only (agent tokens are refused).",
+     "inputSchema": {"type": "object", "required": ["provider"], "properties": {"provider": {"type": "string"}}}},
     {"name": "get_brain", "description": "Which AI runs the in-app agent for this account (Claude, their own key, the free model or the rule writer) and the included budget left.",
      "inputSchema": {"type": "object", "properties": {}}},
 ] + agent_brain.tool_specs_for_mcp()
-READ_ONLY = {"get_onboarding", "get_brain", "list_themes", "get_ai_engine"}
+READ_ONLY = {"get_onboarding", "get_brain", "list_themes", "get_ai_engine", "get_ai_logs", "list_ai_keys"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
@@ -220,6 +287,15 @@ def call_tool(studio, actor, name: str, args: dict):
             return ai_engine(h, actor)
         if name == "set_ai_engine":
             return set_ai_engine(h, actor, str(args.get("engine") or ""))
+        if name == "get_ai_logs":
+            return ai_logs(h, actor, str(args.get("engine") or ""), str(args.get("status") or ""), str(args.get("task") or ""),
+                           str(args.get("q") or ""), int(args.get("page") or 1), int(args.get("limit") or 25))
+        if name == "list_ai_keys":
+            return ai_keys(h, actor)
+        if name == "save_ai_key":
+            return save_ai_key(h, actor, str(args.get("provider") or ""), args)
+        if name == "delete_ai_key":
+            return delete_ai_key(h, actor, str(args.get("provider") or ""))
         if name.startswith("post_"):
             rid = int(args.pop("run_id", 0) or 0)
             return h.brain.tool(actor, rid, name[5:], args)

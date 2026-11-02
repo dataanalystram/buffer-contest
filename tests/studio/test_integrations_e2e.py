@@ -1,6 +1,7 @@
-"""Browser flow (Playwright, the sample workspace at /demo, nothing outside is called): Settings -> Integrations shows one
-card per key integration with its how-to and the Product Hunt Redirect URI, a key is saved and shown masked only, Test
-answers with a clean status, Remove clears it, and News -> Sources links a missing key to its card. Skips when Chromium
+"""Browser flow (Playwright, the sample workspace at /demo, nothing outside is called): Settings -> Integrations shows a
+logo grid with one tile per key integration; a tile's Connect opens the key form in a dialog with its how-to and the
+Product Hunt Redirect URI, a key is saved and shown masked only, Test answers with a clean status, Remove clears it, and
+News -> Sources links to the grid. Skips when Chromium
 can't start. SHOTS=dir saves Settings -> Integrations at 1440 and 390 wide."""
 import os
 
@@ -35,10 +36,14 @@ def test_settings_integrations_cards_save_test_remove(demo_live, chromium):
     base, buffer_calls = demo_live
     ctx, page = _page(chromium, base)
     try:
-        page.goto(base + "/?tab=settings")
-        page.wait_for_selector("[data-testid=integ-card-ph]")
-        assert page.locator("[data-testid^=integ-card-]").count() == 3
-        assert "/integrations/producthunt/callback" in page.text_content("[data-testid=integ-redirect]")  # inside a closed <details>: innerText is "" in current Chromium
+        page.goto(base + "/?tab=settings&sub=integrations")
+        page.wait_for_selector("[data-testid=integ-tile-ph]")
+        assert page.locator("[data-testid=integ-group-research] .integ-tile").count() == 3  # one logo tile per key
+        for t in ("ph", "x-api", "yt-api"):
+            assert page.locator(f"[data-testid=integ-tile-{t}]").count() == 1, t
+        page.click("[data-testid=integ-act-ph]")  # the key form opens in a dialog
+        page.wait_for_selector("[data-testid=integ-dialog] [data-testid=integ-card-ph]")
+        assert "/integrations/producthunt/callback" in page.locator("[data-testid=integ-redirect]").text_content()
         assert page.get_attribute("[data-testid=integ-input-ph]", "type") == "password"
         page.fill("[data-testid=integ-input-ph]", PH)
         page.click("[data-testid=integ-save-ph]")
@@ -50,9 +55,10 @@ def test_settings_integrations_cards_save_test_remove(demo_live, chromium):
         page.on("dialog", lambda d: d.accept())
         page.click("[data-testid=integ-remove-ph]")
         _until(lambda: "by HuhQueue" in page.inner_text("[data-testid=integ-card-ph] [data-testid=integ-status]"))  # the shared app-level read
+        page.click("[data-testid=integ-dialog-close]")
+        page.wait_for_selector("[data-testid=integ-dialog]", state="hidden")
         if SHOTS:
             os.makedirs(SHOTS, exist_ok=True)
-            page.locator("#integrations").scroll_into_view_if_needed()
             page.locator("#integrations").evaluate("el => el.scrollIntoView({block: 'start'})")
             page.wait_for_timeout(400)
             page.screenshot(path=os.path.join(SHOTS, "integrations-1440.png"))
@@ -61,7 +67,7 @@ def test_settings_integrations_cards_save_test_remove(demo_live, chromium):
         ctx.close()
 
 
-def test_phone_width_and_sources_link_to_the_card(demo_live, chromium):
+def test_phone_width_and_sources_link_to_the_grid(demo_live, chromium):
     base, _ = demo_live
     ctx, page = _page(chromium, base, width=390, height=844)
     try:
@@ -70,16 +76,17 @@ def test_phone_width_and_sources_link_to_the_card(demo_live, chromium):
         page.goto(base + "/?tab=news&sub=sources")
         page.wait_for_selector("[data-testid=sa-keys-link]", state="attached")
         page.locator("[data-testid=sa-keys-link]").click()
-        page.wait_for_selector("[data-testid=integ-card-ph]")
+        page.wait_for_selector("[data-testid=integ-tile-ph]")
         _until(lambda: not page.locator("#tab-settings").is_hidden())
-        widths = page.evaluate("[...document.querySelectorAll('.integ-card')].map(e => e.getBoundingClientRect().right)")
-        assert widths and max(widths) <= 390  # no card spills past a phone screen
+        widths = page.evaluate("[...document.querySelectorAll('.integ-tile')].map(e => e.getBoundingClientRect().right)")
+        assert widths and max(widths) <= 390  # no tile spills past a phone screen
         assert page.evaluate("document.documentElement.scrollWidth") <= 392
+        page.click("[data-testid=integ-act-ph]")
+        page.wait_for_selector("[data-testid=integ-dialog] [data-testid=integ-card-ph]")
+        box = page.locator("[data-testid=integ-dialog]").bounding_box()
+        assert box and box["x"] >= 0 and box["x"] + box["width"] <= 390  # the key dialog fits a phone
         if SHOTS:
             os.makedirs(SHOTS, exist_ok=True)
-            page.locator("#integrations").evaluate("el => el.scrollIntoView({block: 'start'})")
-            page.wait_for_timeout(400)
-            page.screenshot(path=os.path.join(SHOTS, "integrations-390.png"))
-            page.locator("[data-testid=integ-card-ph]").screenshot(path=os.path.join(SHOTS, "integrations-390-ph-card.png"))
+            page.screenshot(path=os.path.join(SHOTS, "integrations-390-ph-dialog.png"))
     finally:
         ctx.close()
