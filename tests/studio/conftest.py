@@ -133,6 +133,18 @@ class FakeBuffer:
 
 
 @pytest.fixture(autouse=True)
+def _no_free_engine_keys(monkeypatch):
+    """The free AI engines (studio/free_engines.py) read their keys from the environment: tests start with none set, no
+    engine marked down and no Oracle check result, so nothing ever reaches a real model."""
+    from studio import ai_engines
+    for k in ("GOOGLE_AI_STUDIO_KEY", "NVIDIA_API_KEY", "HF_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    ai_engines.clear_down(); ai_engines.oracle_reset()
+    yield
+    ai_engines.clear_down(); ai_engines.oracle_reset()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_app_keys():
     """App-level research keys cache tokens and results globally (studio/appkeys.py): start every test clean."""
     from studio import appkeys, xreader
