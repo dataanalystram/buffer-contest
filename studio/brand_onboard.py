@@ -32,7 +32,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import brand, brand_extract, demo_guard, netguard, templates
+from . import brand, brand_extract, demo_guard, design_system, netguard, templates
 
 SAMPLE_DIR = Path(__file__).parent / "sample_brands"
 STATIC_BRANDS = Path(__file__).parent / "static" / "brands"
@@ -159,6 +159,7 @@ class BrandOnboard:
 
     def _from_sample(self, sid: str, t0: float) -> dict:
         s = sample(sid)
+        s["kit"].setdefault("theme", design_system.theme_for_kit(s["kit"]))
         return {"source": "sample", "sample_id": sid, "draft": s["kit"], "logo": f"sample:{sid}", "logo_url": s["logo_url"],
                 "mark_url": f"/static/brands/{sid}/mark.png" if (STATIC_BRANDS / sid / "mark.png").is_file() else "",
                 "provenance": s["provenance"], "fonts": s["fonts"], "found": s["found"], "label": SAMPLE_LABEL,
@@ -187,6 +188,10 @@ class BrandOnboard:
                         css.append(data.decode("utf-8", "replace"))
         got = brand_extract.extract(final, html, css, fetch=self._fetch)
         got["kit"]["website"] = final
+        try:  # brand kit v2: the site's design system -> tokens, DESIGN.md and a generated theme (studio/design_system.py)
+            design_system.build(final, html, css, got)
+        except Exception as e:  # noqa: BLE001  (a theme is an extra: the kit still has its logo, colours and fonts)
+            print(f"design system skipped: {e.__class__.__name__}: {str(e)[:120]}", flush=True)
         return got
 
     def _store_draft(self, a, got: dict) -> dict:
@@ -231,6 +236,9 @@ class BrandOnboard:
             c = kit.get(card) if isinstance(kit.get(card), dict) else {}
             clean[card] = {"style": c.get("style") if c.get("style") in templates.STYLES else "glow",
                            "cta": str(c.get("cta") or "")[:28], "line": str(c.get("line") or "")[:70]}
+        th = design_system.clean_theme(kit.get("theme"))
+        if th:
+            clean["theme"] = th
         clean = {k: v for k, v in clean.items() if v is not None}
         clean["_logo"] = body.get("logo") or ""
         return clean
@@ -267,7 +275,7 @@ class BrandOnboard:
         kit = self._draft(a, body)
         ref = kit.pop("_logo", "")
         patch: dict[str, Any] = {k: kit[k] for k in ("name", "handle", "voice", "colors", "font", "body_font", "headline_case",
-                                                    "front_card", "end_card", "label") if k in kit}
+                                                    "front_card", "end_card", "label", "theme") if k in kit}
         if isinstance(body.get("kit"), dict) and body["kit"].get("website"):
             patch["website"] = str(body["kit"]["website"])[:300]
         if str(ref).startswith("sample:") and ref[7:] in SAMPLE_IDS:

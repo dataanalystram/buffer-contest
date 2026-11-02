@@ -15,9 +15,11 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
-         "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf"}
+         "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf", "garamond": "EBGaramond-SemiBold.ttf",
+         "sourceserif": "SourceSerif4-SemiBold.ttf", "roboto": "Roboto-Bold.ttf"}
 BODY_FONTS = {"anton": "Inter-SemiBold.ttf", "poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "figtree": "Figtree-Medium.ttf",
-              "serif": "Inter-Regular.ttf", "dot": "Inter-Regular.ttf"}
+              "serif": "Inter-Regular.ttf", "dot": "Inter-Regular.ttf", "garamond": "SourceSerif4-Regular.ttf",
+              "sourceserif": "SourceSerif4-Regular.ttf", "roboto": "Roboto-Regular.ttf"}
 # What a kit looks like before the brand is set: neutral greys and Inter, so nothing of the HuhByte sample (black,
 # lavender #C9ACFA, Anton) leaks into another brand's renders (owner, 2 Nov 2026). Set colours win everywhere.
 NEUTRAL_ACCENT = "#E8E8E8"

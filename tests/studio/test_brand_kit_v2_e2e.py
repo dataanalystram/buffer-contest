@@ -1,0 +1,56 @@
+"""Brand kit v2 in a browser (the sample workspace at /demo, no Buffer, hermetic): Brand > Templates lists every kit as a
+selectable card with the active one marked; HuhByte AI is selectable (it used to say "in use" and could not be picked);
+picking a kit redraws every template preview in it; a sample is added and used in one click; the builder follows and
+shows the Layout picker. No console errors, nothing wider than the screen. Skips without Chromium."""
+import time
+
+import pytest
+
+pytest.importorskip("playwright.sync_api")
+NO_TOUR = "localStorage.setItem('hq_tour_done','1'); localStorage.setItem('hq_onb_seen','1')"
+
+
+def _until(fn, timeout=45.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        if fn():
+            return True
+        time.sleep(0.2)
+    raise AssertionError("condition not met in time")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_templates_tab_lists_every_kit_and_picking_one_redraws_the_templates(demo_live, chromium, width):
+    base, buffer_calls = demo_live
+    ctx = chromium.new_context(viewport={"width": width, "height": 900 if width > 500 else 844}, has_touch=width < 1024)
+    ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+    ctx.add_init_script(NO_TOUR)
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(base + "/demo")
+        page.wait_for_selector("[data-testid=bk-layout]", state="attached", timeout=60000)
+        page.click("[data-testid=brand-tab-templates]")
+        page.wait_for_selector("[data-testid=tpl-kits] [data-testid=tpl-kit-huhbyte-ai]", timeout=60000)
+        assert page.locator("[data-testid=tpl-kit-nothing]").get_attribute("data-active") == "true"
+        assert page.locator("[data-testid=tpl-kit-huhbyte-ai]").get_attribute("data-active") == "false"
+        assert page.locator("[data-testid=tpl-kit-add-linear]").count() == 1 and page.locator("[data-testid=tpl-kit-add-notion]").count() == 1
+        _until(lambda: page.locator("[data-testid=tpl-preview]").count() >= 6)
+        before = page.locator("[data-testid=tpl-preview]").first.get_attribute("src")
+        page.click("[data-testid=tpl-kit-huhbyte-ai]")
+        _until(lambda: page.locator("[data-testid=tpl-kit-huhbyte-ai]").get_attribute("data-active") == "true")
+        assert page.locator("[data-testid=tpl-kit-nothing]").get_attribute("data-active") == "false"
+        assert page.inner_text("[data-testid=tpl-kit-name]") == "HuhByte AI"
+        _until(lambda: page.locator("[data-testid=tpl-preview]").first.get_attribute("src") != before)
+        page.click("[data-testid=tpl-kit-add-notion]")
+        _until(lambda: page.locator("[data-testid=tpl-kit-notion]").count() == 1
+               and page.locator("[data-testid=tpl-kit-notion]").get_attribute("data-active") == "true")
+        assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 1
+        page.click("[data-testid=brand-tab-kit]")  # the builder followed the switch
+        _until(lambda: page.input_value("[data-testid=bk-name]") == "Notion")
+        assert page.input_value("[data-testid=bk-layout]") == "minimal"
+        assert not errors, errors
+        assert not buffer_calls
+    finally:
+        ctx.close()

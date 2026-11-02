@@ -77,3 +77,11 @@
 .video-ask .row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px}
 .video-ask .va-up{cursor:pointer;min-height:40px;display:inline-flex;align-items:center}
 .video-ask .va-up.busy{opacity:.7;pointer-events:none}
+/* Library: three ways in (Upload, From a link, Send from a device), and the From a link dialog */
+.lib-ins{display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center}
+.lib-ins a.btn2{text-decoration:none}
+.lib-link{border:1px solid var(--line);border-radius:14px;padding:20px;width:min(520px,calc(100vw - 32px));background:var(--raised,var(--paper));color:var(--ink)}
+.lib-link::backdrop{background:var(--scrim,rgba(0,0,0,.4))}
+.lib-link form{display:flex;flex-direction:column;gap:10px}
+.lib-link input{height:44px;padding:0 12px;border:1px solid var(--line-strong,var(--line));border-radius:8px;background:var(--paper);color:var(--ink);font:inherit;min-width:0}
+.lib-link-acts{display:flex;gap:8px;justify-content:flex-end}

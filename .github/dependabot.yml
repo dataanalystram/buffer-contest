@@ -1,0 +1,19 @@
+# Dependabot: weekly version updates (security updates are on in the repo settings and come as soon as an advisory lands).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      python-minor: {update-types: [minor, patch]}
+  - package-ecosystem: npm
+    directory: /web
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 3
+    groups:
+      web-minor: {update-types: [minor, patch]}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 3

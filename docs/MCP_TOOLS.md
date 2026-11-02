@@ -51,10 +51,13 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `render_status` | client brain | Status of a video job: job_id (edit_video / render_reel / render_template video) or take_id (split_video). |
 | `create_package` | client brain | Stage a post YOU wrote: captions per channel (channel id or service name -> text) and the media URLs (render_carousel / render_status). |
 | `update_brand_kit` | client brain | Change the brand kit directly (no HuhQueue AI): name, handle, website, font, voice, colors {primary, accent, text} as hex, end_card {on, line, cta}. |
-| `create_upload` | client brain | **Use first for a local file** (on the user's computer or in the AI app's sandbox): a one-time upload URL on HuhQueue's own domain (`PUT /u/<token>`, 15 minutes, one use, up to 100 MB) plus the exact curl command. The answer is the Library item with its `media_token`. |
-| `upload_media_chunk` | client brain | Fallback when the sandbox can't reach the upload URL: the file as base64 chunks of at most 2 MB (decoded), in order, under one `upload_id`. |
+| `create_upload` | client brain | For a local file when the app can run curl (Claude Code, Codex, Cursor, scripts): a one-time upload URL on HuhQueue's own domain (`PUT /u/<token>`, 15 minutes, one use, up to 100 MB, `max_mb`) plus the exact curl command. The answer carries `if_unreachable`: what to do when the sandbox is network-blocked. |
+| `upload_media_chunk` | client brain | Last resort for **small** files (a few MB): base64 chunks of at most 2 MB (decoded), in order, under one `upload_id`. Pass `total_size` on the first chunk: over 4 MB the answer carries `advice` (use the Send a file page or a share link); every error carries the same guidance. |
+| `create_send_code` | client brain | **Best way in from a chat app** (Claude.ai, ChatGPT): a short code (`K7PD-3QXA`), a link `/send/<code>` and a QR code. The user opens it on any device and drags the file in (10 files, 30 minutes, Library caps). |
+| `list_recent_uploads` | client brain | The newest files the user uploaded, sent from a device or imported from a link (`minutes`, `limit`): `library_id`, `media_token`, `name`, `kind`, `bytes`, `from`, `when`. |
+| `import_from_link` | client brain | A Google Drive, Dropbox, OneDrive / SharePoint or iCloud Drive share link ("anyone with the link"), or any direct https link, streamed into the Library up to the per-file limit. Drive's large-file "Download anyway" page is followed; a sign-in page says how to share the file publicly; folders are refused. |
 | `finish_upload` | client brain | Join the chunks into one Library item: `library_id`, `media_token`, `url`, `kind`, `bytes`. |
-| `library_upload_url` | client brain | Only for a file that is already at a public https URL (up to 40 MB). A link that answers with a web page (a sign-in or preview page) is refused with "That link returned a web page … Use create_upload instead." |
+| `library_upload_url` | client brain | Only for a file that is already at a public https URL (up to 40 MB). A cloud-drive share link goes through `import_from_link` (up to the per-file limit). A link that answers with a web page (a sign-in or preview page) is refused with "That link returned a web page … Use create_upload instead …". |
 | `integrations_status` | client brain | Which integrations are connected for this user (Product Hunt, X reader key, image models...) and whether each key last tested OK. |
 
 ### Server AI: HuhQueue's own agent (needs server_ai: true, spends the user's allowance)
@@ -224,11 +227,18 @@ HuhQueue instead:
 1. `create_upload {"name": "launch.mp4", "size": 26843545}` -> `upload_url` (one use, 15 minutes) and a ready `curl`.
 2. Run it from the sandbox: `curl -sS --fail-with-body -X PUT --data-binary @launch.mp4 '<upload_url>'` -> the Library item
    (`library_id`, `media_token`, `url`, `kind`, `bytes`). The body is the raw file: not base64, not a form.
-3. If the sandbox can't reach the URL: split the file into pieces of at most 2 MB, base64 each, and send them in order:
-   `upload_media_chunk {"index": 0, "data": "<base64>", "name": "launch.mp4"}` -> `upload_id`, then
+3. If the sandbox can't reach the URL (Claude.ai and ChatGPT block outside hosts, 2 Nov 2026), don't push a video
+   through the chat as base64. Either:
+   - `create_send_code {}` -> `code`, `url`, `qr`, `say`. Tell the user to open the link on any device (or type the code
+     at `/send`) and drag the file in; then `list_recent_uploads {"minutes": 15}` -> the item's `media_token`; or
+   - ask for a Google Drive / Dropbox / OneDrive / iCloud share link ("anyone with the link") and call
+     `import_from_link {"url": "https://drive.google.com/file/d/…/view"}` -> the Library item.
+4. Only for a small file (a few MB): split it into pieces of at most 2 MB, base64 each, and send them in order:
+   `upload_media_chunk {"index": 0, "data": "<base64>", "name": "logo.png", "total_size": 812345}` -> `upload_id`, then
    `upload_media_chunk {"upload_id": "up_…", "index": 1, "data": "…"}` and so on, then `finish_upload {"upload_id": "up_…"}`.
 
-Uploads count against the Library's caps (100 MB a file, 200 MB a person). The type is read from the bytes, so a web page
+Uploads, sent files and link imports count against the Library's caps (100 MB a file, 200 MB a person; `GET
+/api/uploads/limits` has the live numbers). The type is read from the bytes, so a web page
 saved as `.mp4` is refused with a message that says it is a web page.
 
 ### Rights: one parameter

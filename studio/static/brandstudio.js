@@ -5,7 +5,10 @@
 (function () {
   const B = { kit: null, tpls: [], styles: {}, examples: [], slots: [], tpl: "weekly_recap", svc: "instagram", over: {}, t: null,
               run: null, picks: new Set(), pkgs: [] };
-  const FONTS = [["anton", "Anton"], ["poppins", "Poppins"], ["inter", "Inter"], ["figtree", "Figtree"]];
+  const FONTS = [["anton", "Anton"], ["poppins", "Poppins"], ["inter", "Inter"], ["figtree", "Figtree"], ["roboto", "Roboto"],
+                 ["sourceserif", "Source Serif 4"], ["garamond", "EB Garamond"], ["serif", "DM Serif Display"], ["dot", "Doto (dot matrix)"]];
+  const BODY_ONLY = new Set(["anton", "garamond", "serif", "dot"]);  // display faces never set body copy
+  const LAYOUT_LABEL = { bold_news: "Bold news", editorial: "Editorial", minimal: "Minimal", playful: "Playful" };
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const ICON = {
     brandstudio: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 13h8M8 16h5"/>',
@@ -18,7 +21,7 @@
     k.innerHTML = KIT_HTML; document.getElementById("bsTplMount").innerHTML = TPL_HTML;
     document.getElementById("saScanMount").innerHTML = SCAN_HTML; document.getElementById("saSetMount").innerHTML = SRC_HTML;
     window.HS_TABS = Object.assign(window.HS_TABS || {}, { brand: () => { loadBrand(); if ((document.getElementById("tab-brand").dataset.sub || "kit") === "ledger") window.loadLedger?.(); } });
-    window.HS_SUBS = Object.assign(window.HS_SUBS || {}, { "brand:ledger": () => window.loadLedger?.(), "brand:kit": () => B.kit || loadBrand(), "brand:templates": () => B.kit || loadBrand(), "news:scan": loadSources });
+    window.HS_SUBS = Object.assign(window.HS_SUBS || {}, { "brand:ledger": () => window.loadLedger?.(), "brand:kit": () => B.kit || loadBrand(), "brand:templates": async () => { if (!B.kit) await loadBrand(); loadKits(); }, "news:scan": loadSources });
     window.loadSources = loadSources;
     wireBrand(); wireSources();
   }
@@ -36,7 +39,7 @@
           <div class="field"><label class="label" for="bsHandle">Handle</label><input id="bsHandle" data-testid="bs-handle" maxlength="40"></div></div>
         <div class="field"><span class="label">Colours</span><div class="bs-colors">${["primary:Ground", "accent:Accent", "text:Text", "secondary:Second"].map((x) => { const [k, l] = x.split(":"); return `<label class="bs-col"><input type="color" data-col="${k}" data-testid="bs-color-${k}"><span>${l}</span></label>`; }).join("")}</div></div>
         <div class="row3"><div class="field"><label class="label" for="bsFont">Headlines</label><select id="bsFont" data-testid="bs-font">${FONTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
-          <div class="field"><label class="label" for="bsBody">Body</label><select id="bsBody" data-testid="bs-body">${FONTS.filter((f) => f[0] !== "anton").map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
+          <div class="field"><label class="label" for="bsBody">Body</label><select id="bsBody" data-testid="bs-body">${FONTS.filter((f) => !BODY_ONLY.has(f[0])).map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
           <div class="field"><label class="label" for="bsCase">Case</label><select id="bsCase"><option value="upper">CAPS</option><option value="title">Sentence</option></select></div></div>
         <div class="field"><label class="label" for="kitVoice">Voice (how you write)</label><textarea id="kitVoice" data-testid="kit-voice" rows="2" maxlength="300" placeholder="Plain, specific, a little dry. No hype."></textarea></div>
         <div class="field"><span class="label">Front card</span><div class="seg bs-styles" id="bsFront" data-testid="bs-front-styles" role="group" aria-label="Front card style"></div>
@@ -57,6 +60,12 @@
       </section>
     </div>`;
   const TPL_HTML = `
+    <section class="panel bs-kits" aria-labelledby="bsKitsH" data-testid="tpl-kits-panel"><div class="bs-kits-head"><div><h2 id="bsKitsH" class="h2">Brand kits</h2>
+      <p class="muted sm">Every kit you have, plus the samples. Pick one and every template below redraws in it at once.</p></div>
+      <span class="muted xs" id="bsKitsMs" aria-live="polite" data-testid="tpl-kits-ms"></span></div>
+      <div class="bs-kit-grid" id="bsKits" role="radiogroup" aria-label="Brand kit used by every template" data-testid="tpl-kits"></div></section>
+    <section class="panel bs-tplprev" aria-labelledby="bsTplPrevH"><h2 id="bsTplPrevH" class="h2">Every template in <span id="bsTplKitName" data-testid="tpl-kit-name">your kit</span></h2>
+      <div class="bs-tplprev-grid" id="bsTplPrev" data-testid="tpl-previews" aria-live="polite"></div></section>
     <section class="panel bs-ex" aria-labelledby="bsExH"><h2 id="bsExH" class="h2">Example brands</h2>
       <p class="muted sm">Two finished kits with real renders. Use one to start, then make it yours on the Kit tab.</p>
       <div class="bs-ex-row" id="bsExamples" data-testid="bs-examples"></div>
@@ -136,7 +145,7 @@
       <button class="btn2 sm" type="button" data-gal="${e.id}" data-testid="bs-gallery-${e.id}">See examples</button></div></article>`).join("");
     document.querySelectorAll("#bsExamples [data-use]").forEach((b) => (b.onclick = async () => {
       b.disabled = true;
-      try { const r = await api(`/api/brand-studio/examples/${b.dataset.use}`, { method: "POST" }); fillKit(r.kit); examples(b.dataset.use); preview(); toast(`${r.kit.name} is your brand now`); }
+      try { const r = await api(`/api/brand-studio/examples/${b.dataset.use}`, { method: "POST" }); fillKit(r.kit); examples(b.dataset.use); preview(); toast(`${r.kit.name} is your brand now`); loadKits(); }
       catch (e) { toast(e.message); } finally { b.disabled = false; }
     }));
     document.querySelectorAll("#bsExamples [data-gal]").forEach((b) => (b.onclick = () => gallery(b.dataset.gal)));
@@ -156,6 +165,97 @@
       if (!B.kit.first_run.examples_seen) { api("/api/brand-studio", { method: "POST", body: { seen_examples: true } }).then(fillKit).catch(() => {}); }
     } catch (e) { toast("Couldn't open the examples"); }
   }
+  // ------------------------------------------------------------ Templates > Brand kits (brand kit v2, owner 2 Nov 2026)
+  // All kits (the samples Nothing, Linear and Notion, HuhByte AI and every kit you saved) as cards; the active one is
+  // marked. A click activates it (or adds the sample first) and every template preview redraws in it.
+  const kslug = (s) => String(s || "kit").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const thumbs = new Map();  // kit id + updated -> cover URL
+  async function loadKits() {
+    const box = $("#bsKits"); if (!box) return;
+    let r;
+    try { r = await api("/api/brand-kits"); } catch (e) { box.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+    B.kitsMeta = r;
+    const haveSample = new Set(r.kits.map((k) => String(k.kit.logo || "").replace("sample:", "")));
+    const names = new Set(r.kits.map((k) => (k.name || "").toLowerCase()));
+    const own = r.kits.map((k) => {
+      const c = k.kit.builder_colors || {}, th = k.kit.theme || {}, d = k.kit.design;
+      return `<button type="button" role="radio" class="bs-kitcard${k.active ? " on" : ""}" aria-checked="${k.active}" data-kitid="${k.id}"
+          data-testid="tpl-kit-${kslug(k.name)}" data-active="${k.active}" style="--g:${esc(c.background)};--a:${esc(c.primary)};--t:${esc(c.text)}">
+        <span class="bs-kitthumb" data-thumb="${k.id}" data-u="${k.updated}"><i class="bk-sk" aria-hidden="true"></i></span>
+        <span class="bs-kitmeta"><span class="bs-kitname">${k.logo_url ? `<img src="${esc(k.logo_url)}" alt="">` : ""}<b>${esc(k.name)}</b></span>
+          <span class="bs-kitsw">${["background", "primary", "accent", "text"].map((x) => `<i style="background:${esc(c[x])}"></i>`).join("")}</span>
+          <small>${esc(LAYOUT_LABEL[th.layout] || "Classic")} · ${esc((r.fonts || {})[k.kit.font] || k.kit.font)}${d && d.site ? ` · style from ${esc(d.site)}` : ""}</small>
+          ${k.kit.label ? `<small class="muted">${esc(k.kit.label)}</small>` : ""}
+          <span class="bs-kitstate">${k.active ? `<b class="bk-on" data-testid="tpl-kit-active">In use</b>` : "Use this kit"}</span></span></button>`;
+    });
+    const add = (r.samples || []).filter((s) => !haveSample.has(s.id) && !names.has(String(s.name || "").toLowerCase())).map((s) =>
+      `<button type="button" class="bs-kitcard add" data-sample="${s.id}" data-testid="tpl-kit-add-${s.id}"><span class="bs-kitthumb add">+</span>
+        <span class="bs-kitmeta"><b>${esc(s.name)}</b><small>${esc(s.label)}</small><span class="bs-kitstate">Add and use</span></span></button>`);
+    const ex = (r.examples || []).filter((e) => !names.has(String(e.name || "").toLowerCase())).map((e) =>
+      `<button type="button" class="bs-kitcard add" data-example="${e.id}" data-testid="tpl-kit-add-${e.id}"><span class="bs-kitthumb add"><img src="${esc(e.logo_url)}" alt=""></span>
+        <span class="bs-kitmeta"><b>${esc(e.name)}</b><small>Example brand</small><span class="bs-kitstate">Add and use</span></span></button>`);
+    box.innerHTML = own.concat(ex, add).join("");
+    box.querySelectorAll("[data-kitid]").forEach((b) => (b.onclick = () => useKit({ id: +b.dataset.kitid }, b)));
+    box.querySelectorAll("[data-sample]").forEach((b) => (b.onclick = () => useKit({ sample: b.dataset.sample }, b)));
+    box.querySelectorAll("[data-example]").forEach((b) => (b.onclick = () => useKit({ example: b.dataset.example }, b)));
+    const act = r.kits.find((k) => k.active);
+    $("#bsTplKitName").textContent = act ? act.name : "your kit";
+    kitThumbs(r.kits);
+    templatePreviews();
+  }
+  async function kitThumbs(kits) {
+    for (const k of kits) {  // one at a time: each kit's cards are cached on the server after the first draw
+      const el = document.querySelector(`#bsKits [data-thumb="${k.id}"]`); if (!el) continue;
+      const key = k.id + ":" + k.updated + ":" + JSON.stringify(k.kit.theme || {});
+      let url = thumbs.get(key);
+      if (!url) {
+        try {
+          const p = await api("/api/brand-kits/preview", { method: "POST", body: { kit_id: k.id, part: "kit", width: 240 } });
+          const c = p.cards.find((x) => x.id === "carousel_cover"); url = c && c.url; if (url) thumbs.set(key, url);
+        } catch (_) { url = null; }
+      }
+      const cur = document.querySelector(`#bsKits [data-thumb="${k.id}"]`);
+      if (cur && url) cur.innerHTML = `<img src="${esc(url)}" alt="${esc(k.name)} carousel cover" data-testid="tpl-kit-thumb">`;
+    }
+  }
+  async function useKit(what, btn) {
+    if (btn.classList.contains("on")) { templatePreviews(); return; }
+    btn.disabled = true; btn.setAttribute("aria-busy", "true");
+    const t0 = performance.now();
+    try {
+      const r = what.id ? await api(`/api/brand-kits/${what.id}/activate`, { method: "POST", body: {} })
+        : await api("/api/brand-kits", { method: "POST", body: { ...what, activate: true } });
+      toast(`${r.name} is the active kit. Every template now renders in it.`);
+      B.kit = null;
+      await loadBrand();
+      window.HQBrandKit?.reload?.();
+      window.dispatchEvent(new CustomEvent("hq:brand-kit", { detail: { id: r.id, from: "templates" } }));
+      await loadKits();
+      $("#bsKitsMs").textContent = `Switched in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+    } catch (e) { toast(e.message); btn.disabled = false; btn.removeAttribute("aria-busy"); }
+  }
+  async function templatePreviews() {
+    const box = $("#bsTplPrev"); if (!box || !B.tpls || !B.tpls.length) return;
+    const seq = (B.tplSeq = (B.tplSeq || 0) + 1);
+    box.classList.add("stale"); box.setAttribute("aria-busy", "true");
+    if (!box.children.length) box.innerHTML = B.tpls.map((t) => `<figure class="bs-tplcard" data-tpl="${t.id}"><span class="bk-sk"></span><figcaption>${esc(t.name)}</figcaption></figure>`).join("");
+    for (const t of B.tpls) {
+      try {
+        const r = await api("/api/brand-studio/preview", { method: "POST", body: { template: t.id, service: "instagram", width: 240, max: 1 } });
+        if (seq !== B.tplSeq) return;
+        const f = box.querySelector(`[data-tpl="${t.id}"]`);
+        if (f) f.innerHTML = `<img src="${r.slides[0]}" alt="${esc(t.name)} in your kit" data-testid="tpl-preview"><figcaption>${esc(t.name)}</figcaption>`;
+      } catch (e) { if (seq !== B.tplSeq) return; }
+    }
+    box.classList.remove("stale"); box.setAttribute("aria-busy", "false");
+  }
+  window.addEventListener("hq:brand-kit", (e) => {  // the builder saved or switched a kit: the Templates tab follows at once
+    if (e.detail && e.detail.from === "templates") return;
+    const t = document.getElementById("tab-brand");
+    if (t && (t.dataset.sub || "kit") === "templates") loadKits(); else B.kitsMeta = null;
+  });
+  window.HQTemplatesKits = { reload: loadKits };
+
   function preview() {
     clearTimeout(B.t);
     B.t = setTimeout(async () => {

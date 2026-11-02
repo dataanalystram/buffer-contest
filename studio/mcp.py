@@ -141,6 +141,11 @@ from . import reel_audio as _reel_audio  # noqa: E402  search_instagram_audio, s
 
 TOOLS += _reel_audio.TOOLS
 READ_ONLY |= _reel_audio.READ_ONLY
+from . import send as _send  # noqa: E402  create_send_code, list_recent_uploads (the Send a file page)
+from . import share_import as _share  # noqa: E402  import_from_link (Drive, Dropbox, OneDrive, iCloud share links)
+
+TOOLS += _send.TOOLS + _share.TOOLS
+READ_ONLY |= _send.READ_ONLY
 from . import mcp_client_brain as _cb  # noqa: E402  client brain: the hands without HuhQueue's AI (docs/MCP_TOOLS.md)
 
 TOOLS += _cb.TOOLS
@@ -267,6 +272,10 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _uploads.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
+    for _mod in (_send, _share):
+        extra = _mod.call_tool(studio, actor, name, args)
+        if extra is not NotImplemented:
+            return extra
     extra = _cb.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra

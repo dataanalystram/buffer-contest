@@ -1056,12 +1056,15 @@ class Tools(EditorialTools):
         if rights_confirmed and not official:
             res["rights_confirmed"] = True
         from . import brand_kits
+        add_logo = (run.get("input") or {}).get("add_logo", True) is not False
         spec = {"kind": "media_render", "style": sid, "brand_colors": bool((run.get("input") or {}).get("brand_colors")) or brand_kits.brand_accent_wins(self.h, self.a), "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
                 "credit": credit, "names": [n for n in (st.get("company"), (cand or {}).get("company")) if n], "music": music or "auto",
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
-                "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "logo": kit.get("logo") or "", "source": clip_tok, "candidate": cand,
+                "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "source": clip_tok, "candidate": cand,
                 "slides": [] if (clip_tok or cand) else [m["token"] for m in gen], "image_prompt": st["headline"],
-                "brand_pass": sid != "none", "logo": (run.get("input") or {}).get("add_logo", True) is not False,
+                "brand_pass": sid != "none", "add_logo": add_logo,
+                # one "logo" key: the kit's logo token, or "" when they turned the logo off (a bool here broke job_spec)
+                "logo": (kit.get("logo") or "") if add_logo else "",
                 "cover_hook": st.get("cover_hook") or "", "covers": True}
         maker = (res.get("video_research") or {}).get("maker")
         if maker and maker not in spec["names"]:

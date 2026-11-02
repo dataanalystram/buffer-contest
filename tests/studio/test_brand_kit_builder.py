@@ -60,7 +60,7 @@ def test_css_colour_parsing_and_var_resolution():
     assert X.parse_css_color("#abc")[0] == (170, 187, 204)
     v = X.css_vars(":root{--a:var(--b, #000);--b:#123456}")
     assert X.resolve("var(--a)", v) == "#123456"
-    assert X.map_font("Lyon Text")[0] == "serif" and X.map_font("NDot 57")[0] == "dot" and X.map_font("Stolzl")[0] == "figtree"
+    assert X.map_font("Lyon Text")[0] in ("serif", "garamond", "sourceserif") and X.map_font("NDot 57")[0] == "dot" and X.map_font("Stolzl")[0] == "figtree"
 
 
 def test_svg_rasteriser_draws_paths_arcs_and_holes():
@@ -149,7 +149,7 @@ def test_kit_lifecycle_rest_create_preview_activate_and_templates_follow(human):
     human.patch(f"/api/brand-kits/{kid}", json={"colors": {"background": "#101820", "primary": "#00C2A8"}})
     assert human.get("/api/brand-studio").json()["kit"]["colors"]["accent"] == "#00C2A8", "editing the active kit restyles at once"
     lst = human.get("/api/brand-kits").json()
-    assert lst["active_id"] == kid and len(lst["kits"]) == 1
+    assert lst["active_id"] == kid and sorted(k["name"] for k in lst["kits"]) == ["Acme", "HuhByte AI"]
     assert human.delete(f"/api/brand-kits/{kid}").status_code == 400  # never the active kit
 
 
@@ -158,7 +158,7 @@ def test_kits_over_mcp(human):
     _, made = mcp_call(human, tok, "create_brand_kit", {"name": "Beta", "colors": {"background": "#FFFFFF", "primary": "#2563EB"}})
     assert made["kit"]["colors"]["accent"] == "#2563EB" and made["kit"]["colors"]["text"] == "#111114"
     _, lst = mcp_call(human, tok, "list_brand_kits")
-    assert [k["name"] for k in lst["kits"]] == ["Beta"]
+    assert [k["name"] for k in lst["kits"]] == ["Beta", "HuhByte AI"]  # HuhByte AI is seeded for every workspace (owner, 2 Nov 2026)
     _, up = mcp_call(human, tok, "update_brand_kit", {"kit_id": made["id"], "head_font": "serif", "end_cta": "Read more"})
     assert up["kit"]["font"] == "serif" and up["kit"]["end_card"]["cta"] == "Read more"
     _, act = mcp_call(human, tok, "set_active_brand_kit", {"kit_id": made["id"]})

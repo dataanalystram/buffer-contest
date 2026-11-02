@@ -153,6 +153,10 @@ NOT_ACCENT = ("text", "fg", "foreground", "border", "line", "overlay", "shadow",
               "surface", "background", "-bg-primary", "bg-primary", "ink", "outline", "placeholder", "scrollbar", "selection")
 
 
+# A CSS framework's own default link / button colour is not the brand's (brand kit v2: wisprflow.ai came out Webflow blue)
+FRAMEWORK_DEFAULTS = {"#3898EC", "#0082F3", "#007BFF", "#0D6EFD", "#337AB7", "#428BCA", "#0000EE", "#551A8B"}
+
+
 def color_candidates(vars_: dict[str, list[str]], css: str) -> list[dict]:
     """Accent candidates: named variables first (scored by name), then raw colours by frequency."""
     out = []
@@ -178,7 +182,7 @@ def color_candidates(vars_: dict[str, list[str]], css: str) -> list[dict]:
     freq = Counter()
     for lit in _COLOR_LIT.findall(_COMMENT.sub("", css)):
         got = parse_css_color(lit)
-        if got and got[1] >= 0.6 and sat(got[0]) >= 0.3:
+        if got and got[1] >= 0.6 and sat(got[0]) >= 0.3 and to_hex(got[0]) not in FRAMEWORK_DEFAULTS:
             freq[to_hex(got[0])] += 1
     for hx, n in freq.most_common(6):
         rgb = tuple(int(hx[i:i + 2], 16) for i in (1, 3, 5))
@@ -281,22 +285,25 @@ def _close(a, b, d: int = 40) -> bool:
 
 
 # ================================================================================================= fonts
-BUNDLED = {"inter": "Inter", "poppins": "Poppins", "figtree": "Figtree", "anton": "Anton", "serif": "DM Serif Display", "dot": "Doto"}
+BUNDLED = {"inter": "Inter", "poppins": "Poppins", "figtree": "Figtree", "anton": "Anton", "serif": "DM Serif Display", "dot": "Doto",
+           "garamond": "EB Garamond", "sourceserif": "Source Serif 4", "roboto": "Roboto"}
 _FONT_MAP = [  # (substring in the family, bundled face)
-    ("ndot", "dot"), ("doto", "dot"), ("dot matrix", "dot"), ("dotmatrix", "dot"), ("lcd", "dot"), ("pixel", "dot"),
+    ("ndot", "dot"), ("ntype", "dot"), ("doto", "dot"), ("dot matrix", "dot"), ("dotmatrix", "dot"), ("lcd", "dot"), ("pixel", "dot"),
     ("inter", "inter"), ("poppins", "poppins"), ("figtree", "figtree"), ("anton", "anton"), ("oswald", "anton"),
     ("bebas", "anton"), ("league gothic", "anton"), ("condensed", "anton"), ("compressed", "anton"), ("druk", "anton"),
-    ("dm serif", "serif"), ("serif display", "serif"), ("lyon", "serif"), ("tiempos", "serif"), ("garamond", "serif"),
+    ("dm serif", "serif"), ("serif display", "serif"), ("lyon", "garamond"), ("tiempos", "sourceserif"), ("garamond", "garamond"), ("caslon", "garamond"), ("cormorant", "garamond"),
     ("playfair", "serif"), ("freight", "serif"), ("canela", "serif"), ("recoleta", "serif"), ("gt super", "serif"),
-    ("noe ", "serif"), ("merriweather", "serif"), ("libre baskerville", "serif"), ("source serif", "serif"),
-    ("fraunces", "serif"), ("instrument serif", "serif"), ("ivar", "serif"), ("domaine", "serif"), ("editorial new", "serif"),
+    ("noe ", "serif"), ("merriweather", "sourceserif"), ("libre baskerville", "garamond"), ("source serif", "sourceserif"),
+    ("newsreader", "sourceserif"), ("georgia", "sourceserif"), ("charter", "sourceserif"), ("youtube sans", "roboto"), ("yt sans", "roboto"),
+    ("verdana", "roboto"), ("tahoma", "roboto"),
+    ("fraunces", "serif"), ("instrument serif", "garamond"), ("ivar", "serif"), ("domaine", "serif"), ("editorial new", "serif"),
     ("montserrat", "poppins"), ("gilroy", "poppins"), ("futura", "poppins"), ("product sans", "poppins"),
     ("google sans", "poppins"), ("circular", "figtree"), ("walsheim", "figtree"), ("dm sans", "figtree"),
     ("jakarta", "figtree"), ("manrope", "figtree"), ("satoshi", "figtree"), ("outfit", "figtree"), ("avenir", "figtree"),
     ("nunito", "figtree"), ("rubik", "figtree"), ("general sans", "figtree"), ("cera", "figtree"), ("roobert", "figtree"),
     ("stolzl", "figtree"), ("geist", "inter"), ("sohne", "inter"), ("söhne", "inter"), ("suisse", "inter"), ("haas", "inter"), ("graphik", "inter"),
     ("aeonik", "inter"), ("untitled sans", "inter"), ("sf pro", "inter"), ("ibm plex sans", "inter"), ("work sans", "inter"),
-    ("public sans", "inter"), ("helvetica", "inter"), ("arial", "inter"), ("roboto", "inter"), ("lato", "figtree"),
+    ("public sans", "inter"), ("helvetica", "inter"), ("arial", "inter"), ("roboto", "roboto"), ("lato", "figtree"),
 ]
 
 
@@ -308,7 +315,7 @@ def map_font(family: str) -> tuple[str, str]:
             return bid, ("exact" if f.replace(" variable", "").replace(" display", "").strip() == BUNDLED[bid].lower()
                          or f.startswith(BUNDLED[bid].lower()) else "closest")
     if re.search(r"(?<!sans[- ])serif", f) or "slab" in f:
-        return "serif", "closest"
+        return "sourceserif", "closest"
     return "inter", "closest"
 
 
@@ -340,7 +347,7 @@ def pick_fonts(vars_: dict, css: str, html_styles: str = "") -> dict:
     head = body_f = ""
     prov = {}
     ranked0 = [f for f, _ in counts.most_common()]
-    top_serif = bool(ranked0) and map_font(ranked0[0])[0] == "serif"
+    top_serif = bool(ranked0) and map_font(ranked0[0])[0] in ("serif", "garamond", "sourceserif")
     for name, vals in vars_.items():  # a family the site names for headings / display wins for the headline
         if re.search(r"size|weight|line|height|spacing|leading|tracking|feature|variation|settings|letter|stretch|style", name):
             continue
@@ -361,8 +368,8 @@ def pick_fonts(vars_: dict, css: str, html_styles: str = "") -> dict:
         prov["head_font"] = prov.get("body_font", "")
     hb, hm = map_font(head) if head else ("inter", "closest")
     bb, bm = map_font(body_f) if body_f else ("inter", "closest")
-    if bb in ("anton", "serif", "dot"):  # a condensed / display face never sets body copy
-        bb = "inter"
+    if bb in ("anton", "serif", "dot", "garamond"):  # a condensed / display face never sets body copy
+        bb = "sourceserif" if bb == "garamond" else "inter"
     return {"head": {"family": head, "bundled": hb, "match": hm if head else "default"},
             "body": {"family": body_f, "bundled": bb, "match": bm if body_f else "default"},
             "provenance": prov}
