@@ -50,7 +50,7 @@ CHUNK_FIT = 4 * 1024 * 1024   # beyond this, chunks through a chat are slow and 
 
 S = {"type": "string"}
 TOOLS = [
-    {"name": "create_upload", "description": "For a photo or video that is on the user's computer or in your sandbox (a local "
+    {"name": "create_upload", "description": "USE THIS FIRST for a photo or video that is on the user's computer or in your sandbox (a local "
      "file, an artifact, an attachment), when you can run curl: returns a one-time upload URL on HuhQueue's own domain "
      "(valid 15 minutes, one use, up to the Library's per-file limit, max_mb) and the exact curl command: "
      "curl -X PUT --data-binary @file.mp4 '<upload_url>'. The answer is the Library item with its media_token for "

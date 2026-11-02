@@ -56,7 +56,7 @@ def test_no_inline_or_third_party_scripts(client):
     for path in ("/", "/docs", "/docs/agents", "/privacy", "/terms", "/security"):
         h = client.get(path).text
         for tag in re.findall(r"<script\b[^>]*>", h):
-            assert 'type="application/ld+json"' in tag or re.search(r'src="/static/[\w.-]+\.js"', tag), (path, tag)
+            assert 'type="application/ld+json"' in tag or re.search(r'src="/static/[\w.-]+\.js(\?v=[\w.-]+)?"', tag), (path, tag)
         assert "fonts.googleapis.com" not in h and " on" + "click=" not in h and "onsubmit=" not in h
     csp = client.get("/").headers["content-security-policy"]
     assert "font-src 'self';" in csp and "googleapis" not in csp and "script-src 'self';" in csp
