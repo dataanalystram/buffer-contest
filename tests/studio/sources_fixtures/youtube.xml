@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCcefcZRL2oaA_uBNeo5UOWg"/>
+ <id>yt:channel:cefcZRL2oaA_uBNeo5UOWg</id>
+ <yt:channelId>cefcZRL2oaA_uBNeo5UOWg</yt:channelId>
+ <title>Y Combinator</title>
+ <link rel="alternate" href="https://www.youtube.com/channel/UCcefcZRL2oaA_uBNeo5UOWg"/>
+ <author>
+  <name>Y Combinator</name>
+  <uri>https://www.youtube.com/channel/UCcefcZRL2oaA_uBNeo5UOWg</uri>
+ </author>
+ <published>2013-10-24T22:58:51+00:00</published>
+ <entry>
+  <id>yt:video:vl7HiMdGfjo</id>
+  <yt:videoId>vl7HiMdGfjo</yt:videoId>
+  <yt:channelId>UCcefcZRL2oaA_uBNeo5UOWg</yt:channelId>
+  <title>What Happens When Everyone Can Build Software</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=vl7HiMdGfjo"/>
+  <author>
+   <name>Y Combinator</name>
+   <uri>https://www.youtube.com/channel/UCcefcZRL2oaA_uBNeo5UOWg</uri>
+  </author>
+  <published>2026-10-30T14:30:00+00:00</published>
+  <updated>2026-10-31T10:20:27+00:00</updated>
+  <media:group>
+   <media:title>What Happens When Everyone Can Build Software</media:title>
+   <media:content url="https://www.youtube.com/v/vl7HiMdGfjo?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i3.ytimg.com/vi/vl7HiMdGfjo/hqdefault.jpg" width="480" height="360"/>
+   <media:description>In this episode of the Lightcone, the hosts sit down with Paul Copplestone, co-founder and CEO of Supabase. Since starting in the YC summer batch of 2020, the company has exploded to 13 million users and over 50 million databases under management. Supabase is now positioning for a future where everyone can write their own software, billions have access to personal databases and agents are driving much of the demand.  
+
+Apply to Y Combinator: https://www.ycombinator.com/apply
+Work at a startup: https://www.ycombinator.com/jobs
+
+Chapters:
+00:00 Intro
+01:18 Growth and 4x Revenue 
+02:35 Three Eras of Supabase
+04:34 “Builders” vs. Traditional Devs
+08:42 Personalized Apps 
+12:12 Personal Databases &amp; Data Ownership
+15:56 Scaling to Billions
+17:58 AI Adoption At Supabase
+19:58 Lessons Learned Along The Way
+27:29 Building For Personal Agents, Dogfooding
+30:01 Agent-First Design and Evals
+38:42 The Future Of Coding
+42:36 Opening Up More Entrepreneurship + Outro</media:description>
+   <media:community>
+    <media:starRating count="421" average="5.00" min="1" max="5"/>
+    <media:statistics views="60376"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:x21EgQzfZaM</id>
+  <yt:videoId>x21EgQzfZaM</yt:videoId>
+  <yt:channelId>UCcefcZRL2oaA_uBNeo5UOWg</yt:channelId>
+  <title>AI for the Air-Gapped Economy</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/x21EgQzfZaM"/>
+  <author>
+   <name>Y Combinator</name>
+   <uri>https://www.youtube.com/channel/UCcefcZRL2oaA_uBNeo5UOWg</uri>
+  </author>
+  <published>2026-10-30T05:41:20+00:00</published>
+  <updated>2026-10-30T05:41:23+00:00</updated>
+  <media:group>
+   <media:title>AI for the Air-Gapped Economy</media:title>
+   <media:content url="https://www.youtube.com/v/x21EgQzfZaM?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i1.ytimg.com/vi/x21EgQzfZaM/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Some of the most valuable data in the world can never leave the building. Defense contractors, banks, hospitals, and nuclear plants can’t simply send it to a cloud AI API.
+
+That creates an opportunity to bring frontier AI inside those walls: on-prem models, deployment tooling, security accreditation, and hardware for the parts of the economy the cloud can’t reach.
+
+Apply for the Winter 2027 batch at ycombinator.com/apply.</media:description>
+   <media:community>
+    <media:starRating count="571" average="5.00" min="1" max="5"/>
+    <media:statistics views="34042"/>
+   </media:community>
+  </media:group>
+ </entry></feed>
