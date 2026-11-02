@@ -170,7 +170,7 @@ def test_brand_pass_brands_the_whole_video_and_opens_on_the_cover(tmp_path):
     brand = {"handle": "@huhbyte.ai", "accent": "#C9ACFA"}
     m = compose.render_style(src, "minimal", out=str(tmp_path / "o.mp4"), hook="Screen Studio makes demos", brand=brand,
                              credit="Video: Screen Studio", brand_pass=True, cover_png=str(cover), music_mood="none", workdir=str(tmp_path / "w"))
-    assert "bug" in m["brand_pass"] and "hook" in m["brand_pass"]  # minimal has no hook on screen: the intro title is added
+    assert m["brand_pass"] == ["bug"]  # minimal already keeps its hook and credit chip on screen: only the logo bug is added
     assert m["thumbnail_offset_ms"] == 300 and m["cover_frame_secs"] == 0.6
     assert abs(m["duration"] - (0.6 + 6 + 3.5 * 0 + compose.CARD_SECS)) < 0.6
     first = compose.frame_at(m["path"], 0.2, str(tmp_path / "f0.png"))
