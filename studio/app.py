@@ -548,6 +548,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return studio.create_agent_token(actor(request, write=True), body.get("name", ""), body.get("policy", "review"),
                                          int(body.get("daily_cap", 10)), body.get("channels") or None, int(body.get("days", 30)))
 
+    @app.patch("/api/agent-tokens/{token_id}")
+    def token_cap(token_id: int, request: Request, body: dict = Body(...)):
+        return studio.set_agent_cap(actor(request, write=True), token_id, body.get("daily_cap"))
+
     @app.delete("/api/agent-tokens/{token_id}")
     def revoke(token_id: int, request: Request):
         return studio.revoke_agent_token(actor(request, write=True), token_id)
