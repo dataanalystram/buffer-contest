@@ -196,8 +196,9 @@ def test_sample_brands_are_cached_and_the_demo_extracts_them_offline(client, mon
     for s in sm:
         for u in list(s["renders"].values()) + s["carousel"] + [s["logo_url"]]:
             assert client.get(u).status_code == 200, u
-    q = client.post("/api/brand/samples/linear/schedule", json={}).json()
-    assert {x["channel_id"] for x in q["queued"]} == {"demo_ig", "demo_li"} and all(x["status"] == "sent_to_buffer" for x in q["queued"])
+    # the view-only demo shows the sample story but scheduling it is a send: refused with the friendly line, nothing queued
+    q = client.post("/api/brand/samples/linear/schedule", json={})
+    assert q.status_code == 403 and q.json()["view_only"] and "In the real app this would schedule" in q.json()["error"]
 
 
 def test_scheduling_the_sample_story_is_refused_outside_the_sample(human):
