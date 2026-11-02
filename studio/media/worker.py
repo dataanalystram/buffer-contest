@@ -96,9 +96,9 @@ def _covers(spec: dict, source_path: str, brand: dict, style: str, ratio: str, t
     return out, png, idx
 
 
-def cover_swap(video: bytes, cover: bytes, secs: float) -> tuple[bytes, dict]:
-    """Replace the Reel's opening cover frames (the first ``secs``) with another cover variant; the sound and every
-    other frame stay as rendered."""
+def cover_swap(video: bytes, cover: bytes, secs: float, replace: float | None = None) -> tuple[bytes, dict]:
+    """Put another cover variant on the Reel's opening frames: ``replace`` seconds of the old cover frames are swapped
+    for ``secs`` of the new one (replace=0: the cover is added in front, e.g. a "No style" video). The sound follows."""
     from . import ff
     tmp = Path(tempfile.mkdtemp(prefix="hq_cswap_"))
     try:
@@ -107,9 +107,17 @@ def cover_swap(video: bytes, cover: bytes, secs: float) -> tuple[bytes, dict]:
         pr = ff.probe(str(tmp / "in.mp4"))
         W, H = pr["width"], pr["height"]
         secs = max(0.3, float(secs or 0.6))
-        fc = (f"[0:v]scale={W}:{H},setsar=1,fps=30,format=yuv420p[c];[1:v]trim=start={secs:.3f},setpts=PTS-STARTPTS,fps=30,"
+        rep = secs if replace is None else max(0.0, float(replace))
+        fc = (f"[0:v]scale={W}:{H},setsar=1,fps=30,format=yuv420p[c];[1:v]trim=start={rep:.3f},setpts=PTS-STARTPTS,fps=30,"
               f"format=yuv420p,setsar=1[m];[c][m]concat=n=2:v=1:a=0[v]")
-        amap = ["-map", "1:a", "-c:a", "copy"] if pr.get("has_audio") else []
+        if pr.get("has_audio") and abs(rep - secs) < 0.01:
+            amap = ["-map", "1:a", "-c:a", "copy"]
+        elif pr.get("has_audio"):  # the picture got longer or shorter: shift the sound by the same amount
+            d_ms = int(max(0.0, secs - rep) * 1000)
+            fc += f";[1:a]atrim=start={max(0.0, rep - secs):.3f},asetpts=PTS-STARTPTS,adelay={d_ms}|{d_ms}[a]"
+            amap = ["-map", "[a]", "-c:a", "aac", "-b:a", "160k"]
+        else:
+            amap = []
         ff.run(["-y", "-v", "error", "-loop", "1", "-framerate", "30", "-t", f"{secs:.3f}", "-i", str(tmp / "cover.jpg"), "-i",
                 str(tmp / "in.mp4"), "-filter_complex", fc, "-map", "[v]", *amap, "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(tmp / "out.mp4")], timeout=900)

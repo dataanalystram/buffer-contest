@@ -46,6 +46,13 @@ using ONLY the tools. Rules:
 - Headlines come from the story's facts. Never copy the person's request into a headline, and never put a URL in one.
 - Use only facts from the source. Never invent numbers. If extract_facts reports a conflict, do not pick a figure: finish and
   ask the person (the app shows your question).
+- VIDEO FIRST: Context.video says what find_video already found (it runs before you when the person asks for a video or
+  links a product). status found -> the video channels AND Instagram get render_reel (LinkedIn/Facebook the 4:5 cut), credit
+  "Video: <maker>" on screen and in the caption; youtube_only or none -> do NOT make a Reel: the carousel for image channels,
+  video-only channels skipped, and the app already asked the person to upload the file (say it again in finish).
+- A Product Hunt link: read_url reads it through Product Hunt's API and the maker's site (the page itself blocks servers).
+- Context.theme "none" means "No style: post my video as it is": render_reel only fits it to the frame with the logo and the
+  end card; never add captions, a theme or music then.
 - Plan first: reply with a short numbered plan (one line per step), then call the tools in that order.
 - Formats: video-only channels (youtube, tiktok) get render_reel only when there is a real video (else they are skipped);
   instagram/linkedin/facebook get render_carousel unless the person asked for a reel or the source has a video; X/threads/bluesky
@@ -126,7 +133,7 @@ class Brain:
         theme = media_styles.resolve(str(body.get("theme") or "auto"))
         theme = theme if theme == "auto" or media_styles.known(theme) else "auto"
         inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
-               "theme": theme, "brand_colors": bool(body.get("brand_colors")),
+               "theme": theme, "brand_colors": bool(body.get("brand_colors")), "add_logo": body.get("add_logo", True) is not False,
                "brief": str(body.get("brief") or "")[:1000],  # theme: validated above (unknown -> auto); a gallery pick wins
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
         res = {"thread": [{"role": "user", "text": prompt or "(your file)", "at": _now()}], "plan": [], "brain": {}}
@@ -312,9 +319,11 @@ class Brain:
             self.h._save(rid, run["steps"], run["result"], "ready")
         return out
 
-    def reply(self, a: Actor, rid: int, text: str) -> dict:
+    def reply(self, a: Actor, rid: int, text: str, media_token: str = "") -> dict:
         self.h.studio._guard_write(a, "agent_reply")
         text = (text or "").strip()[:intake.MAX_PROMPT]
+        if media_token:
+            return self._reply_upload(a, rid, text, media_token)
         if not text:
             raise ActionError("Say what to change.")
         run = self.h.run(a, rid)
@@ -339,6 +348,113 @@ class Brain:
             return self.h.run(a, rid)
         self.h._save(rid, run["steps"], res, "running")
         self._spawn(self._go, a, rid, text)
+        return self.h.run(a, rid)
+
+    def _reply_upload(self, a: Actor, rid: int, text: str, token: str) -> dict:
+        """The answer to "Upload the file and I'll brand it": the person's file becomes this run's video (credited to the
+        maker when it is the launch video we found), then the video channels and Instagram are re-rendered as a Reel."""
+        run = self.h.run(a, rid)
+        if run["kind"] != "agent":
+            raise ActionError("Uploads in the thread work on posts made by the agent.", 409)
+        with _rlock:
+            if rid in _running:
+                raise ActionError("The agent is still working on this post. Upload again once it's done.", 409)
+        meta = self.h.media_meta(a, token)
+        if meta is None:
+            raise ActionError("Unknown file. Upload it first.", 404)
+        if meta.get("type") != "video" and not str(meta.get("mime") or "").startswith("video/"):
+            raise ActionError("That file isn't a video. Upload an MP4 or MOV.")
+        res = run["result"]
+        res.setdefault("thread", []).append({"role": "user", "text": text or "Here's the video.", "at": _now()})
+        res["upload"] = {"token": token, "type": "video", "url": self.h.media_url(token), "name": str(meta.get("name") or "your video")[:80],
+                         "read": True, "transcript_tried": True, "in_reply": True}
+        res["clip_token"], res["clip_owned"] = token, True
+        res.pop("video_ask", None)
+        vr = res.get("video_research") or {}
+        if vr:
+            vr["status"] = "uploaded"
+            res["plan"] = [p for p in res.get("plan") or [] if not str(p).lower().startswith(("launch video is on", "no video found"))]
+            res["plan"].insert(0, f"Your upload is the video: branded as a Reel, credited “{res.get('video_credit') or 'your video'}”")
+        self.h._save(rid, run["steps"], res, "running")
+        self._spawn(self._upload_go, a, rid)
+        return self.h.run(a, rid)
+
+    def _upload_go(self, a: Actor, rid: int) -> None:
+        with _rlock:
+            _running.add(rid)
+        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
+        tools = Tools(self.h, a, rid)
+        try:
+            run = self.h.run(a, rid)
+            if not run["result"].get("story"):
+                self.call(a, rid, tools, "extract_facts", {})
+                run = self.h.run(a, rid)
+            chans = run["input"]["channels"]
+            reel = [c["id"] for c in chans if c["service"] in VIDEO_ONLY or c["service"] == "instagram"]
+            feed = [c["id"] for c in chans if c["service"] in ("facebook", "linkedin")]
+            if reel:
+                self.call(a, rid, tools, "render_reel", {"channel_ids": reel, "rights_confirmed": True})
+            if feed:
+                self.call(a, rid, tools, "render_reel", {"channel_ids": feed, "ratio": "4:5", "rights_confirmed": True},
+                          label="Render the 4:5 feed version")
+            if reel + feed:
+                self.call(a, rid, tools, "write_captions", {"channel_ids": reel + feed})
+            self.call(a, rid, tools, "check", {})
+            run = self.h.run(a, rid)
+            res = run["result"]
+            n = len([p for p in res.get("packages") or [] if p.get("format") == "reel"])
+            self._say(a, rid, f"Your video is branded and ready as a Reel on {n} channel{'s' if n != 1 else ''}. "
+                              "Pick another cover under each video, or reply to change anything.")
+            self.h._save(rid, run["steps"], res, "ready" if res.get("packages") else "failed")
+        except ActionError as e:
+            self._fail(a, rid, str(e))
+        except Exception as e:  # never leave a run spinning
+            traceback.print_exc()
+            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+        finally:
+            activity.end(tok)
+            with _rlock:
+                _running.discard(rid)
+
+    def set_cover(self, a: Actor, rid: int, channel_id: str, index: int) -> dict:
+        """Swap one channel's cover variant in the background (a short render job), then re-check."""
+        self.h.studio._guard_write(a, "agent_set_cover")
+        run = self.h.run(a, rid)
+        if run["kind"] != "agent":
+            raise ActionError("Covers are for posts made by the agent.", 409)
+        with _rlock:
+            if rid in _running:
+                raise ActionError("The agent is still working on this post. Try again when it's done.", 409)
+        cm = (run["result"].get("channel_media") or {}).get(channel_id) or next(
+            (v for k, v in (run["result"].get("channel_media") or {}).items()
+             for c in run["input"]["channels"] if c["id"] == k and c["service"] == channel_id), {})
+        if not cm.get("covers"):
+            raise ActionError("This channel has no cover variants.", 404)
+        if not 0 <= int(index) < len(cm["covers"]):
+            raise ActionError(f"Pick a cover from 0 to {len(cm['covers']) - 1}.")
+        self.h._save(rid, run["steps"], run["result"], "running")
+
+        def go():
+            with _rlock:
+                _running.add(rid)
+            tools = Tools(self.h, a, rid)
+            try:
+                self.call(a, rid, tools, "set_cover", {"channel": channel_id, "index": int(index)})
+                self.call(a, rid, tools, "check", {})
+                r = self.h.run(a, rid)
+                self.h._save(rid, r["steps"], r["result"], "ready")
+            except ActionError as e:
+                r = self.h.run(a, rid)
+                r["result"].setdefault("thread", []).append({"role": "agent", "text": str(e), "at": _now()})
+                self.h._save(rid, r["steps"], r["result"], "ready")
+            except Exception:
+                traceback.print_exc()
+                r = self.h.run(a, rid)
+                self.h._save(rid, r["steps"], r["result"], "ready")
+            finally:
+                with _rlock:
+                    _running.discard(rid)
+        self._spawn(go)
         return self.h.run(a, rid)
 
     def channel_media(self, a: Actor, rid: int, channel_id: str, token: str = "") -> dict:
@@ -410,6 +526,11 @@ class Brain:
             if message is None and (self.h.run(a, rid)["result"].get("upload") or {}).get("read") is None \
                     and self.h.run(a, rid)["result"].get("upload"):
                 self.call(a, rid, tools, "read_upload", {})  # the upload is an input tool, read first whatever the brain
+            if message is None and self._video_first(self.h.run(a, rid)):
+                try:  # VIDEO FIRST (owner, 2 Nov 2026): the launch video is looked for before anything is planned or rendered
+                    self.call(a, rid, tools, "find_video", {})
+                except ActionError:
+                    pass
             engs = brain_llm.engines(self.store, a.uid, self.h.s, self.h.http, demo=tools.demo)
             done = False
             tool_engs = [e for e in engs if e.get("tools")]
@@ -443,6 +564,22 @@ class Brain:
             activity.end(tok)
             with _rlock:
                 _running.discard(rid)
+
+    @staticmethod
+    def _video_first(run) -> bool:
+        """Look for the launch video first? When the person asked for a video, linked a product (Product Hunt), or wants a
+        Reel / has a video-only channel and gave a link that isn't itself a video post. Never for their own video upload."""
+        from .media import find as media_find, video_first
+        inp, res = run["input"], run["result"]
+        if (res.get("upload") or {}).get("type") == "video" or res.get("recap"):
+            return False
+        urls = (inp.get("intake") or {}).get("urls") or []
+        if any(media_find.is_video_post(u) for u in urls):
+            return False  # the link IS the video (an X / YouTube post): read_url and find_media handle it
+        if any(video_first.is_product_link(u) for u in urls) or video_first.wants_video(inp.get("prompt") or ""):
+            return True
+        wants_reel = (inp.get("intake") or {}).get("format") == "reel" or any(c["service"] in VIDEO_ONLY for c in inp["channels"])
+        return bool(urls) and wants_reel
 
     def _note(self, a, rid, text):
         run = self.h.run(a, rid)
@@ -506,6 +643,11 @@ class Brain:
                              "shows": ((up.get("seen") or {}).get("summary") or ""),
                              "is_source": (res.get("source") or {}).get("via") == "upload"}
         ctx["intake"]["research_asked"] = bool(inp["intake"].get("research"))
+        if res.get("video_research"):
+            vr = res["video_research"]
+            ctx["video"] = {"status": vr.get("status"), "credit": vr.get("credit"), "maker": vr.get("maker"),
+                            "video": (vr.get("video") or {}).get("url"), "launch_video": (vr.get("launch_video") or {}).get("url"),
+                            "ask": vr.get("ask")}
         company = editorial_tools.company_request(inp["prompt"], inp["intake"].get("urls"))
         if company and not res.get("upload"):
             ctx["company"] = company
@@ -590,10 +732,12 @@ class Brain:
         self.h._save(rid, run["steps"], run["result"])
 
     # ---------------------------------------------------------------- fixed plan (free model / no AI)
-    def _formats(self, run) -> dict[str, list[str]]:
+    def _formats(self, run, tools=None) -> dict[str, list[str]]:
         inp, res = run["input"], run["result"]
         fmt = inp["intake"]["format"]
         has_video = bool(res.get("clip_token")) or any(m["type"] == "video" for m in (res.get("source") or {}).get("media") or [])
+        if tools is not None:
+            has_video = has_video or tools._has_video(run)  # find_video / find_media found the maker's video
         groups: dict[str, list[str]] = {"reel": [], "reel45": [], "carousel": [], "photo": [], "text": []}
         for c in inp["channels"]:
             svc = c["service"]
@@ -615,7 +759,7 @@ class Brain:
         return groups
 
     def _renders(self, a, rid, tools, run, only: list[str] | None = None):
-        g = self._formats(run)
+        g = self._formats(run, tools)
         sec = run["input"]["intake"].get("seconds")
         from .media import styles as media_styles
         style = media_styles.explicit(run["input"].get("prompt") or "")  # only when the person named a look
@@ -624,7 +768,7 @@ class Brain:
             style = picked  # the gallery choice wins
         elif not style:
             style = media_styles.named_theme(run["input"].get("prompt") or "")
-        if style and (g["reel"] or g["reel45"]) and not run["result"].get("clip_owned"):
+        if style and (g["reel"] or g["reel45"]) and not run["result"].get("clip_owned") and not run["result"].get("video_research"):
             self.call(a, rid, tools, "find_media", {})
         text_ids = [i for i in g["text"] if not only or i in only]
         if text_ids:
@@ -720,7 +864,9 @@ class Brain:
         inp = run["input"]
         it = inp["intake"]
         vids = [c["id"] for c in inp["channels"] if c["service"] in VIDEO_ONLY]
-        want_video = bool(vids) or it.get("format") == "reel"
+        from .media import video_first
+        vr = run["result"].get("video_research") or {}
+        want_video = bool(vids) or it.get("format") == "reel" or video_first.wants_video(inp["prompt"]) or vr.get("status") == "found"
         plan = [f"Save {len(it['rules'])} standing rule(s) to your Style Ledger"] if it["rules"] else []
         plan += [f"Research {company}: its YC page, launch post and website (newest official words win)",
                  "Find the official images (logo, product, founders)", "Edit the hero: product on the brand art, founder avatars",
@@ -738,15 +884,25 @@ class Brain:
         except ActionError:
             pass  # no art and no product image: the cover is the brand ground
         out = self.call(a, rid, tools, "write_editorial", {})
-        if want_video:
-            self.call(a, rid, tools, "find_media", {"query": (self.h.run(a, rid)["result"].get("company") or {}).get("website") or company})
+        if want_video and not (self.h.run(a, rid)["result"].get("video_research") or {}).get("status") == "found":
+            q = (self.h.run(a, rid)["result"].get("company") or {}).get("website") or company
+            try:
+                self.call(a, rid, tools, "find_video", {"query": q})
+            except ActionError:
+                self.call(a, rid, tools, "find_media", {"query": q})
         r = self.call(a, rid, tools, "render_editorial", {})
         if r.get("fit_problems") and out.get("engine") == "claude":
             self.call(a, rid, tools, "write_editorial", {"feedback": "; ".join(r["fit_problems"]) + ". Make those slides shorter."})
             self.call(a, rid, tools, "render_editorial", {})
         run = self.h.run(a, rid)
-        if vids and tools._has_video(run):
-            self.call(a, rid, tools, "render_reel", {"channel_ids": vids, "style": inp.get("theme") if inp.get("theme") not in (None, "", "auto") else "news"})
+        if tools._has_video(run) and want_video:  # a real launch video: a Reel on the video channels and Instagram too
+            sty = {"style": inp["theme"]} if inp.get("theme") not in (None, "", "auto") else {}
+            reel_ids = vids + [c["id"] for c in inp["channels"] if c["service"] == "instagram"]
+            feed_ids = [c["id"] for c in inp["channels"] if c["service"] in ("facebook", "linkedin")]
+            if reel_ids:
+                self.call(a, rid, tools, "render_reel", {"channel_ids": reel_ids, **sty})
+            if feed_ids:
+                self.call(a, rid, tools, "render_reel", {"channel_ids": feed_ids, "ratio": "4:5", **sty}, label="Render the 4:5 feed version")
         tone = it.get("tone") or ""
         self.call(a, rid, tools, "write_captions", {"tone": tone} if tone else {})
         self.call(a, rid, tools, "check", {})

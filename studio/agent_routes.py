@@ -73,7 +73,16 @@ def add_routes(app: FastAPI, house, actor) -> None:
     @app.post("/api/agent/runs/{rid}/messages")
     def run_message(rid: int, request: Request, body: dict = Body(...)):
         """Reply in a run's thread: "make the hook stronger", "redo YouTube at 30s", "it's $1.3M"."""
-        return house.brain.reply(actor(request, write=True), rid, body.get("text", ""))
+        return house.brain.reply(actor(request, write=True), rid, body.get("text", ""), str(body.get("media_token") or ""))
+
+    @app.post("/api/agent/runs/{rid}/packages/{channel_id}/cover")
+    def run_channel_cover(rid: int, channel_id: str, request: Request, body: dict = Body(...)):
+        """Use another cover variant ({"index": 0-2}) for one channel: its Reel's opening frame is swapped."""
+        try:
+            idx = int((body or {}).get("index"))
+        except (TypeError, ValueError):
+            raise ActionError("Give the cover index (0-2).")
+        return house.brain.set_cover(actor(request, write=True), rid, channel_id, idx)
 
     @app.post("/api/agent/runs/{rid}/packages/{channel_id}/media")
     def run_channel_media(rid: int, channel_id: str, request: Request, body: dict = Body(default={})):
@@ -184,6 +193,9 @@ def call_tool(studio, actor, name: str, args: dict):
             return {"themes": media_styles.describe_themes(), "categories": media_styles.theme_categories(), "default": "auto"}
         if name == "set_theme":
             return h.brain.tool(actor, int(args.get("run_id") or 0), "set_theme", {"theme": str(args.get("theme") or ""), "why": "you picked it"})
+        if name == "set_cover":
+            return h.brain.tool(actor, int(args.get("run_id") or 0), "set_cover", {"channel": str(args.get("channel") or ""),
+                                                                                    "index": int(args.get("index") or 0)})
         if name == "reply_post":
             return h.brain.reply(actor, int(args.get("run_id") or 0), args.get("text", ""))
         if name == "replace_channel_media":

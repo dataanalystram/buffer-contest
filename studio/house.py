@@ -952,7 +952,8 @@ class House:
             return render_job(spec, _get, urls=urls, logo=logo, http=self.http)
         if spec["kind"] == "cover_swap":
             from .media.worker import cover_swap
-            return cover_swap(self.get_media(spec["source"])["data"], self.get_media(spec["cover"])["data"], spec.get("secs") or 0.6)
+            return cover_swap(self.get_media(spec["source"])["data"], self.get_media(spec["cover"])["data"], spec.get("secs") or 0.6,
+                              spec.get("replace"))
         if spec["kind"] == "brand_video":
             return render.brand_video(self.get_media(spec["source"])["data"], spec["kit"], spec["params"], logo=logo,
                                       hook=spec.get("hook", ""), ratio=spec.get("ratio", "9:16"))
@@ -1093,7 +1094,9 @@ class House:
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
                 "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",
                          "slides": [base + t for t in spec.get("slides", [])],
-                         "front": base + spec["front"] if spec.get("front") else "", "end": base + spec["end"] if spec.get("end") else ""}}
+                         "front": base + spec["front"] if spec.get("front") else "", "end": base + spec["end"] if spec.get("end") else "",
+                         "cover_image": base + spec["cover_image"] if spec.get("cover_image") else "",
+                         "cover": base + spec["cover"] if spec.get("cover") else ""}}
 
     # ---- the weekly recap (job kind media_recap): cover + one video slide per story + Follow card (4:5) and one Reel (9:16)
     RECAP_KINDS = {"cover": ("photo", "png"), "follow": ("photo", "png"), "reel": ("video", "mp4")}
@@ -1348,7 +1351,7 @@ class House:
         if pk.get("status") in ("sent_to_buffer", "pending_approval"):
             raise ActionError("That package was already sent.", 409)
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
-                                            "mode": mode, "due_at": due_at,
+                                            "mode": mode, "due_at": due_at, "options": pk.get("options") or {},
                                             "override_warnings": override_warnings})
         out = self.studio.submit_post(a, prev["confirm_token"])
         self.mark_package(a, rid, channel_id, out["status"], {"mode": mode, "due_at": prev["preview"].get("due_at"),

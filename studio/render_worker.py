@@ -166,7 +166,7 @@ def main(argv=None) -> int:
         logo = get(urls.get("logo"))
         if spec["kind"] == "cover_swap":  # another cover variant as the Reel's opening frames (studio.media.worker.cover_swap)
             from .media.worker import cover_swap
-            data, meta = cover_swap(get(urls["source"]), get(urls["cover"]), spec.get("secs") or 0.6)
+            data, meta = cover_swap(get(urls["source"]), get(urls["cover"]), spec.get("secs") or 0.6, spec.get("replace"))
         elif spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
             from .media.worker import render_job
             data, meta = render_job(spec, get, urls=urls, logo=logo)
