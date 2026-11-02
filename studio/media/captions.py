@@ -115,8 +115,23 @@ def ass_escape(s: str) -> str:
     return s.replace("\\", "\u29f5").replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
+# Words fix_names never rewrites: real product / brand names a person types or says on purpose (owner bug, 2 Nov 2026:
+# "the Notion template was so good" came out as "the Nothing template" with the Nothing sample kit active, because
+# "notion" is 77% like "nothing").
+PROTECTED = {"notion", "nothing", "linear", "figma", "slack", "stripe", "vercel", "github", "gitlab", "openai", "anthropic",
+             "claude", "gemini", "google", "apple", "meta", "youtube", "tiktok", "instagram", "twitter", "threads", "buffer",
+             "canva", "framer", "webflow", "airtable", "zapier", "discord", "reddit", "medium", "substack", "spotify", "netflix",
+             "amazon", "microsoft", "windows", "android", "iphone", "nvidia", "tesla", "cursor", "replit", "lovable", "perplexity",
+             "mistral", "grok", "llama", "copilot", "chatgpt", "midjourney", "runway", "pika", "sora", "veo", "kling", "ycombinator",
+             "wispr", "flow", "huhbyte", "loom", "miro", "asana", "jira", "trello", "dropbox", "zoom", "teams", "word", "excel"}
+
+
 def fix_names(words: list[dict], names: list[str] | None, cutoff: float = 0.74) -> list[dict]:
-    """Merge 1-3 adjacent words that sound like a known name into that name (case and spacing from the name)."""
+    """Merge 1-3 adjacent words that sound like a known name into that name (case and spacing from the name).
+
+    Only mishearings are fixed: a single word that is itself a real name (PROTECTED, or any of `names`) or a deliberate
+    capitalised word is kept unless it is nearly the same spelling (>= 0.88), and one word needs >= 0.8 to change at all.
+    Merging split words ("So vocal" -> "Subvocal") keeps the old cutoff."""
     if not names:
         return words
     keys = [(re.sub(r"[^a-z0-9]", "", n.lower()), n) for n in names if n and " " not in n.strip()]
@@ -127,8 +142,14 @@ def fix_names(words: list[dict], names: list[str] | None, cutoff: float = 0.74) 
             if i + k > len(words):
                 continue
             joined = re.sub(r"[^a-z0-9]", "", "".join(w["w"] for w in words[i:i + k]).lower())
+            own = {key for key, _ in keys}
             for key, name in keys:
-                if joined and difflib.SequenceMatcher(None, joined, key).ratio() >= cutoff and abs(len(joined) - len(key)) <= 3:
+                if k == 1 and joined != key and (joined in PROTECTED or joined in own):
+                    continue  # "Notion" is a name in its own right, never a mishearing of "Nothing"
+                ratio = difflib.SequenceMatcher(None, joined, key).ratio()
+                if k == 1 and joined != key and (ratio < 0.8 or (words[i]["w"][:1].isupper() and ratio < 0.88)):
+                    continue
+                if joined and ratio >= cutoff and abs(len(joined) - len(key)) <= 3:
                     tail = re.sub(r"^.*?([.,!?;:]*)$", r"\1", words[i + k - 1]["w"])
                     hit = ({"w": name + tail, "s": words[i]["s"], "e": words[i + k - 1]["e"]}, k)
                     break

@@ -36,7 +36,7 @@ import time
 from collections import OrderedDict
 from typing import Any
 
-from . import brand, brand_examples, brand_onboard, demo_guard, templates
+from . import brand, brand_examples, brand_onboard, demo_guard, design_system, templates
 
 SCHEMA = "CREATE TABLE IF NOT EXISTS brand_kit_library (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, name TEXT, data TEXT, created REAL, updated REAL)"
 MAX_KITS = 12
@@ -47,8 +47,9 @@ _gallery: dict[str, list[float]] = {}
 HOOK = "Shipped this week"
 KIT_CARDS = ("carousel_cover", "thumbnail", "end_card")
 FONT_LABELS = {"anton": "Anton", "poppins": "Poppins", "inter": "Inter", "figtree": "Figtree", "serif": "DM Serif Display",
-               "dot": "Doto (dot matrix)", "inter-semibold": "Inter SemiBold"}
-BODY_CHOICES = ("inter", "inter-semibold", "poppins", "figtree")
+               "dot": "Doto (dot matrix)", "inter-semibold": "Inter SemiBold", "garamond": "EB Garamond",
+               "sourceserif": "Source Serif 4", "roboto": "Roboto"}
+BODY_CHOICES = ("inter", "inter-semibold", "poppins", "figtree", "roboto", "sourceserif")
 
 
 class KitError(ValueError):
@@ -123,6 +124,20 @@ def normalize(body: dict, base: dict | None = None) -> dict:
         k["front_card"] = {**(k.get("front_card") or {}), "style": fc["style"]}
     if isinstance(body.get("hashtags"), list):
         k["hashtags"] = [str(t)[:40] for t in body["hashtags"][:8]]
+    # brand kit v2: the generated theme (layout, surface, radius, scale) and the site's DESIGN.md travel with the kit
+    if "theme" in body:
+        th = design_system.clean_theme(body.get("theme"))
+        if th:
+            k["theme"] = th
+        else:
+            k.pop("theme", None)
+    if body.get("layout") in design_system.LAYOUTS:  # the builder's Layout picker
+        th = dict(k.get("theme") or design_system.theme_for_kit({**k, "font": k.get("font") or "inter"}))
+        th["layout"] = body["layout"]
+        th["accent_usage"] = {"bold_news": "fill", "playful": "fill", "minimal": "line", "editorial": "text"}[body["layout"]]
+        k["theme"] = design_system.clean_theme(th) or th
+    if isinstance(base, dict) and isinstance(base.get("design"), dict):
+        k["design"] = base["design"]
     k.setdefault("colors", {"primary": "#111114", "accent": brand.NEUTRAL_ACCENT, "text": "#FFFFFF"})
     k.setdefault("font", "inter")
     k.setdefault("caption_style", "opus")
@@ -132,6 +147,14 @@ def normalize(body: dict, base: dict | None = None) -> dict:
     k["end_card"].setdefault("style", k["front_card"].get("style") or "glow")
     k["end_card"].setdefault("cta", f"Follow {k.get('name') or 'us'}"[:28])
     k["end_card"].setdefault("line", "")
+    return k
+
+
+def example_kit(eid: str) -> dict:
+    """An example brand (HuhByte AI) as a stored kit, with its generated theme."""
+    ex = brand_examples.EXAMPLES[eid]
+    k = normalize({**ex["kit"], "logo": f"example:{eid}", "caption_style": "news"})
+    k["theme"] = design_system.theme_for_kit(k)
     return k
 
 
@@ -176,7 +199,8 @@ def compose_brand(kit: dict, logo_path: str | None) -> dict:
     from .media import styles
     head = templates.HEAD_FONTS.get(kit.get("font") or "inter", "Inter-Bold.ttf")
     body = templates.BODY_FONTS.get(kit.get("body_font") or "inter", "Inter-Regular.ttf")
-    bold = {"Inter-Regular.ttf": "Inter-Bold.ttf", "Poppins-Medium.ttf": "Poppins-Bold.ttf", "Figtree-Medium.ttf": "Figtree-ExtraBold.ttf"}.get(body, body)
+    bold = {"Inter-Regular.ttf": "Inter-Bold.ttf", "Poppins-Medium.ttf": "Poppins-Bold.ttf", "Figtree-Medium.ttf": "Figtree-ExtraBold.ttf",
+            "Roboto-Regular.ttf": "Roboto-Bold.ttf", "SourceSerif4-Regular.ttf": "SourceSerif4-SemiBold.ttf"}.get(body, body)
     mixed = templates.mix(templates.hex_rgb(text), templates.hex_rgb(bg), 0.4)
     acc = c.get("accent") or brand.NEUTRAL_ACCENT
     return {"name": kit.get("name") or "", "handle": ("@" + kit["handle"]) if kit.get("handle") else "", "accent": acc,
@@ -244,8 +268,8 @@ def kit_cards(kit: dict, logo: bytes | None, ids=None) -> list[dict]:
 # card, the size, the format and PREVIEW_VERSION), in memory (LRU) and on disk, so a kit seen once (by anyone: the two
 # sample kits are drawn at start-up) is instant after that, across workers and restarts on the same disk. The builder
 # gets small WebP files by URL (/api/brand-kits/preview-img/<key>.webp) that the browser caches as immutable.
-PREVIEW_VERSION = 2
-RENDER_FIELDS = ("name", "handle", "colors", "font", "body_font", "headline_case", "front_card", "end_card")
+PREVIEW_VERSION = 3
+RENDER_FIELDS = ("name", "handle", "colors", "font", "body_font", "headline_case", "front_card", "end_card", "theme")
 MEM_MAX = 400
 DISK_MAX = 3000
 _mem: "OrderedDict[str, bytes]" = OrderedDict()
@@ -466,13 +490,14 @@ class BrandKits:
         nid = None
         if s:
             k = normalize({**s["kit"], "logo": "sample:nothing"})
+            k["theme"] = design_system.theme_for_kit(k)
             k["label"] = brand_onboard.SAMPLE_LABEL
             k["source"] = {"url": s.get("source_url"), "provenance": s.get("provenance"), "fonts": s.get("fonts"),
                            "extracted_at": s.get("extracted_at")}
             nid = self._insert(a, k)
         hb = brand_examples.EXAMPLES.get("huhbyte")
         if hb:
-            self._insert(a, normalize({**hb["kit"], "logo": "example:huhbyte", "caption_style": "news"}))
+            self._insert(a, example_kit("huhbyte"))
         if nid:
             self.activate(a, nid)
 
@@ -491,8 +516,33 @@ class BrandKits:
 
     def _out(self, a, row: dict, active: int | None) -> dict:
         k = json.loads(row["data"] or "{}")
-        return {"id": row["id"], "name": row["name"], "active": row["id"] == active, "kit": builder_view(k),
+        d = k.get("design") if isinstance(k.get("design"), dict) else {}
+        view = builder_view({kk: v for kk, v in k.items() if kk != "design"})
+        if d:  # "Style taken from <site>" + the DESIGN.md (tokens stay server-side; GET .../design.md has them all)
+            view["design"] = {"site": d.get("site"), "engine": d.get("engine"), "ms": d.get("ms"), "url": f"/api/brand-kits/{row['id']}/design.md"}
+        return {"id": row["id"], "name": row["name"], "active": row["id"] == active, "kit": view,
                 "logo_url": self._logo_url(a, k.get("logo")), "updated": row["updated"]}
+
+    def _backfill_themes(self, a, rows: list[dict]) -> None:
+        """Brand kit v2: kits saved before generated themes get one from their own fonts and colours, once."""
+        for r in rows:
+            k = json.loads(r["data"] or "{}")
+            if isinstance(k.get("theme"), dict) and k["theme"].get("layout"):
+                continue
+            k["theme"] = design_system.theme_for_kit(k)
+            r["data"] = json.dumps(k)
+            self.store.x("UPDATE brand_kit_library SET data=? WHERE id=? AND user_id=?", (r["data"], r["id"], a.uid))
+
+    def design_md(self, a, kid: int) -> str:
+        k = json.loads(self._get(a, kid)["data"] or "{}")
+        d = k.get("design") if isinstance(k.get("design"), dict) else {}
+        if d.get("md"):
+            return d["md"] + ("\n## Raw tokens\n\n```json\n" + json.dumps(d.get("tokens") or {}, indent=2) + "\n```\n")
+        th = k.get("theme") or design_system.theme_for_kit(k)
+        return (f"# DESIGN.md: {k.get('name') or 'Untitled kit'}\n\nThis kit was not read from a website, so its theme comes from its "
+                f"own fonts and colours.\n\n- Layout: **{th.get('layout')}**: {design_system.LAYOUTS.get(th.get('layout'), '')}\n"
+                f"- Ground: {th.get('mode')} {(k.get('colors') or {}).get('primary', '')}, surface {th.get('surface')}, {th.get('radius')}px corners\n"
+                f"- Type: {k.get('font')} headlines ({th.get('case')}), {k.get('body_font')} body\n")
 
     def _logo_url(self, a, ref: str | None) -> str:
         ref = str(ref or "")
@@ -517,7 +567,11 @@ class BrandKits:
             self._seed_demo(a)
         act = self._active(a)
         rows = self._rows(a)
+        self._backfill_themes(a, rows)
         return {"kits": [self._out(a, r, act) for r in rows], "active_id": act, "caption_styles": CAPTION_STYLES,
+                "layouts": design_system.LAYOUTS,
+                "examples": [{"id": e["id"], "name": e["kit"]["name"], "logo_url": f"/api/brand-kits/example-logo/{e['id']}"}
+                             for e in brand_examples.EXAMPLES.values() if e["id"] == "huhbyte"],
                 "preview": self._cached_kit_cards(a, next((r for r in rows if r["id"] == act), None)),
                 "fonts": {k: FONT_LABELS.get(k, k) for k in templates.HEAD_FONTS},
                 "body_fonts": {k: FONT_LABELS.get(k, k) for k in BODY_CHOICES}, "styles": templates.STYLES,
@@ -546,16 +600,23 @@ class BrandKits:
     def create(self, a, body: dict) -> dict:
         self.studio._guard_write(a, "create_brand_kit")
         base, src = None, None
-        if body.get("sample"):
+        if body.get("example"):  # HuhByte AI (the owner's brand) as a kit of its own
+            if body["example"] not in brand_examples.EXAMPLES or body["example"] != "huhbyte":
+                raise KitError("No such example brand. Try huhbyte.")
+            base = example_kit(body["example"])
+        elif body.get("sample"):
             s = brand_onboard.sample(str(body["sample"]))
             if not s:
                 raise KitError(f"No sample brand {body['sample']!r}. Pick one of {', '.join(brand_onboard.SAMPLE_IDS)}.")
             base = {**s["kit"], "logo": f"sample:{s['id']}", "label": brand_onboard.SAMPLE_LABEL}
+            base["theme"] = design_system.theme_for_kit(base)
             src = {"url": s.get("source_url"), "provenance": s.get("provenance"), "fonts": s.get("fonts")}
         elif body.get("url"):
             ex = self.ob.extract(a, str(body["url"]))
             base = {**ex["draft"], "logo": ex.get("logo") or ""}
             src = {"url": ex["draft"].get("website"), "provenance": ex.get("provenance"), "fonts": ex.get("fonts")}
+            if not base.get("theme"):
+                base["theme"] = design_system.theme_for_kit(base)
         k = normalize(body, base)
         if src:
             k["source"] = src
@@ -603,7 +664,7 @@ class BrandKits:
                  "headline_case": k.get("headline_case") or ("upper" if font in ("anton", "dot") else "title"),
                  "front_card": {"style": (k.get("front_card") or {}).get("style") or "glow"},
                  "end_card": {"style": ec.get("style") or "glow", "cta": ec.get("cta") or "Follow for more", "line": ec.get("line") or ""},
-                 "hashtags": k.get("hashtags") or [], "label": k.get("label") or ""}
+                 "hashtags": k.get("hashtags") or [], "label": k.get("label") or "", "theme": k.get("theme") or None}
         if logo_tok:
             patch["logo"] = logo_tok
         self.bs.save(a, patch)
@@ -701,14 +762,16 @@ class BrandKits:
         kits = []
         s = brand_onboard.sample("nothing")
         if s:
-            kits.append((normalize({**s["kit"], "logo": "sample:nothing"}), brand_onboard.sample_logo("nothing")))
+            nk = normalize({**s["kit"], "logo": "sample:nothing"})
+            nk["theme"] = design_system.theme_for_kit(nk)
+            kits.append((nk, brand_onboard.sample_logo("nothing")))
         hb = brand_examples.EXAMPLES.get("huhbyte")
         if hb:
             try:
                 lb = brand_examples.logo_bytes("huhbyte")
             except Exception:
                 lb = None
-            kits.append((normalize({**hb["kit"], "logo": "example:huhbyte", "caption_style": "news"}), lb))
+            kits.append((example_kit("huhbyte"), lb))
         for k, lb in kits:
             n += len(render_cards(k, lb, list(KIT_CARDS), 420, "webp", background=True))
         for k, lb in kits:
@@ -795,6 +858,14 @@ def add_routes(app, house, actor) -> None:
             return Response(status_code=404)
         return Response(v, media_type="image/webp" if ext == "webp" else "image/jpeg",
                         headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
+    @app.get("/api/brand-kits/{kid}/design.md", include_in_schema=False)
+    def kits_design_md(kid: int, request: Request):
+        try:
+            md = bk.design_md(actor(request), kid)
+        except KitError:
+            return Response(status_code=404)
+        return Response(md, media_type="text/markdown; charset=utf-8", headers={"Cache-Control": "private, no-store"})
 
     @app.get("/api/brand-kits")
     def kits_list(request: Request):

@@ -40,11 +40,14 @@ class JobError(RuntimeError):
 
 
 KIT_HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
-                  "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf"}
+                  "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf", "garamond": "EBGaramond-SemiBold.ttf",
+                  "sourceserif": "SourceSerif4-SemiBold.ttf", "roboto": "Roboto-Bold.ttf"}
 KIT_BODY_FONTS = {"poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "inter-semibold": "Inter-SemiBold.ttf",
                   "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf", "serif": "Inter-Regular.ttf",
-                  "dot": "Inter-Regular.ttf"}
-BODY_BOLD = {"Inter-Regular.ttf": "Inter-Bold.ttf", "Poppins-Medium.ttf": "Poppins-Bold.ttf", "Figtree-Medium.ttf": "Figtree-ExtraBold.ttf"}
+                  "dot": "Inter-Regular.ttf", "roboto": "Roboto-Regular.ttf", "sourceserif": "SourceSerif4-Regular.ttf",
+                  "garamond": "SourceSerif4-Regular.ttf"}
+BODY_BOLD = {"Inter-Regular.ttf": "Inter-Bold.ttf", "Poppins-Medium.ttf": "Poppins-Bold.ttf", "Figtree-Medium.ttf": "Figtree-ExtraBold.ttf",
+             "Roboto-Regular.ttf": "Roboto-Bold.ttf", "SourceSerif4-Regular.ttf": "SourceSerif4-SemiBold.ttf"}
 LEGACY_BOLD = {"inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf"}  # a kit with no body font: the old bold
 
 

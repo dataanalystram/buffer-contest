@@ -405,7 +405,8 @@ def split_video(source: str, *, out_dir: str, words: list[dict] | None = None, t
             for r in ratios or ["9:16"]:
                 outp = od / f"{m['id']}_{r.replace(':', 'x')}.mp4"
                 got = render_moment(source, m, words, ratio=r, brand=brand, credit=credit, out=str(outp), faces=faces,
-                                    scenes=scenes, detector=detector, burned_subs=burned, names=names, music=music,
+                                    scenes=scenes, detector=detector, burned_subs=burned, music=music,
+                                    names=names if transcript.get("source") == "whisper" else None,  # typed / human captions stay as written
                                     src_size=(sw, sh))
                 item = {k: got[k] for k in ("path", "ratio", "width", "height", "duration", "clip", "captions", "burned_subs",
                                             "caption_problems", "music")}

@@ -77,6 +77,8 @@ class BrandStudio:
         k["label"] = ex.get("label") or ""
         k["example"] = ex.get("example") or ""
         k["channels"] = ex.get("channels") or []
+        if isinstance(ex.get("theme"), dict) and ex["theme"].get("layout"):  # brand kit v2: the active kit's generated theme
+            k["theme"] = ex["theme"]
         k["front_url"] = self.house.media_url(k["front_card"]["image"]) if k["front_card"]["image"] else ""
         k["end_url"] = self.house.media_url(ec["image"]) if ec["image"] else ""
         k["first_run"] = {"logo": bool(k.get("logo")), "style": bool(ex.get("front_card")), "examples_seen": bool(ex.get("seen_examples")),
@@ -132,6 +134,13 @@ class BrandStudio:
             ex["channels"] = [c for c in patch["channels"] if c in templates.CHANNELS][:9]
         if patch.get("seen_examples"):
             ex["seen_examples"] = True
+        if "theme" in patch:  # brand kit v2: activating a kit sets (or clears) its generated theme
+            from . import design_system
+            th = design_system.clean_theme(patch.get("theme"))
+            if th:
+                ex["theme"] = th
+            else:
+                ex.pop("theme", None)
         self._put(a, ex)
         self.store.audit(a.uid, a.label, "save_brand_studio", "read", {"fields": sorted(patch)[:20]})
         return self.kit(a)
@@ -173,7 +182,7 @@ class BrandStudio:
         self.save(a, {"name": k["name"], "handle": k["handle"], "website": k["website"], "voice": k["voice"], "logo": logo_tok,
                       "colors": k["colors"], "font": k["font"], "body_font": k["body_font"], "headline_case": k["headline_case"],
                       "front_card": {**k["front_card"], "image": ""}, "end_card": {**k["end_card"], "image": ""},
-                      "hashtags": k["hashtags"], "label": k["label"], "channels": ex["channels"]})
+                      "hashtags": k["hashtags"], "label": k["label"], "channels": ex["channels"], "theme": None})
         cur = self.extras(a)
         cur["example"] = example_id
         self._put(a, cur)
@@ -204,6 +213,13 @@ class BrandStudio:
         for k in ("font", "body_font", "headline_case", "handle", "name", "label"):
             if over.get(k) is not None:
                 kit[k] = str(over[k])[:60]
+        if "theme" in over:
+            from . import design_system
+            th = design_system.clean_theme(over.get("theme"))
+            if th:
+                kit["theme"] = th
+            else:
+                kit.pop("theme", None)
         if isinstance(over.get("front_card"), dict) and over["front_card"].get("style") in templates.STYLES:
             kit["front_card"] = {**kit["front_card"], "style": over["front_card"]["style"]}
         if isinstance(over.get("end_card"), dict):
