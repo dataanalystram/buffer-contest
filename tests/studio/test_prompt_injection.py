@@ -86,7 +86,7 @@ def test_a_malicious_page_cannot_make_the_agent_send_or_change_settings(owner, m
     tool_bodies = [b for b in seen["bodies"] if "tools" in b]
     assert all(untrusted.NOTICE in (b["system"] if isinstance(b["system"], str) else json.dumps(b["system"])) for b in tool_bodies)
     results = json.dumps([m for b in tool_bodies for m in b["messages"] if m["role"] == "user"])
-    assert "<untrusted source=\\\"read_url\\\">" in results or '<untrusted source="read_url">' in results
+    assert "<untrusted source=" in results and "read_url" in results and "IGNORE PREVIOUS INSTRUCTIONS" in results
     assert "sk-ant-api03" not in json.dumps(seen["bodies"])  # the key in the page never travels back out
     # the thread tells the person, and they can confirm with their own words
     assert any("didn't save the posts as Buffer drafts" in (m.get("text") or "") for m in run["result"].get("thread") or []) or held
