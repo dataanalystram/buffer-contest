@@ -2,7 +2,8 @@
 renders from the active one (owner, 2 Nov 2026). UI = REST = MCP.
 
   GET    /api/brand-kits                     list the kits and which is active            MCP list_brand_kits
-  POST   /api/brand-kits                     create (from fields, or {url} to read a site) MCP create_brand_kit
+  POST   /api/brand-kits                     create (from fields, {url} to read a site, or {sample} for
+                                             one of the sample brands: nothing, linear, notion)    MCP create_brand_kit
   PATCH  /api/brand-kits/{id}                update fields                                 MCP update_brand_kit
   POST   /api/brand-kits/{id}/activate       make it the active kit                        MCP set_active_brand_kit
   DELETE /api/brand-kits/{id}                remove one (never the active one)
@@ -39,11 +40,14 @@ SCHEMA = "CREATE TABLE IF NOT EXISTS brand_kit_library (id INTEGER PRIMARY KEY A
 MAX_KITS = 12
 CAPTION_STYLES = {"opus": "Opus: big word-by-word captions", "news": "News: a sentence under the video",
                   "minimal": "Minimal: calm lower captions", "hype": "Hype: one huge word at a time"}
-GALLERY_PER_MIN = 12
+GALLERY_PER_MIN = 40  # the builder redraws as you type (debounced); kit cards and themes are separate calls
 _gallery: dict[str, list[float]] = {}
 _cache: dict[str, dict] = {}
 HOOK = "Shipped this week"
 KIT_CARDS = ("carousel_cover", "thumbnail", "end_card")
+FONT_LABELS = {"anton": "Anton", "poppins": "Poppins", "inter": "Inter", "figtree": "Figtree", "serif": "DM Serif Display",
+               "dot": "Doto (dot matrix)", "inter-semibold": "Inter SemiBold"}
+BODY_CHOICES = ("inter", "inter-semibold", "poppins", "figtree")
 
 
 class KitError(ValueError):
@@ -271,13 +275,22 @@ class BrandKits:
             self._seed_demo(a)
         act = self._active(a)
         return {"kits": [self._out(a, r, act) for r in self._rows(a)], "active_id": act, "caption_styles": CAPTION_STYLES,
-                "fonts": {k: v.rsplit(".", 1)[0] for k, v in templates.HEAD_FONTS.items()}, "styles": templates.STYLES,
+                "fonts": {k: FONT_LABELS.get(k, k) for k in templates.HEAD_FONTS},
+                "body_fonts": {k: FONT_LABELS.get(k, k) for k in BODY_CHOICES}, "styles": templates.STYLES,
+                "samples": [{"id": s["id"], "name": s["kit"].get("name"), "label": brand_onboard.SAMPLE_LABEL,
+                             "logo_url": f"/static/brands/{s['id']}/logo.png"} for s in brand_onboard.samples()],
                 "max": MAX_KITS}
 
     def create(self, a, body: dict) -> dict:
         self.studio._guard_write(a, "create_brand_kit")
         base, src = None, None
-        if body.get("url"):
+        if body.get("sample"):
+            s = brand_onboard.sample(str(body["sample"]))
+            if not s:
+                raise KitError(f"No sample brand {body['sample']!r}. Pick one of {', '.join(brand_onboard.SAMPLE_IDS)}.")
+            base = {**s["kit"], "logo": f"sample:{s['id']}", "label": brand_onboard.SAMPLE_LABEL}
+            src = {"url": s.get("source_url"), "provenance": s.get("provenance"), "fonts": s.get("fonts")}
+        elif body.get("url"):
             ex = self.ob.extract(a, str(body["url"]))
             base = {**ex["draft"], "logo": ex.get("logo") or ""}
             src = {"url": ex["draft"].get("website"), "provenance": ex.get("provenance"), "fonts": ex.get("fonts")}
@@ -376,7 +389,8 @@ class BrandKits:
         ref = str(body.get("logo") if body.get("logo") is not None else k.get("logo") or "")
         logo = self.logo_bytes(a, ref)
         w = max(120, min(int(body.get("width") or 220), 400))
-        key = hashlib.sha256(json.dumps([k, ref, w, hashlib.sha256(logo or b"").hexdigest()], sort_keys=True).encode()).hexdigest()
+        part = body.get("part") if body.get("part") in ("kit", "themes") else "all"
+        key = hashlib.sha256(json.dumps([k, ref, w, part, hashlib.sha256(logo or b"").hexdigest()], sort_keys=True).encode()).hexdigest()
         if key in _cache and not as_urls:
             return {**_cache[key], "cached": True, "ms": int((time.time() - t0) * 1000)}
         now = time.time()
@@ -384,7 +398,7 @@ class BrandKits:
         if len(hits) >= GALLERY_PER_MIN:
             raise KitError("Too many gallery redraws this minute. Pause for a moment.")
         _gallery[a.uid] = hits + [now]
-        cards = kit_cards(k, logo) + theme_cards_for(k, logo)
+        cards = (kit_cards(k, logo) if part != "themes" else []) + (theme_cards_for(k, logo) if part != "kit" else [])
         out = []
         for c in cards:
             item = {"id": c["id"], "label": c["label"], "group": "kit" if c["id"] in KIT_CARDS else "theme"}
@@ -398,12 +412,22 @@ class BrandKits:
             else:
                 item["error"] = c.get("error")
             out.append(item)
-        res = {"cards": out, "kit": builder_view(k)}
+        res = {"cards": out, "kit": builder_view(k), "part": part}
         if not as_urls:
             if len(_cache) > 48:
                 _cache.clear()
             _cache[key] = res
         return {**res, "ms": int((time.time() - t0) * 1000)}
+
+
+def caption_style_for(house, a) -> str:
+    """The active kit's caption style (opus | news | minimal | hype): the default look of a captioned video edit when the
+    person or agent names no theme. 'opus' when no kit was ever activated."""
+    try:
+        v = attach(house).bs.extras(a).get("caption_style")
+    except Exception:
+        v = None
+    return v if v in CAPTION_STYLES else "opus"
 
 
 # ================================================================================================== REST + MCP
@@ -462,16 +486,19 @@ def add_routes(app, house, actor) -> None:
 
 _KIT_PROPS = {"name": {"type": "string"}, "handle": {"type": "string"}, "logo": {"type": "string", "description": "media token from upload_media"},
               "colors": {"type": "object", "description": "background, primary, accent, text (hex)"},
-              "head_font": {"type": "string", "enum": list(templates.HEAD_FONTS)}, "body_font": {"type": "string"},
+              "head_font": {"type": "string", "enum": list(templates.HEAD_FONTS)}, "body_font": {"type": "string", "enum": list(BODY_CHOICES)},
               "caption_style": {"type": "string", "enum": list(CAPTION_STYLES)}, "end_text": {"type": "string"}, "end_cta": {"type": "string"},
               "website": {"type": "string"}, "voice": {"type": "string"}}
 TOOLS: list[dict[str, Any]] = [
     {"name": "list_brand_kits", "description": "The workspace's brand kits (name, handle, logo, colours as background / primary / accent / "
      "text, fonts, caption style, end card) and which one is active. Every template and video theme renders from the active kit.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "create_brand_kit", "description": "Create a brand kit from fields, or from a website (url: logo, colours, fonts and voice are "
-     "read from it, no AI). activate: true makes it the active kit at once.",
-     "inputSchema": {"type": "object", "properties": {**_KIT_PROPS, "url": {"type": "string"}, "activate": {"type": "boolean"}}}},
+    {"name": "create_brand_kit", "description": "Create a brand kit from fields, from a website (url: logo, colours, fonts and voice are "
+     "read from it, no AI), or from a sample brand (sample: nothing | linear | notion). activate: true makes it the active kit at once.",
+     "inputSchema": {"type": "object", "properties": {**_KIT_PROPS, "url": {"type": "string"},
+                                                      "sample": {"type": "string", "enum": list(brand_onboard.SAMPLE_IDS),
+                                                                 "description": "start from a sample brand (not affiliated)"},
+                                                      "activate": {"type": "boolean"}}}},
     {"name": "update_brand_kit", "description": "Change fields of a brand kit. When it is the active kit, every template follows at once.",
      "inputSchema": {"type": "object", "required": ["kit_id"], "properties": {"kit_id": {"type": "integer"}, **_KIT_PROPS}}},
     {"name": "set_active_brand_kit", "description": "Make a brand kit the active one: every template, video theme, carousel, thumbnail and "
