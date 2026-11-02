@@ -6,6 +6,7 @@ snapshot of the run while it is working so the "running" thread can be shown in 
 screenshot, any horizontal overflow and any visible control whose text is clipped (layout.json). Exits 1 on a JS error.
 """
 import json
+import os
 import sys
 import time
 from pathlib import Path
