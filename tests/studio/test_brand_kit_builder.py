@@ -334,6 +334,9 @@ def test_the_sample_kits_are_warmed_so_the_demo_builder_opens_from_the_cache(cli
     client.headers["X-HQ-CSRF"] = client.get("/api/session").json()["csrf"]
     lst = client.get("/api/brand-kits").json()
     assert [t["id"] for t in lst["themes"]][:4] == ["opus", "huhbyte_news", "minimal", "hype"] and len(lst["kit_cards"]) == 3
+    pre = lst["preview"]  # the active kit's cards ride on the list, one round trip early
+    assert pre["kit_id"] == lst["active_id"] and [c["id"] for c in pre["cards"]] == ["carousel_cover", "thumbnail", "end_card"]
+    assert all(client.get(c["url"]).status_code == 200 for c in pre["cards"])
     for kit in lst["kits"]:  # how the builder asks on landing: the saved kit by id
         k = client.post("/api/brand-kits/preview", json={"kit_id": kit["id"], "part": "kit", "width": 420}).json()
         t = client.post("/api/brand-kits/preview", json={"kit_id": kit["id"], "part": "themes", "width": 240}).json()

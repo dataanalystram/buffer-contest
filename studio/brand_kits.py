@@ -450,12 +450,32 @@ class BrandKits:
         if demo_guard.is_demo(a.uid):
             self._seed_demo(a)
         act = self._active(a)
-        return {"kits": [self._out(a, r, act) for r in self._rows(a)], "active_id": act, "caption_styles": CAPTION_STYLES,
+        rows = self._rows(a)
+        return {"kits": [self._out(a, r, act) for r in rows], "active_id": act, "caption_styles": CAPTION_STYLES,
+                "preview": self._cached_kit_cards(a, next((r for r in rows if r["id"] == act), None)),
                 "fonts": {k: FONT_LABELS.get(k, k) for k in templates.HEAD_FONTS},
                 "body_fonts": {k: FONT_LABELS.get(k, k) for k in BODY_CHOICES}, "styles": templates.STYLES,
                 "samples": [{"id": s["id"], "name": s["kit"].get("name"), "label": brand_onboard.SAMPLE_LABEL,
                              "logo_url": f"/static/brands/{s['id']}/logo.png"} for s in brand_onboard.samples()],
                 "max": MAX_KITS, "themes": _theme_list(), "kit_cards": [{"id": i, "label": KIT_LABELS[i]} for i in KIT_CARDS]}
+
+    def _cached_kit_cards(self, a, row: dict | None) -> dict | None:
+        """The active kit's own cards when they are already in the preview cache (the warmed sample kits, or a kit seen
+        before), so the builder can paint them straight from the list, one round trip before the preview call."""
+        if not row:
+            return None
+        try:
+            k = json.loads(row["data"] or "{}")
+            logo = self.logo_bytes(a, str(k.get("logo") or ""))
+            cards = []
+            for cid in KIT_CARDS:
+                key = card_key(k, logo, cid, 420, "webp")
+                if cache_get(key) is None:
+                    return None
+                cards.append({"id": cid, "label": KIT_LABELS[cid], "group": "kit", "url": f"/api/brand-kits/preview-img/{key}.webp"})
+            return {"kit_id": row["id"], "width": 420, "cards": cards}
+        except Exception:
+            return None
 
     def create(self, a, body: dict) -> dict:
         self.studio._guard_write(a, "create_brand_kit")

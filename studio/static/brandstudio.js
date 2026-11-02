@@ -115,8 +115,18 @@
       $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single").map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
       $("#bsSvc").innerHTML = Object.entries(d.channels).filter(([, c]) => !c.video_only).map(([k, c]) => `<option value="${k}">${esc(c.label)} (${c.ratio})</option>`).join("");
       $("#bsTpl").value = B.tpl; $("#bsSvc").value = B.svc;
-      fillKit(d.kit); examples(d.active); slots(); preview(); window.brandCheck?.($("#kitCheck"));
+      fillKit(d.kit); examples(d.active); slots();
+      afterBuilder(() => { preview(); window.brandCheck?.($("#kitCheck")); });
     } catch (e) { toast(e.message); }
+  }
+  // The brand kit builder above paints first; this editor's server-drawn previews wait for it (or 2.5 s at most), so the
+  // two never compete for a small instance on landing.
+  function afterBuilder(fn) {
+    if (window.__hqBkFirst || !document.getElementById("bkBuilder")) { fn(); return; }
+    let done = false;
+    const go = () => { if (!done) { done = true; fn(); } };
+    window.addEventListener("hq:bk-first", go, { once: true });
+    setTimeout(go, 2500);
   }
   function examples(active) {
     $("#bsExamples").innerHTML = B.examples.map((e) => `<article class="bs-excard ${e.id === active ? "on" : ""}" data-testid="bs-example" data-id="${e.id}">

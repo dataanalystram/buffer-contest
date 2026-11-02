@@ -145,6 +145,12 @@
     kc.setAttribute("aria-busy", "true"); th.setAttribute("aria-busy", "true");
     kc.classList.add("stale"); th.classList.add("stale");
     K.pending = new Set((K.meta?.themes || []).map((t) => t.id)); K.cachedAll = true;
+    if (K.early && K.early.kit_id === K.id && !K.dirty) {
+      K.early.cards.forEach((c) => put(kc.querySelector(`[data-card="${c.id}"]`), c));
+      kc.classList.remove("stale"); kc.setAttribute("aria-busy", "false");
+      firstShown();
+    }
+    K.early = null;
     try {
       const a = await api("/api/brand-kits/preview", { method: "POST", body: req({ part: "kit", width: 420 }) });
       if (seq !== K.seq) return;
@@ -152,13 +158,18 @@
       kc.classList.remove("stale"); kc.setAttribute("aria-busy", "false");
       K.cachedAll = !!a.cached;
       $("#bkMs").textContent = `Kit cards in ${((performance.now() - t0) / 1000).toFixed(1)} s${a.cached ? " (cached)" : ""}`;
-      window.__hqBkFirst = window.__hqBkFirst || Math.round(performance.now());  // ms since navigation: the first preview on screen
+      firstShown();
       themesInView(seq, t0);
     } catch (e) {
       if (seq !== K.seq) return;
       $("#bkMs").textContent = e.message;
       kc.classList.remove("stale"); th.classList.remove("stale");
     }
+  }
+  function firstShown() {  // the first preview is on screen: the older editor below may start its own (server) renders
+    if (window.__hqBkFirst) return;
+    window.__hqBkFirst = Math.round(performance.now());  // ms since navigation
+    window.dispatchEvent(new Event("hq:bk-first"));
   }
   function themesInView(seq, t0) {
     const th = $("#bkThemes");
@@ -219,6 +230,7 @@
       $("#bkBody").innerHTML = Object.entries(r.body_fonts || { inter: "Inter" }).map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("");
     }
     const id = pickId ?? K.id ?? r.active_id ?? (r.kits[0] || {}).id ?? null;
+    K.early = r.preview && r.preview.kit_id === id ? r.preview : null;  // the kit's cards already cached: paint them now
     if (id != null && r.kits.some((k) => k.id === id)) pick(id, false);
     else { if (!K.form) { K.form = BLANK(); K.id = null; } bar(); fill(); redraw(true); }
     settingsCard();
