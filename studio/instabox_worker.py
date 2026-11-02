@@ -19,6 +19,9 @@ Env (all on the web app):
   INSTABOX_API_KEY               an ibk_ key with machines:write (Render secret; never logged)
   HQ_INSTABOX_MACHINE            the machine id (m_...)
   HQ_INSTABOX_REF                git ref the box runs (default main)
+  HQ_INSTABOX_WAKE_S             seconds to wait for the box to be ready (default 60)
+Fallback: when InstaBox fails, times out or answers non-200, House._dispatch_github starts the GitHub Actions run
+instead (if GH_DISPATCH_TOKEN is set); its open_claim replaces the box's job token, so a late box job can't act.
 One-time box setup (docs/INSTABOX_WORKER.md): /data/hq checkout (read access through an InstaBox Org Secret for
 github.com, so no GitHub token is stored on the box), apt ffmpeg, /data/venv with requirements-worker*.txt.
 """
@@ -55,14 +58,15 @@ def wake(http: httpx.Client, mid: str) -> tuple[bool, str]:
         http.post(f"{API}/machines/{mid}/resume", headers=_h(True), json={})
     elif state in ("stopped", "stopping"):
         http.post(f"{API}/machines/{mid}/start", headers=_h(True), json={})
-    for _ in range(60):
+    wait = int(os.environ.get("HQ_INSTABOX_WAKE_S", "60"))  # past this the app falls back to GitHub Actions
+    for _ in range(max(1, wait // 2)):
         j = http.get(f"{API}/machines/{mid}", headers=_h()).json()
         if j.get("state") == "running" and (j.get("runtime") or {}).get("ready"):
             return True, "ready"
         if j.get("state") == "error":
             return False, "machine in error"
         time.sleep(2)
-    return False, "machine not ready in 120 s"
+    return False, f"machine not ready in {wait} s"
 
 
 def command(jid: int, app_url: str, kind: str = "", ref: str = "main") -> str:
@@ -96,5 +100,5 @@ def dispatch(house, jid: int, workflow: str = "render.yml", inputs: dict | None 
         out = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         ok = r.status_code == 200 and out.get("exitCode", 1) == 0
         return ok, f"InstaBox exec {r.status_code}" + ("" if ok else f" exit {out.get('exitCode')}")
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, ValueError) as e:  # network error, timeout or a non-JSON answer: the caller falls back
         return False, e.__class__.__name__

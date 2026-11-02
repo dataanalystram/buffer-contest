@@ -1,7 +1,9 @@
-# InstaBox render worker (evaluation + opt-in sketch, 2 Nov 2026)
+# InstaBox render worker (2 Nov 2026)
 
-Status: **sketch, not merged, off by default.** `HQ_RENDER_BACKEND=instabox` routes a render/take job to a warm
-InstaBox VM instead of a GitHub Actions run. Without it nothing changes.
+Status: **owner-approved, merged; the live app runs it** (`HQ_RENDER_BACKEND=instabox`, machine `huhqueue-worker`).
+Without that variable nothing changes. When InstaBox fails, times out (`HQ_INSTABOX_WAKE_S`, default 60 s, or the
+exec call) or answers non-200, the app starts the GitHub Actions run instead (needs `GH_DISPATCH_TOKEN`); the Actions
+claim replaces the job token the box was given, so a late box job can't read or write that job.
 
 ## What InstaBox is (docs: https://instabox.sh/llms.txt, /docs/pricing.md, /docs/limits.md, /docs/billing.md)
 - A Firecracker microVM per machine: Debian 13, **4 vCPU / 8 GiB** (the only free size), 16 GiB root, **20 GiB
@@ -36,20 +38,30 @@ Projected: a 60-min video ≈ 5.5 min to transcribe, far inside the 480-min run 
    detached. The token goes in **stdin**, never in the command (exec commands are kept in machine history).
 4. Worker posts results back to the app as today (the app's media store); the box pauses itself after 30 idle min.
 
-## One-time box setup
+## The box: `huhqueue-worker` (created 2 Nov 2026, template agent-browser, free 4 vCPU / 8 GiB)
+A dedicated machine; the old `huhqueue` machine (the self-hosted HuhQueue) is not used or touched.
+Read access to this private repo is a **read-only deploy key** (`huhqueue-worker InstaBox (read-only)`, repo
+Settings → Deploy keys) whose private half is `~/.ssh/hq_deploy` on the box; no GitHub token is stored there.
+Revoke it in the repo settings to cut the box off.
 ```
-sudo apt-get update && sudo apt-get install -y ffmpeg
-git clone <repo> /data/hq            # read access via an InstaBox Org Secret for github.com (no token on disk)
+sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libgles2 git
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/hq_deploy     # add the .pub as a read-only deploy key
+printf 'Host github.com\n  IdentityFile ~/.ssh/hq_deploy\n  IdentitiesOnly yes\n' > ~/.ssh/config
+git clone --depth 1 git@github.com:dataanalystram/buffer-contest.git /data/hq
 python3 -m venv /data/venv && /data/venv/bin/pip install -r /data/hq/requirements-worker.txt -r /data/hq/requirements-media.txt
+/data/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
 ```
+Jobs log to `/data/logs/job-<id>.log` on the box.
 App env on Render: `HQ_RENDER_BACKEND=instabox`, `INSTABOX_API_KEY` (secret), `HQ_INSTABOX_MACHINE`, `HQ_INSTABOX_REF`.
 
 ## Cost per video
 Free plan: **$0**. On Pro (if ever needed): ~1–2 min of a 4/8 box per Reel ≈ $0.001; a 60-min One take
 (~6 min analyze + renders) ≈ $0.005–0.01, plus idle time until auto-pause (≤30 min ≈ $0.017).
 
-## Open items before turning it on
-- Which machine: free plan allows one *running* sandbox after 1 Dec; repurpose an existing paused machine or
-  delete unused ones (owner decision).
-- Does `exec` stdin show up in `instabox history`? Not verified; command string confirmed secret-free.
-- Fallback: keep GitHub Actions dispatch when InstaBox answers non-200 (one-line change in `_dispatch_github`).
+## Notes
+- Free plan after 1 Dec 2026: only one free machine *runs* at a time (paused ones are kept). The worker box
+  resumes per job and pauses after 30 idle minutes; if another free box is running then, a resume can fail and the
+  job falls back to GitHub Actions.
+- Checked 2 Nov 2026: `GET /v1/machines/{id}/history` (`instabox history`) keeps the command string and byte counts,
+  **not the exec stdin**, so the job token (stdin) is not in the machine's history; the command string has no secret.
+- Fallback to GitHub Actions: done (`House._dispatch_github`, tests in tests/studio/test_instabox_worker.py).
