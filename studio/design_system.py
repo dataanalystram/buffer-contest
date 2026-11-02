@@ -88,6 +88,14 @@ def _sat(h: str | None) -> float:
     return bx.sat(tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))) if h else 0.0
 
 
+def _chroma(h: str | None) -> float:
+    """How coloured a colour is, 0..1, pale tints included (bx.sat calls every very light colour grey)."""
+    if not h:
+        return 0.0
+    c = _rgb(h)
+    return (max(c) - min(c)) / 255
+
+
 def _rgb(h: str):
     return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
 
@@ -203,12 +211,12 @@ def tokens_from_styleguide(sg: dict, got: dict | None = None) -> dict:
         accent = own["accent"]  # the site's buttons are black: the brand colour is the logo's / the CSS brand variable
     bg = _hexs(col.get("background")) or own.get("primary") or "#FFFFFF"
     text = _hexs(col.get("text")) or own.get("text") or "#111114"
-    if bx.contrast(_rgb(text), _rgb(bg)) < 3:  # e.g. YouTube's "text" is the link blue: keep the readable ink
+    if bx.contrast(_rgb(text), _rgb(bg)) < 3 or _sat(text) >= 0.45:  # e.g. YouTube's "text" is the link blue: keep the ink
         text = own.get("text") if own.get("text") and bx.contrast(_rgb(own["text"]), _rgb(bg)) >= 3 else (
             "#111114" if bx.lum(_rgb(bg)) > 0.4 else "#FFFFFF")
     surface = _hexs(card.get("backgroundColor") or card.get("background-color") or "")
     btn_bg = _hexs(btn.get("backgroundColor") or btn.get("background-color") or "")
-    if btn_bg and (not surface or surface.lower() == bg.lower()) and _sat(btn_bg) >= 0.2 and bx.lum(_rgb(btn_bg)) > 0.55:
+    if btn_bg and (not surface or surface.lower() == bg.lower()) and _chroma(btn_bg) >= 0.08 and bx.lum(_rgb(btn_bg)) > 0.55:
         surface = btn_bg  # a pale tinted button (Wispr Flow's lavender #F0D7FF) is the brand's surface colour, not its accent
     prov = str(((got or {}).get("provenance") or {}).get("accent") or "")
     if btn_bg and accent and accent.lower() == btn_bg.lower() and own.get("accent") and own["accent"].lower() != accent.lower() \
@@ -321,7 +329,7 @@ def pick_variant(layout: str, dark: bool, bg: str, surface: str, accent: str, vi
                  bar       a solid accent bar across the top, plain sans, the logo in the bar's shadow (YC / Hacker News)
     """
     if layout == "editorial":
-        tinted = bool(surface) and _sat(surface) >= 0.18 and surface.lower() != (bg or "").lower()
+        tinted = bool(surface) and _chroma(surface) >= 0.08 and surface.lower() != (bg or "").lower()
         return "masthead" if tinted else "rules"
     if layout == "minimal":
         off_white = not dark and bg and bg.upper() not in ("#FFFFFF", "#FEFEFE", "#FDFDFD")
