@@ -99,10 +99,10 @@ def test_their_key_runs_its_engine_ahead_of_ours(app, human, ok_test, monkeypatc
     ai_engines.mark_down("nvidia", "the server's key was refused")  # our key down: theirs still runs
     assert "nvidia" in [e["id"] for e in brain_llm.engines(h.store, uid, h.s, h.http)]
     ai_engines.clear_down()
-    # their own key is also the "own" engine, and a demo sample never uses it
-    assert human.get("/api/ai/engine").json()["engines"][-2]["id"] == "own"
-    assert brain_llm.engines(h.store, uid, h.s, h.http, demo=True) == [] or all(
-        e.get("source") != "your key" for e in brain_llm.engines(h.store, uid, h.s, h.http, demo=True))
+    # their key is also the "own" engine; the free sample never runs a hosted engine, even on a saved key
+    own = next(o for o in human.get("/api/ai/engine").json()["engines"] if o["id"] == "own")
+    assert own["available"]
+    assert "nvidia" not in [e["id"] for e in brain_llm.engines(h.store, uid, h.s, h.http, demo=True)]
 
 
 def test_older_single_key_shape_still_reads(app, human):
@@ -125,8 +125,11 @@ def test_agents_read_masked_keys_but_never_write(app, human, ok_test):
     assert res["isError"] and "Only a person" in err
     res, err = mcp_call(human, tok, "delete_ai_key", {"provider": "nvidia"})
     assert res["isError"] and "Only a person" in err
-    r = human.post("/api/ai/keys/openai", json={"api_key": "sk-agent-1234567890"}, headers={"Authorization": f"Bearer {tok}"})
-    assert r.status_code in (401, 403)
+    from fastapi.testclient import TestClient
+    bot = TestClient(app)  # no session cookie: only the agent token
+    assert bot.get("/api/ai/keys", headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+    r = bot.post("/api/ai/keys/openai", json={"api_key": "sk-agent-1234567890"}, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code in (401, 403) and "openai" not in byo_keys.keys(app.state.store, _uid(app))
 
 
 # ------------------------------------------------------------------ logs
