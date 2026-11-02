@@ -207,6 +207,13 @@ def tokens_from_styleguide(sg: dict, got: dict | None = None) -> dict:
         text = own.get("text") if own.get("text") and bx.contrast(_rgb(own["text"]), _rgb(bg)) >= 3 else (
             "#111114" if bx.lum(_rgb(bg)) > 0.4 else "#FFFFFF")
     surface = _hexs(card.get("backgroundColor") or card.get("background-color") or "")
+    btn_bg = _hexs(btn.get("backgroundColor") or btn.get("background-color") or "")
+    if btn_bg and (not surface or surface.lower() == bg.lower()) and _sat(btn_bg) >= 0.2 and bx.lum(_rgb(btn_bg)) > 0.55:
+        surface = btn_bg  # a pale tinted button (Wispr Flow's lavender #F0D7FF) is the brand's surface colour, not its accent
+    prov = str(((got or {}).get("provenance") or {}).get("accent") or "")
+    if btn_bg and accent and accent.lower() == btn_bg.lower() and own.get("accent") and own["accent"].lower() != accent.lower() \
+            and _sat(own["accent"]) >= 0.18 and ("brand" in prov or "logo" in prov):
+        accent = own["accent"]  # the rendered accent is only the CTA button's colour; the brand colour is the site's own
     return {
         "engine": "context.dev",
         "mode": s.get("mode") or ("dark" if bx.lum(_rgb(bg)) < 0.4 else "light"),
@@ -277,13 +284,14 @@ def theme_from_tokens(t: dict, kit: dict | None = None) -> dict:
     typ = t.get("type") or {}
     upper = bool(typ.get("upper")) or head in DISPLAY_IDS
     vivid = _sat(accent) >= 0.45 and bx.lum(_rgb(accent)) > 0.04 if accent else False
+    serif_body = body in SERIF_IDS or bx.map_font(bf or "x")[0] in SERIF_IDS
     if head in DISPLAY_IDS or (upper and dark):
         layout = "bold_news"
     elif head in SERIF_IDS:
         layout = "editorial"
-    elif not dark and rk in ("round", "pill") and vivid:
+    elif not dark and rk in ("round", "pill") and vivid and not serif_body:
         layout = "playful"
-    else:
+    else:  # a plain sans headline (over a serif body too: YC's Hacker-News feel) is minimal, whatever the buttons' corners
         layout = "minimal"
     h1 = typ.get("h1_px")
     scale = 1.0
@@ -293,10 +301,32 @@ def theme_from_tokens(t: dict, kit: dict | None = None) -> dict:
     if not surface or bx.contrast(_rgb(surface), _rgb(bg)) > 1.6 or surface == bg:
         surface = bx.to_hex(tuple(int(_rgb(bg)[i] + (_rgb(text)[i] - _rgb(bg)[i]) * (0.07 if dark else 0.045)) for i in range(3)))
     radius = 0 if rk == "sharp" else int(rb if rb and rb < 100 else (40 if rk == "pill" else 14))
-    return {"layout": layout, "mode": "dark" if dark else "light", "surface": surface,
+    variant = pick_variant(layout, dark, bg, surface, accent, vivid, serif_body)
+    return {"layout": layout, "variant": variant, "mode": "dark" if dark else "light", "surface": surface,
             "radius": max(0, min(radius, 48)), "radius_kind": rk, "card_radius": int(rc) if rc and rc < 100 else radius,
             "head_font": head, "body_font": body, "case": "upper" if upper else "title", "scale": scale,
             "accent_usage": "fill" if layout in ("bold_news", "playful") else "line" if layout == "minimal" else "text"}
+
+
+VARIANTS = {"editorial": ("rules", "masthead"), "minimal": ("line", "bar")}
+
+
+def pick_variant(layout: str, dark: bool, bg: str, surface: str, accent: str, vivid: bool, serif_body: bool) -> str:
+    """Two sites in the same layout family should still look different, so each family has two compositions, picked
+    from more of the site's signals:
+
+      editorial  rules     logo + tracked kicker on a header rule, headline left (YC's serif pages, a plain paper ground)
+                 masthead  centred masthead, the headline on the brand's tinted surface block (Wispr Flow's lavender)
+      minimal    line      a short accent line over the headline (Linear, Notion)
+                 bar       a solid accent bar across the top, plain sans, the logo in the bar's shadow (YC / Hacker News)
+    """
+    if layout == "editorial":
+        tinted = bool(surface) and _sat(surface) >= 0.18 and surface.lower() != (bg or "").lower()
+        return "masthead" if tinted else "rules"
+    if layout == "minimal":
+        off_white = not dark and bg and bg.upper() not in ("#FFFFFF", "#FEFEFE", "#FDFDFD")
+        return "bar" if (not dark and vivid and (serif_body or off_white)) else "line"
+    return ""
 
 
 def theme_for_kit(kit: dict) -> dict:
@@ -313,6 +343,8 @@ def theme_for_kit(kit: dict) -> dict:
         th["layout"], th["accent_usage"] = "bold_news", "fill"
     elif th["head_font"] in SERIF_IDS:
         th["layout"], th["accent_usage"] = "editorial", "text"
+    if th.get("variant") not in VARIANTS.get(th["layout"], ("",)):
+        th["variant"] = VARIANTS.get(th["layout"], ("",))[0]
     return th
 
 
@@ -336,6 +368,8 @@ def clean_theme(v: Any) -> dict | None:
     out["radius_kind"] = v.get("radius_kind") if v.get("radius_kind") in ("sharp", "soft", "round", "pill") else radius_kind(out["radius"])
     out["case"] = "upper" if v.get("case") == "upper" else "title"
     out["accent_usage"] = v.get("accent_usage") if v.get("accent_usage") in ("fill", "line", "text") else "line"
+    if v.get("variant") in VARIANTS.get(out["layout"], ()):
+        out["variant"] = v["variant"]
     for f in ("head_font", "body_font"):
         if isinstance(v.get(f), str) and len(v[f]) < 30:
             out[f] = v[f]
