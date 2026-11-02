@@ -64,7 +64,7 @@ class BrandStudio:
         k["colors"] = dict(k.get("colors") or {})
         if ex.get("secondary"):
             k["colors"]["secondary"] = ex["secondary"]
-        k["font"] = ex.get("head_font") or k.get("font") or "anton"
+        k["font"] = ex.get("head_font") or k.get("font") or "inter"
         k["body_font"] = ex.get("body_font") or ("poppins" if k["font"] == "anton" else k["font"])
         k["headline_case"] = ex.get("headline_case") or ("upper" if k["font"] == "anton" else "title")
         fc = dict(ex.get("front_card") or {})

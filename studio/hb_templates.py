@@ -389,7 +389,7 @@ def save_card(b: T.Brand, ratio: str, n=None) -> Image.Image:
         hf, hl = T.fit_text(d, "@" + (b.handle.upper() if b.upper else b.handle), b.head, int(k * 0.12), W - 2 * m, 1)
         d.text(((W - d.textlength(hl[0], font=hf)) / 2, y), hl[0], font=hf, fill=b.accent)
         y += int(hf.size * 1.25)
-    line = b.end_line or "for daily AI news made simple"
+    line = b.end_line or (f"for more from {b.name}" if b.name else "for more like this")
     lf = b.body(int(k * 0.036))
     for ln in T.wrap(d, line, lf, W - 2 * m)[:2]:
         d.text(((W - d.textlength(ln, font=lf)) / 2, y), ln, font=lf, fill=T.mix(b.text, b.bg, 0.15))

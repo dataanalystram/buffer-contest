@@ -31,9 +31,10 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 FONT_DIR = Path(__file__).parent / "fonts"
 SIZES = {"4:5": (1080, 1350), "9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1600, 900)}
-HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf"}
+HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
+              "serif": "DMSerifDisplay-Regular.ttf"}
 BODY_FONTS = {"poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "inter-semibold": "Inter-SemiBold.ttf",
-              "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf"}
+              "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf", "serif": "Inter-Regular.ttf"}
 STYLES = {  # what a brand can pick for its front and end card instead of uploading one
     "bold": "Solid ground, a thick accent bar and the headline set big",
     "glow": "Dark ground with a soft accent glow behind the headline",
@@ -131,13 +132,15 @@ class Brand:
         self.name = (kit.get("name") or "").strip()
         self.handle = (kit.get("handle") or "").strip().lstrip("@")
         self.bg = hex_rgb(c.get("primary") or c.get("ground"), (17, 17, 20))
-        self.accent = hex_rgb(c.get("accent"), (201, 172, 250))
         self.text = hex_rgb(c.get("text"), (255, 255, 255))
+        # no accent in the kit: a neutral between the text and the ground, never another brand's colour (the HuhByte
+        # lavender used to be the fallback here and showed up in other brands' renders)
+        self.accent = hex_rgb(c.get("accent"), mix(self.text, self.bg, 0.12))
         self.second = hex_rgb(c.get("secondary") or "", mix(self.accent, self.bg, 0.55))
         if contrast(self.text, self.bg) < 3:  # never ship unreadable text: fall back to black or white
             self.text = (255, 255, 255) if _lum(self.bg) < 0.4 else (17, 17, 20)
         self.on_accent = (17, 17, 20) if _lum(self.accent) > 0.35 else (255, 255, 255)
-        self.head_file = HEAD_FONTS.get(kit.get("font") or "anton", "Anton.ttf")
+        self.head_file = HEAD_FONTS.get(kit.get("font") or "inter", "Inter-Bold.ttf")
         self.body_file = BODY_FONTS.get(kit.get("body_font") or ("poppins" if kit.get("font") == "anton" else kit.get("font") or "inter"),
                                         "Inter-Regular.ttf")
         self.upper = (kit.get("headline_case") or ("upper" if kit.get("font") == "anton" else "title")) == "upper"

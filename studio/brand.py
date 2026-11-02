@@ -14,13 +14,18 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
-FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf"}
-BODY_FONTS = {"anton": "Inter-SemiBold.ttf", "poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "figtree": "Figtree-Medium.ttf"}
+FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
+         "serif": "DMSerifDisplay-Regular.ttf"}
+BODY_FONTS = {"anton": "Inter-SemiBold.ttf", "poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "figtree": "Figtree-Medium.ttf",
+              "serif": "Inter-Regular.ttf"}
+# What a kit looks like before the brand is set: neutral greys and Inter, so nothing of the HuhByte sample (black,
+# lavender #C9ACFA, Anton) leaks into another brand's renders (owner, 2 Nov 2026). Set colours win everywhere.
+NEUTRAL_ACCENT = "#E8E8E8"
 
 DEFAULT_KIT = {
     "name": "", "handle": "", "website": "",
-    "colors": {"primary": "#111114", "accent": "#C9ACFA", "text": "#FFFFFF"},
-    "font": "anton", "logo": "", "end_card": {"on": True, "line": "", "cta": "Follow"},
+    "colors": {"primary": "#111114", "accent": NEUTRAL_ACCENT, "text": "#FFFFFF"},
+    "font": "inter", "logo": "", "end_card": {"on": True, "line": "", "cta": "Follow"},
     "voice": "", "updated": 0,
 }
 
@@ -227,7 +232,7 @@ RULE_SCHEMA_HINT = (
     'Return JSON {"rules":[{"kind":"text"|"visual","check":{...},"rule":"short human rule"}]}. check.type is one of: '
     'banned_words{words}, no_emoji, max_hashtags{n}, no_exclamation, ends_with{text}, require_text{text}, caption_case{value:"lower"}, '
     'max_length{n}, logo_position{pos:tl|tr|bl|br}, logo_scale{scale:0.05-0.2}, end_card{on, cta?}, headline_case{value:upper|sentence}, '
-    'headline_max_words{n}, accent_color{hex}, font{name:anton|poppins|inter|figtree}, overlay{value:0-0.9}, source_credit{on}. '
+    'headline_max_words{n}, accent_color{hex}, font{name:anton|poppins|inter|figtree|serif}, overlay{value:0-0.9}, source_credit{on}. '
     'Only rules the correction clearly implies; [] if none.')
 
 VALID_TYPES = {"banned_words", "no_emoji", "max_hashtags", "no_exclamation", "ends_with", "require_text", "caption_case",
@@ -253,7 +258,7 @@ def visual_params(kit: dict, rules: list[dict]) -> dict:
     """What a render should do, after every visual rule in the ledger is applied (newest wins)."""
     p = dict(VISUAL_DEFAULTS)
     p["colors"] = dict(kit.get("colors") or DEFAULT_KIT["colors"])
-    p["font"] = kit.get("font") or "anton"
+    p["font"] = kit.get("font") or "inter"
     p["end_card"] = bool((kit.get("end_card") or {}).get("on", True))
     applied = []
     for r in rules:

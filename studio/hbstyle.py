@@ -18,7 +18,7 @@ import re
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-from .brand import BODY_FONTS, FONTS, hex_to_rgb
+from .brand import BODY_FONTS, FONTS, NEUTRAL_ACCENT, hex_to_rgb
 
 SIZES = {"4:5": (1080, 1350), "9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 # Instagram/TikTok/YouTube UI zones on a 9:16 frame (top status/header, bottom caption/buttons, right action rail)
@@ -31,8 +31,8 @@ def _r():
 
 
 def _fonts(p: dict) -> tuple[str, str, str]:
-    key = p.get("font") or "anton"
-    head = FONTS.get(key, "Anton.ttf")
+    key = p.get("font") or "inter"
+    head = FONTS.get(key, "Inter-Bold.ttf")
     body = BODY_FONTS.get(key, "Inter-SemiBold.ttf")
     strong = {"Inter-SemiBold.ttf": "Inter-Bold.ttf", "Poppins-Medium.ttf": "Poppins-Bold.ttf", "Inter-Regular.ttf": "Inter-SemiBold.ttf"}.get(body, body)
     return head, body, strong
@@ -40,7 +40,7 @@ def _fonts(p: dict) -> tuple[str, str, str]:
 
 def colors(p: dict):
     c = p.get("colors") or {}
-    return (hex_to_rgb(c.get("primary") or "#111114"), hex_to_rgb(c.get("accent") or "#C9ACFA"),
+    return (hex_to_rgb(c.get("primary") or "#111114"), hex_to_rgb(c.get("accent") or NEUTRAL_ACCENT),
             hex_to_rgb(c.get("text") or "#FFFFFF"))
 
 

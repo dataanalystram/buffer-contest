@@ -139,7 +139,7 @@ class House:
                 if k in patch["end_card"]:
                     cur["end_card"][k] = patch["end_card"][k] if k == "on" else str(patch["end_card"][k] or "")[:80]
         if cur["font"] not in brand.FONTS:
-            cur["font"] = "anton"
+            cur["font"] = "inter"
         cur["handle"] = cur["handle"].lstrip("@")
         cur["updated"] = _now()
         data = {k: cur[k] for k in brand.DEFAULT_KIT}
