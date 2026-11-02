@@ -26,8 +26,6 @@ import re
 import time
 from typing import Any
 
-from fastapi import Body, Request
-
 from . import templates
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS custom_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, slug TEXT, name TEXT, "
@@ -352,29 +350,4 @@ def call_tool(studio, actor, name: str, args: dict):
         raise ActionError(str(e), 400)
     return NotImplemented
 
-
-def add_routes(app, house, actor) -> None:
-    from .actions import ActionError
-    ct = attach(house)
-
-    def call(fn, *args):
-        try:
-            return fn(*args)
-        except TemplateError as e:
-            raise ActionError(str(e), 400)
-
-    @app.get("/api/templates/custom")
-    def ct_list(request: Request):
-        return {"templates": ct.list(actor(request)), "max": MAX_CUSTOM, "slide_types": SLIDE_TYPES, "layouts": list(LAYOUT_CHOICES)}
-
-    @app.post("/api/templates/custom")
-    def ct_create(request: Request, body: dict = Body(...)):
-        return call(ct.create, actor(request, write=True), body)
-
-    @app.patch("/api/templates/custom/{ref}")
-    def ct_update(ref: str, request: Request, body: dict = Body(...)):
-        return call(ct.update, actor(request, write=True), ref, body)
-
-    @app.delete("/api/templates/custom/{ref}")
-    def ct_delete(ref: str, request: Request):
-        return call(ct.delete, actor(request, write=True), ref)
+# REST routes live in studio/brand_routes.py (it imports FastAPI; this module stays importable by the video worker).

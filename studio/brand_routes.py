@@ -86,6 +86,33 @@ def add_routes(app: FastAPI, house, actor) -> None:
     def tpl_list(request: Request):
         return bs.list_templates(actor(request))
 
+    # ---------------------------------------------------------------- custom templates (studio/custom_templates.py)
+    from . import custom_templates as ctm
+    ct = ctm.attach(house)
+
+    def ct_call(fn, *args):
+        try:
+            return fn(*args)
+        except ctm.TemplateError as e:
+            _err(e)
+
+    @app.get("/api/templates/custom")
+    def ct_list(request: Request):
+        return {"templates": ct.list(actor(request)), "max": ctm.MAX_CUSTOM, "slide_types": ctm.SLIDE_TYPES,
+                "layouts": list(ctm.LAYOUT_CHOICES)}
+
+    @app.post("/api/templates/custom")
+    def ct_create(request: Request, body: dict = Body(...)):
+        return ct_call(ct.create, actor(request, write=True), body)
+
+    @app.patch("/api/templates/custom/{ref}")
+    def ct_update(ref: str, request: Request, body: dict = Body(...)):
+        return ct_call(ct.update, actor(request, write=True), ref, body)
+
+    @app.delete("/api/templates/custom/{ref}")
+    def ct_delete(ref: str, request: Request):
+        return ct_call(ct.delete, actor(request, write=True), ref)
+
     @app.get("/api/templates/recap")
     def tpl_recap(request: Request, template: str = "weekly_recap"):
         return call(bs.recap_data, actor(request), template)

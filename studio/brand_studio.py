@@ -241,11 +241,12 @@ class BrandStudio:
         if not kit_id:
             kit = self.kit(a)
             return kit, self.brand_obj(a, kit)
-        from . import brand_kits
-        bk = brand_kits.attach(self.house)
+        bk = getattr(self.house, "brand_kits", None)  # attached by brand_kits.add_routes (no import: the worker never loads it)
+        if bk is None:
+            raise StudioError("Brand kits aren't set up on this server.")
         try:
             row = bk._get(a, int(kit_id))
-        except (brand_kits.KitError, ValueError, TypeError):
+        except (ValueError, TypeError):  # KitError is a ValueError
             raise StudioError("No such brand kit (list_brand_kits gives the ids).")
         k = json.loads(row["data"] or "{}")
         kit = dict(self.kit(a))

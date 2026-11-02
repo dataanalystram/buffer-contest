@@ -855,8 +855,6 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     brand_onboard.add_routes(app, house, actor)
     from . import brand_kits  # several kits, one active; the builder's live gallery (UI = REST = MCP)
     brand_kits.add_routes(app, house, actor)
-    from . import custom_templates as custom_tpl_mod  # custom post templates per workspace (UI = REST = MCP = agent tool)
-    custom_tpl_mod.add_routes(app, house, actor)
     from . import agent_routes  # agent brain, natural-language edits, onboarding, recommendations (UI = REST = MCP)
     agent_routes.add_routes(app, house, actor)
     from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)
