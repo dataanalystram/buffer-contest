@@ -132,6 +132,7 @@ def test_nvidia_tool_call_round_trip_and_free_ledger(app, human, free_keys):
     assert req.headers["authorization"] == "Bearer nvapi-test-not-real"
     body = json.loads(req.content)
     assert body["model"] == "nvidia/nemotron-3-ultra-550b-a55b" and body["tools"][0]["function"]["name"] == "read_link"
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}  # Nemotron reasons by default: too slow for agent steps
     assert out["text"] == "Checking."  # the <think> block is not shown
     tc = out["tool_calls"][0]
     assert tc["name"] == "read_link" and tc["input"] == {"url": "https://example.com/a"} and tc["id"].startswith("call_0")
