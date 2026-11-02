@@ -120,7 +120,7 @@
       $("#sdNew").onclick = async () => { try { await makeCode(); $("#sdList").innerHTML = ""; status(); } catch (e) { err($("#sdErr"), e.message); } };
       $("#sdCopy").onclick = async () => {
         try { await navigator.clipboard.writeText(S.link); $("#sdCopy").textContent = "Copied"; setTimeout(() => ($("#sdCopy").textContent = "Copy link"), 1500); }
-        catch (_) { window.prompt("Copy this link", S.link); }
+        catch (_) { $("#sdPage").textContent = S.link.replace(/^https?:\/\//, ""); $("#sdCopy").textContent = "Copy it from above"; }
       };
       return;
     }
