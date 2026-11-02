@@ -144,8 +144,12 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `get_onboarding` | client brain * | The person's content types, channels, website, tone and X watchlist, with the options to choose from. |
 | `set_onboarding` | client brain * | Save onboarding choices: content_types (ai_news, product_launches, yc_startups, tutorials, dev_tools, memes, india_tech, research, funding, open_source), channel_ids, tone, website (builds the brand kit), x_watchlist (handles or… |
 | `get_recommendations` | client brain * | A feed tailored to the person's content types plus up to three ready-to-approve posts in their brand (cover + captions). |
-| `get_ai_engine` | client brain * | The in-app agent's AI engine (claude, gemini-flash, gemini-pro, own, free or auto), which one will actually run, each engine's credit in plain words ("Claude: $0.34 of your $1 used", "Gemini (Oracle): free during the contest, $0.00 of your $3 used") and the app-wide pools. |
+| `get_ai_engine` | client brain * | The in-app agent's AI engine (gemini-studio, nvidia, hf, claude, own, free or auto), which one will actually run, each engine's logo, free/paid tier, usage ("3 of 150 calls today", "$0.34 of $1") and the app-wide pools. A key you saved for an engine runs it. |
 | `set_ai_engine` | client brain * | Choose the in-app agent's engine. Out of credit or erroring, it falls back to the next one automatically (a note in the run). |
+| `get_ai_logs` | read | Recent AI calls: time, engine, model, task, latency, tokens, cost, fallback reason, ok/error. Filters engine, status, task, q; paged. |
+| `list_ai_keys` | read | Your own AI keys per provider (Anthropic, OpenAI, Google AI Studio, NVIDIA, Hugging Face, Groq, OpenRouter, custom), masked. |
+| `save_ai_key` | people only | Test and save your key for a provider; agent tokens are refused (use Settings > AI engine). |
+| `delete_ai_key` | people only | Delete your key for a provider; agent tokens are refused. |
 | `get_brain` | client brain * | Which AI runs the in-app agent for this account (Claude, their own key, the free model or the rule writer) and the included budget left. |
 
 ### Run tools (`post_*`): one step of a Make a post run

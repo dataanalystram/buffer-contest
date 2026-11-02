@@ -199,7 +199,7 @@ def _call(engine: dict, store, uid: str, label: str, *, system: str, messages: l
             r = netguard.safe_post(base + "/messages", http=http, json=body, timeout=timeout, allowed_hosts=hosts,
                                    headers=anthropic_headers(engine["api_key"]))
             if r.status_code >= 400:
-                if engine.get("id") == "claude" and (r.status_code in (401, 403) or "credit balance" in r.text):
+                if engine.get("id") == "claude" and not engine.get("byo") and (r.status_code in (401, 403) or "credit balance" in r.text):
                     from . import ai_engines
                     ai_engines.mark_down("claude", "Anthropic refused the app's key" if r.status_code != 400 else "the app's Anthropic credit is used up")
                 raise llm.LLMError(f"{engine['provider']} answered HTTP {r.status_code}: {r.text[:200]}")
