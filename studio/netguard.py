@@ -212,7 +212,7 @@ def safe_get(url: str, *, limit: int = 5_000_000, http: httpx.Client | None = No
 
 def safe_post(url: str, *, http: httpx.Client | None = None, json=None, headers: dict | None = None, timeout: float = 60,
               https_only: bool = True, allowed_hosts: set[str] | frozenset[str] | None = None,
-              limit: int = 5_000_000) -> httpx.Response:
+              limit: int = 5_000_000, content: bytes | None = None) -> httpx.Response:
     """One POST to an outside API (the AI model endpoints): the host is checked on THIS call (optionally against an
     allowlist), the connection is pinned to the vetted IP, a redirect is never followed, and the body is capped."""
     check_url(url, https_only=https_only)
@@ -222,7 +222,8 @@ def safe_post(url: str, *, http: httpx.Client | None = None, json=None, headers:
     own = http is None
     c = http or client(timeout, headers)
     try:
-        req, pinned = pinned_request(c, "POST", url, headers=headers, json=json)
+        body_kw = {"content": content} if content is not None else {"json": json}
+        req, pinned = pinned_request(c, "POST", url, headers=headers, **body_kw)
         r = c.send(req, stream=True, follow_redirects=False)
         try:
             if pinned:

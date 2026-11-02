@@ -382,6 +382,7 @@ _DESC = {
     "GET /api/templates/slots": "Recurring template slots", "POST /api/templates/slots": "Add a recurring slot", "DELETE /api/templates/slots/{sid}": "Delete a recurring slot",
     "POST /api/templates/slots/{sid}/run": "Run a recurring slot now", "GET /api/templates/video/{jid}": "Status of a template video render",
     "GET /api/ai": "Your AI engine settings (keys never returned)", "POST /api/ai": "Save your AI engine and key",
+    "GET /api/ai/engine": "Which model runs your agent, with each model's credit", "PUT /api/ai/engine": "Choose the model that runs your agent",
     "POST /api/agent-tokens": "Create an agent token (shown once)", "DELETE /api/agent-tokens/{token_id}": "Revoke an agent token",
     "GET /api/safety": "Kill switch and daily caps", "POST /api/safety/kill": "Pause or resume every agent (people only)",
     "GET /api/limits": "Your Buffer API budget right now", "GET /api/plan": "Your Buffer plan's limits",

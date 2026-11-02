@@ -347,15 +347,56 @@ def apply_palette(brand: dict, cfg: dict, keep_brand: bool = False) -> dict:
     return out
 
 
+# The gallery's categories (the picker's left rail), a one-line description, a typical length and a popularity rank.
+CATEGORIES = ("news", "startups", "clips", "explainers", "cinematic")
+CATEGORY_LABELS = {"news": "News", "startups": "Startups", "clips": "Clips", "explainers": "Explainers", "cinematic": "Cinematic"}
+GALLERY = {
+    # id: (category, one-line description, typical length, popularity rank: lower = more popular)
+    "huhbyte_news": ("news", "Branded hook cover, then the story with bold captions.", "30-45s", 1),
+    "opus": ("clips", "Finds the best 20-45 s moment and reframes it full screen.", "20-45s", 2),
+    "caption_news": ("news", "Sound-off news: full-screen footage, huge captions.", "20-40s", 3),
+    "hype": ("clips", "Fast cuts and one giant word at a time.", "15-30s", 4),
+    "minimal": ("explainers", "Calm framed video with clean, small captions.", "30-60s", 5),
+    "dark_keynote": ("startups", "A dark launch-keynote stage for product reveals.", "30-45s", 6),
+    "cinematic": ("cinematic", "Letterbox bars, teal-and-orange grade, film grain.", "30-60s", 7),
+    "screencast": ("explainers", "Looks like a real app screen recording.", "30-60s", 8),
+    "news_package": ("news", "An on-air news package with lower thirds.", "45-60s", 9),
+    "countdown": ("startups", "Launch-day energy with a live countdown.", "20-40s", 10),
+    "crt": ("startups", "Amber terminal glow for repos and dev tools.", "20-40s", 11),
+    "hologram_hud": ("explainers", "Sci-fi HUD for specs, chips and benchmarks.", "30-45s", 12),
+    "glass_studio": ("startups", "A black product stage with a reflective floor.", "20-40s", 13),
+    "investigation": ("news", "A cold evidence desk for fact-checks and leaks.", "45-60s", 14),
+    "swiss": ("explainers", "Swiss grid typography on a light page.", "30-45s", 15),
+    "game_show": ("clips", "Candy stripes and giant numbers for rankings.", "30-45s", 16),
+    "tilt_shift": ("cinematic", "The world as a tabletop miniature.", "20-40s", 17),
+    "newsreel": ("cinematic", "A 1920s sound newsreel in a projected gate.", "30-45s", 18),
+    "silent_film": ("cinematic", "Flickering sepia with title cards.", "30-45s", 19),
+    "kino": ("cinematic", "Constructivist ink-and-paper with a single red.", "30-45s", 20),
+    "risograph": ("explainers", "Blue ink printed on warm paper.", "20-40s", 21),
+}
+
+
+def _gallery(k: str, about: str) -> dict:
+    cat, short, dur, rank = GALLERY.get(k, ("explainers", (about or "").split(":")[0][:90], "30-45s", 99))
+    return {"category": cat, "category_label": CATEGORY_LABELS[cat], "short": short, "duration": dur, "popularity": rank}
+
+
 def describe_themes() -> list[dict]:
-    """Every pickable look (the four base styles first, then the themes) for the gallery, REST, MCP and the agent."""
+    """Every pickable look (the four base styles first, then the themes) for the gallery, REST, MCP and the agent.
+    Each carries its gallery category, a one-line description, a typical length and a popularity rank."""
     out = [{"id": k, "label": v["label"], "about": v["about"], "best_for": v["best_for"], "base": k, "kind": "style",
-            "source": "HuhQueue", "thumb": f"/static/themes/{k}.jpg", "loop": f"/static/themes/{k}.mp4"} for k, v in STYLE_PRESETS.items()]
+            "source": "HuhQueue", "thumb": f"/static/themes/{k}.jpg", "loop": f"/static/themes/{k}.mp4", **_gallery(k, v["about"])}
+           for k, v in STYLE_PRESETS.items()]
     for k, t in THEMES.items():
         out.append({"id": k, "label": t["label"], "about": t["about"], "best_for": t["best_for"], "base": t["base"], "kind": "theme",
                     "source": t["source"], "thumb": f"/static/themes/{k}.jpg", "loop": f"/static/themes/{k}.mp4",
-                    "music": t["music"], "captions": t["captions"]})
+                    "music": t["music"], "captions": t["captions"], **_gallery(k, t["about"])})
     return out
+
+
+def theme_categories() -> list[dict]:
+    themes = describe_themes()
+    return [{"id": c, "label": CATEGORY_LABELS[c], "count": sum(1 for t in themes if t["category"] == c)} for c in CATEGORIES]
 
 
 def _rx(pats, s: str) -> int:

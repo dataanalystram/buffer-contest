@@ -195,33 +195,32 @@ def test_e2e_theme_toggle_persists(live, chromium, close_contexts, w):
 
 # ---------------------------------------------------------------- video theme picker + every sideways strip (owner, 1 Nov)
 @pytest.mark.parametrize("w", [1440, 390])
-def test_e2e_theme_picker_collapsed_then_wrapped_grid(live, chromium, close_contexts, w):
+def test_e2e_theme_picker_compact_card_then_modal(live, chromium, close_contexts, w):
+    # 2 Nov 2026 redesign: one compact "Video style" card on the page; the gallery lives in a modal that scrolls itself
+    # (test_theme_modal_e2e.py covers search, categories, favourites and keys)
     ctx, page = _page(live, chromium, w=w, h=844 if w == 390 else 900)
     page.goto(base_of(live) + "/?tab=agent")
-    sm = page.get_by_test_id("theme-summary")
+    sm = page.get_by_test_id("theme-change")
     sm.wait_for()
-    assert "Let the agent choose" in sm.inner_text() and sm.get_attribute("aria-expanded") == "false"
-    assert not page.get_by_test_id("theme-picker").is_visible()  # collapsed by default
+    assert "Let the agent choose" in page.get_by_test_id("video-style-name").inner_text()
+    assert not page.get_by_test_id("theme-picker").is_visible()  # no gallery on the page
     sm.click()
     grid = page.get_by_test_id("theme-picker")
-    grid.locator(".hqt-card").nth(3).wait_for()
-    n = grid.locator(".hqt-card").count()
+    grid.locator(".hqt-tc").nth(3).wait_for()
+    n = grid.locator(".hqt-tc").count()
     assert n >= 10
-    # wrapped: nothing hides to the right, every card is inside the grid's box
-    assert grid.evaluate("g => g.scrollWidth <= g.clientWidth + 1")
-    gb = grid.bounding_box()
-    last = grid.locator(".hqt-card").nth(n - 1).bounding_box()
-    assert last["x"] + last["width"] <= gb["x"] + gb["width"] + 1
-    grid.locator(".hqt-card").nth(2).click()  # picking closes it and the row names the theme
-    assert sm.get_attribute("aria-expanded") == "false"
-    assert "Let the agent choose" not in sm.inner_text()
+    assert grid.evaluate("g => g.scrollWidth <= g.clientWidth + 1")  # nothing hides to the right
+    grid.locator(".hqt-tc").nth(2).click()
+    page.get_by_test_id("theme-apply").click()
+    assert not page.get_by_test_id("theme-modal").is_visible()
+    assert "Let the agent choose" not in page.get_by_test_id("video-style-name").inner_text()
     assert page.evaluate("localStorage.getItem('hq_theme')")
 
 
 def test_e2e_sideways_strips_scroll_with_wheel_drag_keys_and_buttons(live, chromium, close_contexts):
     ctx, page = _page(live, chromium, w=1440)
     page.goto(base_of(live) + "/?tab=agent")
-    page.get_by_test_id("theme-summary").wait_for()
+    page.get_by_test_id("theme-change").wait_for()
     page.evaluate("""() => { const s = document.createElement('div'); s.className = 'strip'; s.id = 'tstrip';
       s.style.cssText = 'width:300px;height:120px'; s.innerHTML = Array.from({length: 12}, (_, i) => `<img alt="" style="height:100px;width:140px" src="data:,">`).join('');
       document.querySelector('#tab-agent').prepend(s); }""")

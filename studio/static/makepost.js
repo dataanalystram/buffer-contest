@@ -40,7 +40,7 @@
   const STATE = { ready: "Ready", draft: "Draft", scheduled: "Scheduled", running: "Working", failed: "Failed" };
   const q = () => $("#agQuery");
   const fill = (text, fmt) => { const t = q(); t.value = text; t.dispatchEvent(new Event("input")); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
-    if (fmt) $("#agFormat").value = fmt; };
+    if (fmt) { $("#agFormat").value = fmt; window.mpThemePicker && window.mpThemePicker.refresh(); } };
 
   // ------------------------------------------------------------ stepper
   function setStep(name) {
@@ -136,7 +136,11 @@
     el.hidden = false; el.dataset.mounted = "1";
     let v = ""; try { v = localStorage.getItem("hq_theme") || ""; } catch (_) {}
     H_STATE.theme = v;
-    window.HQThemes.mount(el, { value: v, onChange: (x) => { H_STATE.theme = x; try { localStorage.setItem("hq_theme", x || ""); } catch (_) {} } });
+    const FMT = { auto: "Auto format", reel: "Reel 9:16", carousel: "Carousel 4:5", photo: "Image", text: "Text" };
+    const picker = window.HQThemes.mount(el, { value: v, formatLabel: () => FMT[$("#agFormat").value] || "",
+      onChange: (x) => { H_STATE.theme = x; try { localStorage.setItem("hq_theme", x || ""); } catch (_) {} } });
+    $("#agFormat").addEventListener("change", () => picker.refresh());
+    window.mpThemePicker = picker;
   }
 
   // ------------------------------------------------------------ Discover (the feeds you follow, /api/radar)

@@ -1,0 +1,34 @@
+/* The AI engine switch (aiengine.js): Settings > AI engine cards and the composer's compact "Model" select. */
+.ai-eng{margin-bottom:16px}
+.ai-eng-head{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
+.ai-eng-head .card-title{margin:0}
+.ai-eng-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.ai-eng-o{display:flex;flex-direction:column;align-items:stretch;gap:6px;text-align:left;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;
+  background:var(--raised);color:var(--ink);font:inherit;cursor:pointer;min-width:0;transition:border-color var(--fast),box-shadow var(--fast)}
+.ai-eng-o:hover{border-color:var(--line-strong)}
+.ai-eng-o.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.ai-eng-o:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.ai-eng-o.na:not(.on){background:var(--sunken)}
+.ai-eng-o:disabled{cursor:not-allowed;opacity:.72}
+.ai-eng-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ai-eng-top b{font-size:15px;line-height:1.3}
+.ai-eng-b{flex:none;font-size:11px;font-weight:700;line-height:1;padding:4px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em}
+.ai-eng-b.on{background:var(--accent);color:var(--on-accent)}
+.ai-eng-b.off{background:var(--sunken);color:var(--muted);border:1px solid var(--line)}
+.ai-eng-ab{font-size:13px;line-height:1.4;color:var(--muted)}
+.ai-eng-cr{font-size:13px;line-height:1.4;font-weight:600}
+.ai-eng-bar{display:block;height:6px;border-radius:999px;background:var(--sunken);overflow:hidden}
+.ai-eng-bar i{display:block;height:100%;background:var(--ok);border-radius:inherit}
+.ai-eng-bar.low i{background:var(--warn)}.ai-eng-bar.out i{background:var(--bad)}
+.ai-eng-w{font-size:12.5px;font-weight:600}.ai-eng-w.low{color:var(--warn)}.ai-eng-w.out{color:var(--bad)}
+.ai-eng-why{font-size:12.5px;line-height:1.4;color:var(--muted)}
+.ai-eng-note,.ag-eng-note{margin:0 0 12px;padding:8px 12px;border-radius:8px;background:var(--sunken);border:1px solid var(--line);font-size:13px;line-height:1.45}
+.ag-eng-note{margin:8px 0 0}
+.ai-eng-pools{margin:12px 0 0}
+/* composer: "Model [Claude · $0.66 left ▾]  Writing with: Claude" */
+.chips-head{flex-wrap:wrap}
+.ag-eng{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;justify-content:flex-end}
+.ag-eng-l{font-size:13px;font-weight:600;color:var(--muted)}
+.ag-eng-sel{height:34px;min-height:34px;border-radius:8px;padding:0 8px;font-size:13px;max-width:220px}
+@media (max-width:1023px){.ag-eng-sel{height:44px;min-height:44px}}  /* touch: 44 px taps */
+@media (max-width:640px){.ag-eng{width:100%;justify-content:flex-start}.ag-eng-sel{flex:1;max-width:none}}
