@@ -8,11 +8,11 @@
 .bmark.mono b{font-size:13px;font-weight:800;letter-spacing:-.02em;color:var(--brand,var(--ink))}
 :root[data-theme=dark] .bmark[data-mark=x],:root[data-theme=dark] .bmark[data-mark=github],:root[data-theme=dark] .bmark[data-mark=threads],
 :root[data-theme=dark] .bmark[data-mark=openai],:root[data-theme=dark] .bmark[data-mark=tiktok],:root[data-theme=dark] .bmark[data-mark=mcp],
-:root[data-theme=dark] .bmark[data-mark=anthropic]{color:var(--ink)}
+:root[data-theme=dark] .bmark[data-mark=anthropic],:root[data-theme=dark] .bmark[data-mark=buffer]{color:var(--ink)}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]) .bmark[data-mark=x],:root:not([data-theme=light]) .bmark[data-mark=github],
   :root:not([data-theme=light]) .bmark[data-mark=threads],:root:not([data-theme=light]) .bmark[data-mark=openai],
   :root:not([data-theme=light]) .bmark[data-mark=tiktok],:root:not([data-theme=light]) .bmark[data-mark=mcp],
-  :root:not([data-theme=light]) .bmark[data-mark=anthropic]{color:var(--ink)}}
+  :root:not([data-theme=light]) .bmark[data-mark=anthropic],:root:not([data-theme=light]) .bmark[data-mark=buffer]{color:var(--ink)}}
 
 /* (i) button + popover */
 .info-i{display:inline-grid;place-items:center;width:20px;height:20px;min-height:0;padding:0;border-radius:999px;border:1px solid var(--line-strong);

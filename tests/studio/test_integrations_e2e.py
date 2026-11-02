@@ -52,8 +52,8 @@ def test_settings_integrations_cards_save_test_remove(demo_live, chromium):
         page.click("[data-testid=integ-test-ph]")
         _until(lambda: page.inner_text("[data-testid=integ-msg-ph]").strip() not in ("", "Checking with the service…"))
         msg = page.inner_text("[data-testid=integ-msg-ph]"); assert "sample" in msg.lower(), msg
-        page.on("dialog", lambda d: d.accept())
         page.click("[data-testid=integ-remove-ph]")
+        page.get_by_test_id("ask-ok").click()  # the in-app confirm (askdialog.js), not a native dialog
         _until(lambda: "by HuhQueue" in page.inner_text("[data-testid=integ-card-ph] [data-testid=integ-status]"))  # the shared app-level read
         page.click("[data-testid=integ-dialog-close]")
         page.wait_for_selector("[data-testid=integ-dialog]", state="hidden")
