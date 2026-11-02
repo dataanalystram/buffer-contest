@@ -28,7 +28,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-from . import captions, ff, music, textfit
+from . import captions, ff, textfit  # music (numpy) is imported where a video gets a bed: the web dyno has no numpy
 
 SIZES = {"9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080)}
 FPS = 30
@@ -724,6 +724,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         ff.run(["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", video], timeout=300)
 
         mood = cfg["music"] if music_mood == "auto" else music_mood
+        from . import music
         wav = music.make(str(wd / "music.wav"), total + 0.5, mood) if mood != "none" else None
         outp = Path(out)
         outp.parent.mkdir(parents=True, exist_ok=True)

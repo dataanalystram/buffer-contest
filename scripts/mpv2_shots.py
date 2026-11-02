@@ -39,7 +39,7 @@ def watch(pg):
 
 
 with sync_playwright() as p:
-    b = p.chromium.launch()
+    b = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
     ctx = b.new_context(viewport={"width": 1440, "height": 1000})
     ctx.add_init_script("localStorage.setItem('hq_tour_done', '1')")
     pg = ctx.new_page(); watch(pg)

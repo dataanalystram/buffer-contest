@@ -93,7 +93,7 @@ with sync_playwright() as p:
     pg.screenshot(path=str(out / "07_ai.png"), full_page=True)
     m = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
     m.add_init_script("localStorage.setItem('hq_tour_done', '1')")
-    m.goto(base + "/demo"); m.wait_for_selector("[data-testid=inbox-title]"); time.sleep(1)
+    m.goto(base + "/demo"); m.wait_for_selector("[data-testid=bk-builder]", timeout=60000); time.sleep(1)  # the sample opens on Brand > Kit
     m.screenshot(path=str(out / "08_mobile.png"), full_page=True)
     b.close()
 (out / "errors.txt").write_text("\n".join(errors) or "no browser errors")
