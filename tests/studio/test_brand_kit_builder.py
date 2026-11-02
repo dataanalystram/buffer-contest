@@ -149,7 +149,7 @@ def test_kit_lifecycle_rest_create_preview_activate_and_templates_follow(human):
     human.patch(f"/api/brand-kits/{kid}", json={"colors": {"background": "#101820", "primary": "#00C2A8"}})
     assert human.get("/api/brand-studio").json()["kit"]["colors"]["accent"] == "#00C2A8", "editing the active kit restyles at once"
     lst = human.get("/api/brand-kits").json()
-    assert lst["active_id"] == kid and len(lst["kits"]) == 1
+    assert lst["active_id"] == kid and sorted(k["name"] for k in lst["kits"]) == ["Acme", "HuhByte AI"]
     assert human.delete(f"/api/brand-kits/{kid}").status_code == 400  # never the active kit
 
 

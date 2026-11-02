@@ -555,6 +555,10 @@ class BrandKits:
             k["theme"] = design_system.theme_for_kit(k)
             r["data"] = json.dumps(k)
             self.store.x("UPDATE brand_kit_library SET data=? WHERE id=? AND user_id=?", (r["data"], r["id"], a.uid))
+            if r["id"] == self._active(a):  # the active kit's renders follow at once
+                ex = self.bs.extras(a)
+                ex["theme"] = k["theme"]
+                self.bs._put(a, ex)
 
     def design_md(self, a, kid: int) -> str:
         k = json.loads(self._get(a, kid)["data"] or "{}")
