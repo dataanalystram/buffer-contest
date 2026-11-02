@@ -92,7 +92,8 @@ def test_app_shell_uses_wide_screens(demo_live, chromium, close_contexts):
         ctx = chromium.new_context(viewport={"width": w, "height": 1000})
         ctx.add_init_script("try{localStorage.setItem('hq_tour_done','1')}catch(e){}")
         pg = ctx.new_page()
-        pg.goto(base + "/demo", wait_until="networkidle")
+        pg.goto(base + "/demo", wait_until="networkidle")  # the sample opens on Brand > Kit; the Inbox is one click away
+        pg.goto(base + "/?tab=inbox", wait_until="networkidle")
         pg.wait_for_selector("#tab-inbox:not([hidden])")
         widths[w] = pg.evaluate("document.getElementById('tab-inbox').getBoundingClientRect().width")
         if w == 1920:  # agent activity and recommendations side by side

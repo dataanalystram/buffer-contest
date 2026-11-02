@@ -218,3 +218,49 @@ def test_extract_brand_over_mcp_uses_the_extractor(human, monkeypatch):
     assert [s["label"] for s in pv["stills"]] == ["Reel cover", "Carousel cover", "Square post"]
     _, made = mcp_call(human, tok, "create_brand_kit", {"url": "acme.test", "activate": True})
     assert made["kit"]["name"] == "Acme Rockets" and made["active"]
+
+
+# ------------------------------------------------------------------------------------------------ the builder's calls
+def test_builder_list_has_fonts_body_fonts_and_the_sample_brands(human):
+    lst = human.get("/api/brand-kits").json()
+    assert lst["fonts"]["dot"].startswith("Doto") and lst["fonts"]["serif"] == "DM Serif Display"
+    assert set(lst["body_fonts"]) == set(brand_kits.BODY_CHOICES)
+    assert [s["id"] for s in lst["samples"]] == ["nothing", "linear", "notion"]
+    assert all(s["label"] == "Sample brand, not affiliated" for s in lst["samples"])
+
+
+def test_create_from_a_sample_brand_over_rest_and_mcp(human):
+    r = human.post("/api/brand-kits", json={"sample": "linear"})
+    assert r.status_code == 200, r.text
+    k = r.json()
+    assert k["name"] == "Linear" and k["kit"]["label"] == "Sample brand, not affiliated" and k["logo_url"] == "/static/brands/linear/logo.png"
+    assert k["kit"]["source"]["url"]  # where it was read from
+    assert human.post("/api/brand-kits", json={"sample": "acme"}).status_code == 400
+    tok = agent_token(human, policy="trusted", cap=50)
+    _, made = mcp_call(human, tok, "create_brand_kit", {"sample": "notion", "activate": True})
+    assert made["name"] == "Notion" and made["active"]
+    assert human.get("/api/brand-studio").json()["kit"]["name"] == "Notion"
+
+
+def test_preview_in_parts_kit_cards_then_every_theme(human):
+    from studio.media import styles
+    kit = {"name": "Acme", "colors": {"background": "#0B0D12", "primary": "#FF5A1F", "accent": "#21B3FF", "text": "#F5F6F7"},
+           "head_font": "dot", "body_font": "inter", "caption_style": "hype", "end_text": "Rockets weekly", "end_cta": "Book a launch"}
+    a = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "kit"}).json()
+    assert [c["id"] for c in a["cards"]] == ["carousel_cover", "thumbnail", "end_card"] and a["part"] == "kit"
+    assert all(c["group"] == "kit" and c["url"].startswith("data:image/jpeg") for c in a["cards"])
+    b = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "themes"}).json()
+    assert [c["id"] for c in b["cards"]] == list(styles.ALL_IDS) and all(c.get("url") for c in b["cards"])
+    again = human.post("/api/brand-kits/preview", json={"kit": kit, "part": "themes"}).json()
+    assert again["cached"], "switching back to a kit is instant"
+    assert b["kit"]["end_card"]["cta"] == "Book a launch" and b["kit"]["end_card"]["line"] == "Rockets weekly"
+
+
+def test_the_active_kits_caption_style_is_the_default_for_video_edits(human):
+    house = human.app.state.studio.house
+    a = type("A", (), {"uid": human.get("/api/session").json()["user"]["id"], "label": "you", "kind": "human"})()
+    assert brand_kits.caption_style_for(house, a) == "opus"
+    kid = human.post("/api/brand-kits", json={"name": "Calm", "caption_style": "minimal", "activate": True}).json()["id"]
+    assert brand_kits.caption_style_for(house, a) == "minimal"
+    human.patch(f"/api/brand-kits/{kid}", json={"caption_style": "news"})
+    assert brand_kits.caption_style_for(house, a) == "news"

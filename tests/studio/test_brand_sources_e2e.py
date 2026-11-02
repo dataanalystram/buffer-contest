@@ -44,6 +44,7 @@ def test_brand_studio_first_run_preview_examples_and_slot(demo_live, chromium):
         page.wait_for_selector("[data-testid=bs-slide]")
         steps = page.locator("[data-testid=bs-steps] li")
         assert steps.count() == 4 and "Connect Buffer" in steps.nth(3).inner_text()
+        page.click("[data-testid=bk-more] > summary")  # the older kit editor sits under the brand kit builder
         first = page.locator("[data-testid=bs-slide]").first.get_attribute("src")
         page.fill("[data-testid=bs-color-accent]", "#ff5a1f")
         page.locator("[data-testid=bs-color-accent]").dispatch_event("input")
