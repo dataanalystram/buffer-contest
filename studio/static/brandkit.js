@@ -320,5 +320,6 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
   setTimeout(boot, 0);
   window.addEventListener("hq:session", boot);
-  document.addEventListener("click", (e) => { if (e.target.closest && e.target.closest('[data-tab="settings"],[data-go="settings"]')) setTimeout(settingsCard, 60); });
+  const st = document.getElementById("tab-settings");  // Settings > Brand kit fills whenever Settings opens
+  if (st) new MutationObserver(() => { if (!st.hidden) settingsCard(); }).observe(st, { attributes: true, attributeFilter: ["hidden"] });
 })();
