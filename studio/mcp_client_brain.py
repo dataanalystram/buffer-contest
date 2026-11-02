@@ -81,7 +81,8 @@ TOOLS: list[dict[str, Any]] = [
      "description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos, and "
      "for a product / launch link the video-first result (video: status found | youtube_only | none, the maker video to use, the "
      "credit line, and the upload question to ask when it can't be downloaded). You write the facts, slides and captions from this.",
-     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "max_paragraphs": {"type": "integer", "maximum": 60}}}},
+     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "max_paragraphs": {"type": "integer", "maximum": 60},
+                     "find_video": {"type": "boolean", "description": "Also run the video-first search (always on for Product Hunt links)"}}}},
     {"name": "find_video", "description": "Client brain (no HuhQueue AI). VIDEO FIRST for a product or launch link (Product Hunt, the maker's "
      "site, a name): Product Hunt's API (launch media + website) -> the maker's own site (og:video, <video>, YouTube/Vimeo/Loom embeds, "
      "press kit) -> the official YouTube/X channel. status found = a maker video HuhQueue can fetch (use video.url with render_reel / "
@@ -370,7 +371,7 @@ def t_research_link(studio, a, args):
     if art.get("post"):
         p = art["post"]
         out["post"] = {k: p.get(k) for k in ("author_name", "handle", "text", "date") if p.get(k)}
-    if not out["videos"] and not media_find.is_video_post(url) and args.get("find_video", True) is not False:
+    if not out["videos"] and not media_find.is_video_post(url) and args.get("find_video") is True:
         try:  # a launch / product page: the video-first search, so the client knows whether a Reel is possible
             out["video"] = _video_first(studio, a, url)
         except Exception:  # noqa: BLE001 - research never fails on the video search
