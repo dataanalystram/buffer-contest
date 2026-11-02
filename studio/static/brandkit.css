@@ -71,3 +71,6 @@
   .bk-kitcards .k-thumbnail{grid-column:1/-1;order:-1}
   .bk-themes{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 }
+/* the logo tile: a mid-grey checker, so a white, a black or a coloured logo all read (the cards draw it on the kit's ground) */
+.bk-logo{background:conic-gradient(#a7a7a7 25%,#c4c4c4 0 50%,#a7a7a7 0 75%,#c4c4c4 0) 0 0/12px 12px !important}
+.bk-chip-logo:has(img){background:conic-gradient(#a7a7a7 25%,#c4c4c4 0 50%,#a7a7a7 0 75%,#c4c4c4 0) 0 0/10px 10px;box-shadow:inset 0 -4px 0 var(--g,#111)}

@@ -45,8 +45,8 @@
           </div></div>
         <div class="field"><span class="label">Colours</span>
           <div class="bk-cols" id="bkCols">${COLS.map(([k, l]) => `
-            <label class="bk-col"><input type="color" data-col="${k}" data-testid="bk-color-${k}" aria-label="${l} colour">
-              <span><b>${l}</b><input class="bk-hex" data-hex="${k}" data-testid="bk-hex-${k}" maxlength="7" spellcheck="false" aria-label="${l} hex"></span></label>`).join("")}
+            <label class="bk-col"><input type="color" data-bkcol="${k}" data-testid="bk-color-${k}" aria-label="${l} colour">
+              <span><b>${l}</b><input class="bk-hex" data-bkhex="${k}" data-testid="bk-hex-${k}" maxlength="7" spellcheck="false" aria-label="${l} hex"></span></label>`).join("")}
           </div>
           <p class="muted xs bk-hint">Background is the ground of every card, Primary the highlight, Accent the second colour, Text sits on the background.</p></div>
         <div class="bk-row2">
@@ -92,13 +92,13 @@
   function fill() {
     const f = K.form;
     document.querySelectorAll("#bkForm [data-f]").forEach((el) => (el.value = f[el.dataset.f] ?? ""));
-    COLS.forEach(([k]) => { const v = f.colors[k] || "#888888"; $(`[data-col=${k}]`).value = v.toLowerCase(); $(`[data-hex=${k}]`).value = v; });
+    COLS.forEach(([k]) => { const v = f.colors[k] || "#888888"; $(`[data-bkcol=${k}]`).value = v.toLowerCase(); $(`[data-bkhex=${k}]`).value = v; });
     document.querySelectorAll("#bkCaps [data-cap]").forEach((b) => { const on = b.dataset.cap === f.caption_style; b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
     $("#bkCapAbout").textContent = (K.meta?.caption_styles || {})[f.caption_style] || "";
     const img = $("#bkLogoImg");
     img.hidden = !K.logoUrl; $("#bkLogoNone").hidden = !!K.logoUrl;
     if (K.logoUrl) { img.src = K.logoUrl; img.alt = `${f.name || "Brand"} logo`; }
-    $("#bkLogoBox").style.background = f.colors.background;
+
     $("#bkPal").disabled = !K.logo; $("#bkLogoClear").hidden = !K.logo;
     const kit = K.kits.find((x) => x.id === K.id);
     const lab = $("#bkLabel");
@@ -265,13 +265,13 @@
     $("#bkPal").onclick = palette;
     $("#bkLogoClear").onclick = () => { K.logo = ""; K.logoUrl = ""; fill(); edited(); };
     document.querySelectorAll("#bkForm [data-f]").forEach((el) => (el.oninput = () => { K.form[el.dataset.f] = el.value; edited(); }));
-    document.querySelectorAll("#bkForm [data-col]").forEach((el) => (el.oninput = () => {
-      const v = el.value.toUpperCase(); K.form.colors[el.dataset.col] = v; $(`[data-hex=${el.dataset.col}]`).value = v;
-      if (el.dataset.col === "background") $("#bkLogoBox").style.background = v;
+    document.querySelectorAll("#bkForm [data-bkcol]").forEach((el) => (el.oninput = () => {
+      const v = el.value.toUpperCase(); K.form.colors[el.dataset.bkcol] = v; $(`[data-bkhex=${el.dataset.bkcol}]`).value = v;
+
       edited(); }));
-    document.querySelectorAll("#bkForm [data-hex]").forEach((el) => (el.onchange = () => {
-      const v = hex(el.value); if (!v) { el.value = K.form.colors[el.dataset.hex]; return; }
-      K.form.colors[el.dataset.hex] = v; fill(); edited(); }));
+    document.querySelectorAll("#bkForm [data-bkhex]").forEach((el) => (el.onchange = () => {
+      const v = hex(el.value); if (!v) { el.value = K.form.colors[el.dataset.bkhex]; return; }
+      K.form.colors[el.dataset.bkhex] = v; fill(); edited(); }));
     document.querySelectorAll("#bkCaps [data-cap]").forEach((b) => (b.onclick = () => { K.form.caption_style = b.dataset.cap; fill(); edited(); }));
     $("#bkCaps").addEventListener("keydown", (e) => {
       if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
