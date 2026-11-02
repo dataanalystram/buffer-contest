@@ -78,11 +78,12 @@ def add_routes(app: FastAPI, house, actor) -> None:
     @app.post("/api/agent/runs/{rid}/packages/{channel_id}/cover")
     def run_channel_cover(rid: int, channel_id: str, request: Request, body: dict = Body(...)):
         """Use another cover variant ({"index": 0-2}) for one channel: its Reel's opening frame is swapped."""
+        a = actor(request, write=True)  # sign-in first: an anonymous call is a 401, never a validation message
         try:
             idx = int((body or {}).get("index"))
         except (TypeError, ValueError):
             raise ActionError("Give the cover index (0-2).")
-        return house.brain.set_cover(actor(request, write=True), rid, channel_id, idx)
+        return house.brain.set_cover(a, rid, channel_id, idx)
 
     @app.post("/api/agent/runs/{rid}/packages/{channel_id}/media")
     def run_channel_media(rid: int, channel_id: str, request: Request, body: dict = Body(default={})):
