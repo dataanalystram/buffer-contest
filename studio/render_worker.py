@@ -84,7 +84,7 @@ def recap_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict, get) -> in
     spec, urls = j["spec"], j["urls"]
     tmp = Path(tempfile.mkdtemp(prefix="hq_recap_"))
     try:
-        logo = get(urls.get("logo"))
+        logo = get(urls.get("logo"), optional=True)
         logo_path = None
         if logo:
             logo_path = str(tmp / "logo.png")
@@ -298,11 +298,16 @@ def _run(c: httpx.Client, base: str, h: dict, args) -> int:
     from .media import yt_fallback
     yt_fallback.apply(spec.get("yt_fallback"))  # the app's opt-in YouTube route (HQ_YT_FALLBACK), for this job only
 
-    def get(u):
+    def get(u, optional: bool = False):
         if not u:
             return None
         from . import netguard
-        return netguard.safe_get(u, http=c, limit=200 * 1024 * 1024, timeout=300).content
+        r = netguard.safe_get(u, http=c, limit=200 * 1024 * 1024, timeout=300)
+        if r.status_code >= 400:  # a 404 page is not a video: fail with "the link returned 404", not an FFmpeg error
+            if optional:
+                return None
+            r.raise_for_status()
+        return r.content
     if str(spec.get("kind", "")).startswith("take_"):
         return take_job(c, base, h, args.job, j)
     if spec["kind"] == "transcribe":  # the person's own upload -> words, so the post is about what is said in it
@@ -320,7 +325,7 @@ def _run(c: httpx.Client, base: str, h: dict, args) -> int:
         return 0 if r.status_code == 200 else 1
     if spec["kind"] == "media_recap":  # the weekly recap: carousel slides + one Reel, several files
         return recap_job(c, base, h, args.job, j, get)
-    logo = get(urls.get("logo"))
+    logo = get(urls.get("logo"), optional=True)
     if spec["kind"] == "cover_swap":  # another cover variant as the Reel's opening frames (studio.media.worker.cover_swap)
         from .media.worker import cover_swap
         data, meta = cover_swap(get(urls["source"]), get(urls["cover"]), spec.get("secs") or 0.6, spec.get("replace"))
