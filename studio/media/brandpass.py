@@ -47,16 +47,30 @@ def _logo(brand: dict, h: int) -> Image.Image | None:
     return im.resize((max(1, int(im.width * h / im.height)), h), Image.LANCZOS)
 
 
-def bug(W: int, H: int, brand: dict, opacity: float = 0.82) -> tuple[Image.Image, tuple]:
-    """Small logo watermark top-right (inside the safe area), or the @handle in a quiet pill."""
+def _clear_y(x0: int, x1: int, y: int, h: int, avoid: list, H: int) -> int:
+    """The first y at or below ``y`` where a box x0..x1 of height h touches none of ``avoid`` (top half only)."""
+    for _ in range(12):
+        hit = [a for a in avoid if a[0] < x1 and a[2] > x0 and a[1] < y + h and a[3] > y]
+        if not hit:
+            return y
+        y = max(a[3] for a in hit) + max(8, H // 160)
+        if y > H * 0.5:
+            break
+    return y
+
+
+def bug(W: int, H: int, brand: dict, opacity: float = 0.82, avoid: list | None = None) -> tuple[Image.Image, tuple]:
+    """Small logo watermark top-right (inside the safe area), or the @handle in a quiet pill; it steps down past
+    anything in ``avoid`` (a hook or credit the layout already put at the top)."""
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    avoid = [tuple(a) for a in (avoid or []) if isinstance(a, (list, tuple)) and len(a) == 4 and all(isinstance(v, (int, float)) for v in a)]
     l, t, r, b = _safe(W, H)
     lg = _logo(brand, max(28, int(H * (0.03 if H / W > 1.6 else 0.045))))
     if lg:
         a = lg.getchannel("A").point(lambda v: int(v * opacity))
         lg.putalpha(a)
         x, y = r - lg.width, t - int(H * 0.06) if H / W > 1.6 else t
-        y = max(int(H * 0.04), y)
+        y = _clear_y(x, x + lg.width, max(int(H * 0.04), y), lg.height, avoid, H)
         ov.alpha_composite(lg, (x, y))
         return ov, (x, y, x + lg.width, y + lg.height)
     handle = brand.get("handle") or brand.get("name") or ""
@@ -67,6 +81,7 @@ def bug(W: int, H: int, brand: dict, opacity: float = 0.82) -> tuple[Image.Image
     tw = int(f.getlength(handle))
     pw, ph = tw + size * 2, int(size * 2.1)
     x, y = r - pw, max(int(H * 0.04), t - int(H * 0.06) if H / W > 1.6 else t)
+    y = _clear_y(x, x + pw, y, ph, avoid, H)
     d = ImageDraw.Draw(ov)
     d.rounded_rectangle((x, y, x + pw, y + ph), ph // 2, fill=(0, 0, 0, 120))
     a_, de = f.getmetrics()
@@ -140,7 +155,13 @@ def layers(wd: str, W: int, H: int, brand: dict, *, hook: str = "", credit: str 
     out: list[tuple[str, float, float]] = []
     got: dict = {}
     if want["bug"] and "logo" not in boxes and cfg.get("chrome") != "bug":
-        im, bx = bug(W, H, brand)
+        avoid = []
+        for v in boxes.values():
+            if isinstance(v, (list, tuple)) and len(v) == 4 and all(isinstance(x, (int, float)) for x in v):
+                avoid.append(v)
+            elif isinstance(v, dict):
+                avoid += [x for x in v.values() if isinstance(x, (list, tuple)) and len(x) == 4]
+        im, bx = bug(W, H, brand, avoid=avoid)
         if bx[2] > bx[0]:
             p = str(Path(wd) / "bp_bug.png")
             im.save(p)
