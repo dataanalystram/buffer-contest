@@ -462,10 +462,13 @@ def _similar(a: set, b: set) -> bool:
 
 
 def dedupe_library(items: list[dict]) -> list[dict]:
-    """One card per story: the same canonical link, or a near-identical title from another source. The first source
-    to have it leads (originals before aggregators); the others become `also` (the cross-check signal)."""
+    """One card per story: the same canonical link, or a near-identical title from another source. The maker's own
+    source leads (lab, launch, paper), then the press, then aggregators; the others become `also` (the cross-check signal)."""
     from .sources_agent import canonical, tokens
-    order = sorted(items, key=lambda it: (bool(BY_ID.get(it["source_id"], {}).get("aggregator")), -it["published"]))
+    def rank(it):  # the maker's own post first, then the press, then aggregators
+        src = BY_ID.get(it["source_id"], {})
+        return 2 if src.get("aggregator") else (1 if src.get("category") == "Tech news" else 0)
+    order = sorted(items, key=lambda it: (rank(it), -it["published"]))
     out, by_url = [], {}
     for it in order:
         key, tk = canonical(it["url"]), tokens(it["title"])

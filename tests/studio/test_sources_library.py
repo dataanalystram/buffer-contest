@@ -215,6 +215,8 @@ def lib(human, app, monkeypatch):
              "arxiv_ai": [_it("arxiv_ai", "Scaling laws for small agents", "https://arxiv.org/abs/7", now - 600)],
              "verge": FetchError("answered HTTP 500")}
     monkeypatch.setattr(S, "fetch_source", _fake_fetch(table, calls))
+    for env in ("TYPESAFE_API_KEY", "SUBQ_API_KEY"):  # the scan's story judges stay on the rules here
+        monkeypatch.delenv(env, raising=False)
     return human, calls
 
 
