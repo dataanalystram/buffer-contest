@@ -157,7 +157,7 @@ def test_e2e_ai_engine_switch(live, chromium, close_contexts, monkeypatch, w):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     for k in ("OCI_USER", "OCI_TENANCY", "OCI_FINGERPRINT"):
         monkeypatch.setenv(k, "ocid1.test")
-    monkeypatch.setenv("OCI_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----")
+    monkeypatch.setenv("OCI_PRIVATE_KEY", "not-a-real-key")  # only "is it set" matters to the picker
     from studio import ai_engines
     ai_engines.clear_down()
     ctx, page = _page(live, chromium, w, 900 if w > 400 else 844, "light")
