@@ -17,7 +17,7 @@ RAW = Path(S.__file__).parent / "sample_sources" / "raw"
 # ---------------------------------------------------------------- pure parts
 def test_every_adapter_parses_its_recorded_fixture():
     got = {k: ad.sample() for k, ad in S.ADAPTERS.items()}
-    assert set(got) == {"yc", "hn", "rss", "ph", "x"}
+    assert set(got) == {"yc", "hn", "rss", "ph", "x", "library"} and got["library"] == []  # the library has no fixture: the sample never reads it
     assert len(got["yc"]) >= 10 and all(i["url"].startswith("https://www.ycombinator.com/launches/") for i in got["yc"])
     assert all(i["engagement"] >= 0 and i["title"] for i in got["hn"])
     assert {i["source"] for i in got["rss"]} >= {"OpenAI News", "Google DeepMind News"}

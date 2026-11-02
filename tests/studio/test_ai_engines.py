@@ -27,8 +27,10 @@ def oci_env(monkeypatch):
     monkeypatch.setenv("OCI_GEMINI_FLASH_MODEL", "ocid1.generativeairoutingprofile.oc1.eu-paris-1.flash")
     monkeypatch.delenv("OCI_GEMINI_PRO_MODEL", raising=False)
     ai_engines.clear_down()
+    ai_engines.oracle_set(True)  # the 6-hourly Oracle check passed (no real probe in tests)
     yield key
     ai_engines.clear_down()
+    ai_engines.oracle_reset()
 
 
 @pytest.fixture
@@ -50,17 +52,17 @@ def _engines(app, uid, demo=False):
 # ------------------------------------------------------------------ selection
 def test_default_order_and_the_chosen_engine_first(app, human, oci_env, claude_env):
     uid = _uid(app)
-    assert _engines(app, uid) == ["claude", "gemini-flash"]  # no own key, no free model on this server
-    ai_engines.set_pref(app.state.store, uid, "gemini-flash")
-    assert _engines(app, uid) == ["gemini-flash", "claude"]
+    assert _engines(app, uid) == ["gemini-flash", "claude"]  # no free-engine keys, no own key, no free model here
+    ai_engines.set_pref(app.state.store, uid, "claude")
+    assert _engines(app, uid) == ["claude", "gemini-flash"]
     ai_engines.set_pref(app.state.store, uid, "gemini-pro")  # Pro only runs when chosen; Flash stays as the backup
-    assert _engines(app, uid) == ["gemini-pro", "claude", "gemini-flash"]
+    assert _engines(app, uid) == ["gemini-pro", "gemini-flash", "claude"]
     eng = brain_llm.engines(app.state.store, uid, app.state.house.s, app.state.house.http)[0]
     assert eng["model"] == "google.gemini-2.5-pro" and eng["fast_model"] == "google.gemini-2.5-flash"
     assert eng["oci_targets"]["google.gemini-2.5-flash"].startswith("ocid1.generativeairoutingprofile")
     assert eng["oci_targets"]["google.gemini-2.5-pro"] == "google.gemini-2.5-pro"  # no profile set: the model name
     ai_engines.set_pref(app.state.store, uid, "auto")
-    assert _engines(app, uid) == ["claude", "gemini-flash"]
+    assert _engines(app, uid) == ["gemini-flash", "claude"]
     assert _engines(app, uid, demo=True) == []  # the free sample never reaches the app's paid engines
 
 
@@ -69,7 +71,10 @@ def test_unknown_engine_is_refused_and_aliases_work(app, human):
     budget.ensure(app.state.store)
     with pytest.raises(ai_engines.EngineError):
         ai_engines.set_pref(app.state.store, uid, "gpt-9")
-    assert ai_engines.set_pref(app.state.store, uid, "Gemini") == "gemini-flash"
+    assert ai_engines.set_pref(app.state.store, uid, "Gemini") == "gemini-studio"
+    assert ai_engines.set_pref(app.state.store, uid, "oracle") == "gemini-flash"
+    assert ai_engines.set_pref(app.state.store, uid, "NIM") == "nvidia"
+    assert ai_engines.set_pref(app.state.store, uid, "Hugging Face") == "hf"
     assert ai_engines.set_pref(app.state.store, uid, "anthropic") == "claude"
 
 
@@ -83,7 +88,7 @@ def test_marked_down_engine_is_skipped_and_shown(app, human, oci_env, claude_env
     human.put("/api/ai/engine", json={"engine": "gemini-flash"})
     st = human.get("/api/ai/engine").json()
     assert st["selected"] == "gemini-flash" and st["runs"] == "claude"
-    assert "Gemini Flash isn't available" in st["note"] and "Claude runs instead" in st["note"]
+    assert "Gemini Flash (Oracle) isn't available" in st["note"] and "Claude runs instead" in st["note"]
 
 
 # ------------------------------------------------------------------ credits and budgets
@@ -100,11 +105,12 @@ def test_credit_lines_in_plain_words_and_warnings(app, human, oci_env, claude_en
     assert st["claude_pool"]["label"].startswith("App-wide Claude pool: $59.66 of $60")
     assert st["oracle_pool"]["label"] == "App-wide Gemini pool: $200.00 of $200 left"
     budget.record(app.state.store, uid, 0.40)  # 74%: the 70% warning
-    c = human.get("/api/ai/engine").json()["engines"][0]["credit"]
+    c = next(o for o in human.get("/api/ai/engine").json()["engines"] if o["id"] == "claude")["credit"]
     assert c["level"] == "low" and c["used_pct"] == 74
     budget.record(app.state.store, uid, 0.30)  # past 100%: out, and Claude hands over
     st = human.get("/api/ai/engine").json()
-    assert st["engines"][0]["credit"]["level"] == "out" and not st["engines"][0]["available"]
+    cl = next(o for o in st["engines"] if o["id"] == "claude")
+    assert cl["credit"]["level"] == "out" and not cl["available"]
     assert st["runs"] == "gemini-flash"
     # the existing allowance meter (70% / 100% nudges) is unchanged
     assert human.get("/api/agent/brain").json()["meter"]["out"]
@@ -227,8 +233,8 @@ def test_agent_falls_back_engine_by_engine_with_a_note(app, human, monkeypatch):
     run = human.get(f"/api/agent/runs/{r['id']}").json()
     assert tried == ["claude", "gemini-flash"] and planned == [r["id"]]  # then the standard plan
     notes = run["result"].get("notes") or []
-    assert any(n.startswith("Claude is out of credit") and n.endswith("so I switched to Gemini Flash.") for n in notes), notes
-    assert any(n.startswith("Gemini Flash didn't answer") and n.endswith("so I switched to the standard plan.") for n in notes), notes
+    assert any(n.startswith("Claude is out of credit") and n.endswith("so I switched to Gemini Flash (Oracle).") for n in notes), notes
+    assert any(n.startswith("Gemini Flash (Oracle) didn't answer") and n.endswith("so I switched to the standard plan.") for n in notes), notes
     assert "Unexpected error" not in json.dumps(run["result"].get("thread"))
 
 

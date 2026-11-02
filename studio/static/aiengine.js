@@ -1,13 +1,13 @@
 // The AI engine switch (studio/ai_engines.py): Settings > AI engine shows every model with its credit in plain words
-// ("Claude: $0.34 of your $1 used", "Gemini (Oracle): free during the contest, $0.00 of your $3 used") and the app-wide
-// pools; the Make a post composer has a compact "Model" switch. Both read GET /api/ai/engine and save with PUT.
+// ("NVIDIA (free developer credits): 3 of your 150 calls today", "Claude: $0.34 of your $1 used") and the app-wide pools;
+// the Make a post composer has a compact "Model" switch. Both read GET /api/ai/engine and save with PUT.
 // A model that is out of credit or erroring hands over to the next one automatically; the note says so.
 "use strict";
 (() => {
 const E = { st: null, busy: false };
 const q = (s) => document.querySelector(s);
 const escH = (s) => (window.esc ? window.esc(s) : String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])));
-const AUTO = { id: "auto", label: "Automatic", short: "Auto", about: "Claude first, then Gemini on Oracle Cloud, your key, then the free model." };
+const AUTO = { id: "auto", label: "Automatic", short: "Auto", about: "Free engines first (Gemini on AI Studio, NVIDIA, Hugging Face), then Claude, your key, then the free starter model." };
 
 function bar(c) {
   if (!c || c.kind === "own" || c.kind === "free") return "";
@@ -34,8 +34,15 @@ function paintSettings(st) {
   const box = q("#aiEngines"); if (!box) return;
   const sel = st.selected || "auto";
   box.innerHTML = optHtml({ ...AUTO, available: true, credit: null }, sel) + st.engines.map((o) => optHtml(o, sel)).join("");
-  const pools = [st.claude_pool && st.claude_pool.label, st.oracle_pool && st.oracle_pool.label].filter(Boolean);
+  const pools = [...(st.free_pools || []).map((p) => p && p.label), st.claude_pool && st.claude_pool.label,
+    st.oracle_pool && st.oracle_pool.label].filter(Boolean);
   q("#aiEngPools").textContent = pools.join(" · ");
+  // a setup link can't sit inside a radio button: the engines that need one ("Add a free Google AI Studio key") list it here
+  let keys = q("#aiEngKeys");
+  if (!keys) { keys = document.createElement("p"); keys.id = "aiEngKeys"; keys.className = "muted sm ai-eng-keys"; keys.dataset.testid = "ai-engine-keys"; q("#aiEngPools").after(keys); }
+  const links = st.engines.filter((o) => o.link && !o.available);
+  keys.hidden = !links.length;
+  keys.innerHTML = links.map((o) => `${escH(o.label)}: <a class="link" href="${escH(o.link.url)}" target="_blank" rel="noopener" data-testid="ai-engine-key-link-${o.id}">${escH(o.reason)}</a> (${escH(o.link.label.toLowerCase())}, then set it on the server).`).join(" ");
   const note = q("#aiEngNote");
   note.hidden = !st.note; note.textContent = st.note || "";
   const now = q("#aiNow"), runs = st.engines.find((o) => o.id === st.runs);
@@ -58,6 +65,7 @@ function paintComposer(st) {
   const s = q("#agEngineSel"); if (!s) return;
   const sel = st.selected || "auto";
   const left = (o) => !o.credit ? "" : o.credit.kind === "allowance" ? ` · $${Number(o.credit.left_usd).toFixed(2)} left`
+    : o.credit.kind === "free-credit" ? ` · free · ${o.credit.left_calls} left today`
     : o.credit.kind === "oracle" ? " · free" : o.credit.kind === "free" ? " · free" : "";
   s.innerHTML = `<option value="auto">Auto</option>` + st.engines.filter((o) => o.id !== "own" || o.available).map((o) =>
     `<option value="${o.id}"${o.available ? "" : " disabled"}>${escH(o.short)}${o.available ? left(o) : " (unavailable)"}</option>`).join("");
