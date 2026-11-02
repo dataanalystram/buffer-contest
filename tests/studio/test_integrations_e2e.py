@@ -38,7 +38,7 @@ def test_settings_integrations_cards_save_test_remove(demo_live, chromium):
         page.goto(base + "/?tab=settings")
         page.wait_for_selector("[data-testid=integ-card-ph]")
         assert page.locator("[data-testid^=integ-card-]").count() == 3
-        assert "/integrations/producthunt/callback" in page.inner_text("[data-testid=integ-redirect]")
+        assert "/integrations/producthunt/callback" in page.text_content("[data-testid=integ-redirect]")  # inside a closed <details>: innerText is "" in current Chromium
         assert page.get_attribute("[data-testid=integ-input-ph]", "type") == "password"
         page.fill("[data-testid=integ-input-ph]", PH)
         page.click("[data-testid=integ-save-ph]")
