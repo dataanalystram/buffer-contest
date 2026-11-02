@@ -27,7 +27,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
-from . import brand, demo_guard, drafter, netguard, radar, sources, templates
+from . import brand, demo_guard, drafter, netguard, radar, sources, templates, untrusted
 
 FIXTURES = Path(__file__).parent / "sample_sources" / "raw"
 UA = {"User-Agent": "Mozilla/5.0 (HuhQueue Sources agent; +https://huhqueue-studio.onrender.com)"}
@@ -936,7 +936,8 @@ class SourcesAgent:
             d = llm.chat_json(eng, "You write social posts for a brand. Use only the facts given; never invent numbers or quotes.",
                               "Brand voice: " + (kit.get("voice") or "plain, clear") + "\nWrite one post per channel as JSON {service: text}. "
                               "Channel shapes: " + json.dumps({s: STYLE.get(s, STYLE["facebook"]) for s in services}) +
-                              "\nStory: " + json.dumps({k: st[k] for k in ("headline", "line", "facts", "why", "url", "source")}),
+                              "\nStory: " + untrusted.wrap(json.dumps({k: st[k] for k in ("headline", "line", "facts", "why", "url", "source")}),
+                                                           "news source"),
                               http=self.http, max_tokens=1400)
             self.house._ai_audit(a, eng, "sources_draft")
         except Exception:

@@ -39,7 +39,11 @@ _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]"
 
 def scrub(text: str) -> str:
     """Secrets out of anything that goes into a prompt."""
-    from .activity import SECRET_VALUE
+    try:
+        from .activity import SECRET_VALUE
+    except Exception:  # noqa: BLE001  (the video worker's slim venv: fall back to the common key shapes)
+        SECRET_VALUE = re.compile(r"(sk-[A-Za-z0-9_\-]{12,}|hq_[A-Za-z0-9_\-]{16,}|AIza[0-9A-Za-z_\-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}"
+                                  r"|[Bb]earer\s+[A-Za-z0-9._\-]{8,})")
     return SECRET_VALUE.sub("[redacted]", text or "")
 
 

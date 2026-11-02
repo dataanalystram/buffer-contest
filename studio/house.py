@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import brand, demo, demo_guard, drafter, llm, netguard, render, sources
+from . import brand, demo, demo_guard, drafter, llm, netguard, render, sources, untrusted
 from .actions import ActionError, Actor, Studio
 
 STEPS = [("find", "Find the story"), ("verify", "Verify on the source"), ("structure", "Structure the facts"),
@@ -821,7 +821,8 @@ class House:
                 d = llm.chat_json(eng, "You are a careful news editor. Use only facts in the article; never invent numbers.",
                                   "Return JSON {headline (max 12 words, plain, no hype), facts: [3 short facts from the text], "
                                   "why_it_matters (one sentence), label (1-2 words like 'AI news' or 'Launch')}.\nARTICLE: "
-                                  + json.dumps({"title": article["title"], "description": article.get("description", ""), "text": text}),
+                                  + untrusted.wrap(json.dumps({"title": article["title"], "description": article.get("description", ""),
+                                                               "text": text}), "article"),
                                   http=self.http, max_tokens=600)
                 self._ai_audit(a, eng, "structure")
                 facts = [str(f)[:160] for f in (d.get("facts") or []) if str(f).strip()][:4]
