@@ -82,6 +82,7 @@ $("#agentForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!H.sel.size) return toast("Pick at least one channel");
   const body = { channel_ids: [...H.sel], format: $("#agFormat").value, prompt: $("#agQuery").value.trim(), theme: H.theme || "auto" };
+  try { body.add_logo = localStorage.getItem("hq_add_logo") !== "0"; } catch (_) { body.add_logo = true; }
   if (!body.prompt && !H.upload && !H.attach) return toast("Tell the agent what to post, paste a link, or add your photo or video");
   const b = $("#agGo"), label = b.innerHTML; b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
   if (H.theme) body.theme = H.theme;
@@ -201,6 +202,30 @@ function agentExtras(r, busy) {
       <div class="row"><button type="button" class="btn primary sm" data-testid="recap-rights-yes" data-say="Yes, use them with credit">Use them with credit</button>
       <button type="button" class="btn ghost sm" data-testid="recap-rights-no" data-say="No, title cards instead">Title cards instead</button></div></div>` : "");
   $("#agentThread").querySelectorAll("[data-testid^=recap-rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
+  // VIDEO FIRST: the launch video can't be fetched here (YouTube only) or there is none -> an upload button in the chat
+  const ask = res.video_ask;
+  if (ask && !busy && !(res.upload && res.upload.type === "video")) {
+    const box = document.createElement("div");
+    box.className = "st warn video-ask"; box.dataset.testid = "video-ask"; box.setAttribute("data-testid", "video-ask");
+    box.innerHTML = `<span data-testid="video-ask-text">${esc(ask.text)}</span>
+      <span class="row"><label class="btn sm primary va-up"><input type="file" accept="${esc(ask.accept || "video/mp4,video/quicktime")}" class="sr" data-testid="video-ask-file">Upload video</label>
+      ${ask.launch_url ? `<a class="link" href="${esc(ask.launch_url)}" target="_blank" rel="noopener" data-testid="video-ask-open">Open the launch video</a>` : ""}
+      <small class="muted">${esc(ask.label || "MP4/MOV")}, up to ${Number(ask.max_mb) || 40} MB</small></span>`;
+    $("#agentThread").appendChild(box);
+    $("#agentThread").hidden = false;
+    const inp = box.querySelector("[data-testid=video-ask-file]");
+    inp.onchange = async () => {
+      const f = inp.files[0]; if (!f) return;
+      if (!/^video\//.test(f.type) && !/\.(mp4|mov|m4v)$/i.test(f.name)) return toast("Upload an MP4 or MOV video");
+      if (f.size > (Number(ask.max_mb) || 40) * 1048576) return toast(`Videos up to ${Number(ask.max_mb) || 40} MB here`);
+      const lab = box.querySelector(".va-up"); lab.classList.add("busy"); lab.lastChild.textContent = "Uploading…";
+      try {
+        const tok = await uploadFile(f);
+        const n = await api(`/api/agent/runs/${r.id}/messages`, { method: "POST", body: { text: "Here's the video: " + f.name, media_token: tok } });
+        showRun(n); watch(n.id);
+      } catch (e) { toast(e.message, 6000); lab.classList.remove("busy"); lab.lastChild.textContent = "Upload video"; }
+    };
+  }
   // one edit box for every run, after it finishes (also older runs: the server routes it)
   $("#replyForm").hidden = busy;
   $("#replyChips").innerHTML = REPLY_CHIPS.map((q) => `<button type="button" class="chip mini" data-testid="reply-chip" data-say="${esc(q)}">${esc(q)}</button>`).join("");
@@ -267,12 +292,27 @@ function pkgMedia(p) {
       <button type="button" class="link" data-open="0" data-testid="pkg-fullsize">Full size</button></div></div>`;
 }
 
+// the branded cover variants (studio/media/covers.py): the chosen one is the Reel's opening frame (its cover on
+// Instagram / TikTok); YouTube gets the 1280x720 one as its thumbnail. Click another to swap.
+function pkgCovers(p, sent) {
+  const cv = p.covers || [];
+  if (!cv.length) return "";
+  const key = p.service === "youtube" ? "16:9" : (p.ratio === "4:5" ? "4:5" : "9:16");
+  const yt = p.service === "youtube" && p.thumbnail;
+  return `<div class="pkg-covers" data-testid="pkg-covers"><small class="muted sm">${p.service === "youtube" ? "Thumbnail" : "Cover"} · pick one</small>
+    <div class="pc-row">${cv.map((c, i) => `<button type="button" class="pc${i === p.cover_index ? " on" : ""}" data-cover="${i}" data-testid="pkg-cover"
+      aria-pressed="${i === p.cover_index}" aria-label="Cover ${i + 1}${i === p.cover_index ? " (in use)" : ""}" ${sent ? "disabled" : ""}
+      style="aspect-ratio:${key.replace(":", " / ")}"><img src="${esc((c.urls || {})[key] || Object.values(c.urls || {})[0] || "")}" alt="" loading="lazy"></button>`).join("")}</div>
+    ${yt ? `<a class="link sm" href="${esc(p.thumbnail)}" target="_blank" rel="noopener" download data-testid="pkg-yt-thumb">Download the 1280×720 thumbnail</a>` : ""}</div>`;
+}
+
 function pkgCard(p) {
   const ch = chOf(p.channel_id), sent = ["sent_to_buffer", "pending_approval"].includes(p.status);
   const help = PKG_MODES[0][2];
   return `<article class="pkg" data-testid="package" data-ch="${esc(p.channel_id)}">
     <header>${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : avatar(ch)}<div><b>${esc(p.channel_name)}</b><small>${esc(netName(p.service))}</small></div><span class="cnt ${p.length > p.limit ? "over" : ""}" data-testid="pkg-count">${p.length}/${p.limit}</span></header>
     ${pkgMedia(p)}
+    ${pkgCovers(p, sent)}
     ${sent || H.run && ["media", "news"].includes(H.run.kind) ? "" : `<div class="pm-acts"><button type="button" class="btn2 sm" data-testid="pkg-replace">Replace</button><button type="button" class="btn2 sm" data-testid="pkg-regen">Regenerate</button></div>`}
     ${p.note ? `<small class="muted sm" data-testid="pkg-note">${esc(p.note)}</small>` : ""}
     <label class="sr" for="pt-${esc(p.channel_id)}">Caption for ${esc(p.channel_name)}</label>
@@ -309,6 +349,14 @@ function wirePackages(r) {
       try { showRun(await api(`/api/agent/runs/${r.id}/packages/${ch}/media`, { method: "POST", body: { token: item.media_token } })); toast("Media replaced"); }
       catch (e) { toast(e.message, 6000); rep.disabled = false; rep.textContent = "Replace"; }
     }, { title: `Replace ${netName(pk.service)} media`, upload: true, video: pk.service === "youtube" || pk.service === "tiktok" });
+    el.querySelectorAll("[data-cover]").forEach((b) => (b.onclick = async () => {
+      if (b.classList.contains("on")) return;
+      el.querySelectorAll("[data-cover]").forEach((x) => (x.disabled = true));
+      b.classList.add("busy");
+      try { const n = await api(`/api/agent/runs/${r.id}/packages/${ch}/cover`, { method: "POST", body: { index: +b.dataset.cover } });
+        toast("Swapping the cover…"); showRun(n); watch(n.id); }
+      catch (e) { toast(e.message, 6000); el.querySelectorAll("[data-cover]").forEach((x) => (x.disabled = false)); b.classList.remove("busy"); }
+    }));
     const regen = el.querySelector("[data-testid=pkg-regen]");
     if (regen) regen.onclick = async () => {
       busyBtn(regen, "Regenerating…");

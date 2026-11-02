@@ -49,7 +49,7 @@ STYLE_PRESETS: dict[str, dict] = {
 }
 
 # Short names agents and people use ("news" is the HuhByte news layout).
-ALIASES = {"news": "huhbyte_news", "huhbyte": "huhbyte_news", "opus_clip": "opus", "clean": "minimal"}
+ALIASES = {"no_style": "none", "no style": "none", "as_is": "none", "as is": "none", "plain": "none", "news": "huhbyte_news", "huhbyte": "huhbyte_news", "opus_clip": "opus", "clean": "minimal"}
 
 
 def resolve(style: str | None) -> str:
@@ -308,15 +308,26 @@ BASE_IDS = list(STYLE_PRESETS)
 ALL_IDS = BASE_IDS + list(THEMES)
 
 
+NONE = "none"  # "No style: post my video as it is" (trim/fit to the frame, optional logo, the end card)
+NONE_CFG = {"id": NONE, "label": "No style: post my video as it is", "layout": "plain", "fill": "fit", "captions": None,
+            "autoclip": False, "clip_range": (0, 0), "cover_secs": 0.0, "facts_secs": 0.0, "facts_title": "", "cover_label": "",
+            "music": "none", "flash": False, "theme": None, "fx": [], "grade": "", "palette": None,
+            "about": "Your video as it is: only trimmed / fitted to the frame (blurred sides when the shape differs), your logo "
+                     "if you want it, and the Follow end card. No captions, no theme, no music.",
+            "best_for": ["videos that are already edited", "your own finished clips"]}
+
+
 def known(style: str | None) -> bool:
-    """True for a base style or a theme (after aliases)."""
-    return resolve(style) in STYLE_PRESETS or resolve(style) in THEMES
+    """True for a base style, a theme (after aliases) or "none" (post the video as it is)."""
+    return resolve(style) in STYLE_PRESETS or resolve(style) in THEMES or resolve(style) == NONE
 
 
 def config(style: str | None) -> dict:
     """Everything compose.py needs for one style or theme: the base preset with the theme's fields on top.
     cfg["id"] is the resolved id, cfg["layout"] the base layout (opus / huhbyte_news / minimal / hype)."""
     sid = resolve(style)
+    if sid == NONE:
+        return dict(NONE_CFG)
     if sid in STYLE_PRESETS:
         return {**STYLE_PRESETS[sid], "id": sid, "theme": None, "fx": [], "grade": "", "palette": None}
     if sid not in THEMES:
