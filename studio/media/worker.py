@@ -52,6 +52,11 @@ def brand_from_kit(kit: dict | None, logo_path: str | None = None) -> dict:
     for src, dst in (("accent", "accent"), ("primary", "bg"), ("text", "text")):
         if col.get(src):
             b[dst] = col[src]
+    fonts = {"anton": ("Anton.ttf", "Poppins-Bold.ttf"), "poppins": ("Poppins-Bold.ttf", "Poppins-Bold.ttf"),
+             "inter": ("Inter-Bold.ttf", "Inter-Bold.ttf"), "figtree": ("Figtree-ExtraBold.ttf", "Figtree-ExtraBold.ttf")}
+    fk = str(kit.get("font") or "").lower()
+    if fk in fonts:  # the brand kit's headline font on every title, hook, cover and end card
+        b["head_font"], b["bold_font"] = fonts[fk]
     end = kit.get("end_card") or {}
     if end.get("line"):
         b["end_line"] = end["line"]

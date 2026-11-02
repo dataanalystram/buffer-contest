@@ -540,7 +540,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  burned_subs: bool | None = None, captions_mode: str = "auto", accent_words: list[str] | None = None,
                  crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
                  brand_colors: bool = False, reframe: dict | None = None, lower_third_mode="auto",
-                 detect_own_captions: bool = False) -> dict:
+                 detect_own_captions: bool = False, brand_pass: bool | dict = False, cover_png: str | None = None,
+                 cover_secs: float = 0.6, logo: bool = True) -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     ``style`` is a base style or a theme (styles.THEMES: its grade, effects, captions, cards and chrome on a base
@@ -551,10 +552,22 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
     detect_own_captions: with captions_mode auto, look for captions already burned into the picture anywhere in the
     lower half (detect_burned_captions) and add none when they are there (edit_video of a finished clip). captions_mode
     "replace" crops those captions off (full-bleed styles) and captions the video again.
+    brand_pass: brand the whole video (studio/media/brandpass.py): a hook title over the opening seconds, a logo bug, a
+    lower-third with the credit, captions in the brand colours; a dict turns single elements off ({"lower": False}).
+    cover_png: the chosen cover (studio/media/covers.py) held for ``cover_secs`` as the very first frames, so Instagram /
+    TikTok can use it as the Reel cover (Buffer only takes a frame offset, thumbnailOffset, never a separate image).
+    style "none": the video as it is (``render_plain``): trimmed / fitted, ``logo`` bug when True, the end card.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from . import theme_cards
-    from .styles import ALL_IDS, apply_palette, config, resolve
+    from .styles import ALL_IDS, NONE, apply_palette, config, resolve
     style = resolve(style)
+    if style == NONE:
+        if not source:
+            raise ff.MediaError("No style needs a video to post as it is.")
+        return render_plain(source, out=out, ratio=ratio, brand=brand, clip=clip, logo=logo, cover_png=cover_png,
+                            cover_secs=cover_secs, crf=crf, preset=preset, workdir=workdir, max_main=max_main)
+    if brand_pass:
+        brand_colors = True  # branded captions: the brand's accent stays inside any theme
     try:
         cfg = config(style)
     except KeyError:
@@ -648,12 +661,26 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             boxes["cap_band"] = L["cap_band"]
         ov_path = wd / "overlay.png"
         ov.save(ov_path)
+        extras: list = []
+        if brand_pass and source:
+            from . import brandpass
+            extras, boxes["brand_pass"] = brandpass.layers(
+                str(wd), W, H, brand, hook=hook, credit=credit, D=D, boxes=boxes, cfg=cfg, has_cover=bool(cover_s),
+                captions_center=L.get("captions_center") if caps_on else None, accent_words=list(acc) or None,
+                want=brand_pass if isinstance(brand_pass, dict) else None)
         hook_path = None
         if cfg["layout"] == "hype" and hook.strip():
             hk, boxes["hook"] = _hype_hook(W, H, brand, hook, L, acc)
             hook_path = wd / "hook.png"
             hk.save(hook_path)
         segs = []
+        pre_s = 0.0
+        if cover_png and source and Path(cover_png).is_file():  # the chosen cover as the very first frames (Reel cover)
+            pre_s = max(0.3, float(cover_secs))
+            cp = wd / "cover_frame.png"
+            Image.open(cover_png).convert("RGB").resize((W, H), Image.LANCZOS).save(cp)
+            segs.append(_card_segment(str(cp), pre_s, str(wd / "s00_cover.mp4"), crf, preset, fade=False))
+            boxes["cover_frame"] = {"secs": pre_s, "thumbnail_offset_ms": int(pre_s * 500)}
         if cover_s:
             if cfg.get("card"):
                 boxes["cover_boxes"] = theme_cards.cover(cfg, str(wd / "cover.png"), W, H, brand, hook, still,
@@ -677,7 +704,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
 
         main = str(wd / "s1_main.mp4")
         args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand,
-                               hook_path=hook_path, stage_path=stage_path, L=L, wd=wd, reframe=reframe)
+                               hook_path=hook_path, stage_path=stage_path, L=L, wd=wd, reframe=reframe, extras=extras)
         ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}",
                 *_venc(crf, preset), main], timeout=1800)
         segs.append(main)
@@ -698,7 +725,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         wav = music.make(str(wd / "music.wav"), total + 0.5, mood) if mood != "none" else None
         outp = Path(out)
         outp.parent.mkdir(parents=True, exist_ok=True)
-        _mux_audio(video, source if (source and not silent) else None, c0, D, cover_s, total, wav, str(outp))
+        total += pre_s
+        _mux_audio(video, source if (source and not silent) else None, c0, D, cover_s + pre_s, total, wav, str(outp))
         got = ff.probe(str(outp))
         return {"path": str(outp), "style": style, "theme": cfg.get("theme"), "ratio": ratio, "width": got["width"], "height": got["height"],
                 "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), why], "boxes": boxes,
@@ -706,14 +734,96 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                 "captions": caps_on, "burned_subs": bool(burned_subs), "lower_third": lower_third,
                 "captions_note": captions_note, "source_captions": {k: own_caps[k] for k in ("top", "bottom")} if own_caps else None,
                 "captions_center": L.get("captions_center"), "music": mood if wav else "none", "source_silent": silent,
-                "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit}
+                "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit, "cover_frame_secs": pre_s,
+                "thumbnail_offset_ms": int(pre_s * 500) if pre_s else None,
+                "brand_pass": sorted((boxes.get("brand_pass") or {}).keys()) if brand_pass else []}
+    finally:
+        if own:
+            shutil.rmtree(wd, ignore_errors=True)
+
+
+
+def render_plain(source: str, *, out: str, ratio: str = "9:16", brand: dict | None = None, clip: tuple | None = None,
+                 logo: bool = True, cover_png: str | None = None, cover_secs: float = 0.6, crf: int = 21,
+                 preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0, end: bool = True) -> dict:
+    """"No style: post my video as it is": the video only lightly finished. Trimmed (``clip``) and fitted to the frame
+    (a full crop when the shape is close, else the whole frame over a blurred copy of itself), the logo bug when
+    ``logo`` is on, the brand's Follow end card last, its own sound (no music, no captions, no theme)."""
+    from . import brandpass
+    brand = {**DEFAULT_BRAND, **(brand or {})}
+    if ratio not in SIZES:
+        raise ff.MediaError(f"Unknown ratio {ratio!r}. Use 9:16, 4:5 or 1:1.")
+    W, H = SIZES[ratio]
+    own = workdir is None
+    wd = Path(workdir or tempfile.mkdtemp(prefix="hqp-"))
+    wd.mkdir(parents=True, exist_ok=True)
+    try:
+        pr = ff.probe(source)
+        sw, sh, dur, has_a = pr["width"] or 1920, pr["height"] or 1080, pr["duration"], pr["has_audio"]
+        c0, c1 = (float(clip[0]), float(clip[1])) if clip else (0.0, min(dur, max_main))
+        D = max(0.5, c1 - c0)
+        close = abs((sw / sh) - (W / H)) / (W / H) < 0.12
+        src = f"[0:v]setpts=PTS-STARTPTS,fps={FPS},setsar=1"
+        if close:
+            fc = f"{src},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}[base]"
+        else:
+            fc = (f"{src},split[s1][s2];[s1]scale={W // 8}:{H // 8}:force_original_aspect_ratio=increase,crop={W // 8}:{H // 8},"
+                  f"gblur=sigma=6,scale={W}:{H},eq=brightness=-0.2:saturation=0.85[bgv];"
+                  f"[s2]scale={W}:{H}:force_original_aspect_ratio=decrease[fgv];[bgv][fgv]overlay=(W-w)/2:(H-h)/2[base]")
+        args = ["-ss", f"{c0:.3f}", "-t", f"{D:.3f}", "-i", source]
+        boxes = {}
+        chain = "[base]"
+        if logo:
+            im, bx = brandpass.bug(W, H, brand)
+            if bx[2] > bx[0]:
+                im.save(wd / "bug.png")
+                args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", str(wd / "bug.png")]
+                chain += "[1:v]overlay=0:0:shortest=1"
+                boxes["bug"] = bx
+            else:
+                chain += "null"
+        else:
+            chain += "null"
+        fc += ";" + chain + ",format=yuv420p,setsar=1[v]"
+        segs = []
+        pre_s = 0.0
+        if cover_png and Path(cover_png).is_file():
+            pre_s = max(0.3, float(cover_secs))
+            cp = wd / "cover_frame.png"
+            Image.open(cover_png).convert("RGB").resize((W, H), Image.LANCZOS).save(cp)
+            segs.append(_card_segment(str(cp), pre_s, str(wd / "s00_cover.mp4"), crf, preset, fade=False))
+        main = str(wd / "s1_main.mp4")
+        ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}", *_venc(crf, preset), main],
+               timeout=1800)
+        segs.append(main)
+        card = 0.0
+        if end:
+            boxes["end_card"] = end_card(str(wd / "end.png"), W, H, brand)
+            segs.append(_card_segment(str(wd / "end.png"), CARD_SECS, str(wd / "s3_end.mp4"), crf, preset))
+            card = CARD_SECS
+        lst = wd / "segments.txt"
+        lst.write_text("".join(f"file '{Path(x).resolve()}'\n" for x in segs))
+        video = str(wd / "video.mp4")
+        ff.run(["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", video], timeout=300)
+        total = pre_s + D + card
+        silent = (not has_a) or ff.is_silent(source)
+        outp = Path(out)
+        outp.parent.mkdir(parents=True, exist_ok=True)
+        _mux_audio(video, None if silent else source, c0, D, pre_s, total, None, str(outp))
+        got = ff.probe(str(outp))
+        return {"path": str(outp), "style": "none", "theme": None, "ratio": ratio, "width": got["width"], "height": got["height"],
+                "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), "given" if clip else "full video"],
+                "boxes": boxes, "safe_area": safe_area(W, H), "caption_problems": [], "captions": False, "burned_subs": False,
+                "captions_note": "", "source_captions": None, "music": "none", "source_silent": silent, "fit": "crop" if close else "blurred sides",
+                "logo": bool(boxes.get("bug")), "cover_frame_secs": pre_s, "thumbnail_offset_ms": int(pre_s * 500) if pre_s else None,
+                "credit": "", "brand_pass": []}
     finally:
         if own:
             shutil.rmtree(wd, ignore_errors=True)
 
 
 def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand, hook_path=None,
-                stage_path=None, L=None, wd=None, reframe=None):
+                stage_path=None, L=None, wd=None, reframe=None, extras=None):
     args: list[str] = []
     n = 0
     if source:
@@ -737,6 +847,11 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
     if _st.has_fx(cfg, "sweep") and wd is not None:
         args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", _tc.sweep_png(str(Path(wd) / "sweep.png"), W, H)]
         sw_i, nxt = nxt, nxt + 1
+    ex_i = []
+    for (png, _t0, _t1) in extras or []:  # brand pass layers (hook title, logo bug, lower-third), each with its window
+        args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", str(png)]
+        ex_i.append(nxt)
+        nxt += 1
     look = _st.footage_chain(cfg, W)
     look = ("," + look) if look else ""
     weave = _st.has_fx(cfg, "weave")
@@ -793,6 +908,14 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
     chain += f"[{ov_i}:v]overlay=0:0:shortest=1"
     if hook_path:
         chain += f"[b1];[b1][{ov_i + 1}:v]overlay=0:0:eof_action=pass:enable='lt(t,{HYPE_HOOK_SECS})'"
+    for k, (png, t0, t1) in zip(ex_i, extras or []):
+        fade = []
+        if t0 > 0:
+            fade.append(f"fade=t=in:st={t0:.2f}:d=0.25:alpha=1")
+        if t1 < D - 0.05:
+            fade.append(f"fade=t=out:st={max(t0, t1 - 0.3):.2f}:d=0.3:alpha=1")
+        parts.append(f"[{k}:v]format=rgba" + ("," + ",".join(fade) if fade else "") + f"[bp{k}]")
+        chain += f"[bq{k}];[bq{k}][bp{k}]overlay=0:0:eof_action=pass:enable='between(t,{t0:.2f},{t1:.2f})'"
     chain += _theme_text(cfg, L or {}, D)
     tr = _st.transition_chain(cfg) if source else ""
     if tr:
