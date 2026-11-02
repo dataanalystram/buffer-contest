@@ -1384,18 +1384,27 @@ class House:
                           "type": "video" if media and media[0].lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) else
                           ("carousel" if len(set(media)) > 1 else "image" if media else "text"), "draggable": True})
         for r in self.store.q("SELECT id,result,updated FROM agent_runs WHERE user_id=? AND status='ready' ORDER BY id DESC LIMIT 20", (a.uid,)):
-            res = json.loads(r["result"] or "{}")
-            for pk in res.get("packages", []):
-                if pk.get("status") == "ready":
-                    media = pk.get("media_urls") or []
-                    vid = any(str(m).lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) for m in media)
-                    items.append({"kind": "ready", "status": "ready to post", "state": "ready",
-                                  "ref": f"ready:{r['id']}:{pk['channel_id']}", "when": "", "text": pk["text"][:280],
-                                  "service": pk["service"], "channel": pk["channel_name"], "channel_id": pk["channel_id"],
-                                  "run_id": r["id"], "id": f"{r['id']}:{pk['channel_id']}",
-                                  "thumb": "" if vid else (media[0] if media else ""),
-                                  "type": "reel" if vid else ("carousel" if len(media) > 1 else "image" if media else "text"),
-                                  "pass": pk["check"]["pass"], "draggable": True})
+            try:
+                res = json.loads(r["result"] or "{}")
+            except ValueError:
+                continue
+            for pk in res.get("packages") or []:
+                # Packages come from three makers (the agent, Make a post, an MCP client's create_package) and not all of
+                # them carry every field: one client-made package without channel_name made /api/calendar a 500, so the
+                # Planner showed nothing at all (owner, 2 Nov 2026). Read every field defensively; skip what can't be shown.
+                if not isinstance(pk, dict) or pk.get("status") != "ready" or not pk.get("channel_id"):
+                    continue
+                media = [str(m) for m in pk.get("media_urls") or [] if m]
+                vid = any(m.lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) for m in media)
+                ch = chans.get(pk["channel_id"], {})
+                items.append({"kind": "ready", "status": "ready to post", "state": "ready",
+                              "ref": f"ready:{r['id']}:{pk['channel_id']}", "when": "", "text": str(pk.get("text") or "")[:280],
+                              "service": pk.get("service") or ch.get("service", ""),
+                              "channel": pk.get("channel_name") or pk.get("channel") or ch.get("displayName") or ch.get("name") or "",
+                              "channel_id": pk["channel_id"], "run_id": r["id"], "id": f"{r['id']}:{pk['channel_id']}",
+                              "thumb": "" if vid else (media[0] if media else ""),
+                              "type": "reel" if vid else ("carousel" if len(media) > 1 else "image" if media else "text"),
+                              "pass": bool((pk.get("check") or {}).get("pass", True)), "draggable": True})
         try:
             slots = [{"channel_id": c["id"], "timezone": c.get("timezone") or "Europe/London",
                       "schedule": c.get("postingSchedule") or []}

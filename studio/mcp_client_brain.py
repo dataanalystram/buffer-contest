@@ -587,6 +587,7 @@ def t_create_package(studio, a, args):
             fmt = args.get("format") or ("reel" if any(u.lower().split("?")[0].endswith((".mp4", ".mov")) for u in media_urls) else
                                          "carousel" if len(media_urls) > 1 else "photo" if media_urls else "text")
             pk.append({"channel_id": c["id"], "service": c.get("service"), "channel": c.get("displayName") or c.get("name"),
+                       "channel_name": c.get("displayName") or c.get("name"),  # every package reader (Planner, Make a post) uses this
                        "text": str(text)[:5000], "media_urls": media_urls, "format": fmt, "status": "ready",
                        "media": [{"url": u, "type": "video" if u.lower().split("?")[0].endswith((".mp4", ".mov")) else "photo"}
                                  for u in media_urls], "check": h.check(a, str(text))})
