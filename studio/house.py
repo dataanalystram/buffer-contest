@@ -971,6 +971,20 @@ class House:
         owner = self.store.q("SELECT user_id FROM render_jobs WHERE id=?", (jid,))
         if not owner or not self._worker_allowed(owner[0]["user_id"]):  # belt and braces: sample jobs never reach the worker
             return False, "sample workspace: no worker runs"
+        from . import instabox_worker
+        if instabox_worker.enabled():  # opt-in (HQ_RENDER_BACKEND=instabox): a warm InstaBox VM, docs/INSTABOX_WORKER.md
+            ok, why = instabox_worker.dispatch(self, jid, workflow, inputs, ttl)
+            if ok or not os.environ.get("GH_DISPATCH_TOKEN"):
+                return ok, why
+            # InstaBox failed or timed out: fall back to the GitHub Actions run. open_claim below replaces the job token
+            # the box was given, so a box job that did start late can no longer read or write this job.
+            print(f"render: InstaBox dispatch failed for job {jid} ({why}); falling back to GitHub Actions", flush=True)
+            gh_ok, gh_why = self._dispatch_github_actions(jid, workflow, inputs, ttl)
+            return gh_ok, f"{why}; fallback: {gh_why}"
+        return self._dispatch_github_actions(jid, workflow, inputs, ttl)
+
+    def _dispatch_github_actions(self, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:
+        """The GitHub Actions render run (the default backend, and the fallback when InstaBox fails)."""
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")
         self.open_claim(jid, ttl, workflow)
