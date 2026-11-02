@@ -3,7 +3,7 @@
 Runs on the GitHub video worker (.github/workflows/demo-clips.yml), never on the web dyno, and spends nothing on AI:
 transcripts come from faster-whisper on the worker, moments are scored by the built-in scorer (studio.media.longform).
 
-    python scripts/demo_buffer_split.py --source <url or path> --out demo_out
+    python scripts/demo_buffer_split.py --source <url or path> --out demo_out   # --source is required
 
 For each moment the owner picked (seconds in the source) it cuts a window with a little room either side, transcribes
 just that window, snaps the moment to whole sentences, re-scores it with longform.score/reasons/hook_title, tracks faces
@@ -25,7 +25,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from studio import take  # noqa: E402
 from studio.media import ff, longform  # noqa: E402
 
-SOURCE_URL = "https://huggingface.co/datasets/somarajuramprasadie/huhbyte-media/resolve/main/huhqueue/demo/buffer_commit_kickoff_720p.mp4"
 YOUTUBE = "https://youtu.be/QJf0H64BnFo"
 TITLE = "Everything You Need to Know Before Buffer Commit Starts"
 CREDIT = "Video: Buffer — Everything You Need to Know Before Buffer Commit Starts"
@@ -72,7 +71,9 @@ def snap(sents: list[dict], s: float, e: float) -> tuple[int, int]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default=SOURCE_URL)
+    ap.add_argument("--source", required=True,
+                    help="URL or path of the source video (you supply it; nothing is hosted for you). The bundle credits the "
+                         "YouTube original and never records where the file came from.")
     ap.add_argument("--out", default="demo_out")
     ap.add_argument("--model", default="small")
     ap.add_argument("--only", type=int, default=0, help="render just moment N (1-based) for a quick check")
@@ -136,7 +137,7 @@ def main() -> int:
     sh(["ffmpeg", "-y", "-v", "error", "-ss", str(MOMENTS[0][0]), "-i", str(src), "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4",
         str(out / "poster.jpg")])
     bundle = {"source": {"title": TITLE, "speaker": "Buffer team (Buffer Commit kickoff Q&A)", "credit": CREDIT, "url": YOUTUBE,
-                         "media_url": SOURCE_URL, "note": "Buffer's own 89-minute Q&A for the Buffer Commit contest, used as the demo "
+                         "note": "Buffer's own 89-minute Q&A for the Buffer Commit contest, used as the demo "
                          "example with credit. Buffer does not endorse HuhQueue.", "poster": "poster.jpg",
                          "duration": round(pr["duration"], 2)},
               "analysis": {"probe": {"duration": pr["duration"], "width": pr["width"], "height": pr["height"], "audio": True,
