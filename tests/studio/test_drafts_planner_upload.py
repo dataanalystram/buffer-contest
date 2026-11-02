@@ -124,8 +124,9 @@ def test_mcp_tools_run_off_the_event_loop(human, monkeypatch):
 # ---------------------------------------------------------------------------------------------------- 2. Planner
 def test_planner_survives_a_client_package_without_channel_name(human):
     st = human.app.state.store
+    a, b = (_token(human, image_bytes(64, 64, "JPEG"), n) for n in ("a.jpg", "b.jpg"))  # real files: a missing one fails the check
     pk = {"channel_id": "ch_ig", "service": "instagram", "channel": "huhbyte.ai", "text": "Screen Studio 4.0", "status": "ready",
-          "media_urls": ["https://hq.test/m/a.jpg", "https://hq.test/m/b.jpg"], "format": "carousel", "check": {"pass": True}}
+          "media_urls": [f"https://hq.test/m/{a}", f"https://hq.test/m/{b}"], "format": "carousel", "check": {"pass": True}}
     bad = {"channel_id": "ch_li", "status": "ready"}  # an odd old package: no text, no service, no check
     st.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
          (_uid(human), "client", json.dumps({"prompt": "x"}), "ready", "[]", json.dumps({"packages": [pk, bad, "junk"]}), time.time(), time.time()))

@@ -202,10 +202,22 @@ function plEmpty() {
     <div class="row"><button class="btn sm" type="button" data-testid="planner-empty-create" data-act="new">Create post</button>${plFiltersActive() ? `<button class="btn2 sm" type="button" data-testid="planner-empty-clear" data-act="clear">Clear filters</button>` : ""}</div></div>`;
 }
 function plThumb(i) {
+  // the media's files were deleted: say so instead of a broken image (owner bug, 2 Nov 2026)
+  if (i.media_state === "missing") return `<svg class="ic" viewBox="0 0 24 24" aria-label="Media deleted" role="img" data-testid="planner-media-missing"><title>Media deleted</title><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 4l16 16"/></svg>`;
   if (i.thumb) return `<img src="${esc(i.thumb)}" alt="" loading="lazy">`;
   const g = { video: '<path d="M8 6l10 6-10 6z"/>', reel: '<path d="M8 6l10 6-10 6z"/>', carousel: '<rect x="4" y="6" width="12" height="12" rx="2"/><path d="M19 8v8"/>', image: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 16l5-5 4 4 3-3 4 4"/>' }[i.type] || '<path d="M6 7h12M6 12h12M6 17h7"/>';
   return `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${g}</svg>`;
 }
+// a thumbnail whose file is gone (404) shows the "media deleted" mark instead of a broken image (CSP: no inline onerror)
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.closest(".pl-thumb, .pl-tile")) return;
+  const m = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  m.setAttribute("class", "ic"); m.setAttribute("viewBox", "0 0 24 24"); m.setAttribute("role", "img"); m.setAttribute("aria-label", "Image unavailable");
+  m.dataset.testid = "planner-thumb-gone";
+  m.innerHTML = '<title>Image unavailable</title><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 4l16 16"/>';
+  img.replaceWith(m);
+}, true);
 function plWhen(i) { return i.z ? timeLabel(i.z.h, i.z.mi) : "No date"; }
 // a compact chip for the week and month grids
 function plChip(i) {

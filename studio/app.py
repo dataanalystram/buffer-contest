@@ -56,6 +56,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url=None, redoc_url=None)
     house = house_mod.House(studio, http=http)
     studio.house = house
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        house_mod.start_media_check(house)
     app.state.settings, app.state.store, app.state.buffer, app.state.studio, app.state.house = s, store, buffer, studio, house
 
     # ------------------------------------------------------------ helpers
@@ -276,7 +278,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/healthz")
     def health():
         # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
-        return {"ok": True, "configured": s.configured, "db": store.ping()}
+        mh = getattr(house, "media_health", None) or {}
+        return {"ok": True, "configured": s.configured, "db": store.ping(),
+                "media": {"checked_at": mh.get("checked_at"), "missing_files": mh.get("files_missing", 0)} if mh else {"checked_at": None}}
 
     # ------------------------------------------------------------ OAuth
     @app.get("/login", include_in_schema=False)
@@ -613,6 +617,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return Response(data[start:end + 1], status_code=206, media_type=m["mime"],
                             headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
         return Response(data, media_type=m["mime"], headers=headers)
+
+    @app.get("/api/media/health")
+    def media_health(request: Request, refresh: int = 0):
+        """Ready posts whose files are gone (deleted from the Library): the startup / periodic check's result for you."""
+        a = actor(request)
+        if refresh:
+            house.media_audit()
+        return house.media_health_for(a)
 
     @app.post("/api/media")
     async def upload(request: Request):
