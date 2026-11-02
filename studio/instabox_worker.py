@@ -9,8 +9,9 @@ source -> 106 s; 58 s branded Reel (render.brand_video) 21.1 s. docs/INSTABOX_WO
 Flow, per job:
   1. the app mints the job's token itself (House.issue_job_token, the same token an OIDC claim hands out),
   2. resumes / starts the machine HQ_INSTABOX_MACHINE (POST .../resume or .../start, Idempotency-Key),
-  3. one exec: update the checkout to HQ_INSTABOX_REF, then start `python -m studio.render_worker` in the background
-     under a lock (one job at a time on the box). The token travels in the exec's stdin, never in the command
+  3. one exec: update the checkout to HQ_INSTABOX_REF, then start `python -m studio.render_worker` in the background;
+     the worker takes the box lock (HQ_LOCK, one job at a time) after its heartbeat starts.
+     The token travels in the exec's stdin, never in the command
      string (exec commands are kept in the machine's history) and never in a dispatch input,
   4. the worker posts its result back to the app exactly as on GitHub Actions; the box then idles and pauses itself.
 
@@ -71,14 +72,16 @@ def wake(http: httpx.Client, mid: str) -> tuple[bool, str]:
 
 def command(jid: int, app_url: str, kind: str = "", ref: str = "main") -> str:
     """The exec command. Reads the job token from stdin; nothing secret is in this string."""
-    env = f"HQ_JOB_ID={int(jid)} HQ_APP={shlex.quote(app_url)}"
+    # HQ_LOCK: the worker takes the box's one-job-at-a-time lock itself, after its heartbeat starts, so a job waiting its
+    # turn behind a long One take still looks alive to the app's watchdog (House.sweep_stale_jobs)
+    env = f"HQ_JOB_ID={int(jid)} HQ_APP={shlex.quote(app_url)} HQ_LOCK=/data/hq.lock"
     if kind:
         env += f" HQ_KIND={shlex.quote(kind)}"
     return (
         "set -e; IFS= read -r JOB_TOKEN; export JOB_TOKEN; cd /data/hq; "
         f"git fetch -q --depth 1 origin {shlex.quote(ref)} && git checkout -q -f FETCH_HEAD; "
         "mkdir -p /data/logs; "
-        f"(nohup flock /data/hq.lock env {env} /data/venv/bin/python -m studio.render_worker "
+        f"(nohup env {env} /data/venv/bin/python -m studio.render_worker "
         f"--job {int(jid)} --app {shlex.quote(app_url)} > /data/logs/job-{int(jid)}.log 2>&1 &); echo started"
     )
 

@@ -245,7 +245,8 @@
               <label class="chk"><input type="checkbox" id="tkOwns" data-testid="take-owns"> This is my video, or I have the rights to it</label>
               <span class="row"><button class="btn2" id="tkSample" data-testid="take-sample" type="button">Try the sample take</button>
               <button class="btn" id="tkGo" data-testid="take-go" type="submit">Make clips</button></span></div>
-          </form>
+          <p class="st-err" id="tkErr" data-testid="take-error" role="alert"></p>
+            </form>
           <div class="chips-head"><span class="label" id="tkChLbl">Channels for the clips</span></div>
           <div class="chips" id="takeChips" data-testid="take-chips" role="group" aria-labelledby="tkChLbl"></div>
         </div>
@@ -259,8 +260,10 @@
                 <span id="spreadCount" class="sm"></span>
                 <label class="sr" for="spreadWeek">Week</label><select id="spreadWeek" data-testid="spread-week"><option value="next">Next week</option><option value="this">This week</option></select>
                 <button class="btn" type="button" id="spreadGo" data-testid="spread-go">Spread into my week</button>
-                <span class="muted xs">Shows the plan on your Planner first. Clips are saved only as Buffer drafts.</span>
+                <span class="muted xs" id="spreadHelp">Shows the plan on your Planner first. Clips are saved only as Buffer drafts.</span>
+                <span class="muted sm" id="spreadSampleNote" data-testid="spread-sample-note" hidden>This is the sample take, so its clips can't go to your Buffer. Make clips from your own video to spread them into your week.</span>
               </div>
+              <p class="st-err" id="spreadErr" data-testid="spread-error" role="alert"></p>
             </div>
           </div>
         </section>

@@ -53,9 +53,35 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     studio = Studio(s, store, demo.BufferRouter(buffer, demo.DemoBuffer()))
     # docs_url=None: Swagger UI needs a CDN script and an inline script, which the CSP (script-src 'self') blocks, so it
     # rendered blank. /docs/api is our own server-rendered reference; /api/docs redirects there.
-    app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url=None, redoc_url=None)
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        # the render-job watchdog: a worker job with no heartbeat for HQ_JOB_HEARTBEAT_MIN minutes is failed, so a killed
+        # worker can't leave a job running forever (also swept lazily when a run or take is read). HQ_WATCHDOG_S=0: off.
+        import threading
+        stop = threading.Event()
+        every = float(os.environ.get("HQ_WATCHDOG_S", "60"))
+
+        def loop():
+            while not stop.wait(every):
+                try:
+                    house.sweep_stale_jobs(force=True)
+                except Exception:  # noqa: BLE001  keep watching
+                    import traceback
+                    traceback.print_exc()
+        if every > 0:
+            threading.Thread(target=loop, name="hq-job-watchdog", daemon=True).start()
+        try:
+            yield
+        finally:
+            stop.set()
+
+    app = FastAPI(title="HuhQueue — built on the Buffer API", docs_url=None, redoc_url=None, lifespan=lifespan)
     house = house_mod.House(studio, http=http)
     studio.house = house
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        house_mod.start_media_check(house)
     app.state.settings, app.state.store, app.state.buffer, app.state.studio, app.state.house = s, store, buffer, studio, house
 
     # ------------------------------------------------------------ helpers
@@ -280,7 +306,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/healthz")
     def health():
         # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
-        return {"ok": True, "configured": s.configured, "db": store.ping()}
+        mh = getattr(house, "media_health", None) or {}
+        return {"ok": True, "configured": s.configured, "db": store.ping(),
+                "media": {"checked_at": mh.get("checked_at"), "missing_files": mh.get("files_missing", 0)} if mh else {"checked_at": None}}
 
     # ------------------------------------------------------------ OAuth
     @app.get("/login", include_in_schema=False)
@@ -552,6 +580,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return studio.create_agent_token(actor(request, write=True), body.get("name", ""), body.get("policy", "review"),
                                          int(body.get("daily_cap", 10)), body.get("channels") or None, int(body.get("days", 30)))
 
+    @app.patch("/api/agent-tokens/{token_id}")
+    def token_cap(token_id: int, request: Request, body: dict = Body(...)):
+        return studio.set_agent_cap(actor(request, write=True), token_id, body.get("daily_cap"))
+
     @app.delete("/api/agent-tokens/{token_id}")
     def revoke(token_id: int, request: Request):
         return studio.revoke_agent_token(actor(request, write=True), token_id)
@@ -617,6 +649,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return Response(data[start:end + 1], status_code=206, media_type=m["mime"],
                             headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
         return Response(data, media_type=m["mime"], headers=headers)
+
+    @app.get("/api/media/health")
+    def media_health(request: Request, refresh: int = 0):
+        """Ready posts whose files are gone (deleted from the Library): the startup / periodic check's result for you."""
+        a = actor(request)
+        if refresh:
+            house.media_audit()
+        return house.media_health_for(a)
 
     @app.post("/api/media")
     async def upload(request: Request):
@@ -773,11 +813,23 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "write"):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         body = await reqlimits.read_json(request, reqlimits.WORKER_MAX)
+        error = str(body.get("error") or "")
+        if body.get("status") == "failed" and not error:
+            error = "The video worker failed."
         try:
             data = base64.b64decode(body["data"]) if body.get("data") else None
-            return house.finish_video(jid, data, body.get("meta"), body.get("error", ""), body=body)
+            return house.finish_video(jid, data, body.get("meta"), error, body=body)
         finally:
             house.burn_job_token(jid)
+            if error and body.get("log_tail"):
+                house.keep_job_log(jid, body["log_tail"])
+
+    @app.post("/api/worker/jobs/{jid}/heartbeat", include_in_schema=False)
+    def worker_heartbeat(jid: int, request: Request):
+        """The worker is still alive (every ~60 s). The job's token, any number of times, until the result burns it."""
+        if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "beat"):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        return {"ok": house.job_heartbeat(jid)}
 
     @app.post("/api/worker/jobs/{jid}/clips/{clip_id}", include_in_schema=False)
     async def worker_clip(jid: int, clip_id: str, request: Request):

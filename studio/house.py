@@ -35,6 +35,9 @@ MAX_IMAGE_FETCH = 8 * 1024 * 1024
 VIDEO_ONLY = {"tiktok", "youtube"}
 
 STALE_RUN = int(os.environ.get("HQ_RUN_STALE", "900"))  # a run silent this long (seconds) is reported as stopped
+# a worker job (InstaBox or GitHub Actions) with no heartbeat for this many minutes is failed (House.sweep_stale_jobs)
+JOB_STALE_MIN = float(os.environ.get("HQ_JOB_HEARTBEAT_MIN", "10"))
+JOB_STALE_WHY = "The video worker stopped responding (no heartbeat for {n} minutes), so this job was stopped. Try again."
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="house-agent")
 
 
@@ -93,6 +96,49 @@ IMPORT_WHY = {  # media import failures, said plainly (owner bug 2 Nov 2026: eve
     "private": "Couldn't download that file: the link points to a private address, so it can't be read.",
     "unreachable": "Couldn't download that file: the link didn't answer. Check it opens in a browser, or upload the file instead.",
 }
+
+
+
+def start_media_check(house: "House", every: float | None = None, first_delay: float = 20) -> threading.Thread | None:
+    """Check for missing media files shortly after startup, then every ``every`` seconds (HQ_MEDIA_CHECK_S, default 6 h;
+    0 turns it off). Only reads; the result is house.media_health."""
+    every = float(os.environ.get("HQ_MEDIA_CHECK_S", "21600")) if every is None else every
+    if every <= 0:
+        return None
+
+    def loop():
+        time.sleep(first_delay)
+        while True:
+            try:
+                house.media_audit()
+            except Exception as e:  # noqa: BLE001 - keep checking
+                print(f"media check: {e.__class__.__name__}: {e}", flush=True)
+            time.sleep(every)
+    t = threading.Thread(target=loop, daemon=True, name="media-check")
+    t.start()
+    return t
+
+
+_HTTP_WHY = {400: "Bad Request", 401: "needs a sign-in", 403: "Forbidden (private or needs a sign-in)", 404: "Not Found",
+             410: "Gone", 429: "Too Many Requests", 500: "a server error", 502: "a server error", 503: "unavailable"}
+
+
+def plain_worker_error(msg: str) -> str:
+    """The worker reports raw Python errors ("HTTPStatusError: Client error '404 Not Found' for url ..."). Say what happened
+    and what to do instead (live test 2 Nov 2026: a bad One take link showed the raw httpx message)."""
+    import re
+    m = (msg or "").strip()
+    if not m:
+        return ""
+    h = re.match(r"HTTPStatusError: (?:Client|Server) error '(\d{3})[^']*' for url '([^']+)'", m)
+    if h:
+        code, url = int(h.group(1)), h.group(2)
+        host = urlparse(url).hostname or "the link"
+        return (f"Couldn't download the video: {host} answered {code} {_HTTP_WHY.get(code, '')}".rstrip() + ". "
+                "Use a direct link to the video file (it usually ends in .mp4, .mov or .webm), or upload the file instead.")
+    if m.startswith(("ConnectError", "ConnectTimeout", "ReadTimeout", "TimeoutException", "RemoteProtocolError")):
+        return "Couldn't reach the video link from the video worker. Check the link opens in a private window, or upload the file."
+    return m
 
 
 class House:
@@ -369,6 +415,104 @@ class House:
         self.store.x(f"DELETE FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))
         return n
 
+    # ================================================================ missing media
+    # Owner bug, 2 Nov 2026: run 20's ready Instagram carousel showed a broken thumbnail (/m/<token>.jpg answered 404)
+    # because its slides had been deleted from the Library (a forced delete). A package now says which of its files are
+    # gone, the Planner thumbnail falls back to the first slide that still exists, a package with missing files can't be
+    # sent to Buffer (it would only fail there), and a check at startup and every few hours counts what is missing.
+    def media_token_of(self, url: str) -> str:
+        """The media token of one of this server's own /m/<token> URLs, else ''."""
+        u = str(url or "")
+        base = self.s.public_url.rstrip("/") + "/m/"
+        if base != "/m/" and u.startswith(base):
+            return u[len(base):].split("?", 1)[0].split("#", 1)[0]
+        return u[3:].split("?", 1)[0] if u.startswith("/m/") else ""
+
+    def media_present(self, tokens) -> set[str]:
+        """Which of these tokens still have a file (a media row or a chunked Library upload)."""
+        toks = sorted({t for t in tokens if t})
+        have: set[str] = set()
+        for i in range(0, len(toks), 200):
+            part = toks[i:i + 200]
+            marks = ",".join("?" for _ in part)
+            have |= {r["token"] for r in self.store.q(f"SELECT token FROM media WHERE token IN ({marks})", tuple(part))}
+            have |= {r["token"] for r in self.store.q(f"SELECT token FROM library_items WHERE storage='chunks' AND token IN ({marks})",
+                                                       tuple(part))}
+        return have
+
+    @staticmethod
+    def _pkg_urls(pk: dict) -> list[str]:
+        urls = [str((m or {}).get("url") or "") for m in (pk.get("media") or []) if isinstance(m, dict)]
+        urls += [str(u) for u in (pk.get("media_urls") or []) if u]
+        return list(dict.fromkeys(u for u in urls if u))
+
+    def media_state(self, packages: list, have: set[str] | None = None) -> dict[int, dict]:
+        """For each package (by index): {state: ok | partial | missing, missing: [urls], thumb: the first file that still
+        exists}. Only this server's own /m/ files are checked; outside URLs count as present."""
+        toks = {self.media_token_of(u) for pk in packages if isinstance(pk, dict) for u in self._pkg_urls(pk)}
+        toks.discard("")
+        have = self.media_present(toks) if have is None else have
+        out = {}
+        for i, pk in enumerate(packages):
+            if not isinstance(pk, dict):
+                continue
+            urls = self._pkg_urls(pk)
+            gone = [u for u in urls if self.media_token_of(u) and self.media_token_of(u) not in have]
+            alive = [u for u in urls if u not in gone]
+            out[i] = {"state": "ok" if not gone else ("missing" if not alive else "partial"), "missing": gone,
+                      "thumb": alive[0] if alive else ""}
+        return out
+
+    def annotate_media(self, res: dict) -> dict:
+        """Mark each package of a run result with media_state / media_missing (never saved: always read fresh)."""
+        pks = (res or {}).get("packages") or []
+        if not pks:
+            return res
+        try:
+            st = self.media_state(pks)
+        except Exception:  # noqa: BLE001 - a check that can't run never hides the run
+            return res
+        for i, info in st.items():
+            pks[i]["media_state"] = info["state"]
+            pks[i]["media_missing"] = info["missing"]
+        return res
+
+    MISSING_MEDIA_NOTE = ("This post's media was deleted from your Library, so it can't be sent. "
+                          "Make the post again (or upload the files) to get new media.")
+
+    def media_audit(self, limit: int = 300) -> dict:
+        """Every recent ready run's package files, checked against the store. Kept in self.media_health for /healthz
+        and GET /api/media/health; nothing is changed or deleted."""
+        rows = self.store.q("SELECT id,user_id,result FROM agent_runs WHERE status='ready' ORDER BY id DESC LIMIT ?", (limit,))
+        runs, toks = [], set()
+        for r in rows:
+            try:
+                pks = (json.loads(r["result"] or "{}") or {}).get("packages") or []
+            except ValueError:
+                continue
+            runs.append((r["id"], r["user_id"], pks))
+            toks |= {self.media_token_of(u) for pk in pks if isinstance(pk, dict) for u in self._pkg_urls(pk)}
+        toks.discard("")
+        have = self.media_present(toks)
+        bad = []
+        for rid, uid, pks in runs:
+            st = self.media_state(pks, have)
+            n = sum(len(v["missing"]) for v in st.values())
+            if n:
+                bad.append({"run_id": rid, "user_id": uid, "missing": n,
+                            "state": "missing" if any(v["state"] == "missing" for v in st.values()) else "partial"})
+        self.media_health = {"checked_at": _now(), "runs_checked": len(runs), "files_checked": len(toks),
+                             "files_missing": sum(b["missing"] for b in bad), "runs": bad}
+        if bad:
+            print(f"media check: {len(bad)} ready run(s) reference missing files: "
+                  + ", ".join(f"#{b['run_id']} ({b['missing']})" for b in bad[:10]), flush=True)
+        return self.media_health
+
+    def media_health_for(self, a: Actor) -> dict:
+        h = getattr(self, "media_health", None) or self.media_audit()
+        return {"checked_at": h["checked_at"], "runs": [{k: v for k, v in b.items() if k != "user_id"}
+                                                        for b in h["runs"] if b["user_id"] == a.uid]}
+
     # ================================================================ AI settings
     def ai_settings(self, a: Actor) -> dict:
         return llm.public_view(self.store, a.uid, self.s)
@@ -478,6 +622,7 @@ class House:
             traceback.print_exc()
 
     def run(self, a: Actor, rid: int) -> dict:
+        self._sweep_quietly()
         rows = self.store.q("SELECT * FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
         if not rows:
             raise ActionError("No such agent run.", 404)
@@ -494,7 +639,15 @@ class House:
             (d["result"] or {}).setdefault("thread", []).append({"role": "agent", "text": why, "at": _now()})
             d["status"] = "failed"
             self._save(rid, d["steps"], d["result"], "failed")
+        if isinstance(d.get("result"), dict):
+            self.annotate_media(d["result"])
         return d
+
+    def _sweep_quietly(self) -> None:
+        try:
+            self.sweep_stale_jobs()
+        except Exception:  # noqa: BLE001  the watchdog never breaks a page
+            traceback.print_exc()
 
     def _busy(self, rid: int) -> bool:
         from . import agent_brain
@@ -534,6 +687,9 @@ class House:
         return out
 
     def _save(self, rid: int, steps: list, result: dict, status: str | None = None) -> None:
+        if isinstance(result, dict) and result.get("packages"):  # media_state is read fresh on every view, never stored
+            result = {**result, "packages": [{k: v for k, v in p.items() if k not in ("media_state", "media_missing")}
+                                             if isinstance(p, dict) else p for p in result["packages"]]}
         if status:
             self.store.x("UPDATE agent_runs SET steps=?, result=?, status=?, updated=? WHERE id=?",
                          (json.dumps(steps), json.dumps(result, default=str), status, _now(), rid))
@@ -1099,9 +1255,63 @@ class House:
                 return False
             t["clips"] = list(t.get("clips") or []) + [clip_id]
         else:
-            return True  # the result write itself moves the job out of 'queued'; burn_job_token makes sure
+            return True  # 'write' (and 'beat'): the result write moves the job out of 'queued'; burn_job_token makes sure
         spec["_job_token"] = t
         return self._cas(jid, raw, spec)
+
+    # ---- worker liveness (2 Nov 2026): heartbeat, failure log tail, and the watchdog that fails silent jobs
+    def job_heartbeat(self, jid: int) -> bool:
+        """The worker is alive: bump the job's clock (the watchdog reads `updated`). Only while the job is open."""
+        return bool(self.store.q("UPDATE render_jobs SET updated=? WHERE id=? AND status='queued' RETURNING id", (_now(), jid)))
+
+    def keep_job_log(self, jid: int, tail: str) -> None:
+        """The worker's log tail on a failure: kept on the job (result.log_tail, server side only) and in the app log."""
+        tail = re.sub(r"jt_[A-Za-z0-9_\-]{8,}", "jt_[redacted]", str(tail or ""))[-4000:]
+        if not tail:
+            return
+        rows = self.store.q("SELECT result FROM render_jobs WHERE id=?", (jid,))
+        if not rows:
+            return
+        try:
+            res = json.loads(rows[0]["result"] or "{}")
+        except ValueError:
+            res = {}
+        if not isinstance(res, dict):
+            res = {"value": res}
+        res["log_tail"] = tail
+        self.store.x("UPDATE render_jobs SET result=? WHERE id=?", (json.dumps(res), jid))
+        print(f"render: job {jid} failed on the worker; log tail:\n{tail[-1500:]}", flush=True)
+
+    _swept = 0.0
+
+    def sweep_stale_jobs(self, now: float | None = None, force: bool = False) -> list[int]:
+        """Fail every worker job (one that was handed a job token) that has been silent for JOB_STALE_MIN minutes: the
+        worker was killed, the box paused or the runner never started, so no failure callback will ever come. Runs from
+        the app's watchdog thread and, throttled to once a minute, when a run or take is read. Returns the failed ids."""
+        t = _now() if now is None else now
+        if not force and t - self._swept < 60:
+            return []
+        self._swept = t
+        cutoff = t - JOB_STALE_MIN * 60
+        rows = self.store.q("SELECT id FROM render_jobs WHERE status='queued' AND updated < ? AND spec LIKE ?",
+                            (cutoff, '%"_job_token"%'))
+        why = JOB_STALE_WHY.format(n=int(JOB_STALE_MIN) if JOB_STALE_MIN == int(JOB_STALE_MIN) else JOB_STALE_MIN)
+        failed = []
+        for r in rows:
+            jid = r["id"]
+            # claim the job atomically, so a heartbeat or result landing right now wins and the job is left alone
+            if not self.store.q("UPDATE render_jobs SET updated=? WHERE id=? AND status='queued' AND updated < ? RETURNING id",
+                                (t, jid, cutoff)):
+                continue
+            try:
+                self.finish_video(jid, None, None, why)  # the same path as a worker-reported failure: the run/take shows it
+            except Exception:  # noqa: BLE001  an orphaned job (its run is gone) still gets closed
+                traceback.print_exc()
+            self.store.x("UPDATE render_jobs SET status='failed', error=? WHERE id=? AND status='queued'", (why, jid))
+            self.burn_job_token(jid)
+            print(f"render: watchdog failed job {jid} (no heartbeat for {JOB_STALE_MIN:g} min)", flush=True)
+            failed.append(jid)
+        return failed
 
     def burn_job_token(self, jid: int) -> None:
         st = self._token_state(jid)
@@ -1203,6 +1413,7 @@ class House:
 
     def finish_video(self, jid: int, data: bytes | None, meta: dict | None, error: str = "", run_inline: bool = True,
                      body: dict | None = None) -> dict:
+        error = plain_worker_error(error)
         rows = self.store.q("SELECT * FROM render_jobs WHERE id=?", (jid,))
         if not rows:
             raise ActionError("No such job.", 404)
@@ -1385,6 +1596,8 @@ class House:
             raise ActionError("No package for that channel in this run.", 404)
         if pk.get("status") in ("sent_to_buffer", "pending_approval"):
             raise ActionError("That package was already sent.", 409)
+        if pk.get("media_missing"):
+            raise ActionError(self.MISSING_MEDIA_NOTE, 409)
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
                                             "mode": mode, "due_at": due_at, "options": pk.get("options") or {},
                                             "override_warnings": override_warnings})
@@ -1451,7 +1664,11 @@ class House:
                 res = json.loads(r["result"] or "{}")
             except ValueError:
                 continue
-            for pk in res.get("packages") or []:
+            try:
+                mstate = self.media_state(res.get("packages") or [])
+            except Exception:  # noqa: BLE001
+                mstate = {}
+            for pi, pk in enumerate(res.get("packages") or []):
                 # Packages come from three makers (the agent, Make a post, an MCP client's create_package) and not all of
                 # them carry every field: one client-made package without channel_name made /api/calendar a 500, so the
                 # Planner showed nothing at all (owner, 2 Nov 2026). Read every field defensively; skip what can't be shown.
@@ -1459,15 +1676,19 @@ class House:
                     continue
                 media = [str(m) for m in pk.get("media_urls") or [] if m]
                 vid = any(m.lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) for m in media)
+                ms = mstate.get(pi) or {"state": "ok", "missing": [], "thumb": media[0] if media else ""}
                 ch = chans.get(pk["channel_id"], {})
                 items.append({"kind": "ready", "status": "ready to post", "state": "ready",
                               "ref": f"ready:{r['id']}:{pk['channel_id']}", "when": "", "text": str(pk.get("text") or "")[:280],
                               "service": pk.get("service") or ch.get("service", ""),
                               "channel": pk.get("channel_name") or pk.get("channel") or ch.get("displayName") or ch.get("name") or "",
                               "channel_id": pk["channel_id"], "run_id": r["id"], "id": f"{r['id']}:{pk['channel_id']}",
-                              "thumb": "" if vid else (media[0] if media else ""),
+                              # the first slide that still exists: a deleted first slide never shows as a broken image
+                              "thumb": "" if vid else ms["thumb"],
                               "type": "reel" if vid else ("carousel" if len(media) > 1 else "image" if media else "text"),
-                              "pass": bool((pk.get("check") or {}).get("pass", True)), "draggable": True})
+                              "media_state": ms["state"], "media_missing": len(ms["missing"]),
+                              "error": self.MISSING_MEDIA_NOTE if ms["state"] == "missing" else "",
+                              "pass": bool((pk.get("check") or {}).get("pass", True)) and ms["state"] == "ok", "draggable": True})
         try:
             slots = [{"channel_id": c["id"], "timezone": c.get("timezone") or "Europe/London",
                       "schedule": c.get("postingSchedule") or []}
