@@ -132,8 +132,8 @@ def add_routes(app: FastAPI, house, actor) -> None:
 
     # the source library (News › Sources): list = list_sources, refresh = refresh_sources, toggle = set_source_enabled
     @app.get("/api/sources/library")
-    def src_library(request: Request, category: str = "", limit: int = 120):
-        return call(sa.list_sources, actor(request), {"category": category, "limit": limit})
+    def src_library(request: Request, category: str = "", limit: int = 120, fresh_hours: float = 48):
+        return call(sa.list_sources, actor(request), {"category": category, "limit": limit, "fresh_hours": fresh_hours})
 
     @app.post("/api/sources/refresh")
     def src_refresh(request: Request, body: dict = Body(default={})):

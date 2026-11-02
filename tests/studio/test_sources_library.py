@@ -233,6 +233,7 @@ def test_refresh_reads_sources_once_a_minute_per_workspace(lib, app):
     assert len(calls) == len(S.LIBRARY)  # the limited Refresh fetched nothing
     v = c.get("/api/sources/library").json()
     assert v["refresh_in"] > 0 and v["can_refresh"] and {s["status"] for s in v["sources"]} >= {"ok", "failing"}
+    assert c.get("/api/sources/library?fresh_hours=168").json()["fresh_hours"] == 168  # the 7 days switch reaches the server
 
 
 def test_toggle_hides_a_source_and_matches_over_mcp(lib, app):
