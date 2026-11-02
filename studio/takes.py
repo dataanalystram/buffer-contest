@@ -662,6 +662,10 @@ class Takes:
         tz = next((s.get("timezone") for s in sched if s.get("id") in ids and s.get("timezone")), None) or "UTC"
         monday = take.week_start(week_of, tz)
         busy = []
+        try:
+            self.studio.buffer.prefetch_posts(a.uid, u["org_id"], ("scheduled", "draft"))
+        except Exception:  # noqa: BLE001
+            pass
         for st in ("scheduled", "draft"):
             try:
                 busy += self.studio.buffer.posts(a.uid, u["org_id"], [st], first=100)
