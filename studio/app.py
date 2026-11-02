@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import Body, FastAPI, Query, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 import base64
@@ -579,24 +580,38 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return studio.audit(actor(request), min(limit, 500))
 
     # ------------------------------------------------------------ HuhQueue: media, brand kit, ledger, agent, calendar
-    @app.get("/m/{token}", include_in_schema=False)
+    def _head(mime: str, size: int, cache: str) -> Response:
+        """HEAD: the file's type and length, no body. Buffer's fetcher asks with HEAD before it downloads (Render logs,
+        2 Nov 2026: HEAD /m/<token>.mp4 from Buffer answered 405, and Buffer said "Video could not be read from its URL")."""
+        return Response(b"", media_type=mime, headers={"Content-Length": str(size), "Accept-Ranges": "bytes", "Cache-Control": cache})
+
+    @app.api_route("/m/{token}", methods=["GET", "HEAD"], include_in_schema=False)
     def media(token: str, request: Request):
+        head = request.method == "HEAD"
         lib_item = house.library.by_token(token)
         if lib_item:  # an uploaded Library file: read only the chunks a range asks for
+            if head:
+                return _head(lib_item["mime"], int(lib_item["size"] or 0), "public, max-age=86400")
             return app.state.library_serve(house.library._file_of(lib_item), request, "public, max-age=86400")
+        if head:
+            info = house.media_head(token)
+            if not info:
+                return JSONResponse({"error": "not found"}, status_code=404)
+            return _head(info["mime"], info["size"], "public, max-age=86400")
         m = house.get_media(token)
         if not m:
             return JSONResponse({"error": "not found"}, status_code=404)
-        data, size = m["data"], m["size"]
+        data, size = m["data"], len(m["data"])
         headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
-        rng = request.headers.get("range", "")
-        if rng.startswith("bytes="):
-            a_, _, b_ = rng[6:].partition("-")
-            start = int(a_) if a_.isdigit() else 0
-            end = min(int(b_) if b_.isdigit() else size - 1, size - 1)
-            if start <= end:
-                return Response(data[start:end + 1], status_code=206, media_type=m["mime"],
-                                headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
+        from .library import parse_range
+        rng_h = request.headers.get("range", "")
+        rng = parse_range(rng_h, size)
+        if rng_h and rng is None:
+            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
+        if rng:
+            start, end = rng
+            return Response(data[start:end + 1], status_code=206, media_type=m["mime"],
+                            headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
         return Response(data, media_type=m["mime"], headers=headers)
 
     @app.post("/api/media")
@@ -726,7 +741,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         """place_clips_in_week: dry_run (default) returns the plan + confirm_token; confirm_token creates Buffer drafts."""
         return house.takes.place(actor(request, write=True), rid, body)
 
-    @app.get("/sample/{name}", include_in_schema=False)
+    @app.api_route("/sample/{name}", methods=["GET", "HEAD"], include_in_schema=False)
     def sample_file(name: str, request: Request):
         from .takes import SAMPLE_DIR
         p = (SAMPLE_DIR / name).resolve()
@@ -780,6 +795,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     agent_routes.add_routes(app, house, actor)
     from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)
     library_mod.add_routes(app, house, actor)
+    from . import uploads as uploads_mod  # one-time upload URLs + chunked uploads (UI = REST = MCP)
+    uploads_mod.add_routes(app, house, actor)
     from . import integrations as integrations_mod  # Settings -> Integrations: per-user keys + the Product Hunt callback
     integrations_mod.add_routes(app, house, actor, COOKIE, s.public_url, s.secure_cookies)
 
@@ -798,10 +815,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "Agent token required: Authorization: Bearer hq_..."}, status_code=401,
                                 headers={"WWW-Authenticate": f'Bearer realm="huhqueue", resource_metadata="{meta}"'})
         msg = await request.json()
+        # Tools run in the thread pool, never on the event loop: submit_post waits on Buffer, and Buffer downloads our
+        # /m/ media while it decides. Run inline, the whole server stopped answering for the call (Render logs, 2 Nov 2026:
+        # /healthz went silent for 13 s during create_package) and Buffer said "Image could not be read from its URL".
         if isinstance(msg, list):
-            out = [r for r in (mcp.handle(studio, a, m) for m in msg) if r]
+            res = await run_in_threadpool(lambda: [mcp.handle(studio, a, m) for m in msg])
+            out = [r for r in res if r]
             return JSONResponse(out) if out else Response(status_code=202)
-        r = mcp.handle(studio, a, msg)
+        r = await run_in_threadpool(mcp.handle, studio, a, msg)
         return JSONResponse(r) if r else Response(status_code=202)
 
     @app.get("/mcp", include_in_schema=False)
