@@ -13,7 +13,7 @@ import re
 import time
 from urllib.parse import urlparse
 
-from . import brand, demo_guard, drafter, factcheck, hbstyle, intake, llm, netguard, reader, render, sources, vision
+from . import brand, demo_guard, demo_view, drafter, factcheck, hbstyle, intake, llm, netguard, reader, render, sources, vision
 from .media import styles as media_styles
 from .actions import ActionError
 from . import editorial_tools
@@ -250,6 +250,9 @@ class Tools(EditorialTools):
             raise ActionError("Agent actions are paused: the kill switch is on in HuhQueue.", 423)
         if tool in WRITES:
             self.studio._guard_write(self.a, f"agent_{tool}")
+        why = demo_view.tool_blocked(self.a.uid, tool)  # the view-only demo never saves settings or sends
+        if why:
+            raise ActionError(why, 403)
 
     def channels(self, run: dict, ids=None) -> list[dict]:
         return [c for c in run["input"]["channels"] if not ids or c["id"] in ids or c["service"] in ids]

@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import brand, demo, demo_guard, drafter, llm, netguard, render, sources
+from . import brand, demo, demo_guard, demo_view, drafter, llm, netguard, render, sources
 from .actions import ActionError, Actor, Studio
 
 STEPS = [("find", "Find the story"), ("verify", "Verify on the source"), ("structure", "Structure the facts"),
@@ -205,7 +205,7 @@ class House:
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "import"):
             kit = self.save_kit(a, dict(demo.SAMPLE_KIT))
             return {"kit": kit, "found": {"logo": False, "palette": [], "theme_color": "", "handle": demo.SAMPLE_KIT["handle"]},
-                    "sample": True, "note": demo_guard.WHY["import"]}
+                    "sample": True, "note": demo_guard.why("import")}
         url = (url or "").strip()
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -364,9 +364,9 @@ class House:
         demo_user = demo_guard.is_demo(a.uid)
         cap = demo_guard.DEMO_FILE_MAX if demo_user else MAX_UPLOAD
         if len(b64) * 3 // 4 > cap + 3:  # the size, from the base64 length, before anything is decoded (SECURITY_RULES 6)
-            raise ActionError(demo_guard.WHY["upload_kb"] if demo_user else "Files up to 40 MB.", 413)
+            raise ActionError(demo_guard.why("upload_kb") if demo_user else "Files up to 40 MB.", 413)
         if demo_user and not demo_guard.reserve(self.store, a.uid, "upload_kb", max(1, len(b64) * 3 // 4 // 1024)):
-            raise ActionError(demo_guard.WHY["upload_kb"], 429)
+            raise ActionError(demo_guard.why("upload_kb"), 429)
         try:
             data = base64.b64decode(b64, validate=False)
         except Exception:
@@ -572,7 +572,7 @@ class House:
     def _legacy_start_run(self, a: Actor, body: dict) -> dict:
         self.studio._guard_write(a, "agent_run")
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
-            raise ActionError(demo_guard.WHY["run"], 429)
+            raise ActionError(demo_guard.why("run"), 429)
         kind = "media" if body.get("media_token") else "news"
         if kind == "news" and not ((body.get("query") or "").strip() or (body.get("url") or "").strip()):
             raise ActionError("Give the agent a topic to research or a link to start from.")
@@ -609,7 +609,7 @@ class House:
         if self.sync:
             fn(*args)
         else:
-            _pool.submit(self._safe, fn, *args)
+            demo_view.submit(_pool, self._safe, fn, *args)  # carries the demo's no-outbound guard into the thread
 
     def _safe(self, fn, *args):
         try:
@@ -728,9 +728,9 @@ class House:
         # the free sample: live research while the daily allowance lasts, then the bundled sample story
         if demo.is_sample_url(inp.get("url")) or not demo_guard.take(self.store, a.uid, "research"):
             art = dict(demo.SAMPLE_ARTICLE)
-            res["sample"] = demo_guard.WHY["research"]
+            res["sample"] = demo_guard.why("research")
             res["leads"] = [{"title": art["title"], "url": art["url"], "source": art["site"], "via": "sample", "published": 0}]
-            self._step(steps, "find", "done", "Sample story. " + demo_guard.WHY["research"], {"leads": res["leads"]})
+            self._step(steps, "find", "done", "Sample story. " + demo_guard.why("research"), {"leads": res["leads"]})
             res["article"] = {k: art[k] for k in ("url", "title", "description", "image", "site")}
             res["verification"] = {"url": art["url"], "site": art["site"], "title": art["title"], "image": "", "other_outlets": [],
                                    "skipped": [], "sample": True}
@@ -1019,8 +1019,8 @@ class House:
             clip = self.s.public_url.rstrip("/") + "/sample/" + (takes.sample_meta() or {}).get("clips", [{"file": "clip1.mp4"}])[0]["file"]
             self.store.x("UPDATE render_jobs SET status='done', error=?, updated=? WHERE id=?", ("sample: demo video cap", _now(), jid))
             res["media"] = [m for m in res["media"] if m.get("role") != "slide"] + [{"url": clip, "type": "video", "sample": True}]
-            res["sample"] = demo_guard.WHY["video"]
-            return {"id": jid, "status": "done", "detail": demo_guard.WHY["video"]}
+            res["sample"] = demo_guard.why("video")
+            return {"id": jid, "status": "done", "detail": demo_guard.why("video")}
         if mode == "local":
             try:
                 data, meta = self.render_job_local(spec)
@@ -1538,7 +1538,7 @@ class House:
         if self._run_kind(rid) in ("media", "news"):  # never re-run the pre-agent pipeline (owner P0): the agent remakes it
             return self.brain.reply(a, rid, correction)
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
-            raise ActionError(demo_guard.WHY["run"], 429)
+            raise ActionError(demo_guard.why("run"), 429)
         run = self.run(a, rid)
         if run["status"] in ("running", "rendering"):
             raise ActionError("The agent is still working on this run. Try again in a moment.", 409)

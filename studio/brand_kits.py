@@ -740,7 +740,7 @@ class BrandKits:
         from .media import styles
         t0 = time.time()
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
-            raise KitError(demo_guard.WHY["run"])
+            raise KitError(demo_guard.why("run"))
         if body.get("kit_id") and not body.get("kit"):
             k = json.loads(self._get(a, int(body["kit_id"]))["data"] or "{}")
         else:

@@ -205,7 +205,7 @@ class BrandStudio:
         if tpl not in templates.TEMPLATES:
             raise StudioError("Unknown template.")
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
-            raise StudioError(demo_guard.WHY["run"])
+            raise StudioError(demo_guard.why("run"))
         now = time.time()
         hits = [t for t in _previews.get(a.uid, []) if now - t < 60]
         if len(hits) >= PREVIEWS_PER_MIN:
@@ -267,7 +267,7 @@ class BrandStudio:
         self.studio._guard_write(a, "render_template")
         demo = demo_guard.is_demo(a.uid)
         if demo and not demo_guard.take(self.store, a.uid, "run"):
-            raise StudioError(demo_guard.WHY["run"])
+            raise StudioError(demo_guard.why("run"))
         kit = self.kit(a)
         services = [s for s in (body.get("services") or kit.get("channels") or ["instagram"]) if s in templates.CHANNELS][:6]
         data = body.get("data") if isinstance(body.get("data"), dict) else None

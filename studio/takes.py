@@ -215,7 +215,7 @@ class Takes:
         self.h.studio._guard_write(a, "clips_from_video")
         from . import demo_guard
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
-            raise ActionError(demo_guard.WHY["run"], 429)
+            raise ActionError(demo_guard.why("run"), 429)
         sm = sample_meta()
         if not sm:
             raise ActionError("The sample take isn't bundled with this server.", 404)

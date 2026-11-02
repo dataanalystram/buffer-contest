@@ -860,7 +860,7 @@ class SourcesAgent:
         dry = body.get("dry_run", True) is not False
         self.studio._guard_write(a, "sources_draft")
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
-            raise SourceError(demo_guard.WHY["run"])
+            raise SourceError(demo_guard.why("run"))
         for c in picks:
             if c["agent"] == "person_only" and a.kind == "agent":
                 raise SourceError(f"“{c['story']['headline'][:60]}” touches a sensitive subject, so only a person can draft it.")

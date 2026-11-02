@@ -246,7 +246,7 @@ class BrandOnboard:
     def preview(self, a, body: dict, as_urls: bool = False) -> dict:
         t0 = time.time()
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
-            raise OnboardError(demo_guard.WHY["run"])
+            raise OnboardError(demo_guard.why("run"))
         now = time.time()
         hits = [t for t in _previews.get(a.uid, []) if now - t < 60]
         if len(hits) >= PREVIEWS_PER_MIN:
