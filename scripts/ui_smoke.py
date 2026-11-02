@@ -3,6 +3,7 @@
     python scripts/ui_smoke.py http://127.0.0.1:8899 shots/
 Runs the agent for real (live news search, render, captions, brand check), revises it, sends a package, opens the calendar.
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ base, out = sys.argv[1].rstrip("/"), Path(sys.argv[2])
 out.mkdir(parents=True, exist_ok=True)
 errors = []
 with sync_playwright() as p:
-    b = p.chromium.launch()
+    b = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
     pg = b.new_page(viewport={"width": 1366, "height": 900}, device_scale_factor=1)
     pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
@@ -30,7 +31,11 @@ with sync_playwright() as p:
     pg.screenshot(path=str(out / "01_inbox.png"))
     # brand kit first (one Brand screen: Kit, Templates, Style Ledger)
     pg.click("[data-testid=tab-brand]")
-    pg.wait_for_selector("[data-testid=bs-slide]", timeout=20000)
+    # Brand opens on Kit (the builder); the classic kit form and its template preview live under "More kit settings"
+    pg.wait_for_selector("[data-testid=bk-card-carousel_cover] img", timeout=60000)
+    if not pg.locator("[data-testid=bk-more]").evaluate("d => d.open"):
+        pg.click("[data-testid=bk-more] > summary")
+    pg.locator("[data-testid=bs-slide]").first.wait_for(state="visible", timeout=30000)
     pg.fill("[data-testid=bs-name]", "Huhbyte"); pg.fill("[data-testid=bs-handle]", "@huhbyte")
     pg.click("[data-testid=bs-save]"); time.sleep(2)
     pg.click("[data-testid=brand-tab-ledger]")
