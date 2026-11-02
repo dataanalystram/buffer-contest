@@ -420,7 +420,8 @@ class Brain:
                     done = self._llm_loop(a, rid, tools, eng, message)
                     break
                 except budget.BudgetExceeded as e:
-                    self._note(a, rid, f"{brain_llm.label(eng)} is out of credit ({str(e).split('.')[0][:90]}), so I switched to {nxt}.")
+                    why = str(e).split(". ")[0].replace(", so I'm using the free model", "").rstrip(".")[:120]
+                    self._note(a, rid, f"{brain_llm.label(eng)} is out of credit ({why}), so I switched to {nxt}.")
                 except llm.LLMError as e:
                     self._note(a, rid, f"{brain_llm.label(eng)} didn't answer ({str(e)[:100]}), so I switched to {nxt}.")
             if not done:
