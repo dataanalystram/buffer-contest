@@ -304,7 +304,7 @@ def test_theme_none_is_respected(owner, research, monkeypatch, tmp_path):  # noq
     monkeypatch.setattr(media_tools, "media_transcribe", lambda path, names=None, model=None, run_dir=None: {"words": 0})
     clip = _clip(tmp_path, secs=3)
     tok = owner.post("/api/media", json={"name": "mine.mp4", "data": "data:video/mp4;base64," + base64.b64encode(open(clip, "rb").read()).decode()}).json()["token"]
-    rid, run = _start(owner, prompt="post my video", chans=("ch_ig",), theme="none", add_logo=False, media_token=tok)
+    rid, run = _start(owner, prompt="Post my video: a quick demo of the new auto-zoom in our screen recorder", chans=("ch_ig",), theme="none", add_logo=False, media_token=tok)
     job = json.loads(owner.app.state.store.q("SELECT spec FROM render_jobs WHERE spec LIKE '%media_render%' ORDER BY id DESC LIMIT 1")[0]["spec"])
     assert job["style"] == "none" and job["brand_pass"] is False and job["logo"] is False
     assert not research["calls"]  # their own upload: nothing to look for
