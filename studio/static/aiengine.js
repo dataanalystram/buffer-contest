@@ -202,9 +202,18 @@ if (lf) {
 const sel = q("#agEngineSel");
 if (sel) sel.addEventListener("change", () => choose(sel.value));
 const TABS = (window.HS_TABS = window.HS_TABS || {});
+let lastAi = 0;
+function loadAll() { lastAi = Date.now(); refresh(); loadKeys(); loadLogs(E.logs.page); }
 for (const t of ["ai", "agent"]) {
   const prev = TABS[t];
-  TABS[t] = (...a) => { refresh(); if (t === "ai") { loadKeys(); loadLogs(E.logs.page); } return prev && prev(...a); };
+  TABS[t] = (...a) => { if (t === "ai") loadAll(); else refresh(); return prev && prev(...a); };
+}
+// Settings can open before this script has wrapped HS_TABS.ai (a deep link, a fast boot): load when the tab is shown
+const setTab = document.getElementById("tab-settings");
+if (setTab) {
+  const seen = () => { if (!setTab.hidden && Date.now() - lastAi > 1500) loadAll(); };
+  new MutationObserver(seen).observe(setTab, { attributes: true, attributeFilter: ["hidden"] });
+  seen();
 }
 window.HQ_AI_ENGINE = { refresh, loadKeys, loadLogs, get state() { return E.st; } };
 })();
