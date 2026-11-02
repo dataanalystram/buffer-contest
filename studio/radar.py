@@ -62,20 +62,22 @@ def parse(body: bytes, feed_url: str) -> dict:
         if _local(item.tag) not in ("item", "entry"):
             continue
         url = _text(item, "link")
-        image = ""
+        image, video_id = "", _text(item, "videoId")  # yt:videoId on YouTube channel feeds
         for child in item:
-            name = _local(child.tag)
-            if name == "link" and child.get("href") and child.get("rel", "alternate") == "alternate":
+            if _local(child.tag) == "link" and child.get("href") and child.get("rel", "alternate") == "alternate":
                 url = url or child.get("href")
-            if name in ("content", "thumbnail", "enclosure") and (child.get("url") or "").startswith("https://") \
+        for child in item.iter():  # media:thumbnail can sit inside media:group (YouTube), so look below the item too
+            if _local(child.tag) in ("content", "thumbnail", "enclosure") and (child.get("url") or "").startswith("https://") \
                     and "image" in (child.get("type") or child.get("medium") or "image"):
                 image = image or child.get("url")
         if not url.startswith(("http://", "https://")):
             continue
         summary = html.unescape(TAG.sub(" ", _text(item, "description", "summary", "content")))
-        stories.append({"title": html.unescape(_text(item, "title") or url)[:300], "url": url,
-                        "summary": " ".join(summary.split())[:280],
-                        "published": _when(_text(item, "pubDate", "published", "updated", "date")), "image": image})
+        story = {"title": html.unescape(_text(item, "title") or url)[:300], "url": url, "summary": " ".join(summary.split())[:280],
+                 "published": _when(_text(item, "pubDate", "published", "updated", "date")), "image": image}
+        if video_id:
+            story["video_id"] = video_id
+        stories.append(story)
     return {"title": html.unescape(title)[:120], "stories": stories[:20]}
 
 

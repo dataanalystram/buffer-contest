@@ -27,7 +27,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
-from . import brand, demo_guard, drafter, netguard, radar, templates
+from . import brand, demo_guard, drafter, netguard, radar, sources, templates
 
 FIXTURES = Path(__file__).parent / "sample_sources" / "raw"
 UA = {"User-Agent": "Mozilla/5.0 (HuhQueue Sources agent; +https://huhqueue-studio.onrender.com)"}
@@ -54,10 +54,15 @@ def ensure(store) -> None:
     if store.pg:
         for t in ("source_settings", "source_runs", "classifier_usage"):
             store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
+    sources.ensure_library(store)
 
 
 class SourceError(ValueError):
-    pass
+    status = 400
+
+
+class SourceBusy(SourceError):
+    status = 429  # the per-workspace Refresh limit
 
 
 # ================================================================================================ adapters
@@ -288,7 +293,26 @@ class ProductHunt(Adapter):
         return parse_ph(json.loads((FIXTURES / "producthunt.json").read_text()))
 
 
-ADAPTERS: dict[str, Adapter] = {a.key: a for a in (YC(), HN(), RSS(), ProductHunt(), X())}
+class Library(Adapter):
+    key, label, about = "library", "Source library", ("Free feeds by category: launches, AI labs, tech news, research papers, "
+                                                       "official videos and open source (News › Sources). Shared cached copies, no keys.")
+
+    def live(self, cfg, secret, http):
+        store, off = cfg["_store"], set(cfg.get("lib_off") or [])
+        sources.refresh_library(store, [i for i in sources.BY_ID if i not in off], http)  # only copies older than the TTL
+        out = []
+        for it in sources.library_view(store, off)["items"]:
+            if it.get("evergreen"):
+                continue  # evergreen video picks are not news to post
+            out.append(_item("library", it["source"], it["title"], it["url"], it.get("summary", ""), it["published"],
+                             image=it.get("image", ""), engagement=it.get("engagement", 0), type=it["type"]))
+        return out[:60]
+
+    def sample(self):  # the sample workspace's scan stays on its recorded fixtures (the scan skips this adapter there)
+        return []
+
+
+ADAPTERS: dict[str, Adapter] = {a.key: a for a in (YC(), HN(), RSS(), ProductHunt(), X(), Library())}
 KEYED = {"x": ("x_bearer", r"[A-Za-z0-9%_\-.=]{20,200}", "X API bearer token"),
          "ph": ("ph_token", r"[A-Za-z0-9_\-.=]{20,200}", "Product Hunt developer token")}
 
@@ -388,6 +412,8 @@ def judge(it: dict, brand_terms: set[str]) -> dict:
     cat = max(hits, key=lambda k: hits[k]) if any(hits.values()) else "product_feature"
     if it["adapter"] == "yc":
         cat = "product_feature"
+    if it.get("type") == "paper":  # a research paper is never presented as a product someone can use
+        cat = "research"
     about_ai = 0.9 if AI_RE.search(txt) else 0.1
     evergreen = bool(re.search(r"\b(how to|guide|tutorial|explained|what is|lessons|notes on|free way)\b", txt))
     rel = min(3, len(tokens(txt) & brand_terms))
@@ -620,7 +646,7 @@ class SourcesAgent:
         cfg = json.loads(rows[0]["data"]) if rows else {}
         sec = self.store.unseal(rows[0]["secret"]) if rows and rows[0]["secret"] else {}
         on = {k: cfg.get("on", {}).get(k, not ADAPTERS[k].needs_key or demo_guard.is_demo(a.uid)) for k in ADAPTERS}
-        return {"on": on, "rss": cfg.get("rss") or DEFAULT_RSS, "x_query": cfg.get("x_query", ""), "hn_query": cfg.get("hn_query", ""),
+        return {"on": on, "rss": cfg.get("rss") or DEFAULT_RSS, "lib_off": sorted(cfg.get("lib_off") or []), "x_query": cfg.get("x_query", ""), "hn_query": cfg.get("hn_query", ""),
                 "x_key": ("…" + sec["x_bearer"][-4:]) if sec.get("x_bearer") else "",
                 "ph_key": ("…" + sec["ph_token"][-4:]) if sec.get("ph_token") else "",
                 "classifier": classifier_view(),
@@ -670,6 +696,71 @@ class SourcesAgent:
                                                                       "keys": {k: ("set" if body.get(k) else "removed") for k in body if k.endswith("_key")}})
         return self.settings(a)
 
+    # ---------------------------------------------------------------- the source library (News › Sources): UI = REST = MCP
+    def _cfg(self, a) -> dict:
+        rows = self.store.q("SELECT data FROM source_settings WHERE user_id=?", (a.uid,))
+        return json.loads(rows[0]["data"]) if rows and rows[0]["data"] else {}
+
+    def list_sources(self, a, body: dict | None = None) -> dict:
+        """Every library source with its status dot and last check, and the fresh items (deduplicated across sources)
+        from the ones this workspace keeps on. Reading never fetches."""
+        body = body or {}
+        cat = str(body.get("category") or "")
+        if cat and cat not in sources.CATEGORIES:
+            raise SourceError(f"category must be one of: {', '.join(sources.CATEGORIES)}.")
+        hours = min(168.0, max(1.0, float(body.get("fresh_hours") or sources.FRESH_HOURS)))
+        view = sources.library_view(self.store, sources.library_off(self.store, a.uid), category=cat, fresh_hours=hours)
+        limit = max(1, min(200, int(body.get("limit") or 120)))
+        demo = demo_guard.is_demo(a.uid)
+        last = self.store.q("SELECT at FROM source_refresh WHERE user_id=?", (a.uid,))
+        wait = max(0, int(sources.REFRESH_EVERY - (time.time() - float(last[0]["at"])))) if last else 0
+        return {**view, "items": view["items"][:limit], "total_items": len(view["items"]), "read_only": demo,
+                "can_refresh": not demo, "refresh_in": 0 if demo else wait, "refresh_every": sources.REFRESH_EVERY,
+                "note": ("The sample shows the last shared copy. Sign in to refresh." if demo else
+                         "Refresh re-reads every source you keep on; a source checked in the last 2 minutes is reused.")}
+
+    def refresh_sources(self, a, body: dict | None = None) -> dict:
+        """Re-read the workspace's sources now: once a minute per workspace, never in the signed-out sample."""
+        if demo_guard.is_demo(a.uid):
+            e = SourceError("The sample shows a saved copy of the sources. Sign in with Buffer to refresh them.")
+            e.status = 403
+            raise e
+        self.studio._guard_write(a, "sources_refresh")
+        now = time.time()
+        last = self.store.q("SELECT at FROM source_refresh WHERE user_id=?", (a.uid,))
+        if last and now - float(last[0]["at"]) < sources.REFRESH_EVERY:
+            left = int(sources.REFRESH_EVERY - (now - float(last[0]["at"]))) + 1
+            raise SourceBusy(f"Sources were refreshed a moment ago. You can refresh again in {left} s.")
+        self.store.x("INSERT INTO source_refresh(user_id,at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET at=excluded.at", (a.uid, now))
+        off = sources.library_off(self.store, a.uid)
+        t0 = time.time()
+        sources.refresh_library(self.store, [i for i in sources.BY_ID if i not in off], self.http, floor=sources.REFRESH_FLOOR)
+        view = self.list_sources(a, body)
+        failing = [s["label"] for s in view["sources"] if s["enabled"] and s["status"] == "failing"]
+        self.store.audit(a.uid, a.label, "sources_refresh", "read", {"sources_on": view["counts"]["on"], "items": view["total_items"],
+                                                                     "failing": len(failing), "ms": int((time.time() - t0) * 1000)})
+        return {**view, "refreshed": True, "failing": failing}
+
+    def set_source_enabled(self, a, body: dict) -> dict:
+        sid, on = str(body.get("source_id") or ""), body.get("enabled")
+        if sid not in sources.BY_ID:
+            raise SourceError("Unknown source. list_sources gives the ids.")
+        if not isinstance(on, bool):
+            raise SourceError("enabled must be true or false.")
+        if demo_guard.is_demo(a.uid):
+            e = SourceError("The sample's sources are read-only. Sign in with Buffer to choose your own.")
+            e.status = 403
+            raise e
+        self.studio._guard_write(a, "sources_settings")
+        cfg = self._cfg(a)
+        off = set(cfg.get("lib_off") or []) - {sid} | (set() if on else {sid})
+        cfg["lib_off"] = sorted(off & set(sources.BY_ID))
+        self.store.x("INSERT INTO source_settings(user_id,data,secret,updated) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
+                     "data=excluded.data, updated=excluded.updated", (a.uid, json.dumps(cfg), "", time.time()))
+        self.store.audit(a.uid, a.label, "sources_settings", "read", {"source": sid, "enabled": on})
+        src = next(s for s in sources.library_view(self.store, off)["sources"] if s["id"] == sid)
+        return {"source": src, "lib_off": cfg["lib_off"]}
+
     # ---------------------------------------------------------------- scan
     def scan(self, a, body: dict | None = None) -> dict:
         body = body or {}
@@ -681,6 +772,9 @@ class SourcesAgent:
         want = [k for k in (body.get("sources") or [k for k, v in cfg["on"].items() if v]) if k in ADAPTERS]
         if sample and not body.get("sources"):
             want += [k for k in KEYED if k not in want]  # the sample shows the keyed adapters too (made-up items, no call)
+        if sample:
+            want = [k for k in want if k != "library"]  # the sample's scan is the recorded one; it never fetches
+        cfg["_store"] = self.store
         if not sample:
             day = time.time() - 86400
             used = self.store.q("SELECT COUNT(*) AS n FROM audit WHERE user_id=? AND action='sources_scan' AND ok=1 AND ts>?", (a.uid, day))[0]["n"]
@@ -718,7 +812,7 @@ class SourcesAgent:
             with ThreadPoolExecutor(4) as ex:
                 for g, mj in zip(top, ex.map(lambda g: model_judge(self.store, a.uid, g[0], bstate, self.http), top)):
                     if mj:
-                        judged[id(g)] = mj
+                        judged[id(g)] = dict(mj, category="research") if g[0].get("type") == "paper" else mj
         clusters = []
         for g in groups:
             j = judged[id(g)]
