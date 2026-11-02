@@ -112,6 +112,16 @@ studio/brand_examples/buffer/mark.png  (third-party trademark, used for a labell
   What:     the "Buffer (concept example)" brand in the sample workspace. Every render says "Concept example, not
             affiliated with Buffer". Buffer's name and logo are trademarks of Buffer, Inc.
 
+studio/sample_brands/{nothing,linear,notion}.json, studio/static/brands/{nothing,linear,notion}/*
+  (third-party trademarks, used for labelled sample brands)
+  Source:   each company's public website (nothing.tech, linear.app, notion.com): the logo / touch icon, colours and
+            type choices read by studio/brand_extract.py (no AI) via scripts/build_sample_brands.py; the stills and
+            carousel images are HuhQueue renders of a sample story in that style.
+  What:     the "Nothing", "Linear" and "Notion" sample brands in the sample workspace's brand kit builder. Every kit and
+            render carries the label "Sample brand, not affiliated". HuhQueue is not made, endorsed or sponsored by
+            Nothing Technology, Linear Orbit or Notion Labs; their names and logos are trademarks of their owners and
+            are shown only to demonstrate the brand kit. Owners can ask for removal through SECURITY.md's contact.
+
 studio/hbstyle.py  (ported from the owner's own code; same copyright holder)
   Source:   dataanalystram/Huhbyte.ai @ 49d0b5648f2c938482735123c11da2689e199189 - code/hb.py (cover_slide, text_slide,
             facts_slide, reel_overlay_png, end_card_png). https://github.com/dataanalystram/Huhbyte.ai (private repository)

@@ -13,6 +13,7 @@ captions, splits) at $0 AI spend. See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
 **Live:** https://huhqueue-studio.onrender.com · **Buffer Commit entry:** see [CONTEST.md](CONTEST.md) and [SUBMISSION.md](SUBMISSION.md)
 
 > HuhQueue is an independent open-source project built on the [Buffer API](https://developers.buffer.com). It is not made, endorsed or operated by Buffer.
+> The Nothing, Linear and Notion kits in the sample workspace are labelled sample brands, not affiliated with those companies (see [NOTICE](NOTICE)).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/planner-week-dark.png">

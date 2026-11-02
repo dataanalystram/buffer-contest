@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+permissions: {contents: read}
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -14,8 +15,9 @@ jobs:
         options: >-
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: {python-version: "3.12"}
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null   # One take render tests use the real FFmpeg
       - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0"   # numpy: studio.media music + render tests
@@ -36,9 +38,9 @@ jobs:
           - {name: take_render, install: "-r requirements-worker-core.txt numpy>=2.0", flags: "--hard-only"}
           - {name: media_render, install: "-r requirements-worker-core.txt -r requirements-media.txt", flags: "--hard-only"}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: {python-version: "3.12"}
       - name: Worker-only venv (${{ matrix.name }})
         run: python -m venv /tmp/w && /tmp/w/bin/pip install -q ${{ matrix.install }}
