@@ -156,6 +156,9 @@ def normalize(body: dict, base: dict | None = None) -> dict:
     return k
 
 
+CLASSIC_SAMPLES = ("nothing",)  # sample kits that keep their pre-v2 look (no generated theme)
+
+
 def example_kit(eid: str) -> dict:
     """An example brand (HuhByte AI) as a stored kit, with its generated theme."""
     ex = brand_examples.EXAMPLES[eid]
@@ -495,8 +498,7 @@ class BrandKits:
         s = brand_onboard.sample("nothing")
         nid = None
         if s:
-            k = normalize({**s["kit"], "logo": "sample:nothing"})
-            k["theme"] = design_system.theme_for_kit(k)
+            k = normalize({**s["kit"], "logo": "sample:nothing"})  # Nothing keeps its classic grid look (owner, 2 Nov 2026)
             k["label"] = brand_onboard.SAMPLE_LABEL
             k["source"] = {"url": s.get("source_url"), "provenance": s.get("provenance"), "fonts": s.get("fonts"),
                            "extracted_at": s.get("extracted_at")}
@@ -506,6 +508,19 @@ class BrandKits:
             self._insert(a, example_kit("huhbyte"))
         if nid:
             self.activate(a, nid)
+
+    def _seed_huhbyte(self, a) -> None:
+        """Every signed-in workspace gets HuhByte AI as a ready kit next to the samples (owner, 2 Nov 2026), once. It is
+        never activated here, so a person's own active kit stays active; deleting it is respected."""
+        ex = self.bs.extras(a)
+        if ex.get("seeded_huhbyte"):
+            return
+        rows = self._rows(a)
+        if not any((r["name"] or "").strip().casefold() == "huhbyte ai" for r in rows) and len(rows) < MAX_KITS:
+            self._insert(a, example_kit("huhbyte"))
+        ex = self.bs.extras(a)
+        ex["seeded_huhbyte"] = True
+        self.bs._put(a, ex)
 
     def _insert(self, a, k: dict) -> int:
         if len(self._rows(a)) >= MAX_KITS:
@@ -535,6 +550,8 @@ class BrandKits:
             k = json.loads(r["data"] or "{}")
             if isinstance(k.get("theme"), dict) and k["theme"].get("layout"):
                 continue
+            if k.get("theme_classic") or str(k.get("logo") or "") in {f"sample:{c}" for c in CLASSIC_SAMPLES}:
+                continue  # the Nothing sample keeps the look the owner likes
             k["theme"] = design_system.theme_for_kit(k)
             r["data"] = json.dumps(k)
             self.store.x("UPDATE brand_kit_library SET data=? WHERE id=? AND user_id=?", (r["data"], r["id"], a.uid))
@@ -571,6 +588,8 @@ class BrandKits:
     def list(self, a) -> dict:
         if demo_guard.is_demo(a.uid):
             self._seed_demo(a)
+        else:
+            self._seed_huhbyte(a)
         act = self._active(a)
         rows = self._rows(a)
         self._backfill_themes(a, rows)
@@ -615,7 +634,8 @@ class BrandKits:
             if not s:
                 raise KitError(f"No sample brand {body['sample']!r}. Pick one of {', '.join(brand_onboard.SAMPLE_IDS)}.")
             base = {**s["kit"], "logo": f"sample:{s['id']}", "label": brand_onboard.SAMPLE_LABEL}
-            base["theme"] = design_system.theme_for_kit(base)
+            if s["id"] not in CLASSIC_SAMPLES:
+                base["theme"] = design_system.theme_for_kit(base)
             src = {"url": s.get("source_url"), "provenance": s.get("provenance"), "fonts": s.get("fonts")}
         elif body.get("url"):
             ex = self.ob.extract(a, str(body["url"]))
@@ -770,7 +790,6 @@ class BrandKits:
         s = brand_onboard.sample("nothing")
         if s:
             nk = normalize({**s["kit"], "logo": "sample:nothing"})
-            nk["theme"] = design_system.theme_for_kit(nk)
             kits.append((nk, brand_onboard.sample_logo("nothing")))
         hb = brand_examples.EXAMPLES.get("huhbyte")
         if hb:

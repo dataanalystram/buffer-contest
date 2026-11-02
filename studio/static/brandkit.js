@@ -429,7 +429,7 @@
     }
   }
   function refreshLegacy() { try { const t = window.HS_TABS && window.HS_TABS.brand; if (t) t(); } catch (_) { /* optional */ } }
-  window.HQBrandKit = { open, reload: () => load(), settingsCard };
+  window.HQBrandKit = { open, reload: () => { if (!K.dirty) K.id = null; return load(); }, settingsCard };  // reload follows the active kit
   const boot = () => {
     mount(); install();
     const t = document.getElementById("tab-brand");

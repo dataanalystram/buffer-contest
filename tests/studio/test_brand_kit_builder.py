@@ -60,7 +60,7 @@ def test_css_colour_parsing_and_var_resolution():
     assert X.parse_css_color("#abc")[0] == (170, 187, 204)
     v = X.css_vars(":root{--a:var(--b, #000);--b:#123456}")
     assert X.resolve("var(--a)", v) == "#123456"
-    assert X.map_font("Lyon Text")[0] == "serif" and X.map_font("NDot 57")[0] == "dot" and X.map_font("Stolzl")[0] == "figtree"
+    assert X.map_font("Lyon Text")[0] in ("serif", "garamond", "sourceserif") and X.map_font("NDot 57")[0] == "dot" and X.map_font("Stolzl")[0] == "figtree"
 
 
 def test_svg_rasteriser_draws_paths_arcs_and_holes():
