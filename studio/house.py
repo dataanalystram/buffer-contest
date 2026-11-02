@@ -95,6 +95,28 @@ IMPORT_WHY = {  # media import failures, said plainly (owner bug 2 Nov 2026: eve
 }
 
 
+_HTTP_WHY = {400: "Bad Request", 401: "needs a sign-in", 403: "Forbidden (private or needs a sign-in)", 404: "Not Found",
+             410: "Gone", 429: "Too Many Requests", 500: "a server error", 502: "a server error", 503: "unavailable"}
+
+
+def plain_worker_error(msg: str) -> str:
+    """The worker reports raw Python errors ("HTTPStatusError: Client error '404 Not Found' for url ..."). Say what happened
+    and what to do instead (live test 2 Nov 2026: a bad One take link showed the raw httpx message)."""
+    import re
+    m = (msg or "").strip()
+    if not m:
+        return ""
+    h = re.match(r"HTTPStatusError: (?:Client|Server) error '(\d{3})[^']*' for url '([^']+)'", m)
+    if h:
+        code, url = int(h.group(1)), h.group(2)
+        host = urlparse(url).hostname or "the link"
+        return (f"Couldn't download the video: {host} answered {code} {_HTTP_WHY.get(code, '')}".rstrip() + ". "
+                "Use a direct link to the video file (it usually ends in .mp4, .mov or .webm), or upload the file instead.")
+    if m.startswith(("ConnectError", "ConnectTimeout", "ReadTimeout", "TimeoutException", "RemoteProtocolError")):
+        return "Couldn't reach the video link from the video worker. Check the link opens in a private window, or upload the file."
+    return m
+
+
 class House:
     def __init__(self, studio: Studio, http: httpx.Client | None = None):
         self.studio, self.store, self.s = studio, studio.store, studio.s
@@ -1196,6 +1218,7 @@ class House:
 
     def finish_video(self, jid: int, data: bytes | None, meta: dict | None, error: str = "", run_inline: bool = True,
                      body: dict | None = None) -> dict:
+        error = plain_worker_error(error)
         rows = self.store.q("SELECT * FROM render_jobs WHERE id=?", (jid,))
         if not rows:
             raise ActionError("No such job.", 404)
