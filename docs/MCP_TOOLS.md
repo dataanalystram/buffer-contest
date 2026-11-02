@@ -81,6 +81,8 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `submit_post` | no model | Submit exactly what preview_post validated. |
 | `list_approvals` | no model | Your submissions and their status (pending, approved, rejected). |
 | `schedule_package` | no model | Send one ready package from a run to Buffer (mode draft / queue / next / now / schedule with due_at ISO UTC). |
+| `search_instagram_audio` | no model | Instagram licensed music + original sounds for one Instagram channel (blank query = trending), through Buffer's audio catalog. Needs the channel connected through a Facebook Page in Buffer; otherwise `needs_facebook: true` with a help link. Read-only. |
+| `set_reel_audio` | no model | Put a track from `search_instagram_audio` on one Instagram Reel package (music_volume / original_volume 0-100, start_ms kept with the package), or remove it with `audio: null`. Sent to Buffer as `metadata.instagram.audio` with the package. |
 | `get_run` | no model | An agent run: every step with what it did, the rendered media URLs, and one ready package per channel (caption, media, brand check). |
 | `list_queue` | no model | Posts in Buffer by status: scheduled (default), draft, sent or error (failed to publish). |
 | `update_post` | no model | Edit a post already in Buffer: new caption (text), new time (due_at, ISO UTC), or both. |
