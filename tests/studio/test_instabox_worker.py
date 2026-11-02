@@ -2,6 +2,7 @@
 import json
 
 import httpx
+import pytest
 
 from studio import instabox_worker as ib
 
@@ -84,6 +85,7 @@ def _env(monkeypatch):
 
 def test_instabox_failure_falls_back_to_github_actions(client, monkeypatch):
     _env(monkeypatch)
+    monkeypatch.setenv("HQ_ACTIONS_FALLBACK", "1")  # opt-in since 2 Nov 2026 (GitHub Actions billing)
     h = client.app.state.house
     seen, toks = [], []
 
@@ -120,7 +122,30 @@ def test_instabox_success_does_not_touch_github(client, monkeypatch):
 
 def test_instabox_failure_without_github_token_reports_it(client, monkeypatch):
     _env(monkeypatch)
+    monkeypatch.setenv("HQ_ACTIONS_FALLBACK", "1")
     monkeypatch.delenv("GH_DISPATCH_TOKEN")
     h = client.app.state.house
     monkeypatch.setattr(h, "http", httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(503, json={}))))
     assert h._dispatch_github(_queued_job(h)) == (False, "InstaBox answered 503")
+
+
+@pytest.mark.parametrize("flag", [None, "0", "no"])
+def test_actions_fallback_is_off_by_default_and_the_job_fails_clearly(client, monkeypatch, flag):
+    """2 Nov 2026: GitHub Actions can't start jobs (billing), so a fallback run would only sit queued. Unless
+    HQ_ACTIONS_FALLBACK=1, an InstaBox failure fails the job at once with the box's reason, and GitHub is never called."""
+    _env(monkeypatch)
+    if flag is None:
+        monkeypatch.delenv("HQ_ACTIONS_FALLBACK", raising=False)
+    else:
+        monkeypatch.setenv("HQ_ACTIONS_FALLBACK", flag)
+    h = client.app.state.house
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req.url.host)
+        return httpx.Response(503, json={})
+    monkeypatch.setattr(h, "http", httpx.Client(transport=httpx.MockTransport(handler)))
+    assert not ib.actions_fallback()
+    ok, why = h._dispatch_github(_queued_job(h))
+    assert not ok and why == "The InstaBox render worker didn't start (InstaBox answered 503)"
+    assert "api.github.com" not in seen
