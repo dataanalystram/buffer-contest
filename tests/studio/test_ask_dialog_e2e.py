@@ -56,7 +56,8 @@ def _page(chromium, base, w=1440, h=1000):
     ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
     page = ctx.new_page()
     page.set_default_timeout(15000)
-    page.on("dialog", lambda d: (_ for _ in ()).throw(AssertionError(f"native {d.type} dialog: {d.message}")))
+    page.native_dialogs = []
+    page.on("dialog", lambda d: (page.native_dialogs.append(d.message), d.dismiss()))
     return ctx, page
 
 
@@ -68,6 +69,7 @@ def test_planner_delete_draft_confirm_sends_delete(live, chromium):
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(base)
         page.get_by_test_id("tab-planner").click()
+        page.get_by_test_id("planner-nodate-toggle").check(force=True)  # the fake's draft has no date
         btn = page.locator("[data-testid=planner-delete][data-ref]").first
         btn.wait_for()
         # Cancel: the dialog closes and nothing reaches Buffer
@@ -89,6 +91,7 @@ def test_planner_delete_draft_confirm_sends_delete(live, chromium):
         assert fake.deleted == ["d1"]
         pw.expect(page.locator("[data-testid=planner-delete]")).to_have_count(0)
         assert not errors, errors
+        assert page.native_dialogs == []
     finally:
         ctx.close()
 
