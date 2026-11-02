@@ -205,3 +205,62 @@ def claude_credit(store, uid: str) -> dict:
 def oci_credit(store, uid: str) -> dict:
     c = oci_caps()
     return _credit(_spent(store, OCI_USER + uid), c["user"], _spent(store, OCI_GLOBAL), c["global"], "Gemini")
+
+
+# ------------------------------------------------------------------ free engines on HuhQueue's keys (free_engines)
+# Google AI Studio, NVIDIA NIM and Hugging Face cost HuhQueue nothing but have free-tier limits, so they are metered in
+# calls per UTC day: a per-person cap and an app-wide pool per engine (FREE_<ENGINE>_USER_DAILY / FREE_<ENGINE>_APP_DAILY
+# override the defaults in free_engines.ENGINES). Rows live in brain_budget (calls column) under day-stamped scopes.
+def _day() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
+def _calls(store, scope: str) -> int:
+    rows = store.q("SELECT calls FROM brain_budget WHERE scope=?", (scope,))
+    return int(rows[0]["calls"] or 0) if rows else 0
+
+
+def free_caps(eid: str) -> dict:
+    from . import free_engines
+    c, env = free_engines.ENGINES[eid], "FREE_" + eid.upper().replace("-", "_")
+    return {"user": int(os.environ.get(env + "_USER_DAILY") or c["user_daily"]),
+            "app": int(os.environ.get(env + "_APP_DAILY") or c["app_daily"])}
+
+
+def _free_scopes(eid: str, uid: str) -> tuple[str, str]:
+    d = _day()
+    return f"free:{eid}:{d}:app", f"free:{eid}:{d}:user:{uid}"
+
+
+def free_check(store, uid: str, eid: str) -> None:
+    from . import free_engines
+    app_s, user_s = _free_scopes(eid, uid)
+    c, name = free_caps(eid), free_engines.ENGINES[eid]["short"]
+    if _calls(store, app_s) >= c["app"]:
+        raise BudgetExceeded(f"HuhQueue's shared {name} allowance for today is used up.")
+    if _calls(store, user_s) >= c["user"]:
+        raise BudgetExceeded(f"Your {c['user']} free {name} calls for today are used up.")
+
+
+def free_record(store, uid: str, eid: str, tokens: int = 0) -> None:
+    now = time.time()
+    for scope in _free_scopes(eid, uid):
+        store.x("INSERT INTO brain_budget(scope,spent,calls,updated) VALUES(?,?,1,?) ON CONFLICT(scope) DO UPDATE SET "
+                "spent=brain_budget.spent+excluded.spent, calls=brain_budget.calls+1, updated=excluded.updated", (scope, float(tokens), now))
+
+
+def free_credit(store, uid: str, eid: str) -> dict:
+    """"NVIDIA (free developer credits): 12 of your 150 calls today", the app-wide pool, and the 70% / 100% level."""
+    from . import free_engines
+    app_s, user_s = _free_scopes(eid, uid)
+    c, credit = free_caps(eid), free_engines.ENGINES[eid]["credit"]
+    mine, pool = _calls(store, user_s), _calls(store, app_s)
+    used = 1.0 if c["user"] <= 0 else min(1.0, mine / c["user"])
+    out = mine >= c["user"] or pool >= c["app"]
+    level = "out" if out else "low" if used >= NUDGE_AT else "ok"
+    pool_left = max(0, c["app"] - pool)
+    return {"kind": "free-credit", "calls": mine, "cap_calls": c["user"], "left_calls": max(0, min(c["user"] - mine, pool_left)),
+            "used_pct": 100 if out else int(round(used * 100)), "level": level, "out": out,
+            "label": f"{credit}: {min(mine, c['user'])} of your {c['user']} calls today",
+            "pool": {"left_calls": pool_left, "cap_calls": c["app"],
+                     "label": f"{free_engines.ENGINES[eid]['short']} today: {pool_left:,} of {c['app']:,} app-wide calls left"}}

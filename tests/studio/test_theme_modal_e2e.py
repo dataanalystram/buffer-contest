@@ -158,8 +158,10 @@ def test_e2e_ai_engine_switch(live, chromium, close_contexts, monkeypatch, w):
     for k in ("OCI_USER", "OCI_TENANCY", "OCI_FINGERPRINT"):
         monkeypatch.setenv(k, "ocid1.test")
     monkeypatch.setenv("OCI_PRIVATE_KEY", "not-a-real-key")  # only "is it set" matters to the picker
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test-not-real")  # only "is it set" matters to the picker
     from studio import ai_engines
     ai_engines.clear_down()
+    ai_engines.oracle_set(True)
     ctx, page = _page(live, chromium, w, 900 if w > 400 else 844, "light")
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -168,6 +170,9 @@ def test_e2e_ai_engine_switch(live, chromium, close_contexts, monkeypatch, w):
     assert "Claude: $0.00 of your $1 used" in page.get_by_test_id("ai-engine-credit-claude").inner_text()
     assert "Gemini (Oracle): free during the contest, $0.00 of your $3 used" in page.get_by_test_id("ai-engine-credit-gemini-flash").inner_text()
     assert "App-wide" in page.get_by_test_id("ai-engine-pools").inner_text()
+    assert "NVIDIA (free developer credits): 0 of your 150 calls today" in page.get_by_test_id("ai-engine-credit-nvidia").inner_text()
+    link = page.get_by_test_id("ai-engine-key-link-gemini-studio")  # no AI Studio key on this server: how to add one
+    assert link.inner_text() == "Add a free Google AI Studio key" and link.get_attribute("href") == "https://aistudio.google.com/apikey"
     assert page.get_by_test_id("ai-engine-own").is_disabled()  # no key saved yet
     page.get_by_test_id("ai-engine-gemini-flash").click()
     pw.expect(page.get_by_test_id("ai-engine-gemini-flash")).to_have_attribute("aria-checked", "true")

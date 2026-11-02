@@ -37,6 +37,9 @@ def allowed_hosts(engine: dict) -> frozenset[str] | None:
     free -> the operator's AI_BASE_URL host only; openai/anthropic/gemini/groq/openrouter -> that provider's API host;
     custom -> HQ_AI_CUSTOM_HOSTS (comma list) when the operator sets one."""
     prov = engine.get("provider") or "custom"
+    if engine.get("free_engine"):  # HuhQueue's free engines (free_engines): each talks only to its own provider's host
+        from . import free_engines
+        return free_engines.PROVIDER_HOSTS.get(prov, frozenset())
     if prov == "free":
         base = os.environ.get("AI_BASE_URL") or engine.get("base_url") or ""
         return frozenset({(urlparse(base).hostname or "").lower()})

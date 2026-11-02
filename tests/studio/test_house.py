@@ -29,7 +29,7 @@ def jpeg(w=1200, h=800, color=(30, 90, 160)):
 def client(tmp_path, monkeypatch):
     s = load_settings(db_path=str(tmp_path / "h.db"), public_url="https://hs.test", secure_cookies=False)
     s.extra.update(sync_agent=True, render_worker="none")
-    monkeypatch.setattr(sources, "search", lambda q, feeds, http=None, limit=12: [
+    monkeypatch.setattr(sources, "search", lambda q, feeds, http=None, limit=12, **kw: [
         {"title": ARTICLE["title"], "url": ARTICLE["url"], "source": "news.example.com", "published": 0, "via": "bing_news"}])
     monkeypatch.setattr(sources, "bing_news", lambda q, http=None, limit=10: [
         {"title": "Acme agent books travel with one approval", "url": "https://other.example.org/a", "source": "other.example.org",
