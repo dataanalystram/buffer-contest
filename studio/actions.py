@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import demo, demo_guard, drafter, preflight, radar
+from . import demo, demo_guard, drafter, mediareach, preflight, radar
 from .buffer_api import BufferClient, BufferError
 from .config import Settings
 from .store import Store, sha
@@ -150,6 +150,8 @@ class Studio:
         self.s, self.store, self.buffer = s, store, buffer
         self.house = None
         self.media_loader = None  # tests swap this for a fake; production downloads with House's safe fetch
+        self.media_reach = None   # urls -> problems; tests swap this. Production reads each link the way Buffer does
+        self._reach_http = None
 
     # ------------------------------------------------------------ preflight (Never Bounced)
     def _load_media(self, url: str) -> bytes | None:
@@ -165,6 +167,18 @@ class Studio:
         if self.media_loader:
             return self.media_loader(url)
         return self.house._fetch_bytes(url, PROBE_MAX) if self.house else None
+
+    def _reach(self, urls: list[str]) -> list[str]:
+        """Can Buffer download every media link? Read each one from the outside, HEAD then a byte range, like Buffer's
+        fetcher (studio/mediareach.py). Test apps that fake media downloads skip the network unless they set media_reach."""
+        if self.media_reach:
+            return self.media_reach(urls)
+        if self.media_loader:
+            return []
+        if self._reach_http is None:
+            import httpx
+            self._reach_http = httpx.Client(timeout=mediareach.TIMEOUT)
+        return mediareach.check(urls, self._reach_http)
 
     def _preflight(self, ch: dict, text: str, media_urls: list[str], mode: str, options: dict | None = None,
                    probe: bool = True, creating: bool = True) -> dict:
@@ -523,13 +537,24 @@ class Studio:
         if msg:
             self.store.audit(a.uid, a.label, action, "blocked", {"channel": ch["service"], "preflight": pf["status"]}, ok=False)
             raise ActionError(msg)
+        risk = "draft" if clean["mode"] == "draft" else "public"
+        if urls and not demo_guard.is_demo(a.uid):  # Buffer downloads each link while it creates the post: check them first
+            problems = self._reach(urls)
+            if problems:
+                msg = mediareach.message(problems)
+                self.store.audit(a.uid, a.label, action, risk, {"channel": ch["service"], "mode": clean["mode"],
+                                                                 "error": msg[:600], "stage": "media check"}, ok=False)
+                raise ActionError(msg, 422)
         inp = build_post_input(ch, clean["text"], clean["media_url"], clean["mode"], clean.get("due_at"), clean.get("media_urls"),
                                clean.get("options"))
-        risk = "draft" if clean["mode"] == "draft" else "public"
         try:
             post = self.buffer.create_post(a.uid, inp)
         except BufferError as e:
             self.store.audit(a.uid, a.label, action, risk, {"channel": ch["service"], "mode": clean["mode"], "error": str(e)}, ok=False)
+            if "could not be read from its url" in str(e).lower():
+                raise BufferError(f"{e} HuhQueue read these links like Buffer does just before sending and they worked, so Buffer "
+                                  "may have timed out: try again in a minute. If it keeps failing, upload the file to the Library "
+                                  "and use it from there.", e.status) from e
             raise
         self.store.audit(a.uid, a.label, action, risk, {"channel": ch["service"], "mode": clean["mode"], "buffer_post_id": post["id"],
                                                          "status": post.get("status")})
