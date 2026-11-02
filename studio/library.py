@@ -436,7 +436,7 @@ class Library:
         elif kind == "draft":  # Make a post's "Drafts" filter, carried over by "View all"
             items = [i for i in items if any(u.get("draft") for u in i.get("used_in") or [])]
         elif kind in ("upload", "generated"):
-            items = [i for i in items if (i["source"] in ("upload", "take")) == (kind == "upload")]
+            items = [i for i in items if (i["source"] in ("upload", "take", "link", "send")) == (kind == "upload")]
         if q:
             ql = q.lower()
             items = [i for i in items if ql in i["name"].lower() or any(ql in u["title"].lower() for u in i.get("used_in") or [])]

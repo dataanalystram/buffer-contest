@@ -3,7 +3,7 @@
 "use strict";
 const LIB = { items: [], data: null, t: null };
 const KIND_NAME = { video: "Video", image: "Image", carousel: "Carousel" };
-const SRC_NAME = { upload: "Uploaded", take: "Uploaded (One take)", generated: "Made by the agent", sample: "Sample" };
+const SRC_NAME = { upload: "Uploaded", take: "Uploaded (One take)", link: "From a link", send: "Sent from a device", generated: "Made by the agent", sample: "Sample" };
 const libWhen = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "Sample");
 
 function libThumb(it, cls = "") {
@@ -41,7 +41,8 @@ async function loadLibrary() {
     const d = await api("/api/library?" + q); LIB.data = d; LIB.items = d.items;
     const { fmtSize } = window.HQ_FMT;
     $("#libUsage").textContent = d.read_only ? "Sample items · read-only" : `${fmtSize(d.used)} of ${fmtSize(d.quota)} used · files up to ${fmtSize(d.file_max)}`;
-    $("#libUpBtn").hidden = !!d.read_only;
+    $("#libIns").hidden = !!d.read_only;
+    $("#libLinkMax").textContent = fmtSize(d.file_max);
     const per = 12, pages = Math.max(1, Math.ceil(d.items.length / per));
     LIB.page = Math.min(LIB.page || 1, pages);
     grid.innerHTML = d.items.length ? d.items.slice((LIB.page - 1) * per, LIB.page * per).map(libCard).join("")
@@ -97,6 +98,20 @@ $("#libFile").onchange = async (e) => {
   $("#libUsage").innerHTML = `<span class="spin" aria-hidden="true"></span>Uploading ${esc(f.name)}…`;
   try { await window.hqUploadFile(f); toast("Saved to your Library"); } catch (err) { toast(err.message, 6000); }
   e.target.value = ""; loadLibrary();
+};
+
+// From a link: Drive / Dropbox / OneDrive / iCloud share links or a direct link (POST /api/library/import = MCP import_from_link)
+$("#libLinkBtn").onclick = () => { $("#libLinkErr").hidden = true; $("#libLinkUrl").value = ""; $("#libLink").showModal(); $("#libLinkUrl").focus(); };
+$("#libLinkCancel").onclick = () => $("#libLink").close();
+$("#libLinkForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const url = $("#libLinkUrl").value.trim(); if (!url) return;
+  const go = $("#libLinkGo"); go.disabled = true; go.innerHTML = `<span class="spin" aria-hidden="true"></span>Importing…`;
+  try {
+    const d = await api("/api/library/import", { method: "POST", body: { url } });
+    $("#libLink").close(); toast(`Saved to your Library: ${d.name}`); loadLibrary();
+  } catch (err) { $("#libLinkErr").textContent = err.message; $("#libLinkErr").hidden = false; }
+  go.disabled = false; go.textContent = "Import";
 };
 
 // ---------------------------------------------------------------- full-size viewer (Make a post previews + Library)

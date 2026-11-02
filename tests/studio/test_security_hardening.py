@@ -270,6 +270,11 @@ PUBLIC = {  # path -> why it is open to anyone
     "/oauth/authorize": "consent; needs a signed-in session to grant", "/oauth/token": "code/refresh exchange (PKCE)",
     "/mcp:GET": "405 only",
     "/integrations/producthunt/callback": "Product Hunt Redirect URI: a friendly page; a code is exchanged only with our own single-use state",
+    "/send": "Send a file page (static; it asks for a code)", "/send/{code}": "Send a file page with a code in the link (static)",
+    "/send/{code}/status": "a send code's files left and received names (the code is the credential: 40 bits, hashed, 30 minutes, "
+                           "wrong codes rate-limited per network)",
+    "/send/{code}/file": "a file into the code owner's Library (the code is the credential; 10 files, 30 minutes, Library caps)",
+    "/api/uploads/limits": "the upload size limits (public numbers, no account data)",
 }
 
 

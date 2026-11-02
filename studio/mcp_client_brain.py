@@ -173,9 +173,11 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {"name": S, "handle": S, "website": S, "font": S, "voice": S,
          "colors": {"type": "object", "properties": {"primary": S, "accent": S, "text": S}},
          "end_card": {"type": "object", "properties": {"on": {"type": "boolean"}, "line": S, "cta": S}}}}},
-    {"name": "library_upload_url", "description": "Only for a photo or video that is ALREADY at a public https URL (up to 40 MB): "
-     "adds it to the user's Library and returns media_token and library_id for edit_video / split_video / render_carousel. "
-     "For a file on the user's computer or in your sandbox, use create_upload (or upload_media_chunk) instead.",
+    {"name": "library_upload_url", "description": "Only for a photo or video that is ALREADY at a public https URL (up to 40 MB; "
+     "a Google Drive, Dropbox, OneDrive or iCloud share link goes through import_from_link, up to the Library's per-file "
+     "limit): adds it to the user's Library and returns media_token and library_id for edit_video / split_video / "
+     "render_carousel. For a file on the user's computer or in your sandbox, use create_upload; if your sandbox can't reach "
+     "its URL, create_send_code (the user drags the file in on any device).",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S}}},
     {"name": "integrations_status", "description": "Which integrations are connected for this user (Product Hunt, X reader key, "
      "image models...) and whether each key last tested OK. Never returns a key.",
@@ -722,7 +724,12 @@ def t_update_brand_kit(studio, a, args):
 
 
 def t_library_upload_url(studio, a, args):
-    up = studio.house.import_url(a, str(args.get("url") or ""))
+    from . import share_import
+    url = str(args.get("url") or "")
+    if share_import.provider(url):  # a cloud-drive share page: convert it and stream it in (Drive's confirm page included)
+        out = share_import.item_out(studio.house, studio.house.share_import.import_link(a, url), share_import.provider(url))
+        return {**out, "token": out["media_token"]}
+    up = studio.house.import_url(a, url)
     return {"media_token": up["token"], "url": up["url"], "type": up["type"], "library_id": up.get("library_id"), "bytes": up.get("bytes")}
 
 

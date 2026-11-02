@@ -374,6 +374,8 @@ def test_youtube_only_asks_for_the_upload_then_brands_it(owner, research, monkey
     assert pk["instagram"]["format"] == "reel" and pk["youtube"]["format"] == "reel" and not res.get("video_ask")
     job = json.loads(owner.app.state.store.q("SELECT spec FROM render_jobs WHERE spec LIKE '%media_render%' ORDER BY id DESC LIMIT 1")[0]["spec"])
     assert job["credit"] == "Video: Screen Studio" and job["source"] == tok and job["brand_pass"] is True
+    assert isinstance(job["logo"], str) and job["add_logo"] is True  # a bool "logo" made GET /api/worker/jobs/{id} 500
+    assert isinstance(job["logo"], str) and job["add_logo"] is True  # a bool "logo" made GET /api/worker/jobs/{id} 500
 
 
 def test_theme_none_is_respected(owner, research, monkeypatch, tmp_path):  # noqa: F811
@@ -384,7 +386,7 @@ def test_theme_none_is_respected(owner, research, monkeypatch, tmp_path):  # noq
     tok = owner.post("/api/media", json={"name": "mine.mp4", "data": "data:video/mp4;base64," + base64.b64encode(open(clip, "rb").read()).decode()}).json()["token"]
     rid, run = _start(owner, prompt="Post my video: a quick demo of the new auto-zoom in our screen recorder", chans=("ch_ig",), theme="none", add_logo=False, media_token=tok)
     job = json.loads(owner.app.state.store.q("SELECT spec FROM render_jobs WHERE spec LIKE '%media_render%' ORDER BY id DESC LIMIT 1")[0]["spec"])
-    assert job["style"] == "none" and job["brand_pass"] is False and job["logo"] is False
+    assert job["style"] == "none" and job["brand_pass"] is False and job["add_logo"] is False and job["logo"] == ""
     assert not research["calls"]  # their own upload: nothing to look for
     owner.post(f"/api/agent/runs/{rid}/theme", json={"theme": "none"})
 
