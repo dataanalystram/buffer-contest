@@ -519,3 +519,5 @@ footer.foot a{padding:0 6px;min-width:44px;justify-content:center}
 .works-note{margin:16px auto 0;font-size:11.5px;color:var(--subtle);max-width:60ch}
 @media (prefers-reduced-motion:reduce){.works-list li{transition:none}.works-list li:hover{transform:none}}
 @media (max-width:640px){.works-list{gap:14px 10px}.works-list li{width:64px}.works-list svg{width:26px;height:26px}}
+:root[data-theme=dark] .works-list :is([data-testid=works-with-x],[data-testid=works-with-github],[data-testid=works-with-threads],[data-testid=works-with-tiktok],[data-testid=works-with-mcp]){--brand:var(--ink)!important}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .works-list :is([data-testid=works-with-x],[data-testid=works-with-github],[data-testid=works-with-threads],[data-testid=works-with-tiktok],[data-testid=works-with-mcp]){--brand:var(--ink)!important}}
