@@ -43,6 +43,12 @@ def test_templates_tab_lists_every_kit_and_picking_one_redraws_the_templates(dem
         assert page.locator("[data-testid=tpl-kit-nothing]").get_attribute("data-active") == "false"
         assert page.inner_text("[data-testid=tpl-kit-name]") == "HuhByte AI"
         _until(lambda: page.locator("[data-testid=tpl-preview]").first.get_attribute("src") != before)
+        # back to Nothing: its previews come back at once (cached per kit version) and in Nothing's style, not HuhByte's
+        t0 = time.time()
+        page.click("[data-testid=tpl-kit-nothing]")
+        _until(lambda: page.locator("[data-testid=tpl-kit-nothing]").get_attribute("data-active") == "true")
+        _until(lambda: page.locator("[data-testid=tpl-preview]").first.get_attribute("src") == before, timeout=10)
+        assert time.time() - t0 < 1.5, f"cached kit previews took {time.time() - t0:.2f}s"
         page.click("[data-testid=tpl-kit-add-notion]")
         _until(lambda: page.locator("[data-testid=tpl-kit-notion]").count() == 1
                and page.locator("[data-testid=tpl-kit-notion]").get_attribute("data-active") == "true")
