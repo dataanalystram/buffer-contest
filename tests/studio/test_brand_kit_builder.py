@@ -158,7 +158,7 @@ def test_kits_over_mcp(human):
     _, made = mcp_call(human, tok, "create_brand_kit", {"name": "Beta", "colors": {"background": "#FFFFFF", "primary": "#2563EB"}})
     assert made["kit"]["colors"]["accent"] == "#2563EB" and made["kit"]["colors"]["text"] == "#111114"
     _, lst = mcp_call(human, tok, "list_brand_kits")
-    assert [k["name"] for k in lst["kits"]] == ["Beta"]
+    assert [k["name"] for k in lst["kits"]] == ["Beta", "HuhByte AI"]  # HuhByte AI is seeded for every workspace (owner, 2 Nov 2026)
     _, up = mcp_call(human, tok, "update_brand_kit", {"kit_id": made["id"], "head_font": "serif", "end_cta": "Read more"})
     assert up["kit"]["font"] == "serif" and up["kit"]["end_card"]["cta"] == "Read more"
     _, act = mcp_call(human, tok, "set_active_brand_kit", {"kit_id": made["id"]})
