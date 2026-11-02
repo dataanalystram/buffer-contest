@@ -1,0 +1,90 @@
+{
+ "id": "notion",
+ "title": "Notion",
+ "about": "Light, calm, ink and blue. Read from notion.com.",
+ "hosts": [
+  "notion.com",
+  "notion.so"
+ ],
+ "source_url": "https://www.notion.com/",
+ "kit": {
+  "name": "Notion",
+  "handle": "NotionHQ",
+  "website": "https://www.notion.com/",
+  "colors": {
+   "primary": "#FFFFFF",
+   "accent": "#097FE8",
+   "text": "#31302E",
+   "secondary": "#F64932"
+  },
+  "font": "inter",
+  "body_font": "inter",
+  "headline_case": "title",
+  "voice": "Where teams and agents Think together. Build Custom Agents, search across all your apps, and automate busywork. The AI workspace where teams get more done, faster. Bring everything into one system of record. Capture context, find answers, and automate tasks with AI built for your team. The most ambi",
+  "voice_notes": [
+   "short, punchy sentences",
+   "talks to the reader (you)",
+   "no exclamation marks",
+   "product-led, plain terms"
+  ],
+  "front_card": {
+   "style": "minimal"
+  },
+  "end_card": {
+   "style": "minimal",
+   "cta": "Follow Notion",
+   "line": ""
+  },
+  "hashtags": [
+   "#ProductUpdate",
+   "#Notion"
+  ],
+  "label": "Sample brand, not affiliated"
+ },
+ "provenance": {
+  "name": "og:site_name",
+  "handle": "twitter:site meta tag",
+  "primary": "CSS variable --tatami-color-background-base",
+  "text": "CSS variable --tatami-color-banner-body-text",
+  "accent": "CSS variable --tatami-color-accent-strong",
+  "secondary": "CSS variable --brand-screen",
+  "body_font": "CSS variable --tatami-font-family-primary-sans",
+  "head_font": "CSS variable --tatami-font-family-primary-sans",
+  "logo": "inline SVG mark in the page header + the name set in the headline font",
+  "mark": "inline SVG mark in the page header",
+  "voice": "the homepage's h1, description and first paragraphs"
+ },
+ "fonts": {
+  "head": {
+   "family": "NotionInter",
+   "bundled": "inter",
+   "match": "closest"
+  },
+  "body": {
+   "family": "NotionInter",
+   "bundled": "inter",
+   "match": "closest"
+  }
+ },
+ "found": {
+  "logo": true,
+  "mark": true,
+  "css_vars": 1684,
+  "stylesheets": 15,
+  "handle": true,
+  "voice": true
+ },
+ "label": "Sample brand, not affiliated",
+ "extracted_at": "2026-11-02",
+ "extracted_by": "studio/brand_extract.py (no AI), scripts/build_sample_brands.py",
+ "renders": {
+  "reel_cover": "still-9x16.jpg",
+  "cover": "still-4x5.jpg",
+  "square": "still-1x1.jpg"
+ },
+ "carousel": [
+  "carousel-1.jpg",
+  "carousel-2.jpg",
+  "carousel-3.jpg"
+ ]
+}

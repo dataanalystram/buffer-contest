@@ -1,31 +1,123 @@
-/* The AI engine switch (aiengine.js): Settings > AI engine cards and the composer's compact "Model" select. */
+/* Settings > AI engine (aiengine.js): engine cards, Your keys, Logs; brand marks + (i) popovers (brand-mark.js);
+   the composer's compact "Model" select. Light/dark from the theme tokens in style.css. */
+.bmark{flex:none;display:inline-grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--sunken);
+  border:1px solid var(--line);color:var(--brand,var(--ink))}
+.bmark svg{width:20px;height:20px;fill:currentColor}
+.bmark.line{color:var(--ink)}
+.bmark.line svg{fill:none}
+.bmark.mono b{font-size:13px;font-weight:800;letter-spacing:-.02em;color:var(--brand,var(--ink))}
+:root[data-theme=dark] .bmark[data-mark=x],:root[data-theme=dark] .bmark[data-mark=github],:root[data-theme=dark] .bmark[data-mark=threads],
+:root[data-theme=dark] .bmark[data-mark=openai],:root[data-theme=dark] .bmark[data-mark=tiktok],:root[data-theme=dark] .bmark[data-mark=mcp],
+:root[data-theme=dark] .bmark[data-mark=anthropic]{color:var(--ink)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .bmark[data-mark=x],:root:not([data-theme=light]) .bmark[data-mark=github],
+  :root:not([data-theme=light]) .bmark[data-mark=threads],:root:not([data-theme=light]) .bmark[data-mark=openai],
+  :root:not([data-theme=light]) .bmark[data-mark=tiktok],:root:not([data-theme=light]) .bmark[data-mark=mcp],
+  :root:not([data-theme=light]) .bmark[data-mark=anthropic]{color:var(--ink)}}
+
+/* (i) button + popover */
+.info-i{display:inline-grid;place-items:center;width:20px;height:20px;min-height:0;padding:0;border-radius:999px;border:1px solid var(--line-strong);
+  background:transparent;color:var(--muted);font:italic 700 12px/1 Georgia,serif;cursor:pointer;vertical-align:middle;flex:none}
+.info-i:hover,.info-i[aria-expanded=true]{color:var(--ink);border-color:var(--ink)}
+.info-i:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.info-i.static{cursor:default;width:16px;height:16px;font-size:10px}
+@media (pointer:coarse){.info-i:not(.static){width:32px;height:32px}}
+.hq-tip{position:absolute;z-index:30;top:calc(100% + 6px);left:0;width:min(340px,calc(100vw - 32px));padding:12px 14px;border-radius:12px;
+  background:var(--raised);color:var(--ink);border:1px solid var(--line-strong);box-shadow:0 12px 32px rgba(0,0,0,.18);font-size:13px;line-height:1.45}
+.hq-tip p{margin:6px 0 0}.hq-tip b{font-size:13.5px}
+
+/* engine cards */
 .ai-eng{margin-bottom:16px}
-.ai-eng-head{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
+.ai-eng-head{position:relative;display:flex;flex-direction:column;gap:4px;margin-bottom:14px}
 .ai-eng-head .card-title{margin:0}
-.ai-eng-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
-.ai-eng-o{display:flex;flex-direction:column;align-items:stretch;gap:6px;text-align:left;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;
-  background:var(--raised);color:var(--ink);font:inherit;cursor:pointer;min-width:0;transition:border-color var(--fast),box-shadow var(--fast)}
-.ai-eng-o:hover{border-color:var(--line-strong)}
-.ai-eng-o.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.ai-eng-o:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
-.ai-eng-o.na:not(.on){background:var(--sunken)}
-.ai-eng-o:disabled{cursor:not-allowed;opacity:.72}
-.ai-eng-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.ai-eng-top b{font-size:15px;line-height:1.3}
-.ai-eng-b{flex:none;font-size:11px;font-weight:700;line-height:1;padding:4px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em}
-.ai-eng-b.on{background:var(--accent);color:var(--on-accent)}
-.ai-eng-b.off{background:var(--sunken);color:var(--muted);border:1px solid var(--line)}
-.ai-eng-ab{font-size:13px;line-height:1.4;color:var(--muted)}
-.ai-eng-cr{font-size:13px;line-height:1.4;font-weight:600}
-.ai-eng-bar{display:block;height:6px;border-radius:999px;background:var(--sunken);overflow:hidden}
+.ai-eng-auto{display:flex;align-items:center;gap:8px;margin:0}
+.ai-eng-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.ai-c{display:flex;flex-direction:column;align-items:stretch;gap:10px;text-align:left;padding:14px;border:1.5px solid var(--line);border-radius:14px;
+  background:var(--raised);color:var(--ink);font:inherit;cursor:pointer;min-width:0;min-height:0;transition:border-color var(--fast),box-shadow var(--fast),transform var(--fast)}
+.ai-c:hover{border-color:var(--line-strong)}
+.ai-c.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.ai-c:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.ai-c.na:not(.on){background:var(--sunken)}
+.ai-c.na .bmark{opacity:.6}
+.ai-c:disabled{cursor:not-allowed;opacity:.75}
+.ai-c-top{display:flex;align-items:center;gap:10px;min-width:0}
+.ai-c-name{display:flex;flex-direction:column;min-width:0;flex:1}
+.ai-c-name b{font-size:15px;line-height:1.25}
+.ai-c-name small{font:12px/1.3 var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ai-c-tier{flex:none;align-self:flex-start;font-size:11px;font-weight:700;line-height:1;padding:4px 7px;border-radius:999px;text-transform:uppercase;
+  letter-spacing:.03em;border:1px solid var(--line);color:var(--muted);background:var(--sunken)}
+.ai-c-tier.t-free{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.ai-c-tier.t-paid{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent);background:color-mix(in srgb,var(--warn) 10%,transparent)}
+.ai-c-tier.t-your-key{color:var(--accent-ink);border-color:var(--accent);background:var(--accent-soft)}
+.ai-c-st{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600}
+.ai-dot{width:8px;height:8px;border-radius:999px;flex:none;background:var(--subtle)}
+.ai-dot.ok{background:var(--ok)}.ai-dot.sel{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}.ai-dot.off{background:var(--subtle)}
+.ai-u{display:flex;flex-direction:column;gap:5px}
+.ai-u-l{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ai-u-none{font-size:12.5px;color:var(--muted);min-height:1em}
+.ai-eng-bar{display:block;height:6px;border-radius:999px;background:var(--sunken);overflow:hidden;border:1px solid var(--line)}
 .ai-eng-bar i{display:block;height:100%;background:var(--ok);border-radius:inherit}
 .ai-eng-bar.low i{background:var(--warn)}.ai-eng-bar.out i{background:var(--bad)}
-.ai-eng-w{font-size:12.5px;font-weight:600}.ai-eng-w.low{color:var(--warn)}.ai-eng-w.out{color:var(--bad)}
-.ai-eng-why{font-size:12.5px;line-height:1.4;color:var(--muted)}
+.ai-c-why{font-size:12.5px;line-height:1.4;color:var(--muted)}
 .ai-eng-note,.ag-eng-note{margin:0 0 12px;padding:8px 12px;border-radius:8px;background:var(--sunken);border:1px solid var(--line);font-size:13px;line-height:1.45}
 .ag-eng-note{margin:8px 0 0}
-.ai-eng-pools{margin:12px 0 0}
-.ai-eng-keys{margin:6px 0 0}
+.ai-eng-pools{margin:12px 0 0}.ai-eng-keys{margin:4px 0 0}.ai-eng-apps{margin:10px 0 0}
+.ai-eng #aiMeter{margin-top:12px;max-width:520px}
+
+/* Your keys */
+.ai-keys,.ai-logs{margin-bottom:16px}
+.ai-sub-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px 16px;flex-wrap:wrap;margin-bottom:10px}
+.ai-sub-head .card-title{margin:0}
+.ai-keys-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}
+.ai-k{border-top:1px solid var(--line);padding:10px 0;min-width:0}
+.ai-k-main{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+.ai-k .bmark{width:32px;height:32px;border-radius:9px}.ai-k .bmark svg{width:18px;height:18px}
+.ai-k-name{display:flex;flex-direction:column;min-width:0;flex:1 1 140px}
+.ai-k-name b{font-size:14px}.ai-k-name small{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-k-st{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);white-space:nowrap}
+.ai-k-st code{font-family:var(--mono);font-size:12px;color:var(--ink)}
+.ai-k-btns{display:flex;gap:6px;margin-left:auto}
+.ai-k-form{margin:10px 0 2px;padding:12px;border-radius:10px;background:var(--sunken);border:1px solid var(--line)}
+.ai-k-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px;margin-bottom:8px}
+.ai-k-fields .field{display:flex;flex-direction:column;gap:4px;margin:0}
+.ai-k-fields input{width:100%;box-sizing:border-box}
+.ai-k-msg:empty{display:none}.ai-k-msg.bad{color:var(--bad)}
+
+/* Logs */
+.ai-logs-f{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.ai-logs-f select,.ai-logs-f input{height:36px;min-height:36px;font-size:13px;border-radius:8px}
+.ai-logs-f input{flex:1 1 180px;min-width:0}
+.ai-logs-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+.ai-log-t{width:100%;border-collapse:collapse;font-size:13px}
+.ai-log-t th{text-align:left;font-size:12px;font-weight:700;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line);background:var(--sunken);white-space:nowrap}
+.ai-log-t td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.ai-log-t tr:last-child td{border-bottom:0}
+.ai-log-t .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ai-log-t code{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.ai-log-t tr.err td{background:color-mix(in srgb,var(--bad) 5%,transparent)}
+.ai-log-eng{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.ai-log-eng .bmark{width:22px;height:22px;border-radius:6px}.ai-log-eng .bmark svg{width:13px;height:13px}.ai-log-eng .bmark.mono b{font-size:9px}
+.ai-log-st{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 7px;border-radius:999px}
+.ai-log-st.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.ai-log-st.bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.ai-log-why{display:block;margin-top:4px;font-size:12px;color:var(--muted);max-width:38ch;overflow-wrap:anywhere}
+.ai-logs-empty{margin:0;padding:16px}
+.ai-logs-pager{justify-content:flex-end;align-items:center;margin-top:10px}
+
+@media (max-width:860px){.ai-keys-list{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){
+  .ai-eng-list{grid-template-columns:minmax(0,1fr)}
+  .ai-logs-wrap{border:0;overflow:visible}
+  .ai-log-t thead{display:none}
+  .ai-log-t,.ai-log-t tbody,.ai-log-t tr,.ai-log-t td{display:block;width:auto}
+  .ai-log-t tr{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px}
+  .ai-log-t td{display:flex;justify-content:space-between;gap:12px;border:0;padding:3px 0;text-align:right}
+  .ai-log-t td:before{content:attr(data-l);color:var(--muted);font-size:12px;font-weight:600;text-align:left;flex:none}
+  .ai-log-t td[data-l=Status]{flex-wrap:wrap}
+  .ai-log-why{max-width:none;text-align:left;width:100%}
+  .ai-logs-f select{flex:1 1 40%}
+  .ai-k-btns{margin-left:0}
+}
+
 /* composer: "Model [Claude · $0.66 left ▾]  Writing with: Claude" */
 .chips-head{flex-wrap:wrap}
 .ag-eng{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;justify-content:flex-end}
@@ -33,3 +125,11 @@
 .ag-eng-sel{height:34px;min-height:34px;border-radius:8px;padding:0 8px;font-size:13px;max-width:220px}
 @media (max-width:1023px){.ag-eng-sel{height:44px;min-height:44px}}  /* touch: 44 px taps */
 @media (max-width:640px){.ag-eng{width:100%;justify-content:flex-start}.ag-eng-sel{flex:1;max-width:none}}
+/* touch sizes: under 1024 px the (i) and the log filters are 44 px to tap; the (i) keeps its small ring inside the hit area */
+@media (max-width:1023px){
+  .info-i:not(.static){width:44px;height:44px;margin:-6px 0;border-color:transparent;
+    background:radial-gradient(circle,transparent 0 13px,var(--line-strong) 13px 14px,transparent 14.5px)}
+  .info-i:not(.static):hover,.info-i:not(.static)[aria-expanded=true]{border-color:transparent;
+    background:radial-gradient(circle,transparent 0 13px,var(--ink) 13px 14px,transparent 14.5px)}
+  .ai-logs-f select,.ai-logs-f input{min-height:44px;height:auto}
+}

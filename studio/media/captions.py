@@ -4,7 +4,7 @@ Four looks, all driven by word timestamps ({"w","s","e"}):
 
   opus      Opus-Clip-style: 1-3 words at a time, huge heavy type, the word being said pops (scale 118% -> 100%) in
             the accent colour, thick outline. Centre-low, above the platform UI.
-  news      HuhByte news: a short sentence chunk (<= 2 lines) under the video panel, current word in lavender.
+  news      Newsroom: a short sentence chunk (<= 2 lines) under the video panel, current word in lavender.
   minimal   Clean explainer: sentence chunks in Inter SemiBold on a soft translucent box, bottom third.
   hype      One word at a time, giant Anton, alternating white/accent, punch-in with a small tilt.
 

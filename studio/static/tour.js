@@ -8,6 +8,8 @@
 const FIRST_URL_DEMO = new URLSearchParams(location.search).get("demo") === "1" && !new URLSearchParams(location.search).get("url"); // read before boot rewrites the URL; a link from the landing goes straight to drafting
 const TOUR_KEY = "hq_tour_done";
 const TOUR = [
+  { tab: "brand", target: "#bkBuilder", title: "Your brand kit",
+    body: "The sample opens with the Nothing sample brand (not affiliated) filled in. Switch to HuhByte AI, or Start your own: every video theme, the carousel cover, the thumbnail and the end card redraw as you edit, and Save makes it the kit every template uses." },
   { tab: "inbox", target: "#ibStats", title: "Your Inbox",
     body: "Your day at a glance: what's scheduled, agent posts to approve with their media, what bounced, what each AI app did, and posts worth making." },
   { tab: "agent", target: "#agentCompose", title: "Make a post",
@@ -16,8 +18,6 @@ const TOUR = [
     body: "Try the sample take: one talk becomes three captioned clips. The Spread drops them into the open posting times of your week as drafts." },
   { tab: "planner", target: "#plMain", title: "Planner",
     body: "Week, Month, Day, List, Board and Grid on the same posts. Drag a post to move it, or a draft from No date onto the week. Preflight checks every change, and Fix it repairs what it can." },
-  { tab: "brand", target: ".bs-kit", title: "Brand",
-    body: "One kit for every post: import your logo and colours from your website, pick fonts and cards, and watch the preview redraw. Templates and the Style Ledger sit on the tabs above." },
   { tab: "apps", target: "#cxApps", title: "AI apps",
     body: "Use HuhQueue from Claude, ChatGPT, Grok, Cursor or Codex. Their posts wait in your Inbox for approval. A token made here is a sample token: it only reaches this sample workspace." },
   { tab: null, target: "[data-testid=demo-connect]", title: "Use it for real",

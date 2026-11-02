@@ -543,8 +543,10 @@ class Brain:
                 except budget.BudgetExceeded as e:
                     why = str(e).split(". ")[0].replace(", so I'm using the free model", "").rstrip(".")[:120]
                     self._note(a, rid, f"{brain_llm.label(eng)} is out of credit ({why}), so I switched to {nxt}.")
+                    activity.note(fallback=f"{brain_llm.label(eng)} out of credit: {why}"[:160])  # on the next engine's first log row
                 except llm.LLMError as e:
                     self._note(a, rid, f"{brain_llm.label(eng)} didn't answer ({str(e)[:100]}), so I switched to {nxt}.")
+                    activity.note(fallback=f"{brain_llm.label(eng)} failed: {str(e)[:100]}"[:160])
             if not done:
                 self._planner(a, rid, tools, message, engs)
             run = self.h.run(a, rid)

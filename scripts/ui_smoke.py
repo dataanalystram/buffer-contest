@@ -3,6 +3,7 @@
     python scripts/ui_smoke.py http://127.0.0.1:8899 shots/
 Runs the agent for real (live news search, render, captions, brand check), revises it, sends a package, opens the calendar.
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ base, out = sys.argv[1].rstrip("/"), Path(sys.argv[2])
 out.mkdir(parents=True, exist_ok=True)
 errors = []
 with sync_playwright() as p:
-    b = p.chromium.launch()
+    b = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
     pg = b.new_page(viewport={"width": 1366, "height": 900}, device_scale_factor=1)
     pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
@@ -22,12 +23,19 @@ with sync_playwright() as p:
     pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base) and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
     pg.goto(base + "/")
     pg.screenshot(path=str(out / "00_landing.png"), full_page=True)
-    pg.goto(base + "/demo")
+    pg.goto(base + "/demo")  # the sample opens on Brand > Kit, the builder filled with the Nothing sample brand
+    pg.wait_for_selector("[data-testid=bk-card-carousel_cover] img", timeout=60000)
+    pg.screenshot(path=str(out / "00b_brand_kit.png"))
+    pg.click("[data-testid=tab-inbox]")
     pg.wait_for_selector("[data-testid=inbox-title]")
     pg.screenshot(path=str(out / "01_inbox.png"))
     # brand kit first (one Brand screen: Kit, Templates, Style Ledger)
     pg.click("[data-testid=tab-brand]")
-    pg.wait_for_selector("[data-testid=bs-slide]", timeout=20000)
+    # Brand opens on Kit (the builder); the classic kit form and its template preview live under "More kit settings"
+    pg.wait_for_selector("[data-testid=bk-card-carousel_cover] img", timeout=60000)
+    if not pg.locator("[data-testid=bk-more]").evaluate("d => d.open"):
+        pg.click("[data-testid=bk-more] > summary")
+    pg.locator("[data-testid=bs-slide]").first.wait_for(state="visible", timeout=30000)
     pg.fill("[data-testid=bs-name]", "Huhbyte"); pg.fill("[data-testid=bs-handle]", "@huhbyte")
     pg.click("[data-testid=bs-save]"); time.sleep(2)
     pg.click("[data-testid=brand-tab-ledger]")
@@ -85,7 +93,7 @@ with sync_playwright() as p:
     pg.screenshot(path=str(out / "07_ai.png"), full_page=True)
     m = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
     m.add_init_script("localStorage.setItem('hq_tour_done', '1')")
-    m.goto(base + "/demo"); m.wait_for_selector("[data-testid=inbox-title]"); time.sleep(1)
+    m.goto(base + "/demo"); m.wait_for_selector("[data-testid=bk-builder]", timeout=60000); time.sleep(1)  # the sample opens on Brand > Kit
     m.screenshot(path=str(out / "08_mobile.png"), full_page=True)
     b.close()
 (out / "errors.txt").write_text("\n".join(errors) or "no browser errors")

@@ -19,6 +19,7 @@ from .conftest import agent_token, mcp_call
 def oci_env(monkeypatch):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+    monkeypatch.setenv("HQ_ORACLE_GEMINI", "1")  # Oracle Gemini is off by default; these tests keep the code path honest
     monkeypatch.setenv("OCI_USER", "ocid1.user.oc1..u")
     monkeypatch.setenv("OCI_TENANCY", "ocid1.tenancy.oc1..t")
     monkeypatch.setenv("OCI_FINGERPRINT", "aa:bb")
@@ -66,13 +67,17 @@ def test_default_order_and_the_chosen_engine_first(app, human, oci_env, claude_e
     assert _engines(app, uid, demo=True) == []  # the free sample never reaches the app's paid engines
 
 
-def test_unknown_engine_is_refused_and_aliases_work(app, human):
+def test_unknown_engine_is_refused_and_aliases_work(app, human, monkeypatch):
     uid = _uid(app)
     budget.ensure(app.state.store)
     with pytest.raises(ai_engines.EngineError):
         ai_engines.set_pref(app.state.store, uid, "gpt-9")
     assert ai_engines.set_pref(app.state.store, uid, "Gemini") == "gemini-studio"
+    with pytest.raises(ai_engines.EngineError):  # Oracle Gemini is off unless HQ_ORACLE_GEMINI=1
+        ai_engines.set_pref(app.state.store, uid, "oracle")
+    monkeypatch.setenv("HQ_ORACLE_GEMINI", "1")
     assert ai_engines.set_pref(app.state.store, uid, "oracle") == "gemini-flash"
+    monkeypatch.delenv("HQ_ORACLE_GEMINI")
     assert ai_engines.set_pref(app.state.store, uid, "NIM") == "nvidia"
     assert ai_engines.set_pref(app.state.store, uid, "Hugging Face") == "hf"
     assert ai_engines.set_pref(app.state.store, uid, "anthropic") == "claude"
@@ -241,7 +246,7 @@ def test_agent_falls_back_engine_by_engine_with_a_note(app, human, monkeypatch):
 # ------------------------------------------------------------------ REST and MCP parity
 def test_rest_and_mcp_get_and_set(app, human, oci_env, claude_env):
     st = human.get("/api/ai/engine").json()
-    assert st["selected"] == "auto" and [o["id"] for o in st["engines"]] == list(ai_engines.IDS)
+    assert st["selected"] == "auto" and [o["id"] for o in st["engines"]] == list(ai_engines.ids())
     assert human.put("/api/ai/engine", json={"engine": "nope"}).status_code == 400
     assert human.put("/api/ai/engine", json={"engine": "gemini-pro"}).json()["selected"] == "gemini-pro"
     assert human.get("/api/agent/brain").json()["engine"]["selected"] == "gemini-pro"

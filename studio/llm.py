@@ -17,10 +17,14 @@ import httpx
 
 PRESETS = {
     "openai": {"label": "OpenAI", "base_url": "https://api.openai.com/v1", "model": "gpt-4.1-mini", "style": "openai"},
-    "anthropic": {"label": "Anthropic (Claude API key)", "base_url": "https://api.anthropic.com/v1", "model": "claude-sonnet-4-5",
-                  "style": "anthropic"},
-    "gemini": {"label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-               "model": "gemini-2.5-flash", "style": "openai"},
+    "anthropic": {"label": "Anthropic (Claude)", "base_url": "https://api.anthropic.com/v1", "model": "claude-sonnet-4-5",
+                  "fast": "claude-haiku-4-5", "style": "anthropic"},
+    "gemini": {"label": "Google AI Studio (Gemini)", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+               "model": "gemini-flash-latest", "fast": "gemini-flash-lite-latest", "style": "openai"},
+    "nvidia": {"label": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1",
+               "model": "nvidia/nemotron-3-ultra-550b-a55b", "fast": "nvidia/nemotron-3.5-lightning-30b-a3b", "style": "openai"},
+    "hf": {"label": "Hugging Face", "base_url": "https://router.huggingface.co/v1", "model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+           "style": "openai"},
     "groq": {"label": "Groq", "base_url": "https://api.groq.com/openai/v1", "model": "llama-3.3-70b-versatile", "style": "openai"},
     "openrouter": {"label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "model": "openrouter/auto", "style": "openai"},
     "custom": {"label": "Any OpenAI-compatible endpoint", "base_url": "", "model": "", "style": "openai"},
@@ -71,18 +75,16 @@ class LLMError(Exception):
 
 def resolve(store, uid: str, settings) -> dict | None:
     """The engine this user's agent uses right now, or None for the built-in writer."""
-    rows = store.q("SELECT data FROM ai_settings WHERE user_id=?", (uid,))
-    own = store.unseal(rows[0]["data"]) if rows else None
-    if own and own.get("api_key") and own.get("base_url"):
-        pre = PRESETS.get(own.get("provider") or "custom", PRESETS["custom"])
-        return {"source": "your key", "provider": own.get("provider", "custom"), "base_url": own["base_url"].rstrip("/"),
-                "api_key": own["api_key"], "model": own.get("model") or pre["model"], "style": pre["style"]}
+    from . import byo_keys
+    own = byo_keys.own(store, uid)  # the person's saved keys (byo_keys.OWN_ORDER), sealed in ai_settings
+    if own:
+        return own
     if settings.ai_base_url:
         from . import demo_guard
         if not demo_guard.allowed(store, uid, "ai"):  # free sample: daily AI allowance per workspace and per IP
             return None
         day = time.time() - 86400
-        used = store.q("SELECT COUNT(*) AS n FROM audit WHERE user_id=? AND action='ai_call' AND detail LIKE ? AND ts>?",
+        used = store.q("SELECT COUNT(*) AS n FROM audit WHERE user_id=? AND action='ai_call' AND ok=1 AND detail LIKE ? AND ts>?",
                        (uid, '%"free"%', day))[0]["n"]
         if used >= FREE_DAILY:
             return None
@@ -92,12 +94,13 @@ def resolve(store, uid: str, settings) -> dict | None:
 
 
 def public_view(store, uid: str, settings) -> dict:
-    rows = store.q("SELECT data, updated FROM ai_settings WHERE user_id=?", (uid,))
-    own = store.unseal(rows[0]["data"]) if rows else None
+    from . import byo_keys
+    own = byo_keys.own(store, uid)
     eng = resolve(store, uid, settings)
     return {"engine": eng["source"] if eng else "built-in writer",
             "own": ({"provider": own.get("provider"), "model": own.get("model"), "base_url": own.get("base_url"),
-                     "key_hint": "…" + own["api_key"][-4:] if own.get("api_key") else ""} if own else None),
+                     "key_hint": byo_keys.hint(own.get("api_key") or "")} if own else None),
+            "keys": byo_keys.view(store, uid)["keys"],
             "free_starter": bool(settings.ai_base_url), "free_daily": FREE_DAILY,
             "presets": {k: {kk: v[kk] for kk in ("label", "base_url", "model")} for k, v in PRESETS.items()}}
 

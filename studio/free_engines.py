@@ -1,6 +1,7 @@
 """Free AI engines on HuhQueue's own keys: OpenAI-compatible endpoints with free developer tiers.
 
-  gemini-studio  Google AI Studio (free tier), GOOGLE_AI_STUDIO_KEY: Gemini 2.5 Flash plans, Flash-Lite does the quick steps.
+  gemini-studio  Google AI Studio (free tier), GOOGLE_AI_STUDIO_KEY: Gemini Flash (gemini-flash-latest, Google's alias for
+                 the current Flash) plans, Flash-Lite (gemini-flash-lite-latest) does the quick steps.
   nvidia         NVIDIA NIM (free developer credits), NVIDIA_API_KEY: Nemotron Ultra plans, Nemotron Lightning is the fast model.
   hf             Hugging Face Inference Providers (free monthly credits), HF_TOKEN: Qwen3 235B Instruct.
 
@@ -22,8 +23,8 @@ ENGINES = {
     "gemini-studio": {
         "provider": "google-ai-studio", "env": "GOOGLE_AI_STUDIO_KEY", "credit": "Google AI Studio (free tier)",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "model": ("GEMINI_STUDIO_MODEL", "gemini-2.5-flash"), "fast": ("GEMINI_STUDIO_MODEL_FAST", "gemini-2.5-flash-lite"),
-        "label": "Gemini 2.5 Flash (Google AI Studio)", "short": "Gemini (AI Studio)",
+        "model": ("GEMINI_STUDIO_MODEL", "gemini-flash-latest"), "fast": ("GEMINI_STUDIO_MODEL_FAST", "gemini-flash-lite-latest"),
+        "label": "Gemini Flash (Google AI Studio)", "short": "Gemini (AI Studio)",
         "about": "Google's fast Gemini model on the AI Studio free tier. Free; daily limits apply.",
         "user_daily": 120, "app_daily": 240},
     "nvidia": {

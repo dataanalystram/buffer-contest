@@ -92,12 +92,24 @@ def engines(store, uid: str, settings, http=None, demo: bool = False) -> list[di
     Oracle Cloud (only while its 6-hourly check passes), Claude on the operator key (budgeted), the person's own key, and
     the free starter model (planner mode). None of HuhQueue's keys is used for the free sample or while an MCP client is
     the brain. An engine that is not set up, out of credit or marked down is left out, so the next one takes over."""
-    from . import ai_engines, free_engines, oci_genai
+    from . import ai_engines, byo_keys, free_engines, oci_genai
     avail: dict[str, dict] = {}
     server_ok = not demo and not client_brain_active()  # an MCP call without server_ai never reaches the operator's keys
+    # the person's own key for an engine runs ahead of HuhQueue's key for it (no HuhQueue caps; their provider bills them)
+    if not demo:
+        for eid in (*free_engines.IDS, "claude"):
+            try:
+                mine = byo_keys.for_engine(store, uid, eid)
+            except Exception:  # an unreadable saved key never stops the agent
+                mine = None
+            if mine:
+                if eid == "claude":
+                    m = resolve_models(mine["api_key"], http)
+                    mine = {**mine, "model": m["plan"] or mine["model"], "fast_model": m["fast"] or mine["fast_model"]}
+                avail[eid] = mine
     if server_ok:
         for eid in free_engines.IDS:
-            if free_engines.configured(eid) and not ai_engines.down(eid):
+            if eid not in avail and free_engines.configured(eid) and not ai_engines.down(eid):
                 try:
                     budget.free_check(store, uid, eid)
                 except budget.BudgetExceeded:
@@ -106,13 +118,13 @@ def engines(store, uid: str, settings, http=None, demo: bool = False) -> list[di
                     pass
                 avail[eid] = free_engines.engine(eid)
     k = operator_key()
-    if k and server_ok and not ai_engines.down("claude"):
+    if k and server_ok and "claude" not in avail and not ai_engines.down("claude"):
         m = resolve_models(k, http)
         if m["plan"]:
             avail["claude"] = {"id": "claude", "source": "huhqueue claude", "provider": "anthropic", "base_url": ANTHROPIC, "api_key": k,
                                "model": m["plan"], "fast_model": m["fast"] or m["plan"], "style": "anthropic", "tools": True,
                                "budgeted": True}
-    if server_ok and oci_genai.configured() and ai_engines.oracle_check().get("ok"):
+    if server_ok and ai_engines.oracle_enabled() and oci_genai.configured() and ai_engines.oracle_check().get("ok"):
         for eid in ("gemini-flash", "gemini-pro"):
             if not ai_engines.down(eid):
                 avail[eid] = _gemini(eid)
@@ -142,7 +154,21 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
          max_tokens: int = 1500, fast: bool = False, purpose: str = "agent brain", http=None, timeout: float = 90) -> dict:
     """One model turn. Returns {text, tool_calls:[{id,name,input}], assistant (history entry), usage{in,out,cw,cr,cost}, model,
     stop_reason ("max_tokens" when the answer was cut, for both API styles)}.
-    Raises budget.BudgetExceeded (before the call) or llm.LLMError."""
+    Raises budget.BudgetExceeded (before the call) or llm.LLMError. A failed call is logged too (ok=0, the error in a few
+    words), so Settings > AI engine > Logs shows what was tried and why the agent moved on."""
+    t0 = time.monotonic()
+    try:
+        return _call(engine, store, uid, label, system=system, messages=messages, tools=tools, max_tokens=max_tokens,
+                     fast=fast, purpose=purpose, http=http, timeout=timeout, t0=t0)
+    except llm.LLMError as e:
+        model = engine.get("fast_model") if fast else engine.get("model")
+        _log(engine, store, uid, label, model, {"in": 0, "out": 0, "cw": 0, "cr": 0, "cost": 0.0}, purpose,
+             latency=time.monotonic() - t0, error=str(e))
+        raise
+
+
+def _call(engine: dict, store, uid: str, label: str, *, system: str, messages: list, tools: list | None, max_tokens: int,
+          fast: bool, purpose: str, http, timeout: float, t0: float) -> dict:
     model = engine["fast_model"] if fast else engine["model"]
     if engine.get("budgeted") and client_brain_active():  # belt and braces: the client is the brain on this call
         raise budget.BudgetExceeded("This request came from an AI app over MCP: the app's own model is the brain, so "
@@ -159,7 +185,7 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
         budget.free_check(store, uid, free_eid)
     if oci:
         return _call_oci(engine, store, uid, label, model, system=system, messages=messages, tools=tools,
-                         max_tokens=max_tokens, purpose=purpose, http=http, timeout=timeout)
+                         max_tokens=max_tokens, purpose=purpose, http=http, timeout=timeout, t0=t0)
     base = llm.check_engine(engine)
     hosts = llm.allowed_hosts(engine)
     try:
@@ -173,7 +199,7 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
             r = netguard.safe_post(base + "/messages", http=http, json=body, timeout=timeout, allowed_hosts=hosts,
                                    headers=anthropic_headers(engine["api_key"]))
             if r.status_code >= 400:
-                if engine.get("id") == "claude" and (r.status_code in (401, 403) or "credit balance" in r.text):
+                if engine.get("id") == "claude" and not engine.get("byo") and (r.status_code in (401, 403) or "credit balance" in r.text):
                     from . import ai_engines
                     ai_engines.mark_down("claude", "Anthropic refused the app's key" if r.status_code != 400 else "the app's Anthropic credit is used up")
                 raise llm.LLMError(f"{engine['provider']} answered HTTP {r.status_code}: {r.text[:200]}")
@@ -192,8 +218,8 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
             if tools:
                 body["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                                    "parameters": t["input_schema"]}} for t in tools]
-            if free_eid:
-                from . import free_engines
+            from . import free_engines
+            if engine.get("id") in free_engines.IDS:  # HuhQueue's free engine, or the person's own key for it
                 body = free_engines.adapt_request(engine, body)
             r = netguard.safe_post(base + "/chat/completions", http=http, json=body, headers=headers, timeout=timeout, allowed_hosts=hosts,
                                    https_only=(engine.get("provider") != "free") or base.startswith("https://"))
@@ -226,11 +252,11 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
         budget.record(store, uid, cost)
     elif engine.get("source") == "your key":
         budget.byo_check(store, uid, usage["in"] + usage["out"])
-    _log(engine, store, uid, label, model, usage, purpose)
+    _log(engine, store, uid, label, model, usage, purpose, latency=time.monotonic() - t0)
     return {"text": text, "tool_calls": calls, "assistant": assistant, "usage": usage, "model": model, "stop_reason": stop}
 
 
-def _call_oci(engine, store, uid, label, model, *, system, messages, tools, max_tokens, purpose, http, timeout) -> dict:
+def _call_oci(engine, store, uid, label, model, *, system, messages, tools, max_tokens, purpose, http, timeout, t0=None) -> dict:
     """One Gemini turn on Oracle Cloud. History stays in the OpenAI shape (tool results are role=tool), so the agent loop is
     the same as for any OpenAI-compatible key. A hard failure marks the engine down for a few minutes (ai_engines)."""
     from . import ai_engines, oci_genai
@@ -256,13 +282,14 @@ def _call_oci(engine, store, uid, label, model, *, system, messages, tools, max_
             args = {}
         calls.append({"id": tc.get("id") or tc["function"]["name"], "name": tc["function"]["name"], "input": args if isinstance(args, dict) else {}})
     assistant = {"role": "assistant", "content": res["text"], **({"tool_calls": res["tool_calls"]} if res["tool_calls"] else {})}
-    _log(engine, store, uid, label, model, usage, purpose)
+    _log(engine, store, uid, label, model, usage, purpose, latency=(time.monotonic() - t0) if t0 else None)
     stop = "max_tokens" if res["finish"] == "length" else res["finish"]
     return {"text": res["text"], "tool_calls": calls, "assistant": assistant, "usage": usage, "model": model, "stop_reason": stop}
 
 
-def _log(engine, store, uid, label, model, usage, purpose):
-    """Activity: provider, model, tokens and cost on an ai_call row (never the key or the prompt)."""
+def _log(engine, store, uid, label, model, usage, purpose, latency: float | None = None, error: str = ""):
+    """Activity: provider, model, tokens, cost, latency and any fallback reason on an ai_call row (never the key or the
+    prompt). A failed call is the same row with ok=0 and the error in a few words."""
     from . import activity
     prov = {"huhqueue claude": "Anthropic (HuhQueue)", "huhqueue gemini": "Gemini (Oracle Cloud)",
             "huhqueue free": {"google-ai-studio": "Google AI Studio (free tier)", "nvidia": "NVIDIA NIM (free credits)",
@@ -274,7 +301,13 @@ def _log(engine, store, uid, label, model, usage, purpose):
                                                  engine.get("id") if engine.get("free_engine") else "app"),
                                                 "for": purpose, "provider": engine.get("provider"), "model": model,
                                                 "source": "oci" if engine.get("style") == "oci" else engine.get("provider"),
-                                                "cost_usd": usage.get("cost"), "cache_read": usage["cr"], "cache_write": usage["cw"]})
+                                                "cost_usd": usage.get("cost"), "cache_read": usage["cr"], "cache_write": usage["cw"],
+                                                "engine_id": engine.get("id") or "", "byo": engine.get("source") == "your key",
+                                                "latency_ms": int(latency * 1000) if latency is not None else None,
+                                                **({"fallback": fb} if (fb := activity.ctx().pop("fallback", None)) else {}),
+                                                **({"error": activity.clean_text(error.replace(engine.get("api_key") or "\x00", "[key]"), 200)}
+                                                   if error else {})},
+                ok=not error)
 
 
 def _short_error(r) -> str:

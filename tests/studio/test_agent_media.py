@@ -119,3 +119,33 @@ def test_render_worker_routes_media_render_jobs_to_studio_media(monkeypatch):
     assert render_worker.main(["--job", "7", "--app", "https://app.test"]) == 0
     assert got["spec"]["style"] == "news" and got["urls"]["source"] == "https://app.test/m/src"
     assert posted["meta"]["renderer"] == "studio.media" and posted["data"]
+
+
+def test_captioned_render_reel_uses_the_active_brand_kits_caption_style(owner, monkeypatch):  # noqa: F811
+    """render_reel(captions=True) with no look named: the plain Reel until a kit is active, then the active kit's caption
+    style (the same default edit_video uses), mapped to its edit style ("news" -> the Newsroom look, huhbyte_news)."""
+    from studio import agent_tools
+    calls = []
+    monkeypatch.setattr(agent_tools.Tools, "_has_video", lambda self, run: True)
+    monkeypatch.setattr(agent_tools.Tools, "_set_media", lambda self, *a, **k: None)
+    monkeypatch.setattr(agent_tools.Tools, "_reel", lambda self, run, **k: calls.append(("plain", None)) or ([], "plain"))
+    monkeypatch.setattr(agent_tools.Tools, "_media_reel",
+                        lambda self, run, style, **k: calls.append(("styled", style)) or ([], "styled", ""))
+    rid, _ = _start(owner, f"post this on youtube {TWEET}")
+    calls.clear()
+    owner.post(f"/api/agent/runs/{rid}/tools/render_reel", json={"channel_ids": ["ch_yt"], "captions": True})
+    assert calls == [("plain", None)], "no kit was ever activated: the standard Reel"
+    kid = owner.post("/api/brand-kits", json={"name": "Calm", "caption_style": "news", "activate": True}).json()["id"]
+    calls.clear()
+    out = owner.post(f"/api/agent/runs/{rid}/tools/render_reel", json={"channel_ids": ["ch_yt"], "captions": True}).json()
+    assert calls == [("styled", "news")] and out["style"] == "news"
+    owner.patch(f"/api/brand-kits/{kid}", json={"caption_style": "hype"})
+    calls.clear()
+    owner.post(f"/api/agent/runs/{rid}/tools/render_reel", json={"channel_ids": ["ch_yt"], "captions": True})
+    assert calls == [("styled", "hype")]
+    calls.clear()
+    owner.post(f"/api/agent/runs/{rid}/tools/render_reel", json={"channel_ids": ["ch_yt"], "captions": False})
+    assert calls == [("plain", None)], "no captions asked: the kit's caption style isn't forced on"
+    calls.clear()
+    owner.post(f"/api/agent/runs/{rid}/tools/render_reel", json={"channel_ids": ["ch_yt"], "captions": True, "style": "cinematic"})
+    assert calls == [("styled", "cinematic")], "a named look beats the kit"

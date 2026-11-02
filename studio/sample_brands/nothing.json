@@ -1,0 +1,90 @@
+{
+ "id": "nothing",
+ "title": "Nothing",
+ "about": "Black, white and one red dot. Read from nothing.tech.",
+ "hosts": [
+  "nothing.tech",
+  "us.nothing.tech"
+ ],
+ "source_url": "https://nothing.tech/",
+ "kit": {
+  "name": "Nothing",
+  "handle": "nothing",
+  "website": "https://nothing.tech/",
+  "colors": {
+   "primary": "#000000",
+   "accent": "#D61821",
+   "text": "#FFFFFF",
+   "secondary": "#006479"
+  },
+  "font": "dot",
+  "body_font": "inter",
+  "headline_case": "upper",
+  "voice": "Studio-level precision for our most advanced headphone ever. Here at Nothing, we’re building a world where tech is fun again. Remember a time when every new product made you excited? We’re bringing that back. Take the party everywhere with Custom EQs, 18 hours of play and next level water protection",
+  "voice_notes": [
+   "short, punchy sentences",
+   "speaks as a team (we)",
+   "no exclamation marks"
+  ],
+  "front_card": {
+   "style": "grid"
+  },
+  "end_card": {
+   "style": "grid",
+   "cta": "Follow Nothing",
+   "line": ""
+  },
+  "hashtags": [
+   "#Nothing",
+   "#ProductUpdate"
+  ],
+  "label": "Sample brand, not affiliated"
+ },
+ "provenance": {
+  "name": "application-name meta tag",
+  "handle": "social link on the homepage",
+  "primary": "theme-color meta tag",
+  "text": "near-black on a light ground",
+  "accent": "the logo's colours",
+  "secondary": "most used colour in the CSS (2x)",
+  "body_font": "most used font-family (8.5x)",
+  "head_font": "most used font-family (8.5x)",
+  "logo": "touch icon Bkp3sDzU.png + the name set in the headline font",
+  "mark": "touch icon Bkp3sDzU.png",
+  "voice": "the homepage's h1, description and first paragraphs",
+  "tweak": "Tweaked after the import: black ground and white text (the site's theme-color is #F4F4F4), headline font Doto, a dot-matrix face like Nothing's NDot (the site's CSS sets Geist), grid cards."
+ },
+ "fonts": {
+  "head": {
+   "family": "Geist Variable",
+   "bundled": "inter",
+   "match": "closest"
+  },
+  "body": {
+   "family": "Geist Variable",
+   "bundled": "inter",
+   "match": "closest"
+  }
+ },
+ "found": {
+  "logo": true,
+  "mark": true,
+  "css_vars": 93,
+  "stylesheets": 3,
+  "handle": true,
+  "voice": true
+ },
+ "label": "Sample brand, not affiliated",
+ "extracted_at": "2026-11-02",
+ "extracted_by": "studio/brand_extract.py (no AI), scripts/build_sample_brands.py",
+ "renders": {
+  "reel_cover": "still-9x16.jpg",
+  "cover": "still-4x5.jpg",
+  "square": "still-1x1.jpg"
+ },
+ "carousel": [
+  "carousel-1.jpg",
+  "carousel-2.jpg",
+  "carousel-3.jpg"
+ ]
+}
