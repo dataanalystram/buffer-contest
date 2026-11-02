@@ -112,7 +112,8 @@ def test_planner_and_inbox_show_network_marks(demo_live, chromium, close_context
     ctx = chromium.new_context(viewport={"width": 1440, "height": 900})
     ctx.add_init_script("try{localStorage.setItem('hq_tour_done','1')}catch(e){}")
     pg = ctx.new_page()
-    pg.goto(base + "/demo", wait_until="networkidle")
+    pg.goto(base + "/demo", wait_until="networkidle")  # the sample opens on Brand > Kit
+    pg.goto(base + "/?tab=inbox", wait_until="networkidle")
     pg.wait_for_selector("[data-testid=inbox-today-item]")
     assert pg.locator("[data-testid=inbox-today-item] .net[data-net]").count() >= 1
     pg.evaluate("showTab('planner')")
