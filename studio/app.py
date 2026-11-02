@@ -776,6 +776,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # ------------------------------------------------------------ Brand studio + Sources agent (UI = REST = MCP)
     from . import brand_routes
     brand_routes.add_routes(app, house, actor)
+    from . import brand_onboard  # website -> brand kit -> "Your brand" stills; the demo's sample brands (UI = REST = MCP)
+    brand_onboard.add_routes(app, house, actor)
     from . import agent_routes  # agent brain, natural-language edits, onboarding, recommendations (UI = REST = MCP)
     agent_routes.add_routes(app, house, actor)
     from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)

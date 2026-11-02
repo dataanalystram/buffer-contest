@@ -118,6 +118,10 @@ from . import brand_routes as _brand_routes  # noqa: E402
 
 TOOLS += _brand_routes.TOOLS
 READ_ONLY |= _brand_routes.READ_ONLY
+from . import brand_onboard as _brand_onboard  # noqa: E402  website -> brand kit, theme stills, sample brands
+
+TOOLS += _brand_onboard.TOOLS
+READ_ONLY |= _brand_onboard.READ_ONLY
 from . import agent_routes as _agent_routes  # noqa: E402
 
 TOOLS += _agent_routes.TOOLS
@@ -232,6 +236,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "get_limits":
         return {**studio.limits(actor), "plan": studio.plan(actor)}
     extra = _brand_routes.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _brand_onboard.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     extra = _agent_routes.call_tool(studio, actor, name, args)
