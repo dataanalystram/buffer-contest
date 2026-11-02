@@ -20,7 +20,7 @@ jobs:
         with: {python-version: "3.12", cache: pip, cache-dependency-path: requirements-media.txt}
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
       # studio.media (docs/MEDIA_PIPELINE.md): yt-dlp, faster-whisper, numpy. Video runs here, never on the 512 MB web dyno.
-      - run: pip install -q httpx pillow fonttools -r requirements-media.txt
+      - run: pip install -q -r requirements-worker-core.txt -r requirements-media.txt
       - uses: actions/cache@v4
         with: {path: ~/.cache/huggingface, key: whisper-media-tiny-v1}
       - name: Render job ${{ github.event.inputs.job_id }}

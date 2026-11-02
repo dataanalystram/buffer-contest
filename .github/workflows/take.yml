@@ -20,12 +20,12 @@ jobs:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12", cache: pip, cache-dependency-path: requirements-worker.txt}
+        with: {python-version: "3.12", cache: pip, cache-dependency-path: "requirements-worker*.txt"}
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libegl1 libgles2 >/dev/null
       - name: Worker dependencies
         env: {HQ_KIND: "${{ github.event.inputs.kind }}"}
         run: |
-          if [ "$HQ_KIND" = "take_analyze" ]; then pip install -q -r requirements-worker.txt; else pip install -q httpx pillow fonttools "numpy>=2.0" "yt-dlp>=2026.10.26"; fi
+          if [ "$HQ_KIND" = "take_analyze" ]; then pip install -q -r requirements-worker.txt; else pip install -q -r requirements-worker-core.txt "numpy>=2.0"; fi
       - uses: actions/cache@v4
         if: github.event.inputs.kind == 'take_analyze'
         with: {path: ~/.cache/huggingface, key: whisper-small-v1}
