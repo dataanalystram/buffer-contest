@@ -649,10 +649,12 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                     hx0, hy0, hx1, hy1 = L["hook"]
                     L["hook"] = (hx0, hy0, hx1, max(hy0 + int(H * 0.08), min(hy1, L["captions_center"] - int(H * 0.09))))
                 lower_third = {**lower_third, "out_top": y_band}
+        # "own video" is not a source to credit on screen: no chip; the brand pass lower-third shows the handle instead
+        chip_credit = "" if (credit or "").strip().lower() in ("own video", "your video") else credit
         if cfg.get("chrome"):
-            ov, boxes = theme_cards.overlay(cfg, W, H, brand, hook, credit, L, acc)
+            ov, boxes = theme_cards.overlay(cfg, W, H, brand, hook, chip_credit, L, acc)
         else:
-            ov, boxes = _overlay(cfg["layout"], W, H, brand, hook, credit, L, acc)
+            ov, boxes = _overlay(cfg["layout"], W, H, brand, hook, chip_credit, L, acc)
         stage_path = None
         if cfg.get("fill") == "stage":
             stage_path = wd / "stage.png"
