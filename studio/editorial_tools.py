@@ -490,7 +490,7 @@ class EditorialTools:
     @staticmethod
     def _plan_note(res: dict) -> None:
         plan = res.get("plan") if isinstance(res.get("plan"), list) else []
-        if not any("no video found" in str(p).lower() for p in plan):
+        if not any(str(p).lower().startswith(("no video found", "launch video is on")) or "no video found" in str(p).lower() for p in plan):
             plan.append(NO_VIDEO_NOTE[:-1])
             res["plan"] = plan
 

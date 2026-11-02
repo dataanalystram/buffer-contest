@@ -47,7 +47,7 @@ SEQUENCES = {
                  "create_package(captions) -> schedule_package(mode=draft)",
     "make_post": "research_link(url) -> write the slides yourself -> render_carousel(slides) -> create_package(captions) -> "
                  "schedule_package(mode=draft)",
-    "edit_media": "library_upload_url(url) or list_library(kind=video) -> edit_video(media_token, ...) -> render_status(job_id)",
+    "edit_media": "create_upload (a local file) or library_upload_url(public url) or list_library(kind=video) -> edit_video(media_token, ...) -> render_status(job_id)",
     "revise": "change your slides/caption yourself and call render_carousel / edit_video again; remember_rule saves a brand rule",
     "reply_post": "write the reply yourself, then preview_post / submit_post",
     "replace_channel_media": "render the new media (render_carousel / edit_video), then create_package with it",
@@ -72,15 +72,29 @@ SLIDE = {"type": "object", "properties": {
     "body": {"type": "string", "description": "Plain words, max ~40; **bold** marks key facts. On the cover it is the one-line dek."},
     "footnote": {"type": "string", "description": "Small grey source / terms line"},
     "image": {"type": "string", "description": "https URL of a picture (official image from research_link / find_media)"}}}
+RIGHTS = {"type": "string", "enum": ["own", "permission", "news_credit"],
+          "description": "Whose video this is, said once (no separate confirmation step): own = the user made it; "
+                         "permission = the user has the right to use it; news_credit = a news or launch clip used with "
+                         "credit: the credit line (credit, or the source's site when omitted) goes in the caption and "
+                         "as a lower-third on the video."}
 VIDEO_SRC = {"media_token": {"type": "string", "description": "A HuhQueue media token (list_library -> media_token, or an upload)"},
              "library_id": {"type": "integer", "description": "A Library item id (list_library)"},
              "url": {"type": "string", "description": "A public https link to a video file you own (imported first)"}}
 
 TOOLS: list[dict[str, Any]] = [
     {"name": "research_link", "description": "Client brain (no HuhQueue AI). Read an article, launch page or post URL: title, site, "
-     "description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos. "
-     "You write the facts, slides and captions from this.",
-     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "max_paragraphs": {"type": "integer", "maximum": 60}}}},
+     "description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos, and "
+     "for a product / launch link the video-first result (video: status found | youtube_only | none, the maker video to use, the "
+     "credit line, and the upload question to ask when it can't be downloaded). You write the facts, slides and captions from this.",
+     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "max_paragraphs": {"type": "integer", "maximum": 60},
+                     "find_video": {"type": "boolean", "description": "Also run the video-first search (always on for Product Hunt links)"}}}},
+    {"name": "find_video", "description": "Client brain (no HuhQueue AI). VIDEO FIRST for a product or launch link (Product Hunt, the maker's "
+     "site, a name): Product Hunt's API (launch media + website) -> the maker's own site (og:video, <video>, YouTube/Vimeo/Loom embeds, "
+     "press kit) -> the official YouTube/X channel. status found = a maker video HuhQueue can fetch (use video.url with render_reel / "
+     "edit_video(url) and the credit 'Video: <maker>' on screen and in the caption); youtube_only = only on YouTube, which blocks "
+     "downloads from servers: ask the user to upload the file (ask has the exact words and upload_limit_mb), then library_upload_url "
+     "-> edit_video; none = no video: make a carousel and offer the upload.",
+     "inputSchema": {"type": "object", "required": ["query"], "properties": {"query": S}}},
     {"name": "read_x_post", "description": "Client brain (no HuhQueue AI). The free X reader: an X/Twitter post's author, handle, text, "
      "date and its photos/videos (direct MP4 when the post has one), without an X API key.",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S}}},
@@ -126,19 +140,20 @@ TOOLS: list[dict[str, Any]] = [
          "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
          "hook": {"type": "string", "description": "On-screen title you wrote (max ~12 words, facts only)"},
          "credit": {"type": "string", "description": "Credit line for a video the user didn't make"},
-         "rights_confirmed": {"type": "boolean", "description": "The user owns the video or has the right to use it"}}}},
+         "rights": RIGHTS,
+         "rights_confirmed": {"type": "boolean", "description": "Older form of rights=own/permission"}}}},
     {"name": "render_reel", "description": "Make a branded 9:16 Reel (no HuhQueue AI): from a video (same options as edit_video) or "
      "from slides (image URLs, e.g. render_carousel's media_urls) as a slideshow with the end card. Returns a job id; poll "
      "render_status(job_id).",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC, "images": {"type": "array", "items": S, "maxItems": 10},
          "hook": S, "theme": S, "captions": {"type": ["boolean", "string"], "enum": [True, False, "auto", "replace", "on", "off"]}, "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
-         "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}, "rights_confirmed": {"type": "boolean"}, "credit": S}}},
+         "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}, "rights": RIGHTS, "rights_confirmed": {"type": "boolean"}, "credit": S}}},
     {"name": "split_video", "description": "Split a long video into 3-7 short vertical clips on the video worker (no HuhQueue AI: "
      "Whisper transcript, built-in moment scorer, face-tracked reframe, captions, cover and end card). Give media_token / "
      "library_id / url (a file or a YouTube/Vimeo/X post) and owns: true (or rights_confirmed + credit). Returns take_id; poll "
      "render_status(take_id=...) or list_clips(take_id). sample: true shows the bundled example (Buffer's Buffer Commit kickoff).",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC, "n": {"type": "integer", "minimum": 1, "maximum": 7},
-         "owns": {"type": "boolean"}, "rights_confirmed": {"type": "boolean"}, "credit": S, "name": S,
+         "rights": RIGHTS, "owns": {"type": "boolean"}, "rights_confirmed": {"type": "boolean"}, "credit": S, "name": S,
          "channel_ids": {"type": "array", "items": S}, "sample": {"type": "boolean"}}}},
     {"name": "render_status", "description": "Status of a video job: job_id (edit_video / render_reel / render_template video) or "
      "take_id (split_video). status queued | running | done | failed, with download_url(s) when done and the error when failed.",
@@ -150,14 +165,17 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["captions"], "properties": {
          "captions": {"type": "object", "description": "{channel_id or service: caption}", "additionalProperties": S},
          "media_urls": {"type": "array", "items": S, "maxItems": 10}, "title": S,
-         "format": {"type": "string", "enum": ["carousel", "reel", "photo", "text"]}}}},
+         "format": {"type": "string", "enum": ["carousel", "reel", "photo", "text"]},
+         "rights": RIGHTS, "credit": {"type": "string", "description": "Credit line, e.g. 'Video: OpenAI on YouTube'"},
+         "source_url": {"type": "string", "description": "Where the media came from (used for the credit when credit is empty)"}}}},
     {"name": "update_brand_kit", "description": "Change the brand kit directly (no HuhQueue AI): name, handle, website, font, voice, "
      "colors {primary, accent, text} as hex, end_card {on, line, cta}.",
      "inputSchema": {"type": "object", "properties": {"name": S, "handle": S, "website": S, "font": S, "voice": S,
          "colors": {"type": "object", "properties": {"primary": S, "accent": S, "text": S}},
          "end_card": {"type": "object", "properties": {"on": {"type": "boolean"}, "line": S, "cta": S}}}}},
-    {"name": "library_upload_url", "description": "Add a photo or video the user owns to their Library from a public https URL "
-     "(up to 40 MB). Returns media_token and library_id for edit_video / split_video / render_carousel.",
+    {"name": "library_upload_url", "description": "Only for a photo or video that is ALREADY at a public https URL (up to 40 MB): "
+     "adds it to the user's Library and returns media_token and library_id for edit_video / split_video / render_carousel. "
+     "For a file on the user's computer or in your sandbox, use create_upload (or upload_media_chunk) instead.",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S}}},
     {"name": "integrations_status", "description": "Which integrations are connected for this user (Product Hunt, X reader key, "
      "image models...) and whether each key last tested OK. Never returns a key.",
@@ -168,7 +186,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "maximum": 9}, "days": {"type": "integer", "maximum": 14}}}},
 ]
 NAMES = {t["name"] for t in TOOLS}
-READ_ONLY = {"research_link", "read_x_post", "find_media", "scrape_brand_assets", "render_status", "integrations_status",
+READ_ONLY = {"research_link", "read_x_post", "find_media", "find_video", "scrape_brand_assets", "render_status", "integrations_status",
              "weekly_recap_plan"}
 
 
@@ -299,13 +317,55 @@ def rank_images(share: str, photos: list[str]) -> tuple[list[str], list[str]]:
     return pics + logos, logos
 
 
+def _video_first(studio, a, query: str, name: str = "", website: str = "") -> dict:
+    from . import demo_guard
+    from .house import MAX_UPLOAD
+    from .media import video_first
+    try:
+        from . import appkeys
+        ph = appkeys.ph_app_token(studio.house.http)
+    except Exception:  # noqa: BLE001
+        ph = ""
+    limit = (demo_guard.DEMO_FILE_MAX if demo_guard.is_demo(a.uid) else MAX_UPLOAD) // (1024 * 1024)
+    r = video_first.research_video(query, http=studio.house.http, ph_token=ph, upload_limit_mb=limit, name_hint=name, website_hint=website)
+    return {"status": r["status"], "video": r["video"], "launch_video": r["launch_video"], "credit": r["credit"], "maker": r["maker"],
+            "website": r["website"], "product": r["product"], "images": r["images"], "steps": r["steps"], "plan_line": r["plan_line"],
+            "ask": r["ask"], "upload_limit_mb": limit, "upload_accept": r["upload"]["label"]}
+
+
+def t_find_video(studio, a, args):
+    q = str(args.get("query") or "").strip()
+    if not q:
+        raise ActionError("Give find_video a product link or name.")
+    return {**_video_first(studio, a, q), "spent_usd": 0}
+
+
 def t_research_link(studio, a, args):
     from . import intake, netguard, reader
+    from .media import find as media_find, video_first
     h = studio.house
     try:
         url = netguard.check_url(intake.clean_url(str(args.get("url") or "")))
     except netguard.FetchError as e:
         raise ActionError(f"That link isn't allowed: {e}")
+    if video_first.is_product_link(url):  # Product Hunt blocks servers: its API + the maker's site instead of the page
+        vf = _video_first(studio, a, url)
+        prod = vf.get("product") or {}
+        paras = [x for x in [prod.get("tagline"), prod.get("description")] if x]
+        if vf.get("website"):
+            try:
+                site = reader.read_url(netguard.check_url(vf["website"]), h.http, "")
+                paras += (site.get("paragraphs") or [])[:20]
+            except Exception:  # noqa: BLE001
+                pass
+        if not paras and not prod:
+            raise ActionError("Product Hunt blocks servers and its API didn't answer for this product. Give the product's website.")
+        return {"url": url, "site": prod.get("name") or vf.get("maker"), "title": f"{prod.get('name') or vf.get('maker')}: {prod.get('tagline') or ''}".strip(": "),
+                "description": prod.get("tagline") or "", "via": "product_hunt_api" if prod else "website", "paragraphs": paras[:30],
+                "figures": _figures(paras, url), "images": vf.get("images") or [], "logos": [], "videos": [vf["video"]] if vf.get("video") else [],
+                "video": vf, "spent_usd": 0,
+                "next": ("Video found: render_reel / edit_video with video.url and credit '" + vf["credit"] + "'." if vf["status"] == "found"
+                         else "No downloadable video: ask the user exactly: " + vf["ask"])}
     try:
         art = reader.read_url(url, h.http, "")
     except reader.ReadError as e:
@@ -320,6 +380,11 @@ def t_research_link(studio, a, args):
     if art.get("post"):
         p = art["post"]
         out["post"] = {k: p.get(k) for k in ("author_name", "handle", "text", "date") if p.get(k)}
+    if not out["videos"] and not media_find.is_video_post(url) and args.get("find_video") is True:
+        try:  # a launch / product page: the video-first search, so the client knows whether a Reel is possible
+            out["video"] = _video_first(studio, a, url)
+        except Exception:  # noqa: BLE001 - research never fails on the video search
+            pass
     return out
 
 
@@ -452,6 +517,36 @@ def t_hero_edit(studio, a, args):
     return {"url": m["url"], "media_token": m["token"], "edit": how, "report": report, "spent_usd": 0}
 
 
+def _rights(args: dict, src_url: str = "") -> dict:
+    """rights: own | permission | news_credit, one parameter instead of a back-and-forth (owner, 2 Nov 2026). Without it the
+    older owns / rights_confirmed / credit fields still work. news_credit always ends with a credit line: the one given, or
+    the source's site."""
+    r = str(args.get("rights") or "").strip().lower()
+    credit = str(args.get("credit") or "").strip()[:160]
+    if not r:
+        return {"rights": "", "owns": bool(args.get("owns")), "rights_confirmed": bool(args.get("rights_confirmed", True)),
+                "credit": credit}
+    if r == "own":
+        return {"rights": r, "owns": True, "rights_confirmed": True, "credit": credit}
+    if r == "permission":
+        return {"rights": r, "owns": False, "rights_confirmed": True, "credit": credit}
+    if r == "news_credit":
+        if not credit:
+            from urllib.parse import urlparse
+            host = (urlparse(str(src_url or "")).hostname or "").removeprefix("www.")
+            if host and not host.endswith("onrender.com"):
+                credit = f"Video: {host}"
+        if not credit:
+            raise ActionError("rights: news_credit needs a credit line, e.g. credit: 'Video: OpenAI on YouTube' (or give source_url).")
+        return {"rights": r, "owns": False, "rights_confirmed": True, "credit": credit}
+    raise ActionError("rights is one of own | permission | news_credit.")
+
+
+def credit_line(credit: str) -> str:
+    c = credit.strip()
+    return c if c.lower().startswith(("video:", "source:", "credit:", "via ", "photo:", "image:")) else f"Credit: {c}"
+
+
 def _captions_mode(v) -> str:
     """edit_video's captions argument -> the worker's mode (owner bug 2 Nov 2026: a captioned clip got captioned again)."""
     if v is False or v == "off":
@@ -482,11 +577,11 @@ def _video_spec(h, a, args, tok, meta) -> dict:
         if e <= s + 1:
             raise ActionError("The cut must leave at least one second (end_s after start_s).")
         clip = [round(s, 2), round(e, 2)]
-    owned = True  # media_token / library_id / url imports are the user's own files (library_upload_url: "a video you own")
+    rg = _rights(args, str(args.get("source_url") or args.get("url") or ""))  # own | permission | news_credit
     spec = {"kind": "media_render", "style": sid, "ratio": args.get("ratio") if args.get("ratio") in ("9:16", "4:5", "1:1") else "9:16",
-            "hook": str(args.get("hook") or "")[:120], "facts": [], "credit": str(args.get("credit") or "")[:160], "names": [],
+            "hook": str(args.get("hook") or "")[:120], "facts": [], "credit": rg["credit"], "names": [],  # credit: the lower-third
             "music": args.get("music") or "auto", "official": False,
-            "rights_confirmed": bool(args.get("rights_confirmed", owned)), "source": tok, "candidate": None, "slides": [],
+            "rights_confirmed": rg["rights_confirmed"], "source": tok, "candidate": None, "slides": [],
             "captions": args.get("captions") not in (False, "off"),
             "captions_mode": _captions_mode(args.get("captions")),
             "brand_colors": True, **_kit_spec(h, a), "via": SOURCE}
@@ -529,6 +624,12 @@ def t_split_video(studio, a, args):
     if args.get("sample"):
         return h.takes.start_sample(a, {"channel_ids": args.get("channel_ids")})
     body = {k: args.get(k) for k in ("owns", "rights_confirmed", "credit", "name", "channel_ids") if args.get(k) is not None}
+    if args.get("rights"):
+        rg = _rights({**args, "credit": args.get("credit") or "x"} if args.get("rights") == "news_credit" and not args.get("credit")
+                     and args.get("url") else args, str(args.get("url") or ""))
+        body.update(owns=rg["owns"], rights_confirmed=rg["rights_confirmed"])
+        if args.get("credit") or rg["rights"] != "news_credit":  # news_credit from a link: One take names the platform itself
+            body["credit"] = rg["credit"]
     if args.get("n"):
         body["count"] = int(args["n"])
     if args.get("media_token") or args.get("library_id") not in (None, ""):
@@ -581,6 +682,13 @@ def t_create_package(studio, a, args):
         raise ActionError("captions is {channel_id or service: text} with the caption you wrote for each channel.")
     chans = [c for c in studio.channels(a) if not c.get("isDisconnected")]
     media_urls = [str(u) for u in args.get("media_urls") or []][:10]
+    credit = ""
+    if args.get("rights"):
+        rg = _rights(args, str(args.get("source_url") or ""))
+        credit = rg["credit"] if rg["rights"] == "news_credit" else ""
+    if credit:  # news_credit: the credit line goes in every caption (once)
+        line = credit_line(credit)
+        caps = {k: (v if credit.lower() in str(v).lower() else f"{str(v).rstrip()}\n\n{line}") for k, v in caps.items()}
     pk, unknown = [], []
     for key, text in caps.items():
         hits = [c for c in chans if c["id"] == key] or [c for c in chans if c.get("service") == key]
@@ -590,6 +698,7 @@ def t_create_package(studio, a, args):
             fmt = args.get("format") or ("reel" if any(u.lower().split("?")[0].endswith((".mp4", ".mov")) for u in media_urls) else
                                          "carousel" if len(media_urls) > 1 else "photo" if media_urls else "text")
             pk.append({"channel_id": c["id"], "service": c.get("service"), "channel": c.get("displayName") or c.get("name"),
+                       "channel_name": c.get("displayName") or c.get("name"),  # every package reader (Planner, Make a post) uses this
                        "text": str(text)[:5000], "media_urls": media_urls, "format": fmt, "status": "ready",
                        "media": [{"url": u, "type": "video" if u.lower().split("?")[0].endswith((".mp4", ".mov")) else "photo"}
                                  for u in media_urls], "check": h.check(a, str(text))})

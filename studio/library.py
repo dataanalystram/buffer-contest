@@ -126,6 +126,60 @@ def _sample_items() -> list[dict]:
     return out
 
 
+NOT_MEDIA = "Upload a JPG, PNG, WebP or GIF image, or an MP4, MOV or WebM video."
+
+
+def not_media(head: bytes) -> str:
+    """Why a file isn't one we take, saying what it actually is when that's knowable (a web page is the usual one: a
+    share or artifact link that answered with its sign-in page)."""
+    h = (head or b"").lstrip()[:64].lower()
+    if h.startswith((b"<!doctype html", b"<html", b"<head", b"<body", b"<!--", b"<?xml")) or h.startswith(b"<"):
+        return ("That file is a web page (HTML, probably a sign-in or preview page), not a photo or video. "
+                + NOT_MEDIA)
+    if h.startswith((b"{", b"[")):
+        return "That file is JSON text (probably an error message), not a photo or video. " + NOT_MEDIA
+    return NOT_MEDIA
+
+
+class _Writer:
+    """One upload into library_chunks: cap and quota while bytes arrive, MIME sniffed from the first bytes, 1 MB chunks."""
+
+    def __init__(self, lib: "Library", a: Actor, declared: int | None, source: str):
+        lib.check_room(a, declared)
+        self.lib, self.a, self.source = lib, a, source
+        self.room = min(FILE_MAX, QUOTA - lib.used(a.uid))
+        self.iid, self.tok = lib._new_item(a, source, "upload")
+        self.h, self.buf, self.n, self.size, self.kind = hashlib.sha256(), bytearray(), 0, 0, None
+
+    def feed(self, piece: bytes) -> None:
+        self.size += len(piece)
+        if self.size > self.room:
+            raise ActionError(f"Files up to {FILE_MAX // MB} MB, and your Library holds {QUOTA // MB} MB in all.", 413)
+        self.buf += piece
+        if self.kind is None and len(self.buf) >= 16:
+            self.kind = sniff(bytes(self.buf[:32]))
+            if not self.kind:
+                raise ActionError(not_media(bytes(self.buf[:64])), 415)
+        while len(self.buf) >= CHUNK:
+            part, self.buf = bytes(self.buf[:CHUNK]), self.buf[CHUNK:]
+            self.h.update(part)
+            self.lib.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (self.iid, self.n, part))
+            self.n += 1
+
+    def finish(self, name: str) -> dict:
+        if self.kind is None:
+            self.kind = sniff(bytes(self.buf[:32]))
+            if not self.kind:
+                raise ActionError(not_media(bytes(self.buf[:64])), 415)
+        if self.buf:
+            self.h.update(bytes(self.buf))
+            self.lib.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (self.iid, self.n, bytes(self.buf)))
+        return self.lib._finish(self.a, self.iid, self.tok, name, self.kind, self.size, self.h.hexdigest(), self.source)
+
+    def abort(self) -> None:
+        self.lib._drop(self.iid)
+
+
 class Library:
     def __init__(self, house):
         self.h, self.store = house, house.store
@@ -159,42 +213,31 @@ class Library:
     async def save_stream(self, a: Actor, name: str, stream, declared: int | None, source: str = "upload") -> dict:
         """Stream a request body into chunks: capped while it streams, MIME sniffed from the first bytes, nothing
         decoded. A file that breaks a rule leaves nothing behind."""
-        self.check_room(a, declared)
-        room = min(FILE_MAX, QUOTA - self.used(a.uid))
-        iid, tok = self._new_item(a, source, "upload")
-        h, buf, n, size, kind = hashlib.sha256(), bytearray(), 0, 0, None
+        w = _Writer(self, a, declared, source)
         try:
             async for piece in stream:
-                size += len(piece)
-                if size > room:
-                    raise ActionError(f"Files up to {FILE_MAX // MB} MB, and your Library holds {QUOTA // MB} MB in all.", 413)
-                buf += piece
-                if kind is None and len(buf) >= 16:
-                    kind = sniff(bytes(buf[:32]))
-                    if not kind:
-                        raise ActionError("Upload a JPG, PNG, WebP or GIF image, or an MP4, MOV or WebM video.", 415)
-                while len(buf) >= CHUNK:
-                    part, buf = bytes(buf[:CHUNK]), buf[CHUNK:]
-                    h.update(part)
-                    self.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (iid, n, part))
-                    n += 1
-            if kind is None:
-                kind = sniff(bytes(buf[:32]))
-                if not kind:
-                    raise ActionError("Upload a JPG, PNG, WebP or GIF image, or an MP4, MOV or WebM video.", 415)
-            if buf:
-                h.update(bytes(buf))
-                self.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (iid, n, bytes(buf)))
+                w.feed(piece)
+            return w.finish(name)
         except BaseException:
-            self._drop(iid)
+            w.abort()
             raise
-        return self._finish(a, iid, tok, name, kind, size, h.hexdigest(), source)
+
+    def save_iter(self, a: Actor, name: str, pieces, declared: int | None, source: str = "upload") -> dict:
+        """The same writer for bytes that arrive as a plain iterable (an MCP chunk upload being joined)."""
+        w = _Writer(self, a, declared, source)
+        try:
+            for piece in pieces:
+                w.feed(piece)
+            return w.finish(name)
+        except BaseException:
+            w.abort()
+            raise
 
     def save_bytes(self, a: Actor, data: bytes, name: str, source: str = "upload") -> dict:
         self.check_room(a, len(data))
         kind = sniff(data[:32])
         if not kind:
-            raise ActionError("Upload a JPG, PNG, WebP or GIF image, or an MP4, MOV or WebM video.", 415)
+            raise ActionError(not_media(data[:64]), 415)
         iid, tok = self._new_item(a, source, "upload")
         try:
             for n, i in enumerate(range(0, len(data), CHUNK)):

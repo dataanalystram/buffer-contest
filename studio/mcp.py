@@ -134,6 +134,9 @@ from . import library as _library  # noqa: E402  Library: list_library, delete_l
 
 TOOLS += _library.TOOLS
 READ_ONLY |= _library.READ_ONLY
+from . import uploads as _uploads  # noqa: E402  create_upload, upload_media_chunk, finish_upload
+
+TOOLS += _uploads.TOOLS
 from . import mcp_client_brain as _cb  # noqa: E402  client brain: the hands without HuhQueue's AI (docs/MCP_TOOLS.md)
 
 TOOLS += _cb.TOOLS
@@ -252,6 +255,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _library.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _uploads.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     extra = _cb.call_tool(studio, actor, name, args)

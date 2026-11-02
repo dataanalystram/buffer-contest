@@ -73,6 +73,16 @@ SPECS = [
     {"name": "find_media", "description": "Find the REAL launch / demo video for the story on any platform (X, YouTube, Vimeo, Loom, YC launch pages, HN, GitHub, the company's own site). "
                                       "Returns the best video, the best one the worker can fetch (with its credit line) and images. Call before render_reel with a style.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "A link or the story; omit to use the person's link"}}}},
+    {"name": "find_video", "description": "VIDEO FIRST: find the product's REAL launch video before rendering, in order: Product Hunt's API "
+                                       "(launch media, website), the product's own site (og:video, <video>, YouTube/Vimeo/Loom embeds, press kit), "
+                                       "then its official YouTube/X channel. Returns status found (a file the worker can fetch: Reel), youtube_only "
+                                       "(the video is on YouTube, which blocks downloads here: the app asks the person to upload it) or none (no video: "
+                                       "carousel, plus the upload offer), with the credit line 'Video: <maker>'. Runs automatically when the person "
+                                       "asks for a video or links a product; call it again with a link or product name to look elsewhere.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "A link or product name; omit for the person's link"}}}},
+    {"name": "set_cover", "description": "Use another of the 3 cover variants (0-2) as a channel's Reel cover / YouTube thumbnail: the Reel's "
+                                      "opening frame is swapped (Instagram/TikTok use it as the cover).",
+     "input_schema": {"type": "object", "required": ["channel", "index"], "properties": {"channel": S, "index": {"type": "integer", "minimum": 0, "maximum": 2}}}},
     {"name": "generate_images", "description": "No usable video or photo: make n images for the story (the configured image model, else on-brand cards), labelled as AI-generated. A styled render_reel then uses them.",
      "input_schema": {"type": "object", "properties": {"prompt": S, "n": {"type": "integer"}}}},
     {"name": "list_themes", "description": "Every video look: the four edit styles and the video themes, with what each looks like, what it is best "
@@ -80,7 +90,8 @@ SPECS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "set_theme", "description": "Set this run's video theme (the person picked one, or asked 'make it more cinematic' / 'switch to the news "
                                       "theme') and re-render its video channels in it. why: one line for the plan.",
-     "input_schema": {"type": "object", "required": ["theme"], "properties": {"theme": {"type": "string", "enum": ["news"] + media_styles.ALL_IDS},
+     "input_schema": {"type": "object", "required": ["theme"], "properties": {"theme": {"type": "string", "enum": ["news", "none"] + media_styles.ALL_IDS,
+                                                                                       "description": "none = no style: post the video as it is (fit to the frame, logo, end card)"},
                                                                              "why": S, "rerender": {"type": "boolean"}}}},
     {"name": "list_templates", "description": "The brand's post templates (HuhByte formats: editorial cover, text slides, launch Reel, weekly and "
                                            "mid-week recap, GitHub repo pillar, YC launch, viral trend; plus breaking, quote, tutorial).",
@@ -108,12 +119,12 @@ LABELS = {"read_upload": "Read your upload", "read_url": "Read your link", "x_oe
           "render_cover": "Render the cover", "render_carousel": "Render the carousel", "render_reel": "Render the Reel",
           "add_end_card": "Set the end card", "edit_brand": "Update your brand kit", "edit_channel_media": "Re-render one channel",
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
-          "find_media": "Find media", "generate_images": "Make images", "check": "Check everything", "finish": "Done",
+          "find_media": "Find media", "find_video": "Look for the launch video", "set_cover": "Swap the cover", "generate_images": "Make images", "check": "Check everything", "finish": "Done",
           "list_themes": "Look at the themes", "set_theme": "Set the video theme", "list_templates": "Look at the templates",
           "render_template": "Render a template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap",
           **editorial_tools.LABELS}
 WRITES = {"generate_images", "render_recap", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media",
-          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template"} | editorial_tools.WRITES
+          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template", "set_cover"} | editorial_tools.WRITES
 
 
 # Tone drives the caption prompt (QA: "short punchy explainer" came out as plain explainers). Several tones can combine.
@@ -299,6 +310,9 @@ class Tools(EditorialTools):
             url = netguard.check_url(intake.clean_url(url))
         except netguard.FetchError as e:
             raise ActionError(f"That link isn't allowed: {e}")
+        from .media import video_first
+        if video_first.is_product_link(url):  # Product Hunt pages answer 403 to servers: its API (and the maker's site) instead
+            return self._read_product(url)
         try:
             art = reader.read_url(url, self.h.http, "" if self.demo else self._x_bearer())
         except reader.ReadError as e:
@@ -311,6 +325,37 @@ class Tools(EditorialTools):
             out.update(author=art["post"]["author_name"], handle=art["post"]["handle"], text=art["post"]["text"][:400],
                        media=[m["type"] for m in art.get("media") or []], media_note=art.get("media_note", ""))
         return out
+
+    def _read_product(self, url: str) -> dict:
+        from .media import video_first
+        run = self.state()
+        res = run["result"]
+        prod = res.get("product") or {}
+        if not prod:
+            try:
+                prod = video_first.ph_lookup(url, self._ph_token(), self.h.http) or {}
+            except Exception:  # noqa: BLE001
+                prod = {}
+        site = (prod.get("website") or (res.get("video_research") or {}).get("website") or "")
+        paras = [x for x in [prod.get("tagline"), prod.get("description")] if x]
+        site_art = {}
+        if site:
+            try:
+                site_art = reader.read_url(netguard.check_url(site), self.h.http, "")
+                paras += [p for p in (site_art.get("paragraphs") or [])[:8] if p not in paras]
+            except Exception:  # noqa: BLE001 - the website is extra context, never required
+                site_art = {}
+        name = prod.get("name") or video_first.slug_name(url) or site_art.get("site") or ""
+        if not paras and not site_art:
+            raise ActionError(f"Product Hunt blocks servers and its API didn't answer for {name or 'this product'}. Paste the product's website.")
+        title = f"{name}: {prod.get('tagline')}" if prod.get("tagline") else (site_art.get("title") or name)
+        img = next(iter(prod.get("images") or []), "") or prod.get("thumbnail") or site_art.get("image") or ""
+        res["source"] = {"url": url, "title": title[:200], "description": (prod.get("tagline") or site_art.get("description") or "")[:300],
+                         "image": img, "site": name or "Product Hunt", "via": "product_hunt_api" if prod else "website", "post": None,
+                         "media": [], "media_note": "", "paragraphs": paras[:10]}
+        self.save(run)
+        return {"site": res["source"]["site"], "title": res["source"]["title"], "via": res["source"]["via"],
+                "words": len(" ".join(paras).split()), "website": site}
 
     def t_read_upload(self) -> dict:
         """The person's own photo/video as an input: transcribe a video, and with no link make it the source."""
@@ -415,6 +460,169 @@ class Tools(EditorialTools):
         bv, bd = got.get("best_video"), got.get("best_downloadable")
         return {"best_video": bv, "best_downloadable": bd, "images": got.get("images", [])[:3], "note": got.get("note", ""),
                 "needs_rights_confirmation": bool(bd and not bd.get("official"))}
+
+    def _ph_token(self) -> str:
+        """Product Hunt: the app's own key (studio.appkeys), else the person's developer token. Never logged."""
+        try:
+            from . import appkeys
+            tok = appkeys.ph_app_token(self.h.http)
+        except Exception:  # noqa: BLE001
+            tok = ""
+        if not tok and not self.demo:
+            try:
+                from .integrations import user_secret
+                tok = user_secret(self.store, self.a.uid, "ph_token")
+            except Exception:  # noqa: BLE001
+                tok = ""
+        return tok or ""
+
+    def upload_limit_mb(self) -> int:
+        from .house import MAX_UPLOAD
+        return (demo_guard.DEMO_FILE_MAX if self.demo else MAX_UPLOAD) // (1024 * 1024)
+
+    def t_find_video(self, query: str = "") -> dict:
+        """studio.media.video_first: Product Hunt API -> the maker's site -> the official channel. A downloadable maker
+        video makes the video channels (and Instagram) a Reel; YouTube-only or nothing -> the plan says so and the thread
+        asks for an upload (with the real upload limit)."""
+        from .media import video_first
+        run = self.state()
+        res, inp = run["result"], run["input"]
+        it = inp.get("intake") or {}
+        comp = res.get("company") or {}
+        q = query or " ".join(it.get("urls") or []) or inp.get("source_url") or comp.get("website") or comp.get("name") or \
+            (res.get("story") or {}).get("headline") or ""
+        if not q:
+            raise ActionError("Give find_video a link or a product name.")
+        yt = ""
+        if not self.demo:
+            try:
+                from .integrations import user_secret
+                yt = user_secret(self.store, self.a.uid, "yt_key")
+            except Exception:  # noqa: BLE001
+                yt = ""
+        src_vid = next((m for m in (res.get("source") or {}).get("media") or [] if m.get("type") == "video"), None)
+        r = video_first.research_video(q, http=self.h.http, ph_token=self._ph_token(), youtube_api_key=yt or None,
+                                       upload_limit_mb=self.upload_limit_mb(), name_hint=comp.get("name") or "",
+                                       website_hint=comp.get("website") or "")
+        if r["status"] != "found" and (src_vid or res.get("clip_token")):  # the linked post already carries its video
+            r.update(status="found", ask="", plan_line="Video found: the clip in your link, branded as a Reel with credit")
+        run = self.state()
+        res = run["result"]
+        res["video_research"] = {k: r[k] for k in ("status", "video", "launch_video", "credit", "maker", "website", "steps",
+                                                   "plan_line", "ask", "upload")}
+        found = dict(res.get("found_media") or {}) if isinstance(res.get("found_media"), dict) else {}
+        found.update({"best_video": r["best_video"], "best_downloadable": r["best_downloadable"] or found.get("best_downloadable"),
+                      "images": [{"url": u} for u in r["images"]] or found.get("images") or [], "note": r["plan_line"],
+                      "credit": r["credit"]})
+        res["found_media"] = found
+        res["video_credit"] = r["credit"]
+        if r["product"]:
+            res["product"] = r["product"]
+        plan = [p for p in (res.get("plan") if isinstance(res.get("plan"), list) else []) if not str(p).lower().startswith(
+            ("video found", "launch video is on", "no video found"))]
+        plan.insert(0, r["plan_line"])
+        res["plan"] = plan
+        if r["status"] == "found":
+            res.pop("video_ask", None)
+        elif not (res.get("upload") or {}).get("type") == "video":
+            res["video_ask"] = {"text": r["ask"], "status": r["status"], "max_mb": r["upload"]["max_mb"], "accept": r["upload"]["accept"],
+                                "label": r["upload"]["label"], "launch_url": (r["launch_video"] or {}).get("url", ""), "credit": r["credit"]}
+            if r["ask"] not in {t.get("text") for t in res.get("thread") or []}:
+                self.thread(run, "agent", r["ask"])
+        self.save(run)
+        return {"status": r["status"], "video": r["video"], "launch_video": r["launch_video"], "credit": r["credit"],
+                "maker": r["maker"], "website": r["website"], "steps": r["steps"], "ask": r["ask"], "plan_line": r["plan_line"],
+                "upload_limit_mb": r["upload"]["max_mb"]}
+
+    def _cover_info(self, media: list[dict]) -> dict:
+        """The cover variants the worker made for this channel's video (studio/media/covers.py, stored by finish_video)."""
+        v = next((m for m in media if m.get("type") == "video" and m.get("token")), None)
+        meta = (self.h.media_meta(self.a, v["token"]) if v else None) or {}
+        covers = []
+        for c in meta.get("covers") or []:
+            covers.append({"variant": c.get("variant"), "layout": c.get("layout"), "score": c.get("score"),
+                           "source": c.get("source"), "tokens": c.get("files") or {},
+                           "urls": {r: self.h.media_url(t) for r, t in (c.get("files") or {}).items()}})
+        if not covers:
+            return {}
+        return {"covers": covers, "cover_index": int(meta.get("cover_index") or 0),
+                "thumbnail_offset_ms": meta.get("thumbnail_offset_ms"), "cover_frame_secs": meta.get("cover_frame_secs") or 0,
+                "brand_pass": meta.get("brand_pass") or []}
+
+    def t_set_cover(self, channel: str, index: int) -> dict:
+        run = self.state()
+        res = run["result"]
+        ch = next((c for c in run["input"]["channels"] if c["id"] == channel or c["service"] == channel), None)
+        if not ch:
+            raise ActionError("That channel isn't in this post.", 404)
+        cm = (res.get("channel_media") or {}).get(ch["id"]) or {}
+        covers = cm.get("covers") or []
+        if not covers:
+            raise ActionError("This channel has no cover variants (covers come with a rendered video).")
+        index = int(index)
+        if not 0 <= index < len(covers):
+            raise ActionError(f"Pick a cover from 0 to {len(covers) - 1}.")
+        vid = next((m for m in cm.get("media") or [] if m.get("type") == "video" and m.get("token")), None)
+        if not vid:
+            raise ActionError("This channel has no video to put the cover on.")
+        ratio = cm.get("ratio") or "9:16"
+        files = covers[index].get("tokens") or {}
+        ctok = files.get("4:5" if ratio == "4:5" else "9:16") or next(iter(files.values()), "")
+        spec = {"kind": "cover_swap", "source": vid["token"], "cover": ctok, "secs": 0.6,
+                "replace": float(cm.get("cover_frame_secs") or 0)}
+        media, why = self._run_job(spec)
+        if not media:
+            raise ActionError(f"The cover swap didn't finish ({why}).")
+        run = self.state()
+        res = run["result"]
+        changed = []
+        for cid, v in (res.get("channel_media") or {}).items():
+            if any(m.get("url") == vid["url"] for m in v.get("media") or []):
+                v["media"] = [media[0] if m.get("url") == vid["url"] else m for m in v["media"]]
+                v.update(cover_index=index, cover_frame_secs=0.6, thumbnail_offset_ms=300)
+                changed.append(cid)
+        seen, allm = set(), []
+        for v in res["channel_media"].values():
+            for m in v["media"]:
+                if m["url"] not in seen:
+                    seen.add(m["url"])
+                    allm.append(m)
+        res["media"] = allm
+        self.save(run)
+        return {"channels": changed, "cover_index": index, "video": media[0]["url"]}
+
+    def _run_job(self, spec: dict) -> tuple[list[dict] | None, str]:
+        """One render job (local FFmpeg off the hosted app, else the GitHub worker), waited on. (media, '') or (None, why)."""
+        mode = self.h.video_mode()
+        if self.demo:
+            mode = "local" if self.h.local_video_ok() else "none"
+        if mode == "none":
+            return None, "no video renderer here"
+        jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
+                           (self.a.uid, self.rid, json.dumps(spec), "queued", time.time(), time.time()))
+        if mode == "local":
+            try:
+                data, meta = self.h.render_job_local(spec)
+                self.h.finish_video(jid, data, meta, run_inline=False)
+                return [self.h._job_media(jid)], ""
+            except Exception as e:  # noqa: BLE001
+                self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (str(e)[:500], time.time(), jid))
+                return None, str(e)[:120]
+        ok, why = self.h._dispatch_github(jid)
+        if not ok:
+            self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (why, time.time(), jid))
+            return None, why
+        t0 = time.time()
+        while time.time() - t0 < VIDEO_WAIT:
+            time.sleep(0.05 if self.h.sync else 3)
+            row = self.store.q("SELECT status, error FROM render_jobs WHERE id=?", (jid,))[0]
+            self.store.x("UPDATE agent_runs SET updated=? WHERE id=?", (time.time(), self.rid))
+            if row["status"] == "done":
+                return [self.h._job_media(jid)], ""
+            if row["status"] == "failed":
+                return None, (row["error"] or "failed")[:120]
+        self.store.x("UPDATE render_jobs SET status='failed', error='timed out', updated=? WHERE id=?", (time.time(), jid))
+        return None, "timed out"
 
     def t_generate_images(self, prompt: str = "", n: int = 3) -> dict:
         from .media import imagegen
@@ -651,13 +859,20 @@ class Tools(EditorialTools):
         if not style and captions:  # captions asked for, no look named: the active brand kit's caption style (owner, 2 Nov 2026)
             from . import brand_kits
             style = brand_kits.active_caption_style(self.h, self.a) or None
+        found = run["result"].get("found_media") if isinstance(run["result"].get("found_media"), dict) else {}
+        branded = run["result"].get("clip_owned") or bool((found.get("best_downloadable") or {}).get("official"))
+        if not style and branded:  # "Let the agent choose" on their own / the maker's video: a fitting theme, branded throughout
+            inp = run.get("input") or {}
+            style = media_styles.pick_theme(" ".join([inp.get("prompt") or "", (inp.get("intake") or {}).get("tone") or ""]),
+                                            (inp.get("intake") or {}).get("topic") or "")[0]
         if rights_confirmed is None and run["result"].get("rights_confirmed"):
             rights_confirmed = True  # they already said yes for this clip; a theme change doesn't ask again
         if style:
             media, note, ask = self._media_reel(run, style, seconds=seconds, music=music, rights_confirmed=bool(rights_confirmed), ratio=ratio)
             run = self.state()
             fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
-            self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": True, "style": style, "note": note, "ratio": ratio})
+            self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": True, "style": style, "note": note, "ratio": ratio,
+                                                   **(self._cover_info(media) if fmt == "reel" else {})})
             self.save(run)
             out = {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note, "style": style,
                    "clipped": self._clipped([m for m in media if m["type"] == "photo"])}
@@ -823,7 +1038,11 @@ class Tools(EditorialTools):
             media, note = self._reel(run, seconds=seconds, ratio=ratio)
             return media, note + " No video to edit, so the styled edit wasn't used (find_media or generate_images first).", ""
         handle = ((src.get("post") or {}).get("handle") or "").lstrip("@")
-        credit = (f"Video: @{handle} on X" if clip_tok and handle else
+        if clip_tok and res.get("clip_owned"):  # their upload: the maker's credit when it is the launch video they fetched for us
+            handle = ""
+        credit = (res.get("video_credit") or "own video") if (clip_tok and res.get("clip_owned")) else \
+                 (cand or {}).get("credit") if (cand and res.get("video_credit")) else None
+        credit = credit or (f"Video: @{handle} on X" if clip_tok and handle else
                   (cand or {}).get("credit") or (f"Video: {st.get('source')}" if clip_tok and st.get("source") else "")) if (clip_tok or cand) else gen[0]["credit"]
         official = bool(cand and cand.get("official"))
         if (clip_tok or cand) and not (official or rights_confirmed):
@@ -840,12 +1059,37 @@ class Tools(EditorialTools):
                 "credit": credit, "names": [n for n in (st.get("company"), (cand or {}).get("company")) if n], "music": music or "auto",
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "logo": kit.get("logo") or "", "source": clip_tok, "candidate": cand,
-                "slides": [] if (clip_tok or cand) else [m["token"] for m in gen], "image_prompt": st["headline"]}
+                "slides": [] if (clip_tok or cand) else [m["token"] for m in gen], "image_prompt": st["headline"],
+                "brand_pass": sid != "none", "logo": (run.get("input") or {}).get("add_logo", True) is not False,
+                "cover_hook": st.get("cover_hook") or "", "covers": True}
+        maker = (res.get("video_research") or {}).get("maker")
+        if maker and maker not in spec["names"]:
+            spec["names"].insert(0, maker)
+        hero_tok = self._cover_image_token(run)
+        if hero_tok:
+            spec["cover_image"] = hero_tok
         if seconds and sid not in ("opus", "hype"):
             spec["clip"] = [0, float(seconds)]
         frames = [] if (clip_tok or cand) else gen
         media, note = self._video_job(run, spec, frames, f" Style: {sid}.")
         return media, note, ""
+
+    def _cover_image_token(self, run) -> str:
+        """The product's hero image as a media token, so the cover generator can use it when the video's frames are poor."""
+        res = run["result"]
+        if res.get("cover_image_token"):
+            return res["cover_image_token"]
+        url = (res.get("story") or {}).get("image") or (res.get("source") or {}).get("image") or ""
+        if not url:
+            return ""
+        data = self.h._fetch_bytes(url, 8 * 1024 * 1024)
+        clean = vision.prepare(data, 1600) if data else None
+        if not clean:
+            return ""
+        tok = self.h.put_media(self.a, clean, "hero.jpg", kind="render", meta={"type": "photo", "role": "cover_image"})
+        res["cover_image_token"] = tok
+        self.save(run)
+        return tok
 
     # ---------------------------------------------------------------- themes and templates
     def t_list_themes(self) -> dict:
@@ -1196,6 +1440,14 @@ class Tools(EditorialTools):
                   "idempotency_key": hashlib.sha256(f"{self.rid}:{c['id']}".encode()).hexdigest()[:16]}
             if c["service"] == "youtube":
                 pk["options"] = {"title": st["headline"][:100], "category_id": "28"}
+            if cm.get("covers"):  # the branded cover variants (Reel cover = the opening frame; YouTube thumbnail 1280x720)
+                ci = min(int(cm.get("cover_index") or 0), len(cm["covers"]) - 1)
+                pk["covers"] = [{"variant": i, "layout": x.get("layout"), "score": x.get("score"), "urls": x.get("urls") or {}}
+                                for i, x in enumerate(cm["covers"])]
+                pk["cover_index"] = ci
+                pk["thumbnail"] = (cm["covers"][ci].get("urls") or {}).get("16:9", "")
+                if cm.get("thumbnail_offset_ms") is not None and c["service"] in ("instagram", "tiktok", "pinterest"):
+                    pk.setdefault("options", {})["thumbnail_offset_ms"] = int(cm["thumbnail_offset_ms"])
             if prev.get("sent"):
                 pk["sent"] = prev["sent"]
             pk["media"] = self._media_info(media, pk["media_urls"], pk["ratio"])

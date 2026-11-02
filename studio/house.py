@@ -107,6 +107,8 @@ class House:
         self.brain = Brain(self)
         from .library import Library
         self.library = Library(self)
+        from .uploads import Uploads
+        self.uploads = Uploads(self)  # create_upload / upload_media_chunk (any MCP client, no public host)
 
     # ================================================================ brand kit
     def kit(self, a: Actor) -> dict:
@@ -291,6 +293,14 @@ class House:
         d["data"] = bytes(d["data"])
         return d
 
+    def media_head(self, token: str) -> dict | None:
+        """Type and length of a media token without reading its bytes (HEAD /m/<token>)."""
+        rows = self.store.q("SELECT mime, size FROM media WHERE token=?", (token,))
+        if rows and rows[0]["size"]:
+            return {"mime": rows[0]["mime"], "size": int(rows[0]["size"])}
+        m = self.get_media(token)
+        return {"mime": m["mime"], "size": len(m["data"])} if m else None
+
     def media_meta(self, a: Actor, token: str) -> dict | None:
         rows = self.store.q("SELECT meta FROM media WHERE token=? AND user_id=?", (token, a.uid))
         return json.loads(rows[0]["meta"]) if rows else self.library.meta(a, token)
@@ -337,6 +347,17 @@ class House:
         if not data:
             raise ActionError(IMPORT_WHY.get(why, IMPORT_WHY["unreachable"]) if not why.startswith("http_")
                               else f"Couldn't download that file: the link answered HTTP {why[5:]}.")
+        from .library import not_media, sniff
+        if not sniff(data[:32]):  # say what actually came back (owner bug 2 Nov 2026: a sign-in page read "Upload a JPG, PNG…")
+            word = "video" if ext in ("mp4", "mov", "m4v", "webm") else "photo or video"
+            why = not_media(data[:64])
+            if why.startswith("That file is a web page"):
+                raise ActionError(f"That link returned a web page (probably a sign-in page), not a {word}. "
+                                  "Use create_upload instead: it uploads the file itself, no public link needed.", 415)
+            if why.startswith("That file is JSON"):
+                raise ActionError(f"That link returned JSON text (probably an error), not a {word}. Use create_upload instead.", 415)
+            raise ActionError(f"That link didn't return a JPG, PNG, WebP or GIF image or an MP4, MOV or WebM video. "
+                              "Use create_upload to upload the file itself.", 415)
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             ext = "mp4" if data[4:8] == b"ftyp" else ("png" if data[:4] == b"\x89PNG" else "jpg")
         return self.upload(a, "import." + ext, base64.b64encode(data).decode())
@@ -943,12 +964,17 @@ class House:
         if spec["kind"] == "media_render":  # studio.media styled edit (docs/MEDIA_PIPELINE.md); off the hosted app only
             from .media.worker import render_job
             base = self.s.public_url.rstrip("/") + "/m/"
-            urls = {"source": base + spec["source"] if spec.get("source") else "", "slides": [base + t for t in spec.get("slides", [])]}
+            urls = {"source": base + spec["source"] if spec.get("source") else "", "slides": [base + t for t in spec.get("slides", [])],
+                    "cover_image": base + spec["cover_image"] if spec.get("cover_image") else ""}
 
             def _get(u):
                 m = self.get_media(u[len(base):]) if u.startswith(base) else None
                 return m["data"] if m else None
             return render_job(spec, _get, urls=urls, logo=logo, http=self.http)
+        if spec["kind"] == "cover_swap":
+            from .media.worker import cover_swap
+            return cover_swap(self.get_media(spec["source"])["data"], self.get_media(spec["cover"])["data"], spec.get("secs") or 0.6,
+                              spec.get("replace"))
         if spec["kind"] == "brand_video":
             return render.brand_video(self.get_media(spec["source"])["data"], spec["kit"], spec["params"], logo=logo,
                                       hook=spec.get("hook", ""), ratio=spec.get("ratio", "9:16"))
@@ -966,6 +992,20 @@ class House:
         owner = self.store.q("SELECT user_id FROM render_jobs WHERE id=?", (jid,))
         if not owner or not self._worker_allowed(owner[0]["user_id"]):  # belt and braces: sample jobs never reach the worker
             return False, "sample workspace: no worker runs"
+        from . import instabox_worker
+        if instabox_worker.enabled():  # opt-in (HQ_RENDER_BACKEND=instabox): a warm InstaBox VM, docs/INSTABOX_WORKER.md
+            ok, why = instabox_worker.dispatch(self, jid, workflow, inputs, ttl)
+            if ok or not os.environ.get("GH_DISPATCH_TOKEN"):
+                return ok, why
+            # InstaBox failed or timed out: fall back to the GitHub Actions run. open_claim below replaces the job token
+            # the box was given, so a box job that did start late can no longer read or write this job.
+            print(f"render: InstaBox dispatch failed for job {jid} ({why}); falling back to GitHub Actions", flush=True)
+            gh_ok, gh_why = self._dispatch_github_actions(jid, workflow, inputs, ttl)
+            return gh_ok, f"{why}; fallback: {gh_why}"
+        return self._dispatch_github_actions(jid, workflow, inputs, ttl)
+
+    def _dispatch_github_actions(self, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:
+        """The GitHub Actions render run (the default backend, and the fallback when InstaBox fails)."""
         repo = os.environ.get("GH_REPO", "dataanalystram/buffer-contest")
         token = os.environ.get("GH_DISPATCH_TOKEN", "")
         self.open_claim(jid, ttl, workflow)
@@ -1089,7 +1129,9 @@ class House:
         return {"id": jid, "status": rows[0]["status"], "spec": spec,
                 "urls": {"logo": base + spec["logo"] if spec.get("logo") else "", "source": base + spec["source"] if spec.get("source") else "",
                          "slides": [base + t for t in spec.get("slides", [])],
-                         "front": base + spec["front"] if spec.get("front") else "", "end": base + spec["end"] if spec.get("end") else ""}}
+                         "front": base + spec["front"] if spec.get("front") else "", "end": base + spec["end"] if spec.get("end") else "",
+                         "cover_image": base + spec["cover_image"] if spec.get("cover_image") else "",
+                         "cover": base + spec["cover"] if spec.get("cover") else ""}}
 
     # ---- the weekly recap (job kind media_recap): cover + one video slide per story + Follow card (4:5) and one Reel (9:16)
     RECAP_KINDS = {"cover": ("photo", "png"), "follow": ("photo", "png"), "reel": ("video", "mp4")}
@@ -1195,11 +1237,40 @@ class House:
                 self._step(run["steps"], "render", "failed", f"Video render failed: {error[:200]}")
                 self._save(job["run_id"], run["steps"], run["result"], "failed")
             return {"ok": False}
-        tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta or {"type": "video"})
+        meta = dict(meta or {"type": "video"})
+        if meta.get("covers_b64"):
+            meta["covers"] = self._store_covers(a, meta.pop("covers_b64"))
+        meta.pop("covers_b64", None)
+        tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta)
         self.store.x("UPDATE render_jobs SET status='done', media_token=?, updated=? WHERE id=?", (tok, _now(), jid))
         if run_inline and job["run_id"] and self._run_kind(job["run_id"]) != "agent":  # the agent brain waits on its own job
             self._spawn_run(job["run_id"], self._resume_after_video, a, job["run_id"], jid)
         return {"ok": True, "token": tok}
+
+    def _store_covers(self, a: Actor, covers: list) -> list[dict]:
+        """The worker's cover variants (base64 JPEGs per size) -> media tokens: [{variant, layout, score, frame_t, source,
+        files: {ratio: token}}]. Each file is checked to be a JPEG and capped (SECURITY_RULES 6)."""
+        out = []
+        for c in (covers or [])[:4]:
+            if not isinstance(c, dict):
+                continue
+            files = {}
+            for r, b64 in (c.get("files") or {}).items():
+                if r not in ("9:16", "4:5", "16:9") or not isinstance(b64, str) or len(b64) > 3_000_000:
+                    continue
+                try:
+                    raw = base64.b64decode(b64, validate=True)
+                except (ValueError, TypeError):
+                    continue
+                if raw[:3] != b"\xff\xd8\xff":
+                    continue
+                files[r] = self.put_media(a, raw, f"cover-{c.get('variant', 0)}-{r.replace(':', 'x')}.jpg", kind="render",
+                                          meta={"type": "photo", "role": "cover", "ratio": r})
+            if files:
+                out.append({"variant": int(c.get("variant") or 0), "layout": str(c.get("layout") or "")[:12],
+                            "score": float(c.get("score") or 0), "frame_t": c.get("frame_t"), "source": str(c.get("source") or "")[:8],
+                            "files": files})
+        return out
 
     def _run_prompt(self, rid) -> str:
         rows = self.store.q("SELECT input FROM agent_runs WHERE id=?", (rid,)) if rid else []
@@ -1315,7 +1386,7 @@ class House:
         if pk.get("status") in ("sent_to_buffer", "pending_approval"):
             raise ActionError("That package was already sent.", 409)
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
-                                            "mode": mode, "due_at": due_at,
+                                            "mode": mode, "due_at": due_at, "options": pk.get("options") or {},
                                             "override_warnings": override_warnings})
         out = self.studio.submit_post(a, prev["confirm_token"])
         self.mark_package(a, rid, channel_id, out["status"], {"mode": mode, "due_at": prev["preview"].get("due_at"),
@@ -1376,18 +1447,27 @@ class House:
                           "type": "video" if media and media[0].lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) else
                           ("carousel" if len(set(media)) > 1 else "image" if media else "text"), "draggable": True})
         for r in self.store.q("SELECT id,result,updated FROM agent_runs WHERE user_id=? AND status='ready' ORDER BY id DESC LIMIT 20", (a.uid,)):
-            res = json.loads(r["result"] or "{}")
-            for pk in res.get("packages", []):
-                if pk.get("status") == "ready":
-                    media = pk.get("media_urls") or []
-                    vid = any(str(m).lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) for m in media)
-                    items.append({"kind": "ready", "status": "ready to post", "state": "ready",
-                                  "ref": f"ready:{r['id']}:{pk['channel_id']}", "when": "", "text": pk["text"][:280],
-                                  "service": pk["service"], "channel": pk["channel_name"], "channel_id": pk["channel_id"],
-                                  "run_id": r["id"], "id": f"{r['id']}:{pk['channel_id']}",
-                                  "thumb": "" if vid else (media[0] if media else ""),
-                                  "type": "reel" if vid else ("carousel" if len(media) > 1 else "image" if media else "text"),
-                                  "pass": pk["check"]["pass"], "draggable": True})
+            try:
+                res = json.loads(r["result"] or "{}")
+            except ValueError:
+                continue
+            for pk in res.get("packages") or []:
+                # Packages come from three makers (the agent, Make a post, an MCP client's create_package) and not all of
+                # them carry every field: one client-made package without channel_name made /api/calendar a 500, so the
+                # Planner showed nothing at all (owner, 2 Nov 2026). Read every field defensively; skip what can't be shown.
+                if not isinstance(pk, dict) or pk.get("status") != "ready" or not pk.get("channel_id"):
+                    continue
+                media = [str(m) for m in pk.get("media_urls") or [] if m]
+                vid = any(m.lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) for m in media)
+                ch = chans.get(pk["channel_id"], {})
+                items.append({"kind": "ready", "status": "ready to post", "state": "ready",
+                              "ref": f"ready:{r['id']}:{pk['channel_id']}", "when": "", "text": str(pk.get("text") or "")[:280],
+                              "service": pk.get("service") or ch.get("service", ""),
+                              "channel": pk.get("channel_name") or pk.get("channel") or ch.get("displayName") or ch.get("name") or "",
+                              "channel_id": pk["channel_id"], "run_id": r["id"], "id": f"{r['id']}:{pk['channel_id']}",
+                              "thumb": "" if vid else (media[0] if media else ""),
+                              "type": "reel" if vid else ("carousel" if len(media) > 1 else "image" if media else "text"),
+                              "pass": bool((pk.get("check") or {}).get("pass", True)), "draggable": True})
         try:
             slots = [{"channel_id": c["id"], "timezone": c.get("timezone") or "Europe/London",
                       "schedule": c.get("postingSchedule") or []}
