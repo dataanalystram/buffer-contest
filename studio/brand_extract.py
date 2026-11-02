@@ -652,6 +652,12 @@ def raster_candidates(url: str, info: dict) -> list[dict]:
     return out[:8]
 
 
+def _fix_spacing(text: str) -> str:
+    """Page text glued across tags ("type,<br>just") gets its missing space back (studio.templates.fix_spacing)."""
+    from .templates import fix_spacing
+    return fix_spacing(text or "")
+
+
 def logo_palette(img) -> list[tuple]:
     """Saturated colours in a logo image (RGBA), most frequent first."""
     from PIL import Image
@@ -770,7 +776,7 @@ def extract(url: str, html: str, css_texts: list[str] | None = None, fetch=None)
     head = fonts["head"]["bundled"]
     kit = {"name": info["name"], "handle": info["handle"], "website": url, "colors": pal["colors"],
            "font": head, "body_font": fonts["body"]["bundled"], "headline_case": "upper" if head == "anton" else "title",
-           "voice": voice["sample"][:300], "voice_notes": voice["notes"],
+           "voice": _fix_spacing(voice["sample"])[:300], "voice_notes": voice["notes"],
            "front_card": {"style": "glow" if pal["dark"] else "minimal"}, "end_card": {"style": "glow" if pal["dark"] else "minimal",
                                                                                     "cta": f"Follow {info['name']}"[:28], "line": ""}}
     return {"kit": kit, "logo_png": _to_png(logo) if logo is not None else None, "mark_png": _to_png(mark) if mark is not None else None,
