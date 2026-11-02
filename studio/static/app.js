@@ -157,7 +157,11 @@ async function boot() {
   budget(); refreshBadge(); if (typeof readyBadge === "function") readyBadge();
   api("/api/inbox").then((d) => ibBadge(d.waiting)).catch(() => {});
   if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
-  else showTab(p.get("tab") || "inbox", p.get("sub") || "");
+  else { // the sample opens on the brand kit builder, filled with the sample brand (owner, 2 Nov 2026); once per browser tab
+    const firstDemo = s.demo && !p.get("tab") && !sessionStorage.getItem("hq_demo_landed");
+    if (firstDemo) sessionStorage.setItem("hq_demo_landed", "1");
+    showTab(p.get("tab") || (firstDemo ? "brand" : "inbox"), p.get("sub") || "");
+  }
   if (window.onbMaybeOpen) onbMaybeOpen({ justConnected, demo: !!s.demo });
 }
 

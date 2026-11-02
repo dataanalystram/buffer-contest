@@ -4,7 +4,7 @@ from "Take the tour". Desktop and a 390 px phone. Skips without Chromium."""
 import pytest
 
 pytest.importorskip("playwright.sync_api")
-TABS = ["inbox", "agent", "take", "planner", "brand", "apps"]  # the tab each of steps 1-6 shows
+TABS = ["brand", "inbox", "agent", "take", "planner", "apps"]  # the tab each of steps 1-6 shows (the sample opens on the brand kit builder)
 
 
 def _ctx(chromium, base, width):
@@ -28,8 +28,8 @@ def test_tour_opens_on_first_visit_and_walks_seven_steps(demo_live, chromium, wi
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(base + "/demo")
         _step(page, 1)  # opened by itself
-        assert page.get_by_test_id("tour-title").inner_text() == "Your Inbox"
-        assert page.locator("#tab-inbox").is_visible()
+        assert page.get_by_test_id("tour-title").inner_text() == "Your brand kit"
+        assert page.locator("#tab-brand").is_visible() and page.locator("#bkBuilder").is_visible()
         page.wait_for_function("document.activeElement && document.activeElement.dataset.testid === 'tour-next'")
         for n, tab in enumerate(TABS[1:], start=2):
             page.get_by_test_id("tour-next").click()

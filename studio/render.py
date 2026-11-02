@@ -132,7 +132,7 @@ def place_logo(canvas: Image.Image, logo: Image.Image | None, p: dict, kit: dict
         lg = logo.copy()
         lg.thumbnail((target_w, target_w), Image.LANCZOS)
     else:
-        f = font(FONTS.get(p.get("font"), "Anton.ttf"), max(18, int(target_w * 0.28)))
+        f = font(FONTS.get(p.get("font"), "Inter-Bold.ttf"), max(18, int(target_w * 0.28)))
         name = drawable((kit.get("name") or "").strip(), f).strip()[:18]
         if not name:  # no logo and no brand name yet: no placeholder wordmark
             p["_logo_box"] = None
@@ -212,7 +212,7 @@ def brand_photo(photo: bytes, kit: dict, p: dict, *, logo: bytes | None = None, 
         d = ImageDraw.Draw(canvas)
         m = int(p.get("safe_margin", 64))
         head = shape_headline(caption, p)
-        f = font(FONTS.get(p.get("font"), "Anton.ttf"), int(W * 0.075))
+        f = font(FONTS.get(p.get("font"), "Inter-Bold.ttf"), int(W * 0.075))
         lines = wrap(d, head, f, W - 2 * m)[:4]
         y = H - m - int(f.size * 1.08) * len(lines) - int(H * 0.03)
         for i, line in enumerate(lines):

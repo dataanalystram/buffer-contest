@@ -31,9 +31,11 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 FONT_DIR = Path(__file__).parent / "fonts"
 SIZES = {"4:5": (1080, 1350), "9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1600, 900)}
-HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf"}
+HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
+              "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf"}
 BODY_FONTS = {"poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "inter-semibold": "Inter-SemiBold.ttf",
-              "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf"}
+              "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf", "serif": "Inter-Regular.ttf",
+              "dot": "Inter-Regular.ttf"}
 STYLES = {  # what a brand can pick for its front and end card instead of uploading one
     "bold": "Solid ground, a thick accent bar and the headline set big",
     "glow": "Dark ground with a soft accent glow behind the headline",
@@ -131,13 +133,15 @@ class Brand:
         self.name = (kit.get("name") or "").strip()
         self.handle = (kit.get("handle") or "").strip().lstrip("@")
         self.bg = hex_rgb(c.get("primary") or c.get("ground"), (17, 17, 20))
-        self.accent = hex_rgb(c.get("accent"), (201, 172, 250))
         self.text = hex_rgb(c.get("text"), (255, 255, 255))
+        # no accent in the kit: a neutral between the text and the ground, never another brand's colour (the HuhByte
+        # lavender used to be the fallback here and showed up in other brands' renders)
+        self.accent = hex_rgb(c.get("accent"), mix(self.text, self.bg, 0.12))
         self.second = hex_rgb(c.get("secondary") or "", mix(self.accent, self.bg, 0.55))
         if contrast(self.text, self.bg) < 3:  # never ship unreadable text: fall back to black or white
             self.text = (255, 255, 255) if _lum(self.bg) < 0.4 else (17, 17, 20)
         self.on_accent = (17, 17, 20) if _lum(self.accent) > 0.35 else (255, 255, 255)
-        self.head_file = HEAD_FONTS.get(kit.get("font") or "anton", "Anton.ttf")
+        self.head_file = HEAD_FONTS.get(kit.get("font") or "inter", "Inter-Bold.ttf")
         self.body_file = BODY_FONTS.get(kit.get("body_font") or ("poppins" if kit.get("font") == "anton" else kit.get("font") or "inter"),
                                         "Inter-Regular.ttf")
         self.upper = (kit.get("headline_case") or ("upper" if kit.get("font") == "anton" else "title")) == "upper"
@@ -389,7 +393,8 @@ def front_card(b: Brand, ratio: str, kicker: str, title: str, sub: str = "", n=N
         emph = i == len(lines) - 1 and len(lines) > 1
         if emph and style == "minimal":  # a marker-pen band behind the last line, the accent as a highlighter
             bb = d.textbbox((m, y + i * lh), line, font=hf)
-            d.rectangle((bb[0] - 10, bb[1] + (bb[3] - bb[1]) * 0.45, bb[2] + 10, bb[3] + 8), fill=b.accent)
+            band = b.accent if contrast(ink, b.accent) >= 4.5 else mix(b.accent, _ground_rgb(b, style), 0.62)  # text stays readable
+            d.rectangle((bb[0] - 10, bb[1] + (bb[3] - bb[1]) * 0.45, bb[2] + 10, bb[3] + 8), fill=band)
         d.text((m, y + i * lh), line, font=hf, fill=_emph(b, style) if (emph and style != "minimal") else ink)
     y += lh * len(lines) + int(min(W, H) * 0.03) + (int(hf.size * 0.18) if b.upper else 0)
     for s in sub_lines:

@@ -15,6 +15,9 @@ from studio import drafter
 os.environ.setdefault("HQ_ANON_RPM", "1000000")
 os.environ.setdefault("HQ_AUTH_PER_MIN", "1000000")
 os.environ.setdefault("HQ_DEMO_PER_MIN", "1000000")
+import tempfile as _tempfile  # noqa: E402
+os.environ.setdefault("HUHQ_PREVIEW_WARM", "0")  # no start-up warm-up thread in tests (test_brand_kit_builder warms explicitly)
+os.environ.setdefault("HUHQ_PREVIEW_CACHE", _tempfile.mkdtemp(prefix="hq-previews-"))
 from studio.app import create_app
 from studio.config import load_settings
 

@@ -39,6 +39,15 @@ class JobError(RuntimeError):
     pass
 
 
+KIT_HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf",
+                  "serif": "DMSerifDisplay-Regular.ttf", "dot": "Doto-Black.ttf"}
+KIT_BODY_FONTS = {"poppins": "Poppins-Medium.ttf", "inter": "Inter-Regular.ttf", "inter-semibold": "Inter-SemiBold.ttf",
+                  "figtree": "Figtree-Medium.ttf", "anton": "Inter-SemiBold.ttf", "serif": "Inter-Regular.ttf",
+                  "dot": "Inter-Regular.ttf"}
+BODY_BOLD = {"Inter-Regular.ttf": "Inter-Bold.ttf", "Poppins-Medium.ttf": "Poppins-Bold.ttf", "Figtree-Medium.ttf": "Figtree-ExtraBold.ttf"}
+LEGACY_BOLD = {"inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf"}  # a kit with no body font: the old bold
+
+
 def brand_from_kit(kit: dict | None, logo_path: str | None = None) -> dict:
     """agent-core's brand kit (studio.brand.DEFAULT_KIT shape) -> compose.py's brand dict."""
     kit = kit or {}
@@ -52,11 +61,20 @@ def brand_from_kit(kit: dict | None, logo_path: str | None = None) -> dict:
     for src, dst in (("accent", "accent"), ("primary", "bg"), ("text", "text")):
         if col.get(src):
             b[dst] = col[src]
-    fonts = {"anton": ("Anton.ttf", "Poppins-Bold.ttf"), "poppins": ("Poppins-Bold.ttf", "Poppins-Bold.ttf"),
-             "inter": ("Inter-Bold.ttf", "Inter-Bold.ttf"), "figtree": ("Figtree-ExtraBold.ttf", "Figtree-ExtraBold.ttf")}
+    hl = styles.highlight_for(col)  # the builder's Accent: highlighted headline words and the progress bar
+    if hl:
+        b["highlight"] = hl
+    # The kit's fonts, from the same tables the brand kit builder and its gallery draw with (studio/templates.py
+    # HEAD_FONTS / BODY_FONTS; tests/studio/test_brand_kit_render_parity.py keeps the copies equal): the headline font
+    # on every title, hook, cover and end card, the body font (and its bold) on lines and captions.
     fk = str(kit.get("font") or "").lower()
-    if fk in fonts:  # the brand kit's headline font on every title, hook, cover and end card
-        b["head_font"], b["bold_font"] = fonts[fk]
+    if fk in KIT_HEAD_FONTS:
+        b["head_font"] = KIT_HEAD_FONTS[fk]
+        b["bold_font"] = LEGACY_BOLD.get(fk, "Poppins-Bold.ttf")
+    bk = str(kit.get("body_font") or "").lower()
+    if bk in KIT_BODY_FONTS:
+        b["body_font"] = KIT_BODY_FONTS[bk]
+        b["bold_font"] = BODY_BOLD.get(b["body_font"], b["body_font"])
     end = kit.get("end_card") or {}
     if end.get("line"):
         b["end_line"] = end["line"]

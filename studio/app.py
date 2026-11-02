@@ -154,10 +154,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             uid = ag.uid if ag else None
         return bool(uid) and not demo_guard.is_demo(uid)
 
+    # Not counted: the render worker, and the brand kit preview images (cache reads by an unguessable key, 404 otherwise;
+    # the builder loads ~24 of them per kit, which would eat the sample's per-IP budget in one visit).
+    RATE_FREE = ("/api/worker/", "/api/brand-kits/preview-img/")
+
     @app.middleware("http")
     async def _rate(request: Request, call_next):
         path = request.url.path
-        if path.startswith(("/api/", "/mcp", "/oauth/", "/demo") + AUTH_PATHS) and not path.startswith("/api/worker/") \
+        if path.startswith(("/api/", "/mcp", "/oauth/", "/demo") + AUTH_PATHS) and not path.startswith(RATE_FREE) \
                 and not _real_account(request):
             ip = demo_guard.client_ip(request)
             general = path.startswith(("/api/", "/mcp", "/oauth/", "/demo"))
@@ -843,6 +847,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # ------------------------------------------------------------ Brand studio + Sources agent (UI = REST = MCP)
     from . import brand_routes
     brand_routes.add_routes(app, house, actor)
+    from . import brand_onboard  # website -> brand kit -> "Your brand" stills; the demo's sample brands (UI = REST = MCP)
+    brand_onboard.add_routes(app, house, actor)
+    from . import brand_kits  # several kits, one active; the builder's live gallery (UI = REST = MCP)
+    brand_kits.add_routes(app, house, actor)
     from . import agent_routes  # agent brain, natural-language edits, onboarding, recommendations (UI = REST = MCP)
     agent_routes.add_routes(app, house, actor)
     from . import library as library_mod  # the Library: uploads + generated media (UI = REST = MCP)

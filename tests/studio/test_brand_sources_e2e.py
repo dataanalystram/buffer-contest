@@ -41,6 +41,8 @@ def test_brand_studio_first_run_preview_examples_and_slot(demo_live, chromium):
     ctx, page = _page(chromium, base)
     try:
         page.goto(base + "/?tab=brandstudio")
+        page.wait_for_selector("[data-testid=bk-more]")
+        page.eval_on_selector("[data-testid=bk-more]", "d => { d.open = true; }")  # the older kit editor sits under the brand kit builder
         page.wait_for_selector("[data-testid=bs-slide]")
         steps = page.locator("[data-testid=bs-steps] li")
         assert steps.count() == 4 and "Connect Buffer" in steps.nth(3).inner_text()
