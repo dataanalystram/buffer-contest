@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 from . import textfit
 
 SIZES = {"9:16": (1080, 1920), "4:5": (1080, 1350), "16:9": (1280, 720)}
-LAYOUTS = ("bottom", "top", "left")
+LAYOUTS = ("bottom", "top", "inset")
 STOP = {"a", "an", "the", "of", "to", "for", "and", "or", "in", "on", "with", "is", "are", "was", "its", "it", "this", "that",
         "just", "now", "your", "you", "how", "why", "what", "at", "by", "from", "as", "be", "has", "have", "into", "about"}
 HEAD_FONTS = {"anton": "Anton.ttf", "poppins": "Poppins-Bold.ttf", "inter": "Inter-Bold.ttf", "figtree": "Figtree-ExtraBold.ttf"}
@@ -173,28 +173,35 @@ def _map_faces(fs, m, size) -> list[tuple[int, int, int, int]]:
 
 # ------------------------------------------------------------------------------------------------ headline
 def hook_words(text: str, name: str = "", max_words: int = 5) -> tuple[list[str], int]:
-    """A 2-5 word cover line from the hook, and the index of its key word (drawn in the accent)."""
+    """A 2-5 word cover line from the hook, and the index of its key word (drawn in the accent).
+
+    A short hook is kept as written. A long one becomes "<Name>: <payoff>" (the product name, then the last content words,
+    where a headline usually lands: "Screen Studio turns screen recordings into polished demos" -> "Screen Studio: polished
+    demos"); with no name, its first content words. The key word is a number / money figure when there is one, else the
+    payoff's last word."""
     t = re.sub(r"https?://\S+", "", text or "").strip()
     t = re.sub(r"[“”\"`]", "", t)
     words = [w.strip(".,;:!?()[]") for w in t.split() if w.strip(".,;:!?()[]")]
     if not words:
         words = (name or "Watch this").split()
-    keep = [w for w in words if w.lower() not in STOP] if len(words) > max_words else list(words)
+    nm = [w.lower() for w in (name or "").split()]
+
+    def num(w):
+        return bool(re.search(r"[$€£₹]|\d", w))
+    if len(words) <= max_words:
+        keep = list(words)
+    elif nm and len(nm) <= 3 and [w.lower() for w in words[:len(nm)]] == nm:
+        rest = [w for w in words[len(nm):] if w.lower() not in STOP and w.lower() not in nm]
+        room = max(1, min(2, max_words - len(nm)))
+        nums = [w for w in rest if num(w)]
+        tail = (nums[:1] + [w for w in rest[-room:] if w not in nums])[:room] if nums else rest[-room:]
+        keep = words[:len(nm)] + tail
+        keep[len(nm) - 1] = keep[len(nm) - 1] + ":"
+    else:
+        keep = [w for w in words if w.lower() not in STOP][:max_words]
     if len(keep) < 2:
         keep = words[:max_words]
-    keep = keep[:max_words]
-    nm = (name or "").lower().split()
-
-    def weight(i_w):
-        i, w = i_w
-        if re.search(r"[$€£₹]|\d", w):
-            return 100
-        if nm and w.lower() in nm:
-            return 60
-        if w[:1].isupper() and i > 0:
-            return 40 + len(w)
-        return len(w)
-    key = max(enumerate(keep), key=weight)[0] if keep else 0
+    key = next((i for i, w in enumerate(keep) if num(w)), len(keep) - 1)
     return keep, key
 
 
@@ -267,12 +274,14 @@ def safe_box(ratio: str, W: int, H: int) -> tuple[int, int, int, int]:
 def _text_area(layout: str, ratio: str, W: int, H: int) -> tuple[int, int, int, int]:
     x0, y0, x1, y1 = safe_box(ratio, W, H)
     if ratio == "16:9":
-        if layout == "left":
+        if layout in ("left", "inset"):
             return (x0, y0, x0 + int((x1 - x0) * 0.56), y1)
         if layout == "top":
             return (x0, y0, x1 - int(W * 0.12), y0 + int((y1 - y0) * 0.42))
         return (x0, y1 - int((y1 - y0) * 0.42), x1 - int(W * 0.16), y1)
     h = int((y1 - y0) * (0.34 if ratio == "9:16" else 0.36))
+    if layout == "inset":
+        return (x0, y0, x1, y0 + int((y1 - y0) * (0.30 if ratio == "9:16" else 0.33)))
     if layout == "top":
         top = y0 + int((y1 - y0) * 0.08)
         return (x0, top, x1, top + h)
@@ -293,8 +302,8 @@ def compose_cover(base: Image.Image, words: list[str], key: int, brand: dict, ra
     """One cover at ``ratio``: crop around the subject, gradient + vignette, the hook (key word in the accent), the logo."""
     W, H = SIZES[ratio]
     fs = fs or []
-    img, m = crop_to(base, (W, H), subject_center(base, fs))
-    face_px = _map_faces(fs, m, (W, H))
+    dark = _rgb(brand.get("bg") or "#0B0B0F", (11, 11, 15))
+    accent = _rgb(brand.get("accent") or "#C9ACFA", (201, 172, 250))
     area = _text_area(layout, ratio, W, H)
     font_name = _head_font(brand)
     text = " ".join(words).upper() if font_name == "Anton.ttf" else " ".join(words)
@@ -303,15 +312,57 @@ def compose_cover(base: Image.Image, words: list[str], key: int, brand: dict, ra
     f = textfit.font(font_name, fit.size)
     lh = fit.line_height
     tx0 = area[0]
-    ty0 = area[3] - fit.height if layout == "bottom" else (area[1] if layout == "top" else area[1] + (area[3] - area[1] - fit.height) // 2)
+    ty0 = area[3] - fit.height if layout == "bottom" else (area[1] + (area[3] - area[1] - fit.height) // 2 if layout == "left" else area[1])
+    if layout == "inset":
+        ty0 = area[3] - fit.height if ratio != "16:9" else area[1] + (area[3] - area[1] - fit.height) // 2
     tbox = (tx0, ty0, tx0 + fit.width, ty0 + fit.height)
-    dark = _rgb(brand.get("bg") or "#0B0B0F", (11, 11, 15))
-    canvas = img.convert("RGBA")
-    canvas.alpha_composite(_gradient((W, H), tbox, layout, dark))
+    if layout == "inset":
+        # brand ground + the picture framed (rounded, shadow): the tasteful crop for screen recordings and UI shots
+        canvas = Image.new("RGBA", (W, H), dark + (255,))
+        glow = Image.new("L", (W, H), 0)
+        ImageDraw.Draw(glow).ellipse((W * 0.1, H * 0.35, W * 1.2, H * 1.15), fill=90)
+        glow = glow.filter(ImageFilter.GaussianBlur(max(W, H) // 6))
+        gl = Image.new("RGBA", (W, H), accent + (255,))
+        gl.putalpha(glow)
+        canvas.alpha_composite(gl)
+        sb = safe_box(ratio, W, H)
+        if ratio == "16:9":
+            fx0, fy0, fx1, fy1 = int(W * 0.58), int(H * 0.14), int(W * 0.97), int(H * 0.86)
+        else:
+            fx0, fx1 = int(W * 0.06), int(W * 0.94)
+            fy0 = tbox[3] + int(H * 0.035)
+            fy1 = min(sb[3] + int(H * 0.08), H - int(H * 0.06))
+        fw, fh = fx1 - fx0, max(40, fy1 - fy0)
+        pic, m = crop_to(base, (fw, fh), subject_center(base, fs))
+        rad = max(12, W // 40)
+        mask = Image.new("L", (fw, fh), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, fw - 1, fh - 1), radius=rad, fill=255)
+        sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(sh).rounded_rectangle((fx0 + 10, fy0 + 18, fx1 + 10, fy1 + 18), radius=rad, fill=(0, 0, 0, 150))
+        canvas.alpha_composite(sh.filter(ImageFilter.GaussianBlur(18)))
+        pr = pic.convert("RGBA")
+        pr.putalpha(mask)
+        canvas.alpha_composite(pr, (fx0, fy0))
+        ImageDraw.Draw(canvas).rounded_rectangle((fx0, fy0, fx1, fy1), radius=rad, outline=accent + (200,), width=max(2, W // 360))
+        face_px = [(b[0] + fx0, b[1] + fy0, b[2] + fx0, b[3] + fy0) for b in _map_faces(fs, m, (fw, fh))]
+    else:
+        img, m = crop_to(base, (W, H), subject_center(base, fs))
+        face_px = _map_faces(fs, m, (W, H))
+        canvas = img.convert("RGBA")
+        pre = canvas.crop(tbox).convert("RGB") if tbox[2] > tbox[0] and tbox[3] > tbox[1] else None
+        bright = _lum(tuple(int(v) for v in ImageStat.Stat(pre).mean[:3])) if pre else 0.0
+        canvas.alpha_composite(_gradient((W, H), tbox, layout, dark, 0.97 if bright > 0.3 else 0.82))
+        post = canvas.crop(tbox).convert("RGB") if pre else None
+        if post and _lum(tuple(int(v) for v in ImageStat.Stat(post).mean[:3])) > 0.18:
+            # still too bright behind the words (a white UI): a soft brand-coloured plate under them
+            pad = int(H * 0.018)
+            plate = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            ImageDraw.Draw(plate).rounded_rectangle((tbox[0] - pad, tbox[1] - pad, tbox[2] + pad, tbox[3] + pad),
+                                                    radius=pad, fill=dark + (205,))
+            canvas.alpha_composite(plate)
     behind = canvas.crop(tbox).convert("RGB") if tbox[2] > tbox[0] and tbox[3] > tbox[1] else None
     bg_mean = tuple(int(v) for v in ImageStat.Stat(behind).mean[:3]) if behind else dark
     text_col = _rgb(brand.get("text") or "#FFFFFF")
-    accent = _rgb(brand.get("accent") or "#C9ACFA", (201, 172, 250))
     if contrast(text_col, bg_mean) < 3:  # a light brand text colour on a light patch: switch to the readable one
         text_col = (255, 255, 255) if _lum(bg_mean) < 0.4 else (12, 12, 14)
     if contrast(accent, bg_mean) < 2.2:
@@ -331,12 +382,14 @@ def compose_cover(base: Image.Image, words: list[str], key: int, brand: dict, ra
         y += lh
     sb = safe_box(ratio, W, H)
     bar_y = tbox[3] + int(H * 0.018)
-    if ratio != "16:9" and layout != "top" and bar_y + 8 < sb[3]:
+    if ratio != "16:9" and layout in ("bottom", "left") and bar_y + 8 < sb[3]:
         d.rectangle((tx0, bar_y, tx0 + int(W * 0.12), bar_y + max(6, H // 240)), fill=accent + (255,))
     lg = _logo(brand, int(H * (0.045 if ratio != "16:9" else 0.085)))
     lbox = None
     if lg:
         lx, ly = (sb[0], sb[1]) if layout != "top" else (sb[0], sb[3] - lg.height)
+        if layout == "inset" and ratio != "16:9":
+            lx, ly = sb[0], max(int(H * 0.06), tbox[1] - lg.height - int(H * 0.025))
         if ratio == "16:9":
             lx, ly = (W - lg.width - int(W * 0.04), int(H * 0.06))
         canvas.alpha_composite(lg, (lx, ly))
