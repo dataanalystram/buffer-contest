@@ -717,7 +717,7 @@ async function loadTokens() {
     : `<p class="muted ib-none">No app has a token yet. Claude and ChatGPT sign in with OAuth and appear in the activity below once they act.</p>`;
   box.querySelectorAll("[data-testid=revoke-token]").forEach((b) => (b.onclick = async () => { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "DELETE" }); loadTokens(); }));
   box.querySelectorAll("[data-testid=token-cap-edit]").forEach((b) => (b.onclick = async () => {
-    const v = prompt("Actions a day for this app (1 to 100)", b.dataset.cap); if (v === null) return;
+    const v = await hqAsk("Actions a day for this app (1 to 100)", b.dataset.cap, { type: "number", min: 1, max: 100, ok: "Save limit" }); if (v === null) return;
     try { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "PATCH", body: { daily_cap: +v } }); toast("Daily limit changed"); } catch (e) { toast(e.message, 5000); }
     loadTokens();
   }));
@@ -771,7 +771,7 @@ async function deviceLink() {
   catch (e) { toast(e.message, 5000); }
 }
 async function logout() { await api("/api/logout", { method: "POST" }); location.href = "/"; }
-async function disconnect() { if (!confirm("Disconnect Buffer and delete everything HuhQueue stored for you?")) return; await api("/api/disconnect", { method: "POST" }); location.href = "/"; }
+async function disconnect() { if (!(await hqConfirm("Disconnect Buffer and delete everything HuhQueue stored for you?", { ok: "Disconnect", danger: true }))) return; await api("/api/disconnect", { method: "POST" }); location.href = "/"; }
 $("#deviceBtn").onclick = deviceLink; $("#setDevice").onclick = deviceLink;
 $("#logoutBtn").onclick = logout; $("#setLogout").onclick = logout;
 $("#disconnectBtn").onclick = disconnect; $("#setDisconnect").onclick = disconnect;

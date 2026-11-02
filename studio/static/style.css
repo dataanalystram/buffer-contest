@@ -502,6 +502,8 @@ body.pl-dragging .pl-cell,body.pl-dragging .pl-mday{cursor:copy}
 .pl-dialog{border:1px solid var(--line);border-radius:16px;padding:24px;width:min(520px,calc(100vw - 32px));background:var(--raised);color:var(--ink);box-shadow:var(--float)}
 .pl-dialog::backdrop{background:rgba(10,10,12,.42);backdrop-filter:blur(2px)}
 .pl-dialog form{display:flex;flex-direction:column;gap:14px}
+.ask-dialog{width:min(420px,calc(100vw - 32px))}.ask-msg{margin:0;line-height:1.5}.ask-input{width:100%}
+.btn.danger-fill{background:var(--bad);border-color:var(--bad);color:#fff}
 .pl-dialog textarea{width:100%;resize:vertical;border-color:var(--line-strong)}
 .pl-dlg-act{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:4px}
 .st-err{color:var(--bad);font-size:13px;min-height:0}.st-err:empty{display:none}

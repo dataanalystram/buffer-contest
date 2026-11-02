@@ -159,6 +159,7 @@ pre.code{white-space:pre-wrap;word-break:break-word}
   /* dialogs are full screen; the actions stay in reach at the bottom */
   dialog.pl-dialog,.pl-dialog{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;border-radius:0;border:0;padding:20px 16px calc(20px + env(safe-area-inset-bottom));overflow-y:auto}
   .pl-dialog .pl-dlg-act{position:sticky;bottom:0;background:var(--raised);padding-top:12px}
+  dialog.ask-dialog{width:calc(100vw - 32px);height:auto;max-height:calc(100dvh - 32px);margin:auto;border-radius:16px;border:1px solid var(--line)}
   .pl-pop{left:8px!important;right:8px;width:auto!important;max-width:none}
   .menu{position:fixed;left:8px;right:8px;top:60px;min-width:0}
   /* the Planner: compact header, the month grid stays a glanceable heat map and a tap opens the day */

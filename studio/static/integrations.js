@@ -71,7 +71,7 @@
     });
     const rm = form.querySelector("[data-act=remove]");
     if (rm) rm.onclick = async () => {
-      if (!confirm("Remove this key? Features that use it stop until you add one again.")) return;
+      if (!(await hqConfirm("Remove this key? Features that use it stop until you add one again.", { ok: "Remove key", danger: true }))) return;
       try { draw(await api(`/api/integrations/${key}`, { method: "DELETE" })); toast("Key removed"); } catch (e) { say(e.message, false); }
     };
   }
