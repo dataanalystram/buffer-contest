@@ -51,7 +51,10 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `render_status` | client brain | Status of a video job: job_id (edit_video / render_reel / render_template video) or take_id (split_video). |
 | `create_package` | client brain | Stage a post YOU wrote: captions per channel (channel id or service name -> text) and the media URLs (render_carousel / render_status). |
 | `update_brand_kit` | client brain | Change the brand kit directly (no HuhQueue AI): name, handle, website, font, voice, colors {primary, accent, text} as hex, end_card {on, line, cta}. |
-| `library_upload_url` | client brain | Add a photo or video the user owns to their Library from a public https URL (up to 40 MB). |
+| `create_upload` | client brain | **Use first for a local file** (on the user's computer or in the AI app's sandbox): a one-time upload URL on HuhQueue's own domain (`PUT /u/<token>`, 15 minutes, one use, up to 100 MB) plus the exact curl command. The answer is the Library item with its `media_token`. |
+| `upload_media_chunk` | client brain | Fallback when the sandbox can't reach the upload URL: the file as base64 chunks of at most 2 MB (decoded), in order, under one `upload_id`. |
+| `finish_upload` | client brain | Join the chunks into one Library item: `library_id`, `media_token`, `url`, `kind`, `bytes`. |
+| `library_upload_url` | client brain | Only for a file that is already at a public https URL (up to 40 MB). A link that answers with a web page (a sign-in or preview page) is refused with "That link returned a web page … Use create_upload instead." |
 | `integrations_status` | client brain | Which integrations are connected for this user (Product Hunt, X reader key, image models...) and whether each key last tested OK. |
 
 ### Server AI: HuhQueue's own agent (needs server_ai: true, spends the user's allowance)
@@ -206,13 +209,41 @@ ernd (YC F26) is "the credit card for the AI stack". The model:
    -> `run_id`.
 6. After the user says yes: `schedule_package {"run_id": …, "channel_id": "<instagram channel id>", "mode": "draft"}`.
 
+### Upload a file the AI app has locally (no public link needed)
+
+Claude, ChatGPT and other clients often have the file itself (an attachment, an artifact, a file in their sandbox) but no
+public host: their sandboxes block file hosts and their artifact links answer with a sign-in page. Upload it straight to
+HuhQueue instead:
+
+1. `create_upload {"name": "launch.mp4", "size": 26843545}` -> `upload_url` (one use, 15 minutes) and a ready `curl`.
+2. Run it from the sandbox: `curl -sS --fail-with-body -X PUT --data-binary @launch.mp4 '<upload_url>'` -> the Library item
+   (`library_id`, `media_token`, `url`, `kind`, `bytes`). The body is the raw file: not base64, not a form.
+3. If the sandbox can't reach the URL: split the file into pieces of at most 2 MB, base64 each, and send them in order:
+   `upload_media_chunk {"index": 0, "data": "<base64>", "name": "launch.mp4"}` -> `upload_id`, then
+   `upload_media_chunk {"upload_id": "up_…", "index": 1, "data": "…"}` and so on, then `finish_upload {"upload_id": "up_…"}`.
+
+Uploads count against the Library's caps (100 MB a file, 200 MB a person). The type is read from the bytes, so a web page
+saved as `.mp4` is refused with a message that says it is a web page.
+
+### Rights: one parameter
+
+`edit_video`, `render_reel`, `split_video` and `create_package` take `rights`, said once, with no confirmation round-trip:
+
+| `rights` | Meaning | What HuhQueue does |
+|---|---|---|
+| `own` | The user made it | Nothing extra |
+| `permission` | The user has the right to use it | Nothing extra (a `credit` is shown if given) |
+| `news_credit` | A news or launch clip used with credit | The credit line (`credit`, or the source's site from `source_url` / `url`) is added to every caption and as a lower-third on the video |
+
+The older `owns` / `rights_confirmed` / `credit` fields still work.
+
 ### 2. Cut a video and add captions
 
-1. `list_library {"kind": "video"}` -> pick the clip (or `library_upload_url {"url": "https://…/talk.mp4"}` for a file the
-   user owns, up to 40 MB) -> `media_token`.
-2. `edit_video {"media_token": "…", "start_s": 12, "end_s": 41, "ratio": "9:16", "captions": true,
-   "hook": "<a short title the model wrote from what is said>"}` -> `job_id`. For someone else's video add
-   `"credit": "Video: …"` and `"rights_confirmed": true`.
+1. `list_library {"kind": "video"}` -> pick the clip (or `create_upload` for a local file, or `library_upload_url
+   {"url": "https://…/talk.mp4"}` for a file already at a public link, up to 40 MB) -> `media_token`.
+2. `edit_video {"media_token": "…", "start_s": 12, "end_s": 41, "ratio": "9:16", "captions": true, "rights": "own",
+   "hook": "<a short title the model wrote from what is said>"}` -> `job_id`. For someone else's news clip use
+   `"rights": "news_credit", "credit": "Video: …"`.
 3. `render_status {"job_id": …}` every 10 to 20 s -> `status: done` and the download URL. Show it to the user.
 4. Optional: `create_package` with that URL and a caption per channel, then `schedule_package` as a draft.
 
