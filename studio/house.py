@@ -98,6 +98,27 @@ IMPORT_WHY = {  # media import failures, said plainly (owner bug 2 Nov 2026: eve
 }
 
 
+
+def start_media_check(house: "House", every: float | None = None, first_delay: float = 20) -> threading.Thread | None:
+    """Check for missing media files shortly after startup, then every ``every`` seconds (HQ_MEDIA_CHECK_S, default 6 h;
+    0 turns it off). Only reads; the result is house.media_health."""
+    every = float(os.environ.get("HQ_MEDIA_CHECK_S", "21600")) if every is None else every
+    if every <= 0:
+        return None
+
+    def loop():
+        time.sleep(first_delay)
+        while True:
+            try:
+                house.media_audit()
+            except Exception as e:  # noqa: BLE001 - keep checking
+                print(f"media check: {e.__class__.__name__}: {e}", flush=True)
+            time.sleep(every)
+    t = threading.Thread(target=loop, daemon=True, name="media-check")
+    t.start()
+    return t
+
+
 _HTTP_WHY = {400: "Bad Request", 401: "needs a sign-in", 403: "Forbidden (private or needs a sign-in)", 404: "Not Found",
              410: "Gone", 429: "Too Many Requests", 500: "a server error", 502: "a server error", 503: "unavailable"}
 
@@ -394,6 +415,104 @@ class House:
         self.store.x(f"DELETE FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))
         return n
 
+    # ================================================================ missing media
+    # Owner bug, 2 Nov 2026: run 20's ready Instagram carousel showed a broken thumbnail (/m/<token>.jpg answered 404)
+    # because its slides had been deleted from the Library (a forced delete). A package now says which of its files are
+    # gone, the Planner thumbnail falls back to the first slide that still exists, a package with missing files can't be
+    # sent to Buffer (it would only fail there), and a check at startup and every few hours counts what is missing.
+    def media_token_of(self, url: str) -> str:
+        """The media token of one of this server's own /m/<token> URLs, else ''."""
+        u = str(url or "")
+        base = self.s.public_url.rstrip("/") + "/m/"
+        if base != "/m/" and u.startswith(base):
+            return u[len(base):].split("?", 1)[0].split("#", 1)[0]
+        return u[3:].split("?", 1)[0] if u.startswith("/m/") else ""
+
+    def media_present(self, tokens) -> set[str]:
+        """Which of these tokens still have a file (a media row or a chunked Library upload)."""
+        toks = sorted({t for t in tokens if t})
+        have: set[str] = set()
+        for i in range(0, len(toks), 200):
+            part = toks[i:i + 200]
+            marks = ",".join("?" for _ in part)
+            have |= {r["token"] for r in self.store.q(f"SELECT token FROM media WHERE token IN ({marks})", tuple(part))}
+            have |= {r["token"] for r in self.store.q(f"SELECT token FROM library_items WHERE storage='chunks' AND token IN ({marks})",
+                                                       tuple(part))}
+        return have
+
+    @staticmethod
+    def _pkg_urls(pk: dict) -> list[str]:
+        urls = [str((m or {}).get("url") or "") for m in (pk.get("media") or []) if isinstance(m, dict)]
+        urls += [str(u) for u in (pk.get("media_urls") or []) if u]
+        return list(dict.fromkeys(u for u in urls if u))
+
+    def media_state(self, packages: list, have: set[str] | None = None) -> dict[int, dict]:
+        """For each package (by index): {state: ok | partial | missing, missing: [urls], thumb: the first file that still
+        exists}. Only this server's own /m/ files are checked; outside URLs count as present."""
+        toks = {self.media_token_of(u) for pk in packages if isinstance(pk, dict) for u in self._pkg_urls(pk)}
+        toks.discard("")
+        have = self.media_present(toks) if have is None else have
+        out = {}
+        for i, pk in enumerate(packages):
+            if not isinstance(pk, dict):
+                continue
+            urls = self._pkg_urls(pk)
+            gone = [u for u in urls if self.media_token_of(u) and self.media_token_of(u) not in have]
+            alive = [u for u in urls if u not in gone]
+            out[i] = {"state": "ok" if not gone else ("missing" if not alive else "partial"), "missing": gone,
+                      "thumb": alive[0] if alive else ""}
+        return out
+
+    def annotate_media(self, res: dict) -> dict:
+        """Mark each package of a run result with media_state / media_missing (never saved: always read fresh)."""
+        pks = (res or {}).get("packages") or []
+        if not pks:
+            return res
+        try:
+            st = self.media_state(pks)
+        except Exception:  # noqa: BLE001 - a check that can't run never hides the run
+            return res
+        for i, info in st.items():
+            pks[i]["media_state"] = info["state"]
+            pks[i]["media_missing"] = info["missing"]
+        return res
+
+    MISSING_MEDIA_NOTE = ("This post's media was deleted from your Library, so it can't be sent. "
+                          "Make the post again (or upload the files) to get new media.")
+
+    def media_audit(self, limit: int = 300) -> dict:
+        """Every recent ready run's package files, checked against the store. Kept in self.media_health for /healthz
+        and GET /api/media/health; nothing is changed or deleted."""
+        rows = self.store.q("SELECT id,user_id,result FROM agent_runs WHERE status='ready' ORDER BY id DESC LIMIT ?", (limit,))
+        runs, toks = [], set()
+        for r in rows:
+            try:
+                pks = (json.loads(r["result"] or "{}") or {}).get("packages") or []
+            except ValueError:
+                continue
+            runs.append((r["id"], r["user_id"], pks))
+            toks |= {self.media_token_of(u) for pk in pks if isinstance(pk, dict) for u in self._pkg_urls(pk)}
+        toks.discard("")
+        have = self.media_present(toks)
+        bad = []
+        for rid, uid, pks in runs:
+            st = self.media_state(pks, have)
+            n = sum(len(v["missing"]) for v in st.values())
+            if n:
+                bad.append({"run_id": rid, "user_id": uid, "missing": n,
+                            "state": "missing" if any(v["state"] == "missing" for v in st.values()) else "partial"})
+        self.media_health = {"checked_at": _now(), "runs_checked": len(runs), "files_checked": len(toks),
+                             "files_missing": sum(b["missing"] for b in bad), "runs": bad}
+        if bad:
+            print(f"media check: {len(bad)} ready run(s) reference missing files: "
+                  + ", ".join(f"#{b['run_id']} ({b['missing']})" for b in bad[:10]), flush=True)
+        return self.media_health
+
+    def media_health_for(self, a: Actor) -> dict:
+        h = getattr(self, "media_health", None) or self.media_audit()
+        return {"checked_at": h["checked_at"], "runs": [{k: v for k, v in b.items() if k != "user_id"}
+                                                        for b in h["runs"] if b["user_id"] == a.uid]}
+
     # ================================================================ AI settings
     def ai_settings(self, a: Actor) -> dict:
         return llm.public_view(self.store, a.uid, self.s)
@@ -520,6 +639,8 @@ class House:
             (d["result"] or {}).setdefault("thread", []).append({"role": "agent", "text": why, "at": _now()})
             d["status"] = "failed"
             self._save(rid, d["steps"], d["result"], "failed")
+        if isinstance(d.get("result"), dict):
+            self.annotate_media(d["result"])
         return d
 
     def _sweep_quietly(self) -> None:
@@ -566,6 +687,9 @@ class House:
         return out
 
     def _save(self, rid: int, steps: list, result: dict, status: str | None = None) -> None:
+        if isinstance(result, dict) and result.get("packages"):  # media_state is read fresh on every view, never stored
+            result = {**result, "packages": [{k: v for k, v in p.items() if k not in ("media_state", "media_missing")}
+                                             if isinstance(p, dict) else p for p in result["packages"]]}
         if status:
             self.store.x("UPDATE agent_runs SET steps=?, result=?, status=?, updated=? WHERE id=?",
                          (json.dumps(steps), json.dumps(result, default=str), status, _now(), rid))
@@ -1472,6 +1596,8 @@ class House:
             raise ActionError("No package for that channel in this run.", 404)
         if pk.get("status") in ("sent_to_buffer", "pending_approval"):
             raise ActionError("That package was already sent.", 409)
+        if pk.get("media_missing"):
+            raise ActionError(self.MISSING_MEDIA_NOTE, 409)
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
                                             "mode": mode, "due_at": due_at, "options": pk.get("options") or {},
                                             "override_warnings": override_warnings})
@@ -1538,7 +1664,11 @@ class House:
                 res = json.loads(r["result"] or "{}")
             except ValueError:
                 continue
-            for pk in res.get("packages") or []:
+            try:
+                mstate = self.media_state(res.get("packages") or [])
+            except Exception:  # noqa: BLE001
+                mstate = {}
+            for pi, pk in enumerate(res.get("packages") or []):
                 # Packages come from three makers (the agent, Make a post, an MCP client's create_package) and not all of
                 # them carry every field: one client-made package without channel_name made /api/calendar a 500, so the
                 # Planner showed nothing at all (owner, 2 Nov 2026). Read every field defensively; skip what can't be shown.
@@ -1546,15 +1676,19 @@ class House:
                     continue
                 media = [str(m) for m in pk.get("media_urls") or [] if m]
                 vid = any(m.lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) for m in media)
+                ms = mstate.get(pi) or {"state": "ok", "missing": [], "thumb": media[0] if media else ""}
                 ch = chans.get(pk["channel_id"], {})
                 items.append({"kind": "ready", "status": "ready to post", "state": "ready",
                               "ref": f"ready:{r['id']}:{pk['channel_id']}", "when": "", "text": str(pk.get("text") or "")[:280],
                               "service": pk.get("service") or ch.get("service", ""),
                               "channel": pk.get("channel_name") or pk.get("channel") or ch.get("displayName") or ch.get("name") or "",
                               "channel_id": pk["channel_id"], "run_id": r["id"], "id": f"{r['id']}:{pk['channel_id']}",
-                              "thumb": "" if vid else (media[0] if media else ""),
+                              # the first slide that still exists: a deleted first slide never shows as a broken image
+                              "thumb": "" if vid else ms["thumb"],
                               "type": "reel" if vid else ("carousel" if len(media) > 1 else "image" if media else "text"),
-                              "pass": bool((pk.get("check") or {}).get("pass", True)), "draggable": True})
+                              "media_state": ms["state"], "media_missing": len(ms["missing"]),
+                              "error": self.MISSING_MEDIA_NOTE if ms["state"] == "missing" else "",
+                              "pass": bool((pk.get("check") or {}).get("pass", True)) and ms["state"] == "ok", "draggable": True})
         try:
             slots = [{"channel_id": c["id"], "timezone": c.get("timezone") or "Europe/London",
                       "schedule": c.get("postingSchedule") or []}

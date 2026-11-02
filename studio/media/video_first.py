@@ -168,6 +168,36 @@ def _site_from_search(name: str, http) -> str:
     return ""
 
 
+BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+              "Chrome/124.0 Safari/537.36")
+
+
+def is_ph_redirect(url: str) -> bool:
+    """Product Hunt hands out the maker's website as producthunt.com/r/<code>, which answers 403 to servers."""
+    return bool(url) and find.host_of(url) == "producthunt.com" and urlparse(url if "://" in url else "https://" + url).path.startswith("/r/")
+
+
+def resolve_site(url: str, name: str, http=None, log: Callable[[str], None] | None = None) -> tuple[str, str]:
+    """The maker's real website for ``url``: a producthunt.com/r/... redirect is followed with a browser User-Agent (every
+    hop checked by netguard), else found by name with a web search. Returns (site, note); ("", note) when neither worked."""
+    if not is_ph_redirect(url):
+        return url, ""
+    log = log or (lambda m: None)
+    try:
+        with netguard.safe_stream(url, http=http, timeout=12, headers={"User-Agent": BROWSER_UA,
+                                                                      "Accept": "text/html,*/*;q=0.8"}) as r:
+            final = str(r.url)
+            if r.status_code < 400 and find.host_of(final) and find.host_of(final) != "producthunt.com":
+                return clean_site(final), ""
+            log(f"product hunt redirect answered {r.status_code}")
+    except Exception as e:  # noqa: BLE001 - fall through to the search
+        log(f"product hunt redirect: {e.__class__.__name__}")
+    site = _site_from_search(name, http) if name else ""
+    if site:
+        return site, "Product Hunt's link to the website was blocked, so the site was found by search."
+    return "", "Product Hunt's link to the website was blocked and no web search is configured to find it."
+
+
 def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key: str | None = None, upload_limit_mb: int = 40,
                    name_hint: str = "", website_hint: str = "", deep: bool = True,
                    log: Callable[[str], None] | None = None) -> dict:
@@ -216,7 +246,15 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
     elif not website:
         website = next((u for u in links if not find.platform_of(u)), "")
 
+    # a2. Product Hunt's website field is often a producthunt.com/r/... redirect that 403s: find the real site first,
+    #     so the maker's own video (e.g. screen.studio's hero-demo.mp4) is checked before YouTube.
+    site_note = ""
+    if is_ph_redirect(website):
+        website, site_note = resolve_site(website, name, http, log)
+
     # b. the product's own site (and one hop to its press kit)
+    if not website and site_note:
+        steps.append({"step": "website", "ok": False, "found": 0, "note": site_note, "url": ""})
     if website:
         found, note = 0, ""
         try:
@@ -247,6 +285,8 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
                     note = f"Checked its press page ({urlparse(press).path})."
         except Exception as e:  # noqa: BLE001
             note = f"Its website didn't open ({e.__class__.__name__})."
+        if site_note:
+            note = (site_note + " " + note).strip()
         steps.append({"step": "website", "ok": "didn't open" not in note and "answered" not in note, "found": found,
                       "note": note, "url": website})
 
