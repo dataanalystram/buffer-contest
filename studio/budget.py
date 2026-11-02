@@ -28,6 +28,7 @@ PRICES = {
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS brain_budget (scope TEXT PRIMARY KEY, spent REAL, calls INTEGER, updated REAL);
 CREATE TABLE IF NOT EXISTS brain_tokens (day TEXT, user_id TEXT, tokens INTEGER, PRIMARY KEY (day, user_id));
+CREATE TABLE IF NOT EXISTS ai_engine_pref (user_id TEXT PRIMARY KEY, engine TEXT, updated REAL);
 """
 
 
@@ -41,7 +42,7 @@ def ensure(store) -> None:
             stmt = stmt.replace(" REAL", " DOUBLE PRECISION")
         store.x(stmt)
     if store.pg:
-        for t in ("brain_budget", "brain_tokens"):
+        for t in ("brain_budget", "brain_tokens", "ai_engine_pref"):
             store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
 
 
@@ -148,3 +149,59 @@ def byo_check(store, uid: str, add: int = 0) -> None:
     rows = store.q("SELECT tokens FROM brain_tokens WHERE day=? AND user_id=?", (day, uid))
     if rows and int(rows[0]["tokens"]) >= caps()["byo_tokens"]:
         raise BudgetExceeded("Today's agent token cap for your own key is reached (it protects your key from a runaway loop).")
+
+
+# ------------------------------------------------------------------ Gemini on Oracle Cloud (source=oci)
+# A separate ledger: Oracle trial credit, metered at Google's public Gemini list price as an upper bound (oci_genai.PRICES).
+# App-wide pool AI_OCI_BUDGET_TOTAL_USD (default $200) and per signed-in user AI_OCI_BUDGET_PER_USER_USD (default $3).
+OCI_GLOBAL, OCI_USER = "oci:global", "oci:user:"
+
+
+def oci_caps() -> dict:
+    e = os.environ.get
+    return {"global": float(e("AI_OCI_BUDGET_TOTAL_USD") or "200"), "user": float(e("AI_OCI_BUDGET_PER_USER_USD") or "3")}
+
+
+def oci_check(store, uid: str, model: str, est_in: int, max_out: int) -> None:
+    from . import oci_genai
+    worst = oci_genai.price(model, est_in, max_out)
+    c = oci_caps()
+    if _spent(store, OCI_GLOBAL) + worst > c["global"]:
+        raise BudgetExceeded("HuhQueue's shared Gemini credit is used up.")
+    if _spent(store, OCI_USER + uid) + worst > c["user"]:
+        raise BudgetExceeded(f"Your ${c['user']:g} of included Gemini usage is used up.")
+
+
+def oci_record(store, uid: str, cost: float) -> None:
+    now = time.time()
+    for scope in (OCI_GLOBAL, OCI_USER + uid):
+        store.x("INSERT INTO brain_budget(scope,spent,calls,updated) VALUES(?,?,1,?) ON CONFLICT(scope) DO UPDATE SET "
+                "spent=brain_budget.spent+excluded.spent, calls=brain_budget.calls+1, updated=excluded.updated", (scope, cost, now))
+
+
+def _credit(spent: float, cap: float, pool_spent: float, pool_cap: float, what: str) -> dict:
+    """One credit line for the engine picker: "$0.34 of your $1 used", the pool, and the 70% / 100% warning level."""
+    mine_left = max(0.0, cap - spent)
+    pool_left = max(0.0, pool_cap - pool_spent)
+    used = 1.0 if cap <= 0 else min(1.0, max(0.0, spent / cap))
+    out = mine_left <= 0.005 or pool_left <= 0.005
+    level = "out" if out else "low" if used >= NUDGE_AT else "ok"
+    return {"used_usd": round(min(spent, cap), 2), "cap_usd": cap, "left_usd": round(min(mine_left, pool_left), 2),
+            "used_pct": 100 if out else int(round(used * 100)), "level": level, "out": out,
+            "label": f"${min(spent, cap):.2f} of your ${cap:g} used",
+            "pool": {"left_usd": round(pool_left, 2), "cap_usd": pool_cap,
+                     "label": f"App-wide {what} pool: ${pool_left:,.2f} of ${pool_cap:,.0f} left"}}
+
+
+def claude_credit(store, uid: str) -> dict:
+    c = caps()
+    if is_tester(store, uid):
+        spent, cap = _spent(store, "testing"), c["testing"]
+    else:
+        spent, cap = _spent(store, f"user:{uid}"), c["user"]
+    return _credit(spent, cap, _spent(store, "global"), c["global"], "Claude")
+
+
+def oci_credit(store, uid: str) -> dict:
+    c = oci_caps()
+    return _credit(_spent(store, OCI_USER + uid), c["user"], _spent(store, OCI_GLOBAL), c["global"], "Gemini")

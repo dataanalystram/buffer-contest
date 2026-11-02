@@ -296,3 +296,22 @@ def test_claude_brain_tool_loop_budget_and_workspace_header(owner, monkeypatch):
     run2 = owner.get(f"/api/agent/runs/{r2['id']}").json()
     assert run2["status"] == "ready" and seen["tool_turns"] == calls_before
     assert run2["result"]["brain"]["mode"] == "plan" and any("used up" in n for n in run2["result"]["notes"])
+
+
+def test_no_video_plan_note_on_every_path_and_deduped(owner):
+    """Owner, 2 Nov 2026: any run that finds no usable video says "No video found, carousel only" in its plan, even with no
+    video-only channel (so render_reel never runs) and on format auto; a second check never adds it twice."""
+    prompt = f"make a carousel for LinkedIn and Instagram about this {TWEET}"
+    r = owner.post("/api/agent/runs", json={"prompt": prompt, "channel_ids": ["ch_li", "ch_ig"], "format": "auto"}).json()
+    run = owner.get(f"/api/agent/runs/{r['id']}").json()
+    res = run["result"]
+    assert run["status"] == "ready", run["steps"]
+    assert {p["service"] for p in res["packages"]} <= {"linkedin", "instagram"} and res["packages"]
+    assert all(p["format"] != "reel" for p in res["packages"])
+    note = [p for p in res["plan"] if "no video found, carousel only" in p.lower()]
+    assert len(note) == 1, res["plan"]
+    # the plan replaced by a brain after check (MCP / REST tool path) gets it back, once
+    owner.post(f"/api/agent/runs/{r['id']}/tools/check", json={})
+    owner.post(f"/api/agent/runs/{r['id']}/tools/check", json={})
+    plan = owner.get(f"/api/agent/runs/{r['id']}").json()["result"]["plan"]
+    assert sum("no video found, carousel only" in p.lower() for p in plan) == 1, plan

@@ -404,7 +404,8 @@ $("#ruleForm").addEventListener("submit", async (ev) => {
 // ---------------------------------------------------------------- AI engine
 async function loadAI() {
   const v = await api("/api/ai"); H.ai = v;
-  $("#aiNow").innerHTML = v.own ? `Your agent writes with <b>your ${esc(v.presets[v.own.provider]?.label || v.own.provider)} key</b> (${esc(v.own.model)}, ${esc(v.own.key_hint)}).`
+  if (window.HQ_AI_ENGINE) window.HQ_AI_ENGINE.refresh();  // "Right now" names the engine that will actually run
+  else $("#aiNow").innerHTML = v.own ? `Your agent writes with <b>your ${esc(v.presets[v.own.provider]?.label || v.own.provider)} key</b> (${esc(v.own.model)}, ${esc(v.own.key_hint)}).`
     : v.free_starter ? `Your agent writes with the <b>free starter model</b> (${v.free_daily} AI calls a day). Add your own key for more, or use HuhQueue from Claude or ChatGPT.`
     : `Your agent writes with the <b>built-in writer</b> (no AI). Add a key or connect Claude/ChatGPT for richer captions.`;
   const sel = $("#aiProv");

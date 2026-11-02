@@ -23,6 +23,7 @@
 <link rel="stylesheet" href="/static/themes.css">
 <link rel="stylesheet" href="/static/integrations.css">
 <link rel="stylesheet" href="/static/brainswap.css">
+<link rel="stylesheet" href="/static/aiengine.css">
 <link rel="stylesheet" href="/static/makepost.css">
 <link rel="stylesheet" href="/static/sources.css">
 </head>
@@ -117,20 +118,23 @@
                 <div class="mp-q-foot"><small class="muted sm" id="agCount" data-testid="agent-count" aria-live="polite">0 / 4,000</small>
                   <button type="button" class="link mp-ex" id="mpExample" data-testid="mp-example"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>Try an example</button></div></div>
               <div class="mp-chips" id="mpChips" role="group" aria-label="Quick actions" data-testid="mp-quick-chips"></div>
+              <div class="mp-theme" id="mpTheme" data-testid="mp-theme" hidden></div>
               <div class="mp-tools">
                 <div class="drop mp-attach" id="drop" data-testid="agent-drop"><label class="btn2 mp-tool" for="agFile"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/></svg><span id="dropTxt">Attach</span></label>
                   <input id="agFile" data-testid="agent-file" type="file" class="sr" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" aria-label="Attach a photo or video (up to 40 MB)"></div>
                 <button type="button" class="btn2 mp-tool" id="agLib" data-testid="agent-from-library"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>Media library</button>
                 <span class="mp-sp" aria-hidden="true"></span>
                 <label class="mp-fmt-l" for="agFormat">Format</label>
-                <select id="agFormat" data-testid="agent-format" class="mp-fmt"><option value="auto">Let agent pick</option><option value="reel">Reel (9:16)</option><option value="carousel">Carousel (4:5)</option><option value="photo">Image</option><option value="text">Text</option></select>
-                <div class="mp-theme" id="mpTheme" data-testid="mp-theme" hidden></div>
+                <select id="agFormat" data-testid="agent-format" class="mp-fmt"><option value="auto">Auto format</option><option value="reel">Reel (9:16)</option><option value="carousel">Carousel (4:5)</option><option value="photo">Image</option><option value="text">Text</option></select>
                 <button class="btn big mp-go" id="agGo" data-testid="agent-go" type="submit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>Create with agent</button>
               </div>
               <div class="attached" id="agAttached" data-testid="agent-attached" hidden></div>
             </form>
           </div>
-          <div class="chips-head"><span class="label" id="agChLbl">Channels</span><span class="muted sm" id="agEngine" data-testid="agent-engine"></span></div>
+          <div class="chips-head"><span class="label" id="agChLbl">Channels</span>
+            <span class="ag-eng"><label class="ag-eng-l" for="agEngineSel">Model</label><select id="agEngineSel" class="ag-eng-sel" data-testid="agent-engine-switch" aria-describedby="agEngine"><option value="auto">Auto</option></select>
+              <span class="muted sm" id="agEngine" data-testid="agent-engine"></span></span></div>
+          <p class="ag-eng-note" id="agEngNote" data-testid="agent-engine-note" role="status" hidden></p>
           <div id="agMeter" class="bsw-slot" data-testid="agent-meter" aria-live="polite" hidden></div>
           <div class="chips mp-chans" id="agChips" data-testid="agent-chips" role="group" aria-labelledby="agChLbl"></div>
           </div>
@@ -507,6 +511,13 @@
             <div class="row tight"><button class="btn2 sm" type="button" id="refreshCh" data-testid="refresh-channels">Refresh from Buffer</button><a class="link sm" id="setBufferLink" href="https://publish.buffer.com/channels" target="_blank" rel="noopener">Add a channel in Buffer</a></div></section>
         </div>
         <h2 class="sec" id="aiH">AI engine</h2>
+        <section class="panel ai-eng" aria-labelledby="aiEngH" data-testid="ai-engine-picker">
+          <div class="ai-eng-head"><h2 class="card-title" id="aiEngH">Which model runs your agent</h2>
+            <p class="muted sm" id="aiEngSub">If your choice runs out of credit or doesn't answer, the agent switches to the next one automatically and tells you in the run.</p></div>
+          <p class="ai-eng-note" id="aiEngNote" data-testid="ai-engine-note" role="status" hidden></p>
+          <div class="ai-eng-list" id="aiEngines" role="radiogroup" aria-labelledby="aiEngH"><span class="muted sm">Loading models…</span></div>
+          <p class="muted sm ai-eng-pools" id="aiEngPools" data-testid="ai-engine-pools"></p>
+        </section>
         <div class="set-grid">
           <div class="panel"><h2 class="card-title">Right now</h2><p id="aiNow" data-testid="ai-now"></p>
             <div id="aiMeter" class="bsw-slot" data-testid="ai-meter" aria-live="polite" hidden></div>
@@ -575,5 +586,6 @@
 <script src="/static/integrations.js"></script>
 <script src="/static/onboarding.js"></script>
 <script src="/static/brainswap.js"></script>
+<script src="/static/aiengine.js"></script>
 </body>
 </html>
