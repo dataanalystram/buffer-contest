@@ -6,7 +6,7 @@ Styles (studio/media/styles.py describes them for agents and the UI):
 
   opus           Opus-Clip-style auto-clip: the best 20-45 s moment of the transcript, full-bleed reframed video,
                  big bouncing word captions, hook title on top from frame 0, Follow end card.
-  huhbyte_news   The owner's HuhByte news layout (code/hb.py build_reel/add_cta): branded cover card with the hook
+  huhbyte_news   The Newsroom layout (id kept for compatibility; first built as the owner's HuhByte layout, code/hb.py build_reel/add_cta): branded cover card with the hook
                  (first second), black frame with logo + hook headline, the FULL video in a panel (never trimmed),
                  word-highlight captions under it, credit line, Follow pill, facts card, 3 s Follow end card.
   minimal        Calm explainer: blurred-video backdrop, rounded video panel, small title, clean boxed captions.

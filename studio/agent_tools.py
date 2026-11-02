@@ -46,7 +46,7 @@ SPECS = [
     {"name": "render_carousel", "description": "Render a carousel (4:5): cover, the post card or facts, end card last.", "input_schema": {"type": "object", "properties": {"channel_ids": IDS}}},
     {"name": "render_reel", "description": "Render a 9:16 Reel: the headline on every frame, the source clip if there is one, the end card last. seconds sets a target length. "
                                        "style edits the real video with the media pipeline (studio.media): opus = auto-picked best moment with big word captions "
-                                       "(short punchy explainers), news = HuhByte layout with the full video in a panel and a facts card, minimal = calm "
+                                       "(short punchy explainers), news = Newsroom layout with the full video in a panel and a facts card, minimal = calm "
                                        "tutorial look, hype = fast one-word captions, or any video THEME (list_themes: caption_news, news_package, "
                                        "newsreel, dark_keynote, glass_studio, swiss, kino, silent_film, risograph, hologram_hud, screencast, "
                                        "investigation, countdown, crt, tilt_shift, game_show, cinematic). It uses the clip from the link or the video find_media found. "
@@ -648,6 +648,9 @@ class Tools(EditorialTools):
         theme = (run.get("input") or {}).get("theme") or ""
         if not style and theme and theme != "auto" and media_styles.known(theme):
             style = theme  # the theme the person picked in Make a post (or set in the thread) styles every video
+        if not style and captions:  # captions asked for, no look named: the active brand kit's caption style (owner, 2 Nov 2026)
+            from . import brand_kits
+            style = brand_kits.active_caption_style(self.h, self.a) or None
         if rights_confirmed is None and run["result"].get("rights_confirmed"):
             rights_confirmed = True  # they already said yes for this clip; a theme change doesn't ask again
         if style:

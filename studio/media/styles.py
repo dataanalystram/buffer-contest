@@ -22,10 +22,10 @@ STYLE_PRESETS: dict[str, dict] = {
         "best_for": ["talking-head launch videos", "founder demos", "podcast or keynote moments", "short punchy explainers"],
     },
     "huhbyte_news": {
-        "label": "HuhByte news", "layout": "huhbyte_news", "fill": "panel", "captions": "news", "autoclip": False,
+        "label": "Newsroom", "layout": "huhbyte_news", "fill": "panel", "captions": "news", "autoclip": False,
         "clip_range": (0, 0), "cover_secs": 0.9, "facts_secs": 3.5, "facts_title": "What it does", "cover_label": "WATCH",
         "music": "cinematic", "flash": False,
-        "about": "The HuhByte layout: branded cover with the hook in the first second, logo + hook headline over the FULL "
+        "about": "The newsroom layout: branded cover with the hook in the first second, logo + hook headline over the FULL "
                  "product video in a panel (never trimmed), word-highlight captions, credit line, Follow pill, a facts "
                  "card with the product info, then the Follow end card. Cinematic score under silent demos.",
         "best_for": ["launch announcements", "product demos without speech", "AI news"],
@@ -48,8 +48,9 @@ STYLE_PRESETS: dict[str, dict] = {
     },
 }
 
-# Short names agents and people use ("news" is the HuhByte news layout).
-ALIASES = {"news": "huhbyte_news", "huhbyte": "huhbyte_news", "opus_clip": "opus", "clean": "minimal"}
+# Short names agents and people use. The Newsroom look keeps the id huhbyte_news (stored runs, REST and MCP callers use
+# it); "newsroom" and "news" are its neutral aliases.
+ALIASES = {"news": "huhbyte_news", "newsroom": "huhbyte_news", "huhbyte": "huhbyte_news", "opus_clip": "opus", "clean": "minimal"}
 
 
 def resolve(style: str | None) -> str:
@@ -69,7 +70,7 @@ def describe() -> list[dict]:
 
 _EXPLICIT = [("hype", r"\bhype\s+(?:style|video|edit|reel|cut)\b|\bin\s+hype\b"), ("opus", r"\bopus(?:[\s-]?clip)?\b"),
              ("minimal", r"\bminimal(?:ist)?\s+(?:style|video|edit|look|reel)\b"),
-             ("news", r"\b(?:huhbyte|news)\s+(?:style|layout|look)\b")]
+             ("news", r"\b(?:huhbyte|news|newsroom)\s+(?:style|layout|look)\b")]
 
 
 def explicit(text: str) -> str | None:
@@ -292,7 +293,7 @@ THEMES: dict[str, dict] = {
         "transition": "fade", "music": "cinematic", "fonts": {"head_font": "DMSerifDisplay-Regular.ttf"}},
 }
 
-THEME_ALIASES = {"opus clip": "opus", "like opus clip": "opus", "news style": "huhbyte_news", "news theme": "huhbyte_news",
+THEME_ALIASES = {"opus clip": "opus", "like opus clip": "opus", "news style": "huhbyte_news", "news theme": "huhbyte_news", "newsroom style": "huhbyte_news",
                  "keynote": "dark_keynote", "glass": "glass_studio", "product studio": "glass_studio", "hud": "hologram_hud",
                  "hologram": "hologram_hud", "terminal": "crt", "retro terminal": "crt", "miniature": "tilt_shift",
                  "tiltshift": "tilt_shift", "silent": "silent_film", "riso": "risograph", "constructivist": "kino",
@@ -449,7 +450,7 @@ def pick_theme(prompt: str, content: str = "", fmt: str = "") -> tuple[str, str]
             best, score = tid, n
     if best and score >= 2:
         return best, f"{THEMES[best]['label']} fits the story ({THEMES[best]['best_for'][0]})"
-    return "huhbyte_news", "HuhByte news fits a launch or announcement (the full video in a panel with a facts card)"
+    return "huhbyte_news", "Newsroom fits a launch or announcement (the full video in a panel with a facts card)"
 
 
 _FX_ORDER = ["misreg", "curve", "scanlines", "vignette", "flicker", "grain"]

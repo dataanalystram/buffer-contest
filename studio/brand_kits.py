@@ -134,6 +134,20 @@ def normalize(body: dict, base: dict | None = None) -> dict:
     return k
 
 
+def _drop_sample_badge(k: dict, sample_name: str | None) -> None:
+    """A kit started from a sample brand keeps the "Sample brand, not affiliated" badge only while it is still that brand.
+    Saved under another name it is the person's own kit, so the badge (and the sample's logo) no longer describe it:
+    the badge goes, and source.derived_from records where it started."""
+    if k.get("label") != brand_onboard.SAMPLE_LABEL or not sample_name:
+        return
+    if (k.get("name") or "").strip().casefold() == str(sample_name).strip().casefold():
+        return
+    k.pop("label", None)
+    src = dict(k.get("source") or {})
+    src["derived_from"] = sample_name
+    k["source"] = src
+
+
 def builder_view(k: dict) -> dict:
     """The stored kit with the builder's colour names alongside."""
     c = k.get("colors") or {}
@@ -297,6 +311,7 @@ class BrandKits:
         k = normalize(body, base)
         if src:
             k["source"] = src
+        _drop_sample_badge(k, (base or {}).get("name") if body.get("sample") else None)
         self._check_logo(a, k)
         kid = self._insert(a, k)
         self.store.audit(a.uid, a.label, "create_brand_kit", "read", {"kit": kid, "from_url": bool(body.get("url"))})
@@ -308,6 +323,7 @@ class BrandKits:
         self.studio._guard_write(a, "update_brand_kit")
         row = self._get(a, kid)
         k = normalize(body, json.loads(row["data"] or "{}"))
+        _drop_sample_badge(k, row["name"])
         self._check_logo(a, k)
         self.store.x("UPDATE brand_kit_library SET name=?, data=?, updated=? WHERE id=?", (k.get("name") or row["name"], json.dumps(k), time.time(), row["id"]))
         self.store.audit(a.uid, a.label, "update_brand_kit", "read", {"kit": row["id"], "fields": sorted(body)[:20]})
@@ -428,6 +444,18 @@ def caption_style_for(house, a) -> str:
     except Exception:
         v = None
     return v if v in CAPTION_STYLES else "opus"
+
+
+def active_caption_style(house, a) -> str | None:
+    """The caption style the person chose in their active brand kit, or None when no kit was ever activated (callers then
+    keep their own default instead of switching every plain render to a styled edit)."""
+    try:
+        bk = attach(house)
+        ex = bk.bs.extras(a)
+    except Exception:
+        return None
+    v = ex.get("caption_style")
+    return v if ex.get("active_kit") and v in CAPTION_STYLES else None
 
 
 # ================================================================================================== REST + MCP

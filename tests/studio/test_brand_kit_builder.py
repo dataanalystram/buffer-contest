@@ -264,3 +264,34 @@ def test_the_active_kits_caption_style_is_the_default_for_video_edits(human):
     assert brand_kits.caption_style_for(house, a) == "minimal"
     human.patch(f"/api/brand-kits/{kid}", json={"caption_style": "news"})
     assert brand_kits.caption_style_for(house, a) == "news"
+
+
+def test_a_sample_kit_saved_under_a_new_name_drops_the_sample_badge(human):
+    k = human.post("/api/brand-kits", json={"sample": "nothing"}).json()
+    assert k["kit"]["label"] == brand_onboard.SAMPLE_LABEL
+    same = human.patch(f"/api/brand-kits/{k['id']}", json={"head_font": "inter"}).json()
+    assert same["kit"]["label"] == brand_onboard.SAMPLE_LABEL, "still the sample brand: the badge stays"
+    mine = human.patch(f"/api/brand-kits/{k['id']}", json={"name": "Acme Audio", "handle": "acmeaudio"}).json()
+    assert mine["name"] == "Acme Audio" and not mine["kit"].get("label")
+    assert mine["kit"]["source"]["derived_from"] == "Nothing"
+    act = human.post(f"/api/brand-kits/{k['id']}/activate").json()
+    assert act["applied"] and not human.get("/api/brand-studio").json()["kit"].get("label")
+    lst = human.get("/api/brand-kits").json()
+    assert not next(x for x in lst["kits"] if x["id"] == k["id"])["kit"].get("label")
+    # created from a sample but named differently in the same call: never badged
+    own = human.post("/api/brand-kits", json={"sample": "linear", "name": "Orbit"}).json()
+    assert own["name"] == "Orbit" and not own["kit"].get("label") and own["kit"]["source"]["derived_from"] == "Linear"
+    # the sample itself, renamed back to its own name, stays a sample
+    lin = human.post("/api/brand-kits", json={"sample": "linear", "name": "linear"}).json()
+    assert lin["kit"]["label"] == brand_onboard.SAMPLE_LABEL
+
+
+def test_the_news_style_is_labelled_newsroom_and_keeps_its_id():
+    from studio.media import styles
+    assert styles.STYLE_PRESETS["huhbyte_news"]["label"] == "Newsroom"
+    assert styles.resolve("newsroom") == "huhbyte_news" and styles.resolve("news") == "huhbyte_news"
+    assert styles.resolve("huhbyte_news") == "huhbyte_news" and styles.known("huhbyte")
+    assert styles.explicit("use the newsroom look") == "news"
+    g = next(t for t in styles.describe_themes() if t["id"] == "huhbyte_news")
+    assert g["label"] == "Newsroom" and "HuhByte" not in g["label"] + g["about"] + g["short"]
+    assert "HuhByte" not in styles.pick_theme("a launch")[1]
