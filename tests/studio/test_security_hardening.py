@@ -258,6 +258,7 @@ PUBLIC = {  # path -> why it is open to anyone
     "/terms": "terms of use", "/security": "security page", "/favicon.ico": "favicon", "/og.png": "social preview image",
     "/robots.txt": "crawl rules", "/sitemap.xml": "sitemap", "/docs": "documentation", "/docs/{slug}": "documentation page",
     "/docs/search.json": "documentation search index",
+    "/api/brand-kits/example-logo/{eid}": "an example brand's logo (a committed file, no workspace data)",
     "/security.txt": "security contact", "/.well-known/security.txt": "security contact", "/healthz": "uptime check",
     "/login": "starts Buffer OAuth", "/callback": "Buffer OAuth return (state-checked)", "/demo": "rate-capped sample",
     "/device/{tok}": "single-use device link (the token is the credential)", "/api/logout": "ends the caller's own session",

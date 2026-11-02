@@ -1,0 +1,88 @@
+{
+ "id": "linear",
+ "title": "Linear",
+ "about": "Dark, precise, indigo. Read from linear.app.",
+ "hosts": [
+  "linear.app"
+ ],
+ "source_url": "https://linear.app/",
+ "kit": {
+  "name": "Linear",
+  "handle": "linear",
+  "website": "https://linear.app/",
+  "colors": {
+   "primary": "#08090A",
+   "accent": "#5E6AD2",
+   "text": "#F7F8F8",
+   "secondary": "#7170FF"
+  },
+  "font": "inter",
+  "body_font": "inter",
+  "headline_case": "title",
+  "voice": "The product development system for teams and agents. Purpose-built for planning and building products with AI agents. Purpose-built for planning and building products. Designed for the AI era. Render UI before vehicle_state sync when minimum required state is present, instead of blocking on full ref",
+  "voice_notes": [
+   "short, punchy sentences",
+   "no exclamation marks",
+   "product-led, plain terms"
+  ],
+  "front_card": {
+   "style": "glow"
+  },
+  "end_card": {
+   "style": "glow",
+   "cta": "Follow Linear",
+   "line": ""
+  },
+  "hashtags": [
+   "#ProductUpdate",
+   "#Linear"
+  ],
+  "label": "Sample brand, not affiliated"
+ },
+ "provenance": {
+  "name": "application-name meta tag",
+  "handle": "twitter:site meta tag",
+  "primary": "theme-color meta tag",
+  "text": "CSS variable --color-text-primary",
+  "accent": "CSS variable --color-brand-bg",
+  "secondary": "CSS variable --color-accent",
+  "body_font": "CSS variable --font-regular",
+  "head_font": "CSS variable --font-regular",
+  "logo": "inline SVG in the page header (linear   navigate to home tztsqg_logolin)",
+  "mark": "inline SVG mark in the page header",
+  "voice": "the homepage's h1, description and first paragraphs"
+ },
+ "fonts": {
+  "head": {
+   "family": "Inter Variable",
+   "bundled": "inter",
+   "match": "exact"
+  },
+  "body": {
+   "family": "Inter Variable",
+   "bundled": "inter",
+   "match": "exact"
+  }
+ },
+ "found": {
+  "logo": true,
+  "mark": true,
+  "css_vars": 568,
+  "stylesheets": 40,
+  "handle": true,
+  "voice": true
+ },
+ "label": "Sample brand, not affiliated",
+ "extracted_at": "2026-11-02",
+ "extracted_by": "studio/brand_extract.py (no AI), scripts/build_sample_brands.py",
+ "renders": {
+  "reel_cover": "still-9x16.jpg",
+  "cover": "still-4x5.jpg",
+  "square": "still-1x1.jpg"
+ },
+ "carousel": [
+  "carousel-1.jpg",
+  "carousel-2.jpg",
+  "carousel-3.jpg"
+ ]
+}

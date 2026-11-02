@@ -558,7 +558,10 @@ def _captions_mode(v) -> str:
 
 def _video_spec(h, a, args, tok, meta) -> dict:
     from .media import styles as media_styles
-    style = str(args.get("theme") or args.get("caption_style") or "opus")
+    style = str(args.get("theme") or args.get("caption_style") or "")
+    if not style:  # no theme named: the active brand kit's caption style
+        from . import brand_kits
+        style = brand_kits.caption_style_for(h, a)
     sid = media_styles.resolve(style)
     if not media_styles.known(sid):
         raise ActionError(f"Unknown theme/style {style}. list_themes gives the ids.")

@@ -26,7 +26,14 @@ from . import templates as T
 
 SIZES = {"4:5": (1080, 1350), "1:1": (1080, 1080), "9:16": (1080, 1920)}
 M = 72
-GREY, RULE, BODY = (150, 150, 156), (58, 58, 64), (222, 222, 226)
+GREY, RULE, BODY = (150, 150, 156), (58, 58, 64), (222, 222, 226)  # the dark kit's tones (what _tones gives for white on black)
+
+
+def _tones(b: T.Brand) -> dict:
+    """Body copy, footnote grey, hairline and wordmark tones from THIS brand's text and ground, so a light kit (dark text
+    on white) reads as well as the dark one. White on black gives exactly the old fixed greys."""
+    t, g = b.text, b.bg
+    return {"body": T.mix(t, g, 0.13), "grey": T.mix(t, g, 0.42), "rule": T.mix(t, g, 0.77), "mark": T.mix(t, g, 0.08)}
 MIN_CONTENT = 4  # content slides (not cover / follow) a carousel needs when the sources support it (owner rule)
 MAX_UPSCALE = 1.5  # a cover picture is never blown up past this (owner bug, 2 Nov 2026: the ernd cover was a 4x logo);
 #                    a smaller picture sits as an inset on the brand ground instead
@@ -109,14 +116,12 @@ def _track(d, xy, text, f, fill, sp):
 
 
 def _logo(canvas: Image.Image, b: T.Brand, h: int, xy) -> None:
-    lg = b.logo
-    if lg is None:
+    if b.logo is None:
         d = ImageDraw.Draw(canvas)
         f = _font(_head_file(b), h)
         d.text(xy, b.name or "", font=f, fill=b.text)
         return
-    lg = lg.copy()
-    lg.thumbnail((int(h * 6), h), Image.LANCZOS)
+    lg = T.logo_for(b, "plain", int(h * 6), h)  # recoloured to the ink when it would vanish on the ground
     canvas.paste(lg, (int(xy[0]), int(xy[1])), lg if lg.mode == "RGBA" else None)
 
 
@@ -124,18 +129,18 @@ def _wordmark(canvas, b: T.Brand, y: int, W: int) -> None:
     d = ImageDraw.Draw(canvas)
     f = _ed_body(b, 22, semi=True)
     word = (b.name or b.handle or "").upper()
-    x = _track(d, (M, y), word, f, (235, 235, 240), 7) + 26
+    x = _track(d, (M, y), word, f, _tones(b)["mark"], 7) + 26
     bb = d.textbbox((0, 0), "H", font=f)
     ry = y + (bb[1] + bb[3]) // 2
     d.line((x, ry, max(x + 40, W - M), ry), fill=b.accent, width=2)
 
 
-def _counter(d, n, W, y):
+def _counter(d, n, W, y, b: T.Brand | None = None):
     if not n:
         return
     t = f"{n[0]}/{n[1]}"
     f = _font("Inter-Regular.ttf", 28)
-    d.text((W - M - d.textlength(t, font=f), y), t, font=f, fill=GREY)
+    d.text((W - M - d.textlength(t, font=f), y), t, font=f, fill=_tones(b)["grey"] if b is not None else GREY)
 
 
 def _label(d, b, xy, text):
@@ -184,7 +189,7 @@ def _body(d, b, text, x, y, size, maxw, draw=True, lh=1.38):
         if draw:
             for wd, bold, ww, gap in ln:
                 cx += gap
-                d.text((cx, y), wd, font=fb if bold else fr, fill=b.text if bold else BODY)
+                d.text((cx, y), wd, font=fb if bold else fr, fill=b.text if bold else _tones(b)["body"])
                 cx += ww
         y += int(size * lh)
     return y
@@ -261,12 +266,12 @@ def cover(b: T.Brand, hero: Image.Image | None, eyebrow: str, headline: str, dek
     _top_vignette(s, color=b.bg)
     d = ImageDraw.Draw(s)
     _logo(s, b, 46, (M, M - 4))
-    _counter(d, n, W, M)
+    _counter(d, n, W, M, b)
     _label(d, b, (M, cat_y), eyebrow)
     _headline(d, b, headline, M, head_y, size, accent, maxw)
     y = sub_y
     for ln in sub:
-        d.text((M, y), ln, font=sf, fill=BODY)
+        d.text((M, y), ln, font=sf, fill=_tones(b)["body"])
         y += 46
     _wordmark(s, b, wm_y, W)
     return s
@@ -299,7 +304,7 @@ def idea(b: T.Brand, eyebrow: str, blocks: list[dict], n=None, ratio="4:5", acce
             if i:
                 y += 34
                 if draw:
-                    d.line((M, y, W - M, y), fill=RULE, width=2)
+                    d.line((M, y, W - M, y), fill=_tones(b)["rule"], width=2)
                 y += 64
             y, _ = _headline(d, b, bl.get("head", ""), M, y, bs, accent, maxw, draw=draw)
             y += 40 - int(bs * 0.06)
@@ -309,7 +314,7 @@ def idea(b: T.Brand, eyebrow: str, blocks: list[dict], n=None, ratio="4:5", acce
             y += 16
             for ln in T.wrap(d, note, nf, maxw):
                 if draw:
-                    d.text((M, y), ln, font=nf, fill=GREY)
+                    d.text((M, y), ln, font=nf, fill=_tones(b)["grey"])
                 y += 36
         return y
     bs, bf = 124, 40
@@ -322,7 +327,7 @@ def idea(b: T.Brand, eyebrow: str, blocks: list[dict], n=None, ratio="4:5", acce
     y_start = y0 + max(0, (floor - end) // (2 if image is None else 3))
     layout(bs, bf, True, y_start)
     _logo(s, b, 46, (M, M - 4))
-    _counter(d, n, W, M)
+    _counter(d, n, W, M, b)
     _wordmark(s, b, wm_y, W)
     return s
 
@@ -343,7 +348,7 @@ def founders_band(photos: list[Image.Image], names: list[str], W: int, b: T.Bran
         nm = (names[i] if i < len(names) else "").split(" ")[0]
         if nm:
             tw = d.textlength(nm, font=f)
-            d.text((x + av.width / 2 - tw / 2, 140 + av.height + 18), nm, font=f, fill=GREY)
+            d.text((x + av.width / 2 - tw / 2, 140 + av.height + 18), nm, font=f, fill=_tones(b)["grey"])
         x += dd + 12 + gap
     return s
 
@@ -352,18 +357,17 @@ def follow(b: T.Brand, n=None, ratio="4:5", line: str = "") -> Image.Image:
     W, H = SIZES.get(ratio, SIZES["4:5"])
     s = Image.new("RGB", (W, H), b.bg)
     d = ImageDraw.Draw(s)
-    _counter(d, n, W, M)
+    _counter(d, n, W, M, b)
     big = int(W * 0.2)
     hf = _font(_head_file(b), big)
     af = _font(_head_file(b), int(big * 0.62))
     lf = _font("Inter-Regular.ttf", 38)
-    line = line or b.end_line or "AI news made simple, every day."
+    line = line or b.end_line or (f"More from {b.name}, every week." if b.name else "")
     lh = 110
     block = lh + 90 + int(big * 1.05) + int(big * 0.62 * 1.15) + 110
     y = (H - 100 - block) // 2
     if b.logo is not None:
-        lg = b.logo.copy()
-        lg.thumbnail((int(W * 0.5), lh), Image.LANCZOS)
+        lg = T.logo_for(b, "plain", int(W * 0.5), lh)
         s.paste(lg, ((W - lg.width) // 2, y), lg if lg.mode == "RGBA" else None)
     y += lh + 90
     t = "Follow"
@@ -374,8 +378,8 @@ def follow(b: T.Brand, n=None, ratio="4:5", line: str = "") -> Image.Image:
         af = _font(_head_file(b), int(af.size * 0.94))
     d.text((W / 2 - d.textlength(t, font=af) / 2, y - int(af.size * 0.12)), t, font=af, fill=b.accent)
     y += int(af.size * 1.15) + 60
-    d.line((W / 2 - 60, y - 30, W / 2 + 60, y - 30), fill=RULE, width=2)
-    d.text((W / 2 - d.textlength(line, font=lf) / 2, y), line, font=lf, fill=BODY)
+    d.line((W / 2 - 60, y - 30, W / 2 + 60, y - 30), fill=_tones(b)["rule"], width=2)
+    d.text((W / 2 - d.textlength(line, font=lf) / 2, y), line, font=lf, fill=_tones(b)["body"])
     _wordmark(s, b, H - 100, W)
     return s
 

@@ -1,0 +1,89 @@
+/* "Create your brand kit": the builder on Brand > Kit (brandkit.js). Uses the app's tokens only, so light and dark follow. */
+.bk{display:grid;gap:14px;margin-bottom:16px;min-width:0}
+.bk-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}
+.bk-head p{margin:4px 0 0;max-width:68ch}
+.bk-head .btn2{flex:none}
+.bk-bar{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:thin;min-width:0}
+.bk-chip{display:flex;align-items:center;gap:8px;flex:none;min-height:48px;padding:6px 12px 6px 6px;border:1px solid var(--line);
+  border-radius:12px;background:var(--raised);color:var(--ink);font:inherit;text-align:left;cursor:pointer;max-width:280px}
+.bk-chip:hover{border-color:var(--line-strong)}
+.bk-chip.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.bk-chip:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.bk-chip.add{border-style:dashed;padding-left:12px;color:var(--muted)}
+.bk-chip.draft{cursor:default;padding-left:12px}
+.bk-chip-logo{width:36px;height:36px;border-radius:8px;background:var(--g,#111);display:grid;place-items:center;overflow:hidden;flex:none;
+  border:1px solid rgba(127,127,127,.25)}
+.bk-chip-logo img{max-width:30px;max-height:24px;object-fit:contain}
+.bk-chip-logo b{color:var(--a,#fff);font-size:16px}
+.bk-chip-t{display:grid;line-height:1.2;min-width:0}
+.bk-chip-t b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bk-chip-t small{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.bk-chip-t small.bk-on{color:var(--ok);font-weight:700}
+.bk-url{display:flex;gap:8px;min-width:0}
+.bk-url input{flex:1;min-width:0}
+.bk-label{margin:0;font-size:12.5px;color:var(--warn);font-weight:600}
+.bk-grid{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:20px;align-items:start}
+.bk-form{display:grid;gap:12px;min-width:0}
+.bk-form .field{margin:0;min-width:0}
+.bk-form input:not([type=color]):not([type=file]),.bk-form select{width:100%;min-width:0;box-sizing:border-box}
+.bk-row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.bk-at{display:flex;align-items:center;gap:4px;min-width:0}
+.bk-at span{color:var(--muted)}
+.bk-logo-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bk-logo{width:88px;height:48px;border-radius:10px;display:grid;place-items:center;overflow:hidden;border:1px solid var(--line);flex:none}
+.bk-logo img{max-width:76px;max-height:36px;object-fit:contain}
+.bk-logo i{font-style:normal;font-size:11px;color:var(--subtle);background:var(--raised);padding:2px 6px;border-radius:6px}
+.bk-up{cursor:pointer}
+.bk-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.bk-col{display:flex;gap:8px;align-items:center;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--raised);min-width:0}
+.bk-col input[type=color]{width:40px;height:40px;padding:0;border:0;border-radius:8px;background:none;cursor:pointer;flex:none}
+.bk-col>span{display:grid;gap:2px;min-width:0;font-size:12.5px}
+.bk-form .bk-col .bk-hex{font-family:var(--mono);font-size:12.5px;padding:2px 4px;height:auto;min-height:0;border:1px solid transparent;background:transparent;color:var(--ink)}
+.bk-col .bk-hex:focus{border-color:var(--line-strong)}
+.bk-hint{margin:6px 0 0}
+.bk .xs,.set-brand .xs{font-size:12px}
+.bk-caps{display:flex;flex-wrap:wrap}
+.bk-caps button{min-height:40px}
+.bk-save{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.bk-prev{min-width:0;display:grid;gap:10px}
+.bk-prev-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.bk-prev-head h3{margin:0;font-size:15px}
+.bk-kitcards{display:grid;grid-template-columns:4fr 6fr 4fr;gap:10px;align-items:end;min-height:120px}
+.bk-themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px;min-height:200px}
+.bk-kitcards.stale,.bk-themes.stale{opacity:.55;transition:opacity var(--base)}
+.bk-card{margin:0;display:grid;gap:4px;min-width:0}
+.bk-card img{width:100%;height:auto;display:block;border-radius:8px;border:1px solid var(--line);background:var(--sunken)}
+.bk-card.theme img{aspect-ratio:9/16;object-fit:cover}
+.bk-card figcaption{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bk-sk{display:block;border-radius:8px;border:1px solid var(--line);background:linear-gradient(100deg,var(--sunken) 30%,color-mix(in srgb,var(--sunken) 70%,var(--line)) 50%,var(--sunken) 70%);background-size:220% 100%;animation:bk-sk 1.3s ease-in-out infinite}
+.bk-card.theme .bk-sk{aspect-ratio:9/16}.bk-card.k-carousel_cover .bk-sk,.bk-card.k-end_card .bk-sk{aspect-ratio:4/5}.bk-card.k-thumbnail .bk-sk{aspect-ratio:16/9}
+.bk-card.k-carousel_cover img,.bk-card.k-end_card img{aspect-ratio:4/5;object-fit:cover}.bk-card.k-thumbnail img{aspect-ratio:16/9;object-fit:cover}
+@keyframes bk-sk{from{background-position:120% 0}to{background-position:-120% 0}}
+@media (prefers-reduced-motion:reduce){.bk-sk{animation:none}}
+.bk-card.bad span{aspect-ratio:9/16;display:grid;place-items:center;border:1px dashed var(--line-strong);border-radius:8px;font-size:12px;color:var(--muted)}
+.bk-more{margin-top:4px}
+.bk-more>summary{cursor:pointer;font-weight:600;padding:4px 0}
+.bk-more[open]>summary{margin-bottom:12px}
+.set-bk{display:flex;gap:10px;align-items:center;margin:4px 0 10px;min-width:0}
+.set-bk-sw{display:inline-flex;gap:4px;margin:4px 0}
+.set-bk-sw i{width:16px;height:16px;border-radius:4px;border:1px solid var(--line)}
+@media (max-width:1100px){.bk-grid{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:560px){
+  .bk-head{flex-direction:column}
+  .bk-url{flex-direction:column}
+  .bk-row2{grid-template-columns:minmax(0,1fr)}
+  .bk-kitcards{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .bk-kitcards .k-thumbnail{grid-column:1/-1;order:-1}
+  .bk-themes{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+}
+/* the logo tile: a mid-grey checker, so a white, a black or a coloured logo all read (the cards draw it on the kit's ground) */
+.bk-logo{background:conic-gradient(#a7a7a7 25%,#c4c4c4 0 50%,#a7a7a7 0 75%,#c4c4c4 0) 0 0/12px 12px !important}
+.bk-chip-logo:has(img){background:conic-gradient(#a7a7a7 25%,#c4c4c4 0 50%,#a7a7a7 0 75%,#c4c4c4 0) 0 0/10px 10px;box-shadow:inset 0 -4px 0 var(--g,#111)}
+/* touch widths: every control is at least 44 px tall (tests/studio/test_responsive.py) */
+@media (max-width:1024px){
+  .bk-form .bk-col .bk-hex{min-height:44px;font-size:14px}
+  .bk-col input[type=color]{width:44px;height:44px}
+  .bk-caps button{min-height:44px;min-width:44px}
+  .bk-col{align-items:stretch}
+  .bk-col>span{grid-template-rows:auto 1fr}
+}
