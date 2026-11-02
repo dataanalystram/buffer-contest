@@ -65,6 +65,62 @@ def brand_from_kit(kit: dict | None, logo_path: str | None = None) -> dict:
     return b
 
 
+COVER_RATIO = {"9:16": "9:16", "4:5": "4:5"}
+
+
+def _covers(spec: dict, source_path: str, brand: dict, style: str, ratio: str, tmp: Path, get, urls: dict) -> tuple[list, str | None, int]:
+    """Three branded cover variants (studio/media/covers.py) from the source video (and the product's hero image when the
+    app sent one), as base64 JPEGs per size; the chosen one also becomes the Reel's opening frame (not for style none,
+    which posts the video as it is). A failure only means no covers."""
+    import base64
+    try:
+        from . import covers as cov
+        hero = get(urls["cover_image"]) if urls.get("cover_image") else None
+        names = spec.get("names") or []
+        cv = cov.make_covers(source_path, image=hero, hook=spec.get("cover_hook") or spec.get("hook") or "", brand=brand,
+                             name=names[0] if names else "", clip=tuple(spec["clip"]) if spec.get("clip") else None)
+    except Exception as e:  # noqa: BLE001
+        print(f"covers skipped: {e.__class__.__name__}: {str(e)[:120]}")
+        return [], None, 0
+    out = []
+    for i, v in enumerate(cv["variants"]):
+        out.append({"variant": i, "layout": v["layout"], "score": v["score"], "frame_t": v["frame_t"], "source": v["source"],
+                    "files": {r: base64.b64encode(cov.jpeg(im)).decode() for r, im in v["images"].items()}})
+    if not out:
+        return [], None, 0
+    idx = min(max(0, int(spec.get("cover_index") or 0)), len(out) - 1)
+    png = None
+    if style != "none" and spec.get("cover_frame", True) is not False and ratio in COVER_RATIO:
+        png = str(tmp / "cover.png")
+        cv["variants"][idx]["images"][COVER_RATIO[ratio]].save(png)
+    return out, png, idx
+
+
+def cover_swap(video: bytes, cover: bytes, secs: float) -> tuple[bytes, dict]:
+    """Replace the Reel's opening cover frames (the first ``secs``) with another cover variant; the sound and every
+    other frame stay as rendered."""
+    from . import ff
+    tmp = Path(tempfile.mkdtemp(prefix="hq_cswap_"))
+    try:
+        (tmp / "in.mp4").write_bytes(video)
+        (tmp / "cover.jpg").write_bytes(cover)
+        pr = ff.probe(str(tmp / "in.mp4"))
+        W, H = pr["width"], pr["height"]
+        secs = max(0.3, float(secs or 0.6))
+        fc = (f"[0:v]scale={W}:{H},setsar=1,fps=30,format=yuv420p[c];[1:v]trim=start={secs:.3f},setpts=PTS-STARTPTS,fps=30,"
+              f"format=yuv420p,setsar=1[m];[c][m]concat=n=2:v=1:a=0[v]")
+        amap = ["-map", "1:a", "-c:a", "copy"] if pr.get("has_audio") else []
+        ff.run(["-y", "-v", "error", "-loop", "1", "-framerate", "30", "-t", f"{secs:.3f}", "-i", str(tmp / "cover.jpg"), "-i",
+                str(tmp / "in.mp4"), "-filter_complex", fc, "-map", "[v]", *amap, "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(tmp / "out.mp4")], timeout=900)
+        got = ff.probe(str(tmp / "out.mp4"))
+        return (tmp / "out.mp4").read_bytes(), {"type": "video", "width": got["width"], "height": got["height"],
+                                                "duration": round(got["duration"], 2), "cover_frame_secs": secs,
+                                                "thumbnail_offset_ms": int(secs * 500)}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None = None, logo: bytes | None = None,
                http=None) -> tuple[bytes, dict]:
     """Run one media_render job. ``get(url)`` fetches an app media URL (the worker passes its netguard getter);
@@ -110,6 +166,9 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
             images = [g["path"] for g in gen["images"]]
             credit = credit or gen["images"][0]["credit"]
 
+        covers_out, cover_png, cover_idx = [], None, 0
+        if source_path and spec.get("covers") is not False:
+            covers_out, cover_png, cover_idx = _covers(spec, source_path, brand, style, ratio, tmp, get, urls)
         words_path = None
         if source_path and spec.get("captions") is not False and (style in CAPTION_STYLES or style in styles.THEMES):
             try:  # captions and the opus/hype clip picker need the transcript; a failure only turns captions off
@@ -121,7 +180,8 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
                                facts=spec.get("facts"), credit=credit, words_path=words_path, names=spec.get("names"),
                                clip=spec.get("clip"), music=spec.get("music") or "auto", brand=brand, official=official,
                                rights_confirmed=bool(spec.get("rights_confirmed")), run_dir=str(tmp),
-                               brand_colors=bool(spec.get("brand_colors")), **_captions_args(spec))
+                               brand_colors=bool(spec.get("brand_colors")), brand_pass=spec.get("brand_pass") or False,
+                               cover_png=cover_png, logo=spec.get("logo", True) is not False, **_captions_args(spec))
         if r.get("needs_confirmation"):
             raise JobError("Rights not confirmed: " + r["question"])
         if r.get("error"):
@@ -130,7 +190,12 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
         meta = {"type": "video", "renderer": "studio.media", "style": style, "ratio": ratio, "width": out["width"],
                 "height": out["height"], "duration": out["duration"], "clip": out["clip"], "captions": out["captions"],
                 "music": out["music"], "credit": credit, "caption_problems": out["caption_problems"],
-                "captions_note": out.get("captions_note") or "", "source_captions": out.get("source_captions")}
-        return Path(out["path"]).read_bytes(), json.loads(json.dumps(meta))
+                "captions_note": out.get("captions_note") or "", "source_captions": out.get("source_captions"),
+                "brand_pass": out.get("brand_pass") or [], "thumbnail_offset_ms": out.get("thumbnail_offset_ms"),
+                "cover_frame_secs": out.get("cover_frame_secs") or 0, "fit": out.get("fit"), "logo": out.get("logo")}
+        meta = json.loads(json.dumps(meta))
+        if covers_out:
+            meta["covers_b64"], meta["cover_index"] = covers_out, cover_idx  # finish_video stores them as media, then drops these
+        return Path(out["path"]).read_bytes(), meta
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
