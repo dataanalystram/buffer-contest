@@ -1,5 +1,5 @@
 """Settings -> AI apps: a human can change a token's daily limit (PATCH /api/agent-tokens/{id}); an agent never can."""
-from .conftest import agent_token, mcp_call
+from .conftest import agent_token
 
 
 def _tid(human):
@@ -25,10 +25,11 @@ def test_cap_bounds_and_unknown_token(client, human):
     assert human.patch("/api/agent-tokens/99999", json={"daily_cap": 20}).status_code == 404
 
 
-def test_agent_cannot_change_its_own_cap(client, human):
+def test_agent_cannot_change_its_own_cap(app, client, human):
+    from fastapi.testclient import TestClient
     tok = agent_token(human, cap=3)
     tid = _tid(human)
-    r = client.patch(f"/api/agent-tokens/{tid}", json={"daily_cap": 100}, headers={"Authorization": f"Bearer {tok}"})
+    r = TestClient(app).patch(f"/api/agent-tokens/{tid}", json={"daily_cap": 100}, headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code in (401, 403)
     assert [t for t in human.get("/api/safety").json()["tokens"] if t["id"] == tid][0]["daily_cap"] == 3
 

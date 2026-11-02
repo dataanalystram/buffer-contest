@@ -389,6 +389,7 @@ _DESC = {
     "GET /api/ai": "Your AI engine settings (keys never returned)", "POST /api/ai": "Save your AI engine and key",
     "GET /api/ai/engine": "Which model runs your agent, with each model's credit", "PUT /api/ai/engine": "Choose the model that runs your agent",
     "POST /api/agent-tokens": "Create an agent token (shown once)", "DELETE /api/agent-tokens/{token_id}": "Revoke an agent token",
+    "PATCH /api/agent-tokens/{token_id}": "Change a token's daily limit (1-100, humans only)",
     "GET /api/safety": "Kill switch and daily caps", "POST /api/safety/kill": "Pause or resume every agent (people only)",
     "GET /api/limits": "Your Buffer API budget right now", "GET /api/plan": "Your Buffer plan's limits",
     "GET /api/activity": "Activity log, newest first (tabs, filters, cursor)", "GET /api/activity/export.csv": "Activity log as CSV",
