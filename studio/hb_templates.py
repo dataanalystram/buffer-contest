@@ -672,7 +672,7 @@ def _credit_slide(b, ratio, credit, n):
 def video(template: str, data: dict | None, b: T.Brand, ratio: str = "9:16", now=None, source: str | None = None,
           theme: str | None = None) -> bytes:
     """The template as a Reel. launch_reel / viral_trend with a real clip (``source`` path) go through the media pipeline
-    (studio.media.compose: the full video in the brand, credit on screen, Follow end card, music under silence) in
+    (studio.media.compose: the full video in the brand, credit on screen, Follow end card, no music unless picked) in
     ``theme`` (default huhbyte_news / caption_news); everything else is the slides as a Reel."""
     d = {**SAMPLE[template], **(data or {})}
     if source and template in ("launch_reel", "viral_trend", "github_repo", "yc_launch"):
