@@ -126,7 +126,7 @@
       try { await api(`/api/ledger/rules/${c.dataset.act}`, { method: "PATCH", body: { active: c.checked } }); loadLedger(); } catch (e) { toast(e.message); c.checked = !c.checked; } }));
     box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
       const r = (L.data.rules || []).find((x) => String(x.id) === b.dataset.del);
-      if (window.confirmDialog ? !(await window.confirmDialog(`Delete “${r ? r.rule : "this rule"}”?`, "Delete")) : !confirm(`Delete “${r ? r.rule : "this rule"}”?`)) return;
+      if (!(await window.hqConfirm(`Delete “${r ? r.rule : "this rule"}”? Posts stop following it.`, { ok: "Delete", danger: true }))) return;
       try { await api(`/api/ledger/${b.dataset.del}`, { method: "DELETE" }); toast("Rule deleted"); loadLedger(); } catch (e) { toast(e.message); } }));
     box.querySelectorAll("[data-edit]").forEach((b) => (b.onclick = () => { L.editing = +b.dataset.edit; draw(); const i = box.querySelector(".lg-edit input"); i && i.focus(); }));
     box.querySelectorAll("[data-cancel]").forEach((b) => (b.onclick = () => { L.editing = null; draw(); }));
