@@ -740,6 +740,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                             headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
         return Response(data, media_type=m["mime"], headers=headers)
 
+    @app.api_route("/ms/{exp}/{sig}/{token}", methods=["GET", "HEAD"], include_in_schema=False)
+    def media_signed(exp: str, sig: str, token: str, request: Request):
+        """get_media_preview's short-lived link (15 min, HMAC over expiry + token): the same file as /m/<token>."""
+        from . import mcp_parity
+        if not mcp_parity.verify(studio.s, exp, sig, token):
+            return JSONResponse({"error": "This link expired or is not valid. Ask get_media_preview for a new one."}, status_code=403)
+        return media(token, request)
+
     @app.get("/api/media/health")
     def media_health(request: Request, refresh: int = 0):
         """Ready posts whose files are gone (deleted from the Library): the startup / periodic check's result for you."""

@@ -172,6 +172,10 @@ from . import mcp_client_brain as _cb  # noqa: E402  client brain: the hands wit
 
 TOOLS += _cb.TOOLS
 READ_ONLY |= _cb.READ_ONLY
+from . import mcp_parity as _parity  # noqa: E402  get_media_preview, replace_draft_media, get_page_context (3 Nov 2026)
+
+TOOLS += _parity.TOOLS
+READ_ONLY |= _parity.READ_ONLY
 
 
 
@@ -316,7 +320,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _uploads.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
-    for _mod in (_send, _share, _ledger):
+    for _mod in (_send, _share, _ledger, _parity):
         extra = _mod.call_tool(studio, actor, name, args)
         if extra is not NotImplemented:
             return extra
@@ -397,8 +401,10 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
             result = call_tool(studio, actor, name, clean)
             # the run's thread shows what the external agent did: one visible step per tool call (studio/mcp_runs.py)
             mcp_runs.record(studio.store, actor, name, clean, result, True, int((time.monotonic() - t0) * 1000), model_hint=hint)
-            return ok({"content": [{"type": "text", "text": json.dumps(result, indent=1, default=str)}],
-                       "structuredContent": result if isinstance(result, dict) else {"items": result}, "isError": False})
+            images = result.pop("_mcp_images", None) if isinstance(result, dict) else None  # get_media_preview's stills
+            content = [{"type": "text", "text": json.dumps(result, indent=1, default=str)}]
+            content += [{"type": "image", "data": i["data"], "mimeType": i["mimeType"]} for i in images or []]
+            return ok({"content": content, "structuredContent": result if isinstance(result, dict) else {"items": result}, "isError": False})
         except (ActionError, BufferError) as e:
             mcp_runs.record(studio.store, actor, name, clean, None, False, int((time.monotonic() - t0) * 1000), str(e), model_hint=hint)
             return ok({"content": [{"type": "text", "text": str(e)}], "isError": True})
