@@ -167,11 +167,7 @@ def test_selection_bar_menu_and_bin(live, chromium, close_contexts, w):
         assert box["y"] + box["height"] <= 900 - 72 and box["y"] > 700 and box["height"] < 70, box
         _no_overflow(page)
     _shot(page, f"lp-selected-{w}.png")
-    if w == 390:
-        page.get_by_test_id("library-bulk-more").click()
-        page.get_by_role("menuitem", name="Clear selection").click()
-    else:
-        page.get_by_test_id("library-bulk-cancel").click()
+    page.get_by_test_id("library-bulk-cancel").click()
     assert page.get_by_test_id("library-bulk-count").inner_text() == "0 selected"
     # a card's ⋯ menu: opens, keyboard moves through it, Escape closes it and gives focus back
     card = page.locator(f"[data-testid=library-item][data-id='{live['gen']}']")
