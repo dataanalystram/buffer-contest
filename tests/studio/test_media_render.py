@@ -70,12 +70,26 @@ def test_feed_ratios(clips, ratio, size, tmp_path):
     _check_layout(m)
 
 
-def test_silent_demo_gets_the_score_and_vertical_source_fits(clips, tmp_path):
+def test_silent_demo_stays_silent_by_default_and_vertical_source_fits(clips, tmp_path):
+    """Owner, 3 Nov 2026: a piano/cinematic bed was added to his uploaded silent Reel. No music unless it is picked."""
     _, _, mute = clips
     m = compose.render_style(mute, "huhbyte_news", out=str(tmp_path / "m.mp4"), hook="Robot hand demo", credit="Video: Axonnic",
                              preset="ultrafast", crf=32, burned_subs=False)
-    assert m["source_silent"] and m["music"] == "cinematic" and not ff.is_silent(m["path"])
+    assert m["source_silent"] and m["music"] == "none" and ff.is_silent(m["path"])
     _check_layout(m)
+
+
+def test_silent_demo_gets_the_score_only_when_picked(clips, tmp_path):
+    _, _, mute = clips
+    m = compose.render_style(mute, "huhbyte_news", out=str(tmp_path / "m2.mp4"), hook="Robot hand demo", credit="Video: Axonnic",
+                             preset="ultrafast", crf=32, burned_subs=False, music_mood="cinematic", clip=(0, 2))
+    assert m["music"] == "cinematic" and not ff.is_silent(m["path"])
+
+
+@pytest.mark.parametrize("mood,want", [("auto", "none"), (None, "none"), ("", "none"), ("none", "none"), ("lofi", "none"),
+                                       ("cinematic", "cinematic"), ("pulse", "pulse"), ("hype", "pulse")])
+def test_picked_music_never_defaults_to_a_score(mood, want):
+    assert compose.picked_music(mood) == want
 
 
 def test_images_only_slideshow(tmp_path):
@@ -83,7 +97,7 @@ def test_images_only_slideshow(tmp_path):
         Image.new("RGB", (1600, 900), (40 * i, 80, 160)).save(tmp_path / f"i{i}.jpg")
     m = compose.render_style(None, "minimal", out=str(tmp_path / "s.mp4"), hook="No video? Still a short.",
                              images=[str(tmp_path / "i0.jpg"), str(tmp_path / "i1.jpg")], preset="ultrafast", crf=32)
-    assert m["duration"] > 6 and m["music"] == "cinematic"
+    assert m["duration"] > 6 and m["music"] == "none"
 
 
 def test_unknown_style_and_ratio_are_refused(clips, tmp_path):

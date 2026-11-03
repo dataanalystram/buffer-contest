@@ -13,9 +13,10 @@ Styles (studio/media/styles.py describes them for agents and the UI):
   hype           Fast and loud: full-bleed, white flash + giant hook in the first second, one-word captions that
                  punch in, pulse music, end card.
 
-Audio rule (owner, 23 Oct 2026: never ship a silent Reel): real audio is always kept; when the source is silent the
-original score is the soundtrack, otherwise the music is ducked ~20 dB under the speech (sidechain), then the mix is
-normalised to -14 LUFS. Every layout box is computed, every text block is auto-fitted (textfit) inside the platform
+Audio rule (owner, 3 Nov 2026, replaces "never ship a silent Reel"): NO music is ever added by default. The video's own
+sound is kept; a silent video stays silent unless the person picked music (music_mood "cinematic" / "pulse"; "auto" and
+"none" both mean no music; Instagram music is added by Buffer as metadata, never baked in). With music picked, it is ducked
+~20 dB under the speech (sidechain), then the mix is normalised to -14 LUFS. Every layout box is computed, every text block is auto-fitted (textfit) inside the platform
 safe area, and ``render_style`` returns the boxes so tests can prove nothing clips or overlaps.
 Credit: layouts adapted from dataanalystram/Huhbyte.ai (same owner), see NOTICE.
 """
@@ -548,6 +549,18 @@ def _esc(p: str) -> str:
 
 
 # ------------------------------------------------------------------------------------------------ main entry
+MUSIC_MOODS = ("cinematic", "pulse")
+
+
+def picked_music(music_mood: str | None) -> str:
+    """The score a render bakes in: only one the person PICKED ("cinematic" / "pulse", or the old aliases "hype" /
+    "energetic"). "auto", "none", "" and anything unknown are no music: a silent video stays silent (owner, 3 Nov 2026)."""
+    m = str(music_mood or "").strip().lower()
+    if m in ("hype", "energetic"):
+        return "pulse"
+    return m if m in MUSIC_MOODS else "none"
+
+
 def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16", hook: str = "", facts: list[str] | None = None,
                  brand: dict | None = None, words: list[dict] | None = None, credit: str = "", clip: tuple | None = None,
                  images: list[str] | None = None, music_mood: str = "auto", names: list[str] | None = None,
@@ -738,9 +751,11 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         video = str(wd / "video.mp4")
         ff.run(["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", video], timeout=300)
 
-        mood = cfg["music"] if music_mood == "auto" else music_mood
-        from . import music
-        wav = music.make(str(wd / "music.wav"), total + 0.5, mood) if mood != "none" else None
+        mood = picked_music(music_mood)  # never the theme's score by default (owner, 3 Nov 2026: a piano bed on his upload)
+        wav = None
+        if mood != "none":
+            from . import music
+            wav = music.make(str(wd / "music.wav"), total + 0.5, mood)
         outp = Path(out)
         outp.parent.mkdir(parents=True, exist_ok=True)
         total += pre_s
