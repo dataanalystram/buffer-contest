@@ -455,6 +455,8 @@ TEMPLATES = {
     "github_repo": {"name": "GitHub repo pillar", "kind": "carousel", "video": True, "front": "editorial",
                     "about": "\"This free GitHub repo...\": a hook cover with the repo card (stars, licence, language), three plain "
                              "facts, the link slide, end card. Video first when the repo has a demo."},
+    "funding": {"name": "Funding round", "kind": "carousel", "video": False, "front": "editorial",
+                "about": "A startup raised money: the amount and round on the cover, who led it, what the company builds, end card."},
     "yc_launch": {"name": "YC launch: one startup", "kind": "carousel", "video": True, "front": "editorial",
                   "about": "One YC startup: the batch tag, what it does in plain words, founders and funding, end card."},
     "viral_trend": {"name": "Viral trend with creator credit", "kind": "reel", "video": True, "front": "editorial",
@@ -494,6 +496,9 @@ SAMPLE = {
     "yc_launch": {"company": "Sample Robotics", "batch": "F25", "title": "Sample Robotics builds robot hands that learn from video",
                   "what": ["Robot hands that copy a task after watching one video", "No code: show it, it repeats it",
                            "Built for small factories"], "founders": "Two ex-research engineers", "funding": "Raised a seed round"},
+    "funding": {"company": "Sample Robotics", "amount": "$12M", "round": "Series A", "title": "Sample Robotics raises $12M",
+                "round_facts": ["$12M Series A", "Led by Sample Ventures"], "what": ["Robot hands that learn a task from one video",
+                                                                                 "Built for small factories"]},
     "viral_trend": {"creator": "@samplecreator", "platform": "X", "title": "This AI clip is everywhere this week",
                     "points": ["One prompt made a 30-second short film", "The creator shared the full workflow", "Free tools only"]},
     "editorial_story": {"eyebrow": "YC F25 · AI + TOOLS", "headline": "Sample Co Turns One Video Into 7 Posts", "accent": ["7"],
@@ -574,6 +579,13 @@ def slides(template: str, data: dict | None, b: T.Brand, ratio: str, now=None, m
         body = [("facts", "What they do", list(d.get("what") or [])[:3], d.get("image"))]
         if extra:
             body.append(("facts", "The team", extra, None))
+    elif template == "funding":
+        amount = str(d.get("amount") or "").strip()
+        front = (d.get("title") or f"{d.get('company', '')} raises {amount}".strip(), d.get("accent_words") or ({amount} if amount else None),
+                 d.get("company", ""), "FUNDING")
+        body = [("facts", "The round", list(d.get("round_facts") or d.get("facts") or [])[:3], None)]
+        if d.get("what"):
+            body.append(("facts", "What they build", list(d.get("what") or [])[:3], d.get("image")))
     elif template == "viral_trend":
         credit = f"Video: {d.get('creator', '')} on {d.get('platform', '')}".strip()
         front = (d["title"], d.get("accent_words"), credit, "TRENDING")

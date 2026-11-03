@@ -37,7 +37,7 @@
     ["startups", "Startups", /\b(YC|Y Combinator|startup|raises|raised|funding|seed|Series [A-D]|launch(es|ed)?|founder)\b/i],
     ["robotics", "Robotics", /\b(robot\w*|humanoid|drone|autonomous|self-driving|Figure|Boston Dynamics|Optimus)\b/i]];
   const FILTERS = [["all", "All"], ["reel", "Reels"], ["carousel", "Carousels"], ["image", "Images"], ["draft", "Drafts"]];
-  const STATE = { ready: "Ready", draft: "Draft", scheduled: "Scheduled", running: "Working", failed: "Failed" };
+  const STATE = { ready: "Ready", draft: "Draft", scheduled: "Scheduled", running: "Working", failed: "Failed", interrupted: "Interrupted" };
   const q = () => $("#agQuery");
   const fill = (text, fmt) => { const t = q(); t.value = text; t.dispatchEvent(new Event("input")); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
     if (fmt) { $("#agFormat").value = fmt; window.mpThemePicker && window.mpThemePicker.refresh(); } };
@@ -253,9 +253,11 @@
     $("#mpUser").innerHTML = `<div class="mp-bubble"><p>${esc(said)}</p>${up ? `<span class="mp-att">${up.type === "video" ? `<video src="${esc(up.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${esc(up.url)}" alt="">`}<small>${esc(up.name || "Your " + up.type)}${up.duration ? " · " + fmtDur(up.duration) : ""}</small></span>` : ""}</div>`;
     const steps = r.steps || [], cur = steps.find((s) => s.status === "running"), done = steps.filter((s) => ["done", "warn"].includes(s.status)).length;
     $("#mpTraceSum").textContent = busy ? `Working · ${done} of ${Math.max(steps.length, done + 1)} steps` : `${steps.length} step${steps.length === 1 ? "" : "s"} · ${r.status === "failed" ? "stopped" : "done"}`;
-    $("#mpTrace").open = busy || r.status === "failed";
+    $("#mpTrace").open = busy || ["failed", "interrupted"].includes(r.status);  // collapsed once it's done
     $("#mpStatus").innerHTML = busy ? `<span class="spin" aria-hidden="true"></span>${esc(cur ? cur.label + (cur.detail ? ": " + cur.detail.slice(0, 80) : "") + "…" : "Thinking…")}`
       : r.status === "failed" ? `<span class="mp-dot bad" aria-hidden="true"></span>Stopped. Reply below to try again.`
+      : r.status === "interrupted" ? `<span class="mp-dot bad" aria-hidden="true"></span>Interrupted by a server restart. Press Resume below.`
+      : res.rights_question && !res.recap && !(res.rights || {}).mode ? `<span class="mp-dot" aria-hidden="true"></span>Needs your answer below`
       : res.recap && res.recap.awaiting_rights ? `<span class="mp-dot" aria-hidden="true"></span>Needs your answer below` : pk.length ? `<span class="mp-dot ok" aria-hidden="true"></span>Ready for review` : "";
     const src = sources(r);
     $("#mpSources").hidden = !src.length;
