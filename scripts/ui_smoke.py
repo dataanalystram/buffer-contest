@@ -95,6 +95,8 @@ with sync_playwright() as p:
     if not any(("Scheduled in Buffer" in t or "In the real app this would" in t) for t in toasts):
         print("planner save error:", pg.inner_text("#plDlgErr"))
         raise AssertionError("the planner save neither scheduled nor answered the demo line")
+    if pg.locator("dialog[open]").count():  # the demo leaves the dialog open on its answer; a real save closes it
+        pg.keyboard.press("Escape"); time.sleep(0.5)
     pg.click("[data-testid=tab-settings]"); time.sleep(1.5)
     pg.screenshot(path=str(out / "07_ai.png"), full_page=True)
     m = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
