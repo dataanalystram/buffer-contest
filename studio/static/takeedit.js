@@ -188,10 +188,10 @@ function paintCc() {
 $c("ceCc").onclick = () => { if (!CE) return; CE.cc = !CE.cc; $c("ceCc").setAttribute("aria-pressed", CE.cc); paintCc(); };
 $c("cePrevClip").onclick = () => step(-1);
 $c("ceNextClip").onclick = () => step(1);
-function step(d) {
+async function step(d) {
   if (!CE) return; const list = CE.t.clips || [], i = list.findIndex((x) => x.id === CE.id) + d;
   if (i < 0 || i >= list.length) return;
-  if (changes().length && !confirm("Leave this clip without saving your changes?")) return;
+  if (changes().length && !(await hqConfirm("Leave this clip without saving your changes?", { ok: "Leave clip", danger: true }))) return;
   player.pause(); window.openClipEditor(list[i].id);
 }
 

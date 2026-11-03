@@ -125,3 +125,5 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 @media (prefers-reduced-motion:reduce){.sw span,.sw span:after{transition:none}}
 .clip-row .clip-pf .pf-chip{font-size:11px;padding:2px 8px;line-height:1.4}
 .clip-row .clip-pf{gap:4px}
+/* why this moment was picked: two lines on the compact row, the full reason in the tooltip */
+.clip-row .clip-why { margin: 2px 0 0; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted, #667); }
