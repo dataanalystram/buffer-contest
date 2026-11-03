@@ -245,8 +245,8 @@
     } finally { K.busyThemes -= 1; }
   }
   const card = (c) => c.url
-    ? `<figure class="bk-card ${c.group === "kit" ? "k-" + c.id : "theme"}" data-testid="bk-card-${c.id}" data-card="${c.id}"><img src="${esc(c.url)}" decoding="async" ${c.group === "kit" ? "" : 'width="240" height="427"'} alt="${esc(c.label)} in ${esc(K.form.name || "your kit")}"><figcaption>${esc(c.label)}</figcaption></figure>`
-    : `<figure class="bk-card ${c.group === "kit" ? "k-" + c.id : "theme"} bad" data-testid="bk-card-${c.id}" data-card="${c.id}"><span>Couldn't draw</span><figcaption>${esc(c.label)}</figcaption></figure>`;
+    ? `<figure class="bk-card ${c.group === "kit" ? "k-" + c.id : "theme"}" data-testid="bk-card-${esc(c.id)}" data-card="${esc(c.id)}"><img src="${esc(c.url)}" decoding="async" ${c.group === "kit" ? "" : 'width="240" height="427"'} alt="${esc(c.label)} in ${esc(K.form.name || "your kit")}"><figcaption>${esc(c.label)}</figcaption></figure>`
+    : `<figure class="bk-card ${c.group === "kit" ? "k-" + c.id : "theme"} bad" data-testid="bk-card-${esc(c.id)}" data-card="${esc(c.id)}"><span>Couldn't draw</span><figcaption>${esc(c.label)}</figcaption></figure>`;
 
   // ------------------------------------------------------------ actions
   async function load(pickId) {

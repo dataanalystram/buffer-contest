@@ -36,7 +36,7 @@
   function tile(t) {
     const tipId = `integTip-${t.id}`;
     const act = t.action ? `<button class="btn2 sm integ-act" type="button" data-act="${esc(t.action)}" data-key="${esc(t.key || "")}" data-testid="integ-act-${t.id}">${esc(t.actLabel)}</button>`
-      : t.href ? `<a class="btn2 sm integ-act" href="${esc(t.href)}" target="_blank" rel="noopener" data-testid="integ-act-${t.id}">${esc(t.actLabel)} <span aria-hidden="true">↗</span></a>` : "";
+      : t.href ? `<a class="btn2 sm integ-act" href="${escUrl(t.href)}" target="_blank" rel="noopener" data-testid="integ-act-${t.id}">${esc(t.actLabel)} <span aria-hidden="true">↗</span></a>` : "";
     return `<div class="integ-tile${t.on ? " on" : ""}" data-testid="integ-tile-${t.id}" data-on="${t.on ? 1 : 0}">
       <div class="integ-tile-top">${mark(t.mark)}${chip(t.on, t.offLabel)}</div>
       <div class="integ-tile-name"><h3>${esc(t.name)}</h3>
@@ -109,7 +109,7 @@
       <p class="muted sm">${esc(c.unlocks)}</p>
       <details class="integ-how"${c.connected || (c.app && c.app.label) ? "" : " open"}><summary>${c.app && c.app.label ? "Use your own key" : "Get a key"}</summary>
         <ol class="sm">${c.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
-        <p class="sm"><a class="link" href="${esc(c.get_url)}" target="_blank" rel="noopener" data-testid="integ-get-${c.key}">Open ${esc(new URL(c.get_url).host)} ↗</a></p>
+        <p class="sm"><a class="link" href="${escUrl(c.get_url)}" target="_blank" rel="noopener" data-testid="integ-get-${c.key}">Open ${esc(new URL(c.get_url).host)} ↗</a></p>
         ${c.redirect_uri ? `<p class="muted xs">Redirect URI: <code class="integ-code" data-testid="integ-redirect">${esc(c.redirect_uri)}</code> <button class="link xs" type="button" data-copy="${esc(c.redirect_uri)}">Copy</button></p>` : ""}
       </details>
       <form class="integ-form" data-key="${c.key}" autocomplete="off">

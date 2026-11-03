@@ -158,8 +158,8 @@
       const groups = [["Covers per channel", (x) => x.name.startsWith("cover-")], ["Weekly recap carousel", (x) => /^recap-\d/.test(x.name)],
                       ["Launch", (x) => x.name.startsWith("launch-")], ["Tutorial", (x) => x.name.startsWith("tutorial-")], ["Quote", (x) => x.name.startsWith("quote-")]];
       box.innerHTML = `<div class="row"><h3 class="h3">${esc(g.title)}</h3>${g.label ? `<span class="bs-label">${esc(g.label)}</span>` : ""}<button class="link" type="button" id="bsGalClose">Close</button></div>` +
-        groups.map(([t, f]) => `<h4>${t}</h4><div class="bs-strip">${g.images.filter(f).map((x) => `<a href="/static/examples/${id}/${x.file}" target="_blank" rel="noopener"><img loading="lazy" src="/static/examples/${id}/${x.file}" alt="${esc(x.name)}"></a>`).join("")}</div>`).join("") +
-        `<h4>Reels (front card first, end card last)</h4><div class="bs-strip">${g.videos.map((v) => `<video controls muted playsinline preload="metadata" src="/static/examples/${id}/${v.file}" data-testid="bs-video"></video>`).join("")}</div>` +
+        groups.map(([t, f]) => `<h4>${t}</h4><div class="bs-strip">${g.images.filter(f).map((x) => `<a href="/static/examples/${esc(id)}/${esc(x.file)}" target="_blank" rel="noopener"><img loading="lazy" src="/static/examples/${esc(id)}/${esc(x.file)}" alt="${esc(x.name)}"></a>`).join("")}</div>`).join("") +
+        `<h4>Reels (front card first, end card last)</h4><div class="bs-strip">${g.videos.map((v) => `<video controls muted playsinline preload="metadata" src="/static/examples/${esc(id)}/${esc(v.file)}" data-testid="bs-video"></video>`).join("")}</div>` +
         `<h4>Captions per channel</h4><div class="bs-caps">${Object.entries(g.captions).map(([s, t]) => `<div><b>${esc(netName(s))}</b><pre>${esc(t)}</pre></div>`).join("")}</div>`;
       box.hidden = false; $("#bsGalClose").onclick = () => (box.hidden = true);
       box.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -313,7 +313,7 @@
         const r = await api("/api/brand-studio/preview", { method: "POST", body: { template: $("#bsTpl").value, service: $("#bsSvc").value, width: 300,
           kit: { colors: p.colors, font: p.font, body_font: p.body_font, headline_case: p.headline_case, handle: p.handle.replace(/^@/, ""), name: p.name,
                  front_card: p.front_card, end_card: p.end_card } } });
-        $("#bsStrip").innerHTML = r.slides.map((s, i) => `<img src="${s}" alt="Slide ${i + 1} of ${r.count}" data-testid="bs-slide">`).join("");
+        $("#bsStrip").innerHTML = r.slides.map((s, i) => `<img src="${esc(s)}" alt="Slide ${i + 1} of ${r.count}" data-testid="bs-slide">`).join("");
       } catch (e) { $("#bsStrip").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
     }, 300);
   }
@@ -439,11 +439,11 @@
         <span class="sa-pic-fb" aria-hidden="true">${fav(host)}<b>${esc(host)}</b></span>
         <label class="chk sa-pick"><input type="checkbox" data-pick="${c.id}" data-testid="sa-pick" ${B.picks.has(c.id) ? "checked" : ""} aria-label="Pick ${esc(c.story.headline)}"></label></div>
       <div class="sa-b"><div class="sa-src">${fav(host)}<span>${esc(it.source || host)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}${AGENT[c.agent] ? `<span class="sa-warn">${AGENT[c.agent]}</span>` : ""}</div>
-        <h3><a href="${esc(url)}" target="_blank" rel="noopener">${esc(c.story.headline)}</a></h3>
+        <h3><a href="${escUrl(url)}" target="_blank" rel="noopener">${esc(c.story.headline)}</a></h3>
         ${why ? `<p class="sa-why" data-testid="sa-why"><b>Why it matters:</b> ${esc(why)}</p>` : ""}
         <div class="sa-tags" data-testid="sa-tags">${tags.map((t) => `<span class="sa-tag">${esc(t)}</span>`).join("")}<span class="sa-score muted">score ${c.score}</span></div>
         <div class="sa-act"><button class="btn sm" type="button" data-make="${esc(url)}" data-testid="sa-make">Make post</button>
-          <a class="link sm" href="${esc(url)}" target="_blank" rel="noopener" data-testid="sa-open">Open source</a></div></div></li>`;
+          <a class="link sm" href="${escUrl(url)}" target="_blank" rel="noopener" data-testid="sa-open">Open source</a></div></div></li>`;
   }
   function list(page) {
     B.page = page || 1;
