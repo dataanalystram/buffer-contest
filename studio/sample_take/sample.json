@@ -3135,6 +3135,13 @@
      "kind": "video",
      "bytes": 2292250
     }
+   },
+   "source_window": {
+    "file": "src1.mp4",
+    "start": 2043.98,
+    "end": 2085.14,
+    "width": 960,
+    "height": 640
    }
   },
   {
@@ -3164,6 +3171,13 @@
      "kind": "video",
      "bytes": 2340753
     }
+   },
+   "source_window": {
+    "file": "src2.mp4",
+    "start": 2134.0,
+    "end": 2173.43,
+    "width": 960,
+    "height": 640
    }
   },
   {
@@ -3193,6 +3207,13 @@
      "kind": "video",
      "bytes": 2153453
     }
+   },
+   "source_window": {
+    "file": "src3.mp4",
+    "start": 2828.52,
+    "end": 2868.98,
+    "width": 960,
+    "height": 640
    }
   },
   {
@@ -3222,6 +3243,13 @@
      "kind": "video",
      "bytes": 1918810
     }
+   },
+   "source_window": {
+    "file": "src4.mp4",
+    "start": 4528.5,
+    "end": 4559.08,
+    "width": 960,
+    "height": 640
    }
   },
   {
@@ -3251,6 +3279,13 @@
      "kind": "video",
      "bytes": 1669066
     }
+   },
+   "source_window": {
+    "file": "src5.mp4",
+    "start": 5209.64,
+    "end": 5237.05,
+    "width": 960,
+    "height": 640
    }
   }
  ]

@@ -137,7 +137,7 @@ async function finish(toAgent) {
   S.selected.clear(); defaultChannels().forEach((c) => S.selected.add(c.id));
   if (!toAgent) showTab("inbox");
 }
-function close() { if (!O.el) return; O.el.hidden = true; O.el.innerHTML = ""; document.removeEventListener("keydown", keys, true); O.back?.focus?.(); }
+function close() { if (!O.el) return; O.el.hidden = true; O.el.innerHTML = ""; document.removeEventListener("keydown", keys, true); O.back?.focus?.(); window.dispatchEvent(new CustomEvent("hq:interests")); }
 function keys(e) { if (e.key === "Escape" && O.el && !O.el.hidden) { e.preventDefault(); O.el.querySelector("[data-onb=skip]")?.click(); } }
 async function onbOpen(step) {
   await onbState();

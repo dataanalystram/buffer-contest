@@ -417,9 +417,14 @@ class Studio:
         return [dict(r) for r in self.store.q("SELECT id,url,created FROM feeds WHERE user_id=? ORDER BY id", (a.uid,))]
 
     def radar(self, a: Actor) -> dict:
-        out = {"feeds": self.feeds(a), **radar.stories(self.feeds(a))}
+        """The For you feed: the newest stories from the feeds you follow, filtered and ranked by the interests you
+        accepted in setup (onboarding content types, kept per account), the same way on every refresh."""
+        from . import onboarding
+        feeds = self.feeds(a)
+        out = {"feeds": feeds, **radar.stories(feeds, limit=80)}
         if demo_guard.is_demo(a.uid) and not out.get("stories"):  # the sample's feeds couldn't be read: show sample stories
             out["stories"], out["sample"] = [dict(s) for s in demo.SAMPLE_STORIES], True
+        out.update(onboarding.rank_stories(out["stories"], onboarding.interests(self.store, a.uid)))
         return out
 
     def add_feed(self, a: Actor, url: str) -> dict:

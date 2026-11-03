@@ -40,3 +40,12 @@ dialog.rm-dialog{width:min(680px,calc(100vw - 32px));max-height:calc(100dvh - 48
   .rm-track .rm-kind{display:none}
 }
 .rm-chosen .rm-txt small{white-space:normal}
+/* one picker for the package dialog and One take's Music tab (HQMusic.mount) */
+.rm-picker{display:flex;flex-direction:column;gap:12px}
+.rm-about{margin:0}
+.rm-about b{font-weight:600;color:var(--ink)}
+.rm-who{font-weight:400;color:var(--muted)}
+.rm-chosen.sm{grid-template-columns:32px minmax(0,1fr);padding:6px 8px;gap:8px}
+.rm-chosen.sm img,.rm-chosen.sm .rm-art{width:32px;height:32px}
+.rm-mix input[type=range]{accent-color:var(--ink)}
+.rm-track.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink) inset}

@@ -406,7 +406,12 @@ def t_read_x_post(studio, a, args):
 
 def t_find_media(studio, a, args):
     from .media import tools as mt
-    out = mt.media_find(str(args.get("query") or ""), max_results=int(args.get("max_results") or 5), http=studio.house.http)
+    try:
+        from . import appkeys
+        ph = appkeys.ph_app_token(studio.house.http)  # Product Hunt's launch video + gallery for a product link
+    except Exception:  # noqa: BLE001
+        ph = ""
+    out = mt.media_find(str(args.get("query") or ""), max_results=int(args.get("max_results") or 5), http=studio.house.http, ph_token=ph)
     return {**out, "spent_usd": 0}
 
 

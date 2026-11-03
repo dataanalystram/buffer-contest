@@ -94,10 +94,16 @@ TOOLS: list[dict[str, Any]] = [
          "name": {"type": "string"}, "sample": {"type": "boolean"}}}},
     {"name": "list_clips", "description": "Without take_id: the user's takes. With take_id: the take's progress steps and its clips (video and cover URLs, start/end in the source, hook, transcript, layout, preflight per channel, the caption per network, and where each clip was placed).",
      "inputSchema": {"type": "object", "properties": {"take_id": {"type": "integer"}}}},
-    {"name": "adjust_clip", "description": "Edit one clip of a take: trim (start_ms/end_ms in the source video; re-renders on the worker), a new hook for the cover (must be at least 3 words quoted from the clip), or the post caption (caption, optionally for one service). Returns the take.",
+    {"name": "adjust_clip", "description": "Trim & caption one clip of a take (the same edits as the UI's Trim & caption window). Any of: in/out (start_ms/end_ms in the source video; the sample take only inside its moment), transcript (the clip's corrected words: fixes the burned-in captions, timings follow the voice), hook (the cover line: at least 3 words quoted from the clip), caption + service or captions {service: text} (post caption per network; only the take's channels, each within its network's limit), music (an Instagram track from search_instagram_audio for the Reel, with music_volume / original_volume 0-100; null removes it; Instagram picks which part of the track plays). Timing, transcript and hook re-render the clip on the video worker (poll list_clips until the clip is ready: it gets a new url); captions and music save at once. Returns the take with changed and rerendering.",
      "inputSchema": {"type": "object", "required": ["take_id", "clip_id"], "properties": {"take_id": {"type": "integer"}, "clip_id": {"type": "string"},
-         "start_ms": {"type": "integer"}, "end_ms": {"type": "integer"}, "hook": {"type": "string"}, "caption": {"type": "string"},
-         "service": {"type": "string", "description": "Network the caption is for (instagram, tiktok, youtube, ...); omit for all"}}}},
+         "start_ms": {"type": "integer"}, "end_ms": {"type": "integer"}, "transcript": {"type": "string"}, "hook": {"type": "string"},
+         "caption": {"type": "string"}, "service": {"type": "string", "description": "Network the caption is for (instagram, tiktok, youtube, ...); omit for all"},
+         "captions": {"type": "object", "additionalProperties": {"type": "string"}, "description": "{service: caption} for several networks at once"},
+         "music": {"type": ["object", "null"], "description": "Instagram Reel music: a track from search_instagram_audio (audio_id, title, type, duration_ms), or null to remove"},
+         "music_volume": {"type": "integer", "minimum": 0, "maximum": 100}, "original_volume": {"type": "integer", "minimum": 0, "maximum": 100}}}},
+    {"name": "rewrite_clip_caption", "description": "An AI rewrite of one clip's post caption for one of the take's networks, using only what was said in the clip. Returns the suggestion with its character count and the network limit; nothing is saved until you pass it to adjust_clip.",
+     "inputSchema": {"type": "object", "required": ["take_id", "clip_id", "service"], "properties": {"take_id": {"type": "integer"}, "clip_id": {"type": "string"},
+         "service": {"type": "string"}, "text": {"type": "string", "description": "The caption to improve (default: the current one)"}}}},
     {"name": "place_clips_in_week", "description": "The Spread: put a take's ready clips into the open Buffer posting slots of a week as DRAFTS (never published). Step 1 (default dry_run): returns the plan (clip, channel, time in the channel's timezone, caption, preflight) and a single-use confirm_token. Show it to the user. Step 2: call again with confirm_token to create the drafts; with a 'review' token each one waits in the Approvals inbox first. week_of: 'next' (default), 'this' or a date in the week.",
      "inputSchema": {"type": "object", "required": ["take_id"], "properties": {"take_id": {"type": "integer"},
          "channel_ids": {"type": "array", "items": {"type": "string"}}, "clip_ids": {"type": "array", "items": {"type": "string"}},
@@ -253,10 +259,14 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return {"takes": h.takes.list(actor)}
     if name == "adjust_clip":
         t = h.takes.adjust(actor, int(args.get("take_id") or 0), args.get("clip_id", ""),
-                           {k: args[k] for k in ("start_ms", "end_ms", "hook", "caption", "service") if k in args})
+                           {k: args[k] for k in ("start_ms", "end_ms", "hook", "caption", "service", "captions", "transcript", "music",
+                                                 "music_volume", "original_volume") if k in args})
         for c in t["clips"]:
             c.pop("words", None)
         return t
+    if name == "rewrite_clip_caption":
+        return h.takes.rewrite_caption(actor, int(args.get("take_id") or 0), args.get("clip_id", ""), args.get("service", ""),
+                                       args.get("text", ""))
     if name == "place_clips_in_week":
         body = {k: args[k] for k in ("channel_ids", "clip_ids", "week_of", "confirm_token", "override_warnings") if k in args}
         body["dry_run"] = args.get("dry_run", True) if not args.get("confirm_token") else None
