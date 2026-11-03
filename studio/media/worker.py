@@ -99,7 +99,8 @@ def _covers(spec: dict, source_path: str, brand: dict, style: str, ratio: str, t
         hero = get(urls["cover_image"]) if urls.get("cover_image") else None
         names = spec.get("names") or []
         cv = cov.make_covers(source_path, image=hero, hook=spec.get("cover_hook") or spec.get("hook") or "", brand=brand,
-                             name=names[0] if names else "", clip=tuple(spec["clip"]) if spec.get("clip") else None)
+                             name=names[0] if names else "", clip=tuple(spec["clip"]) if spec.get("clip") else None,
+                             as_written=bool(spec.get("cover_title_given")))
     except Exception as e:  # noqa: BLE001
         print(f"covers skipped: {e.__class__.__name__}: {str(e)[:120]}")
         return [], None, 0

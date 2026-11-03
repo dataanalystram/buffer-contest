@@ -113,6 +113,12 @@ def start_media_check(house: "House", every: float | None = None, first_delay: f
                 house.media_audit()
             except Exception as e:  # noqa: BLE001 - keep checking
                 print(f"media check: {e.__class__.__name__}: {e}", flush=True)
+            try:  # Library items deleted more than TRASH_DAYS ago are removed for good (library.Library.purge_trash)
+                n = house.library.purge_trash()
+                if n:
+                    print(f"library trash: removed {n} item(s) for good", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"library trash: {e.__class__.__name__}: {e}", flush=True)
             time.sleep(every)
     t = threading.Thread(target=loop, daemon=True, name="media-check")
     t.start()
@@ -512,8 +518,9 @@ class House:
             if n:
                 bad.append({"run_id": rid, "user_id": uid, "missing": n,
                             "state": "missing" if any(v["state"] == "missing" for v in st.values()) else "partial"})
+        gone = {self.media_token_of(u) for _, _, pks in runs for st in [self.media_state(pks, have)] for v in st.values() for u in v["missing"]}
         self.media_health = {"checked_at": _now(), "runs_checked": len(runs), "files_checked": len(toks),
-                             "files_missing": sum(b["missing"] for b in bad), "runs": bad}
+                             "files_missing": sum(b["missing"] for b in bad), "unique_files_missing": len(gone - {""}), "runs": bad}
         if bad:
             print(f"media check: {len(bad)} ready run(s) reference missing files: "
                   + ", ".join(f"#{b['run_id']} ({b['missing']})" for b in bad[:10]), flush=True)

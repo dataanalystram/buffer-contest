@@ -43,13 +43,19 @@ def test_templates_tab_lists_every_kit_and_picking_one_redraws_the_templates(dem
         assert page.locator("[data-testid=tpl-kit-nothing]").get_attribute("data-active") == "false"
         assert page.inner_text("[data-testid=tpl-kit-name]") == "HuhByte AI"
         _until(lambda: page.locator("[data-testid=tpl-preview]").first.get_attribute("src") != before)
+        # back to Nothing: its previews come back at once (cached per kit version) and in Nothing's style, not HuhByte's
+        t0 = time.time()
+        page.click("[data-testid=tpl-kit-nothing]")
+        _until(lambda: page.locator("[data-testid=tpl-kit-nothing]").get_attribute("data-active") == "true")
+        _until(lambda: page.locator("[data-testid=tpl-preview]").first.get_attribute("src") == before, timeout=10)
+        assert time.time() - t0 < 1.5, f"cached kit previews took {time.time() - t0:.2f}s"
         # the view-only demo won't save a new kit: adding the Notion sample answers the friendly line, nothing is added
         page.click("[data-testid=tpl-kit-add-notion]")
         page.get_by_text("The demo doesn't change anything.").first.wait_for()
         assert page.locator("[data-testid=tpl-kit-notion]").count() == 0
         assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 1
         page.click("[data-testid=brand-tab-kit]")  # the builder followed the switch
-        _until(lambda: page.input_value("[data-testid=bk-name]") == "HuhByte AI")
+        _until(lambda: page.input_value("[data-testid=bk-name]") == "Nothing")
         assert not errors, errors
         assert not buffer_calls
     finally:

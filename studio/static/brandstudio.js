@@ -223,32 +223,79 @@
     if (btn.classList.contains("on")) { templatePreviews(); return; }
     btn.disabled = true; btn.setAttribute("aria-busy", "true");
     const t0 = performance.now();
+    const known = what.id && B.kitsMeta && (B.kitsMeta.kits || []).find((k) => k.id === what.id);
+    if (known) {  // a kit already in the list: mark it and show the previews this tab has for it now, before the round trips
+      B.kitsMeta.kits.forEach((k) => (k.active = k.id === what.id));
+      document.querySelectorAll("#bsKits [data-kitid]").forEach((b) => {
+        const on = +b.dataset.kitid === what.id;
+        b.classList.toggle("on", on); b.dataset.active = String(on); b.setAttribute("aria-checked", String(on));
+      });
+      $("#bsTplKitName").textContent = known.name;
+      templatePreviews();
+    }
     try {
       const r = what.id ? await api(`/api/brand-kits/${what.id}/activate`, { method: "POST", body: {} })
         : await api("/api/brand-kits", { method: "POST", body: { ...what, activate: true } });
       toast(`${r.name} is the active kit. Every template now renders in it.`);
       B.kit = null;
-      await loadBrand();
-      window.HQBrandKit?.reload?.();
       window.dispatchEvent(new CustomEvent("hq:brand-kit", { detail: { id: r.id, from: "templates" } }));
-      await loadKits();
+      await Promise.all([loadBrand().then(() => window.HQBrandKit?.reload?.()), loadKits()]);
       $("#bsKitsMs").textContent = `Switched in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
-    } catch (e) { toast(e.message); btn.disabled = false; btn.removeAttribute("aria-busy"); }
+    } catch (e) {
+      toast(e.message); btn.disabled = false; btn.removeAttribute("aria-busy");
+      if (known) loadKits();  // put the list back the way the server has it
+    }
   }
+  // "Every template in <kit>": each template's first slide drawn in the ACTIVE kit (by its id, so it never falls back to
+  // another kit's style), one request per template, all in flight at once, each card filled the moment it arrives.
+  // The server caches every card (kit render fields + logo + template), so a kit seen before shows at once; this tab
+  // also keeps the URLs it got per kit version, so switching back costs no request at all.
+  const cbadge = (t) => (t.custom ? ' <span class="bs-custom" data-testid="tpl-custom">Custom</span>' : "");
+  const tplCache = new Map();  // kit id:updated:theme -> {template id: url}
   async function templatePreviews() {
     const box = $("#bsTplPrev"); if (!box || !B.tpls || !B.tpls.length) return;
     const seq = (B.tplSeq = (B.tplSeq || 0) + 1);
-    box.classList.add("stale"); box.setAttribute("aria-busy", "true");
-    if (!box.children.length) box.innerHTML = B.tpls.map((t) => `<figure class="bs-tplcard" data-tpl="${t.id}"><span class="bk-sk"></span><figcaption>${esc(t.name)}</figcaption></figure>`).join("");
-    for (const t of B.tpls) {
+    const act = ((B.kitsMeta || {}).kits || []).find((k) => k.active);
+    const ver = act ? `${act.id}:${act.updated}:${JSON.stringify(act.kit.theme || {})}` : "house";
+    const have = tplCache.get(ver) || {};
+    const c = (act && act.kit.builder_colors) || {};
+    box.style.setProperty("--kit-g", c.background || "");
+    box.dataset.kit = act ? String(act.id) : "";
+    box.innerHTML = B.tpls.map((t) => have[t.id]
+      ? `<figure class="bs-tplcard" data-tpl="${t.id}"><img src="${esc(have[t.id])}" alt="${esc(t.name)} in ${esc(act ? act.name : "your kit")}" data-testid="tpl-preview"><figcaption>${esc(t.name)}${cbadge(t)}</figcaption></figure>`
+      : `<figure class="bs-tplcard" data-tpl="${t.id}"><span class="bk-sk bs-tplsk" data-testid="tpl-preview-ph"></span><figcaption>${esc(t.name)}</figcaption></figure>`).join("");
+    const todo = B.tpls.filter((t) => !have[t.id]);
+    if (!todo.length) { box.setAttribute("aria-busy", "false"); return; }
+    box.setAttribute("aria-busy", "true");
+    const t0 = performance.now();
+    const one = async (t) => {
+      let url = null;
       try {
-        const r = await api("/api/brand-studio/preview", { method: "POST", body: { template: t.id, service: "instagram", width: 240, max: 1 } });
-        if (seq !== B.tplSeq) return;
-        const f = box.querySelector(`[data-tpl="${t.id}"]`);
-        if (f) f.innerHTML = `<img src="${r.slides[0]}" alt="${esc(t.name)} in your kit" data-testid="tpl-preview"><figcaption>${esc(t.name)}${t.custom ? ' <span class="bs-custom" data-testid="tpl-custom">Custom</span>' : ""}</figcaption>`;
-      } catch (e) { if (seq !== B.tplSeq) return; }
-    }
-    box.classList.remove("stale"); box.setAttribute("aria-busy", "false");
+        const r = act && !t.custom  // custom templates are drawn by the Brand studio preview (in the active kit)
+          ? await api("/api/brand-kits/preview", { method: "POST", body: { kit_id: act.id, part: "templates", ids: [t.id], width: 240 } })
+          : null;
+        const card = r && r.cards && r.cards[0];
+        url = card && card.url;
+        if (!r) {  // no saved kit yet: the house kit (older path)
+          const p = await api("/api/brand-studio/preview", { method: "POST", body: { template: t.id, service: "instagram", width: 240, max: 1 } });
+          url = p.slides && p.slides[0];
+        }
+      } catch (_) { url = null; }
+      if (seq !== B.tplSeq) return;
+      const f = box.querySelector(`[data-tpl="${t.id}"]`);
+      if (!f) return;
+      if (url) {
+        have[t.id] = url; tplCache.set(ver, have);
+        f.innerHTML = `<img src="${esc(url)}" alt="${esc(t.name)} in ${esc(act ? act.name : "your kit")}" data-testid="tpl-preview"><figcaption>${esc(t.name)}${cbadge(t)}</figcaption>`;
+        if (!box.dataset.first) box.dataset.first = String(Math.round(performance.now() - t0));
+      } else {
+        f.innerHTML = `<span class="bk-sk bs-tplsk off" data-testid="tpl-preview-failed"></span><figcaption>${esc(t.name)} <button type="button" class="linkish" data-retry="${t.id}">Retry</button></figcaption>`;
+        const rb = f.querySelector("[data-retry]"); if (rb) rb.onclick = () => one(t);
+      }
+    };
+    delete box.dataset.first;
+    await Promise.all(todo.map(one));
+    if (seq === B.tplSeq) box.setAttribute("aria-busy", "false");
   }
   window.addEventListener("hq:brand-kit", (e) => {  // the builder saved or switched a kit: the Templates tab follows at once
     if (e.detail && e.detail.from === "templates") return;

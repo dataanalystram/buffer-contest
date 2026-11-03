@@ -346,9 +346,69 @@ class Brain:
             self.h._save(rid, run["steps"], res, "running")
             self._spawn(self._recap_go, a, rid, ans)
             return self.h.run(a, rid)
+        edits = intake.video_edits(text)
+        if edits and self._video_run(res):  # "trim the first 3 s and add captions": edit_video on this run's video
+            self.h._save(rid, run["steps"], res, "running")
+            self._spawn(self._edit_go, a, rid, edits)
+            return self.h.run(a, rid)
         self.h._save(rid, run["steps"], res, "running")
         self._spawn(self._go, a, rid, text)
         return self.h.run(a, rid)
+
+    @staticmethod
+    def _video_run(res: dict) -> bool:
+        """This run has a video to edit: an upload / fetched clip, a found maker video, or a rendered Reel."""
+        fm = res.get("found_media") if isinstance(res.get("found_media"), dict) else {}
+        return bool(res.get("clip_token") or (fm.get("best_downloadable") or {}).get("url")
+                    or any(v.get("format") == "reel" for v in (res.get("channel_media") or {}).values()))
+
+    @staticmethod
+    def edit_reply(out: dict) -> str:
+        """The thread's answer to a plain-word edit: what changed, where, how long, by which worker."""
+        did = ", ".join(out.get("edits") or []) or "re-rendered"
+        parts = []
+        for r in out.get("renders") or []:
+            where = " + ".join(s.title() for s in r.get("channels") or [])
+            if r.get("format") != "reel":
+                parts.append(f"{where}: no video this time ({(r.get('note') or '')[:140]})")
+                continue
+            ln = f", {r['duration_s']:.1f} s" if r.get("duration_s") else ""
+            parts.append(f"{where} {r.get('ratio')}{ln}")
+        backend = next((n for n in (r.get("note") or "" for r in out.get("renders") or []) if n.startswith("Rendered")), "")
+        backend = backend.split(",")[0].split(".")[0]
+        msg = f"Done: {did}. " + ("; ".join(parts) + "." if parts else "")
+        if out.get("kept_vertical"):
+            msg += f" {', '.join(s.title() for s in out['kept_vertical'])} stay 9:16 (vertical only)."
+        if backend:
+            msg += f" {backend}."
+        if out.get("needs_confirmation"):
+            msg += " " + (out.get("question") or "")
+        return msg.strip()
+
+    def _edit_go(self, a: Actor, rid: int, edits: dict, channel_ids: list | None = None) -> None:
+        with _rlock:
+            _running.add(rid)
+        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
+        tools = Tools(self.h, a, rid)
+        try:
+            run = self.h.run(a, rid)
+            if not run["result"].get("story"):
+                self.call(a, rid, tools, "extract_facts", {})
+            out = self.call(a, rid, tools, "edit_video", {**edits, **({"channel_ids": channel_ids} if channel_ids else {})})
+            self._say(a, rid, self.edit_reply(out))
+            run = self.h.run(a, rid)
+            self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else run["status"])
+        except ActionError as e:
+            self._say(a, rid, f"I couldn't make that edit: {str(e)[:300]}")
+            run = self.h.run(a, rid)
+            self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
+        except Exception as e:  # never leave a run spinning
+            traceback.print_exc()
+            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+        finally:
+            activity.end(tok)
+            with _rlock:
+                _running.discard(rid)
 
     def _reply_upload(self, a: Actor, rid: int, text: str, token: str) -> dict:
         """The answer to "Upload the file and I'll brand it": the person's file becomes this run's video (credited to the
@@ -376,10 +436,10 @@ class Brain:
             res["plan"] = [p for p in res.get("plan") or [] if not str(p).lower().startswith(("launch video is on", "no video found"))]
             res["plan"].insert(0, f"Your upload is the video: branded as a Reel, credited “{res.get('video_credit') or 'your video'}”")
         self.h._save(rid, run["steps"], res, "running")
-        self._spawn(self._upload_go, a, rid)
+        self._spawn(self._upload_go, a, rid, intake.video_edits(text))  # "here's the file, trim the first 3 s" in one reply
         return self.h.run(a, rid)
 
-    def _upload_go(self, a: Actor, rid: int) -> None:
+    def _upload_go(self, a: Actor, rid: int, edits: dict | None = None) -> None:
         with _rlock:
             _running.add(rid)
         tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
@@ -392,7 +452,10 @@ class Brain:
             chans = run["input"]["channels"]
             reel = [c["id"] for c in chans if c["service"] in VIDEO_ONLY or c["service"] == "instagram"]
             feed = [c["id"] for c in chans if c["service"] in ("facebook", "linkedin")]
-            if reel:
+            edited = None
+            if reel and edits:  # the edits asked for with the file: one render with them, and the reply says what changed
+                edited = self.call(a, rid, tools, "edit_video", {**edits, "channel_ids": reel})
+            elif reel:
                 self.call(a, rid, tools, "render_reel", {"channel_ids": reel, "rights_confirmed": True})
             if feed:
                 self.call(a, rid, tools, "render_reel", {"channel_ids": feed, "ratio": "4:5", "rights_confirmed": True},
@@ -403,8 +466,11 @@ class Brain:
             run = self.h.run(a, rid)
             res = run["result"]
             n = len([p for p in res.get("packages") or [] if p.get("format") == "reel"])
-            self._say(a, rid, f"Your video is branded and ready as a Reel on {n} channel{'s' if n != 1 else ''}. "
-                              "Pick another cover under each video, or reply to change anything.")
+            if edited:
+                self._say(a, rid, self.edit_reply(edited) + " Reply to change anything else.")
+            else:
+                self._say(a, rid, f"Your video is branded and ready as a Reel on {n} channel{'s' if n != 1 else ''}. "
+                                  "Pick another cover under each video, or reply to change anything.")
             self.h._save(rid, run["steps"], res, "ready" if res.get("packages") else "failed")
         except ActionError as e:
             self._fail(a, rid, str(e))

@@ -335,7 +335,7 @@ def test_the_sample_kits_are_warmed_so_the_demo_builder_opens_from_the_cache(cli
     monkeypatch.setattr(brand_kits, "_disk_dir", str(tmp_path))
     brand_kits.cache_clear()
     w = brand_kits.attach(client.app.state.studio.house).warm()
-    assert w["cards"] == 2 * (3 + 21)
+    assert w["cards"] == 2 * (3 + 21 + len(brand_kits.templates.TEMPLATES))  # kit cards, themes, template previews
     client.get("/demo")
     client.headers["X-HQ-CSRF"] = client.get("/api/session").json()["csrf"]
     lst = client.get("/api/brand-kits").json()

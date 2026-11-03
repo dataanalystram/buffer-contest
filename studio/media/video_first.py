@@ -147,8 +147,26 @@ def yt_allowed() -> bool:
     return bool(os.environ.get("HQ_YT_FALLBACK"))
 
 
+LAUNCH_HOWS = {"product_hunt", "yc_launch", "official_channel"}  # the launch film the maker posted for the launch itself
+HERO_RX = re.compile(r"(?:^|[/_.-])(?:hero|loop|loops|background|bg|banner|ambient|header|backdrop|splash)(?:[/_.-]|\d|$)", re.I)
+YC_LAUNCH_RX = re.compile(r"^https?://(?:www\.)?ycombinator\.com/(?:launches|companies)/", re.I)
+
+
+def is_hero_loop(c: dict) -> bool:
+    """A website's decorative hero / background loop (aviern.com/renders/web-hero.av1.mp4): a real video of the product,
+    but not its launch film. Kept as the fallback when nothing better can be fetched."""
+    if c.get("how") in LAUNCH_HOWS or c.get("platform") not in ("direct", "web", None):
+        return False
+    path = urlparse(c.get("url") or "").path
+    d = c.get("duration")
+    return bool(HERO_RX.search(path)) or (isinstance(d, (int, float)) and 0 < d < 12)
+
+
 def _rank_key(c: dict) -> tuple:
-    return (0 if c.get("official") else 1, DIRECT_FIRST.get(c["platform"], 8), -c.get("confidence", 0))
+    """Official first; then the launch film (Product Hunt / YC launch / the maker's channel) before other videos, and a
+    site's hero loop last; then direct files before platforms."""
+    return (0 if c.get("official") else 1, 1 if is_hero_loop(c) else 0, 0 if c.get("how") in LAUNCH_HOWS else 1,
+            DIRECT_FIRST.get(c["platform"], 8), -c.get("confidence", 0))
 
 
 def _fetchable(c: dict) -> bool:
@@ -244,7 +262,28 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
             website = website or _site_from_search(name, http)
         steps.append({"step": "product_hunt", "ok": bool(ph), "found": len(ph.get("all_videos") or []) if ph else 0, "note": note})
     elif not website:
-        website = next((u for u in links if not find.platform_of(u)), "")
+        website = next((u for u in links if not find.platform_of(u) and not YC_LAUNCH_RX.match(u)), "")
+
+    # a1. a YC launch page (ycombinator.com/launches/...): the founders' launch video is embedded there (usually YouTube)
+    for yl in [u for u in links if YC_LAUNCH_RX.match(u)][:1]:
+        found, note = 0, ""
+        try:
+            got, ctx = find.from_page(yl, http)
+            if not name:  # "Launch YC: Aviern: Unmanned cargo airplanes ..." -> Aviern
+                t = re.sub(r"^\s*launch\s+yc\s*:\s*", "", ctx.get("title") or "", flags=re.I)
+                name = re.split(r"\s*[:|–—-]\s", t)[0].strip()[:60] if t and t != (ctx.get("title") or "") else name
+            seen = set()
+            for c in got:
+                if c["kind"] == "video" and c["url"] not in seen:
+                    seen.add(c["url"])
+                    c.update(how="yc_launch", official=True, confidence=max(c.get("confidence", 0.5), 0.95), source_page=yl)
+                    cands.append(c)
+                    found += 1
+        except Exception as e:  # noqa: BLE001 - one source failing never stops the cascade
+            note = f"The YC launch page didn't open ({e.__class__.__name__})."
+        steps.append({"step": "yc_launch", "ok": not note, "found": found, "note": note, "url": yl})
+    if not website:
+        website = next((u for u in links if not find.platform_of(u) and not YC_LAUNCH_RX.match(u)), "")
 
     # a2. Product Hunt's website field is often a producthunt.com/r/... redirect that 403s: find the real site first,
     #     so the maker's own video (e.g. screen.studio's hero-demo.mp4) is checked before YouTube.
@@ -302,7 +341,7 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
             c["official"] = True
 
     # c. the official channel, by web search, when nothing fetchable came from the maker yet
-    if name and not any(_fetchable(c) for c in cands):
+    if name and not any(_fetchable(c) and not is_hero_loop(c) for c in cands):  # a hero loop alone: still look for the launch film
         found, note, extra = 0, "", []
         if not search_available(youtube_api_key):
             note = "No web search is configured on this server for the official channel."
@@ -337,9 +376,12 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
             c["downloadable"] = False
             c["blocked"] = c.get("blocked") or "youtube_blocks_servers"
     ranked = sorted(vids.values(), key=_rank_key)
+    for c in ranked:
+        if is_hero_loop(c):
+            c["note"] = c.get("note") or "the website's hero loop (used only when the launch video can't be fetched)"
     official = [c for c in ranked if c.get("official")]
     pick = next((c for c in official if _fetchable(c)), None)
-    launch = (official or [None])[0]
+    launch = pick or (official or [None])[0]  # the video we use; else the best official one anywhere (the YouTube original)
     maker = name or (launch or {}).get("uploader") or dom or "the maker"
     credit = f"Video: {maker}"
     for c in ranked:
