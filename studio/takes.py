@@ -492,6 +492,7 @@ class Takes:
             ctok = self.h.put_media(a, cover, f"cover-{clip_id}.jpg", kind="render", meta={"type": "photo", "cover": True})
             clip.update(status="rendered", token=tok, url=self.media_url(tok), cover_token=ctok, cover_url=self.media_url(ctok),
                         meta=meta, rendered_at=_now())
+            clip.pop("rerender_error", None)
             done = sum(1 for c in res["clips"] if c["status"] in ("rendered", "ready"))
             todo = len(j["spec"].get("clips") or [])
             got = sum(1 for c in res["clips"] if c["id"] in {x["id"] for x in j["spec"].get("clips") or []} and c["status"] == "rendered")
@@ -511,7 +512,11 @@ class Takes:
         self.store.x("UPDATE render_jobs SET status=?, error=?, updated=? WHERE id=?",
                      ("failed" if error and failed else "done", (error or "")[:500], _now(), jid))
         for c in failed:
-            c["status"], c["error"] = "failed", (error or "The worker didn't return this clip.")[:300]
+            why = (error or "The worker didn't return this clip.")[:300]
+            if c.get("url"):  # a re-render that failed keeps the clip's previous video, and says so on the clip
+                c["status"], c["rerender_error"] = "rendered", why
+            else:
+                c["status"], c["error"] = "failed", why
         ok = [c for c in res.get("clips", []) if c.get("url")]
         if not ok:
             for k in ("reframe", "captions", "covers"):
@@ -593,7 +598,7 @@ class Takes:
         clips = []
         for c in res.get("clips", []):
             d = {k: c.get(k) for k in ("id", "moment_id", "status", "start", "end", "hook", "text", "score", "why", "url", "cover_url",
-                                       "error", "placements", "preflight", "captions", "rank", "reasons")}
+                                       "error", "placements", "preflight", "captions", "rank", "reasons", "rerender_error")}
             d["variants"] = {r: v["url"] for r, v in (c.get("variants") or {}).items()}
             m = c.get("meta") or {}
             d["duration"] = m.get("duration") or round((c["end"] - c["start"]) + take.COVER_SECS + take.END_SECS, 2)

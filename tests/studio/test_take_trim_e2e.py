@@ -143,6 +143,7 @@ def test_trim_and_caption_rerenders_the_sample_clip(live, chromium, close_contex
     page.locator("[data-testid=clip-card][data-clip=c5][data-status=ready]").wait_for(timeout=240_000)
     res = json.loads(app.state.store.q("SELECT result FROM agent_runs WHERE kind='take'")[0]["result"])
     c5 = next(c for c in res["clips"] if c["id"] == "c5")
+    assert not c5.get("rerender_error"), c5.get("rerender_error")
     assert c5["url"] != old_url and "/m/" in c5["url"]
     assert c5["end"] - c5["start"] < 20 and c5["captions"]["twitter"] == "Short and sweet for X."
     assert c5["music"]["audio_id"] == TRACK["id"] and c5["music"]["music_volume"] == 60
