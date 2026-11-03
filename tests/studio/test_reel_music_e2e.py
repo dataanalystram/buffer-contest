@@ -89,17 +89,17 @@ def test_pick_a_track_and_it_is_saved_on_the_package(live, chromium, close_conte
     assert dlg.get_by_test_id("music-pick").first.inner_text() == "Picked"
     dlg.get_by_test_id("music-vol").fill("70")
     dlg.get_by_test_id("music-orig").fill("25")
-    dlg.get_by_test_id("music-start").fill("12")
+    assert dlg.get_by_test_id("music-start").count() == 0   # Buffer's API has no start time: Instagram picks the part
     if shots:
         os.makedirs(shots, exist_ok=True)
         page.wait_for_timeout(1200)
         page.screenshot(path=os.path.join(shots, "music-picker-1440-light.png"))
     dlg.get_by_test_id("music-save").click()
     page.get_by_test_id("music-chosen").wait_for()
-    assert "Music 70% · Video sound 25% · from 0:12" in page.get_by_test_id("music-levels").inner_text()
+    assert "Music 70% · Video sound 25%" == page.get_by_test_id("music-levels").inner_text()
     run = json.loads(app.state.store.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]["result"])
     au = run["packages"][0]["options"]["ig_audio"]
-    assert au["audio_id"] == TRACK["id"] and au["music_volume"] == 70 and au["original_volume"] == 25 and au["start_ms"] == 12000
+    assert au["audio_id"] == TRACK["id"] and au["music_volume"] == 70 and au["original_volume"] == 25 and "start_ms" not in au
     if shots:
         page.get_by_test_id("pkg-music").scroll_into_view_if_needed()
         page.screenshot(path=os.path.join(shots, "music-on-package-1440-light.png"))

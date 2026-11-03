@@ -198,5 +198,6 @@ def test_ui_ships_the_picker_and_the_facebook_message():
     js, html, hj = (st / "reelmusic.js").read_text(), (st / "index.html").read_text(), (st / "house.js").read_text()
     assert "reelmusic.js" in html and "reelmusic.css" in html
     assert "window.pkgMusic" in hj and "wireMusic" in hj
-    for tid in ("music-add", "music-q", "music-preview", "music-pick", "music-vol", "music-orig", "music-start", "music-save", "music-needs-fb"):
+    for tid in ("music-add", "music-q", "music-preview", "music-pick", "music-vol", "music-orig", "music-save", "music-needs-fb"):
         assert f'data-testid="{tid}"' in js or f"data-testid=\"{tid}\"" in js
+    assert 'data-testid="music-start"' not in js   # Buffer has no start-time field: Instagram picks the part

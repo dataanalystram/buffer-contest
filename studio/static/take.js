@@ -3,7 +3,7 @@
 // slots of your week in the Planner. Nothing is created until you press "Save as Buffer drafts", and only drafts.
 // Same actions as REST and MCP: clips_from_video, list_clips, adjust_clip, place_clips_in_week.
 "use strict";
-const T = { src: "upload", file: null, take: null, poll: null, sel: new Set(), plan: null, edit: null };
+const T = { src: "upload", file: null, take: null, poll: null, sel: new Set(), plan: null, edit: null, sort: "score" };
 const T_VIDEO = new Set(["instagram", "tiktok", "youtube", "twitter", "linkedin", "threads", "facebook", "bluesky"]);
 const reducedMotion = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const secs = (s) => { s = Math.max(0, +s || 0); const m = Math.floor(s / 60); return `${m}:${String((s % 60).toFixed(1)).padStart(4, "0")}`; };
@@ -20,7 +20,7 @@ function takeChips() {
     el.type = "button"; el.className = "chip svc-" + c.service + (T.sel.has(c.id) ? " on" : "");
     el.setAttribute("data-testid", "take-chip"); el.setAttribute("aria-pressed", T.sel.has(c.id)); el.dataset.ch = c.id;
     el.innerHTML = `${avatar(c)}<span>${esc(c.displayName || c.name)}</span><small>${esc(netName(c.service))}</small>`;
-    el.onclick = () => { T.sel.has(c.id) ? T.sel.delete(c.id) : T.sel.add(c.id); el.classList.toggle("on"); el.setAttribute("aria-pressed", T.sel.has(c.id)); };
+    el.onclick = () => { T.sel.has(c.id) ? T.sel.delete(c.id) : T.sel.add(c.id); el.classList.toggle("on"); el.setAttribute("aria-pressed", T.sel.has(c.id)); if (T.take) takeTargets(T.take); };
     box.appendChild(el);
   }
 }
@@ -105,18 +105,15 @@ function showTake(t) {
     + (t.transcript_source && t.transcript_source !== "whisper" ? `<span class="pill sm" data-testid="take-captions-reused">Reused existing captions (no transcription)</span>` : "");
   const grid = $("#clipGrid");
   const clips = t.clips || [];
+  $("#tkClipsN").textContent = clips.length ? `(${clips.length})` : "";
   if (!clips.length) {
-    grid.innerHTML = ["running", "rendering"].includes(t.status) ? `<div class="clip-ph" aria-hidden="true"><span class="spin"></span></div>` : "";
+    grid.innerHTML = ["running", "rendering"].includes(t.status) ? `<li class="clip-ph" aria-hidden="true"><span class="spin"></span> Finding the best moments…</li>` : "";
   } else {
-    const playing = new Set([...grid.querySelectorAll("video")].filter((v) => !v.paused).map((v) => v.dataset.clip));
-    grid.innerHTML = clips.map(clipCard).join("");
+    grid.innerHTML = sortedClips(t).map(({ c, i }, k) => clipRow(c, i, k)).join("");
     grid.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => clipAct(b.dataset.act, b.dataset.clip)));
-    grid.querySelectorAll("video").forEach((v) => {
-      if (playing.has(v.dataset.clip)) v.play().catch(() => {});
-      v.onmouseenter = () => { if (!reducedMotion()) { v.muted = true; v.play().catch(() => {}); } };
-      v.onmouseleave = () => { if (v.muted) v.pause(); };
-    });
+    if (window.HQ_MUSIC_NOBROKEN) window.HQ_MUSIC_NOBROKEN(grid);
   }
+  takeTargets(t);
   const ready = clips.filter((c) => c.status === "ready").length;
   $("#spreadBar").hidden = !(t.status === "ready" && ready);
   // the sample's clips only spread in the sample workspace (the server refuses them in a real account): say so up front
@@ -125,88 +122,71 @@ function showTake(t) {
   $("#spreadSampleNote").hidden = !sampleOnly;
   $("#spreadErr").textContent = "";
   $("#spreadCount").textContent = `${ready} clip${ready === 1 ? "" : "s"} ready`;
-  if (T.edit) openEditor(T.edit);
+  if (window.ceRefresh) window.ceRefresh(t);
+}
+// clips in the chosen order; i is the clip's number in the take (c1 = 1), shown on the row and in the editor
+function sortedClips(t) {
+  const rows = (t.clips || []).map((c, i) => ({ c, i: i + 1 }));
+  return T.sort === "time" ? rows.sort((a, b) => a.c.start - b.c.start) : rows.sort((a, b) => (b.c.score ?? -1) - (a.c.score ?? -1) || a.i - b.i);
+}
+$("#tkSort").onchange = () => { T.sort = $("#tkSort").value; if (T.take) showTake(T.take); };
+// Channel targets: what each channel of the take gets (the ratio it's rendered in, its caption limit, how many clips pass
+// its preflight) and whether the Spread uses it (the same selection as the channel chips above).
+const T_RATIO = { instagram: "9:16 Reel", tiktok: "9:16", youtube: "9:16 Short", facebook: "9:16 Reel", linkedin: "4:5", threads: "4:5", twitter: "1:1", bluesky: "1:1" };
+function takeTargets(t) {
+  const box = $("#tkTgList"); if (!box) return;
+  const chans = (t.input && t.input.channels) || [];
+  const lim = t.caption_limits || {};
+  box.innerHTML = chans.map((ch) => {
+    const pf = (t.clips || []).map((c) => (c.preflight || {})[ch.id]).filter(Boolean);
+    const ok = pf.filter((r) => r.status === "ok").length, bad = pf.filter((r) => r.status === "error").length;
+    const ratio = t.style === "opus" ? T_RATIO[ch.service] || "9:16" : "9:16";
+    const on = T.sel.has(ch.id);
+    return `<li class="tk-tg-row" data-testid="take-target" data-ch="${esc(ch.id)}">${netMark(ch.service)}
+      <span class="tk-tg-t"><b>${esc(ch.name)}</b><small>${esc(netName(ch.service))} · ${esc(ratio)}${lim[ch.service] ? ` · captions up to ${lim[ch.service].toLocaleString()}` : ""}</small>
+        ${pf.length ? `<small class="${bad ? "tk-bad" : ""}" data-testid="take-target-preflight">${ok} of ${pf.length} clips pass preflight${bad ? ` · ${bad} need a fix` : ""}</small>` : ""}</span>
+      <label class="sw"><input type="checkbox" role="switch" data-tg="${esc(ch.id)}" data-testid="take-target-switch" ${on ? "checked" : ""} aria-label="Spread to ${esc(ch.name)}"><span aria-hidden="true"></span></label></li>`;
+  }).join("") || `<li class="muted sm">No channels on this take.</li>`;
+  box.querySelectorAll("[data-tg]").forEach((i) => (i.onchange = () => {
+    i.checked ? T.sel.add(i.dataset.tg) : T.sel.delete(i.dataset.tg);
+    const chip = document.querySelector(`#takeChips [data-ch="${CSS.escape(i.dataset.tg)}"]`);
+    if (chip) { chip.classList.toggle("on", i.checked); chip.setAttribute("aria-pressed", i.checked); }
+  }));
+}
+// the row shows one small chip per channel (network + pass/warn/fix); the full check is in its tooltip
+function pfCompact(c) {
+  const pf = c.preflight || {};
+  return Object.entries(pf).map(([cid, r]) => `<span class="pf-chip s-${esc(r.status)}" data-testid="clip-preflight" data-status="${esc(r.status)}" title="${esc(r.chip + "\n" + (r.findings || []).map((f) => f.message).join("\n"))}"><b aria-hidden="true">${PF_ICON[r.status]}</b><span class="sr">${PF_WORD[r.status]}: </span>${esc(netName(r.service || ""))}</span>`).join("");
 }
 function pfMini(c) {
   const pf = c.preflight || {};
   return Object.entries(pf).map(([cid, r]) => `<span class="pf-chip s-${esc(r.status)}" data-testid="clip-preflight" data-status="${esc(r.status)}" title="${esc((r.findings || []).map((f) => f.message).join("\n"))}"><b aria-hidden="true">${PF_ICON[r.status]}</b><span class="sr">${PF_WORD[r.status]}: </span>${esc(r.chip)}</span>`).join("");
 }
-function clipCard(c, i) {
+const SCISSORS = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg>`;
+function clipRow(c, n, k) {
   const placed = (c.placements || []).filter((p) => ["draft", "pending_approval"].includes(p.status));
   const failed = (c.placements || []).filter((p) => p.status === "failed");
-  const st = c.status === "ready" ? "" : c.status === "failed" ? `<span class="st err" data-testid="clip-error">${esc(c.error || "Render failed")}</span>` : `<span class="muted sm"><span class="spin" aria-hidden="true"></span> Rendering…</span>`;
-  return `<article class="clip deal" style="--i:${i}" data-testid="clip-card" data-clip="${esc(c.id)}" data-status="${esc(c.status)}">
-    <div class="clip-media">${c.url ? `<video src="${esc(c.url)}" poster="${esc(c.cover_url || "")}" controls playsinline preload="none" muted loop data-clip="${esc(c.id)}" data-testid="clip-video" aria-label="Clip ${i + 1}: ${esc(c.hook)}"></video>` : c.cover_url ? `<img src="${esc(c.cover_url)}" alt="">` : `<span class="spin" aria-hidden="true"></span>`}</div>
+  const st = c.status === "ready" ? "" : c.status === "failed" ? `<span class="st err" data-testid="clip-error">${esc(c.error || "Render failed")}</span>` : `<span class="muted xs" data-testid="clip-rendering"><span class="spin" aria-hidden="true"></span> Rendering…</span>`;
+  return `<li class="clip-row deal" style="--i:${k}" data-testid="clip-card" data-clip="${esc(c.id)}" data-status="${esc(c.status)}">
+    <button type="button" class="clip-thumb" data-act="edit" data-clip="${esc(c.id)}" aria-label="Open clip ${n} in Trim and caption" ${c.url ? "" : "disabled"}>${c.cover_url ? `<img src="${esc(c.cover_url)}${c.rendered_at ? "?v=" + Math.round(c.rendered_at) : ""}" alt="" loading="lazy">` : `<span class="spin" aria-hidden="true"></span>`}</button>
+    <span class="clip-n" aria-hidden="true">${n}</span>
     <div class="clip-body">
-      <p class="clip-hook" data-testid="clip-hook">“${esc(c.hook)}”</p>
-      <p class="muted xs clip-meta"><span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span> · ${Math.round(c.duration || 0)} s${c.layout ? ` · ${esc(LAYOUT[c.layout] || c.layout)}` : ""}${c.score != null ? ` · score ${Math.round(c.score)}` : ""}</p>
-      ${c.why ? `<p class="xs clip-why" data-testid="clip-why">${c.rank ? `<b>#${c.rank}</b> · ` : ""}Why this moment: ${esc(c.why)}</p>` : ""}
+      <p class="clip-hook" data-testid="clip-hook">${esc(c.hook)}</p>
+      <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.score != null ? ` · <span class="pill sm clip-score" data-testid="clip-score">Score ${Math.round(c.score)}</span>` : ""}</p>
+      ${c.why ? `<p class="xs clip-why" data-testid="clip-why" title="${esc(c.why)}">${c.rank ? `<b>#${c.rank}</b> · ` : ""}Why this moment: ${esc(c.why)}</p>` : ""}
       ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${escUrl(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
-      ${st}
-      <div class="clip-pf">${pfMini(c)}</div>
+      ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
+      ${st}${c.rerender_error ? `<span class="st err xs" data-testid="clip-rerender-error">Re-render failed: ${esc(c.rerender_error)} The previous video is kept.</span>` : ""}
+      <div class="clip-pf">${pfCompact(c)}</div>
       ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${p.status === "draft" ? "Buffer draft" : "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
-      <div class="clip-act">${c.url ? `<button type="button" class="link" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">Trim &amp; caption</button><a class="link" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}</div>
-    </div></article>`;
+    </div>
+    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button><a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}</div>
+  </li>`;
 }
 
-// ---------------------------------------------------------------- per-clip editor: trim + hook + caption
-function clipAct(act, id) { if (act === "edit") openEditor(id); }
-function openEditor(id) {
-  const c = (T.take?.clips || []).find((x) => x.id === id); if (!c) return;
-  T.edit = id;
-  const dlg = $("#clipDialog");
-  if (dlg.open && dlg.dataset.clip === id) return;
-  dlg.dataset.clip = id;
-  $("#ceTitle").textContent = `Clip ${id.replace(/^c/, "")}: trim and caption`;
-  const canCut = T.take.can_rerender;
-  T.trim = { s: c.start, e: c.end };
-  const words = c.words || [];
-  $("#ceWords").innerHTML = words.map((w, i) => `<button type="button" class="w" data-i="${i}" data-s="${w.s}" data-e="${w.e}">${esc(w.w)}</button>`).join(" ");
-  $("#ceWords").querySelectorAll(".w").forEach((b) => (b.onclick = (ev) => {
-    const s = +b.dataset.s, e = +b.dataset.e;
-    if (ev.shiftKey || Math.abs(s - T.trim.e) < Math.abs(s - T.trim.s)) T.trim.e = e + 0.2; else T.trim.s = Math.max(0, s - 0.1);
-    paintTrim();
-  }));
-  $("#ceTrimNote").textContent = canCut ? "Click a word to start there (Shift+click to end there), or nudge with the buttons. Trimming re-renders the clip." : (T.take.sample ? "The sample workspace has no video worker, so trimming is shown but not re-rendered here. Caption edits work." : "This server has no video worker, so only captions can change.");
-  const svcs = [...new Set(T.take.input.channels.map((x) => x.service))];
-  $("#ceSvc").innerHTML = svcs.map((s) => `<option value="${esc(s)}">${esc(netName(s))}</option>`).join("");
-  $("#ceCaption").value = (c.post_captions || {})[svcs[0]] || "";
-  $("#ceSvc").onchange = () => { const cc = (T.take.clips.find((x) => x.id === id) || {}).post_captions || {}; $("#ceCaption").value = cc[$("#ceSvc").value] || ""; };
-  $("#ceHook").value = c.hook || "";
-  $("#ceErr").textContent = "";
-  paintTrim();
-  if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
-  $("#ceCaption").focus();
-}
-function paintTrim() {
-  const { s, e } = T.trim;
-  $("#ceIn").textContent = secs(s); $("#ceOut").textContent = secs(e); $("#ceLen").textContent = `${(e - s).toFixed(1)} s`;
-  $("#ceWords").querySelectorAll(".w").forEach((b) => b.classList.toggle("out", +b.dataset.e < s || +b.dataset.s > e));
-}
-document.querySelectorAll("[data-nudge]").forEach((b) => (b.onclick = () => {
-  const [edge, d] = b.dataset.nudge.split(":"); T.trim[edge] = Math.max(0, +(T.trim[edge] + +d).toFixed(2)); paintTrim();
-}));
-function closeEditor() { const d = $("#clipDialog"); T.edit = null; if (typeof d.close === "function" && d.open) d.close(); else d.removeAttribute("open"); }
-$("#ceCancel").onclick = closeEditor;
-$("#clipDialog").addEventListener("close", () => (T.edit = null));
-$("#ceForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const id = T.edit, c = T.take.clips.find((x) => x.id === id); if (!c) return;
-  const body = {};
-  if ($("#ceCaption").value !== ((c.post_captions || {})[$("#ceSvc").value] || "")) { body.caption = $("#ceCaption").value; body.service = $("#ceSvc").value; }
-  if ($("#ceHook").value.trim() !== c.hook) body.hook = $("#ceHook").value.trim();
-  if (Math.abs(T.trim.s - c.start) > 0.04 || Math.abs(T.trim.e - c.end) > 0.04) { body.start_ms = Math.round(T.trim.s * 1000); body.end_ms = Math.round(T.trim.e * 1000); }
-  if (!Object.keys(body).length) return closeEditor();
-  const btn = $("#ceSave"); btn.disabled = true; $("#ceErr").textContent = "";
-  try {
-    const t = await api(`/api/takes/${T.take.id}/clips/${encodeURIComponent(id)}`, { method: "PATCH", body });
-    closeEditor(); showTake(t);
-    toast(body.start_ms != null || body.hook ? "Re-rendering that clip…" : "Caption saved");
-    if (["running", "rendering"].includes(t.status)) watchTake(t.id);
-  } catch (e) { $("#ceErr").textContent = e.message; }
-  finally { btn.disabled = false; }
-});
+// ---------------------------------------------------------------- per-clip editor: Trim & caption (takeedit.js)
+function clipAct(act, id) { if (act === "edit" && window.openClipEditor) window.openClipEditor(id); }
 
 // ---------------------------------------------------------------- The Spread
 $("#spreadGo").onclick = async () => {
@@ -228,7 +208,7 @@ async function spread(out) {
   const plan = out.plan, clips = Object.fromEntries((T.take.clips || []).map((c) => [c.id, c]));
   // where each card flies from: its clip card on this page
   const from = {};
-  document.querySelectorAll("#clipGrid [data-testid=clip-card]").forEach((el) => { const m = el.querySelector(".clip-media"); from[el.dataset.clip] = (m || el).getBoundingClientRect(); });
+  document.querySelectorAll("#clipGrid [data-testid=clip-card]").forEach((el) => { const m = el.querySelector(".clip-thumb"); from[el.dataset.clip] = (m || el).getBoundingClientRect(); });
   // ghost items in the Planner, one per placement, in the planned week
   PL.extra = plan.placements.map((p, i) => ({ kind: "ghost", state: "ghost", ref: `ghost:${i}`, when: p.at, text: p.text, service: p.service,
     channel: p.channel_name, channel_id: p.channel_id, id: `ghost:${i}`, thumb: p.cover_url || "", type: "reel", draggable: false, clip_id: p.clip_id, preflight: p.preflight }));

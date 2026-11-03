@@ -61,18 +61,19 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
         page.evaluate("() => window.scrollTo(0, document.querySelector('#tkHead').getBoundingClientRect().top + scrollY - 90)")
         page.wait_for_timeout(600)
         page.screenshot(path=f"{shots}/take-clips-{scheme}.png", full_page=False)
-    # per-clip editor: transcript words, nudges, caption edit saved through PATCH
+    # Trim & caption in the view-only sample: timing, transcript and cover are shown but locked (no re-render here);
+    # a caption edit saves through PATCH
     page.locator("[data-testid=clip-card][data-clip=c2] [data-testid=clip-edit]").click()
     dlg = page.get_by_test_id("clip-dialog")
     dlg.wait_for()
-    assert page.locator("#ceWords .w").count() > 20
-    first_in = page.get_by_test_id("clip-in").inner_text()
-    page.get_by_test_id("clip-in-later").click()
-    assert page.get_by_test_id("clip-in").inner_text() != first_in
-    page.get_by_test_id("clip-in-earlier").click()
+    assert page.get_by_test_id("clip-in-later").is_disabled() and page.get_by_test_id("clip-handle-out").is_disabled()
+    assert "can't re-render" in page.get_by_test_id("clip-trim-note").inner_text()
+    page.get_by_test_id("clip-tab-transcript").click()
+    assert len(page.get_by_test_id("clip-transcript").input_value().split()) > 20
     if shots:
         page.screenshot(path=f"{shots}/take-editor-{scheme}.png")
-    page.get_by_test_id("clip-caption").fill("Biofilms on a space station, in 30 seconds.")
+    page.get_by_test_id("clip-tab-caption").click()
+    page.get_by_test_id("clip-caption").fill("The Buffer Commit kickoff, in 40 seconds.")
     page.get_by_test_id("clip-edit-save").click()
     # the view-only demo shows the editor but saving is refused with the friendly line
     err = page.get_by_test_id("clip-edit-error")
