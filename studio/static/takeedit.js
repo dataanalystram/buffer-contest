@@ -61,7 +61,7 @@ window.openClipEditor = function (id) {
   tab("trim");
   paintTrim(); paintDirty(); frames();
   if (!dlg.open) { if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", ""); }
-  $c("ceTabTrim").focus();
+  $c("ceTabTrim").focus({ preventScroll: true });
 };
 
 // ------------------------------------------------------------------ tabs
@@ -104,7 +104,6 @@ function paintTrim() {
     el.setAttribute("aria-valuenow", v.toFixed(1)); el.setAttribute("aria-valuetext", stamp(v));
   }
   $c("ceLo").textContent = stamp(CE.s); $c("ceHi").textContent = stamp(CE.e);
-  $c("ceLo").style.marginLeft = `calc(${a}% - 24px)`;
   const beyond = CE.s < c.start - 0.05 || CE.e > c.end + 0.05;
   $c("cePrevNote").textContent = beyond ? "The preview plays the current cut. The new part shows after you save." : "";
   paintTime(); paintDirty();

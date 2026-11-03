@@ -40,9 +40,9 @@ function mount(box, opts) {
   box.innerHTML = `
     <p class="muted sm rm-about">Instagram's licensed music and original sounds, through Buffer. <b>${PICKS_NOTE}</b></p>
     <div class="rm-sel" data-testid="music-selected"></div>
-    <form class="rm-search" role="search"><label class="sr" for="rmQ_${opts.channelId}">Search music</label>
+    <div class="rm-search" role="search"><label class="sr" for="rmQ_${opts.channelId}">Search music</label>
       <input id="rmQ_${opts.channelId}" type="search" placeholder="Search songs, artists or sounds" autocomplete="off" data-testid="music-q">
-      <button type="submit" class="btn2 sm" data-testid="music-search">Search</button></form>
+      <button type="button" class="btn2 sm" data-testid="music-search">Search</button></div>
     <div class="rm-status" role="status" aria-live="polite" data-testid="music-status"></div>
     <ul class="rm-list" data-testid="music-results" aria-label="Tracks"></ul>
     <fieldset class="rm-mix" data-testid="music-mix">
@@ -116,7 +116,9 @@ function mount(box, opts) {
   function get() { return M.pick ? { ...M.pick, music_volume: +vol.value, original_volume: +orig.value } : null; }
   vol.oninput = () => { paintLevels(); paintSel(); if (M.audio) M.audio.volume = vol.value / 100; changed(); };
   orig.oninput = () => { paintLevels(); paintSel(); changed(); };
-  $b("form").onsubmit = (e) => { e.preventDefault(); search($b("[data-testid=music-q]").value.trim()); };
+  // a div, not a form: the picker also sits inside the Trim & caption form, and forms can't nest
+  $b("[data-testid=music-search]").onclick = () => search($b("[data-testid=music-q]").value.trim());
+  $b("[data-testid=music-q]").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); search(e.target.value.trim()); } });
   paintSel();
   const api_ = { get, search, stop, get searched() { return M.searched; } };
   return api_;
