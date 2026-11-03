@@ -222,17 +222,28 @@
     if (btn.classList.contains("on")) { templatePreviews(); return; }
     btn.disabled = true; btn.setAttribute("aria-busy", "true");
     const t0 = performance.now();
+    const known = what.id && B.kitsMeta && (B.kitsMeta.kits || []).find((k) => k.id === what.id);
+    if (known) {  // a kit already in the list: mark it and show the previews this tab has for it now, before the round trips
+      B.kitsMeta.kits.forEach((k) => (k.active = k.id === what.id));
+      document.querySelectorAll("#bsKits [data-kitid]").forEach((b) => {
+        const on = +b.dataset.kitid === what.id;
+        b.classList.toggle("on", on); b.dataset.active = String(on); b.setAttribute("aria-checked", String(on));
+      });
+      $("#bsTplKitName").textContent = known.name;
+      templatePreviews();
+    }
     try {
       const r = what.id ? await api(`/api/brand-kits/${what.id}/activate`, { method: "POST", body: {} })
         : await api("/api/brand-kits", { method: "POST", body: { ...what, activate: true } });
       toast(`${r.name} is the active kit. Every template now renders in it.`);
       B.kit = null;
-      await loadBrand();
-      window.HQBrandKit?.reload?.();
       window.dispatchEvent(new CustomEvent("hq:brand-kit", { detail: { id: r.id, from: "templates" } }));
-      await loadKits();
+      await Promise.all([loadBrand().then(() => window.HQBrandKit?.reload?.()), loadKits()]);
       $("#bsKitsMs").textContent = `Switched in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
-    } catch (e) { toast(e.message); btn.disabled = false; btn.removeAttribute("aria-busy"); }
+    } catch (e) {
+      toast(e.message); btn.disabled = false; btn.removeAttribute("aria-busy");
+      if (known) loadKits();  // put the list back the way the server has it
+    }
   }
   // "Every template in <kit>": each template's first slide drawn in the ACTIVE kit (by its id, so it never falls back to
   // another kit's style), one request per template, all in flight at once, each card filled the moment it arrives.
