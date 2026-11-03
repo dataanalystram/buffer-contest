@@ -63,5 +63,7 @@
 .bs-kitcard.on .bs-kitstate b{color:var(--ink)}
 .bs-tplprev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:10px}
 .bs-tplprev-grid.stale{opacity:.6;transition:opacity .2s}
+.bs-tplsk{background-color:color-mix(in srgb,var(--kit-g,var(--sunken)) 35%,var(--sunken))}.bs-tplsk.off{animation:none;opacity:.5}
+.bs-tplcard .linkish{background:none;border:0;padding:0;color:var(--accent,inherit);text-decoration:underline;cursor:pointer;font:inherit}
 .bs-tplcard{margin:0}.bs-tplcard img,.bs-tplcard .bk-sk{width:100%;aspect-ratio:4/5;border-radius:8px;display:block;border:1px solid var(--line)}
 .bs-tplcard figcaption{font-size:12px;color:var(--muted);margin-top:4px}

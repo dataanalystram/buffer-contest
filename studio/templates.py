@@ -47,6 +47,7 @@ STYLES = {  # what a brand can pick for its front and end card instead of upload
 }
 
 LAYOUTS = ("bold_news", "editorial", "minimal", "playful")  # brand kit v2 base layouts (see studio/design_system.py)
+VARIANTS = {"editorial": ("rules", "masthead"), "minimal": ("line", "bar")}  # compositions within a layout family
 
 # Per channel: the frame Buffer and the network take best, the most images in one post, and whether it wants video.
 CHANNELS = {
@@ -165,6 +166,7 @@ class Brand:
         self.surface = hex_rgb(th.get("surface") or "", mix(self.bg, self.text, 0.06)) if self.layout else None
         self.scale = float(th.get("scale") or 1.0) if self.layout else 1.0
         self.accent_usage = th.get("accent_usage") or "line"
+        self.variant = th.get("variant") if th.get("variant") in VARIANTS.get(self.layout, ()) else ""
         self.logo = _open_logo(logo)
         self.front_img = _open(front)
         self.end_img = _open(end)
@@ -204,7 +206,50 @@ def _open_logo(data: bytes | None) -> Image.Image | None:
     # logos exported on black with a "transparent" alpha of near-zero noise: cut to what is actually visible
     a = im.getchannel("A").point(lambda v: 255 if v > 24 else 0)
     box = a.getbbox()
+    if box and a.getextrema()[0] == 255 and im.width > 8 and im.height > 8:
+        # an opaque logo (a JPG or a PNG on a white / coloured box): trim the plain border the way alpha is trimmed,
+        # so the slot is filled by the mark itself, not by its padding
+        from PIL import ImageChops
+        rgb = im.convert("RGB")
+        bg = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+        diff = ImageChops.difference(rgb, bg).convert("L").point(lambda v: 255 if v > 18 else 0)
+        box = diff.getbbox() or box
     return im.crop(box) if box else im
+
+
+def logo_box(lg_w: int, lg_h: int, box_w: int) -> tuple[int, int]:
+    """The size a logo is drawn at in a corner slot box_w wide, from its visual bounds (after trimming): every logo gets
+    about the same visual area, so a long wordmark (Y Combinator's lockup is 10:1) is not shrunk to a 19 px sliver and a
+    square mark is not blown up. A wordmark may run past box_w (up to 1.6x), never below a minimum height."""
+    import math
+    a = max(0.2, lg_w / max(1, lg_h))
+    area = (box_w * 0.5) ** 2
+    h = math.sqrt(area / a)
+    w = h * a
+    if w > box_w * 1.6:
+        w = box_w * 1.6
+        h = w / a
+    h = min(max(h, box_w * 0.16), box_w * 0.6)
+    w = min(h * a, box_w * 1.9)
+    return max(1, int(round(w))), max(1, int(round(h)))
+
+
+_PUNCT_GLUE = re.compile(r"(?<=[a-z\u00e0-\u00ff\u2019')\]])([,;!?])(?=[A-Za-z\u00c0-\u00ff])")
+_PERIOD_GLUE = re.compile(r"(?<=[a-z\u00e0-\u00ff]{2})\.(?=[A-Z][a-z])")
+
+
+def fix_spacing(text: str) -> str:
+    """A missing space after punctuation, from page text glued across tags ("Don't type,<br>just speak" read as
+    "type,just"), put back. Words are never changed; links, e-mail addresses, domains and numbers are left alone."""
+    out = []
+    for tok in re.split(r"(\s+)", text or ""):
+        if not tok or tok.isspace() or "://" in tok or "@" in tok or tok.lower().startswith("www."):
+            out.append(tok)
+            continue
+        tok = _PUNCT_GLUE.sub(r"\1 ", tok)
+        tok = _PERIOD_GLUE.sub(". ", tok)
+        out.append(tok)
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------------------------------- drawing
@@ -302,12 +347,17 @@ def _emph(b: Brand, style: str):
     return b.accent if contrast(b.accent, g) >= 2.2 else _ink(b, style)[0]
 
 
-def logo_for(b: Brand, style: str, w: int, h: int | None = None) -> Image.Image | None:
-    """The logo sized for the slot, recoloured to the ink when it would vanish on the ground (a dark mark on a dark card)."""
+def logo_for(b: Brand, style: str, w: int, h: int | None = None, grow: bool = False) -> Image.Image | None:
+    """The logo sized for the slot, recoloured to the ink when it would vanish on the ground (a dark mark on a dark card).
+    grow: a logo file smaller than the slot is scaled up to it (corner logos sized by logo_box)."""
     if b.logo is None:
         return None
     lg = b.logo.copy()
-    lg.thumbnail((w, h or int(w * 0.6)), Image.LANCZOS)
+    h = h or int(w * 0.6)
+    if grow and lg.width < w and lg.height < h:
+        k = min(w / lg.width, h / lg.height)
+        lg = lg.resize((max(1, int(lg.width * k)), max(1, int(lg.height * k))), Image.LANCZOS)
+    lg.thumbnail((w, h), Image.LANCZOS)
     g = _ground_rgb(b, style)
     px = [p for p in lg.getdata() if p[3] > 128]
     if px:
@@ -323,7 +373,7 @@ def logo_for(b: Brand, style: str, w: int, h: int | None = None) -> Image.Image 
 def _logo(canvas: Image.Image, b: Brand, box_w: int, xy: tuple[int, int], style: str = "") -> int:
     """Paste the logo at xy (top-left) no wider than box_w; returns its height. No logo: the brand name as a wordmark."""
     d = ImageDraw.Draw(canvas)
-    lg = logo_for(b, style, box_w)
+    lg = logo_for(b, style, *logo_box(b.logo.width, b.logo.height, box_w), grow=True) if b.logo is not None else None
     if lg is not None:
         canvas.paste(lg, xy, lg)
         return lg.height
@@ -552,6 +602,10 @@ def bullets_slide(b: Brand, ratio: str, title: str, items: list[str], n=None) ->
 
 
 def quote_card(b: Brand, ratio: str, quote: str, speaker: str, role: str = "", n=None) -> Image.Image:
+    quote = fix_spacing(quote)
+    if b.layout:
+        from . import layouts
+        return layouts.quote(b, ratio, quote, speaker, role, n)
     W, H, m, wide = _frame(ratio)
     style = b.front_style if b.front_style in ("glow", "grid", "minimal") else "glow"
     im = _ground(W, H, b, style)
@@ -561,8 +615,16 @@ def quote_card(b: Brand, ratio: str, quote: str, speaker: str, role: str = "", n
     qf = b.body(int(min(W, H) * 0.4), strong=True)
     d.text((m - int(min(W, H) * 0.01), int(H * (0.12 if not wide else 0.08))), "\u201c" if _has(qf, "\u201c") else '"', font=qf, fill=_emph(b, style))
     y = int(H * (0.36 if not wide else 0.32))
-    tf, lines = fit_text(d, quote, lambda s: b.head(s) if not b.upper else b.body(s, strong=True),
-                         int(min(W, H) * 0.08), W - 2 * m, 6 if not wide else 4)
+    # the speaker block and the footer (@handle) sit under the quote: the quote is fitted to the room that leaves, so a
+    # long name never runs into the handle
+    S = min(W, H)
+    tail = int(S * 0.05) + 6 + int(S * 0.035) + int(S * 0.04 * 1.4) + (int(S * 0.03 * 1.3) if role else 0) + int(S * 0.026 * 2.2)
+    room = H - m - tail - y
+    mk = lambda s: b.head(s) if not b.upper else b.body(s, strong=True)
+    max_l = 6 if not wide else 4
+    tf, lines = fit_text(d, quote, mk, int(S * 0.08), W - 2 * m, max_l)
+    while len(lines) * int(tf.size * 1.18) > room and tf.size > 26:
+        tf, lines = fit_text(d, quote, mk, int(tf.size * 0.92), W - 2 * m, max_l, min_size=26)
     for line in lines:
         d.text((m, y), line, font=tf, fill=ink)
         y += int(tf.size * 1.18)
