@@ -81,9 +81,9 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .ce-io-g output{min-width:84px;height:36px;display:inline-flex;align-items:center;padding:0 10px;border:1px solid var(--line-strong);border-radius:4px;font-variant-numeric:tabular-nums;font-weight:600}
 .ce-strip{position:relative;height:72px;border-radius:6px;background:var(--sunken);user-select:none;touch-action:none}
 .ce-frames{position:absolute;inset:0;display:grid;grid-template-columns:repeat(10,1fr);border-radius:6px;overflow:hidden}
-.ce-fr{background:var(--well) center/cover no-repeat;border-right:1px solid rgba(0,0,0,.3)}
+.ce-fr{background:var(--sunken) center/cover no-repeat;border-right:1px solid rgba(0,0,0,.3)}
 .ce-fr.out{background:repeating-linear-gradient(135deg,var(--sunken) 0 6px,var(--line) 6px 12px)}
-.ce-sel{position:absolute;top:0;bottom:0;border:2px solid var(--ink);border-radius:4px;box-shadow:0 0 0 9999px rgba(11,12,13,.45);pointer-events:none;clip-path:inset(-2px -2px -2px -2px)}
+.ce-sel{position:absolute;top:0;bottom:0;border:2px solid var(--ink);border-radius:4px;box-shadow:0 0 0 9999px rgba(11,12,13,.5);pointer-events:none}
 .ce-strip{overflow:hidden}
 .ce-hd{position:absolute;top:0;bottom:0;width:18px;border:0;border-radius:4px;background:var(--ink);cursor:ew-resize;touch-action:none;z-index:2}
 .ce-h-out{margin-left:-18px}
@@ -123,3 +123,5 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
   .ce-foot .ce-dirty{flex-basis:100%}
 }
 @media (prefers-reduced-motion:reduce){.sw span,.sw span:after{transition:none}}
+.clip-row .clip-pf .pf-chip{font-size:11px;padding:2px 8px;line-height:1.4}
+.clip-row .clip-pf{gap:4px}
