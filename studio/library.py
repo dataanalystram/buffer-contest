@@ -27,6 +27,7 @@ from fastapi import Body, Request
 from fastapi.responses import Response, StreamingResponse
 
 from . import demo_guard
+from . import metastrip
 from .actions import ActionError, Actor
 from .buffer_api import BufferError
 
@@ -156,6 +157,24 @@ class _Writer:
         self.room = min(FILE_MAX, QUOTA - lib.used(a.uid))
         self.iid, self.tok = lib._new_item(a, source, "upload")
         self.h, self.buf, self.n, self.size, self.kind = hashlib.sha256(), bytearray(), 0, 0, None
+        self.out, self.head = 0, False  # bytes stored (after metadata is stripped); True while a photo's header is held back
+
+    def _strip(self, final: bool = False) -> None:
+        """Hold a photo's header back until it is complete, then drop its EXIF/GPS (studio/metastrip.py)."""
+        r = metastrip.head(self.kind[1], bytes(self.buf))
+        if r is metastrip.INCOMPLETE and not final and len(self.buf) < metastrip.HEAD_MAX:
+            return
+        self.head = False
+        if r:
+            self.buf = bytearray(r)
+
+    def _flush(self) -> None:
+        while len(self.buf) >= CHUNK:
+            part, self.buf = bytes(self.buf[:CHUNK]), self.buf[CHUNK:]
+            self.h.update(part)
+            self.lib.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (self.iid, self.n, part))
+            self.n += 1
+            self.out += len(part)
 
     def feed(self, piece: bytes) -> None:
         self.size += len(piece)
@@ -166,21 +185,27 @@ class _Writer:
             self.kind = sniff(bytes(self.buf[:32]))
             if not self.kind:
                 raise ActionError(not_media(bytes(self.buf[:64])), 415)
-        while len(self.buf) >= CHUNK:
-            part, self.buf = bytes(self.buf[:CHUNK]), self.buf[CHUNK:]
-            self.h.update(part)
-            self.lib.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (self.iid, self.n, part))
-            self.n += 1
+            self.head = self.kind[1] in ("jpg", "png")
+        if self.head:
+            self._strip()
+            if self.head:
+                return
+        self._flush()
 
     def finish(self, name: str) -> dict:
         if self.kind is None:
             self.kind = sniff(bytes(self.buf[:32]))
             if not self.kind:
                 raise ActionError(not_media(bytes(self.buf[:64])), 415)
+            self.head = self.kind[1] in ("jpg", "png")
+        if self.head:
+            self._strip(final=True)
+        self._flush()
         if self.buf:
             self.h.update(bytes(self.buf))
             self.lib.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (self.iid, self.n, bytes(self.buf)))
-        return self.lib._finish(self.a, self.iid, self.tok, name, self.kind, self.size, self.h.hexdigest(), self.source)
+            self.out += len(self.buf)
+        return self.lib._finish(self.a, self.iid, self.tok, name, self.kind, self.out, self.h.hexdigest(), self.source)
 
     def abort(self) -> None:
         self.lib._drop(self.iid)
@@ -244,6 +269,7 @@ class Library:
         kind = sniff(data[:32])
         if not kind:
             raise ActionError(not_media(data[:64]), 415)
+        data = metastrip.strip_bytes(kind[1], data)  # no EXIF/GPS from a phone photo at a public /m/ URL
         iid, tok = self._new_item(a, source, "upload")
         try:
             for n, i in enumerate(range(0, len(data), CHUNK)):
@@ -262,6 +288,11 @@ class Library:
         if same:  # the same file again: keep the one already there
             self._drop(iid)
             return self.item(a, same[0]["id"])
+        if self.used(a.uid) + size > QUOTA:  # uploads that ran at the same time each saw room for themselves: recount now
+            self._drop(iid)
+            raise ActionError(f"Your Library is full ({QUOTA // MB} MB). Delete files you no longer need in Library.", 413)
+        if k == "video":
+            self._scrub_video(iid, size)
         tok = f"{tok}.{ext}"
         meta = {"type": "video" if k == "video" else "photo"}
         if k == "image":
@@ -272,12 +303,28 @@ class Library:
         self.store.audit(a.uid, a.label, "library_upload", "read", {"kind": k, "bytes": size, "source": source})
         return self.item(a, iid)
 
+    def _scrub_video(self, iid: int, size: int) -> None:
+        """Blank the GPS position a phone writes into a video's moov box, in place (same length: nothing moves)."""
+        try:
+            patches = metastrip.video_location_patches(lambda s, e: self._read(iid, s, e), size)
+        except Exception:  # noqa: BLE001  (an odd box layout: keep the file as it came)
+            return
+        for off, new in patches:
+            for n in range(off // CHUNK, (off + len(new) - 1) // CHUNK + 1):
+                rows = self.store.q("SELECT data FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
+                if not rows:
+                    continue
+                buf = bytearray(bytes(rows[0]["data"]))
+                lo, hi = max(off, n * CHUNK), min(off + len(new), (n + 1) * CHUNK)
+                buf[lo - n * CHUNK:hi - n * CHUNK] = new[lo - off:hi - off]
+                self.store.x("UPDATE library_chunks SET data=? WHERE item_id=? AND n=?", (bytes(buf), iid, n))
+
     def _image_size(self, iid: int) -> dict:
         try:
             import io
 
             from PIL import Image
-            data = self._read(iid, 0, None)
+            data = self._read(iid, 0, 2 * CHUNK - 1)  # the header is enough for the size: never the whole file in memory
             with Image.open(io.BytesIO(data)) as im:
                 return {"width": im.width, "height": im.height}
         except Exception:  # noqa: BLE001
@@ -504,6 +551,8 @@ class Library:
 
     # ---------------------------------------------------------------- tokens: library uploads work as media tokens
     def by_token(self, token: str) -> dict | None:
+        if not token or token.startswith(TRASH_TOKEN):  # a binned item is served to its owner only (bin_file)
+            return None
         rows = self.store.q("SELECT * FROM library_items WHERE token=? AND storage='chunks'", (token,))
         if not rows:
             return None

@@ -358,6 +358,9 @@ class House:
         return tok
 
     def get_media(self, token: str) -> dict | None:
+        from .library import TRASH_TOKEN
+        if not token or token.startswith(TRASH_TOKEN):  # /m/trash~<token> must not serve a binned file (owner-only preview)
+            return None
         rows = self.store.q("SELECT token,user_id,mime,data,size,meta FROM media WHERE token=?", (token,))
         if not rows:
             return self.library.blob(token)  # an uploaded Library file works as a media token everywhere
@@ -367,6 +370,9 @@ class House:
 
     def media_head(self, token: str) -> dict | None:
         """Type and length of a media token without reading its bytes (HEAD /m/<token>)."""
+        from .library import TRASH_TOKEN
+        if not token or token.startswith(TRASH_TOKEN):
+            return None
         rows = self.store.q("SELECT mime, size FROM media WHERE token=?", (token,))
         if rows and rows[0]["size"]:
             return {"mime": rows[0]["mime"], "size": int(rows[0]["size"])}
