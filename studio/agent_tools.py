@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from . import brand, demo_guard, demo_view, drafter, factcheck, hbstyle, intake, llm, netguard, reader, render, sources, template_pick, untrusted, vision
 from .media import styles as media_styles
 from .actions import ActionError
+from .headline import cover_hook
 from . import editorial_tools
 from .editorial_tools import EditorialTools
 
@@ -109,10 +110,13 @@ SPECS = [
     {"name": "set_template", "description": "Switch the post's template BY NAME or id ('funding', 'GitHub repo pillar', 'editorial', "
                                          "'text slides', 'news carousel', a custom template's name). slides: only those slides change "
                                          "('the second slide' -> [2]); keep: slides that stay; rest: restyle every slide but the kept ones. "
-                                         "Always drawn in the active brand kit. Then check.",
+                                         "Always drawn in the active brand kit. A channel that is a Reel is never switched to a "
+                                         "carousel without the person's answer: the call returns needs_choice (Keep Reel / Switch); "
+                                         "call again with reel='keep' or reel='switch' (the video becomes slide 2). Then check.",
      "input_schema": {"type": "object", "required": ["template"], "properties": {"template": S, "slides": {"type": "array", "items": {"type": "integer"}},
                                                                                "keep": {"type": "array", "items": {"type": "integer"}},
-                                                                               "rest": {"type": "boolean"}, "channel_ids": IDS}}},
+                                                                               "rest": {"type": "boolean"}, "channel_ids": IDS,
+                                                                               "reel": {"type": "string", "enum": ["keep", "switch"]}}}},
     {"name": "create_template", "description": "Save a NEW reusable post template for this workspace when the person asks for one (e.g. "
      "'make me a funding announcement template'): name, layout (kit | bold_news | editorial | minimal | playful), fields [{key, label, "
      "sample}] and up to 8 slides of type front {kicker,title,sub} | bullets {title, items} | story {title,body,tag,source} | stat "
@@ -248,6 +252,71 @@ def keyword_first(text: str, keyword: str) -> str:
     return f"{kw}: {head}" + (("\n" + rest) if rest else "")
 
 
+
+_TRACKING = re.compile(r"^(?:utm_[a-z]+|ref|ref_src|ref_url|s|t|si|feature|fbclid|gclid|igshid|mc_[a-z]+|share|via)$", re.I)
+_HERO_BYTES: dict[str, bytes] = {}  # the last story / thumbnail pictures read (previews draw the same one many times)
+
+
+def canon_source(u: str) -> str:
+    """One spelling per source link: youtu.be / shorts / embed / watch?v= -> youtube:<id>, twitter.com / x.com status ->
+    x:<id>, else host without www./m. + path without the trailing slash + the query minus tracking parameters."""
+    from urllib.parse import parse_qsl, urlencode
+
+    from .media import find
+    u = (u or "").strip()
+    if not u:
+        return ""
+    if "://" not in u:
+        u = "https://" + u
+    key = find.canonical(u)
+    if not key.startswith(("http://", "https://")):
+        return key
+    p = urlparse(u)
+    host = (p.hostname or "").lower()
+    for pre in ("www.", "m.", "mobile."):
+        if host.startswith(pre):
+            host = host[len(pre):]
+    host = {"twitter.com": "x.com"}.get(host, host)
+    q = urlencode(sorted((k, v) for k, v in parse_qsl(p.query) if not _TRACKING.match(k)))
+    return f"{host}{p.path.rstrip('/')}" + (f"?{q}" if q else "")
+
+
+def same_source(a: str, b: str) -> bool:
+    """True when two links name the same page or video (another spelling, tracking parameters, a trailing slash)."""
+    ca, cb = canon_source(a), canon_source(b)
+    return bool(ca) and ca == cb
+
+
+def stale_since_sent(prev: dict, fmt: str, urls: list[str]) -> dict | None:
+    """The package was sent to Buffer (or saved as a draft) and its media or format changed since: what was sent
+    ({mode, buffer_post_id, at, format, media_urls}), else None."""
+    sent = (prev or {}).get("sent")
+    if not sent:
+        return None
+    if list(prev.get("media_urls") or []) == list(urls or []) and (prev.get("format") or "") == (fmt or ""):
+        return None
+    return {"mode": sent.get("mode") or "", "buffer_post_id": sent.get("buffer_post_id") or "", "at": sent.get("at"),
+            "approval_id": sent.get("approval_id"), "format": prev.get("format") or "",
+            "media_urls": list(prev.get("media_urls") or [])[:10]}
+
+
+def version_label(cm: dict, template: dict | None = None) -> str:
+    """The Undo button's words for going back to this version: "Back to the Reel", "Back to the News carousel"."""
+    fmt = (cm or {}).get("format") or ""
+    if fmt == "reel":
+        return "Back to the Reel"
+    name = ""
+    if template and template.get("id") and (cm or {}).get("template") in (template.get("id"), None):
+        name = template.get("name") or ""
+    if fmt == "carousel":
+        if not name:
+            return "Back to the carousel"
+        return f"Back to the {name}" if "carousel" in name.lower() else f"Back to the {name} carousel"
+    if fmt == "photo":
+        return "Back to the image"
+    return "Undo"
+
+
 class Tools(EditorialTools):
     def __init__(self, house, actor, rid: int):
         self.h, self.a, self.rid = house, actor, rid
@@ -352,6 +421,7 @@ class Tools(EditorialTools):
                 raise ActionError(str(e))
         res["source"] = {k: art.get(k) for k in ("url", "title", "description", "image", "site", "via", "post", "media", "media_note")}
         res["source"]["paragraphs"] = (art.get("paragraphs") or [])[:10]
+        res["source"]["requested_url"] = url  # the link as given (the page may redirect to another spelling)
         self.save(run)
         out = {"site": art["site"], "title": art["title"], "via": art.get("via"), "words": len(" ".join(art.get("paragraphs") or []).split())}
         if art.get("post"):
@@ -385,7 +455,7 @@ class Tools(EditorialTools):
         res["source"] = {"url": info["url"], "title": info["title"], "image": info["thumbnail"], "site": info["channel"] or "YouTube",
                          "description": (next((p for p in paras[1:]), "") or f"A video by {info['channel']} on YouTube.")[:300],
                          "via": info["via"], "post": None, "media": [], "media_note": "", "paragraphs": paras,
-                         "video_url": info["url"], "channel": info["channel"], "channel_url": info["channel_url"]}
+                         "video_url": info["url"], "channel": info["channel"], "channel_url": info["channel_url"], "requested_url": url}
         self.save(run)
         out = {"site": info["channel"], "title": info["title"], "via": info["via"], "channel": info["channel"],
                "description": (info["description"] or "")[:800], "published": info["published"], "words": len(" ".join(paras).split())}
@@ -840,19 +910,51 @@ class Tools(EditorialTools):
             m = self.h.get_media(up["token"])
             if m:
                 return m["data"], "hero"
-        url = story.get("image") or (res.get("source") or {}).get("image") or ""
-        if not url:
-            return None, "none"
-        data = self.h._fetch_bytes(url, 8 * 1024 * 1024)
-        if not data:
-            return None, "none"
+        first = story.get("image") or (res.get("source") or {}).get("image") or ""
+        thumbs = self._source_thumbs(run)
         cache = res.setdefault("hero_judgment", {})
-        if url not in cache:
-            j = vision.judge_candidate(data, story.get("headline", "") + ". " + " ".join(story.get("facts") or []), self.demo, self.h.http)
-            cache[url] = {**j, "use": vision.decide_hero(j)}
-            self.save(run)
-        use = cache[url]["use"]
-        return (data if use != "skip" else None), use
+        for url in dict.fromkeys([u for u in [first, *thumbs] if u]):
+            if (cache.get(url) or {}).get("use") == "skip" and url not in thumbs:
+                continue  # judged before: not this one (no second download)
+            data = _HERO_BYTES.get(url) or self.h._fetch_bytes(url, 8 * 1024 * 1024)
+            if not data:
+                continue
+            _HERO_BYTES[url] = data
+            while len(_HERO_BYTES) > 24:
+                _HERO_BYTES.pop(next(iter(_HERO_BYTES)))
+            if url not in cache:
+                j = vision.judge_candidate(data, story.get("headline", "") + ". " + " ".join(story.get("facts") or []), self.demo, self.h.http)
+                cache[url] = {**j, "use": vision.decide_hero(j)}
+                self.save(run)
+            use = cache[url]["use"]
+            if use != "skip":
+                return data, use
+            if url in thumbs and (cache[url].get("width") or 0) >= 300:
+                # the source video's own thumbnail is on topic by definition: a cover never falls back to an empty gradient
+                # (owner, 3 Nov 2026: the Screen Studio covers and template chips were blank)
+                return data, "hero"
+        return None, "none"
+
+    def _source_thumbs(self, run) -> list[str]:
+        """The source's own pictures, best first: the YouTube video's thumbnails (maxres, then hq), the found video's
+        thumbnail. Used when the story image is missing or judged off topic."""
+        from .media import find
+        res = run["result"]
+        src = res.get("source") or {}
+        out = []
+        for u in (src.get("video_url"), src.get("url"), src.get("requested_url"), (run.get("input") or {}).get("source_url")):
+            yid = find.youtube_id(u or "") if u else None
+            if yid and re.fullmatch(r"[A-Za-z0-9_-]{6,20}", yid):
+                out += [f"https://i.ytimg.com/vi/{yid}/maxresdefault.jpg", f"https://i.ytimg.com/vi/{yid}/hqdefault.jpg"]
+                break
+        if src.get("image") and ("ytimg.com" in src["image"] or src.get("video_url")):
+            out.append(src["image"])
+        fm = res.get("found_media") if isinstance(res.get("found_media"), dict) else {}
+        for c in [fm.get("best_downloadable") or {}, *(fm.get("candidates") or [])[:3]]:
+            t = (c or {}).get("thumbnail") or (c or {}).get("thumb") or ""
+            if isinstance(t, str) and t.startswith("https://"):
+                out.append(t)
+        return list(dict.fromkeys(out))
 
     def _keep(self, data: bytes, name: str, meta: dict, role: str = "") -> dict:
         tok = self.h.put_media(self.a, data, name, kind="render", meta=meta)
@@ -861,10 +963,28 @@ class Tools(EditorialTools):
             out["role"] = role
         return out
 
+    MAX_VERSIONS = 6
+
+    def _push_version(self, res: dict, cid: str, old: dict | None) -> None:
+        """Keep what a channel had before its media changes (owner, 3 Nov 2026: a template switch lost the Reel), so
+        "Undo" / "Back to the Reel" can always restore it (undo_package_media)."""
+        if not old or not old.get("media"):
+            return
+        vs = res.setdefault("media_versions", {}).setdefault(cid, [])
+        if vs and [m.get("url") for m in vs[-1]["cm"].get("media") or []] == [m.get("url") for m in old.get("media") or []]:
+            return  # the same files twice in a row are one version
+        tp = res.get("template") if isinstance(res.get("template"), dict) else None
+        vs.append({"cm": json.loads(json.dumps(old, default=str)), "template": json.loads(json.dumps(tp, default=str)) if tp else None,
+                   "at": time.time(), "format": old.get("format") or "", "label": version_label(old, tp)})
+        del vs[:-self.MAX_VERSIONS]
+
     def _set_media(self, run, ids: list[str], media: list[dict], fmt: str, extra: dict | None = None) -> None:
         res = run["result"]
         cm = res.setdefault("channel_media", {})
         for cid in ids:
+            old = cm.get(cid)
+            if old and [m.get("url") for m in old.get("media") or []] != [m.get("url") for m in media]:
+                self._push_version(res, cid, old)
             cm[cid] = {"format": fmt, "media": media, **(extra or {})}
         if media:
             try:  # every finished channel render is kept in the person's Library (studio/library.py)
@@ -889,7 +1009,7 @@ class Tools(EditorialTools):
         post = (run["result"].get("source") or {}).get("post")
         img, use = self._hero(run)
         total = (3 if post else 2) + (1 if p.get("end_card") else 0)
-        b, m = render.news_card(st["headline"], kit, dict(p), image=img if use == "hero" else None, inset=img if use == "inset" else None,
+        b, m = render.news_card(cover_hook(st["headline"]) or st["headline"], kit, dict(p), image=img if use == "hero" else None, inset=img if use == "inset" else None,
                                 logo=logo, ratio="4:5", label=st.get("label", ""), credit=st["source"], n=(1, total) if carousel else None,
                                 hi=self._hi(st["headline"]))
         out = [self._keep(b, "cover.jpg", m)]
@@ -1034,7 +1154,7 @@ class Tools(EditorialTools):
                 draw = self._drawable(tid)
                 if draw == template_pick.NEWS:
                     img, use = self._hero(run)
-                    raw, _m = render.news_card(st["headline"], kit, dict(p), image=img if use == "hero" else None,
+                    raw, _m = render.news_card(cover_hook(st["headline"]) or st["headline"], kit, dict(p), image=img if use == "hero" else None,
                                                inset=img if use == "inset" else None, logo=logo, ratio="4:5", label=st.get("label", ""),
                                                credit=st.get("source", ""), hi=self._hi(st["headline"]))
                     im = Image.open(io.BytesIO(raw)).convert("RGB")
@@ -1087,8 +1207,10 @@ class Tools(EditorialTools):
         self.save(run)
         return f"your {kt['name']} brand kit (this post only)"
 
+    REEL_ASK = "Turn the Reel into a carousel? The video becomes slide 2."
+
     def t_set_template(self, template: str, slides: list | None = None, keep: list | None = None, rest: bool | None = None,
-                       channel_ids: list | None = None) -> dict:
+                       channel_ids: list | None = None, reel: str | None = None) -> dict:
         """The person picked a template (by name or id), for the whole post or only the slides they named."""
         run = self.state()
         res = run["result"]
@@ -1121,6 +1243,28 @@ class Tools(EditorialTools):
                  and (channel_ids or (cm.get(c["id"]) or {}).get("format") in (None, "carousel", "photo"))]
         if not chans:  # every image channel is a Reel now: the template goes on them as a carousel (they asked for it)
             chans = [c for c in self.channels(run, channel_ids) if c["service"] not in VIDEO_ONLY]
+        # owner, 3 Nov 2026: tapping a carousel template on a Reel turned it into a carousel and the video was gone. A Reel
+        # channel is never switched without asking; on "switch" its video stays as slide 2 and Undo goes back to the Reel.
+        reel_ids = [c["id"] for c in chans if (cm.get(c["id"]) or {}).get("format") == "reel"]
+        reel = (reel or "").strip().lower()
+        if reel_ids and reel not in ("keep", "switch"):
+            q = self.REEL_ASK
+            res["ask"] = {"kind": "reel_to_carousel", "question": q, "template": tid, "name": info["name"], "channels": reel_ids,
+                          "choices": [{"label": "Keep Reel", "body": {"template": tid, "reel": "keep"}, "say": "Keep the Reel"},
+                                      {"label": "Switch", "body": {"template": tid, "reel": "switch"}, "say": "Switch to the carousel"}],
+                          "at": time.time()}
+            self.save(run)
+            return {"template": tid, "name": info["name"], "needs_choice": True, "question": q, "choices": ["Keep Reel", "Switch"],
+                    "channels": reel_ids, "slides_changed": [], "kit": cur.get("kit") or ""}
+        res.pop("ask", None)
+        if reel == "keep" and reel_ids:
+            chans = [c for c in chans if c["id"] not in reel_ids]
+            if not chans:
+                self.save(run)
+                return {"template": tid, "name": info["name"], "kept_reel": True, "channels": [], "slides_changed": [],
+                        "kit": cur.get("kit") or ""}
+        keep_video = {cid: next((m for m in (cm.get(cid) or {}).get("media") or [] if m.get("type") == "video"), None)
+                      for cid in reel_ids} if reel == "switch" else {}
         ids = [c["id"] for c in chans]
         if not ids:
             raise ActionError("This post has no image channel for a template (YouTube and TikTok take videos only).")
@@ -1137,6 +1281,14 @@ class Tools(EditorialTools):
         run = self.state()
         res = run["result"]
         cm = res.get("channel_media") or {}
+        svc = {c["id"]: c["service"] for c in chans}
+        for cid, vid in keep_video.items():  # the Reel's video stays in the post, as slide 2 where the network allows it
+            ent = cm.get(cid) or {}
+            if vid and svc.get(cid) in self.MIXED_CAROUSEL and ent.get("media"):
+                ms = [m for m in ent["media"] if m.get("type") != "video"]
+                cm[cid] = {**ent, "media": (ms[:1] + [vid] + ms[1:])[:10], "format": "carousel", "video_slide": 2}
+        if keep_video:
+            self._set_media(run, [], [], "carousel")  # rebuilds result.media from channel_media
         partial = bool(slides or keep or rest)
         changed: list[int] = []
         if partial:
@@ -1170,7 +1322,7 @@ class Tools(EditorialTools):
         self.save(run)
         self._refresh_packages()
         return {"template": tid, "name": info["name"], "channels": ids, "slides_changed": sorted(changed) if partial else "all",
-                "kit": rec.get("kit") or ""}
+                "kit": rec.get("kit") or "", **({"video_slide": 2, "from_reel": sorted(keep_video)} if keep_video else {})}
 
     def template_names(self) -> list[dict]:
         """The templates by name (the thread's answer to "what templates can you use")."""
@@ -1268,7 +1420,7 @@ class Tools(EditorialTools):
         st = self._story(run)
         post = (run["result"].get("source") or {}).get("post")
         img, use = self._hero(run)
-        b, m = render.news_card(st["headline"], kit, dict(p), image=img if use == "hero" else None, inset=img if use == "inset" else None,
+        b, m = render.news_card(cover_hook(st["headline"]) or st["headline"], kit, dict(p), image=img if use == "hero" else None, inset=img if use == "inset" else None,
                                 logo=logo, ratio="9:16", label=st.get("label", ""), credit=st["source"], hi=self._hi(st["headline"]))
         frames = [self._keep(b, "r_cover.jpg", m, "slide")]
         if post:
@@ -2009,14 +2161,16 @@ class Tools(EditorialTools):
             if clipped:
                 problems.append(f"{c['service']}: text clipped on {len(clipped)} image(s)")
             prev = old.get(c["id"], {})
-            if prev.get("sent"):
+            stale = stale_since_sent(prev, cm["format"], ([m["url"] for m in media][:10] if cm.get("recap") and cm["format"] == "carousel"
+                                                           else self._urls_for(c["service"], media, cm["format"])))
+            if prev.get("sent") and not stale:
                 status = prev["status"]
             else:
                 status = "hold" if res.get("conflicts") else "ready"
             pk = {"channel_id": c["id"], "service": c["service"], "channel_name": c["name"], "text": cap["text"],
                   "length": drafter.count(c["service"], cap["text"]), "limit": drafter.limit_for(c["service"]),
                   "media_urls": ([m["url"] for m in media][:10] if cm.get("recap") and cm["format"] == "carousel" else
-                                 self._urls_for(c["service"], media)), "format": cm["format"], "note": cm.get("note", ""),
+                                 self._urls_for(c["service"], media, cm["format"])), "format": cm["format"], "note": cm.get("note", ""),
                   "ratio": cm.get("ratio") or ("9:16" if cm["format"] == "reel" else "4:5"),
                   "check": chk, "clipped": clipped, "status": status,
                   "applied_rules": self.h.ledger.applied(rules, c["service"]), "evidence": _evidence(res.get("story"), res.get("source")),
@@ -2032,11 +2186,22 @@ class Tools(EditorialTools):
                 if cm.get("thumbnail_offset_ms") is not None and c["service"] in ("instagram", "tiktok", "pinterest"):
                     pk.setdefault("options", {})["thumbnail_offset_ms"] = int(cm["thumbnail_offset_ms"])
             pa = (prev.get("options") or {}).get("ig_audio")  # the Reel's music survives a re-check while the video is still there
-            if pa and c["service"] == "instagram" and any(u.lower().split("?")[0].endswith((".mp4", ".mov", ".m4v", ".webm")) for u in pk["media_urls"]):
+            if pa and c["service"] == "instagram" and cm["format"] == "reel" and \
+                    any(u.lower().split("?")[0].endswith((".mp4", ".mov", ".m4v", ".webm")) for u in pk["media_urls"]):
                 pk.setdefault("options", {}).update(ig_audio=pa, ig_type="reel")
-            if prev.get("sent"):
+            if prev.get("sent") and not stale:
                 pk["sent"] = prev["sent"]
+            elif stale or prev.get("changed_since_sent"):
+                # owner, 3 Nov 2026: a re-render / template change kept the card "In Buffer". The new media is NOT in Buffer:
+                # the card is ready again and says so; a Buffer draft it made can take the new media (update_package_draft)
+                was = stale or prev["changed_since_sent"]
+                pk["changed_since_sent"] = was
+                if was.get("buffer_post_id") and was.get("mode") == "draft":
+                    pk["buffer_draft"] = {"buffer_post_id": was["buffer_post_id"], "at": was.get("at")}
             pk["media"] = self._media_info(media, pk["media_urls"], pk["ratio"])
+            vs = (res.get("media_versions") or {}).get(c["id"]) or []
+            if vs:  # what Undo goes back to (the card's "Undo" / "Back to the Reel")
+                pk["undo"] = {"label": vs[-1].get("label") or "Undo", "format": vs[-1].get("format") or "", "versions": len(vs)}
             if cm.get("reel"):  # the weekly recap: the same stories as one 9:16 Reel, ready as its own post
                 pk["reel"] = self._media_info(cm["reel"], [m["url"] for m in cm["reel"]], "9:16")
             packages.append(pk)
@@ -2050,9 +2215,11 @@ class Tools(EditorialTools):
         ask = res.get("video_ask") or {}
         if ask.get("text") and not self._has_video(run) and ask["text"] not in {t.get("text") for t in res.get("thread") or []}:
             self.thread(run, "agent", ask["text"])  # the search is over and there is still no video: ask for the upload now
-        src_url = ((res.get("source") or {}).get("url") or "").split("?")[0].rstrip("/")
-        want = (run["input"].get("source_url") or "").split("?")[0].rstrip("/")
-        about = not want or (src_url.lower().replace("twitter.com", "x.com") == want.lower().replace("twitter.com", "x.com"))
+        src = res.get("source") or {}
+        want = run["input"].get("source_url") or ""
+        # the story came from the link when the link read IS the source, whatever its spelling (owner, 3 Nov 2026: a
+        # youtu.be link read as youtube.com/watch?v= was "the story isn't from your link")
+        about = not want or any(same_source(u, want) for u in (src.get("url"), src.get("requested_url"), src.get("video_url")) if u)
         if not about:
             problems.append("the story isn't from your link")
         res["checks"] = {"about_source": about, "problems": problems, "conflicts": len(res.get("conflicts") or []), "skipped": skipped}
@@ -2075,10 +2242,15 @@ class Tools(EditorialTools):
                         "duration": meta.get("duration"), "ratio": r})
         return out
 
+    MIXED_CAROUSEL = ("instagram", "threads", "facebook")  # carousels that take a video slide next to the images
+
     @staticmethod
-    def _urls_for(svc: str, media: list[dict]) -> list[str]:
+    def _urls_for(svc: str, media: list[dict], fmt: str = "") -> list[str]:
         vids = [m["url"] for m in media if m["type"] == "video"]
         imgs = [m["url"] for m in media if m["type"] == "photo" and m.get("role") != "slide"]
+        if fmt == "carousel" and vids and imgs and svc in Tools.MIXED_CAROUSEL:
+            # a Reel switched to a carousel template keeps its video as a slide (owner, 3 Nov 2026)
+            return [m["url"] for m in media if m["type"] == "video" or (m["type"] == "photo" and m.get("role") != "slide")][:10]
         if vids:
             return vids[:1]
         if svc in VIDEO_ONLY:
@@ -2095,8 +2267,12 @@ class Tools(EditorialTools):
         if res.get("conflicts"):
             raise ActionError("A fact needs your answer before anything goes to Buffer: " + res["conflicts"][0]["question"], 409)
         out = []
+        redo = []  # re-rendered since they were saved: their Buffer draft takes the new media (never a second draft)
         for pk in res.get("packages") or []:
             if channel_ids and pk["channel_id"] not in channel_ids and pk["service"] not in channel_ids:
+                continue
+            if not pk.get("sent") and pk.get("status") == "ready" and (pk.get("buffer_draft") or {}).get("buffer_post_id"):
+                redo.append(pk["channel_id"])
                 continue
             if pk.get("sent") or pk.get("status") != "ready":  # idempotent: one draft per run + channel
                 out.append({"service": pk["service"], "status": "already saved" if pk.get("sent") else pk.get("status")})
@@ -2113,6 +2289,11 @@ class Tools(EditorialTools):
             out.append({"service": pk["service"], "status": sub["status"], "buffer_post_id": pk["sent"]["buffer_post_id"]})
             self.save(run)  # saved after every draft, so a retry never creates the same draft twice
         self.save(run)
+        for cid in redo:
+            u = self.h.update_package_draft(self.a, self.rid, cid)
+            pk = next((p for p in self.state()["result"].get("packages") or [] if p["channel_id"] == cid), {})
+            out.append({"service": pk.get("service", ""), "status": "draft " + u.get("draft", "updated"),
+                        "buffer_post_id": (pk.get("sent") or {}).get("buffer_post_id")})
         return {"drafts": out}
 
     def t_finish(self, message: str) -> dict:
