@@ -1138,7 +1138,7 @@ class Tools(EditorialTools):
             style = (run["result"].get("kit_override") or {}).get("caption_style") or brand_kits.active_caption_style(self.h, self.a) or None
         found = run["result"].get("found_media") if isinstance(run["result"].get("found_media"), dict) else {}
         branded = run["result"].get("clip_owned") or bool((found.get("best_downloadable") or {}).get("official"))
-        if not style and branded:  # "Let the agent choose" on their own / the maker's video: a fitting theme, branded throughout
+        if not style and (branded or found.get("best_downloadable")):  # a real video (theirs, the maker's, or a credited one): a fitting theme
             inp = run.get("input") or {}
             style = media_styles.pick_theme(" ".join([inp.get("prompt") or "", (inp.get("intake") or {}).get("tone") or ""]),
                                             (inp.get("intake") or {}).get("topic") or "")[0]
