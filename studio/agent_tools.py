@@ -1481,7 +1481,7 @@ class Tools(EditorialTools):
 
     def t_remember_rule(self, correction: str) -> dict:
         from .ledger import from_person
-        if not from_person(correction, self.own_words()):  # a rule only from the person's own words (prompt injection)
+        if not getattr(self, "direct", False) and not from_person(correction, self.own_words()):  # a rule only from the person's own words (prompt injection)
             self.h.store.audit(self.a.uid, "system", "rule_held", "safety", {"run": self.rid, "rule": str(correction)[:160]})
             return {"rules": [], "held": True, "message": "Not saved: a Style Ledger rule comes only from the person's own words in "
                                                           "this run, and they didn't say this. Ask them, or let them add it in Brand."}

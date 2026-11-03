@@ -313,6 +313,7 @@ class Brain:
         if run["kind"] != "agent":
             raise ActionError("Agent tools work on runs started with make_post.")
         tools = Tools(self.h, a, rid)
+        tools.direct = a.kind == "human"  # a person pressed it (e.g. confirming a held rule); an AI app's call is checked
         out = self.call(a, rid, tools, name, args or {})
         run = self.h.run(a, rid)
         if name == "check" and run["result"].get("packages"):

@@ -71,7 +71,8 @@ TYPE_GROUP = {"banned_words": "words", "prefer_words": "words", "no_emoji": "emo
 SERVICES = ("instagram", "linkedin", "twitter", "facebook", "threads", "bluesky", "tiktok", "youtube", "mastodon", "pinterest",
             "googlebusiness")
 STOP = set("a an the and or but of to in on at for with by from is are was were be been it its this that these those as "
-           "we our you your i my they their he she his her so very just really also then than there here not no".split())
+           "we our you your i my they their he she his her so very just really also then than there here not no it's that's "
+           "it’s that’s we're we’re you're you’re can will has have had do does did into about over more most".split())
 EMOJI = brand.EMOJI_RE
 HASH = brand.HASHTAG_RE
 
@@ -146,11 +147,15 @@ def signals(before: str, after: str, service: str = "") -> list[dict]:
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         gone = [w for w in a[i1:i2] if w]
         new = [w for w in b[j1:j2] if w]
-        if op == "delete" and 1 <= len(gone) <= 4:
-            ph = " ".join(gone)
-            if _phrase_ok(gone):
-                out[f"avoid:{ph}"] = {"sig": f"avoid:{ph}", "type": "banned_words", "phrase": ph}
-        elif op == "replace" and 1 <= len(gone) <= 3 and 1 <= len(new) <= 3:
+        short_replace = op == "replace" and 1 <= len(gone) <= 3 and 1 <= len(new) <= 3
+        if (op == "delete" and 1 <= len(gone) <= 4) or short_replace:
+            # what was taken out: a one- or two-word phrase as it is, a longer one word by word (its content words)
+            parts = [gone] if len(gone) <= 2 else [[w] for w in gone if w not in STOP and len(w) >= 4]
+            for p in parts:
+                ph = " ".join(p)
+                if _phrase_ok(p) and ph not in new:
+                    out[f"avoid:{ph}"] = {"sig": f"avoid:{ph}", "type": "banned_words", "phrase": ph}
+        if short_replace:
             ph, to = " ".join(gone), " ".join(new)
             if _phrase_ok(gone) and ph != to and not any(w.startswith(("#", "http")) for w in new):
                 out[f"prefer:{ph}=>{to}"] = {"sig": f"prefer:{ph}=>{to}", "type": "prefer_words", "from": ph, "to": to}
@@ -214,6 +219,8 @@ def covered(sig: dict, rules: list[dict]) -> bool:
             continue
         c = r.get("check") or {}
         if sig["type"] == "banned_words" and c.get("type") == "banned_words" and sig["phrase"] in [w.lower() for w in c.get("words", [])]:
+            return True
+        if sig["type"] == "banned_words" and c.get("type") == "prefer_words" and sig["phrase"] in [w.lower() for w in c.get("from", [])]:
             return True
         if sig["type"] == "prefer_words" and c.get("type") == "prefer_words" and sig["from"] in [w.lower() for w in c.get("from", [])]:
             return True
@@ -494,6 +501,8 @@ class Ledger:
                 continue
             if len(hits) < SUGGEST_AFTER:
                 continue
+            if s0["type"] == "banned_words" and any(k.startswith(f"prefer:{s0['phrase']}=>") and len(v) >= len(hits) for k, v in by.items()):
+                continue  # the same word swapped for the same replacement every time: suggest "say Y, not X" instead
             kind, check, text = suggestion_rule(s0, [s for _, s in hits])
             svcs = sorted({e["service"] for e, _ in hits if e["service"]})
             scope = [svcs[0]] if (len(svcs) == 1 and s0["type"] == "max_length") else []
