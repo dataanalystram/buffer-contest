@@ -734,16 +734,50 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "not found"}, status_code=404)
         data, size = m["data"], len(m["data"])
         headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
-        from .library import parse_range
+        from .library import parse_range, range_unsatisfiable
         rng_h = request.headers.get("range", "")
         rng = parse_range(rng_h, size)
-        if rng_h and rng is None:
+        if rng is None and range_unsatisfiable(rng_h, size):
             return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
         if rng:
             start, end = rng
             return Response(data[start:end + 1], status_code=206, media_type=m["mime"],
                             headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
         return Response(data, media_type=m["mime"], headers=headers)
+
+    @app.api_route("/ms/{exp}/{sig}/{token}", methods=["GET", "HEAD"], include_in_schema=False)
+    def media_signed(exp: str, sig: str, token: str, request: Request):
+        """get_media_preview's short-lived link (15 min, HMAC over expiry + token): the same file as /m/<token>."""
+        from . import mcp_parity
+        if not mcp_parity.verify(studio.s, exp, sig, token):
+            return JSONResponse({"error": "This link expired or is not valid. Ask get_media_preview for a new one."}, status_code=403)
+        return media(token, request)
+
+    @app.get("/api/media/{token}/preview")
+    def media_preview(token: str, request: Request, frames_at: str = "0,1,2", width: int = 480):
+        """get_media_preview: frame stills (base64 JPEG) of your own video or image, and a 15-minute signed link."""
+        from . import mcp_parity
+        try:
+            times = [float(x) for x in frames_at.split(",") if x.strip()][:mcp_parity.MAX_FRAMES]
+        except ValueError:
+            raise ActionError("frames_at is seconds separated by commas, e.g. 0,1,2", 400)
+        out = mcp_parity.media_preview(studio, actor(request), {"media_token": token, "frames_at": times, "width": width})
+        out["images"] = out.pop("_mcp_images", [])
+        return out
+
+    @app.post("/api/buffer/drafts/{post_id}/media")
+    def draft_media(post_id: str, request: Request, body: dict = Body(...)):
+        """replace_draft_media: new media on a Buffer draft (any draft); the old one is deleted only with delete_old + confirm."""
+        from . import mcp_parity
+        a = actor(request, write=True)
+        studio._guard_write(a, "replace_draft_media")
+        return mcp_parity.replace_draft_media(studio, a, {**(body or {}), "post_id": post_id})
+
+    @app.get("/api/agent/pages")
+    def agent_pages(request: Request, page: str = ""):
+        """get_page_context: what each page shows and which MCP tools do the same things there."""
+        from . import mcp_parity
+        return mcp_parity.page_context(studio, actor(request), {"page": page})
 
     @app.get("/api/media/health")
     def media_health(request: Request, refresh: int = 0):

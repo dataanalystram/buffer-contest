@@ -41,6 +41,25 @@ def _hl(brand: dict) -> str:
 SIZES = {"9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080)}
 FPS = 30
 CARD_SECS = 3.0
+# The chosen cover held as the Reel's very first frames, so Buffer's thumbnailOffset (the only cover control its API has:
+# VideoAssetInput.thumbnailUrl is rejected for video) can point Instagram / TikTok at it. Six frames: long enough that the
+# offset lands on it after Instagram's re-encode, short enough that a viewer never sees a held still (owner, 3 Nov 2026:
+# the 0.6 s cover + the theme's title card played as two stills before the video, and again on every loop).
+COVER_FRAME_SECS = 0.2
+
+
+def cover_thumb_ms(secs: float) -> int:
+    """Buffer thumbnailOffset (ms) for a cover held ``secs`` at the start: the middle of it."""
+    return int(round(float(secs) * 500))
+
+
+def cover_frame_secs(secs: float | None) -> float:
+    """The cover-frame length actually used: COVER_FRAME_SECS unless a shorter/longer one in 0.1-0.25 s is asked for."""
+    try:
+        v = float(secs) if secs is not None else COVER_FRAME_SECS
+    except (TypeError, ValueError):
+        v = COVER_FRAME_SECS
+    return round(min(0.25, max(0.1, v)), 3)
 HYPE_HOOK_SECS = 1.4  # hype: the giant hook holds for the first beat, then the one-word captions take over
 DEFAULT_BRAND = {"name": "HuhByte AI", "handle": "@huhbyte.ai", "accent": "#C9ACFA", "bg": "#0E0E10", "text": "#FFFFFF",
                  "muted": "#A0A0A8", "logo": None, "head_font": "Anton.ttf", "body_font": "Poppins-Medium.ttf",
@@ -568,7 +587,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
                  brand_colors: bool = False, reframe: dict | None = None, lower_third_mode="auto",
                  detect_own_captions: bool = False, brand_pass: bool | dict = False, cover_png: str | None = None,
-                 cover_secs: float = 0.6, logo: bool = True) -> dict:
+                 cover_secs: float = COVER_FRAME_SECS, logo: bool = True) -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     ``style`` is a base style or a theme (styles.THEMES: its grade, effects, captions, cards and chrome on a base
@@ -644,7 +663,10 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                 caps_on = False
                 captions_note = ("This video already has captions burned in, so no new captions were added (they would "
                                  "double up). Ask for captions=\"replace\" to crop the old ones off and caption it again.")
-        cover_s = cfg["cover_secs"] if source else 0.0
+        has_cover_frame = bool(cover_png and source and Path(cover_png).is_file())
+        # One opening still at most: with the chosen cover as the first frames, the theme's title card is not added after
+        # it (it repeated the same title as a second still; the hook stays on screen over the video from frame 0).
+        cover_s = cfg["cover_secs"] if (source and not has_cover_frame) else 0.0
         facts = [f for f in (facts or []) if f.strip()]
         facts_s = cfg["facts_secs"] if facts else 0.0
         total = cover_s + D + facts_s + CARD_SECS
@@ -705,12 +727,12 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             hk.save(hook_path)
         segs = []
         pre_s = 0.0
-        if cover_png and source and Path(cover_png).is_file():  # the chosen cover as the very first frames (Reel cover)
-            pre_s = max(0.3, float(cover_secs))
+        if has_cover_frame:  # the chosen cover as the very first frames (Reel cover via thumbnailOffset)
+            pre_s = cover_frame_secs(cover_secs)
             cp = wd / "cover_frame.png"
             Image.open(cover_png).convert("RGB").resize((W, H), Image.LANCZOS).save(cp)
             segs.append(_card_segment(str(cp), pre_s, str(wd / "s00_cover.mp4"), crf, preset, fade=False))
-            boxes["cover_frame"] = {"secs": pre_s, "thumbnail_offset_ms": int(pre_s * 500)}
+            boxes["cover_frame"] = {"secs": pre_s, "thumbnail_offset_ms": cover_thumb_ms(pre_s)}
         if cover_s:
             if cfg.get("card"):
                 boxes["cover_boxes"] = theme_cards.cover(cfg, str(wd / "cover.png"), W, H, brand, hook, still,
@@ -768,7 +790,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                 "captions_note": captions_note, "source_captions": {k: own_caps[k] for k in ("top", "bottom")} if own_caps else None,
                 "captions_center": L.get("captions_center"), "music": mood if wav else "none", "source_silent": silent,
                 "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit, "cover_frame_secs": pre_s,
-                "thumbnail_offset_ms": int(pre_s * 500) if pre_s else None,
+                "thumbnail_offset_ms": cover_thumb_ms(pre_s) if pre_s else None,
                 "brand_pass": sorted((boxes.get("brand_pass") or {}).keys()) if brand_pass else []}
     finally:
         if own:
@@ -777,7 +799,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
 
 
 def render_plain(source: str, *, out: str, ratio: str = "9:16", brand: dict | None = None, clip: tuple | None = None,
-                 logo: bool = True, cover_png: str | None = None, cover_secs: float = 0.6, crf: int = 21,
+                 logo: bool = True, cover_png: str | None = None, cover_secs: float = COVER_FRAME_SECS, crf: int = 21,
                  preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0, end: bool = True) -> dict:
     """"No style: post my video as it is": the video only lightly finished. Trimmed (``clip``) and fitted to the frame
     (a full crop when the shape is close, else the whole frame over a blurred copy of itself), the logo bug when
@@ -821,7 +843,7 @@ def render_plain(source: str, *, out: str, ratio: str = "9:16", brand: dict | No
         segs = []
         pre_s = 0.0
         if cover_png and Path(cover_png).is_file():
-            pre_s = max(0.3, float(cover_secs))
+            pre_s = cover_frame_secs(cover_secs)
             cp = wd / "cover_frame.png"
             Image.open(cover_png).convert("RGB").resize((W, H), Image.LANCZOS).save(cp)
             segs.append(_card_segment(str(cp), pre_s, str(wd / "s00_cover.mp4"), crf, preset, fade=False))
@@ -848,7 +870,7 @@ def render_plain(source: str, *, out: str, ratio: str = "9:16", brand: dict | No
                 "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), "given" if clip else "full video"],
                 "boxes": boxes, "safe_area": safe_area(W, H), "caption_problems": [], "captions": False, "burned_subs": False,
                 "captions_note": "", "source_captions": None, "music": "none", "source_silent": silent, "fit": "crop" if close else "blurred sides",
-                "logo": bool(boxes.get("bug")), "cover_frame_secs": pre_s, "thumbnail_offset_ms": int(pre_s * 500) if pre_s else None,
+                "logo": bool(boxes.get("bug")), "cover_frame_secs": pre_s, "thumbnail_offset_ms": cover_thumb_ms(pre_s) if pre_s else None,
                 "credit": "", "brand_pass": []}
     finally:
         if own:

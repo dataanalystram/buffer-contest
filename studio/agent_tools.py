@@ -708,6 +708,7 @@ class Tools(EditorialTools):
                 "brand_pass": meta.get("brand_pass") or []}
 
     def t_set_cover(self, channel: str, index: int) -> dict:
+        from .media.compose import COVER_FRAME_SECS, cover_thumb_ms
         run = self.state()
         res = run["result"]
         ch = next((c for c in run["input"]["channels"] if c["id"] == channel or c["service"] == channel), None)
@@ -726,7 +727,7 @@ class Tools(EditorialTools):
         ratio = cm.get("ratio") or "9:16"
         files = covers[index].get("tokens") or {}
         ctok = files.get("4:5" if ratio == "4:5" else "9:16") or next(iter(files.values()), "")
-        spec = {"kind": "cover_swap", "source": vid["token"], "cover": ctok, "secs": 0.6,
+        spec = {"kind": "cover_swap", "source": vid["token"], "cover": ctok, "secs": COVER_FRAME_SECS,
                 "replace": float(cm.get("cover_frame_secs") or 0)}
         media, why = self._run_job(spec)
         if not media:
@@ -737,7 +738,7 @@ class Tools(EditorialTools):
         for cid, v in (res.get("channel_media") or {}).items():
             if any(m.get("url") == vid["url"] for m in v.get("media") or []):
                 v["media"] = [media[0] if m.get("url") == vid["url"] else m for m in v["media"]]
-                v.update(cover_index=index, cover_frame_secs=0.6, thumbnail_offset_ms=300)
+                v.update(cover_index=index, cover_frame_secs=COVER_FRAME_SECS, thumbnail_offset_ms=cover_thumb_ms(COVER_FRAME_SECS))
                 changed.append(cid)
         seen, allm = set(), []
         for v in res["channel_media"].values():
@@ -2177,6 +2178,10 @@ class Tools(EditorialTools):
                   "idempotency_key": hashlib.sha256(f"{self.rid}:{c['id']}".encode()).hexdigest()[:16]}
             if c["service"] == "youtube":
                 pk["options"] = {"title": st["headline"][:100], "category_id": "28"}
+            has_vid = any(u.lower().split("?")[0].endswith((".mp4", ".mov", ".m4v", ".webm")) for u in pk["media_urls"])
+            if cm["format"] == "reel" and has_vid and c["service"] in ("instagram", "facebook"):
+                # a 9:16 Reel goes out as a Reel on both Meta networks (Facebook defaulted to a feed video "post")
+                pk.setdefault("options", {})["ig_type" if c["service"] == "instagram" else "fb_type"] = "reel"
             if cm.get("covers"):  # the branded cover variants (Reel cover = the opening frame; YouTube thumbnail 1280x720)
                 ci = min(int(cm.get("cover_index") or 0), len(cm["covers"]) - 1)
                 pk["covers"] = [{"variant": i, "layout": x.get("layout"), "score": x.get("score"), "urls": x.get("urls") or {}}

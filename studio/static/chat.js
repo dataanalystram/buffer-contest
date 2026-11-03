@@ -179,16 +179,22 @@
     document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = li.dataset.id === String(r.id); li.classList.toggle("on", on);
       const b = li.querySelector(".hc-th"); if (b) { if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); } });
   }
+  // the run's own brain (what wrote it); a run an AI app made over MCP says so ("Claude · via MCP"), never our engine
+  function runBrain() { const r = run(), br = r && (r.result || {}).brain; return br && typeof br === "object" && (br.model || br.provider || br.source) ? br : null; }
   function modelName() {
-    const r = run(), br = r && (r.result || {}).brain, fallback = (window.H_STATE || {}).brain;
     if (typeof brainName !== "function") return "the built-in writer";
-    return brainName(br && (br.model || br.provider || br.source) ? br : fallback);
+    return brainName(runBrain() || (window.H_STATE || {}).brain);
   }
   function drawModel() {
-    const n = modelName();
-    model.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>`; model.setAttribute("aria-label", `Model: ${n}. Open Settings, AI engine`);
-    document.getElementById("hcCModel").textContent = "Model: " + n;
+    const n = modelName(), br = runBrain(), mcp = !!(br && br.mode === "mcp");
+    const nxt = !mcp && br && window.H_STATE && H_STATE.brain && typeof brainName === "function" && brainName(H_STATE.brain) !== n ? brainName(H_STATE.brain) : "";
+    model.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>`;
+    model.title = mcp ? br.hint : "The model that runs this agent. Change it in Settings > AI engine.";
+    model.setAttribute("aria-label", mcp ? `Made in ${n}. ${br.hint}` : `Model: ${n}. Open Settings, AI engine`);
+    const f = document.getElementById("hcCModel");
+    f.textContent = mcp ? `${n} — ${br.hint}` : "Model: " + n + (nxt ? ` · next reply: ${nxt}` : "");
   }
+  window.hcDrawModel = () => { if (run()) drawModel(); };
 
   // ------------------------------------------------------------ after every render of the run: decorate
   function actions(kind, text, extra) {
@@ -249,6 +255,7 @@
     const t = busy ? `Working… ${steps.length} step${steps.length === 1 ? "" : "s"}${cur ? " · " + cur.label : ""}` :
       `${r.status === "failed" ? "Stopped after" : "Worked through"} ${steps.length} step${steps.length === 1 ? "" : "s"}`;
     if (sum.textContent !== t) sum.textContent = t;
+    tr.hidden = !busy && !steps.length;  // never "Worked through 0 steps": no steps, no row
     tr.classList.toggle("hc-working", busy);
     const want = HC.trace[r.id] ?? ["failed", "interrupted"].includes(r.status);
     if (tr.open !== want) { HC.syncing = true; tr.open = want; setTimeout(() => { HC.syncing = false; }, 0); }
