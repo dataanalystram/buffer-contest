@@ -110,7 +110,7 @@ async function allTemplates(r) {
   const grid = dlg.querySelector("[data-testid=tpl-all-grid]");
   grid.innerHTML = (t.options || []).map((o) => `<button type="button" class="pc-tpl${o.current ? " on" : ""}" data-tpl="${E(o.id)}" data-testid="tpl-all-item" aria-pressed="${o.current}" title="${E(o.about || o.name)}">
       ${o.preview ? `<img src="${escUrl(o.preview)}" alt="">` : `<span class="mp-tpl-ph" aria-hidden="true"></span>`}
-      <b>${E(o.name)}</b><small class="muted">${o.current ? "In use" : o.custom ? "Yours" : E((o.about || "").slice(0, 70))}</small></button>`).join("") ||
+      <b>${E(o.name)}</b><small class="muted">${o.current ? "In use" : o.custom ? "Yours" : E(o.about || "")}</small></button>`).join("") ||
     `<p class="muted sm">No templates.</p>`;
   grid.querySelectorAll("[data-tpl]").forEach((b) => (b.onclick = async () => {
     if (b.classList.contains("on")) { close(); return; }

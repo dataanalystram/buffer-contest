@@ -381,6 +381,9 @@ def test_ui_contract_for_the_new_controls():
         assert f'data-testid="{tid}"' in js or f'"data-testid", "{tid}"' in js, tid
     hj = (st / "house.js").read_text()
     assert "hqPkgControls" in hj and "hqAskCard" in hj and "hqAllTemplates" in hj
+    css = (st / "pkgcontrols.css").read_text()
+    assert ".st.pc-changed:before{content:none" in css  # no stray "Note." label on the Changed since saved row
+    assert "-webkit-line-clamp:3" in css and ".slice(0, 70)" not in js  # descriptions clamp in CSS, never cut mid-word in JS
 
 
 # ---------------------------------------------------------------- 5b the launch cover never says the title twice
