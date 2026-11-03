@@ -162,10 +162,10 @@
     if (!MP.stories.length && MP.loading) { box.innerHTML = `<li class="mp-skel" aria-busy="true"><span></span><span></span><span></span></li>`; return; }
     box.innerHTML = rows.map((s, i) => { const host = hostOf(s.url), ago = s.published ? timeAgo(s.published * 1000) : "";
       return `<li class="mp-ds" data-testid="mp-disc-item"><div class="mp-ds-pic"><img src="${esc(window.hqThumb(s.url, s.image || ""))}" alt="" loading="lazy">${fav(host)}</div>
-        <div class="mp-ds-b"><span class="mp-ds-tag">${esc(tagOf(s))}</span><a class="mp-ds-t" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>
+        <div class="mp-ds-b"><span class="mp-ds-tag">${esc(tagOf(s))}</span><a class="mp-ds-t" href="${escUrl(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>
           <small>${esc(host || s.source || "")}${ago ? " · " + esc(ago) : ""}</small></div>
         <div class="mp-ds-a"><button type="button" class="mp-ib" data-use="${i}" data-testid="mp-disc-use" aria-label="Use “${esc(s.title.slice(0, 60))}” in a post">Use</button>
-          <a class="mp-ib" href="${esc(s.url)}" target="_blank" rel="noopener" data-testid="mp-disc-open" aria-label="Open the story">${ic(I.out)}</a></div></li>`; }).join("")
+          <a class="mp-ib" href="${escUrl(s.url)}" target="_blank" rel="noopener" data-testid="mp-disc-open" aria-label="Open the story">${ic(I.out)}</a></div></li>`; }).join("")
       || `<li class="mp-ds-empty muted sm">${MP.stories.length ? "Nothing on this topic right now." : "No stories yet: follow a few sites in News → Sources."}</li>`;
     box.querySelectorAll(".mp-ds-pic img").forEach((im) => (im.onerror = () => im.closest(".mp-ds-pic").classList.add("nopic")));
     box.querySelectorAll("[data-use]").forEach((b) => (b.onclick = () => { const s = rows[+b.dataset.use]; leaveThread(); fill(`Post this on all my channels: ${s.url}`); setStep("create"); }));
@@ -210,7 +210,7 @@
     $("#mpRecentH").parentElement.querySelector(".mp-filters").innerHTML = FILTERS.map(([k, l]) => `<button type="button" class="mp-f${MP.filter === k ? " on" : ""}" data-f="${k}" data-testid="mp-filter" aria-pressed="${MP.filter === k}">${l}</button>`).join("");
     root.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { MP.filter = b.dataset.f; MP.page = 1; drawRecent(); }));
     const box = $("#runList");
-    box.innerHTML = rows.slice((MP.page - 1) * per, MP.page * per).map((x) => `<button type="button" class="mp-rc runrow" data-testid="run-row" data-id="${x.id}" data-kind="${esc(x.kind)}">
+    box.innerHTML = rows.slice((MP.page - 1) * per, MP.page * per).map((x) => `<button type="button" class="mp-rc runrow" data-testid="run-row" data-id="${esc(x.id)}" data-kind="${esc(x.kind)}">
         <span class="mp-rc-pic">${cardPic(x)}<span class="mp-badge" data-testid="mp-badge">${badge(x)}</span></span>
         <span class="mp-rc-b"><b>${esc(x.title)}</b><span class="mp-pill st-${esc(x.state || x.status)}" data-testid="mp-pill">${esc(STATE[x.state] || x.status)}</span></span></button>`).join("")
       || `<div class="empty"><b>${MP.recent.length ? "Nothing here yet" : "No posts yet"}</b><span>Ask the agent above, or pick a story from Discover.</span></div>`;
@@ -233,7 +233,7 @@
     clearTimeout(H_STATE.poll); H_STATE.run = null; setStep("create");
   }
   $("#mpNew").onclick = () => { leaveThread(); q().focus(); };
-  const hostIcon = (u) => { const h = hostOf(u); return h ? `<a class="mp-src" href="${esc(u)}" target="_blank" rel="noopener" data-testid="mp-source">${fav(h)}<span>${esc(h)}</span></a>` : ""; };
+  const hostIcon = (u) => { const h = hostOf(u); return h ? `<a class="mp-src" href="${escUrl(u)}" target="_blank" rel="noopener" data-testid="mp-source">${fav(h)}<span>${esc(h)}</span></a>` : ""; };
   function sources(r) {
     const res = r.result || {}, urls = [];
     const add = (u) => { if (u && /^https?:/.test(u) && !urls.includes(u)) urls.push(u); };

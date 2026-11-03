@@ -234,7 +234,7 @@ function plCard(i, where) {
   if (i.kind === "ready") acts.push(`<button type="button" class="link" data-testid="planner-open-run" data-act="run" data-ref="${esc(i.ref)}">Open</button>`,
     `<button type="button" class="link" data-testid="planner-reschedule" data-act="reschedule" data-ref="${esc(i.ref)}">Schedule</button>`);
   if (i.state === "draft") acts.push(`<button type="button" class="link danger" data-testid="planner-delete" data-act="delete" data-ref="${esc(i.ref)}">Delete draft</button>`);
-  if (i.state === "sent" && i.link) acts.push(`<a class="link" href="${esc(i.link)}" target="_blank" rel="noopener" data-testid="planner-view-post">View post</a>`);
+  if (i.state === "sent" && i.link) acts.push(`<a class="link" href="${escUrl(i.link)}" target="_blank" rel="noopener" data-testid="planner-view-post">View post</a>`);
   return `<article class="pl-card s-${esc(i.state)}${where === "side" ? " in-side" : ""}" data-testid="${where === "side" ? "planner-nodate-item" : "planner-card"}" data-ref="${esc(i.ref)}" data-ch="${esc(i.channel_id)}" data-state="${esc(i.state)}" ${i.draggable ? 'draggable="true"' : ""}>
     <span class="pl-thumb">${plThumb(i)}</span>
     <div class="pl-card-body"><div class="pl-meta">${netMark(i.service, i.channel_id)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted nw">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
@@ -405,7 +405,7 @@ function plOpenItem(i) {
   if (i.kind === "ghost") return toast("A planned clip. Save the plan below to create it as a Buffer draft.");
   if (i.kind === "ready") return plAct("run", i.ref);
   if (i.kind === "approval") return plDialog("reschedule", i);
-  if (i.state === "sent") { if (i.link) window.open(i.link, "_blank", "noopener"); else toast("Sent by Buffer. Sent posts can't be moved."); return; }
+  if (i.state === "sent") { if (i.link) window.open(safeUrl(i.link), "_blank", "noopener"); else toast("Sent by Buffer. Sent posts can't be moved."); return; }
   plDialog("edit", i);
 }
 async function plAct(act, ref, el) {

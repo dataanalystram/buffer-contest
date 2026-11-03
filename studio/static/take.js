@@ -141,12 +141,12 @@ function clipCard(c, i) {
       <p class="clip-hook" data-testid="clip-hook">“${esc(c.hook)}”</p>
       <p class="muted xs clip-meta"><span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span> · ${Math.round(c.duration || 0)} s${c.layout ? ` · ${esc(LAYOUT[c.layout] || c.layout)}` : ""}${c.score != null ? ` · score ${Math.round(c.score)}` : ""}</p>
       ${c.why ? `<p class="xs clip-why" data-testid="clip-why">${c.rank ? `<b>#${c.rank}</b> · ` : ""}Why this moment: ${esc(c.why)}</p>` : ""}
-      ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${esc(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
+      ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${escUrl(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
       ${st}
       <div class="clip-pf">${pfMini(c)}</div>
       ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${p.status === "draft" ? "Buffer draft" : "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
-      <div class="clip-act">${c.url ? `<button type="button" class="link" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">Trim &amp; caption</button><a class="link" href="${esc(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}</div>
+      <div class="clip-act">${c.url ? `<button type="button" class="link" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">Trim &amp; caption</button><a class="link" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}</div>
     </div></article>`;
 }
 
@@ -292,8 +292,8 @@ async function loadTakes() {
   const box = $("#takeList");
   try {
     const rows = await api("/api/takes");
-    box.innerHTML = rows.length ? rows.map((x) => `<button class="runrow" data-testid="take-row" data-id="${x.id}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="vt">▶</span>`}
-      <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${x.clips} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small></span></button>`).join("")
+    box.innerHTML = rows.length ? rows.map((x) => `<button class="runrow" data-testid="take-row" data-id="${esc(x.id)}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="vt">▶</span>`}
+      <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${esc(x.clips)} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small></span></button>`).join("")
       : `<div class="empty"><b>No takes yet</b><span>Drop a talk, a podcast episode or a tutorial you recorded, or try the sample take.</span></div>`;
     box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => { const t = await api(`/api/takes/${b.dataset.id}`); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); window.scrollTo({ top: 0, behavior: "smooth" }); }));
   } catch (_) {}

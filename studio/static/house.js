@@ -192,7 +192,7 @@ function showRun(r) {
   if (!pk.length && media.length) {  // while the agent works: what it has made so far (each channel's own card follows)
     html += `<div class="strip" data-testid="media-strip">${media.map((m, i) => isVid(m.url) || m.type === "video"
       ? `<video src="${esc(m.url)}" controls playsinline preload="metadata" data-testid="media-video"></video>`
-      : `<a href="${esc(m.url)}" target="_blank" rel="noopener"><img src="${esc(m.url)}" alt="Slide ${i + 1}" data-testid="media-img"></a>`).join("")}</div>`;
+      : `<a href="${escUrl(m.url)}" target="_blank" rel="noopener"><img src="${esc(m.url)}" alt="Slide ${i + 1}" data-testid="media-img"></a>`).join("")}</div>`;
   } else if (busy && !pk.length) html += `<div class="ph" aria-hidden="true"><span class="spin"></span></div>`;
   $("#mediaBox").innerHTML = html;
   const redo = $("[data-testid=legacy-redo]");
@@ -255,7 +255,7 @@ function agentExtras(r, busy) {
     box.className = "st warn video-ask"; box.dataset.testid = "video-ask"; box.setAttribute("data-testid", "video-ask");
     box.innerHTML = `<span data-testid="video-ask-text">${esc(ask.text)}</span>
       <span class="row"><label class="btn sm primary va-up"><input type="file" accept="${esc(ask.accept || "video/mp4,video/quicktime")}" class="sr" data-testid="video-ask-file">Upload video</label>
-      ${ask.launch_url ? `<a class="link" href="${esc(ask.launch_url)}" target="_blank" rel="noopener" data-testid="video-ask-open">Open the launch video</a>` : ""}
+      ${ask.launch_url ? `<a class="link" href="${escUrl(ask.launch_url)}" target="_blank" rel="noopener" data-testid="video-ask-open">Open the launch video</a>` : ""}
       <small class="muted">${esc(ask.label || "MP4/MOV")}, up to ${Number(ask.max_mb) || 100} MB · or use Upload video below</small></span>`;
     $("#agentThread").appendChild(box);
     $("#agentThread").hidden = false;
@@ -300,7 +300,7 @@ function drawReady(r, busy) {
   const word = (p) => (p.sent ? (p.status === "pending_approval" ? "Waiting for approval" : "In Buffer") : p.status === "hold" ? "On hold" : "Ready");
   box.hidden = false;
   box.innerHTML = `<span class="mp-ready-h">Your posts</span>` + pk.map((p) => { const f = pkgFiles(p)[0];
-    const th = f ? (f.type === "video" ? `<video src="${esc(f.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${esc(f.url)}" alt="">`) : `<span class="mp-ready-ph" aria-hidden="true"></span>`;
+    const th = f ? (f.type === "video" ? `<video src="${escUrl(f.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${escUrl(f.url)}" alt="">`) : `<span class="mp-ready-ph" aria-hidden="true"></span>`;
     return `<button type="button" class="mp-ready-i st-${esc(p.sent ? "sent" : p.status)}" data-ch="${esc(p.channel_id)}" data-testid="mp-ready-item" aria-label="Go to the ${esc(netName(p.service))} post">${th}<span><b>${esc(netName(p.service))}</b><small>${esc(mediaLabel(p))} · ${word(p)}</small></span></button>`; }).join("");
   box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => { const c = document.querySelector(`#packages .pkg[data-ch="${CSS.escape(b.dataset.ch)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "start" }); flash([c]); } }));
 }
@@ -325,7 +325,7 @@ async function drawTemplates(r, busy) {
   if (H.tplKey !== key) return;
   H.tplHtml = line + `<div class="mp-tpl-row" role="group" aria-label="Change template" data-testid="mp-template-chips"><span class="mp-tpl-h">Change template</span>
     ${(t.options || []).map((o) => `<button type="button" class="mp-tpl${o.current ? " on" : ""}" data-tpl="${esc(o.id)}" data-testid="mp-template-chip" aria-pressed="${o.current ? "true" : "false"}" title="${esc(o.about || o.name)}" aria-label="${esc(o.name)}${o.current ? " (in use)" : ""}">
-      ${o.preview ? `<img src="${esc(o.preview)}" alt="" loading="lazy">` : `<span class="mp-tpl-ph" aria-hidden="true"></span>`}<span>${esc(o.name)}</span></button>`).join("")}
+      ${o.preview ? `<img src="${escUrl(o.preview)}" alt="" loading="lazy">` : `<span class="mp-tpl-ph" aria-hidden="true"></span>`}<span>${esc(o.name)}</span></button>`).join("")}
     <button type="button" class="mp-tpl more" data-testid="mp-template-all" aria-label="List every template">All templates…</button></div>`;
   box.innerHTML = H.tplHtml; wireTpl(r);
 }
@@ -343,11 +343,11 @@ function wireTpl(r) {
 
 function stepExtra(s) {
   const d = s.data || {};
-  if (s.key === "find" && d.leads) return `<ul class="leads">${d.leads.slice(0, 3).map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a> <span class="muted">${esc(l.source || "")}</span></li>`).join("")}</ul>`;
-  if (s.key === "verify" && d.url) return `<ul class="leads"><li>Read: <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.site)}</a></li>${(d.other_outlets || []).map((o) => `<li>Also: <a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.source)}</a></li>`).join("")}</ul>`;
+  if (s.key === "find" && d.leads) return `<ul class="leads">${d.leads.slice(0, 3).map((l) => `<li><a href="${escUrl(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a> <span class="muted">${esc(l.source || "")}</span></li>`).join("")}</ul>`;
+  if (s.key === "verify" && d.url) return `<ul class="leads"><li>Read: <a href="${escUrl(d.url)}" target="_blank" rel="noopener">${esc(d.site)}</a></li>${(d.other_outlets || []).map((o) => `<li>Also: <a href="${escUrl(o.url)}" target="_blank" rel="noopener">${esc(o.source)}</a></li>`).join("")}</ul>`;
   if (s.key === "structure" && d.facts) return `<ul class="facts">${d.facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
   if (s.tool === "extract_facts" && d.facts) return `<ul class="facts">${d.facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`;
-  if (s.tool === "search_news" && d.leads) return `<ul class="leads">${d.leads.slice(0, 3).map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a></li>`).join("")}</ul>`;
+  if (s.tool === "search_news" && d.leads) return `<ul class="leads">${d.leads.slice(0, 3).map((l) => `<li><a href="${escUrl(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a></li>`).join("")}</ul>`;
   if (s.tool === "read_upload" && d.transcript) return `<p class="muted sm">“${esc(d.transcript.slice(0, 200))}${d.transcript.length > 200 ? "…" : ""}”</p>`;
   return "";
 }
@@ -422,7 +422,7 @@ function pkgCovers(p, sent) {
     <div class="pc-row">${cv.map((c, i) => `<button type="button" class="pc${i === p.cover_index ? " on" : ""}" data-cover="${i}" data-testid="pkg-cover"
       aria-pressed="${i === p.cover_index}" aria-label="Cover ${i + 1}${i === p.cover_index ? " (in use)" : ""}" ${sent ? "disabled" : ""}
       style="aspect-ratio:${key.replace(":", " / ")}"><img src="${esc((c.urls || {})[key] || Object.values(c.urls || {})[0] || "")}" alt="" loading="lazy"></button>`).join("")}</div>
-    ${yt ? `<a class="link sm" href="${esc(p.thumbnail)}" target="_blank" rel="noopener" download data-testid="pkg-yt-thumb">Download the 1280×720 thumbnail</a>` : ""}</div>`;
+    ${yt ? `<a class="link sm" href="${escUrl(p.thumbnail)}" target="_blank" rel="noopener" download data-testid="pkg-yt-thumb">Download the 1280×720 thumbnail</a>` : ""}</div>`;
 }
 
 function pkgCard(p) {
@@ -543,7 +543,7 @@ async function loadRuns() {
   try {
     const rows = await api("/api/agent/runs?limit=60");
     if (window.mpRecent) return window.mpRecent(rows);  // Make a post v2: Recent content cards (makepost.js)
-    box.innerHTML = rows.length ? rows.map((x) => `<button class="runrow" data-testid="run-row" data-id="${x.id}" data-kind="${esc(x.kind)}">${x.cover ? (isVid(x.cover) ? `<span class="vt">▶</span>` : `<img src="${esc(x.cover)}" alt="">`) : `<span class="vt">·</span>`}
+    box.innerHTML = rows.length ? rows.map((x) => `<button class="runrow" data-testid="run-row" data-id="${esc(x.id)}" data-kind="${esc(x.kind)}">${x.cover ? (isVid(x.cover) ? `<span class="vt">▶</span>` : `<img src="${esc(x.cover)}" alt="">`) : `<span class="vt">·</span>`}
       <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${x.packages ? " · " + x.packages + " posts" : ""}</small></span></button>`).join("")
       : `<div class="empty"><b>No runs yet</b><span>Give the agent a topic like “AI agents” and watch it work.</span></div>`;
     box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => { if (b.dataset.kind === "take") return window.openTake(b.dataset.id); const r = await api(`/api/agent/runs/${b.dataset.id}`); showRun(r); if (["running", "rendering"].includes(r.status)) watch(r.id); window.scrollTo({ top: 0, behavior: "smooth" }); }));
