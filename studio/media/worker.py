@@ -210,7 +210,8 @@ def render_job(spec: dict, get: Callable[[str], bytes | None], urls: dict | None
                                clip=spec.get("clip"), music=spec.get("music") or "auto", brand=brand, official=official,
                                rights_confirmed=bool(spec.get("rights_confirmed")), run_dir=str(tmp),
                                brand_colors=bool(spec.get("brand_colors")), brand_pass=spec.get("brand_pass") or False,
-                               cover_png=cover_png, logo=spec.get("logo", True) is not False, **_captions_args(spec))
+                               cover_png=cover_png, logo=spec.get("logo", True) is not False, owns=bool(spec.get("owns")),
+                               **_captions_args(spec))
         if r.get("needs_confirmation"):
             raise JobError("Rights not confirmed: " + r["question"])
         if r.get("error"):

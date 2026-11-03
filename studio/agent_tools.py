@@ -99,6 +99,13 @@ SPECS = [
     {"name": "render_template", "description": "Render a post template in the brand for the run's channels (each at its frame) instead of the default "
                                             "carousel, using the story's facts and hero image unless data says otherwise. data: the template's fields.",
      "input_schema": {"type": "object", "required": ["template"], "properties": {"template": S, "data": {"type": "object"}, "channel_ids": IDS}}},
+    {"name": "create_template", "description": "Save a NEW reusable post template for this workspace when the person asks for one (e.g. "
+     "'make me a funding announcement template'): name, layout (kit | bold_news | editorial | minimal | playful), fields [{key, label, "
+     "sample}] and up to 8 slides of type front {kicker,title,sub} | bullets {title, items} | story {title,body,tag,source} | stat "
+     "{title,body,tag} | quote {quote,speaker,role} | breaking {title,source,when}, with {field} placeholders. The end card is "
+     "added last. It shows in the Templates tab; render it with render_template(template='custom:<slug>').",
+     "input_schema": {"type": "object", "required": ["name", "slides"], "properties": {"name": S, "about": S, "layout": S, "kind": S,
+                      "fields": {"type": "array", "items": {"type": "object"}}, "slides": {"type": "array", "items": {"type": "object"}}}}},
     {"name": "recap_plan", "description": "Weekly recap ('make a 7 days what happened in AI recap with videos', 'weekly recap'): the week's top AI stories "
                                        "from the news sources, each with its official video/image and a credit line. Returns ONE rights question when "
                                        "some media isn't the company's own: finish and ask it, then call render_recap with the answer.",
@@ -121,10 +128,11 @@ LABELS = {"read_upload": "Read your upload", "read_url": "Read your link", "x_oe
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
           "find_media": "Find media", "find_video": "Look for the launch video", "set_cover": "Swap the cover", "generate_images": "Make images", "check": "Check everything", "finish": "Done",
           "list_themes": "Look at the themes", "set_theme": "Set the video theme", "list_templates": "Look at the templates",
-          "render_template": "Render a template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap",
+          "render_template": "Render a template", "create_template": "Save a new template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap",
           **editorial_tools.LABELS}
 WRITES = {"generate_images", "render_recap", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media",
-          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template", "set_cover"} | editorial_tools.WRITES
+          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template", "set_cover",
+          "create_template"} | editorial_tools.WRITES
 
 
 # Tone drives the caption prompt (QA: "short punchy explainer" came out as plain explainers). Several tones can combine.
@@ -972,7 +980,8 @@ class Tools(EditorialTools):
             try:
                 data, meta = self.h.render_job_local(spec)
                 self.h.finish_video(jid, data, meta, run_inline=False)
-                return [self.h._job_media(jid)], "Rendered on this server." + note_extra
+                media = [self.h._job_media(jid)]
+                return media, f"Rendered on this server{self._len_note(media)}." + note_extra
             except Exception as e:
                 self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (str(e)[:500], time.time(), jid))
                 if own:
@@ -990,7 +999,8 @@ class Tools(EditorialTools):
             row = self.store.q("SELECT status, error FROM render_jobs WHERE id=?", (jid,))[0]
             self.store.x("UPDATE agent_runs SET updated=? WHERE id=?", (time.time(), self.rid))
             if row["status"] == "done":
-                return [self.h._job_media(jid)], "Rendered by the video worker." + note_extra
+                media = [self.h._job_media(jid)]
+                return media, f"Rendered by {self.h.backend_label(why)}{self._len_note(media)}." + note_extra
             if row["status"] == "failed":
                 if own:
                     return own, f"The branded render failed ({(row['error'] or '')[:120]}), so this is your video as uploaded."
@@ -999,6 +1009,19 @@ class Tools(EditorialTools):
         if own:
             return own, "The video worker took too long, so this is your video as uploaded. Reply “redo the reel” to try again."
         return frames or self._slides_45(run, carousel=True), "The video worker took too long; slides instead. Reply “redo the reel” to try again."
+
+    def _len_note(self, media: list[dict]) -> str:
+        """", 12.4 s long": the rendered file's real length (from the worker's meta), never the length that was asked for."""
+        try:
+            meta = self.h.media_meta(self.a, media[0]["token"]) or {}
+            d = float(meta.get("duration") or 0)
+        except Exception:  # noqa: BLE001
+            d = 0.0
+        if d <= 0:
+            return ""
+        if media:
+            media[0]["duration"] = round(d, 1)
+        return f", {d:.1f} s long"
 
     def _own_clip(self, run, spec: dict) -> list[dict]:
         """The person's own uploaded video, as uploaded: the fallback when a branded render can't be made (never slides
@@ -1063,7 +1086,7 @@ class Tools(EditorialTools):
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "source": clip_tok, "candidate": cand,
                 "slides": [] if (clip_tok or cand) else [m["token"] for m in gen], "image_prompt": st["headline"],
-                "brand_pass": sid != "none", "add_logo": add_logo,
+                "brand_pass": sid != "none", "add_logo": add_logo, "owns": bool(clip_tok and res.get("clip_owned")),
                 # one "logo" key: the kit's logo token, or "" when they turned the logo off (a bool here broke job_spec)
                 "logo": (kit.get("logo") or "") if add_logo else "",
                 "cover_hook": st.get("cover_hook") or "", "covers": True}
@@ -1123,14 +1146,32 @@ class Tools(EditorialTools):
         return out
 
     def t_list_templates(self) -> dict:
-        from . import templates
-        return {"templates": [{"id": k, **{x: v.get(x) for x in ("name", "kind", "about", "video")}} for k, v in templates.TEMPLATES.items()]}
+        from . import custom_templates, templates
+        out = [{"id": k, **{x: v.get(x) for x in ("name", "kind", "about", "video")}} for k, v in templates.TEMPLATES.items()]
+        out += [{x: t.get(x) for x in ("id", "name", "kind", "about", "video", "fields", "custom")}
+                for t in custom_templates.attach(self.h).list(self.a)]
+        return {"templates": out}
+
+    def t_create_template(self, name: str = "", slides: list | None = None, **kw) -> dict:
+        from . import custom_templates
+        body = {"name": name, "slides": slides or [], **{k: kw[k] for k in ("about", "layout", "kind", "fields") if k in kw}}
+        try:
+            t = custom_templates.attach(self.h).create(self.a, body)
+        except custom_templates.TemplateError as e:
+            raise ActionError(str(e))
+        return {k: t[k] for k in ("id", "name", "kind", "layout", "fields", "next")}
 
     def t_render_template(self, template: str, data: dict | None = None, channel_ids: list | None = None) -> dict:
         """A template in the brand for each channel's frame, filled from the story unless data says otherwise."""
-        from . import templates
-        if template not in templates.TEMPLATES:
-            raise ActionError(f"Unknown template {template}. Pick one of {', '.join(templates.TEMPLATES)}.")
+        from . import custom_templates, templates
+        custom = custom_templates.is_custom(template)
+        if custom:
+            try:
+                cspec = custom_templates.attach(self.h).spec(self.a, template)
+            except custom_templates.TemplateError as e:
+                raise ActionError(str(e))
+        elif template not in templates.TEMPLATES:
+            raise ActionError(f"Unknown template {template}. Pick one of {', '.join(templates.TEMPLATES)} or a custom:<slug>.")
         if template == "editorial_story":  # the editorial carousel has its own research -> hero -> copy chain
             if (data or {}).get("slides") or (self.state()["result"].get("editorial") or {}).get("spec"):
                 return {"template": template, **self.t_render_editorial((data or None) if (data or {}).get("slides") else None, channel_ids)}
@@ -1159,7 +1200,7 @@ class Tools(EditorialTools):
             by_ratio.setdefault(spec["ratio"], []).append(c["id"])
         out = {"template": template, "channels": [], "media": []}
         for ratio, ids in by_ratio.items():
-            ims = templates.slides(template, d, b, ratio)
+            ims = custom_templates.render_slides(cspec, d, b, ratio) if custom else templates.slides(template, d, b, ratio)
             media = [self._keep(templates.jpeg(im), f"{template}-{i + 1}.jpg", {"type": "photo", "template": template, "width": im.width,
                                                                                 "height": im.height}, "slide")
                      for i, im in enumerate(ims)]
