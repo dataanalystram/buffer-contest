@@ -200,7 +200,7 @@ def test_sample_workspace_cant_make_send_codes(client):
     client.get("/demo", follow_redirects=False)
     csrf = client.get("/api/session").json()["csrf"]
     r = client.post("/api/send-codes", headers={"X-HQ-CSRF": csrf})
-    assert r.status_code == 403 and "read-only" in r.json()["error"]
+    assert r.status_code == 403 and r.json()["error"].endswith("The demo doesn't change anything.")
 
 
 # ------------------------------------------------------------------ guidance for a blocked sandbox + limits in the API

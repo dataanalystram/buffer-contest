@@ -177,5 +177,5 @@ def test_connect_without_oauth_env_shows_the_token_steps(human, monkeypatch):
 def test_sample_workspace_never_calls_out(client):
     client.get("/demo", follow_redirects=True)
     client.headers["X-HQ-CSRF"] = client.get("/api/session").json()["csrf"]
-    r = client.post("/api/integrations/ph/test", json={"value": PH_TOKEN}).json()
-    assert r["ok"] is False and "sample" in r["message"].lower()
+    r = client.post("/api/integrations/ph/test", json={"value": PH_TOKEN})
+    assert r.status_code == 403 and r.json()["view_only"] and "test that integration's key" in r.json()["error"]

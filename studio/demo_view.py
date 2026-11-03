@@ -51,6 +51,9 @@ ALLOW = [
     # example Reel: the video spend kind is closed, so nothing reaches the worker).
     ("POST", r"/api/brand-kits/[^/]+/activate"), ("POST", r"/api/brand-studio/examples/[^/]+"),
     ("POST", r"/api/brand/extract"), ("POST", r"/api/templates/render"),
+    # The News radar's recorded sample scan (the demo's scan never fetches) and its dry-run packages; a real send
+    # (dry_run false) is refused inside SourcesAgent.draft.
+    ("POST", r"/api/sources/scan"), ("POST", r"/api/sources/draft"),
 ]
 # Agent tools that change settings or send: refused in the demo however they are reached (button, REST or the agent).
 BLOCKED_TOOLS = {
@@ -92,8 +95,7 @@ WOULD = [
     (r"^/api/radar/feeds", None, "follow this feed"),
     (r"^/api/safety/kill$", None, "stop every agent with the kill switch"),
     (r"^/api/send-codes$", None, "make a code to send a file from your phone"),
-    (r"^/api/sources/(scan|refresh)$", None, "scan your sources for new stories"),
-    (r"^/api/sources/draft$", None, "draft a post from this story with your AI engine"),
+    (r"^/api/sources/refresh$", None, "scan your sources for new stories"),
     (r"^/api/sources/", None, "change your News sources"),
     (r"^/api/takes/\d+/place$", None, "place these clips in your Buffer queue"),
     (r"^/api/takes/\d+/clips/", None, "save your clip edit"),
