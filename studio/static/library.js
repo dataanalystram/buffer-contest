@@ -165,7 +165,7 @@ function libEmpty(d) {
   }
   if (d.read_only) return box(IC.img, "The sample Library is read-only", "Connect your own workspace to keep uploads and everything the agent makes.");
   return box(IC.img, "Your Library is empty", "Upload a photo or video, or make a post: every image, carousel and Reel the agent makes lands here.",
-    `<button type="button" class="btn sm" data-empty-act="upload">Upload a file</button><button type="button" class="btn2 sm" data-empty-act="make">Make a post</button>`);
+    `<button type="button" class="btn sm" data-empty-act="upload" data-testid="library-empty-upload">Upload a file</button><button type="button" class="btn2 sm" data-empty-act="make" data-testid="library-empty-make">Make a post</button>`);
 }
 function wireLibCard(el) {
   const it = LIB.items.find((x) => String(x.id) === el.dataset.id); if (!it) return;
