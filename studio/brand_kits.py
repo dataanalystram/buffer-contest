@@ -725,6 +725,32 @@ class BrandKits:
         with held(a.uid):  # B2: one lock, one extras write (the kit fields, active_kit, example and caption style together)
             return self._activate_locked(a, kid)
 
+    def kit_view(self, a, kid: int) -> tuple[dict, str]:
+        """One kit in house.kit's shape (logo as a media token) and its caption style, for ONE agent run. It never becomes
+        the account's active kit (owner, 3 Nov 2026: "use the Nothing kit" in a thread switched every later Reel)."""
+        row = self._get(a, kid)
+        k = json.loads(row["data"] or "{}")
+        ref = str(k.get("logo") or "")
+        logo_tok = ""
+        if ref.startswith(("sample:", "example:")):
+            data = self.logo_bytes(a, ref)
+            logo_tok = self.house.put_media(a, data, "logo.png", kind="logo") if data else ""
+        elif ref:
+            logo_tok = ref
+        ec = k.get("end_card") or {}
+        font = k.get("font") or "inter"
+        out = {**brand.DEFAULT_KIT, "name": k.get("name", ""), "handle": k.get("handle", ""), "website": k.get("website", ""),
+               "voice": k.get("voice", ""), "font": font, "body_font": k.get("body_font") or ("inter" if font in ("anton", "serif", "dot") else font),
+               "headline_case": k.get("headline_case") or ("upper" if font in ("anton", "dot") else "title"),
+               "front_card": {"style": (k.get("front_card") or {}).get("style") or "glow"},
+               "hashtags": k.get("hashtags") or [], "label": k.get("label") or "", "theme": k.get("theme") or None, "logo": logo_tok}
+        out["colors"] = {**brand.DEFAULT_KIT["colors"], **(k.get("colors") or {})}
+        out["end_card"] = {**brand.DEFAULT_KIT["end_card"], "style": ec.get("style") or "glow", "cta": ec.get("cta") or "Follow for more",
+                           "line": ec.get("line") or ""}
+        out["logo_url"] = self.house.media_url(logo_tok) if logo_tok else ""
+        out["is_set"], out["kit_id"] = True, row["id"]
+        return out, k.get("caption_style") or "opus"
+
     def _activate_locked(self, a, kid: int) -> dict:
         row = self._get(a, kid)
         k = json.loads(row["data"] or "{}")

@@ -20,6 +20,7 @@ from . import editorial_tools
 from .editorial_tools import EditorialTools
 
 VIDEO_ONLY = {"tiktok", "youtube"}
+_PREVIEWS: dict = {}  # (run, template, kit+story key) -> data URL: the Change template chips
 TEXT_FIRST = {"twitter", "threads", "bluesky", "mastodon"}
 VIDEO_WAIT = int(os.environ.get("HQ_VIDEO_WAIT", "300"))
 RECAP_WAIT = int(os.environ.get("HQ_RECAP_WAIT", "1800"))  # the recap fetches 5-7 stories' media and renders ~8 videos
@@ -758,7 +759,7 @@ class Tools(EditorialTools):
 
     # ---------------------------------------------------------------- rendering
     def _ctx(self):
-        kit, rules = self.h.kit(self.a), self.h.rules(self.a)
+        kit, rules = self._kit(), self.h.rules(self.a)
         return kit, rules, brand.visual_params(kit, rules), self.h._logo_bytes(kit)
 
     def _story(self, run) -> dict:
@@ -891,7 +892,7 @@ class Tools(EditorialTools):
             return cur
         p = template_pick.pick(run, self._has_video(run), self._custom_list())
         rec = {"id": p["id"], "name": p["name"], "why": p["why"], "type": p["type"], "auto": True, "suggestions": p["suggestions"],
-               "kit": (self.h.kit(self.a).get("name") or "").strip()}
+               "kit": (self._kit().get("name") or "").strip()}
         res["template"] = rec
         return rec
 
@@ -911,9 +912,9 @@ class Tools(EditorialTools):
         except Exception:  # noqa: BLE001
             return self._slides_45(run, carousel=True)
 
-    def _template_media(self, run, template: str, ratio: str, data: dict | None = None) -> list[dict]:
+    def _template_images(self, run, template: str, ratio: str, data: dict | None = None) -> list:
         from . import custom_templates, templates
-        kit, _rules, _p, logo = self._ctx()  # the ACTIVE kit: a template change never switches the kit or its layout
+        kit, _rules, _p, logo = self._ctx()  # the run's kit: a template change never switches the kit or its layout
         st = run["result"].get("story") or {}
         if template == "github_repo" and "repo_info" not in run["result"]:
             repo = template_pick.github_repo([(run["result"].get("source") or {}).get("url") or "", run["input"].get("source_url") or "",
@@ -932,50 +933,91 @@ class Tools(EditorialTools):
                 cspec = custom_templates.attach(self.h).spec(self.a, template)
             except custom_templates.TemplateError as e:
                 raise ActionError(str(e))
-            ims = custom_templates.render_slides(cspec, d, b, ratio)
-        else:
-            ims = templates.slides(template, d, b, ratio)
+            return custom_templates.render_slides(cspec, d, b, ratio)
+        return templates.slides(template, d, b, ratio)
+
+    def _template_media(self, run, template: str, ratio: str, data: dict | None = None) -> list[dict]:
+        from . import templates
+        ims = self._template_images(run, template, ratio, data)
         return [self._keep(templates.jpeg(im), f"{template}-{i + 1}.jpg", {"type": "photo", "template": template, "width": im.width,
                                                                           "height": im.height}, "slide") for i, im in enumerate(ims)]
 
     def template_previews(self, ids: list[str] | None = None) -> dict[str, str]:
-        """Small first-slide previews of the suggested templates, drawn from THIS run's facts in the active kit (cached on the
-        run by headline + kit colours, so each chip costs one render, once)."""
+        """Small first-slide previews of the suggested templates, drawn from THIS run's facts in the run's kit. Returned as
+        data URLs and cached in memory (nothing is stored, so viewing a run never writes)."""
+        import base64
         import io
 
         from PIL import Image
         run = self.state()
         res = run["result"]
-        if not res.get("story"):
+        st = res.get("story") or {}
+        if not st:
             return {}
         rec = self._template_choice(run)
-        key = hashlib.sha256(((res.get("story") or {}).get("headline", "") + json.dumps(self.h.kit(self.a).get("colors") or {},
-                                                                                       sort_keys=True)).encode()).hexdigest()[:12]
-        old = res.get("template_previews") if isinstance(res.get("template_previews"), dict) else {}
-        cache = old if old.get("key") == key else {"key": key}
+        kit, _rules, p, logo = self._ctx()
+        key = hashlib.sha256(json.dumps([st.get("headline"), kit.get("colors"), kit.get("font"), kit.get("theme"), kit.get("logo")],
+                                        sort_keys=True, default=str).encode()).hexdigest()[:16]
         out = {}
         for tid in (ids or rec.get("suggestions") or [])[:4]:
-            if tid in cache:
-                out[tid] = cache[tid]
+            ck = (self.rid, tid, key)
+            if ck in _PREVIEWS:
+                out[tid] = _PREVIEWS[ck]
                 continue
             try:
                 draw = self._drawable(tid)
-                media = self._slides_45(run, carousel=False) if draw == template_pick.NEWS else self._template_media(run, draw, "4:5")[:1]
-                m = self.h.get_media(media[0]["token"]) if media and media[0].get("token") else None
-                if m:
-                    im = Image.open(io.BytesIO(m["data"])).convert("RGB")
-                    im.thumbnail((240, 300))
-                    buf = io.BytesIO()
-                    im.save(buf, "JPEG", quality=80)
-                    tok = self.h.put_media(self.a, buf.getvalue(), f"preview-{tid.replace(':', '-')}.jpg", kind="render",
-                                           meta={"type": "photo", "role": "template_preview"})
-                    cache[tid] = out[tid] = self.h.media_url(tok)
+                if draw == template_pick.NEWS:
+                    img, use = self._hero(run)
+                    raw, _m = render.news_card(st["headline"], kit, dict(p), image=img if use == "hero" else None,
+                                               inset=img if use == "inset" else None, logo=logo, ratio="4:5", label=st.get("label", ""),
+                                               credit=st.get("source", ""), hi=self._hi(st["headline"]))
+                    im = Image.open(io.BytesIO(raw)).convert("RGB")
+                else:
+                    im = self._template_images(run, draw, "4:5")[0].convert("RGB")
+                im.thumbnail((240, 300))
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=78)
+                _PREVIEWS[ck] = out[tid] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+                while len(_PREVIEWS) > 240:
+                    _PREVIEWS.pop(next(iter(_PREVIEWS)))
             except Exception:  # noqa: BLE001  a preview that can't be drawn is a chip without a picture
                 continue
-        run = self.state()
-        run["result"]["template_previews"] = cache
-        self.save(run)
         return out
+
+    # ---------------------------------------------------------------- the run's brand kit (owner, 3 Nov 2026)
+    def _kit(self) -> dict:
+        """The kit this run draws in: the one the person named in this run's thread, else the account's active kit."""
+        ko = self.state()["result"].get("kit_override") or {}
+        return ko["kit"] if isinstance(ko.get("kit"), dict) else self._kit()
+
+    def _said_default(self) -> bool:
+        """The person's last reply asked to make the kit their default ("make it my default", "from now on")."""
+        last = next((t.get("text") or "" for t in reversed(self.state()["result"].get("thread") or []) if t.get("role") == "user"), "")
+        return bool(re.search(r"\b(?:make (?:it|this|that) (?:my |the )?default|as (?:my|the) default|my default kit|"
+                              r"for (?:all|every) (?:my )?(?:posts|runs)|from now on|everywhere)\b", last, re.I))
+
+    def use_kit(self, kt: dict, default: bool = False) -> str:
+        """Use a brand kit for THIS run only (result.kit_override), or make it the account's active kit when the person said
+        so. Returns the line for the thread."""
+        from . import brand_kits
+        bk = brand_kits.attach(self.h)
+        run = self.state()
+        res = run["result"]
+        if default:
+            if not kt["active"]:
+                bk.activate(self.a, kt["kit_id"])
+            res.pop("kit_override", None)
+            self.save(run)
+            return f"your {kt['name']} brand kit (now your default kit)"
+        if kt["active"] and not res.get("kit_override"):
+            return f"your {kt['name']} brand kit"
+        if kt["active"]:
+            res.pop("kit_override", None)
+        else:
+            kit, cs = bk.kit_view(self.a, kt["kit_id"])
+            res["kit_override"] = {"id": kt["kit_id"], "name": kt["name"], "kit": kit, "caption_style": cs}
+        self.save(run)
+        return f"your {kt['name']} brand kit (this post only)"
 
     def t_set_template(self, template: str, slides: list | None = None, keep: list | None = None, rest: bool | None = None,
                        channel_ids: list | None = None) -> dict:
@@ -1090,7 +1132,7 @@ class Tools(EditorialTools):
             style = theme  # the theme the person picked in Make a post (or set in the thread) styles every video
         if not style and captions:  # captions asked for, no look named: the active brand kit's caption style (owner, 2 Nov 2026)
             from . import brand_kits
-            style = brand_kits.active_caption_style(self.h, self.a) or None
+            style = (run["result"].get("kit_override") or {}).get("caption_style") or brand_kits.active_caption_style(self.h, self.a) or None
         found = run["result"].get("found_media") if isinstance(run["result"].get("found_media"), dict) else {}
         branded = run["result"].get("clip_owned") or bool((found.get("best_downloadable") or {}).get("official"))
         if not style and branded:  # "Let the agent choose" on their own / the maker's video: a fitting theme, branded throughout
@@ -1312,7 +1354,7 @@ class Tools(EditorialTools):
             res["rights_confirmed"] = True
         from . import brand_kits
         add_logo = (run.get("input") or {}).get("add_logo", True) is not False
-        spec = {"kind": "media_render", "style": sid, "brand_colors": bool((run.get("input") or {}).get("brand_colors")) or brand_kits.brand_accent_wins(self.h, self.a), "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
+        spec = {"kind": "media_render", "style": sid, "brand_colors": bool((run.get("input") or {}).get("brand_colors")) or (not res.get("kit_override") and brand_kits.brand_accent_wins(self.h, self.a)), "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
                 "credit": credit, "names": [n for n in (st.get("company"), (cand or {}).get("company")) if n], "music": music or "auto",
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "source": clip_tok, "candidate": cand,
@@ -1372,13 +1414,15 @@ class Tools(EditorialTools):
             rows, active = bk._rows(self.a), bk._active(self.a)
         except Exception:  # noqa: BLE001
             return None
+        ko = (self.state()["result"].get("kit_override") or {}).get("id")
         for r in rows:
             if (r.get("name") or "").strip().lower() == n:
                 k = json.loads(r.get("data") or "{}")
                 th = k.get("theme")
                 th = th.get("id") if isinstance(th, dict) else th if isinstance(th, str) else None
                 style = th if th and media_styles.known(th) else ({"news": "huhbyte_news"}.get(k.get("caption_style"), k.get("caption_style")) or "opus")
-                return {"kit_id": r["id"], "name": r["name"], "style": media_styles.resolve(style), "active": r["id"] == active}
+                return {"kit_id": r["id"], "name": r["name"], "style": media_styles.resolve(style), "active": r["id"] == active,
+                        "in_run": r["id"] == (ko or active)}
         return None
 
     def _resolve_theme(self, theme: str) -> tuple[str, str, str]:
@@ -1394,12 +1438,9 @@ class Tools(EditorialTools):
         if media_styles.known(sid):
             return sid, media_styles.config(sid).get("label", sid), ""
         kt = self._kit_theme(t)
-        if kt:
-            if not kt["active"]:
-                from . import brand_kits
-                brand_kits.attach(self.h).activate(self.a, kt["kit_id"])  # "switch to the Nothing theme": their own words
-            lab = f"{kt['name']} brand kit"
-            return kt["style"], lab, f"your {kt['name']} brand kit" + ("" if kt["active"] else " (now your active kit)")
+        if kt:  # "switch to the Nothing theme": THIS run only, unless they said "make it my default" (live 3 Nov: account-wide)
+            why = self.use_kit(kt, self._said_default())
+            return kt["style"], f"{kt['name']} brand kit", why
         raise ActionError(f"Unknown theme {theme}. Pick one of {', '.join(media_styles.ALL_IDS)}, 'auto', 'none' or a brand kit name.")
 
     def _refresh_packages(self) -> None:
@@ -1722,7 +1763,7 @@ class Tools(EditorialTools):
         learned = self.h.remember(self.a, t) if re.search(r"logo|end ?card|case|overlay|credit|words|#[0-9a-f]{6}|font", t, re.I) else {"added": []}
         changed += [r["rule"] for r in learned.get("added") or [] if r["rule"] not in changed]
         return {"changed": changed or ["nothing I could apply"],
-                "kit": {k: v for k, v in self.h.kit(self.a).items() if k in ("colors", "font", "name", "handle")}}
+                "kit": {k: v for k, v in self._kit().items() if k in ("colors", "font", "name", "handle")}}
 
     def t_edit_channel_media(self, channel: str, seconds: int | None = None, format: str | None = None, captions: bool | None = None) -> dict:
         run = self.state()
@@ -1748,7 +1789,7 @@ class Tools(EditorialTools):
     def t_write_captions(self, channel_ids: list | None = None, tone: str = "", hook: str = "") -> dict:
         run = self.state()
         res = run["result"]
-        kit, rules = self.h.kit(self.a), self.h.rules(self.a)
+        kit, rules = self._kit(), self.h.rules(self.a)
         st = self._story(run)
         src = res.get("source") or {}
         cm_all = res.get("channel_media") or {}
@@ -1832,7 +1873,7 @@ class Tools(EditorialTools):
         """Brand check + clipping + 'is this about THE source' + fact conflicts, then one package per channel."""
         run = self.state()
         res = run["result"]
-        kit, rules = self.h.kit(self.a), self.h.rules(self.a)
+        kit, rules = self._kit(), self.h.rules(self.a)
         st = self._story(run)
         packages, problems = [], []
         old = {p["channel_id"]: p for p in res.get("packages") or []}
