@@ -19,6 +19,7 @@ import threading
 import time
 import traceback
 import uuid
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 
 from . import activity, brain_llm, budget, demo_guard, demo_view, editorial_tools, intake, llm, template_pick, untrusted
@@ -112,7 +113,8 @@ class Brain:
                      ("DOUBLE PRECISION" if getattr(self.store, "pg", False) else "REAL") + ")")
         self.beat()
         if not getattr(house, "sync", False) and os.environ.get("HQ_PROC_SWEEP", "1") != "0":
-            threading.Thread(target=self._beat_loop, name="agent-heartbeat", daemon=True).start()
+            # a weak reference: the loop never keeps a discarded app (and its database connection) alive
+            threading.Thread(target=Brain._beat_loop, args=(weakref.ref(self),), name="agent-heartbeat", daemon=True).start()
 
     # ---------------------------------------------------------------- runs cut off by a deploy / crash (owner, 3 Nov 2026)
     def beat(self) -> None:
@@ -121,15 +123,20 @@ class Brain:
         except Exception:  # noqa: BLE001  a heartbeat never breaks the app
             traceback.print_exc()
 
-    def _beat_loop(self) -> None:
+    @staticmethod
+    def _beat_loop(ref) -> None:
         n = 0
         while True:
-            self.beat()
+            me = ref()
+            if me is None:  # the app is gone (tests make many): stop, so its store can close
+                return
+            me.beat()
             if n % 3 == 0:
                 try:
-                    self.interrupt_orphans()
+                    me.interrupt_orphans()
                 except Exception:  # noqa: BLE001
                     traceback.print_exc()
+            del me
             n += 1
             time.sleep(HEARTBEAT_S)
 
