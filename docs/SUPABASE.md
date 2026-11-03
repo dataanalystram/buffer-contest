@@ -16,15 +16,6 @@ The app only needs `DATABASE_URL`. It does not use the Supabase API keys. On sta
 turns on row-level security for each of them, so the Supabase Data API (publishable key) cannot read them. The app
 connects as the table owner, which RLS does not restrict.
 
-## Moving the data from Render (one deploy)
-
-1. In the Render service's Environment, add `MIGRATE_FROM_URL` = the current `DATABASE_URL` value (the Render database).
-2. Set `DATABASE_URL` = the Supabase Session pooler URL. Save, which redeploys.
-3. The deploy log shows `migrate: copied {...}` with row counts. Users stay signed in to Buffer and agent tokens keep
-   working, because `SESSION_SECRET` is unchanged and the encrypted tokens move as they are.
-4. Remove `MIGRATE_FROM_URL`. The copy only runs into an empty database, so leaving it set is harmless, but the Render
-   database is going away.
-
 ## Keeping the free tiers awake
 
 Supabase pauses a free project after 7 days without activity, and Render's free web service sleeps after 15 idle

@@ -97,7 +97,7 @@ MCP grew from 10 to 19 tools: `run_agent`, `edit_media`, `get_run`, `revise`, `r
 | Supabase `DATABASE_URL` | Render env (already set) | Session pooler connection | Data store |
 | Optional AI keys | Per user, in-app (encrypted) | Provider API key | BYO AI tier |
 
-Render env names today: `MIGRATE_FROM_URL`, `AI_MODEL`, `AI_BASE_URL`, `BUFFER_CLIENT_SECRET`, `BUFFER_CLIENT_ID`, `DATABASE_URL`, `SESSION_SECRET`, `PUBLIC_URL`, `RENDER_WORKER` (= github), `GH_REPO`. Still to add by you: `GH_DISPATCH_TOKEN`.
+Render env names today: `AI_MODEL`, `AI_BASE_URL`, `BUFFER_CLIENT_SECRET`, `BUFFER_CLIENT_ID`, `DATABASE_URL`, `SESSION_SECRET`, `PUBLIC_URL`, `RENDER_WORKER` (= github), `GH_REPO`. Still to add by you: `GH_DISPATCH_TOKEN`.
 
 Security housekeeping: change the Google password that was typed in chat; give the dispatch token a 90-day expiry.
 
@@ -107,5 +107,4 @@ Security housekeeping: change the Google password that was typed in chat; give t
 2. Merge PR #11 to `main` (CI green) → Render auto-deploys.
 3. Production checks: `/healthz`, `/demo`, agent run, brand preview, calendar, real Buffer draft.
 4. Polish pass on calendar and package UI (desktop + mobile screenshots).
-5. Optional: drop the old `MIGRATE_FROM_URL` once Supabase is confirmed as the only database.
-6. Demo video (about 2 minutes) following the judge loop above, README hero, submission form.
+5. Demo video (about 2 minutes) following the judge loop above, README hero, submission form.

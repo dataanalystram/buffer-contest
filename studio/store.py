@@ -125,6 +125,13 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
           "ai_settings")
 
 
+# Per-person tables created by other modules (each on first use). Disconnect and delete removes them too (found in the
+# 2 Nov 2026 privacy review: brand kits, templates, sources and upload/send sessions outlived the account). Not here, on
+# purpose: the per-day usage counters (brain_tokens, classifier_usage) and demo_owners, which hold no content and keep
+# a reconnect from resetting an allowance.
+OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "source_runs", "source_settings",
+                   "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref")
+
 class Store:
     """SQLite locally; Postgres when the path is a postgres:// URL (production: survives restarts,
     so rotating Buffer refresh tokens are never lost)."""
@@ -296,6 +303,11 @@ class Store:
             self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
         except Exception:  # noqa: BLE001
             pass
+        for t in OWNED_ELSEWHERE:  # tables other modules create on first use (privacy page: "Disconnect and delete")
+            try:
+                self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+            except Exception:  # noqa: BLE001  (this store hasn't created that table yet)
+                pass
         self.x("DELETE FROM users WHERE id=?", (uid,))
 
     # ---- sessions
