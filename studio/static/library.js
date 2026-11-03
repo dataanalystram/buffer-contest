@@ -24,7 +24,7 @@ function libCard(it) {
   return `<article class="lib-card" data-testid="library-item" data-id="${esc(it.id)}" data-kind="${esc(it.kind)}">
     <button type="button" class="lib-th" data-act="open" data-testid="library-open" aria-label="Open ${esc(it.name)} full size">${libThumb(it)}${it.kind === "video" ? '<span class="lib-play" aria-hidden="true">▶</span>' : ""}<span class="lib-kind">${esc(KIND_NAME[it.kind])}</span></button>
     <div class="lib-info"><b title="${esc(it.name)}">${esc(it.name)}</b><small>${meta.map(esc).join(" · ")}</small><small class="lib-src">${esc(SRC_NAME[it.source] || it.source)}</small>
-      <small class="lib-used" data-testid="library-used">${used.length ? "Used in: " + used.slice(0, 2).map((u) => `<button type="button" class="link" data-run="${u.run_id}" data-testid="library-used-run">${esc(u.title.slice(0, 48))}</button>`).join(", ") + (used.length > 2 ? ` and ${used.length - 2} more` : "") : "Not used in a post yet"}</small></div>
+      <small class="lib-used" data-testid="library-used">${used.length ? "Used in: " + used.slice(0, 2).map((u) => `<button type="button" class="link" data-run="${esc(u.run_id)}" data-testid="library-used-run">${esc(u.title.slice(0, 48))}</button>`).join(", ") + (used.length > 2 ? ` and ${used.length - 2} more` : "") : "Not used in a post yet"}</small></div>
     <div class="lib-acts">${it.read_only ? `<span class="muted sm">Sample · read-only</span>`
       : `<button type="button" class="btn sm" data-act="use" data-testid="library-use">Use in a post</button><button type="button" class="btn2 sm danger" data-act="del" data-testid="library-delete">Delete</button>`}</div>
   </article>`;
