@@ -247,11 +247,9 @@ class BrandOnboard:
         t0 = time.time()
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
             raise OnboardError(demo_guard.WHY["run"])
-        now = time.time()
-        hits = [t for t in _previews.get(a.uid, []) if now - t < 60]
-        if len(hits) >= PREVIEWS_PER_MIN:
+        from .userlocks import rate_hit
+        if not rate_hit(_previews, a.uid, time.time(), PREVIEWS_PER_MIN):  # B4: one lock for the shared window
             raise OnboardError("Too many preview redraws this minute. Pause for a moment.")
-        _previews[a.uid] = hits + [now]
         if body.get("url") and not body.get("kit"):  # MCP convenience: extract and preview in one call
             ex = self.extract(a, body["url"])
             body = {"kit": ex["draft"], "logo": ex["logo"]}
