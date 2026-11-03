@@ -191,3 +191,65 @@ def test_create_draft_prefill_and_view_run(live, chromium, close_contexts, w):
     page.goto(base + f"/?tab=library&run={live['rid']}", wait_until="domcontentloaded")
     page.wait_for_function("() => document.getElementById('runView') && !document.getElementById('runView').hidden", timeout=20000)
     assert not errors, errors
+
+
+SLOW_BOOT = """(() => { const f = window.fetch.bind(window);  // a slow boot: /api/channels answers 2.5 s late
+  window.fetch = (u, o) => String(u).includes("/api/channels") ? new Promise((r) => setTimeout(r, 2500)).then(() => f(u, o)) : f(u, o); })()"""
+
+
+def _hits(page, base):
+    hits = []
+    page.on("request", lambda r: hits.append(r.url.split("?")[0].replace(base, "")) if "/api/" in r.url else None)
+    return hits
+
+
+def test_slow_boot_bin_view_is_kept_and_redrawn_without_a_second_fetch(live, chromium, close_contexts):
+    """Library opened, then its Bin view, while boot still waits on /api/channels (main's boot-end redraw, PR #88): the Bin
+    view bumps HQ_NAV so boot keeps it, and the boot-end redraw draws it again from the answer it has (HS_REDRAW.library):
+    no second /api/library or /api/library/bin."""
+    base, app = live["base"], live["app"]
+    app.state.house.library.delete(A, live["ups"][4])  # one item in the Bin
+    ctx, page, errors = _ctx(chromium, base, 1280)
+    ctx.add_init_script(SLOW_BOOT)
+    hits = _hits(page, base)
+    page.goto(base + "/", wait_until="domcontentloaded")
+    page.wait_for_function("() => typeof window.showTab === 'function' && typeof api === 'function'")
+    assert page.evaluate("() => !document.body.dataset.booted"), "boot finished before the delayed /api/channels"
+    nav0 = page.evaluate("() => window.HQ_NAV")
+    page.evaluate("() => showTab('library')")
+    page.get_by_test_id("library-item").first.wait_for()
+    page.locator("#libViewBin").click()
+    page.get_by_test_id("bin-item").first.wait_for()
+    assert page.evaluate("() => window.HQ_NAV") >= nav0 + 2  # showTab + the Bin view
+    assert page.evaluate("() => !document.body.dataset.booted")
+    page.wait_for_function("() => document.body.dataset.booted === '1'", timeout=15000)
+    page.wait_for_timeout(500)
+    assert page.locator("#tab-library").is_visible() and page.locator("#tab-inbox").is_hidden()
+    pw.expect(page.get_by_test_id("bin-item")).to_have_count(1)
+    assert page.locator("#libViewBin").get_attribute("aria-pressed") == "true"
+    assert page.evaluate("() => window.HQ_RELOADS") == 1
+    assert hits.count("/api/library") == 1, hits
+    assert hits.count("/api/library/bin") == 1, hits
+    # back to the Library view after boot: drawn from a fresh fetch as usual
+    page.locator("#libViewItems").click()
+    pw.expect(page.get_by_test_id("library-item")).to_have_count(5)
+    assert not errors, errors
+
+
+def test_slow_boot_view_run_deep_link_opens_the_run_once(live, chromium, close_contexts):
+    """/?tab=library&run=<id> on a slow boot: boot opens the Library, which opens the run (no /api/library fetch at all),
+    the run's open bumps HQ_NAV, and the boot end neither throws it back to the Inbox nor redraws it."""
+    base, rid = live["base"], live["rid"]
+    ctx, page, errors = _ctx(chromium, base, 1280)
+    ctx.add_init_script(SLOW_BOOT)
+    hits = _hits(page, base)
+    page.goto(base + f"/?tab=library&run={rid}", wait_until="domcontentloaded")
+    page.wait_for_function("() => document.body.dataset.booted === '1'", timeout=20000)
+    page.wait_for_function("() => document.getElementById('runView') && !document.getElementById('runView').hidden", timeout=20000)
+    page.wait_for_timeout(500)
+    assert page.locator("#tab-agent").is_visible() and page.locator("#tab-inbox").is_hidden()
+    assert page.get_by_test_id("package").first.is_visible()
+    assert hits.count("/api/library") == 0, hits
+    assert hits.count(f"/api/agent/runs/{rid}") == 1, hits
+    assert not page.evaluate("() => window.HQ_RELOADS")
+    assert not errors, errors

@@ -4,7 +4,9 @@
 const LIB = { items: [], data: null, t: null, view: "items", sel: new Set(), last: null, bin: null, binPage: 1 };
 // "View run" opens in a new tab as /?tab=library&run=<id>: read it before boot rewrites the URL, open it once the Library loads
 LIB.deepRun = new URLSearchParams(location.search).get("run");
-const libNav = () => (window.HQ_NAV = (window.HQ_NAV || 0) + 1);  // a Library view change counts as navigation (boot keeps it)
+// a Library view change (Library | Bin, a View run) counts as navigation, the same as showTab: boot keeps the screen, and
+// one made before boot's session + channels arrived (S.navEarly) gets the boot-end redraw (HS_REDRAW.library below)
+const libNav = () => { window.HQ_NAV = (window.HQ_NAV || 0) + 1; if (typeof S !== "undefined" && !S.bootData) S.navEarly = true; };
 const KIND_NAME = { video: "Video", image: "Image", carousel: "Carousel" };
 const SRC_NAME = { upload: "Uploaded", take: "Uploaded (One take)", link: "From a link", send: "Sent from a device", generated: "Made by the agent", sample: "Sample" };
 const libWhen = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "Sample");
@@ -45,6 +47,13 @@ async function loadLibrary() {
   try {
     const q = new URLSearchParams({ q: $("#libQ").value.trim(), kind: $("#libKind").value });
     const d = await api("/api/library?" + q); LIB.data = d; LIB.items = d.items;
+    libDraw(d);
+  } catch (e) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+}
+// draws the Library grid from an /api/library answer: loadLibrary after it fetches, and the boot-end redraw from LIB.data
+function libDraw(d) {
+  const grid = $("#libGrid");
+  {
     const { fmtSize } = window.HQ_FMT;
     $("#libUsage").textContent = d.read_only ? "Sample items · read-only" : `${fmtSize(d.used)} of ${fmtSize(d.quota)} used · files up to ${fmtSize(d.file_max)}`;
     $("#libIns").hidden = !!d.read_only;
@@ -65,7 +74,7 @@ async function loadLibrary() {
       im.outerHTML = `<video src="${esc(im.dataset.fallback)}#t=1.5" muted playsinline preload="metadata" aria-hidden="true"></video>`; }));
     window.hqPager && window.hqPager($("#libPager"), { total: d.items.length, page: LIB.page, per, label: "Library pages",
       onPage: (n) => { LIB.page = n; loadLibrary(); grid.scrollIntoView({ behavior: "smooth", block: "start" }); } });
-  } catch (e) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+  }
 }
 function wireLibCard(el) {
   const it = LIB.items.find((x) => String(x.id) === el.dataset.id); if (!it) return;
@@ -218,7 +227,15 @@ async function loadBin() {
   const grid = $("#libGrid");
   if (!LIB.bin) grid.innerHTML = `<div class="ph" aria-hidden="true"><span class="spin"></span></div>`;
   try {
-    const d = await api("/api/library/bin"); LIB.bin = d.items; libBinCount(d.total);
+    const d = await api("/api/library/bin"); LIB.bin = d.items; LIB.binData = d;
+    binDraw(d);
+  } catch (e) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+}
+// draws the Bin from an /api/library/bin answer: loadBin after it fetches, and the boot-end redraw from LIB.binData
+function binDraw(d) {
+  const grid = $("#libGrid");
+  {
+    libBinCount(d.total);
     const per = 12, pages = Math.max(1, Math.ceil(d.items.length / per));
     LIB.binPage = Math.min(LIB.binPage || 1, pages);
     const page = d.items.slice((LIB.binPage - 1) * per, LIB.binPage * per);
@@ -237,7 +254,7 @@ async function loadBin() {
     libSelPaint();
     if (window.hqPager) window.hqPager($("#libPager"), { total: d.items.length, page: LIB.binPage, per, label: "Bin pages",
       onPage: (n) => { LIB.binPage = n; loadBin(); grid.scrollIntoView({ behavior: "smooth", block: "start" }); } });
-  } catch (e) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+  }
 }
 $("#libEmptyBin").onclick = async () => {
   if (!(await hqConfirm("Empty the Bin? Every item in it is deleted permanently now. This can't be undone.", { ok: "Empty bin", danger: true }))) return;
@@ -354,3 +371,8 @@ $("#libPickFile").onchange = async (e) => {
 window.pickFromLibrary = pickFromLibrary;
 
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { library: loadLibrary });
+// boot-end redraw of a Library opened while boot loaded (app.js reloadOpenScreen): redraw the open view (Library or Bin)
+// from the answer it already has, never a second /api/library or /api/library/bin; a fetch still in flight draws itself.
+window.HS_REDRAW = Object.assign(window.HS_REDRAW || {}, { library: () => {
+  if (LIB.view === "bin") { if (LIB.binData) binDraw(LIB.binData); } else if (LIB.data) libDraw(LIB.data);
+} });
