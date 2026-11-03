@@ -28,6 +28,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from . import demo_guard
 from .actions import ActionError, Actor
+from .buffer_api import BufferError
 
 MB = 1024 * 1024
 CHUNK = MB
@@ -40,8 +41,9 @@ CREATE TABLE IF NOT EXISTS library_items (
   size INTEGER, sha256 TEXT, storage TEXT, meta TEXT, run_id INTEGER, created REAL);
 CREATE TABLE IF NOT EXISTS library_chunks (item_id INTEGER, n INTEGER, data BLOB, PRIMARY KEY (item_id, n));
 CREATE TABLE IF NOT EXISTS library_media (token TEXT PRIMARY KEY, item_id INTEGER, user_id TEXT);
+CREATE TABLE IF NOT EXISTS library_purged (token TEXT PRIMARY KEY, user_id TEXT, at REAL);
 """
-TABLES = ("library_items", "library_chunks", "library_media")
+TABLES = ("library_items", "library_chunks", "library_media", "library_purged")
 TRASH_DAYS = 7  # a deleted item stays restorable this long (see Library.delete)
 TRASH_TOKEN = "trash~"  # a trashed item's media rows keep their bytes under this prefix, so /m/<token> no longer serves them
 
@@ -344,6 +346,8 @@ class Library:
         if d["kind"] == "carousel":
             out["slides"] = [f"{url}?i={i}" for i in range(len(tokens))]
         if runs is not None:
+            rid = d.get("run_id")  # "View run": only for an item a run made, and only while that run still exists
+            out["run_id"] = rid if rid and any(r["run_id"] == rid for r in runs) else None
             out["used_in"] = [r for r in runs if any(t in r["_blob"] for t in tokens)]
             out["used_in"] = [{k: v for k, v in r.items() if not k.startswith("_")} for r in out["used_in"]]
         return out
@@ -358,9 +362,10 @@ class Library:
                 continue
             title = (res.get("story") or {}).get("headline") or inp.get("prompt") or inp.get("query") or inp.get("name") or "A post"
             sent = [p.get("sent") for p in res.get("packages") or [] if p.get("sent")]
-            draft = bool(sent) and not any((x or {}).get("mode") in ("queue", "schedule") for x in sent)
+            scheduled = any((x or {}).get("mode") in ("queue", "schedule", "now") for x in sent)
+            draft = bool(sent) and not scheduled
             out.append({"run_id": r["id"], "kind": r["kind"], "title": str(title)[:90], "status": r["status"], "sent": bool(sent),
-                        "draft": draft, "_created": r["created"], "_thumb": _run_thumb(res, inp), "_thumb_src": _run_thumb_src(res, inp), "_res": res,
+                        "draft": draft, "scheduled": scheduled, "_created": r["created"], "_thumb": _run_thumb(res, inp), "_thumb_src": _run_thumb_src(res, inp), "_res": res,
                         "_blob": (r["input"] or "") + (r["result"] or "")})
         return out
 
@@ -411,7 +416,20 @@ class Library:
                     continue
         return n
 
-    def list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200) -> dict:
+    def list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200, offset: int = 0, per: int = 0) -> dict:
+        """The Library (newest first). ``per``/``offset`` page it (``total`` is the count before paging); the answer also
+        carries ``bin_count`` so the Library screen shows its Bin badge without a second request."""
+        out = self._list(a, q, kind, limit)
+        out["total"] = len(out["items"])
+        if per:
+            per, offset = max(1, min(int(per), 200)), max(0, int(offset or 0))
+            out["items"], out["offset"], out["per"] = out["items"][offset:offset + per], offset, per
+        out["bin_count"] = 0 if demo_guard.is_demo(a.uid) else int(self.store.q(
+            "SELECT COUNT(*) AS n FROM library_items WHERE user_id=? AND storage='trash'", (a.uid,))[0]["n"] or 0)
+        out["bin_days"] = TRASH_DAYS
+        return out
+
+    def _list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200) -> dict:
         if demo_guard.is_demo(a.uid):
             items = _sample_items()
             used = 0
@@ -505,21 +523,95 @@ class Library:
         return {"kind": "upload", **d["meta"]} if d and d["user_id"] == a.uid else None
 
     # ---------------------------------------------------------------- delete / use
-    def delete(self, a: Actor, iid, force: bool = False) -> dict:
+    def delete(self, a: Actor, iid, force: bool = False, mode: str = "bin") -> dict:
+        """mode=bin (the default): the item moves to the Bin for TRASH_DAYS and can be restored. mode=permanent: the file
+        and its record are removed now (this can't be undone). Both warn (409, force=true goes ahead) while a post that
+        hasn't gone out, or a post scheduled in Buffer, uses the item. A permanent delete is refused outright (409,
+        force can't override) while a post scheduled in Buffer uses it: Buffer fetches the file again when it publishes."""
+        if mode not in ("bin", "permanent"):
+            raise ActionError("mode is bin or permanent.")
         if demo_guard.is_demo(a.uid):
             raise ActionError("Sample items can't be deleted. Connect Buffer to manage your own Library.", 403)
         self.h.studio._guard_write(a, "delete_library_item")
         d = self._row(a, iid)
-        pub = self._public(d, self._runs(a))
-        live = [u for u in pub["used_in"] if not u["sent"] and u["status"] in ("ready", "running", "rendering")]
-        if live and not force:
-            raise ActionError(f"“{d['name']}” is used in {len(live)} post{'s' if len(live) > 1 else ''} that hasn't gone out yet "
-                              f"(“{live[0]['title'][:60]}”). Delete it anyway?", 409)
-        self._trash(a, d)
-        self.store.audit(a.uid, a.label, "delete_library_item", "safety", {"kind": d["kind"], "bytes": int(d["size"] or 0), "forced": bool(live),
-                                                                            "trash_days": TRASH_DAYS})
-        return {"deleted": True, "id": d["id"], "was_used_in": [u["run_id"] for u in pub["used_in"]], "in_trash_days": TRASH_DAYS,
-                "restore": f"POST /api/library/{d['id']}/restore"}
+        return self._delete_row(a, d, self._runs(a), force, mode)
+
+    @staticmethod
+    def _uses(d: dict, runs: list[dict], tokens: list[str] | None = None) -> tuple[list[dict], list[dict], list[dict]]:
+        """(every run using the item, the ones not gone out yet, the ones scheduled in Buffer)."""
+        toks = [t for t in (tokens or d["meta"].get("tokens") or [d["token"]]) if t]
+        used = [r for r in runs if any(t in r["_blob"] for t in toks)]
+        live = [u for u in used if not u["sent"] and u["status"] in ("ready", "running", "rendering")]
+        sched = [u for u in used if u.get("scheduled")]
+        return used, live, sched
+
+    def _delete_row(self, a: Actor, d: dict, runs: list[dict], force: bool, mode: str) -> dict:
+        used, live, sched = self._uses(d, runs)
+        if mode == "permanent" and sched:
+            raise ActionError(f"“{d['name']}” can't be deleted permanently: it's used in a post scheduled in Buffer "
+                              f"(“{sched[0]['title'][:60]}”), and Buffer fetches the file again when it publishes. "
+                              "Unschedule that post first, or move the item to the Bin.", 409)
+        risky = live + sched
+        if risky and not force:
+            what = "scheduled in Buffer" if sched else "that hasn't gone out yet"
+            n = len(risky)
+            raise ActionError(f"“{d['name']}” is used in {n} post{'s' if n > 1 else ''} {what} "
+                              f"(“{risky[0]['title'][:60]}”). Delete it anyway?", 409)
+        if mode == "permanent":
+            self._purge_row(d)
+        else:
+            self._trash(a, d)
+        self.store.audit(a.uid, a.label, "delete_library_item", "safety", {"kind": d["kind"], "bytes": int(d["size"] or 0),
+                                                                            "forced": bool(risky), "mode": mode, "trash_days": TRASH_DAYS})
+        out = {"deleted": True, "id": d["id"], "mode": mode, "was_used_in": [u["run_id"] for u in used]}
+        if mode == "bin":
+            out.update({"in_trash_days": TRASH_DAYS, "restore": f"POST /api/library/{d['id']}/restore"})
+        return out
+
+    def _purge_row(self, d: dict) -> None:
+        """Remove an item's bytes and record for good (its media rows too, live or binned), and note its tokens as deleted
+        by the person, so /healthz doesn't count posts that used them as missing files."""
+        t = d["meta"].get("trash") or {}
+        toks = [x for x in (t.get("tokens") or d["meta"].get("tokens") or [t.get("token") or d["token"]]) if x]
+        toks = [x.removeprefix(TRASH_TOKEN) for x in toks]
+        if (t.get("storage") or d["storage"]) == "media":
+            for x in toks:
+                self.store.x("DELETE FROM media WHERE token IN (?,?) AND user_id=?", (x, TRASH_TOKEN + x, d["user_id"]))
+        for x in toks:
+            self.store.x("INSERT INTO library_purged(token,user_id,at) VALUES(?,?,?) ON CONFLICT(token) DO NOTHING", (x, d["user_id"], _now()))
+        self._drop(d["id"])
+
+    MAX_BULK = 200
+
+    def _ids(self, ids) -> list[int]:
+        try:
+            out = list(dict.fromkeys(int(i) for i in (ids or [])))
+        except (TypeError, ValueError):
+            raise ActionError("ids is a list of Library item ids.")
+        if not out:
+            raise ActionError("Pick at least one item.")
+        if len(out) > self.MAX_BULK:
+            raise ActionError(f"Up to {self.MAX_BULK} items at a time.")
+        return out
+
+    def bulk_delete(self, a: Actor, ids, mode: str = "bin", force: bool = False) -> dict:
+        """Delete several items (mode bin | permanent). Each item is checked on its own, exactly like a single delete: the
+        ones a post needs come back under ``refused`` with the reason (``needs_force`` when force=true would go ahead)."""
+        if mode not in ("bin", "permanent"):
+            raise ActionError("mode is bin or permanent.")
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("Sample items can't be deleted. Connect Buffer to manage your own Library.", 403)
+        self.h.studio._guard_write(a, "delete_library_item")
+        ids, runs = self._ids(ids), self._runs(a)
+        done, refused = [], []
+        for iid in ids:
+            try:
+                d = self._row(a, iid)
+                done.append(self._delete_row(a, d, runs, force, mode)["id"])
+            except ActionError as e:
+                refused.append({"id": iid, "error": str(e), "status": e.status,
+                                "needs_force": e.status == 409 and "can't be deleted permanently" not in str(e)})
+        return {"mode": mode, "deleted": done, "refused": refused, "in_trash_days": TRASH_DAYS if mode == "bin" else None}
 
     # ---------------------------------------------------------------- trash (owner bug, 2 Nov 2026)
     # Nine Library items were deleted in 43 s on 2 Nov (20:50 GMT), five of them past the "used in a post that hasn't gone
