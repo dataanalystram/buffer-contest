@@ -19,8 +19,8 @@ with sync_playwright() as p:
     pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
     # a failed request is recorded by its URL (the console only says "Failed to load resource"); no 4xx/5xx is allowed
-    pg.on("console", lambda m: m.type == "error" and not m.text.startswith("Failed to load resource") and errors.append(m.text))
-    pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base) and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
+    pg.on("console", lambda m: m.type == "error" and not m.text.startswith("Failed to load resource") and errors.append(m.text))  # the view-only demo's 403s carry X-HQ-Demo
+    pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base) and r.headers.get("x-hq-demo") != "view-only" and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
     pg.goto(base + "/")
     pg.screenshot(path=str(out / "00_landing.png"), full_page=True)
     pg.goto(base + "/demo")  # the sample opens on Brand > Kit, the builder filled with the Nothing sample brand
@@ -63,7 +63,11 @@ with sync_playwright() as p:
     time.sleep(1.5)
     pg.screenshot(path=str(out / "05_revised.png"), full_page=True)
     pg.locator("[data-testid=pkg-send]").first.click()
-    pg.wait_for_selector("[data-testid=pkg-sent]", timeout=20000)
+    # the sample workspace is view-only: Send answers "In the real app this would …" (a toast) instead of sending
+    end, toasts = time.time() + 20, []
+    while time.time() < end and not pg.locator("[data-testid=pkg-sent]").count() and not any("In the real app this would" in t for t in toasts):
+        toasts.append(pg.locator("#toast").text_content() or ""); time.sleep(0.2)
+    assert pg.locator("[data-testid=pkg-sent]").count() or any("In the real app this would" in t for t in toasts), "Send neither sent nor answered the demo line"
     pg.click("[data-testid=tab-planner]")
     pg.click("[data-testid=planner-view-month]")
     pg.wait_for_selector("[data-testid=planner-day]", timeout=20000)
@@ -84,11 +88,15 @@ with sync_playwright() as p:
         const z = (n) => String(n).padStart(2, "0");
         e.value = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T10:00`; e.dispatchEvent(new Event("input", {bubbles: true})); }""")
     pg.click("[data-testid=planner-dialog-save]")
-    try:
-        pg.wait_for_selector("[data-testid=toast]:has-text('Scheduled in Buffer')", timeout=20000)
-    except Exception:
+    # the view-only sample answers "In the real app this would …" instead of scheduling; a real workspace schedules
+    end, toasts = time.time() + 20, []
+    while time.time() < end and not any(("Scheduled in Buffer" in t or "In the real app this would" in t) for t in toasts):
+        toasts += [pg.locator("#toast").text_content() or "", pg.locator("#plDlgErr").text_content() or ""]; time.sleep(0.2)
+    if not any(("Scheduled in Buffer" in t or "In the real app this would" in t) for t in toasts):
         print("planner save error:", pg.inner_text("#plDlgErr"))
-        raise
+        raise AssertionError("the planner save neither scheduled nor answered the demo line")
+    if pg.locator("dialog[open]").count():  # the demo leaves the dialog open on its answer; a real save closes it
+        pg.keyboard.press("Escape"); time.sleep(0.5)
     pg.click("[data-testid=tab-settings]"); time.sleep(1.5)
     pg.screenshot(path=str(out / "07_ai.png"), full_page=True)
     m = b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)

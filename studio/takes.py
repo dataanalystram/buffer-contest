@@ -215,7 +215,7 @@ class Takes:
         self.h.studio._guard_write(a, "clips_from_video")
         from . import demo_guard
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
-            raise ActionError(demo_guard.WHY["run"], 429)
+            raise ActionError(demo_guard.why("run"), 429)
         sm = sample_meta()
         if not sm:
             raise ActionError("The sample take isn't bundled with this server.", 404)
@@ -710,6 +710,10 @@ class Takes:
         if run["result"].get("sample") and not demo.is_demo(a.uid):
             raise ActionError("The sample take can only be spread in the sample workspace (/demo).", 403)
         token = (body.get("confirm_token") or "").strip()
+        if (token or body.get("dry_run") is False) and demo.is_demo(a.uid):
+            from .demo_view import message, view_only
+            if view_only():  # the view-only demo shows The Spread's plan (dry run) but never places the clips
+                raise ActionError(message("place these clips in your Buffer as drafts"), 403)
         if not token:
             if body.get("dry_run") is False and a.kind == "agent":
                 raise ActionError("Agents place clips in two steps: call with dry_run first, show the plan, then confirm_token.", 400)

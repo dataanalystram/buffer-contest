@@ -184,6 +184,8 @@ def test_sample_scan_is_recorded_and_never_calls_out(app):
     assert all(s["mode"] == "recorded sample" for s in d["status"])
     d2 = c.post("/api/sources/scan", json={}).json()
     assert [x["id"] for x in d2["clusters"]] == [x["id"] for x in d["clusters"]]  # deterministic
-    sent = c.post("/api/sources/draft", json={"run_id": d["run_id"], "dry_run": False}).json()
-    assert sent["buffer_cost"] == {"requests": 0, "live": False}
-    assert all(p["result"]["status"] == "sent_to_buffer" for p in sent["packages"])
+    # the dry run shows the packages; the view-only demo refuses the real send
+    dry = c.post("/api/sources/draft", json={"run_id": d["run_id"]}).json()
+    assert dry["packages"]
+    sent = c.post("/api/sources/draft", json={"run_id": d["run_id"], "dry_run": False})
+    assert sent.status_code == 403 and "The demo doesn't change anything." in sent.json()["error"]
