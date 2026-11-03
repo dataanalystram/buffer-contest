@@ -1,0 +1,5 @@
+# Live QA after PR #83 merge (2026-11-03)
+- Merge 88ec3c03c07ca7d7356e3746b3607bb36d19f00f, Render deploy dep-dbklvlflk1mc73e0vs60 live, /healthz 200.
+- YouTube reel: run 49, media https://huhqueue-studio.onrender.com/m/yo_hVi-BHk7-HeARoMe96GPn.mp4 (1080x1920, 68 s), cover https://huhqueue-studio.onrender.com/m/TShQJdBTmxlaQjz-4YmfVA7g.jpg; frames in youtube-reel-run49-frames.png (credit "Video: Screen Studio", HuhByte kit). Buffer draft 6ae963f7a86fdc4e317ead7a created then deleted; drafts back to 9-id baseline; active kit 8 before/after.
+- Style Ledger: taught rule 7 "say ships, not launches"; learned rule 8 "Say details, not link" from 3 edits (runs 42/43/44 IG), accepted Instagram-only; run 50 IG caption ends "Details in bio", applied_rules [7, 8]. Review link 2 (token fT0q…): GET 200 signed-out, approve -> thread line "QA reviewer approved the drafts through a review link"; revoke -> GET 410. Rules 7 and 8 deleted; ledger back to 0 rules.
+- ledger-after-cleanup-1920.png: Style Ledger after cleanup. The browser could not resize to 1280/390 and did not retain the mid-test screenshots.
