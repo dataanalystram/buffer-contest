@@ -74,7 +74,11 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
         page.screenshot(path=f"{shots}/take-editor-{scheme}.png")
     page.get_by_test_id("clip-caption").fill("Biofilms on a space station, in 30 seconds.")
     page.get_by_test_id("clip-edit-save").click()
-    page.get_by_test_id("toast").filter(has_text="Caption saved").wait_for()
+    # the view-only demo shows the editor but saving is refused with the friendly line
+    page.get_by_test_id("toast").filter(has_text="In the real app this would save your clip edit").wait_for()
+    if dlg.is_visible():
+        page.keyboard.press("Escape")
+        dlg.wait_for(state="hidden")
     # The Spread: plan first (ghost cards on the Planner), nothing saved yet
     page.get_by_test_id("spread-go").click()
     page.get_by_test_id("planner-spread").wait_for()
@@ -85,11 +89,14 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
     assert page.locator(".pl-chip.s-ghost.landed").count() == CLIPS * chans
     if shots:
         page.screenshot(path=f"{shots}/take-spread-{scheme}.png")
+    drafts = page.locator("[data-testid=planner-item][data-state=draft]").count()
     page.get_by_test_id("planner-spread-save").click()
-    page.get_by_test_id("toast").filter(has_text="Buffer drafts").wait_for()
+    # the view-only demo shows The Spread's plan, but placing it is refused and nothing is saved
+    page.get_by_test_id("toast").filter(has_text="In the real app this would place these clips").wait_for()
+    assert page.get_by_test_id("planner-spread").is_visible()
+    page.get_by_test_id("planner-spread-cancel").click()
     page.wait_for_function("() => !document.querySelector(\"[data-ref^='ghost:']\")")
-    assert page.get_by_test_id("planner-spread").is_hidden()
-    assert page.locator("[data-testid=planner-item][data-state=draft]").count() >= CLIPS * chans
+    assert page.locator("[data-testid=planner-item][data-state=draft]").count() == drafts
     if shots:
         page.screenshot(path=f"{shots}/take-saved-{scheme}.png")
     ctx.close()
