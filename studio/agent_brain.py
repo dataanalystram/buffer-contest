@@ -813,6 +813,8 @@ class Brain:
             else:
                 self._say(a, rid, f"Your video is branded and ready as a Reel on {n} channel{'s' if n != 1 else ''}. "
                                   "Pick another cover under each video, or reply to change anything.")
+            run = self.h.run(a, rid)  # re-read: _say saved the reply, so the status save keeps it
+            res = run["result"]
             self.h._save(rid, run["steps"], res, "ready" if res.get("packages") else "failed")
         except ActionError as e:
             self._fail(a, rid, str(e))
