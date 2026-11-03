@@ -53,7 +53,7 @@ Notion template was so good" came out as "the Nothing template".
 ### Missing media on 2 Nov (`/healthz` missing_files 9 -> 42)
 
 Not the deploys: media lives in Postgres (Supabase, `media` table, 205 rows), not on Render's ephemeral disk, and the
-Supabase copy (MIGRATE_FROM_URL) only runs into an empty store. The audit log shows nine `delete_library_item` calls from
+one-time Supabase copy only runs into an empty store. The audit log shows nine `delete_library_item` calls from
 a signed-in human session on the owner's workspace (audit actor "you": the Library UI or a browser session signed in as the owner) between 20:50:54 and 20:51:37 GMT (five forced past the "used in a post that hasn't gone
 out" warning) and four more at 12:32 GMT. Each removed the media rows behind ready posts (runs 4, 5, 6, 9, 10 and 20;
 42 references). Those bytes are gone (hard delete, no backup on the free plan); from now on a delete is restorable for 7
