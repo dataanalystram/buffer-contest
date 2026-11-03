@@ -721,6 +721,16 @@ def _range_label(start: datetime, end: datetime) -> str:
     return f"{start.day} {start.strftime('%b')} \u2013 {end.day} {end.strftime('%b')}"
 
 
+def launch_title(d: dict) -> str:
+    """The launch cover's title: product + tagline through cover_hook, so a tagline that repeats the product line is dropped
+    and a long pair falls back to the product line (owner, 3 Nov 2026: "Agent Desktop lets AI agents use your computer like a
+    person: Agent Desktop lets AI agents use your computer like a person...")."""
+    from .headline import cover_hook
+    product, tagline = (d.get("product") or "").strip(), (d.get("tagline") or "").strip()
+    head = f"{product}: {tagline}" if product and tagline else product or tagline
+    return cover_hook(head) or head
+
+
 def slides(template: str, data: dict | None, b: Brand, ratio: str = "4:5", now: datetime | None = None,
            max_slides: int | None = None) -> list[Image.Image]:
     """The template's slides in order: front card first, end card last."""
@@ -746,7 +756,7 @@ def slides(template: str, data: dict | None, b: Brand, ratio: str = "4:5", now: 
     elif template == "breaking":
         return [breaking_card(b, ratio, d["title"], d.get("source", ""), d.get("when", "Just now"), d.get("image"))]
     elif template == "launch":
-        front = ("Launch", f"{d['product']}: {d['tagline']}", d.get("company", ""))
+        front = ("Launch", launch_title(d), d.get("company", ""))
         body = [("bullets", "What it does", d.get("features") or [])]
         extra = [x for x in (d.get("price") and f"Price: {d['price']}", d.get("availability") and f"Where: {d['availability']}",
                              d.get("why") and f"Why it matters: {d['why']}") if x]

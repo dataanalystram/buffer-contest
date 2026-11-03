@@ -381,3 +381,20 @@ def test_ui_contract_for_the_new_controls():
         assert f'data-testid="{tid}"' in js or f'"data-testid", "{tid}"' in js, tid
     hj = (st / "house.js").read_text()
     assert "hqPkgControls" in hj and "hqAskCard" in hj and "hqAllTemplates" in hj
+
+
+# ---------------------------------------------------------------- 5b the launch cover never says the title twice
+def test_launch_cover_title_is_not_repeated(monkeypatch):
+    from studio import templates
+    head = "Agent Desktop lets AI agents use your computer like a person"
+    d = {"product": head, "tagline": head + ", clicking and typing in any app on your Mac", "company": ""}
+    assert templates.launch_title(d) == head
+    assert templates.launch_title({"product": head, "tagline": head}) == head
+    assert templates.launch_title({"product": "Sample Studio", "tagline": "Turn one long video into a week of shorts"}) == \
+        "Sample Studio: Turn one long video into a week of shorts"
+    assert templates.launch_title({"product": "Sora 2", "tagline": ""}) == "Sora 2"
+    seen = []
+    real = templates.front_card
+    monkeypatch.setattr(templates, "front_card", lambda b, ratio, kicker, title, *a, **k: seen.append(title) or real(b, ratio, kicker, title, *a, **k))
+    templates.slides("launch", {**d, "features": ["Runs locally"]}, templates.Brand({"name": "Acme"}), max_slides=2)
+    assert seen == [head] and seen[0].lower().count("agent desktop") == 1
