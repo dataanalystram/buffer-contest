@@ -106,7 +106,7 @@ def test_sample_rerender_job_reads_the_bundled_window(human, app, monkeypatch):
 
 def test_mcp_adjust_clip_and_rewrite(signed, monkeypatch):
     human, t, rendered = signed
-    tok = agent_token(human, policy="auto", cap=20)
+    tok = agent_token(human, policy="trusted", cap=20)
     res, out = mcp_call(human, tok, "adjust_clip", {"take_id": t["id"], "clip_id": "c4", "captions": {"instagram": "From MCP."},
                                                     "music": MUSIC})
     assert not res["isError"], out
