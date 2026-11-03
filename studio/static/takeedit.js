@@ -6,7 +6,7 @@
 // transcript and hook re-render the clip on the video worker; captions and music save at once. Esc closes.
 "use strict";
 (() => {
-const LIM = window.LIMITS || { twitter: 280, linkedin: 3000, instagram: 2196, facebook: 5000, threads: 500, bluesky: 300, tiktok: 2200, youtube: 5000 };
+const LIM = (typeof LIMITS !== "undefined" && LIMITS) || { twitter: 280, linkedin: 3000, instagram: 2196, facebook: 5000, threads: 500, bluesky: 300, tiktok: 2200, youtube: 5000 };
 const MIN_S = 3, MAX_S = 90, NUDGE = 0.5, FRAMES = 10, PAD = 8;
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9']+/g, " ").trim();
 const clock = (s) => { s = Math.max(0, +s || 0); const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`; };
@@ -15,7 +15,7 @@ const count = (svc, t) => [...(svc === "twitter" || svc === "x" ? String(t).repl
 const $c = (id) => document.getElementById(id);
 let CE = null;
 
-function take() { return window.T && T.take; }
+function take() { return typeof T !== "undefined" ? T.take : null; }
 function clipOf(id) { return ((take() || {}).clips || []).find((c) => c.id === id); }
 function lead(t) { return t.style === "opus" || t.sample ? 0 : 0.5; }  // the classic render opens on a 0.5 s cover frame
 function canCut(t) { return !!t.can_rerender; }
@@ -248,7 +248,7 @@ function paintDirty() {
 }
 function close() { player.pause(); if (CE && CE.picker) CE.picker.stop(); const d = $c("clipDialog"); if (d.open && typeof d.close === "function") d.close(); else d.removeAttribute("open"); }
 $c("ceCancel").onclick = close; $c("ceClose").onclick = close;
-$c("clipDialog").addEventListener("close", () => { player.pause(); if (CE && CE.picker) CE.picker.stop(); CE = null; if (window.T) T.edit = null; });
+$c("clipDialog").addEventListener("close", () => { player.pause(); if (CE && CE.picker) CE.picker.stop(); CE = null; if (typeof T !== "undefined") T.edit = null; });
 $c("ceForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!CE) return;
