@@ -354,7 +354,7 @@
   function traceText(r) {
     const steps = r.steps || [], busy = busyRun(r), cur = steps.find((s) => s.status === "running"), n = steps.length;
     const t0 = Number(r.created) || 0, t1 = busy ? Date.now() / 1000 : Number(r.updated) || t0;
-    const took = t0 && t1 >= t0 ? secs(t1 - t0) : "";
+    const took = t0 && t1 >= t0 && (busy || t1 - t0 >= 1) ? secs(t1 - t0) : "";  // a run done within a second shows no time
     const t = busy ? (n ? `Working… ${n} step${n === 1 ? "" : "s"}${cur ? " · " + cur.label : ""}` : "Thinking…") :
       `${r.status === "failed" ? "Stopped after" : "Worked through"} ${n} step${n === 1 ? "" : "s"}`;
     const sum = document.getElementById("mpTraceSum");

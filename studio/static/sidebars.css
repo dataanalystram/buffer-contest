@@ -7,7 +7,7 @@
 
 /* ---------------------------------------------------------------- main sidebar: 232 px, or a 64 px icon rail */
 .rail .rail-toggle{display:none}
-.hq-tip{position:fixed;z-index:80;max-width:240px;padding:5px 9px;border-radius:6px;background:var(--ink);color:var(--paper);font-size:12px;font-weight:600;
+.hq-tip{position:fixed;z-index:80;width:max-content;max-width:240px;padding:5px 9px;border-radius:6px;background:var(--ink);color:var(--paper);font-size:12px;font-weight:600;
   line-height:1.3;white-space:nowrap;pointer-events:none;box-shadow:var(--float)}
 .hq-tip[hidden]{display:none}
 @media (min-width:861px){
