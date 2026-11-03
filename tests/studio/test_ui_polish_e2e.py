@@ -64,7 +64,7 @@ def test_settings_ai_engine_cards_keys_and_logs(live, chromium, close_contexts, 
     ai_engines.clear_down()
     _seed_logs(app)
     ctx, page, errors = _ctx(chromium, base, w, h, scheme)
-    page.goto(base + "/?tab=settings")
+    page.goto(base + "/?tab=settings&sub=ai")  # Settings sidebar: AI engine is its own page (3 Nov 2026)
     page.get_by_test_id("ai-engine-claude").wait_for()
     for eid in ("auto", "gemini-studio", "nvidia", "hf", "claude", "own", "free"):
         assert page.get_by_test_id(f"ai-engine-{eid}").count() == 1

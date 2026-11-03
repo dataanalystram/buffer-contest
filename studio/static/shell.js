@@ -18,7 +18,7 @@ const TABS = [["inbox", "Inbox", ["G", "I"]], ["agent", "Make a post", ["G", "M"
 // jobs that live inside a screen, findable by their old names too
 const SUBS = [["inbox", "", "Approvals", "approve agent posts"], ["agent", "quick", "Quick text posts", "write from a link"], ["news", "scan", "Story scan", "sources agent"],
   ["news", "sources", "News sources", "follow a feed"], ["brand", "templates", "Brand templates", "examples, recurring slots"], ["brand", "ledger", "Style Ledger", "rules from corrections"],
-  ["settings", "", "AI engine", "your own model key"]];
+  ["settings", "ai", "AI engine", "your own model key"], ["settings", "integrations", "Integrations", "keys and connected services"], ["settings", "privacy", "Privacy and data", "export, delete my data"]];
 const VIEWS = ["week", "month", "day", "list", "board", "grid"];
 const DOCS = [["getting-started", "Getting started"], ["connect-buffer", "Connect Buffer"], ["brand-kit", "Brand kit and templates"], ["sources-agent", "Sources agent"],
   ["inbox", "Inbox"], ["planner", "Planner views"], ["one-take", "One take"], ["agents", "Agents, MCP and API"], ["security", "Security and privacy"], ["faq", "FAQ"]];
