@@ -39,11 +39,31 @@ WHY = {
     "upload_kb": "The free sample's uploads for today are used up (or the file is over 8 MB). Connect Buffer to upload more.",
 }
 PREFIX = "demo_"
+# View-only demo (studio/demo_view.py): these kinds spend real money or call out, so a demo user never gets them and
+# every run takes its bundled path. "run" and "upload_kb" are local work; uploads are refused at the route anyway.
+SPEND_KINDS = frozenset({"research", "ai", "import", "feed", "video"})
+VIEW_WHY = {
+    "research": "The demo uses the bundled sample story: live research is off in the demo (it spends nothing).",
+    "ai": "The demo uses the built-in writer: AI engines are off in the demo (it spends nothing).",
+    "import": "The demo fills in the sample brand: importing from a website is off in the demo.",
+    "feed": "In the real app this would follow this feed. The demo doesn't change anything.",
+    "video": "The demo shows the bundled sample Reel: video renders are off in the demo (it spends nothing).",
+}
+
+
+def _view_only_closed(uid: str | None, kind: str) -> bool:
+    from .demo_view import view_only
+    return view_only() and is_demo(uid) and kind in SPEND_KINDS
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS demo_usage (day TEXT, bucket TEXT, kind TEXT, n INTEGER, PRIMARY KEY (day, bucket, kind));
 CREATE TABLE IF NOT EXISTS demo_owners (user_id TEXT PRIMARY KEY, ip_hash TEXT, created REAL);
 """
+
+
+def why(kind: str) -> str:
+    from .demo_view import view_only
+    return VIEW_WHY[kind] if view_only() and kind in VIEW_WHY else WHY[kind]
 
 
 def _day() -> str:
@@ -109,6 +129,8 @@ def allowed(store: Store, uid: str | None, kind: str) -> bool:
     """True when this call may spend: always for real accounts; for a sample workspace, while every cap has room."""
     if not is_demo(uid):
         return True
+    if _view_only_closed(uid, kind):
+        return False
     return all(_count(store, b, kind) < cap for b, cap in _buckets(store, uid, kind))
 
 
@@ -118,6 +140,8 @@ def reserve(store: Store, uid: str | None, kind: str, n: int = 1) -> bool:
     Spend this BEFORE the costly call. Real accounts always pass."""
     if not is_demo(uid):
         return True
+    if _view_only_closed(uid, kind):
+        return False
     done = []
     for b, cap in _buckets(store, uid, kind):
         store.x("INSERT INTO demo_usage(day,bucket,kind,n) VALUES(?,?,?,0) ON CONFLICT(day,bucket,kind) DO NOTHING", (_day(), b, kind))
@@ -160,5 +184,5 @@ def left(store: Store, uid: str) -> dict:
         if kind == "workspace":
             continue
         rooms = [cap - _count(store, b, kind) for b, cap in _buckets(store, uid, kind)]
-        out[kind] = max(0, min(rooms)) if rooms else None
+        out[kind] = 0 if _view_only_closed(uid, kind) else (max(0, min(rooms)) if rooms else None)
     return out

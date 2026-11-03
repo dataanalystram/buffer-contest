@@ -105,8 +105,9 @@ def test_demo_planner_has_undated_drafts_slots_and_moves_without_buffer(client, 
     cal = client.get("/api/calendar").json()
     undated = [i for i in cal["items"] if i["state"] == "draft" and not i["when"]]
     assert len(undated) >= 2 and len(cal["slots"]) == 5
-    r = client.post(f"/api/posts/{undated[0]['id']}/reschedule", json={"due_at": _soon(5)}).json()
-    assert r["post"]["status"] == "draft"
-    moved = {i["id"]: i for i in client.get("/api/calendar").json()["items"]}[undated[0]["id"]]
-    assert moved["when"] and moved["state"] == "draft"
+    # the view-only demo shows the Planner but a drag (reschedule) is refused with the friendly line and nothing moves
+    r = client.post(f"/api/posts/{undated[0]['id']}/reschedule", json={"due_at": _soon(5)})
+    assert r.status_code == 403 and r.json()["view_only"]
+    same = {i["id"]: i for i in client.get("/api/calendar").json()["items"]}[undated[0]["id"]]
+    assert not same["when"] and same["state"] == "draft"
     assert not fake.calls  # the sample workspace never reaches Buffer

@@ -27,7 +27,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
-from . import brand, demo_guard, drafter, netguard, radar, sources, templates
+from . import brand, demo_guard, drafter, netguard, radar, sources, templates, untrusted
 
 FIXTURES = Path(__file__).parent / "sample_sources" / "raw"
 UA = {"User-Agent": "Mozilla/5.0 (HuhQueue Sources agent; +https://huhqueue-studio.onrender.com)"}
@@ -858,9 +858,15 @@ class SourcesAgent:
         if not chans:
             raise SourceError("Pick at least one connected channel.")
         dry = body.get("dry_run", True) is not False
+        if not dry and demo_guard.is_demo(a.uid):
+            from .demo_view import message, view_only
+            if view_only():  # the view-only demo previews the packages (dry run) but never sends them
+                err = SourceError(message("save these posts as drafts in your Buffer"))
+                err.status = 403
+                raise err
         self.studio._guard_write(a, "sources_draft")
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
-            raise SourceError(demo_guard.WHY["run"])
+            raise SourceError(demo_guard.why("run"))
         for c in picks:
             if c["agent"] == "person_only" and a.kind == "agent":
                 raise SourceError(f"“{c['story']['headline'][:60]}” touches a sensitive subject, so only a person can draft it.")
@@ -936,7 +942,8 @@ class SourcesAgent:
             d = llm.chat_json(eng, "You write social posts for a brand. Use only the facts given; never invent numbers or quotes.",
                               "Brand voice: " + (kit.get("voice") or "plain, clear") + "\nWrite one post per channel as JSON {service: text}. "
                               "Channel shapes: " + json.dumps({s: STYLE.get(s, STYLE["facebook"]) for s in services}) +
-                              "\nStory: " + json.dumps({k: st[k] for k in ("headline", "line", "facts", "why", "url", "source")}),
+                              "\nStory: " + untrusted.wrap(json.dumps({k: st[k] for k in ("headline", "line", "facts", "why", "url", "source")}),
+                                                           "news source"),
                               http=self.http, max_tokens=1400)
             self.house._ai_audit(a, eng, "sources_draft")
         except Exception:

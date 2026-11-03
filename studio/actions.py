@@ -395,7 +395,7 @@ class Studio:
             raise ActionError("No connected Buffer channels selected.")
         sample = None
         if demo.is_sample_url(url) or (demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "research")):
-            article, sample = dict(demo.SAMPLE_ARTICLE), demo_guard.WHY["research"].replace("the agent used", "this uses")
+            article, sample = dict(demo.SAMPLE_ARTICLE), demo_guard.why("research").replace("the agent used", "this uses")
         else:
             try:
                 article = drafter.fetch_article(url)
@@ -436,7 +436,7 @@ class Studio:
         if any(f["url"] == url for f in self.feeds(a)):
             raise ActionError("You already follow that feed.")
         if not demo_guard.take(self.store, a.uid, "feed"):
-            raise ActionError(demo_guard.WHY["feed"], 429)
+            raise ActionError(demo_guard.why("feed"), 429)
         try:
             feed = radar.fetch(url)
         except drafter.FetchError as e:

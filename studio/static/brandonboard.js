@@ -97,7 +97,7 @@
       O.t = setTimeout(async () => {
         try {
           const r = await api("/api/brand/themes-preview", { method: "POST", body: { kit: O.draft, logo: O.logo, width: 420 } });
-          $("#bobStills").innerHTML = r.stills.map((s) => `<figure class="bob-still r${s.ratio.replace(":", "x")}"><img src="${s.url}" alt="${esc(s.label)} in ${esc(O.draft.name)}'s style" data-testid="bob-still"><figcaption>${esc(s.label)} · ${esc(s.ratio)}</figcaption></figure>`).join("")
+          $("#bobStills").innerHTML = r.stills.map((s) => `<figure class="bob-still r${s.ratio.replace(":", "x")}"><img src="${esc(s.url)}" alt="${esc(s.label)} in ${esc(O.draft.name)}'s style" data-testid="bob-still"><figcaption>${esc(s.label)} · ${esc(s.ratio)}</figcaption></figure>`).join("")
             + `<p class="muted sm bob-ms">Rendered on this server in ${r.ms} ms, nothing stored.</p>`;
         } catch (e) { $("#bobStills").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
         resolve();
