@@ -324,9 +324,11 @@ class Tools(EditorialTools):
             url = netguard.check_url(intake.clean_url(url))
         except netguard.FetchError as e:
             raise ActionError(f"That link isn't allowed: {e}")
-        from .media import video_first
+        from .media import video_first, youtube_info
         if video_first.is_product_link(url):  # Product Hunt pages answer 403 to servers: its API (and the maker's site) instead
             return self._read_product(url)
+        if youtube_info.is_youtube_video(url):  # a watch page read as an article said "- YouTube" (owner bug, 3 Nov 2026)
+            return self._read_youtube(url)
         try:
             art = reader.read_url(url, self.h.http, "" if self.demo else self._x_bearer())
         except reader.ReadError as e:
@@ -338,6 +340,46 @@ class Tools(EditorialTools):
         if art.get("post"):
             out.update(author=art["post"]["author_name"], handle=art["post"]["handle"], text=art["post"]["text"][:400],
                        media=[m["type"] for m in art.get("media") or []], media_note=art.get("media_note", ""))
+        return out
+
+    def _yt_key(self) -> str:
+        """The person's own YouTube Data API key (Settings > Integrations), else the operator's. Never logged."""
+        if self.demo:
+            return ""
+        try:
+            from .integrations import user_secret
+            key = user_secret(self.store, self.a.uid, "yt_key")
+        except Exception:  # noqa: BLE001
+            key = ""
+        return key or os.environ.get("YOUTUBE_API_KEY", "")
+
+    def _read_youtube(self, url: str) -> dict:
+        """A YouTube link: the real title, channel and description (Data API, else oEmbed), then the video itself through
+        find_video's fallbacks (the YouTube route, the maker's own copy). The facts come from the video, never the prompt."""
+        from .media import youtube_info
+        run = self.state()
+        res = run["result"]
+        key = self._yt_key()
+        info = youtube_info.video_info(url, self.h.http, key)
+        if not info:
+            raise ActionError("YouTube didn't give this video's details (it may be private or removed). Paste another link, or upload the video.")
+        lines = [p.strip() for p in re.split(r"\n+", info["description"] or "")]
+        paras = [info["title"]] + [p for p in lines if len(p) > 25 and not youtube_info.URL_RE.fullmatch(p)][:9]
+        res["source"] = {"url": info["url"], "title": info["title"], "image": info["thumbnail"], "site": info["channel"] or "YouTube",
+                         "description": (next((p for p in paras[1:]), "") or f"A video by {info['channel']} on YouTube.")[:300],
+                         "via": info["via"], "post": None, "media": [], "media_note": "", "paragraphs": paras,
+                         "video_url": info["url"], "channel": info["channel"], "channel_url": info["channel_url"]}
+        self.save(run)
+        out = {"site": info["channel"], "title": info["title"], "via": info["via"], "channel": info["channel"],
+               "description": (info["description"] or "")[:800], "published": info["published"], "words": len(" ".join(paras).split())}
+        if not key:
+            out["note"] = ("Read with YouTube oEmbed (title, channel, thumbnail; no description). A YouTube Data API key in "
+                           "Settings > Integrations adds the description.")
+        try:
+            v = self.t_find_video(url)
+            out["video"] = {k: v.get(k) for k in ("status", "plan_line", "credit", "ask")}
+        except ActionError as e:
+            out["video"] = {"status": "none", "note": str(e)}
         return out
 
     def _read_product(self, url: str) -> dict:
@@ -469,6 +511,11 @@ class Tools(EditorialTools):
             got = media_tools.media_find(q, http=self.h.http, **({"youtube_api_key": yt} if yt else {}))
         except Exception as e:  # noqa: BLE001
             return {"found": [], "note": f"Media finder failed ({e.__class__.__name__})."}
+        prev = res.get("found_media") if isinstance(res.get("found_media"), dict) else {}
+        if (prev.get("best_downloadable") or {}).get("official") and not (got.get("best_downloadable") or {}).get("official"):
+            # find_video already found the maker's own video (or the linked one): a broader search never replaces it
+            got = {**got, "best_downloadable": prev["best_downloadable"], "best_video": prev.get("best_video") or got.get("best_video"),
+                   "credit": prev.get("credit") or got.get("credit")}
         res["found_media"] = got
         self.save(run)
         bv, bd = got.get("best_video"), got.get("best_downloadable")
@@ -491,8 +538,9 @@ class Tools(EditorialTools):
         return tok or ""
 
     def upload_limit_mb(self) -> int:
-        from .house import MAX_UPLOAD
-        return (demo_guard.DEMO_FILE_MAX if self.demo else MAX_UPLOAD) // (1024 * 1024)
+        # the upload box sends videos to the Library (/api/library/upload), so its per-file limit is the one to say
+        from .library import FILE_MAX
+        return (demo_guard.DEMO_FILE_MAX if self.demo else FILE_MAX) // (1024 * 1024)
 
     def t_find_video(self, query: str = "") -> dict:
         """studio.media.video_first: Product Hunt API -> the maker's site -> the official channel. A downloadable maker
@@ -510,13 +558,7 @@ class Tools(EditorialTools):
         extra = [u for u in (it.get("urls") or []) if u and u not in q]  # the person's own links (a YC launch page) always count
         if extra:
             q = " ".join([q, *extra])
-        yt = ""
-        if not self.demo:
-            try:
-                from .integrations import user_secret
-                yt = user_secret(self.store, self.a.uid, "yt_key")
-            except Exception:  # noqa: BLE001
-                yt = ""
+        yt = self._yt_key()
         src_vid = next((m for m in (res.get("source") or {}).get("media") or [] if m.get("type") == "video"), None)
         r = video_first.research_video(q, http=self.h.http, ph_token=self._ph_token(), youtube_api_key=yt or None,
                                        upload_limit_mb=self.upload_limit_mb(), name_hint=comp.get("name") or "",
