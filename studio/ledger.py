@@ -817,7 +817,7 @@ def add_routes(app, house, actor) -> None:
         b = body or {}
         return L.decide(actor(request, write=True), sid, str(b.get("decision") or ""), b.get("scope"), b.get("confirm_token"))
 
-    @app.post("/api/ledger/check")
+    @app.post("/api/check/draft")
     def ledger_check(request: Request, body: dict = Body(default={})):
         b = body or {}
         return L.check_draft(actor(request), str(b.get("text") or ""), str(b.get("service") or ""), str(b.get("media_token") or ""),
