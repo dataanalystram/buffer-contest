@@ -219,3 +219,6 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
 .cx-card .cx-snip pre.code{white-space:pre;word-break:normal;overflow-wrap:normal;overflow-x:auto;max-width:100%;padding-right:16px}
 /* phones: Inbox tile labels and their small lines wrap instead of being cut ("Buffer requests left", "0 used: nothing reaches Buffer") */
 @media (max-width:600px){.ib-tl,.ib-ts{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}}
+/* For you: the interests accepted in setup, shown above the feed they decide */
+.nf-for{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 16px}
+.nf-for p{flex-basis:100%;margin:0}

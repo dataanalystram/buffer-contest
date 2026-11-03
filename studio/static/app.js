@@ -596,7 +596,7 @@ function storyItem(st) {
     <img class="nf-img" src="${esc(window.hqThumb(st.url, st.image || ""))}" alt="" loading="lazy" data-testid="story-thumb">
     <div class="nf-b"><div class="nf-meta">${fav(host)}<span class="nf-src" title="via ${esc(st.source || "")}">${esc(host || st.source)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}</div>
       <a class="nf-t" href="${escUrl(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
-      ${why ? `<p class="nf-why">${esc(why)}</p>` : ""}
+      ${why ? `<p class="nf-why">${esc(why)}</p>` : ""}${st.why_for_you ? `<span class="muted xs" data-testid="story-for-you">${esc(st.why_for_you)}</span>` : ""}
       <div class="nf-act"><button class="btn sm" type="button" data-make="${esc(st.url)}" data-testid="story-write">Make post</button></div></div></article>`;
 }
 function timeAgo(ms) {
@@ -624,6 +624,13 @@ async function loadFeed() {
   if (!NF.stories.length) box.innerHTML = `<div class="nf-skel" aria-busy="true"><span></span><span></span><span></span></div>`;
   try {
     const r = await api("/api/radar"); NF.stories = r.stories; NF.feeds = r.feeds;
+    // the interests accepted in setup decide the feed, on every refresh (server-side: onboarding.rank_stories)
+    const fy = $("#nfFor"), ints = r.interests || [];
+    fy.hidden = !ints.length;
+    fy.innerHTML = ints.length ? `<span class="muted sm">Following your interests:</span> ${ints.map((t) => `<span class="pill sm" data-testid="news-interest" data-id="${esc(t.id)}">${esc(t.label)}</span>`).join(" ")}`
+      + ` <button class="link sm" type="button" data-testid="news-interests-change">Change</button>` + (r.note ? `<p class="muted xs" data-testid="news-interests-note">${esc(r.note)}</p>` : "") : "";
+    const chg = fy.querySelector("[data-testid=news-interests-change]");
+    if (chg) chg.onclick = () => window.onbOpen && onbOpen(0);
     box.innerHTML = (r.errors || []).map((e) => `<div class="st err">${esc(hostOf(e.feed))}: ${esc(e.error)}</div>`).join("")
       + (r.stories.length ? r.stories.slice((NF.page - 1) * 12, NF.page * 12).map(storyItem).join("") : `<div class="empty"><b>No stories yet</b><span>Follow a site in <button class="link" type="button" data-go="news:sources" data-testid="news-empty-sources">Sources</button>. Most news sites and blogs have a feed at /feed or /rss.</span></div>`);
     $("#nfMore").hidden = true;  // numbered pages instead of "Show more" (owner, 1 Nov 2026)
@@ -634,6 +641,7 @@ async function loadFeed() {
   } catch (e) { box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
 }
 $("#nfMore").onclick = () => { NF.shown += 12; loadFeed(); };
+window.addEventListener("hq:interests", () => { const t = document.getElementById("tab-news"); if (t && !t.hidden) { NF.page = 1; loadFeed(); } });
 window.HS_SUBS = Object.assign(window.HS_SUBS || {}, { "news:feed": loadFeed, "news:sources": loadFeeds });
 // One list of followed feeds: the For you feed (news radar) and the story scan (sources agent) read the same list.
 async function loadFeeds() {

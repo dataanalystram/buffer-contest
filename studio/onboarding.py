@@ -311,3 +311,35 @@ def _filter(clusters: list[dict], types: list[str]) -> list[dict]:
 def _why(c: dict, types: list[str], txt: str) -> str:
     hits = [CONTENT_TYPES[t]["label"] for t in types if c["category"] in CONTENT_TYPES[t]["cats"] or any(w in txt for w in CONTENT_TYPES[t]["words"])]
     return "Matches " + ", ".join(hits[:2]) if hits else ""
+
+
+def interests(store, uid: str) -> list[str]:
+    """The content types the person accepted in setup (user_profiles, per account). [] when they haven't picked any."""
+    try:
+        ensure(store)
+        rows = store.q("SELECT data FROM user_profiles WHERE user_id=?", (uid,))
+    except Exception:  # noqa: BLE001 - the feed never breaks on the profile
+        return []
+    d = json.loads(rows[0]["data"] or "{}") if rows else {}
+    return [t for t in d.get("content_types") or [] if t in CONTENT_TYPES]
+
+
+def rank_stories(stories: list[dict], types: list[str], limit: int = 30) -> dict:
+    """The For you feed, following the accepted interests: stories that match a chosen content type (by its words),
+    closest match first, then newest; the same input always gives the same order, so a refresh never reshuffles or
+    drops the interests. With no interests the newest stories stand. Nothing matching -> the newest, with a note."""
+    if not types:
+        return {"stories": stories[:limit], "interests": [], "off_interest": 0}
+    words = {t: CONTENT_TYPES[t]["words"] for t in types}
+    out = []
+    for st in stories:
+        txt = f" {st.get('title', '')} {st.get('summary', '')} ".lower()
+        hits = [t for t, ws in words.items() if any(re.search(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", txt) for w in ws)]
+        if hits:
+            out.append({**st, "match": len(hits), "why_for_you": "Matches " + ", ".join(CONTENT_TYPES[t]["label"] for t in hits[:2])})
+    out.sort(key=lambda x: (-x["match"], -(x.get("published") or 0), x.get("url") or ""))
+    lab = [{"id": t, "label": CONTENT_TYPES[t]["label"]} for t in types]
+    if not out:
+        return {"stories": stories[:limit], "interests": lab, "off_interest": len(stories),
+                "note": "Nothing in the feeds you follow matches your interests right now, so these are the newest stories."}
+    return {"stories": out[:limit], "interests": lab, "off_interest": len(stories) - len(out)}

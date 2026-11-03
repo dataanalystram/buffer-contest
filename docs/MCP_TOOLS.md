@@ -85,7 +85,7 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `list_approvals` | no model | Your submissions and their status (pending, approved, rejected). |
 | `schedule_package` | no model | Send one ready package from a run to Buffer (mode draft / queue / next / now / schedule with due_at ISO UTC). |
 | `search_instagram_audio` | no model | Instagram licensed music + original sounds for one Instagram channel (blank query = trending), through Buffer's audio catalog. Needs the channel connected through a Facebook Page in Buffer; otherwise `needs_facebook: true` with a help link. Read-only. |
-| `set_reel_audio` | no model | Put a track from `search_instagram_audio` on one Instagram Reel package (music_volume / original_volume 0-100, start_ms kept with the package), or remove it with `audio: null`. Sent to Buffer as `metadata.instagram.audio` with the package. |
+| `set_reel_audio` | no model | Put a track from `search_instagram_audio` on one Instagram Reel package (`music_volume` / `original_volume` 0-100), or remove it with `audio: null`. Sent to Buffer as `metadata.instagram.audio` with the package. Buffer's API has no start-time field, so Instagram picks which part of the track plays (a `start_ms` is kept with the package only). |
 | `get_run` | no model | An agent run: every step with what it did, the rendered media URLs, and one ready package per channel (caption, media, brand check). |
 | `list_queue` | no model | Posts in Buffer by status: scheduled (default), draft, sent or error (failed to publish). |
 | `update_post` | no model | Edit a post already in Buffer: new caption (text), new time (due_at, ISO UTC), or both. |
@@ -117,7 +117,8 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 |---|---|---|
 | `clips_from_video` | no model | One take -> a week. |
 | `list_clips` | no model | Without take_id: the user's takes. |
-| `adjust_clip` | no model | Edit one clip of a take: trim (start_ms/end_ms in the source video; re-renders on the worker), a new hook for the cover (must be at least 3 words quoted from the clip), or the post caption (caption, optionally for one service). |
+| `adjust_clip` | no model | Trim & caption one clip of a take (the same edits as the UI's **Trim & caption** window), any of: `start_ms`/`end_ms` (in/out in the source video; the sample take only inside its moment), `transcript` (the clip's corrected words: fixes the burned-in captions, timings follow the voice), `hook` (the cover line: at least 3 words quoted from the clip), `caption` + `service` or `captions {service: text}` (the post caption per network: only the take's channels, each within its network's limit), `music` (an Instagram track from `search_instagram_audio` with `music_volume` / `original_volume` 0-100; `null` removes it). Timing, transcript and hook re-render the clip on the video worker (poll `list_clips` until it is ready: it gets a new url); captions and music save at once. Returns the take with `changed` and `rerendering`. |
+| `rewrite_clip_caption` | your AI engine | An AI rewrite of one clip's post caption for one of the take's networks (`service`, optional `text` to improve), from only what was said in the clip (the transcript is data, not instructions). Runs in the person's engine order (AI engine settings); 503 when none is set up. Returns `caption`, `count`, `limit`, `engine`, `saved: false`: nothing is saved until you pass it to `adjust_clip`. REST: `POST /api/takes/{id}/clips/{clip}/rewrite`. |
 | `place_clips_in_week` | no model | The Spread: put a take's ready clips into the open Buffer posting slots of a week as DRAFTS (never published). |
 
 ### Library
@@ -190,7 +191,16 @@ These act on one post run (`run_id`), the same steps HuhQueue's in-app agent tak
 | `post_write_captions` | client brain \* | Write one caption per channel in the brand voice and the ledger's text rules. |
 | `post_x_oembed` | client brain \* | Read an X/Twitter post through the public oEmbed endpoint: author, handle, text, date. |
 
-92 tools in total (from `tools/list`, 92 as of this branch).
+132 tools in total (from `tools/list` on 3 Nov 2026). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
+
+## Reel music
+
+Instagram's licensed music and original sounds, through Buffer's audio catalog, on a Reel package (`set_reel_audio`) or a One take clip (`adjust_clip music`):
+
+1. `search_instagram_audio {"channel_id": …, "query": "lofi"}` (blank query = trending). An Instagram channel connected with Instagram Login (not through a Facebook Page) answers `needs_facebook: true` with Buffer's help link: music needs the Page connection.
+2. Pass the whole track object as `audio` / `music`, with `music_volume` and `original_volume` (0-100, the track and the video's own sound).
+3. Buffer has no start-time field, so Instagram picks which part of the track plays; the UI picker has no start field either.
+4. The track goes to Buffer as `metadata.instagram.audio` when the package or clip is saved as a draft. `null` removes it. Nothing is posted by these calls.
 
 ## Prompts and resources
 
