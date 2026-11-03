@@ -35,7 +35,7 @@ NEXT = {"github_repo": ["text_slides", NEWS, "editorial_cover"], "funding": ["yc
 ALIASES = [(r"\b(?:github|repo(?:sitory)?)\b", "github_repo"), (r"\bfund(?:ing|raise|raising)?\b|\braise[ds]?\b|\bseries [a-d]\b", "funding"),
            (r"\byc\b|\by ?combinator\b|\bstartup launch\b", "yc_launch"), (r"\btext[- ]?(?:slides?|only slides?)\b|\bplain(?:[- ]words)? slides?\b", "text_slides"),
            (r"\beditorial\b", "editorial_cover"), (r"\bbreaking\b", "breaking"), (r"\bnews(?: carousel)?\b|\bdefault\b|\boriginal\b", NEWS),
-           (r"\bproduct launch\b|\blaunch carousel\b|\blaunch\b", "launch"), (r"\bquote\b", "quote"), (r"\btutorial\b|\bhow[- ]to\b|\bfree way\b", "tutorial"),
+           (r"\bproduct launch\b|\blaunch (?:carousel|template|slides)\b", "launch"), (r"\bquote\b", "quote"), (r"\btutorial\b|\bhow[- ]to\b|\bfree way\b", "tutorial"),
            (r"\bviral\b|\btrend(?:ing)?\b", "viral_trend"), (r"\breel\b", "launch_reel"), (r"\brecap\b", "weekly_recap")]
 INTENT = re.compile(r"\btemplates?\b|\bstyle\b|\blayout\b|\bdesign\b|\blook\b|\brestyle\b|\bformat\b", re.I)
 LIST_RE = re.compile(r"\b(?:what|which|list|show)\b[^.?!]{0,40}\btemplates?\b|\btemplates?\b[^.?!]{0,30}\b(?:can you|do you|available|have)\b"
@@ -172,7 +172,10 @@ def template_reply(text: str, custom: list[dict] | None = None) -> dict | None:
     if wants_list(text):
         return {"list": True}
     change, keep, rest = slide_refs(text)
-    tid = named(text, custom) if INTENT.search(text or "") or re.search(r"\buse (?:the|a|my)\b", text or "", re.I) else ""
+    t = text or ""
+    if re.search(r"\btheme\b", t, re.I) and not re.search(r"\btemplate\b", t, re.I):
+        return None  # "switch to the news theme" is a video theme (set_theme), not a template
+    tid = named(t, custom) if INTENT.search(t) or re.search(r"\b(?:use|switch to|change to|go with)\s+(?:the|a|my)\b", t, re.I) else ""
     restyle = bool(re.search(r"\b(?:restyle|change|switch|swap|different|another|other|new)\b[^.?!]{0,30}\b(?:template|style|layout|design|look)\b"
                              r"|\b(?:template|style|layout|design|look)\b[^.?!]{0,20}\b(?:change|switch|swap|different)\b|\brestyle\b", text or "", re.I))
     if not (tid or restyle or (change and INTENT.search(text or ""))):
