@@ -164,6 +164,7 @@ function watch(id) {
 
 // ---------------------------------------------------------------- run view
 function showRun(r) {
+  window.HQ_NAV = (window.HQ_NAV || 0) + 1;  // boot() keeps a run the user opened while it loaded (see app.js)
   H.run = r; $("#runView").hidden = false;
   window.mpOnRun && window.mpOnRun(r);
   // a step that ran again with nothing new ("Check everything" x4) is one row with its count (the latest result)

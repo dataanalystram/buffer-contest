@@ -84,8 +84,7 @@ def _page(chromium, base, w, h=900):
 
 
 def _open(page, base, rid):
-    # ?tab=agent: boot() ends with showTab(?tab or "inbox"); on a slow boot that landed after showRun and hid the thread
-    page.goto(base + "/?tab=agent")
+    page.goto(base + "/#/agent")
     page.wait_for_function("() => typeof window.showRun === 'function' && typeof api === 'function'")
     page.evaluate(f"async () => {{ window.showTab && showTab('agent'); const r = await api('/api/agent/runs/{rid}'); showRun(r); }}")
     page.get_by_test_id("package").first.wait_for()
@@ -102,6 +101,46 @@ def _say(page, text):
 def _no_overflow(page, w):
     sw = page.evaluate("() => document.documentElement.scrollWidth")
     assert sw <= w + 1, f"horizontal overflow at {w}px: {sw}"
+
+
+SLOW_BOOT = """(() => { const f = window.fetch.bind(window);  // a slow boot: /api/channels answers 2.5 s late
+  window.fetch = (u, o) => String(u).includes("/api/channels") ? new Promise((r) => setTimeout(r, 2500)).then(() => f(u, o)) : f(u, o); })()"""
+
+
+def test_slow_boot_keeps_the_run_the_user_opened(live, chromium):
+    """boot() ends with showTab(?tab or "inbox"). When it lands after showRun (or a tab the user opened), it must not
+    throw them back to the Inbox and hide the chat thread; with nothing opened meanwhile it still lands on the Inbox."""
+    base, app, tmp = live
+    rid = _seed(app)
+    ctx, page = _page(chromium, base, 1280)
+    ctx.add_init_script(SLOW_BOOT)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(base + "/")
+        page.wait_for_function("() => typeof window.showRun === 'function' && typeof api === 'function'")
+        assert page.evaluate("() => !document.body.dataset.booted"), "boot finished before the delayed /api/channels"
+        page.evaluate(f"async () => {{ showTab('agent'); const r = await api('/api/agent/runs/{rid}'); showRun(r); }}")
+        page.get_by_test_id("package").first.wait_for()
+        page.wait_for_function("() => document.body.dataset.booted === '1'", timeout=15000)
+        page.wait_for_timeout(300)
+        assert page.locator("#tab-agent").is_visible() and page.locator("#tab-inbox").is_hidden()
+        assert page.get_by_test_id("package").first.is_visible() and page.locator("#runView").is_visible()
+        # a sub-tab picked while boot loads is kept too
+        page.goto(base + "/?tab=settings&sub=ai")
+        page.wait_for_function("() => typeof window.showTab === 'function'")
+        page.evaluate("() => { showTab('settings', 'ai'); document.querySelector('[data-testid=settings-tab-integrations]').click(); }")
+        page.wait_for_function("() => document.body.dataset.booted === '1'", timeout=15000)
+        page.wait_for_timeout(300)
+        pw.expect(page.get_by_test_id("settings-tab-integrations")).to_have_attribute("aria-selected", "true")
+        assert page.get_by_test_id("ai-engine-picker").is_hidden()
+        # nothing opened while boot loads: it lands on the Inbox as before
+        page.goto(base + "/")
+        page.wait_for_function("() => document.body.dataset.booted === '1'", timeout=15000)
+        assert page.locator("#tab-inbox").is_visible() and page.locator("#tab-agent").is_hidden()
+        assert not errors, errors
+    finally:
+        ctx.close()
 
 
 def test_owner_sequence_in_the_browser(live, chromium):

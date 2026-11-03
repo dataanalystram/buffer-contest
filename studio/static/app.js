@@ -146,7 +146,12 @@ function pfStrip() {
 document.addEventListener("preflight", pfStrip);
 
 // ---------------------------------------------------------------- boot
+// Every navigation (showTab, a sub-tab, showRun) bumps HQ_NAV. boot() opens its landing tab only when nothing navigated
+// while it loaded: a slow boot that finished after the user (or showRun) opened a screen used to throw them back to the
+// Inbox and hide the chat thread they were in.
+window.HQ_NAV = window.HQ_NAV || 0;
 async function boot() {
+  const nav0 = window.HQ_NAV;
   const p = new URLSearchParams(location.search);
   if (p.get("error")) toast("Buffer: " + p.get("error"), 6000);
   if (p.get("connected")) toast("Connected to Buffer");
@@ -171,12 +176,14 @@ async function boot() {
   budget(); refreshBadge(); if (typeof readyBadge === "function") readyBadge();
   api("/api/inbox").then((d) => ibBadge(d.waiting)).catch(() => {});
   if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
+  else if (window.HQ_NAV !== nav0) { /* the user (or showRun) already opened a screen while boot loaded: keep it */ }
   else { // the sample opens on the brand kit builder, filled with the sample brand (owner, 2 Nov 2026); once per browser tab
     const firstDemo = s.demo && !p.get("tab") && !sessionStorage.getItem("hq_demo_landed");
     if (firstDemo) sessionStorage.setItem("hq_demo_landed", "1");
     showTab(p.get("tab") || (firstDemo ? "brand" : "inbox"), p.get("sub") || "");
   }
   if (window.onbMaybeOpen) onbMaybeOpen({ justConnected, demo: !!s.demo });
+  document.body.dataset.booted = "1";  // tests wait on this for a boot that finished
 }
 
 $("#bookmarklet").href = `javascript:location.href='${location.origin}/?url='+encodeURIComponent(location.href)`;
@@ -356,6 +363,7 @@ document.addEventListener("click", (e) => {
   e.preventDefault(); ibGo(g.dataset.go);
 });
 function subTab(tab, sub) {
+  window.HQ_NAV++;
   const root = document.getElementById("tab-" + tab); if (!root) return "";
   const subs = [...root.querySelectorAll(":scope > .sub[data-sub]")]; if (!subs.length) return "";
   if (SUB_ALIAS[tab]) sub = SUB_ALIAS[tab](sub || "");
@@ -383,6 +391,7 @@ function urlFor(name, sub) {
   history.replaceState(null, "", q || demo ? "/?" + (demo + q).replace(/&$/, "") : "/");
 }
 function showTab(name, sub = "") {
+  window.HQ_NAV++;
   if (TAB_ALIAS[name]) {
     if (name === "queue") { try { const s = JSON.parse(localStorage.getItem("hq_planner") || "{}"); s.view = "list"; localStorage.setItem("hq_planner", JSON.stringify(s)); } catch (_) {} }
     const [t, sb] = TAB_ALIAS[name]; if (name === "approvals") setTimeout(() => $("#ibApprSec")?.scrollIntoView({ block: "start" }), 300);
@@ -812,4 +821,7 @@ $("#logoutBtn").onclick = logout; $("#setLogout").onclick = logout;
 $("#disconnectBtn").onclick = disconnect; $("#setDisconnect").onclick = disconnect; $("#setPrivDelete").onclick = disconnect;
 document.querySelectorAll("#acctMenu [data-go]").forEach((b) => b.addEventListener("click", () => ($("#acctMenu").hidden = true)));
 
-boot().catch((e) => toast(e.message, 6000));
+// after every script has run (DOMContentLoaded): boot() used to start while later scripts (makepost.js, planner.js,
+// integrations.js) were still loading, so its showTab could land before their HS_TABS loaders existed and the tab drew empty
+const startBoot = () => boot().catch((e) => toast(e.message, 6000));
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startBoot); else startBoot();
