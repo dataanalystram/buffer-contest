@@ -154,7 +154,8 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `schedule_template_slot` | client brain * | Add a recurring Planner slot for a template (e.g. weekly_recap every mon 20:00 Europe/Dublin). |
 | `templates_slot_run` | client brain * | Fire a recurring template slot now: render it from this week's posts and put one Buffer DRAFT per channel at the slot's next time. |
 | `create_template` | no model | Build a NEW custom template for this workspace (funding announcement, job opening...): name, base layout (kit / bold_news / editorial / minimal / playful), fields, up to 8 slides (front, bullets, story, stat, quote, breaking) with `{field}` placeholders. Renders in the active kit, Follow end card last, shown in the Templates tab as `custom:<slug>`, recorded in the Style Ledger. Max 20 per workspace. |
-| `update_template` / `delete_template` | no model | Change or delete a custom template (`template: custom:<slug>`). |
+| `get_template` | no model | One template by id or name: a built-in (`built_in: true`) or a custom one (fields, slides, layout, `made_by`). Read-only. |
+| `update_template` / `delete_template` | no model | Change or delete a custom template (`template: custom:<slug>`). An AI app may change or delete only a template **it created**; the person's own and built-in ones are refused with a pointer to `create_template`. |
 
 ### Onboarding and the in-app brain
 
@@ -201,7 +202,47 @@ These act on one post run (`run_id`), the same steps HuhQueue's in-app agent tak
 | `post_write_captions` | client brain \* | Write one caption per channel in the brand voice and the ledger's text rules. |
 | `post_x_oembed` | client brain \* | Read an X/Twitter post through the public oEmbed endpoint: author, handle, text, date. |
 
-150 tools in total (from `tools/list` on 3 Nov 2026). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
+161 tools in total (from `tools/list` on 3 Nov 2026, feat/mcp-client-templates: 157 on main + get_template, get_media_preview, replace_draft_media, get_page_context; `test_tools_list_parity_and_page_context` checks the count matches). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
+
+## Runs made from an AI app, previews, draft media and page context (3 Nov 2026)
+
+Owner report: a Reel made from Claude over MCP showed "Model: nvidia/nemotron-3-ultra-550b-a55b" (HuhQueue's engine, which
+never ran) and "Worked through 0 steps".
+
+* **Who made the run.** A run an AI app made over MCP (`create_package`, `make_post` with `brain: "external"`, or any run its
+  tool calls touch) shows **"Claude · via MCP"** (from the MCP `initialize` clientInfo, e.g. `claude-ai 0.1.0`, and the agent
+  token's name) with the hint *"The model is chosen in Claude — see that chat for the model used."* HuhQueue never claims a
+  model it didn't run; a `_meta.model` sent with a tool call is shown as "Claude reported the model …". `get_run` and
+  `GET /api/agent/runs/{id}` carry it as `result.brain` (`mode: "mcp"`, `label`, `hint`, `client`, `client_version`, `token`)
+  and `result.mcp`.
+* **What it did.** Every MCP tool call an agent token makes is a visible step on the run (`via: "mcp"`, tool, a short
+  summary, `done | failed`, duration). Calls made before the run existed (e.g. `research_link`, `render_reel`) are claimed by
+  the run the same token creates next (within 3 hours). Polling and lookups (`get_run`, `render_status`, `list_*`, `whoami`…)
+  are not steps. Summaries never hold captions, keys or tokens. The steps live in their own table (`mcp_calls`), merged when
+  a run is read, so they never race a running agent; the thread never says "Worked through 0 steps" (no steps, no row).
+* **The Model switch.** The engine picked in Make a post runs. A pick without tool use (the free starter model) used to be
+  skipped for the first tool engine (NVIDIA); it now writes the standard plan. A pick that can't run right now is said once in
+  the thread. The chip and footer update at once after a change, and an open thread says `· next reply: <model>`.
+
+| Tool | Brain | What it does |
+|---|---|---|
+| `get_media_preview` | no model | SEE what you made: frame stills as MCP `image` content (default at 0, 1 and 2 s; `frames_at` up to 6, `width` 160-720) of the person's own video, or a thumbnail of an image, plus `signed.url`, a download link valid for 15 minutes (`/ms/<exp>/<sig>/<token>`, HMAC). `media_token` or `url` (a HuhQueue `/m/<token>` link). Another person's media is "not found". 20 previews per 10 minutes. REST: `GET /api/media/{token}/preview`. |
+| `replace_draft_media` | no model | New media on a Buffer **draft**, including drafts HuhQueue didn't make. Caption, channel and settings stay (and an Instagram Reel's music when Buffer reports it); `text` / `options` (e.g. `thumbnail_offset_ms` for the cover frame) change them. `strategy`: `auto` (edit in place; if Buffer refuses, a new draft with the same caption + the new media), `edit` or `recreate`. The old draft is deleted only with `delete_old: true` **and** `confirm: true`, after the new one exists. Scheduled and sent posts are refused. REST: `POST /api/buffer/drafts/{post_id}/media`. |
+| `get_page_context` | no model | Each app page (Make a post, Planner, Inbox, Library, Templates, Brand kit, One take, Settings > AI engine, Activity): what it shows and which tools do the same things there, each with its one-line description, plus `tool_count`. REST: `GET /api/agent/pages`. |
+| `get_post_context` | no model | A Make a post thread's context as the agent reads it (source, rights, kit, template, summarized turns). |
+| `rename_post_thread` | no model | Rename a Make a post thread (blank title = the automatic one). |
+| `get_post_templates` | no model | A run's template, the suggested others, and with `all: true` every built-in and custom template (custom ones show "Yours"). |
+| `resume_post` | no model | Resume a run the server cut off (status `interrupted`) from its last finished step. |
+
+Templates an AI app makes are the person's: `create_template` always makes a NEW template (a name already taken gets a new
+id, never an overwrite), it shows in All templates as **Yours** (`yours: true`, `owner: "yours"`), and `made_by` says
+"Claude (via MCP)". The app may then change or delete only the ones it made.
+
+Reschedule: `reschedule_post` / `update_post` (`due_at`) use Buffer's `editPost`; review and draft tokens may only move
+drafts, trusted tokens may move scheduled posts too. Cover/thumbnail: `set_cover` (a run's 3 cover variants) or
+`thumbnail_offset_ms` in `replace_draft_media` / `create_package` `cover.frame_s`. Music: `list_music`, `set_post_music`,
+`search_instagram_audio`, `set_reel_audio`. Library: `list_library_bin`, `restore_library_items`, `purge_library_bin`,
+`bulk_delete_library`, `draft_from_library`.
 
 ## Music, Undo, Update draft and brand kits (3 Nov 2026)
 

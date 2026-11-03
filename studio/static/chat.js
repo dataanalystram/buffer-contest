@@ -260,16 +260,26 @@
     document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = li.dataset.id === String(r.id); li.classList.toggle("on", on);
       const b = li.querySelector(".hc-th"); if (b) { if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); } });
   }
+  // the run's own brain (what wrote it); a run an AI app made over MCP says so ("Claude · via MCP"), never our engine
+  function runBrain() { const r = run(), br = r && (r.result || {}).brain; return br && typeof br === "object" && (br.model || br.provider || br.source) ? br : null; }
   function modelName() {
-    const r = run(), br = r && (r.result || {}).brain, fallback = (window.H_STATE || {}).brain;
     if (typeof brainName !== "function") return "the built-in writer";
-    return brainName(br && (br.model || br.provider || br.source) ? br : fallback);
+    return brainName(runBrain() || (window.H_STATE || {}).brain);
   }
   function drawModel() {
-    const n = modelName();
-    model.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>`; model.setAttribute("aria-label", `Model: ${n}. Open Settings, AI engine`);
-    cmodel.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>`; cmodel.setAttribute("aria-label", `Model: ${n}. Open Settings, AI engine`); cmodel.title = `Model: ${n}`;
+    const n = modelName(), br = runBrain(), mcp = !!(br && br.mode === "mcp");
+    const nxt = !mcp && br && window.H_STATE && H_STATE.brain && typeof brainName === "function" && brainName(H_STATE.brain) !== n ? brainName(H_STATE.brain) : "";
+    const label = mcp ? `Made in ${n}. ${br.hint}` : `Model: ${n}${nxt ? `, next reply: ${nxt}` : ""}. Open Settings, AI engine`;
+    model.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>`;
+    model.title = mcp ? br.hint : "The model that runs this agent. Change it in Settings > AI engine.";
+    model.setAttribute("aria-label", label);
+    // the composer pill (sidebars layout): same name; an MCP run carries its hint, a switched engine says "next reply:"
+    cmodel.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>` + (nxt ? `<span class="hc-next"> · next reply: ${esc(nxt)}</span>` : "");
+    cmodel.setAttribute("aria-label", label);
+    cmodel.title = mcp ? `${n} — ${br.hint}` : `Model: ${n}` + (nxt ? ` · next reply: ${nxt}` : "");
+    if (mcp) cmodel.dataset.hint = br.hint || ""; else delete cmodel.dataset.hint;
   }
+  window.hcDrawModel = () => { if (run()) drawModel(); };
 
   // ------------------------------------------------------------ after every render of the run: decorate
   function actions(kind, text, extra) {
@@ -329,7 +339,7 @@
     // a run with no recorded steps shows "Thinking…" while it works and no row at all after (never "0 steps")
     const tr = document.getElementById("mpTrace"), steps = r.steps || [], cur = steps.find((s) => s.status === "running");
     const done = steps.filter((s) => ["done", "warn", "skipped"].includes(s.status)).length;
-    tr.hidden = !busy && !steps.length;
+    tr.hidden = !busy && !steps.length;  // never "Worked through 0 steps": no steps, no row
     traceText(r);
     tr.classList.toggle("hc-working", busy);
     tr.dataset.state = busy ? "working" : r.status === "failed" ? "failed" : "done";

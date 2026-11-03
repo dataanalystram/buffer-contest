@@ -59,6 +59,22 @@ def ensure(store) -> None:
     store.x(sql)
     if store.pg:
         store.x("ALTER TABLE custom_templates ENABLE ROW LEVEL SECURITY")
+    # who made it (3 Nov 2026): "you" or "agent:<token id>:<name>"; an AI app may change only the templates it made
+    if store.pg:
+        store.x("ALTER TABLE custom_templates ADD COLUMN IF NOT EXISTS created_by TEXT")
+    elif "created_by" not in {r["name"] for r in store.q("PRAGMA table_info(custom_templates)")}:
+        store.x("ALTER TABLE custom_templates ADD COLUMN created_by TEXT")
+
+
+def maker(a) -> str:
+    return "you" if getattr(a, "kind", "") != "agent" else f"agent:{a.agent.get('id')}:{str(a.agent.get('name') or '')[:40]}"
+
+
+def made_by_label(created_by: str | None) -> str:
+    if not created_by or created_by == "you":
+        return "you"
+    parts = created_by.split(":", 2)
+    return f"{parts[2] or 'an AI app'} (via MCP)" if len(parts) == 3 else "an AI app (via MCP)"
 
 
 def _txt(v: Any, n: int) -> str:
@@ -231,7 +247,9 @@ class CustomTemplates:
         k = json.loads(row["data"] or "{}")
         return {"id": PREFIX + row["slug"], "db_id": row["id"], "name": row["name"], "kind": k.get("kind", "carousel"), "video": False,
                 "custom": True, "about": k.get("about") or f"Custom template ({len(k.get('slides') or [])} slides, layout {k.get('layout')})",
-                "layout": k.get("layout"), "fields": k.get("fields") or [], "slides": k.get("slides") or [], "updated": row["updated"]}
+                "layout": k.get("layout"), "fields": k.get("fields") or [], "slides": k.get("slides") or [], "updated": row["updated"],
+                # every custom template is the user's own ("Yours" in All templates), whoever drew it up
+                "owner": "yours", "yours": True, "made_by": made_by_label(row.get("created_by"))}
 
     def _ledger(self, a, verb: str, row: dict, spec: dict) -> None:
         """One Style Ledger entry per change (kind template). The newest entry for a template is its active one."""
@@ -243,6 +261,18 @@ class CustomTemplates:
         self.store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created) VALUES(?,?,?,?,?,?,?)",
                      (a.uid, "template", json.dumps({"type": "template", "template": tid, "action": verb}), rule,
                       f"{getattr(a, 'kind', '')}:{getattr(a, 'label', '')}"[:120], 0 if verb == "deleted" else 1, time.time()))
+
+    @staticmethod
+    def _own(a, row: dict, verb: str) -> None:
+        """An AI app (agent token) makes its OWN templates and never overwrites the person's or another app's: it may
+        change or delete only one it created. The person can change any of them in the Templates tab."""
+        if getattr(a, "kind", "") != "agent":
+            return
+        mine = str(row.get("created_by") or "").split(":")[:2] == ["agent", str(a.agent.get("id"))]
+        if not mine:
+            raise TemplateError(f"An AI app can't {verb} '{row['name']}': it belongs to the person (made by "
+                                f"{made_by_label(row.get('created_by'))}). Make your own with create_template (it gets a new id) "
+                                "and leave this one as it is.")
 
     def list(self, a) -> list[dict]:
         return [self._out(r) for r in self._rows(a)]
@@ -267,8 +297,8 @@ class CustomTemplates:
             while slug in taken:
                 slug, i = f"{base}-{i}", i + 1
             now = time.time()
-            tid = self.store.x("INSERT INTO custom_templates(user_id,slug,name,data,created,updated) VALUES(?,?,?,?,?,?)",
-                               (a.uid, slug, spec["name"], json.dumps(spec), now, now))
+            tid = self.store.x("INSERT INTO custom_templates(user_id,slug,name,data,created,updated,created_by) VALUES(?,?,?,?,?,?,?)",
+                               (a.uid, slug, spec["name"], json.dumps(spec), now, now, maker(a)))
             row = dict(self.store.q("SELECT * FROM custom_templates WHERE user_id=? AND slug=?", (a.uid, slug))[0])
         self._ledger(a, "created", row, spec)
         self.store.audit(a.uid, a.label, "create_template", "read", {"template": PREFIX + slug, "slides": len(spec["slides"]), "id": tid})
@@ -279,6 +309,7 @@ class CustomTemplates:
         from .userlocks import held
         with held(a.uid, "templates"):
             row = self._find(a, ref)
+            self._own(a, row, "change")
             spec = clean_spec(body, json.loads(row["data"] or "{}"))
             self.store.x("UPDATE custom_templates SET name=?, data=?, updated=? WHERE id=? AND user_id=?",
                          (spec["name"], json.dumps(spec), time.time(), row["id"], a.uid))
@@ -292,6 +323,7 @@ class CustomTemplates:
         from .userlocks import held
         with held(a.uid, "templates"):
             row = self._find(a, ref)
+            self._own(a, row, "delete")
             self.store.x("DELETE FROM custom_templates WHERE id=? AND user_id=?", (row["id"], a.uid))
         self._ledger(a, "deleted", row, json.loads(row["data"] or "{}"))
         self.store.audit(a.uid, a.label, "delete_template", "read", {"template": PREFIX + row["slug"]})
@@ -330,12 +362,17 @@ TOOLS: list[dict[str, Any]] = [
      "Follow end card is always added last, it appears in the Templates tab and in list_templates as custom:<slug>, and the change is "
      f"recorded in the Style Ledger. Up to {MAX_CUSTOM} per workspace. Then render_template(template='custom:<slug>', data).",
      "inputSchema": {"type": "object", "required": ["name", "slides"], "properties": _SPEC_PROPS}},
-    {"name": "update_template", "description": "Change a custom template (template: custom:<slug>); only the fields you pass change.",
+    {"name": "get_template", "description": "One template by id or name: a built-in (its name, what it's for, formats) or a custom one "
+     "(custom:<slug>: its fields, slides, layout, who made it). Read-only. Use it before render_template or update_template.",
+     "inputSchema": {"type": "object", "required": ["template"], "properties": {"template": {"type": "string", "description": "id (e.g. custom:funding-announcement) or name"}}}},
+    {"name": "update_template", "description": "Change a custom template (template: custom:<slug>); only the fields you pass change. "
+     "An AI app may change only a template it created itself (made_by); the person's own and built-in templates are refused: "
+     "create_template a new one instead.",
      "inputSchema": {"type": "object", "required": ["template"], "properties": {"template": {"type": "string"}, **_SPEC_PROPS}}},
-    {"name": "delete_template", "description": "Delete a custom template (built-in templates can't be deleted).",
+    {"name": "delete_template", "description": "Delete a custom template (built-in templates can't be deleted). An AI app may delete only a template it created.",
      "inputSchema": {"type": "object", "required": ["template"], "properties": {"template": {"type": "string"}}}},
 ]
-READ_ONLY: set[str] = set()
+READ_ONLY: set[str] = {"get_template"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
@@ -346,6 +383,8 @@ def call_tool(studio, actor, name: str, args: dict):
     try:
         if name == "create_template":
             return ct.create(actor, args)
+        if name == "get_template":
+            return get_template(studio, actor, ct, str(args.get("template") or ""))
         if name == "update_template":
             return ct.update(actor, args.get("template"), {k: v for k, v in args.items() if k != "template"})
         if name == "delete_template":
@@ -353,5 +392,25 @@ def call_tool(studio, actor, name: str, args: dict):
     except TemplateError as e:
         raise ActionError(str(e), 400)
     return NotImplemented
+
+def get_template(studio, actor, ct: CustomTemplates, ref: str) -> dict:
+    """get_template: a custom template by custom:<slug> / id / name, else a built-in by id or name (list_templates)."""
+    from .actions import ActionError
+    ref = ref.strip()
+    if not ref:
+        raise ActionError("template is an id (custom:<slug> or a built-in id) or a name. list_templates lists them.", 400)
+    try:
+        return ct.get(actor, ref)
+    except TemplateError:
+        pass
+    for t in ct.list(actor):
+        if t["name"].strip().casefold() == ref.casefold():
+            return t
+    for k, v in templates.TEMPLATES.items():
+        if k == ref or str(v.get("name") or "").strip().casefold() == ref.casefold():
+            return {"id": k, **v, "custom": False, "built_in": True,
+                    "note": "Built-in: render it with render_template; to change it, create_template a new one of your own."}
+    raise ActionError(f"No template called {ref!r}. list_templates lists every built-in and custom one.", 404)
+
 
 # REST routes live in studio/brand_routes.py (it imports FastAPI; this module stays importable by the video worker).

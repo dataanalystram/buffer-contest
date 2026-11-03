@@ -178,7 +178,7 @@ def test_dated_draft_reel_with_thumbnail_offset_only_where_buffer_honours_it():
     yt = actions.build_post_input({"id": "yt", "service": "youtube"}, "hi", url, "draft", None,
                                   options={"title": "A hook", "category_id": "22", "thumbnail_offset_ms": 250})
     assert yt["assets"] == [{"video": {"url": url}}] and yt["mode"] == "addToQueue" and yt["saveToDraft"] is True
-    assert yt["metadata"]["youtube"] == {"title": "A hook", "categoryId": "22"}
+    assert yt["metadata"]["youtube"] == {"title": "A hook", "categoryId": "22", "madeForKids": False}
     assert actions.clean_options({"ig_type": "carousel", "thumbnail_offset_ms": "x"}) == {}
 
 
