@@ -13,3 +13,4 @@
   Sheets: e2e/templates/sheet_*.jpg
 - main CI on e47d808: test success, worker-imports success.
 - Step5 PASS: 3 parallel MCP sessions (A: kit 6 voice x3, B: kit 6 website x3, C: active kit voice x3 + list_brand_kits), each update+render_template(breaking) per round; wall 12.5s, calls 0.5-2.5s, 0 errors. Final kit6 voice=A2 AND website=B2 (no lost write), kit8 voice=C2 = house kit (get_brand) voice, 4 kits, 1 HuhByte kit. Renders A/B in Linear, C in HuhByte. Restored kit6 voice/website + kit8 voice afterwards. (An earlier run was cut by a sandbox reset after round 1: also showed both writes.)
+- PR #77 CI green (test+smoke), marked ready, merged 0f507c91db4ff142c1ee0fc31c6b498d7c182656 (main had moved to 8af0d2e: brand kit v2 polish + video agent). PR #79 CI running.
