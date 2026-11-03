@@ -188,3 +188,14 @@ def test_find_media_puts_product_hunts_launch_video_and_gallery_first(monkeypatc
     assert [i["url"] for i in out["images"]][:2] == ["https://ph-files.imgix.net/1.png", "https://ph-files.imgix.net/2.png"]
     none = media_tools.media_find("https://www.producthunt.com/products/screen-studio", http=http, ph_token="")
     assert "isn't configured" in none["note"]
+
+
+def test_view_only_demo_refuses_clip_edits_and_rewrites(monkeypatch):
+    """#74: the view-only demo never re-renders a clip or calls an AI engine from Trim & caption (REST or MCP)."""
+    from studio import demo_view
+    monkeypatch.delenv("HQ_DEMO_VIEW_ONLY", raising=False)
+    for method, path in (("PATCH", "/api/takes/7/clips/c1"), ("POST", "/api/takes/7/clips/c1/rewrite"), ("POST", "/mcp")):
+        why = demo_view.blocked(method, path)
+        assert why and why.startswith("In the real app this would"), (method, path, why)
+    assert "clip edit" in demo_view.blocked("PATCH", "/api/takes/7/clips/c1")
+    assert demo_view.blocked("GET", "/api/takes/7") is None
