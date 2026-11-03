@@ -240,6 +240,7 @@ function agentExtras(r, busy) {
       <button type="button" class="btn2 sm" data-testid="rights-slides" data-say="Use slides instead">Use slides instead</button></div></div>` : "") +
     (r.status === "interrupted" ? `<div class="st warn ask-card" data-testid="interrupted"><span>The server restarted while I was working${(res.interrupted || {}).after ? ` (after “${esc(res.interrupted.after)}”)` : ""}. What's made so far is kept.</span>
       <div class="row"><button type="button" class="btn sm" data-testid="mp-resume">Resume</button></div></div>` : "") +
+    (window.hqAskCard ? window.hqAskCard(res, busy) : "") +
     ((res.conflicts || []).length ? `<div class="st warn" data-testid="agent-question">${esc(res.conflicts[0].question)}</div>` : "") +
     // the weekly recap's one rights question, answered inline: yes, title cards, or type the story numbers below
     (res.recap && res.recap.awaiting_rights && res.rights_question ? `<div class="st warn" data-testid="recap-rights">${esc(res.rights_question)}
@@ -248,6 +249,7 @@ function agentExtras(r, busy) {
   // only the answer buttons (the card itself is data-testid=rights-card: a click on it must not send "undefined")
   // the rights / Resume card can come before the first reply: show the thread whenever it has anything in it
   $("#agentThread").hidden = !$("#agentThread").innerHTML.trim();
+  if (window.hqAskCard) window.hqAskCard.wire($("#agentThread"), r);  // Keep Reel / Switch, which kit, which track
   $("#agentThread").querySelectorAll("button[data-say][data-testid^=recap-rights-],button[data-say][data-testid^=rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
   const rs = $("#agentThread [data-testid=mp-resume]");
   if (rs) rs.onclick = async () => { rs.disabled = true;
@@ -301,7 +303,7 @@ function drawReady(r, busy) {
   const box = $("#mpReady"); if (!box) return;
   const pk = (r.result || {}).packages || [];
   if (!pk.length || busy) { box.hidden = true; box.innerHTML = ""; return; }
-  const word = (p) => (p.sent ? (p.status === "pending_approval" ? "Waiting for approval" : "In Buffer") : p.status === "hold" ? "On hold" : "Ready");
+  const word = (p) => (p.sent ? (p.status === "pending_approval" ? "Waiting for approval" : "In Buffer") : p.status === "hold" ? "On hold" : p.changed_since_sent ? "Changed since saved" : "Ready");
   box.hidden = false;
   box.innerHTML = `<span class="mp-ready-h">Your posts</span>` + pk.map((p) => { const f = pkgFiles(p)[0];
     const th = f ? (f.type === "video" ? `<video src="${escUrl(f.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${escUrl(f.url)}" alt="">`) : `<span class="mp-ready-ph" aria-hidden="true"></span>`;
@@ -342,7 +344,7 @@ function wireTpl(r) {
     catch (e) { toast(e.message, 6000); box.querySelectorAll("[data-tpl]").forEach((x) => (x.disabled = false)); b.classList.remove("busy"); }
   }));
   const all = box.querySelector("[data-testid=mp-template-all]");
-  if (all) all.onclick = () => { $("#replyIn").value = "What templates can you use?"; $("#replyForm").requestSubmit(); };
+  if (all) all.onclick = () => (window.hqAllTemplates ? window.hqAllTemplates(r) : ($("#replyIn").value = "What templates can you use?", $("#replyForm").requestSubmit()));
 }
 
 function stepExtra(s) {
@@ -437,7 +439,7 @@ function pkgCard(p) {
     ${pkgMedia(p)}
     ${sent ? "" : pkgMissing(p)}
     ${pkgCovers(p, sent)}
-    ${window.pkgMusic ? window.pkgMusic(p, sent) : ""}
+    ${window.hqPkgControls ? window.hqPkgControls.card(p, sent) : window.pkgMusic ? window.pkgMusic(p, sent) : ""}
     ${sent || H.run && ["media", "news"].includes(H.run.kind) ? "" : `<div class="pm-acts"><button type="button" class="btn2 sm" data-testid="pkg-replace">Replace</button><button type="button" class="btn2 sm" data-testid="pkg-regen">Regenerate</button></div>`}
     ${p.note ? `<small class="muted sm" data-testid="pkg-note">${esc(p.note)}</small>` : ""}
     <label class="sr" for="pt-${esc(p.channel_id)}">Caption for ${esc(p.channel_name)}</label>
@@ -483,7 +485,8 @@ function wirePackages(r) {
         toast("Swapping the cover…"); showRun(n); watch(n.id); }
       catch (e) { toast(e.message, 6000); el.querySelectorAll("[data-cover]").forEach((x) => (x.disabled = false)); b.classList.remove("busy"); }
     }));
-    if (window.wireMusic) window.wireMusic(el, r, pk);  // Instagram music on the Reel (reelmusic.js)
+    if (window.hqPkgControls) window.hqPkgControls.wire(el, r, pk);  // Update draft, Undo, Music (pkgcontrols.js)
+    else if (window.wireMusic) window.wireMusic(el, r, pk);  // Instagram music on the Reel (reelmusic.js)
     const regen = el.querySelector("[data-testid=pkg-regen]");
     if (regen) regen.onclick = async () => {
       busyBtn(regen, "Regenerating…");

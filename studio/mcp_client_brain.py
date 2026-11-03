@@ -130,7 +130,7 @@ TOOLS: list[dict[str, Any]] = [
                      "ratio": {"type": "string", "enum": ["4:5", "1:1", "9:16"]}}}},
     {"name": "edit_video", "description": "Edit or cut a video on the HuhQueue server (no HuhQueue AI): trim to start_s..end_s or "
      "cut_first_s seconds off the start, reframe to 9:16 / 4:5 / 1:1 (speaker-aware), burned-in word captions on or off "
-     "(transcribed with Whisper on the video worker), a theme/style (list_themes), music under silent video, a hook title; the "
+     "(transcribed with Whisper on the video worker), a theme/style (list_themes), music only when asked (music: cinematic | pulse; auto = none), a hook title; the "
      "brand's Follow end card is always added last (brand rule). "
      "Give the video as media_token, library_id or url. Returns a job id at once; poll "
      "render_status(job_id) every 10-20 s until status is done, then show download_url.",

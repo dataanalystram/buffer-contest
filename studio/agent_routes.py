@@ -133,10 +133,10 @@ def add_routes(app: FastAPI, house, actor) -> None:
         return house.brain.tool(actor(request, write=True), rid, name, body or {})
 
     @app.get("/api/agent/runs/{rid}/templates")
-    def run_templates(rid: int, request: Request):
+    def run_templates(rid: int, request: Request, all: int = 0):  # noqa: A002  (?all=1, the query name the UI sends)
         """The run's template (name and why), 3-4 suggestions with small previews drawn from the run's own facts in its
-        brand kit, and every template by name."""
-        return house.brain.templates(actor(request), rid)
+        brand kit, and every template by name. ?all=1 ("All templates…"): every template with its preview."""
+        return house.brain.templates(actor(request), rid, everything=bool(all))
 
     @app.post("/api/agent/runs/{rid}/template")
     def run_template(rid: int, request: Request, body: dict = Body(...)):
@@ -245,12 +245,13 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "set_theme", "description": "Set a post run's video theme and re-render its video channels in it (e.g. 'cinematic', 'news_package'). Same as replying 'switch to the X theme'. theme 'none' = no style: post the video as it is (fit to the frame, logo, end card; no captions, theme or music).",
      "inputSchema": {"type": "object", "required": ["run_id", "theme"], "properties": {"run_id": {"type": "integer"}, "theme": {"type": "string", "description": "A theme id from list_themes, 'auto' or 'none'"}}}},
-    {"name": "set_template", "description": "Switch a post run's template BY NAME or id ('funding', 'GitHub repo pillar', 'editorial', 'text slides', 'news carousel', or a custom template's name), drawn in the run's brand kit. slides: only those slides change (e.g. [2] for 'the second slide'); keep: slides that stay. Same as replying 'use the funding template'.",
+    {"name": "set_template", "description": "Switch a post run's template BY NAME or id ('funding', 'GitHub repo pillar', 'editorial', 'text slides', 'news carousel', or a custom template's name), drawn in the run's brand kit. slides: only those slides change (e.g. [2] for 'the second slide'); keep: slides that stay. Same as replying 'use the funding template'. A Reel is never turned into a carousel without an answer: the run then asks 'Turn the Reel into a carousel? The video becomes slide 2' (result.ask, Keep Reel / Switch); call again with reel='keep' or reel='switch'. undo_package_media goes back.",
      "inputSchema": {"type": "object", "required": ["run_id", "template"], "properties": {"run_id": {"type": "integer"}, "template": {"type": "string"},
                                                                                       "slides": {"type": "array", "items": {"type": "integer"}},
-                                                                                      "keep": {"type": "array", "items": {"type": "integer"}}}}},
-    {"name": "get_post_templates", "description": "A post run's template (name and why it was picked), the 3-4 suggested others, and every template the agent can use, by name.",
-     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
+                                                                                      "keep": {"type": "array", "items": {"type": "integer"}},
+                                                                                      "reel": {"type": "string", "enum": ["keep", "switch"]}}}},
+    {"name": "get_post_templates", "description": "A post run's template (name and why it was picked), the 3-4 suggested others, and every template the agent can use, by name. all=true: options lists every built-in and custom template (the UI's 'All templates…'); previews=true adds each first slide drawn from the run's facts in its kit (data URLs).",
+     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}, "all": {"type": "boolean"}, "previews": {"type": "boolean"}}}},
     {"name": "resume_post", "description": "Resume a post run the server cut off (status 'interrupted': a deploy or a crash) from its last finished step.",
      "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
     {"name": "set_cover", "description": "Pick another of the 3 branded cover variants (index 0-2, in the run's package covers) for one channel: its Reel's opening frame becomes that cover (Instagram/TikTok use it as the cover via the thumbnail offset); the 1280x720 variant is the YouTube thumbnail.",
@@ -293,7 +294,8 @@ def call_tool(studio, actor, name: str, args: dict):
         if name == "set_template":
             return h.brain.set_template(actor, int(args.get("run_id") or 0), args)
         if name == "get_post_templates":
-            return h.brain.templates(actor, int(args.get("run_id") or 0), previews=False)
+            return h.brain.templates(actor, int(args.get("run_id") or 0), previews=bool(args.get("previews")),
+                                     everything=bool(args.get("all")))
         if name == "resume_post":
             return h.brain.resume(actor, int(args.get("run_id") or 0))
         if name == "set_cover":

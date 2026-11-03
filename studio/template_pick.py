@@ -194,7 +194,9 @@ def fill(tid: str, run: dict, extra: dict | None = None) -> dict:
     src = st.get("source") or ""
     sample = (hb_templates.SAMPLE.get(tid) or templates.SAMPLE.get(tid) or {}) if not tid.startswith("custom:") else {}
     d: dict = {k: ([] if isinstance(v, list) else "") for k, v in sample.items()}
-    d.update(title=head, hook=head, credit=f"Source: {src}" if src else "", facts=facts, features=facts, what=facts, points=facts)
+    from .headline import cover_hook
+    short = cover_hook(head) or head  # a cover says the hook, not the title + subtitle run together (owner, 3 Nov 2026)
+    d.update(title=short, hook=short, credit=f"Source: {src}" if src else "", facts=facts, features=facts, what=facts, points=facts)
     comp = st.get("company") or (res.get("company") or {}).get("name") or ""
     if tid == "github_repo":
         repo = github_repo([(res.get("source") or {}).get("url") or "", (run.get("input") or {}).get("source_url") or "",
@@ -215,12 +217,12 @@ def fill(tid: str, run: dict, extra: dict | None = None) -> dict:
     elif tid == "text_slides":
         d.update(slides=[{"text": f} for f in facts[:5]], sub="")
     elif tid == "launch":
-        d.update(product=comp or head, company=comp, tagline=st.get("why") or (facts[0] if facts else ""), price="", availability="",
+        d.update(product=comp or short, company=comp, tagline=st.get("why") or (facts[0] if facts else ""), price="", availability="",
                  why=st.get("why") or "")
     elif tid == "breaking":
         d.update(source=src, when="Just now")
     elif tid == "tutorial":
-        d.update(task=head, tool="", steps=[{"title": f, "body": ""} for f in facts[:5]])
+        d.update(task=short, tool="", steps=[{"title": f, "body": ""} for f in facts[:5]])
     elif tid == "quote":
         d.update(quote=facts[0] if facts else head, speaker=src, role="")
     elif tid == "viral_trend":

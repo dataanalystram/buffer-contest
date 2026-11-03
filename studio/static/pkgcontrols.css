@@ -1,0 +1,30 @@
+/* Make a post package controls (studio/static/pkgcontrols.js): Changed since saved, Undo, Music, ask cards, All templates */
+.pc-changed{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.st.pc-changed:before{content:none;display:none} /* the row says "Changed since saved" itself: no stray "Note." label */
+.pc-changed small{display:block;margin-top:2px}
+.pc-changed .btn{min-height:44px}
+.pc-row{display:flex;gap:8px;flex-wrap:wrap}
+.pc-undo{min-height:44px}
+.pc-music{display:flex;flex-direction:column;gap:6px}
+.pc-note{margin:0}
+.pc-seg{display:inline-flex;align-self:flex-start;border:1px solid var(--line-strong);border-radius:10px;overflow:hidden}
+.pc-seg button{min-height:44px;padding:0 14px;border:0;background:var(--paper);color:var(--ink);font:inherit;font-size:13px;cursor:pointer}
+.pc-seg button+button{border-left:1px solid var(--line-strong)}
+.pc-seg button.on{background:var(--ink);color:var(--paper);font-weight:600}
+.pc-seg button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.pc-ask .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.pc-ask .btn,.pc-ask .btn2{min-height:44px}
+dialog.pc-tpl-dialog{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto}
+.pc-tpl-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}
+.pc-tpl-head h2{margin:0 0 4px;font-size:20px}
+.pc-tpl-head p{margin:0}
+.pc-tpl-head .icon-btn{min-width:44px;min-height:44px;border:1px solid var(--line);border-radius:10px;background:var(--raised);color:var(--ink);cursor:pointer}
+.pc-tpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.pc-tpl{display:flex;flex-direction:column;gap:6px;align-items:stretch;text-align:left;padding:8px;border:1px solid var(--line);border-radius:12px;background:var(--paper);color:var(--ink);cursor:pointer;font:inherit}
+.pc-tpl img,.pc-tpl .mp-tpl-ph{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:8px;background:var(--sunken)}
+.pc-tpl b{font-size:13px;line-height:1.25}
+.pc-tpl small{font-size:12px;line-height:1.3;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
+.pc-tpl.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.pc-tpl.busy{opacity:.6}
+.pc-tpl:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:480px){.pc-tpl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

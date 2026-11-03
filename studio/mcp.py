@@ -154,6 +154,10 @@ from . import reel_audio as _reel_audio  # noqa: E402  search_instagram_audio, s
 
 TOOLS += _reel_audio.TOOLS
 READ_ONLY |= _reel_audio.READ_ONLY
+from . import post_controls as _post_controls  # noqa: E402  update_package_draft, undo_package_media, list_music, set_post_music, use_brand_kit
+
+TOOLS += _post_controls.TOOLS
+READ_ONLY |= _post_controls.READ_ONLY
 from . import send as _send  # noqa: E402  create_send_code, list_recent_uploads (the Send a file page)
 from . import share_import as _share  # noqa: E402  import_from_link (Drive, Dropbox, OneDrive, iCloud share links)
 
@@ -303,6 +307,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _reel_audio.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _post_controls.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     extra = _uploads.call_tool(studio, actor, name, args)

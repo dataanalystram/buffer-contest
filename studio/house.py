@@ -1649,6 +1649,8 @@ class House:
             raise ActionError("That package was already sent.", 409)
         if pk.get("media_missing"):
             raise ActionError(self.MISSING_MEDIA_NOTE, 409)
+        if mode == "draft" and (pk.get("buffer_draft") or {}).get("buffer_post_id"):
+            return self.update_package_draft(a, rid, channel_id)  # its Buffer draft takes the new media (never a 2nd draft)
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
                                             "mode": mode, "due_at": due_at, "options": pk.get("options") or {},
                                             "override_warnings": override_warnings})
@@ -1657,6 +1659,41 @@ class House:
                                                                "buffer_post_id": (out.get("post") or {}).get("id"),
                                                                "approval_id": out.get("approval_id")})
         return {**out, "warnings": prev["warnings"]}
+
+    def update_package_draft(self, a: Actor, rid: int, channel_id: str) -> dict:
+        """"Changed since saved to Buffer · Update draft": the package's Buffer DRAFT gets the package's current media and
+        caption (editPost). When that draft is gone from Buffer (deleted there), a new draft is saved instead. A post that
+        was scheduled meanwhile is never touched (replace_draft refuses anything but a draft)."""
+        run = self.run(a, rid)
+        pk = next((p for p in (run["result"] or {}).get("packages", []) if p["channel_id"] == channel_id), None)
+        if not pk:
+            raise ActionError("No package for that channel in this run.", 404)
+        pid = (pk.get("buffer_draft") or {}).get("buffer_post_id")
+        if not pid:
+            raise ActionError("This post has no Buffer draft to update. Use Save draft to save one.", 409)
+        if pk.get("media_missing"):
+            raise ActionError(self.MISSING_MEDIA_NOTE, 409)
+        body = {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [], "options": pk.get("options") or {}}
+        try:
+            out = self.studio.replace_draft(a, pid, body)
+        except ActionError as e:
+            if e.status != 404:
+                raise
+            for p in run["result"].get("packages", []):  # the draft was deleted in Buffer: a fresh draft, the same way as Save draft
+                if p["channel_id"] == channel_id:
+                    p.pop("buffer_draft", None)
+            self._save(rid, run["steps"], run["result"])
+            out = self.schedule_package(a, rid, channel_id, "draft")
+            return {**out, "draft": "recreated"}
+        run = self.run(a, rid)
+        for p in run["result"].get("packages", []):
+            if p["channel_id"] == channel_id:
+                p["status"] = "sent_to_buffer"
+                p["sent"] = {"mode": "draft", "buffer_post_id": pid, "key": p.get("idempotency_key"), "at": time.time(), "updated": True}
+                p.pop("changed_since_sent", None)
+                p.pop("buffer_draft", None)
+        self._save(rid, run["steps"], run["result"])
+        return {"status": "sent_to_buffer", "draft": "updated", "post": out.get("post"), "warnings": out.get("warnings") or []}
 
     def mark_package(self, a: Actor, rid: int, channel_id: str, status: str, info: dict) -> None:
         run = self.run(a, rid)

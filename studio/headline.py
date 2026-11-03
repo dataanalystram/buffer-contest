@@ -79,3 +79,30 @@ def title(text: str, prompt: str = "", fallback: str = "") -> str:
     """A run's title in lists: the story headline when there is one, else the person's words about the content, never
     the raw request with its URL."""
     return safe_headline(text, prompt, [intake.describe(prompt or "")]) or fallback
+
+
+_SEP = re.compile(r"\s*:\s+|\s+[–—|]\s+|\s+-\s+")
+
+
+def cover_hook(text: str, limit: int = 72) -> str:
+    """A short hook for a cover or a template's first slide, from a headline that may be a title + subtitle run together
+    (owner, 3 Nov 2026: "SCREEN STUDIO 4.0: THE MAC RECORDER THAT EDITS FOR YOU: THE BIGGEST UPDATE YET FOR THE MAC SCREEN
+    RECORDER THAT HANDLES ZOOMS..."). Keeps the title and its first subtitle when they fit, else the title; never more than
+    two parts; a subtitle that only repeats the title is dropped. One plain headline is kept (the renderer fits it).
+    Captions keep the full headline."""
+    t = strip_urls(text)
+    if not t:
+        return ""
+    parts = [p.strip(" .") for p in _SEP.split(t) if p.strip(" .")]
+    if len(parts) <= 1:
+        return t[:120]
+    a, b = parts[0], parts[1]
+    wa, wb = set(_WORD.findall(a.lower())), set(_WORD.findall(b.lower()))
+    if wb and len(wa & wb) / len(wb) >= 0.6:  # the subtitle repeats the title
+        b = ""
+    two = f"{a}: {b}" if b else a
+    if len(two) <= limit:
+        return two
+    if len(re.findall(r"\w{2,}", a)) >= 2:
+        return a[:120]
+    return t[:120]
