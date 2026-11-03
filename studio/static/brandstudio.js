@@ -119,9 +119,10 @@
     try {
       const d = await api("/api/brand-studio");
       B.tpls = d.templates; B.styles = d.styles; B.examples = d.examples; B.slots = d.slots; B.channels = d.channels;
-      $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+      // custom templates (create_template over MCP / REST / the agent) carry custom: true and show with a "Custom" mark
+      $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}${t.custom ? " · Custom" : ""}</option>`).join("");
       $("#bsTplR").innerHTML = $("#bsTpl").innerHTML;
-      $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single").map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+      $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single" && !t.custom).map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
       $("#bsSvc").innerHTML = Object.entries(d.channels).filter(([, c]) => !c.video_only).map(([k, c]) => `<option value="${k}">${esc(c.label)} (${c.ratio})</option>`).join("");
       $("#bsTpl").value = B.tpl; $("#bsSvc").value = B.svc;
       fillKit(d.kit); examples(d.active); slots();
@@ -249,6 +250,7 @@
   // another kit's style), one request per template, all in flight at once, each card filled the moment it arrives.
   // The server caches every card (kit render fields + logo + template), so a kit seen before shows at once; this tab
   // also keeps the URLs it got per kit version, so switching back costs no request at all.
+  const cbadge = (t) => (t.custom ? ' <span class="bs-custom" data-testid="tpl-custom">Custom</span>' : "");
   const tplCache = new Map();  // kit id:updated:theme -> {template id: url}
   async function templatePreviews() {
     const box = $("#bsTplPrev"); if (!box || !B.tpls || !B.tpls.length) return;
@@ -260,7 +262,7 @@
     box.style.setProperty("--kit-g", c.background || "");
     box.dataset.kit = act ? String(act.id) : "";
     box.innerHTML = B.tpls.map((t) => have[t.id]
-      ? `<figure class="bs-tplcard" data-tpl="${t.id}"><img src="${esc(have[t.id])}" alt="${esc(t.name)} in ${esc(act ? act.name : "your kit")}" data-testid="tpl-preview"><figcaption>${esc(t.name)}</figcaption></figure>`
+      ? `<figure class="bs-tplcard" data-tpl="${t.id}"><img src="${esc(have[t.id])}" alt="${esc(t.name)} in ${esc(act ? act.name : "your kit")}" data-testid="tpl-preview"><figcaption>${esc(t.name)}${cbadge(t)}</figcaption></figure>`
       : `<figure class="bs-tplcard" data-tpl="${t.id}"><span class="bk-sk bs-tplsk" data-testid="tpl-preview-ph"></span><figcaption>${esc(t.name)}</figcaption></figure>`).join("");
     const todo = B.tpls.filter((t) => !have[t.id]);
     if (!todo.length) { box.setAttribute("aria-busy", "false"); return; }
@@ -269,7 +271,7 @@
     const one = async (t) => {
       let url = null;
       try {
-        const r = act
+        const r = act && !t.custom  // custom templates are drawn by the Brand studio preview (in the active kit)
           ? await api("/api/brand-kits/preview", { method: "POST", body: { kit_id: act.id, part: "templates", ids: [t.id], width: 240 } })
           : null;
         const card = r && r.cards && r.cards[0];
@@ -284,7 +286,7 @@
       if (!f) return;
       if (url) {
         have[t.id] = url; tplCache.set(ver, have);
-        f.innerHTML = `<img src="${esc(url)}" alt="${esc(t.name)} in ${esc(act ? act.name : "your kit")}" data-testid="tpl-preview"><figcaption>${esc(t.name)}</figcaption>`;
+        f.innerHTML = `<img src="${esc(url)}" alt="${esc(t.name)} in ${esc(act ? act.name : "your kit")}" data-testid="tpl-preview"><figcaption>${esc(t.name)}${cbadge(t)}</figcaption>`;
         if (!box.dataset.first) box.dataset.first = String(Math.round(performance.now() - t0));
       } else {
         f.innerHTML = `<span class="bk-sk bs-tplsk off" data-testid="tpl-preview-failed"></span><figcaption>${esc(t.name)} <button type="button" class="linkish" data-retry="${t.id}">Retry</button></figcaption>`;

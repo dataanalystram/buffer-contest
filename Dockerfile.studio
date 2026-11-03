@@ -5,6 +5,9 @@ WORKDIR /app
 COPY requirements-studio.txt ./
 RUN pip install --no-cache-dir -r requirements-studio.txt && useradd --create-home --uid 1000 app
 COPY studio ./studio
+# MCP resources huhqueue://docs/MCP_TOOLS.md and huhqueue://docs/DESIGN.md (studio/mcp_prompts.py)
+COPY DESIGN.md ./DESIGN.md
+COPY docs/MCP_TOOLS.md ./docs/MCP_TOOLS.md
 USER app
 ENV PYTHONUNBUFFERED=1 PORT=10000
 EXPOSE 10000
