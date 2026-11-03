@@ -98,7 +98,7 @@ async function search(q) {
     const out = await api(`/api/instagram/audio?channel_id=${encodeURIComponent(D.pk.channel_id)}&q=${encodeURIComponent(q)}`);
     if (out.needs_facebook) {
       D.tracks = []; drawTracks();
-      status(`<b data-testid="music-needs-fb">${H_ESC(out.message)}</b> <a href="${H_ESC(out.help_url)}" target="_blank" rel="noopener" data-testid="music-help">How to connect it in Buffer</a>`, "warn");
+      status(`<b data-testid="music-needs-fb">${H_ESC(out.message)}</b> <a href="${escUrl(out.help_url)}" target="_blank" rel="noopener" data-testid="music-help">How to connect it in Buffer</a>`, "warn");
       return;
     }
     D.tracks = out.tracks || [];
