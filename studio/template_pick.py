@@ -26,11 +26,11 @@ NEWS_INFO = {"name": "News carousel", "kind": "carousel", "video": False,
 NOT_SUGGESTED = {"weekly_recap", "midweek_recap", "editorial_story", "quote", "launch_reel", "viral_trend"}
 WHY = {"github_repo": "a GitHub repo link", "funding": "a funding story", "yc_launch": "a Y Combinator startup",
        "launch_reel": "a launch with its video: a Reel", "viral_trend": "someone else's viral clip, credited",
-       "editorial_story": "a post about one company", NEWS: "a news story"}
+       "editorial_story": "a post about one company", NEWS: "a news story", "x_post": "an X post: its card is slide 2"}
 # the order of the other suggestions per story type (the picked one is always first)
 NEXT = {"github_repo": ["text_slides", NEWS, "editorial_cover"], "funding": ["yc_launch", NEWS, "text_slides"],
         "yc_launch": ["funding", "text_slides", NEWS], "launch_reel": ["launch", "text_slides", NEWS],
-        "editorial_story": ["text_slides", NEWS, "editorial_cover"], NEWS: ["text_slides", "editorial_cover", "breaking"]}
+        "editorial_story": ["text_slides", NEWS, "editorial_cover"], "x_post": ["text_slides", "funding", "editorial_cover"], NEWS: ["text_slides", "editorial_cover", "breaking"]}
 # words -> template id ("use the funding template", "editorial style", "text slides")
 ALIASES = [(r"\b(?:github|repo(?:sitory)?)\b", "github_repo"), (r"\bfund(?:ing|raise|raising)?\b|\braise[ds]?\b|\bseries [a-d]\b", "funding"),
            (r"\byc\b|\by ?combinator\b|\bstartup launch\b", "yc_launch"), (r"\btext[- ]?(?:slides?|only slides?)\b|\bplain(?:[- ]words)? slides?\b", "text_slides"),
@@ -74,6 +74,8 @@ def story_type(run: dict, has_video: bool = False) -> str:
     urls = list(it.get("urls") or []) + [inp.get("source_url") or "", (res.get("source") or {}).get("url") or ""]
     if github_repo(urls):
         return "github_repo"
+    if (res.get("source") or {}).get("post") and not has_video:
+        return "x_post"  # the X post itself is slide 2 of the News carousel
     st = res.get("story") or {}
     words = " ".join([inp.get("prompt") or "", st.get("headline") or "", " ".join(st.get("facts") or [])[:600]])
     if res.get("editorial") or res.get("company"):
