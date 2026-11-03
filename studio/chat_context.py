@@ -26,9 +26,10 @@ THRESHOLD = 10       # compaction starts once the thread is longer than this
 TURN_CHARS = 140     # each folded turn keeps at most this many characters
 SUMMARY_CHARS = 2400  # the run summary never grows past this (oldest folded lines go first)
 TITLE_MAX = 80
-PROMPT_TURN_CHARS = 300   # each kept turn in the agent's prompt (the UI shows them whole)
-PROMPT_SUMMARY_CHARS = 1200
-TOOL_KEEP_TURNS = 2       # inside one reply, tool results older than this many model turns are shortened
+PROMPT_TURN_CHARS = 200   # each recent turn in the agent's prompt (the UI shows them whole)
+PROMPT_TURNS = 2          # recent turns in the prompt, besides the reply itself
+PROMPT_SUMMARY_CHARS = 420
+TOOL_KEEP_TURNS = 1       # inside one reply, tool results older than the latest model turn are shortened
 TOOL_STUB_CHARS = 400
 
 TITLES_SCHEMA = ("CREATE TABLE IF NOT EXISTS chat_titles (user_id TEXT, run_id INTEGER, title TEXT, updated REAL)",
@@ -100,11 +101,19 @@ def prompt_facts(run: dict, kit: dict | None = None) -> dict:
 def prompt_block(run: dict, kit: dict | None = None) -> str:
     """What the agent reads about the conversation on a reply: pinned facts, the run summary, the last turns (clipped)."""
     c = compact((run.get("result") or {}).get("thread") or [])
-    turns = "\n".join(f"{'Person' if t.get('role') == 'user' else 'Agent'}: {_clip(t.get('text'), PROMPT_TURN_CHARS)}" for t in c["kept"][:-1])
+    thread = (run.get("result") or {}).get("thread") or []
+    recent = thread[-PROMPT_TURNS - 1:-1]  # the reply itself is already in the prompt
+    turns = "\n".join(f"{'Person' if t.get('role') == 'user' else 'Agent'}: {_clip(t.get('text'), PROMPT_TURN_CHARS)}" for t in recent)
     out = f"Pinned facts (always true for this post): {json.dumps(prompt_facts(run, kit), separators=(',', ':'), default=str)[:1500]}\n"
     if c["summarized"]:
-        s = c["summary"]
-        out += (s if len(s) <= PROMPT_SUMMARY_CHARS else s[:PROMPT_SUMMARY_CHARS] + " …") + "\n"
+        head, *lines = c["summary"].split("\n")
+        older = [f"- {'Person' if t.get('role') == 'user' else 'Agent'}: {_clip(t.get('text'), 100)}" for t in thread[:-PROMPT_TURNS - 1]]
+        keep: list[str] = []
+        for ln in reversed(older):  # the newest folded turns first, within the budget; the pinned facts carry the decisions
+            if sum(len(x) + 1 for x in keep) + len(ln) > PROMPT_SUMMARY_CHARS:
+                break
+            keep.insert(0, ln)
+        out += f"Earlier in this thread ({len(older)} messages, the {len(keep)} most recent shown):\n" + "\n".join(keep) + "\n"
     return out + ("Messages before this reply:\n" + turns if turns else "")
 
 
