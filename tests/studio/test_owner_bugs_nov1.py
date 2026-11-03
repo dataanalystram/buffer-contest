@@ -86,7 +86,7 @@ def test_page_contract_view_all_link_mode_and_theme():
     assert 'data-testid="agent-mode-link"' in html and 'role="tab" data-mode="link"' in html
     assert 'data-testid="mp-link-url"' in html and 'data-testid="mp-link-preview"' in html
     assert "/api/link/preview" in mp and "LIB_PRESET" in mp and "LIB_PRESET" in lib
-    assert '<option value="draft">Drafts</option>' in html and "per = 12" in lib
+    assert '["draft", "Drafts"]' in lib and "per: 12" in lib  # Library premium: Drafts is a Used in filter, 12 a page
     assert 'data-testid="theme-toggle"' in html and 'data-testid="settings-theme"' in html
     assert html.index("/static/appearance.js") < html.index("/static/style.css")  # no flash of the other theme
     for css in ("style.css", "premium.css", "makepost.css"):
