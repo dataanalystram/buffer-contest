@@ -21,6 +21,13 @@ async function api(path, opts = {}) {
   if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; throw e; }
   return j;
 }
+// The view-only demo (studio/demo_view.py): answer an action that would change data at once, on screen, instead of
+// sending it and waiting behind other requests (the server refuses it with the same line anyway). True when it answered.
+function demoSays(would) {
+  if (!(typeof S !== "undefined" && S.session && S.session.demo && S.session.view_only !== false)) return false;
+  toast(`In the real app this would ${would}. The demo doesn't change anything.`, 6000);
+  return true;
+}
 function toast(msg, ms = 3200) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms); }
 
 // Buffer-style character counting (mirrors studio/preflight.py count_text; the server is the source of truth)
@@ -790,7 +797,12 @@ async function deviceLink() {
   catch (e) { toast(e.message, 5000); }
 }
 async function logout() { await api("/api/logout", { method: "POST" }); location.href = "/"; }
-async function disconnect() { if (!(await hqConfirm("Disconnect Buffer and delete everything HuhQueue stored for you?", { ok: "Disconnect", danger: true }))) return; await api("/api/disconnect", { method: "POST" }); location.href = "/"; }
+async function disconnect() {
+  if (!(await hqConfirm("Disconnect Buffer and delete everything HuhQueue stored for you?", { ok: "Disconnect", danger: true }))) return;
+  if (demoSays("disconnect Buffer and delete everything HuhQueue keeps for you")) return;
+  try { await api("/api/disconnect", { method: "POST" }); } catch (e) { toast(e.message, 6000); return; }
+  location.href = "/";
+}
 $("#deviceBtn").onclick = deviceLink; $("#setDevice").onclick = deviceLink;
 $("#logoutBtn").onclick = logout; $("#setLogout").onclick = logout;
 $("#disconnectBtn").onclick = disconnect; $("#setDisconnect").onclick = disconnect;
