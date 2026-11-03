@@ -108,6 +108,7 @@
   padding:10px 14px;border-radius:12px;background:var(--inv);color:var(--inv-ink);box-shadow:var(--float, 0 8px 24px rgba(0,0,0,.18))}
 .lib-bulk b{font-size:14px}
 .lib-bulk-acts{display:flex;gap:8px;flex-wrap:wrap}
+.lib-bulk .btn{background:var(--inv-ink);color:var(--inv);border-color:var(--inv-ink)}
 .lib-bulk .btn2{background:transparent;color:var(--inv-ink);border-color:var(--inv-muted)}
 .lib-bulk .btn2.danger{color:#ffb4a8;border-color:#ffb4a8}
 .lib-del .lib-opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
