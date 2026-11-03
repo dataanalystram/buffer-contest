@@ -1,7 +1,10 @@
-// Instagram music on Reels (studio/reel_audio.py; UI = REST = MCP: search_instagram_audio, set_reel_audio).
-// A package card for an Instagram video shows "Music": add a track from Instagram's catalog (search, 30-second preview,
-// pick), set the track's and the video's own volume and a start time, or remove it. The choice is saved on the package
-// and sent to Buffer with it. Channels connected with Instagram Login can't take music: the dialog says how to fix that.
+// Instagram music on Reels (studio/reel_audio.py; UI = REST = MCP: search_instagram_audio, set_reel_audio, adjust_clip music).
+// One picker, two homes: HQMusic.mount() draws it inside a container (the Music tab of One take's Trim & caption window)
+// and openMusicPicker() wraps the same picker in a dialog for an agent-run package card. Search Instagram's catalog
+// through Buffer (blank = trending; the server caches each search for 5 minutes), play a 30-second preview, pick a track
+// (shown as a chip: title · artist, Change / Remove), and set the Music and Video sound levels. Instagram picks which part
+// of the track plays: Buffer's API has no start time. Channels connected with Instagram Login can't take music: the
+// picker says how to fix that.
 "use strict";
 (() => {
 const H_ESC = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -10,9 +13,118 @@ const VID = /\.(mp4|mov|m4v|webm)(\?|$)/i;
 const who = (t) => t.display_artist || (t.creator_username ? "@" + t.creator_username : "");
 const kind = (t) => (t.type === "originalSound" ? "Original sound" : "Music");
 const NOTE_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 18.5a3 3 0 1 1-2-2.83V5.5l12-2.5v12a3 3 0 1 1-2-2.83V7.4l-8 1.67V18.5z"/></svg>`;
+const HELP = "https://support.buffer.com/en-us/articles/getting-instagram-locations-facebook-authorization-required-acaC8V633l";
+const PICKS_NOTE = "Instagram picks which part of the track plays.";
+let CUR = null;  // the one preview that may play at a time
 
+function art(t) { return t.cover_url ? `<img src="${H_ESC(t.cover_url)}" alt="" loading="lazy">` : `<span class="rm-art">${NOTE_ICON}</span>`; }
+// Meta's artwork links are temporary: a cover that doesn't load becomes the note mark instead of a broken image
+function noBroken(box) { box.querySelectorAll("img").forEach((i) => (i.onerror = () => { const s = document.createElement("span"); s.className = "rm-art"; s.innerHTML = NOTE_ICON; i.replaceWith(s); })); }
+window.HQ_MUSIC_NOBROKEN = noBroken;
+const levels = (au) => `Music ${au.music_volume ?? 100}% · Video sound ${au.original_volume ?? 100}%`;
+// the chosen track, the same chip everywhere (package card, Trim & caption, the clip row)
+function chip(au, { actions = true, compact = false } = {}) {
+  return `<div class="rm-chosen${compact ? " sm" : ""}" data-testid="music-chosen">${art(au)}
+    <div class="rm-txt"><b>${H_ESC(au.title)}${who(au) ? ` <span class="rm-who">· ${H_ESC(who(au))}</span>` : ""}</b>
+      <small>${H_ESC([kind(au), mmss(au.duration_ms)].filter(Boolean).join(" · "))}</small>
+      <small data-testid="music-levels">${levels(au)}</small></div>
+    ${actions ? `<span class="row"><button type="button" class="btn2 sm" data-testid="music-change">Change</button><button type="button" class="link sm" data-testid="music-remove">Remove</button></span>` : ""}</div>`;
+}
+window.HQMusicChip = chip;
+
+// mount(box, { channelId, value, onChange }) -> { get(), search(q), stop() }. value / get(): the track with music_volume and
+// original_volume (0-100), or null. Nothing is saved here: the caller saves (set_reel_audio, adjust_clip).
+function mount(box, opts) {
+  const M = { tracks: [], pick: opts.value ? { ...opts.value } : null, audio: null, playing: -1, searched: false };
+  box.classList.add("rm-picker");
+  box.innerHTML = `
+    <p class="muted sm rm-about">Instagram's licensed music and original sounds, through Buffer. <b>${PICKS_NOTE}</b></p>
+    <div class="rm-sel" data-testid="music-selected"></div>
+    <form class="rm-search" role="search"><label class="sr" for="rmQ_${opts.channelId}">Search music</label>
+      <input id="rmQ_${opts.channelId}" type="search" placeholder="Search songs, artists or sounds" autocomplete="off" data-testid="music-q">
+      <button type="submit" class="btn2 sm" data-testid="music-search">Search</button></form>
+    <div class="rm-status" role="status" aria-live="polite" data-testid="music-status"></div>
+    <ul class="rm-list" data-testid="music-results" aria-label="Tracks"></ul>
+    <fieldset class="rm-mix" data-testid="music-mix">
+      <legend>Mix</legend>
+      <label><span class="rm-lab">Music <output data-testid="music-vol-out"></output></span>
+        <input type="range" min="0" max="100" step="5" data-testid="music-vol" aria-label="Music volume"></label>
+      <label><span class="rm-lab">Video sound <output data-testid="music-orig-out"></output></span>
+        <input type="range" min="0" max="100" step="5" data-testid="music-orig" aria-label="The video's own sound volume"></label>
+    </fieldset>`;
+  const $b = (sel) => box.querySelector(sel);
+  const vol = $b("[data-testid=music-vol]"), orig = $b("[data-testid=music-orig]");
+  vol.value = M.pick?.music_volume ?? 100; orig.value = M.pick?.original_volume ?? 100;
+  const changed = () => opts.onChange && opts.onChange(get());
+  function paintLevels() {
+    $b("[data-testid=music-vol-out]").textContent = vol.value + "%"; $b("[data-testid=music-orig-out]").textContent = orig.value + "%";
+    $b("[data-testid=music-mix]").disabled = !M.pick;
+  }
+  function paintSel() {
+    const sel = $b("[data-testid=music-selected]");
+    sel.innerHTML = M.pick ? chip({ ...M.pick, music_volume: +vol.value, original_volume: +orig.value }) : `<p class="muted sm" data-testid="music-none">No music on this Reel yet. Pick a track below.</p>`;
+    noBroken(sel);
+    const ch = sel.querySelector("[data-testid=music-change]"), rm = sel.querySelector("[data-testid=music-remove]");
+    if (ch) ch.onclick = () => { $b("[data-testid=music-q]").focus(); if (!M.searched) search(""); };
+    if (rm) rm.onclick = () => { M.pick = null; stop(); paintSel(); paintLevels(); drawTracks(); changed(); };
+    paintLevels();
+  }
+  function status(html, cls = "") { const s = $b("[data-testid=music-status]"); s.className = "rm-status " + cls; s.innerHTML = html; }
+  function drawTracks() {
+    const ul = $b("[data-testid=music-results]");
+    ul.innerHTML = M.tracks.map((t, i) => { const on = !!(M.pick && M.pick.audio_id === t.audio_id);
+      return `<li class="rm-track${on ? " on" : ""}" data-testid="music-track">${art(t)}
+        <div class="rm-txt"><b>${H_ESC(t.title)}</b><small>${H_ESC([who(t), mmss(t.duration_ms)].filter(Boolean).join(" · "))}</small></div>
+        <span class="rm-kind ${t.type === "originalSound" ? "orig" : ""}">${kind(t)}</span>
+        ${t.preview_url ? `<button type="button" class="btn2 sm rm-play" data-play="${i}" data-testid="music-preview" aria-label="Play a 30-second preview of ${H_ESC(t.title)}">${M.playing === i ? "Stop" : "Preview"}</button>` : `<span class="muted xs rm-nopv">No preview</span>`}
+        <button type="button" class="btn2 sm" data-pick="${i}" data-testid="music-pick" aria-pressed="${on}">${on ? "Picked" : "Pick"}</button></li>`; }).join("");
+    noBroken(ul);
+    ul.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => play(+b.dataset.play)));
+    ul.querySelectorAll("[data-pick]").forEach((b) => (b.onclick = () => { M.pick = { ...M.tracks[+b.dataset.pick] }; paintSel(); drawTracks(); changed(); }));
+  }
+  function stop() { if (M.audio) { M.audio.pause(); M.audio = null; } M.playing = -1; box.querySelectorAll("[data-play]").forEach((b) => (b.textContent = "Preview")); }
+  function play(i) {
+    const t = M.tracks[i];
+    if (M.audio && M.playing === i) { stop(); return; }
+    if (CUR && CUR !== api_) CUR.stop();
+    stop(); CUR = api_;
+    const a = new Audio(t.preview_url);  // Buffer's search returns Instagram's own 30-second preview link
+    a.volume = (+vol.value || 0) / 100;
+    M.audio = a; M.playing = i; drawTracks();
+    a.onended = () => stop();
+    a.play().catch(() => { stop(); status("That preview didn't play (Instagram's preview links expire). Search again for a fresh one.", "warn"); });
+  }
+  async function search(q) {
+    M.searched = true;
+    status(`<span class="spin" aria-hidden="true"></span> ${q ? "Searching Instagram music…" : "Loading what's trending…"}`);
+    try {
+      const out = await api(`/api/instagram/audio?channel_id=${encodeURIComponent(opts.channelId)}&q=${encodeURIComponent(q)}`);
+      if (out.needs_facebook) {
+        M.tracks = []; drawTracks();
+        status(`<b data-testid="music-needs-fb">${H_ESC(out.message)}</b> <a href="${H_ESC(out.help_url)}" target="_blank" rel="noopener" data-testid="music-help">How to connect it in Buffer</a>`, "warn");
+        return;
+      }
+      M.tracks = out.tracks || [];
+      if (M.pick && !M.tracks.some((t) => t.audio_id === M.pick.audio_id)) M.tracks.unshift(M.pick);
+      drawTracks();
+      status(M.tracks.length ? `${q ? "Results for “" + H_ESC(q) + "”" : "Trending on Instagram"} · ${M.tracks.length} track${M.tracks.length > 1 ? "s" : ""}${out.note ? " · " + H_ESC(out.note) : ""}` : "Nothing found. Try another song or artist.");
+    } catch (e) {
+      M.tracks = []; drawTracks();
+      status(H_ESC(e.message) + (e.status === 409 ? ` <a href="${HELP}" target="_blank" rel="noopener">How to connect it in Buffer</a>` : ""), "warn");
+    }
+  }
+  function get() { return M.pick ? { ...M.pick, music_volume: +vol.value, original_volume: +orig.value } : null; }
+  vol.oninput = () => { paintLevels(); paintSel(); if (M.audio) M.audio.volume = vol.value / 100; changed(); };
+  orig.oninput = () => { paintLevels(); paintSel(); changed(); };
+  $b("form").onsubmit = (e) => { e.preventDefault(); search($b("[data-testid=music-q]").value.trim()); };
+  paintSel();
+  const api_ = { get, search, stop, get searched() { return M.searched; } };
+  return api_;
+}
+window.HQMusic = { mount, chip, levels, PICKS_NOTE };
+
+// ---------------------------------------------------------------- agent-run package cards
 function canMusic(p) { return p.service === "instagram" && (p.media_urls || []).some((u) => VID.test(u)); }
-
 window.pkgMusic = function (p, sent) {
   if (!canMusic(p)) return "";
   const au = (p.options || {}).ig_audio;
@@ -20,129 +132,43 @@ window.pkgMusic = function (p, sent) {
     return `<div class="pkg-music" data-testid="pkg-music"><small class="muted sm">Music</small>
       ${sent ? `<span class="muted sm">No music</span>` : `<button type="button" class="btn2 sm rm-add" data-testid="music-add">${NOTE_ICON}<span>Add Instagram music</span></button>`}</div>`;
   }
-  return `<div class="pkg-music" data-testid="pkg-music"><small class="muted sm">Music</small>
-    <div class="rm-chosen" data-testid="music-chosen">${au.cover_url ? `<img src="${H_ESC(au.cover_url)}" alt="" loading="lazy">` : `<span class="rm-art">${NOTE_ICON}</span>`}
-      <div class="rm-txt"><b>${H_ESC(au.title)}</b><small>${H_ESC([who(au), kind(au), mmss(au.duration_ms)].filter(Boolean).join(" · "))}</small>
-      <small data-testid="music-levels">Music ${au.music_volume}% · Video sound ${au.original_volume}%${au.start_ms ? " · from " + mmss(au.start_ms) : ""}</small></div>
-      ${sent ? "" : `<span class="row"><button type="button" class="btn2 sm" data-testid="music-change">Change</button><button type="button" class="link sm" data-testid="music-remove">Remove</button></span>`}</div></div>`;
+  return `<div class="pkg-music" data-testid="pkg-music"><small class="muted sm">Music</small>${chip(au, { actions: !sent })}</div>`;
 };
 
-let D = null;  // the open picker: { dlg, run, pk, el, tracks, pick, audio }
-
-function dialogHtml(pk) {
-  const au = (pk.options || {}).ig_audio || {};
-  return `<form method="dialog" class="rm-form">
-    <div class="rm-head"><div><h2 id="rmTitle">Add Instagram music</h2><p class="muted sm">For the Reel on ${H_ESC(pk.channel_name || "Instagram")}. Instagram's licensed music and original sounds, through Buffer.</p></div>
-      <button type="button" class="icon-btn" data-testid="music-close" aria-label="Close">✕</button></div>
-    <div class="rm-search" role="search"><label class="sr" for="rmQ">Search music</label>
-      <input id="rmQ" type="search" placeholder="Search songs, artists or sounds" autocomplete="off" data-testid="music-q">
-      <button type="submit" class="btn sm" data-testid="music-search">Search</button></div>
-    <div class="rm-status" role="status" aria-live="polite" data-testid="music-status"></div>
-    <ul class="rm-list" data-testid="music-results" aria-label="Tracks"></ul>
-    <fieldset class="rm-mix" data-testid="music-mix" disabled>
-      <legend>Mix</legend>
-      <label><span class="rm-lab">Music volume <output data-testid="music-vol-out">${au.music_volume ?? 100}%</output></span>
-        <input type="range" min="0" max="100" step="5" value="${au.music_volume ?? 100}" data-testid="music-vol" aria-label="Music volume"></label>
-      <label><span class="rm-lab">Video's own sound <output data-testid="music-orig-out">${au.original_volume ?? 100}%</output></span>
-        <input type="range" min="0" max="100" step="5" value="${au.original_volume ?? 100}" data-testid="music-orig" aria-label="Video's own sound volume"></label>
-      <label>Start at <span class="rm-start"><input type="number" min="0" step="1" value="${Math.round((au.start_ms || 0) / 1000)}" data-testid="music-start" aria-describedby="rmStartHelp"> s</span></label>
-      <small class="muted sm" id="rmStartHelp">Saved with the post. Buffer can't send a start time yet, so Instagram plays the track from its default start.</small>
-    </fieldset>
-    <div class="pl-dlg-act"><span class="muted sm" data-testid="music-picked">${au.title ? "Picked: " + H_ESC(au.title) : "Pick a track"}</span><span class="row">
-      <button type="button" class="btn2 sm" data-testid="music-cancel">Cancel</button>
-      <button type="button" class="btn sm" data-testid="music-save" ${au.title ? "" : "disabled"}>Use this music</button></span></div>
-  </form>`;
-}
-
-// Meta's artwork links are temporary: a cover that doesn't load becomes the note mark instead of a broken image
-function noBroken(box) { box.querySelectorAll("img").forEach((i) => (i.onerror = () => { const s = document.createElement("span"); s.className = "rm-art"; s.innerHTML = NOTE_ICON; i.replaceWith(s); })); }
-window.HQ_MUSIC_NOBROKEN = noBroken;
-
-function status(html, cls = "") { const s = D.dlg.querySelector("[data-testid=music-status]"); s.className = "rm-status " + cls; s.innerHTML = html; }
-
-function drawTracks() {
-  const ul = D.dlg.querySelector("[data-testid=music-results]");
-  ul.innerHTML = D.tracks.map((t, i) => `<li class="rm-track${D.pick && D.pick.audio_id === t.audio_id ? " on" : ""}" data-testid="music-track">
-      ${t.cover_url ? `<img src="${H_ESC(t.cover_url)}" alt="" loading="lazy">` : `<span class="rm-art">${NOTE_ICON}</span>`}
-      <div class="rm-txt"><b>${H_ESC(t.title)}</b><small>${H_ESC([who(t), mmss(t.duration_ms)].filter(Boolean).join(" · "))}</small></div>
-      <span class="rm-kind ${t.type === "originalSound" ? "orig" : ""}">${kind(t)}</span>
-      ${t.preview_url ? `<button type="button" class="btn2 sm rm-play" data-play="${i}" data-testid="music-preview" aria-label="Preview ${H_ESC(t.title)}">Play</button>` : `<span class="muted sm rm-nopv">No preview</span>`}
-      <button type="button" class="btn2 sm" data-pick="${i}" data-testid="music-pick" aria-pressed="${!!(D.pick && D.pick.audio_id === t.audio_id)}">${D.pick && D.pick.audio_id === t.audio_id ? "Picked" : "Pick"}</button></li>`).join("");
-  noBroken(ul);
-  ul.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => play(+b.dataset.play, b)));
-  ul.querySelectorAll("[data-pick]").forEach((b) => (b.onclick = () => {
-    D.pick = D.tracks[+b.dataset.pick];
-    D.dlg.querySelector("[data-testid=music-mix]").disabled = false;
-    D.dlg.querySelector("[data-testid=music-save]").disabled = false;
-    D.dlg.querySelector("[data-testid=music-picked]").textContent = "Picked: " + D.pick.title;
-    drawTracks();
-  }));
-}
-
-function stop() { if (D && D.audio) { D.audio.pause(); D.audio = null; } D && D.dlg.querySelectorAll("[data-play]").forEach((b) => (b.textContent = "Play")); }
-
-function play(i, btn) {
-  const t = D.tracks[i];
-  if (D.audio && D.playing === i) { stop(); return; }
-  stop();
-  const a = new Audio(t.preview_url);  // a short-lived Meta link straight from Buffer's search
-  a.volume = (+D.dlg.querySelector("[data-testid=music-vol]").value || 100) / 100;
-  D.audio = a; D.playing = i; btn.textContent = "Stop";
-  a.onended = () => stop();
-  a.play().catch(() => { stop(); status("That preview didn't play (Instagram's preview links expire). Search again for a fresh one.", "warn"); });
-}
-
-async function search(q) {
-  status(`<span class="spin" aria-hidden="true"></span> ${q ? "Searching Instagram music…" : "Loading what's trending…"}`);
-  try {
-    const out = await api(`/api/instagram/audio?channel_id=${encodeURIComponent(D.pk.channel_id)}&q=${encodeURIComponent(q)}`);
-    if (out.needs_facebook) {
-      D.tracks = []; drawTracks();
-      status(`<b data-testid="music-needs-fb">${H_ESC(out.message)}</b> <a href="${H_ESC(out.help_url)}" target="_blank" rel="noopener" data-testid="music-help">How to connect it in Buffer</a>`, "warn");
-      return;
-    }
-    D.tracks = out.tracks || [];
-    if (D.pick && !D.tracks.some((t) => t.audio_id === D.pick.audio_id)) D.tracks.unshift(D.pick);
-    drawTracks();
-    status(D.tracks.length ? `${q ? "Results for “" + H_ESC(q) + "”" : "Trending on Instagram"} · ${D.tracks.length} track${D.tracks.length > 1 ? "s" : ""}${out.note ? " · " + H_ESC(out.note) : ""}` : "Nothing found. Try another song or artist.");
-  } catch (e) {
-    D.tracks = []; drawTracks();
-    status(H_ESC(e.message) + (e.status === 409 ? ` <a href="https://support.buffer.com/en-us/articles/getting-instagram-locations-facebook-authorization-required-acaC8V633l" target="_blank" rel="noopener">How to connect it in Buffer</a>` : ""), "warn");
-  }
-}
-
-function close() { stop(); if (D) { try { D.dlg.close(); } catch (_) {} D.dlg.remove(); D = null; } }
-
-window.openMusicPicker = function (r, pk, el) {
+let D = null;  // the open package picker: { dlg, picker }
+function close() { if (D) { D.picker.stop(); try { D.dlg.close(); } catch (_) {} D.dlg.remove(); D = null; } }
+window.openMusicPicker = function (r, pk) {
   close();
   const dlg = document.createElement("dialog");
   dlg.className = "pl-dialog rm-dialog"; dlg.dataset.testid = "music-dialog"; dlg.setAttribute("aria-labelledby", "rmTitle");
-  dlg.innerHTML = dialogHtml(pk);
-  document.body.append(dlg);
   const au = (pk.options || {}).ig_audio;
-  D = { dlg, run: r, pk, el, tracks: [], pick: au ? { ...au, preview_url: "" } : null, audio: null };
-  if (D.pick) dlg.querySelector("[data-testid=music-mix]").disabled = false;
-  const vol = dlg.querySelector("[data-testid=music-vol]"), orig = dlg.querySelector("[data-testid=music-orig]");
-  vol.oninput = () => { dlg.querySelector("[data-testid=music-vol-out]").textContent = vol.value + "%"; if (D.audio) D.audio.volume = vol.value / 100; };
-  orig.oninput = () => { dlg.querySelector("[data-testid=music-orig-out]").textContent = orig.value + "%"; };
-  dlg.querySelector("form").onsubmit = (e) => { e.preventDefault(); search(dlg.querySelector("#rmQ").value.trim()); };
+  dlg.innerHTML = `<div class="rm-form">
+    <div class="rm-head"><div><h2 id="rmTitle">Instagram music</h2><p class="muted sm">For the Reel on ${H_ESC(pk.channel_name || "Instagram")}.</p></div>
+      <button type="button" class="icon-btn" data-testid="music-close" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div data-testid="music-picker"></div>
+    <div class="pl-dlg-act"><span class="muted sm" data-testid="music-picked">${au ? "Picked: " + H_ESC(au.title) : "Pick a track"}</span><span class="row">
+      <button type="button" class="btn2 sm" data-testid="music-cancel">Cancel</button>
+      <button type="button" class="btn sm" data-testid="music-save" ${au ? "" : "disabled"}>Use this music</button></span></div></div>`;
+  document.body.append(dlg);
+  const save = dlg.querySelector("[data-testid=music-save]");
+  const picker = mount(dlg.querySelector("[data-testid=music-picker]"), { channelId: pk.channel_id, value: au ? { ...au, preview_url: "" } : null,
+    onChange: (v) => { save.disabled = !v && !au; dlg.querySelector("[data-testid=music-picked]").textContent = v ? "Picked: " + v.title : (au ? "Music will be removed" : "Pick a track"); } });
+  D = { dlg, picker };
   dlg.querySelector("[data-testid=music-close]").onclick = close;
   dlg.querySelector("[data-testid=music-cancel]").onclick = close;
   dlg.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
-  dlg.querySelector("[data-testid=music-save]").onclick = async (ev) => {
-    const b = ev.currentTarget; if (!D.pick) return;
-    b.disabled = true;
-    const start = Math.max(0, Math.round(+dlg.querySelector("[data-testid=music-start]").value || 0)) * 1000;
+  save.onclick = async () => {
+    const v = picker.get(); save.disabled = true;
     try {
       await api(`/api/agent/runs/${r.id}/packages/${encodeURIComponent(pk.channel_id)}/audio`, { method: "POST",
-        body: { audio: D.pick, music_volume: +vol.value, original_volume: +orig.value, start_ms: start } });
-      close(); toast("Music added to the Reel. It goes to Buffer with the post.", 4000);
+        body: v ? { audio: v, music_volume: v.music_volume, original_volume: v.original_volume } : { audio: null } });
+      close(); toast(v ? "Music added to the Reel. It goes to Buffer with the post." : "Music removed", 4000);
       showRun(await api(`/api/agent/runs/${r.id}`));
-    } catch (e) { toast(e.message, 6000); b.disabled = false; }
+    } catch (e) { toast(e.message, 6000); save.disabled = false; }
   };
   if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
-  dlg.querySelector("#rmQ").focus();
-  search("");
+  dlg.querySelector("[data-testid=music-q]").focus();
+  picker.search("");
 };
 
 window.wireMusic = function (el, r, pk) {
