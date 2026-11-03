@@ -708,6 +708,7 @@ class Tools(EditorialTools):
                 "brand_pass": meta.get("brand_pass") or []}
 
     def t_set_cover(self, channel: str, index: int) -> dict:
+        from .media.compose import COVER_FRAME_SECS, cover_thumb_ms
         run = self.state()
         res = run["result"]
         ch = next((c for c in run["input"]["channels"] if c["id"] == channel or c["service"] == channel), None)
@@ -726,7 +727,7 @@ class Tools(EditorialTools):
         ratio = cm.get("ratio") or "9:16"
         files = covers[index].get("tokens") or {}
         ctok = files.get("4:5" if ratio == "4:5" else "9:16") or next(iter(files.values()), "")
-        spec = {"kind": "cover_swap", "source": vid["token"], "cover": ctok, "secs": 0.6,
+        spec = {"kind": "cover_swap", "source": vid["token"], "cover": ctok, "secs": COVER_FRAME_SECS,
                 "replace": float(cm.get("cover_frame_secs") or 0)}
         media, why = self._run_job(spec)
         if not media:
@@ -737,7 +738,7 @@ class Tools(EditorialTools):
         for cid, v in (res.get("channel_media") or {}).items():
             if any(m.get("url") == vid["url"] for m in v.get("media") or []):
                 v["media"] = [media[0] if m.get("url") == vid["url"] else m for m in v["media"]]
-                v.update(cover_index=index, cover_frame_secs=0.6, thumbnail_offset_ms=300)
+                v.update(cover_index=index, cover_frame_secs=COVER_FRAME_SECS, thumbnail_offset_ms=cover_thumb_ms(COVER_FRAME_SECS))
                 changed.append(cid)
         seen, allm = set(), []
         for v in res["channel_media"].values():
