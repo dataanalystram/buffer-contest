@@ -82,6 +82,10 @@
   const readyTxt = el("span", "hc-ready-t", { id: "hcReadyT", "data-testid": "chat-ready-text" });
   acts.prepend(readyTxt);
   reply.parentNode.insertBefore(acts, reply);  // right above the composer, sticky with it
+  // a phone gets the short placeholder (the long one wrapped onto a second, cut-off line)
+  const ri0 = document.getElementById("replyIn"), longPh = ri0.placeholder, mq = matchMedia("(max-width:600px)");
+  const ph = () => { ri0.placeholder = mq.matches ? "Ask for a change…" : longPh; };
+  ph(); if (mq.addEventListener) mq.addEventListener("change", ph);
   if (window.ResizeObserver) new ResizeObserver(() => rv.style.setProperty("--hc-composer", reply.offsetHeight + "px")).observe(reply);
 
   // ------------------------------------------------------------ the thread sidebar (past runs = conversations)
