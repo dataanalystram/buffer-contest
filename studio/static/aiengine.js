@@ -51,7 +51,7 @@ function paintSettings(st) {
   if (!keys) { keys = document.createElement("p"); keys.id = "aiEngKeys"; keys.className = "muted xs ai-eng-keys"; keys.dataset.testid = "ai-engine-keys"; q("#aiEngPools").after(keys); }
   const links = st.engines.filter((o) => o.link && !o.available);
   keys.hidden = !links.length;
-  keys.innerHTML = links.map((o) => `${escH(o.short)}: <a class="link" href="${escH(o.link.url)}" target="_blank" rel="noopener" data-testid="ai-engine-key-link-${o.id}">${escH(o.reason)}</a> (or add your own key below).`).join(" ");
+  keys.innerHTML = links.map((o) => `${escH(o.short)}: <a class="link" href="${escUrl(o.link.url)}" target="_blank" rel="noopener" data-testid="ai-engine-key-link-${o.id}">${escH(o.reason)}</a> (or add your own key below).`).join(" ");
   const note = q("#aiEngNote");
   note.hidden = !st.note; note.textContent = st.note || "";
   const btns = [...box.querySelectorAll(".ai-c")];
@@ -115,7 +115,7 @@ function keyRow(k) {
         ${k.needs_base_url ? `<label class="field"><span class="label">Base URL</span><input name="base_url" placeholder="https://…/v1" value="${escH(k.base_url || "")}" data-testid="ai-key-base-${k.provider}"></label>` : ""}
       </div>
       <div class="row tight"><button class="btn sm" type="submit" data-testid="ai-key-save-${k.provider}">Test and save</button>
-        ${k.get_key_url ? `<a class="link sm" href="${escH(k.get_key_url)}" target="_blank" rel="noopener">Get a key ↗</a>` : ""}
+        ${k.get_key_url ? `<a class="link sm" href="${escUrl(k.get_key_url)}" target="_blank" rel="noopener">Get a key ↗</a>` : ""}
         <span class="ai-k-msg sm" role="status" data-testid="ai-key-msg-${k.provider}"></span></div>
     </form></li>`;
 }

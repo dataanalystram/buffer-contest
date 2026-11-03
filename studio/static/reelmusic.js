@@ -101,7 +101,7 @@ function mount(box, opts) {
       const out = await api(`/api/instagram/audio?channel_id=${encodeURIComponent(opts.channelId)}&q=${encodeURIComponent(q)}`);
       if (out.needs_facebook) {
         M.tracks = []; drawTracks();
-        status(`<b data-testid="music-needs-fb">${H_ESC(out.message)}</b> <a href="${H_ESC(out.help_url)}" target="_blank" rel="noopener" data-testid="music-help">How to connect it in Buffer</a>`, "warn");
+        status(`<b data-testid="music-needs-fb">${H_ESC(out.message)}</b> <a href="${escUrl(out.help_url)}" target="_blank" rel="noopener" data-testid="music-help">How to connect it in Buffer</a>`, "warn");
         return;
       }
       M.tracks = out.tracks || [];

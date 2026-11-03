@@ -174,14 +174,14 @@ function clipRow(c, n, k) {
       <p class="clip-hook" data-testid="clip-hook">${esc(c.hook)}</p>
       <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.score != null ? ` · <span class="pill sm clip-score" data-testid="clip-score">Score ${Math.round(c.score)}</span>` : ""}</p>
       ${c.why ? `<p class="xs clip-why" data-testid="clip-why" title="${esc(c.why)}">${c.rank ? `<b>#${c.rank}</b> · ` : ""}Why this moment: ${esc(c.why)}</p>` : ""}
-      ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${esc(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
+      ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${escUrl(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
       ${st}${c.rerender_error ? `<span class="st err xs" data-testid="clip-rerender-error">Re-render failed: ${esc(c.rerender_error)} The previous video is kept.</span>` : ""}
       <div class="clip-pf">${pfCompact(c)}</div>
       ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${p.status === "draft" ? "Buffer draft" : "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
     </div>
-    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button><a class="link xs" href="${esc(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}</div>
+    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button><a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}</div>
   </li>`;
 }
 
@@ -272,8 +272,8 @@ async function loadTakes() {
   const box = $("#takeList");
   try {
     const rows = await api("/api/takes");
-    box.innerHTML = rows.length ? rows.map((x) => `<button class="runrow" data-testid="take-row" data-id="${x.id}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="vt">▶</span>`}
-      <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${x.clips} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small></span></button>`).join("")
+    box.innerHTML = rows.length ? rows.map((x) => `<button class="runrow" data-testid="take-row" data-id="${esc(x.id)}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="vt">▶</span>`}
+      <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${esc(x.clips)} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small></span></button>`).join("")
       : `<div class="empty"><b>No takes yet</b><span>Drop a talk, a podcast episode or a tutorial you recorded, or try the sample take.</span></div>`;
     box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => { const t = await api(`/api/takes/${b.dataset.id}`); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); window.scrollTo({ top: 0, behavior: "smooth" }); }));
   } catch (_) {}

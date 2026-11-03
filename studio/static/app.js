@@ -2,6 +2,13 @@
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Links built from outside content (feeds, extracted sites, agent output, Buffer) open only http(s), mailto, blob, raster
+// data: images or same-site paths; anything else with a scheme (javascript:, vbscript:, data:text/html…) becomes "#".
+// Browsers drop tabs/newlines/controls inside a scheme, so they're stripped before the check.
+const safeUrl = (u) => { const s = String(u ?? "").trim(), p = s.replace(/[\u0000-\u0020\u007f]+/g, "");
+  return !/^[a-z][a-z0-9+.\-]*:/i.test(p) || /^(https?|mailto|blob):/i.test(p) || /^data:image\/(png|jpe?g|gif|webp|avif);/i.test(p) ? s : "#"; };
+const escUrl = (u) => esc(safeUrl(u));
+window.safeUrl = safeUrl; window.escUrl = escUrl;
 const MODES = [["draft", "Buffer draft"], ["queue", "Add to queue"], ["next", "Share next"], ["now", "Share now"], ["schedule", "Schedule…"]];
 const S = { csrf: "", channels: [], selected: new Set(), drafts: [], article: null, session: null };
 
@@ -67,7 +74,7 @@ function pfPanel(box, getPost, onFix) {
     const r = st.result;
     if (!r) { box.innerHTML = `<div class="pf-row"><span class="pf-chip s-wait" data-testid="preflight-chip" data-status="checking">Checking…</span></div>`; return; }
     const fixes = (r.fixes || []).filter((f) => f.id !== "reencode");
-    const items = r.findings.map((f) => `<li class="pf-f l-${esc(f.level)}" data-testid="preflight-finding" data-level="${esc(f.level)}"><span class="pf-lvl">${esc({ error: "Error", warning: "Warning", info: "Note" }[f.level])}</span><span>${esc(f.message)}${f.source ? ` <a href="${esc(f.source.split(" ; ")[0])}" target="_blank" rel="noopener" data-testid="preflight-source">Rule</a>` : ""}</span></li>`).join("");
+    const items = r.findings.map((f) => `<li class="pf-f l-${esc(f.level)}" data-testid="preflight-finding" data-level="${esc(f.level)}"><span class="pf-lvl">${esc({ error: "Error", warning: "Warning", info: "Note" }[f.level])}</span><span>${esc(f.message)}${f.source ? ` <a href="${escUrl(f.source.split(" ; ")[0])}" target="_blank" rel="noopener" data-testid="preflight-source">Rule</a>` : ""}</span></li>`).join("");
     box.innerHTML = `<div class="pf-row">${pfChip(r)}
         ${fixes.length ? `<button type="button" class="btn2 sm pf-fix" data-testid="preflight-fix" title="${esc(fixes.map((f) => f.label).join(" · "))}">Fix it</button>` : ""}
         ${st.before ? `<button type="button" class="link" data-testid="preflight-undo">Undo fix</button>` : ""}</div>
@@ -396,7 +403,7 @@ const ibWhen = (iso) => { if (!iso) return ""; const d = new Date(iso); return d
 const hhmm = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 function ibItem(g, it) {
   const acts = (it.actions || []).map((a) => a.href
-    ? `<a class="btn2 sm" data-testid="inbox-action" data-act="${esc(a.id)}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
+    ? `<a class="btn2 sm" data-testid="inbox-action" data-act="${esc(a.id)}" href="${escUrl(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
     : `<button type="button" class="${a.id === "approve" || a.id === "fix" ? "btn accent sm" : "btn2 sm"}" data-testid="inbox-action" data-act="${esc(a.id)}" data-go="${esc(a.go || "")}" data-id="${esc(it.id ?? "")}">${esc(a.label)}</button>`).join("");
   if (g.key === "open_slots") return `<li class="ib-slot" data-testid="inbox-item" data-group="${g.key}" title="next ${esc(ibWhen(it.next))}">${netBadge(it.service)}<b>${it.count}</b><span class="sr"> open on ${esc(it.channel)}</span></li>`;
   if (g.key === "plan") return "";
@@ -410,7 +417,7 @@ function ibItem(g, it) {
 function netBadge(svc, label) { return window.netIcon ? netIcon(svc, label) : `<span class="net svc-${esc(svc || "")}" aria-hidden="true">${esc((svc || "?").slice(0, 2))}</span>`; }
 function ibGroup(g) {
   const acts = (g.actions || []).map((a) => a.href
-    ? `<a class="btn2 sm" data-testid="inbox-group-action" data-act="${esc(a.id)}" href="${esc(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
+    ? `<a class="btn2 sm" data-testid="inbox-group-action" data-act="${esc(a.id)}" href="${escUrl(a.href)}" target="_blank" rel="noopener">${esc(a.label)}</a>`
     : `<button type="button" class="btn2 sm" data-testid="inbox-group-action" data-act="${esc(a.id)}" data-go="${esc(a.go || "")}">${esc(a.label)}</button>`).join("");
   const more = g.count > (g.items || []).length && g.key !== "plan" && g.key !== "open_slots" ? `<p class="muted sm ib-more">and ${g.count - g.items.length} more</p>` : "";
   return `<section class="ib-group u-${g.urgency}" id="ib-${g.key}" data-testid="inbox-group" data-group="${g.key}" data-urgency="${g.urgency}" data-count="${g.count}" aria-labelledby="ibh-${g.key}">
@@ -588,7 +595,7 @@ function storyItem(st) {
   return `<article class="nf-card" data-testid="story-item">
     <img class="nf-img" src="${esc(window.hqThumb(st.url, st.image || ""))}" alt="" loading="lazy" data-testid="story-thumb">
     <div class="nf-b"><div class="nf-meta">${fav(host)}<span class="nf-src" title="via ${esc(st.source || "")}">${esc(host || st.source)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}</div>
-      <a class="nf-t" href="${esc(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
+      <a class="nf-t" href="${escUrl(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
       ${why ? `<p class="nf-why">${esc(why)}</p>` : ""}${st.why_for_you ? `<span class="muted xs" data-testid="story-for-you">${esc(st.why_for_you)}</span>` : ""}
       <div class="nf-act"><button class="btn sm" type="button" data-make="${esc(st.url)}" data-testid="story-write">Make post</button></div></div></article>`;
 }
@@ -674,12 +681,12 @@ function postItem(p) {
   const href = demo ? "" : sent && p.externalLink ? p.externalLink : `https://publish.buffer.com/channels/${encodeURIComponent(p.channelId)}/schedule`;
   const go = sent && p.externalLink ? `View on ${netName(ch.service)}` : "Open in Buffer";
   const a = (p.assets || [])[0], isVid = a && /video/.test(a.type + a.mimeType), thumb = a && (a.thumbnail || (!isVid && a.source));
-  const media = !a ? "" : `${href ? `<a class="pv-media" href="${esc(href)}" target="_blank" rel="noopener" aria-label="${esc(go)}">` : `<span class="pv-media">`}${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : ""}${isVid ? `<span class="play" aria-hidden="true"></span>` : ""}${(p.assets || []).length > 1 ? `<span class="more">+${p.assets.length - 1}</span>` : ""}${href ? "</a>" : "</span>"}`;
+  const media = !a ? "" : `${href ? `<a class="pv-media" href="${escUrl(href)}" target="_blank" rel="noopener" aria-label="${esc(go)}">` : `<span class="pv-media">`}${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : ""}${isVid ? `<span class="play" aria-hidden="true"></span>` : ""}${(p.assets || []).length > 1 ? `<span class="more">+${p.assets.length - 1}</span>` : ""}${href ? "</a>" : "</span>"}`;
   return `<article class="item pv svc-${esc(ch.service)}${p.error ? " failed" : ""}" data-testid="queue-item">
     <div class="pv-body"><div class="dh">${avatar(ch)}<div class="who"><b>${esc(ch.displayName || ch.name)}</b><small>${esc(ch.name ? "@" + ch.name + " on " : "")}${esc(netName(ch.service))}</small></div></div>
       <pre>${esc(p.text)}</pre>
       ${p.error ? `<div class="st err">${esc(p.error.message)}</div>` : ""}
-      <div class="pv-foot"><span class="muted">${esc(label)}</span>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener" data-testid="open-post">${esc(go)}</a>` : ""}</div></div>
+      <div class="pv-foot"><span class="muted">${esc(label)}</span>${href ? `<a href="${escUrl(href)}" target="_blank" rel="noopener" data-testid="open-post">${esc(go)}</a>` : ""}</div></div>
     ${media}</article>`;
 }
 
