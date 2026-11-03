@@ -340,7 +340,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         mh = getattr(house, "media_health", None) or {}
         return {"ok": True, "configured": s.configured, "db": store.ping(),
                 "media": {"checked_at": mh.get("checked_at"), "missing_files": mh.get("files_missing", 0),
-                          "unique_missing_files": mh.get("unique_files_missing", 0)} if mh else {"checked_at": None}}
+                          "unique_missing_files": mh.get("unique_files_missing", 0), "files_in_bin": mh.get("files_in_bin", 0),
+                          "files_deleted_by_owner": mh.get("files_deleted_by_owner", 0)} if mh else {"checked_at": None}}
 
     # ------------------------------------------------------------ OAuth
     @app.get("/login", include_in_schema=False)

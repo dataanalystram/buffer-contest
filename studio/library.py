@@ -843,23 +843,55 @@ class Library:
 TOOLS = [
     {"name": "list_library", "description": "The person's Library: every uploaded photo/video and every image, carousel and Reel the agent made, "
                                             "with type, size, date and which posts used each one. q searches names and post titles; kind: video | image | carousel | upload | generated.",
-     "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}, "kind": {"type": "string"}}}},
-    {"name": "delete_library_item", "description": "Delete one Library item (the file and its record). Refused with a warning while a post that hasn't gone out uses it; force=true deletes anyway.",
-     "inputSchema": {"type": "object", "required": ["item_id"], "properties": {"item_id": {"type": "integer"}, "force": {"type": "boolean"}}}},
+     "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}, "kind": {"type": "string"},
+                                                                    "offset": {"type": "integer"}, "per": {"type": "integer", "description": "page size (1-200); total is the count before paging"}}}},
+    {"name": "delete_library_item", "description": "Delete one Library item. mode=bin (default) moves it to the Bin for 7 days (restore_library_items brings it back); "
+                                                  "mode=permanent removes the file and its record now and can't be undone. Refused with a warning (409) while a post that hasn't gone out "
+                                                  "or a post scheduled in Buffer uses it; force=true goes ahead, except that a permanent delete of media a scheduled post uses is always refused.",
+     "inputSchema": {"type": "object", "required": ["item_id"], "properties": {"item_id": {"type": "integer"}, "force": {"type": "boolean"},
+                                                                             "mode": {"type": "string", "enum": ["bin", "permanent"]}}}},
+    {"name": "bulk_delete_library", "description": "Delete several Library items at once (up to 200): mode=bin (default, restorable for 7 days) or mode=permanent (can't be undone). "
+                                                  "Each item is checked like a single delete; the ones a post needs come back under refused with the reason (needs_force: force=true would go ahead).",
+     "inputSchema": {"type": "object", "required": ["ids"], "properties": {"ids": {"type": "array", "items": {"type": "integer"}},
+                                                                         "mode": {"type": "string", "enum": ["bin", "permanent"]}, "force": {"type": "boolean"}}}},
+    {"name": "list_library_bin", "description": "The Library Bin: items deleted in the last 7 days, newest first, with days_left before each is removed for good and the posts that used it.",
+     "inputSchema": {"type": "object", "properties": {"offset": {"type": "integer"}, "per": {"type": "integer"}}}},
+    {"name": "restore_library_items", "description": "Restore items from the Bin to the Library (their files come back for every post that used them).",
+     "inputSchema": {"type": "object", "required": ["ids"], "properties": {"ids": {"type": "array", "items": {"type": "integer"}}}}},
+    {"name": "purge_library_bin", "description": "Delete items in the Bin permanently (ids, or all=true to empty the Bin). Can't be undone. Media a post scheduled in Buffer uses is refused.",
+     "inputSchema": {"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "integer"}}, "all": {"type": "boolean"}}}},
+    {"name": "draft_from_library", "description": "Save a Library item as a Buffer DRAFT (never published) on the channels you pick, with its media and the per-channel captions its run wrote. "
+                                                 "Without channels it returns the prefill (media, channels with captions, run_id) to choose from. channels: [{channel_id, text?}] (text defaults to the run's caption); dry_run=true previews only.",
+     "inputSchema": {"type": "object", "required": ["item_id"], "properties": {"item_id": {"type": "integer"}, "dry_run": {"type": "boolean"},
+                                                                             "channels": {"type": "array", "items": {"type": "object", "required": ["channel_id"],
+                                                                                          "properties": {"channel_id": {"type": "string"}, "text": {"type": "string"}}}}}}},
     {"name": "use_library_item", "description": "Use a Library item in a new post. With prompt (what to post, which channels) it starts make_post with the file attached and returns the run; without, it returns the media_token to pass to make_post.",
      "inputSchema": {"type": "object", "required": ["item_id"], "properties": {"item_id": {"type": "integer"}, "prompt": {"type": "string"},
                                                                              "channel_ids": {"type": "array", "items": {"type": "string"}},
                                                                              "format": {"type": "string", "enum": ["auto", "reel", "carousel", "photo"]}}}},
 ]
-READ_ONLY = {"list_library"}
+READ_ONLY = {"list_library", "list_library_bin"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
     lib = studio.house.library
     if name == "list_library":
-        return lib.list(actor, str(args.get("q") or ""), str(args.get("kind") or ""))
+        return lib.list(actor, str(args.get("q") or ""), str(args.get("kind") or ""), offset=int(args.get("offset") or 0),
+                        per=int(args.get("per") or 0))
     if name == "delete_library_item":
-        return lib.delete(actor, args.get("item_id"), bool(args.get("force")))
+        return lib.delete(actor, args.get("item_id"), bool(args.get("force")), str(args.get("mode") or "bin"))
+    if name == "bulk_delete_library":
+        return lib.bulk_delete(actor, args.get("ids"), str(args.get("mode") or "bin"), bool(args.get("force")))
+    if name == "list_library_bin":
+        return lib.trash(actor, int(args.get("offset") or 0), int(args.get("per") or 0))
+    if name == "restore_library_items":
+        return lib.restore_many(actor, args.get("ids"))
+    if name == "purge_library_bin":
+        return lib.purge(actor, args.get("ids"), bool(args.get("all")))
+    if name == "draft_from_library":
+        if not args.get("channels"):
+            return lib.draft_prefill(actor, args.get("item_id"))
+        return lib.draft_from_library(actor, args.get("item_id"), {"channels": args.get("channels"), "dry_run": bool(args.get("dry_run"))})
     if name == "use_library_item":
         return lib.use(actor, args.get("item_id"), {k: args.get(k) for k in ("prompt", "channel_ids", "format") if args.get(k)})
     return NotImplemented
@@ -898,8 +930,8 @@ def add_routes(app, house, actor) -> None:
         return Response(f["read"](0, None), media_type=f["mime"], headers=headers)
 
     @app.get("/api/library")
-    def library_list(request: Request, q: str = "", kind: str = ""):
-        return lib.list(actor(request), q, kind)
+    def library_list(request: Request, q: str = "", kind: str = "", offset: int = 0, per: int = 0):
+        return lib.list(actor(request), q, kind, offset=offset, per=per)
 
     @app.post("/api/library/upload")
     async def library_upload(request: Request, name: str = "", source: str = "upload"):
@@ -916,9 +948,28 @@ def add_routes(app, house, actor) -> None:
         return await lib.save_stream(a, nm, request.stream(), declared, "take" if source == "take" else "upload")
 
     @app.get("/api/library/trash")
-    def library_trash(request: Request):
-        """Items deleted in the last TRASH_DAYS days; restore one with POST /api/library/{id}/restore."""
-        return lib.trash(actor(request))
+    @app.get("/api/library/bin")
+    def library_trash(request: Request, offset: int = 0, per: int = 0):
+        """The Bin: items deleted in the last TRASH_DAYS days; restore with POST /api/library/{id}/restore."""
+        return lib.trash(actor(request), offset, per)
+
+    @app.get("/api/library/bin/{iid}/file")
+    def library_bin_file(iid: int, request: Request, i: int = 0):
+        return serve(lib.bin_file(actor(request), iid, i), request, "private, no-store")
+
+    @app.post("/api/library/bin/restore")
+    def library_bin_restore(request: Request, body: dict = Body(...)):
+        return lib.restore_many(actor(request, write=True), (body or {}).get("ids"))
+
+    @app.post("/api/library/bin/purge")
+    def library_bin_purge(request: Request, body: dict = Body(...)):
+        b = body or {}
+        return lib.purge(actor(request, write=True), b.get("ids"), bool(b.get("all")))
+
+    @app.post("/api/library/bulk-delete")
+    def library_bulk_delete(request: Request, body: dict = Body(...)):
+        b = body or {}
+        return lib.bulk_delete(actor(request, write=True), b.get("ids"), str(b.get("mode") or "bin"), bool(b.get("force")))
 
     @app.post("/api/library/{iid}/restore")
     def library_restore(iid: int, request: Request):
@@ -933,8 +984,16 @@ def add_routes(app, house, actor) -> None:
         return serve(lib.file(actor(request), iid, i), request, "private, max-age=3600")
 
     @app.delete("/api/library/{iid}")
-    def library_delete(iid: int, request: Request, force: int = 0):
-        return lib.delete(actor(request, write=True), iid, bool(force))
+    def library_delete(iid: int, request: Request, force: int = 0, mode: str = "bin"):
+        return lib.delete(actor(request, write=True), iid, bool(force), mode)
+
+    @app.get("/api/library/{iid}/draft")
+    def library_draft_prefill(iid: int, request: Request):
+        return lib.draft_prefill(actor(request), iid)
+
+    @app.post("/api/library/{iid}/draft")
+    def library_draft(iid: int, request: Request, body: dict = Body(...)):
+        return lib.draft_from_library(actor(request, write=True), iid, body or {})
 
     @app.post("/api/library/{iid}/use")
     def library_use(iid: int, request: Request, body: dict = Body(default={})):
