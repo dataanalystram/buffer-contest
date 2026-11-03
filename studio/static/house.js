@@ -3,7 +3,37 @@
 const H = { run: null, poll: null, sel: new Set(), ai: null, upload: null, attach: null };
 const STATUS_ICON = { pending: "", running: '<span class="spin" aria-hidden="true"></span>', done: "✓", warn: "!", failed: "×" };
 // suggestion chips under the reply box: one box edits any channel, its media or its caption
-const REPLY_CHIPS = ["Make the hook stronger", "Redo YouTube at 30s", "LinkedIn more formal", "Shorter captions", "Logo smaller", "No hashtags"];
+// relevant to THIS post (owner, 3 Nov 2026: "Redo YouTube at 30s" showed when only Instagram was selected)
+function replyChips(r) {
+  const pk = (r.result || {}).packages || [], svc = new Set(pk.map((p) => p.service)), fm = new Set(pk.map((p) => p.format));
+  if (!pk.length) return ["Try again with a different angle", "What templates can you use?"];
+  const out = ["Make the hook stronger", "Shorter captions"];
+  if (fm.has("carousel")) out.push("Restyle slide 2");
+  if (fm.has("reel")) out.push("Add captions", "Trim the first 3 s");
+  if (svc.has("youtube")) out.push("Redo YouTube at 30s");
+  if (svc.has("linkedin")) out.push("LinkedIn more formal");
+  out.push("What templates can you use?");
+  return out.slice(0, 6);
+}
+// agent replies are markdown: escaped first, then **bold**, *italic*, `code`, [links](https://...) and "- " lists. Nothing
+// else becomes HTML (owner, 3 Nov 2026: replies showed a raw **Question:**)
+function md(t) {
+  const inline = (x) => x.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, "$1<i>$2</i>")
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)"'<>]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  let html = "", list = false;
+  for (const ln of esc(t || "").split("\n")) {
+    const m = ln.match(/^\s*[-*•]\s+(.*)$/);
+    if (m) { if (!list) { html += "<ul>"; list = true; } html += `<li>${inline(m[1])}</li>`; continue; }
+    if (list) { html += "</ul>"; list = false; }
+    const h = ln.match(/^\s*#{1,4}\s+(.*)$/);
+    html += h ? `<b class="md-h">${inline(h[1])}</b><br>` : (ln.trim() ? inline(ln) + "<br>" : "<br>");
+  }
+  if (list) html += "</ul>";
+  return html.replace(/(<br>)+$/, "");
+}
+window.hqMd = md;
+const BUSY = (st) => ["running", "rendering"].includes(st);
 // what each send option does, in plain words (owner: "Ready for Buffer" / "Buffer draft" confused him)
 const PKG_MODES = [["draft", "Save as Buffer draft (not posted)", "Goes to your Buffer drafts. Nothing is posted until you publish it there.", "Save draft"],
   ["queue", "Add to queue", "Buffer posts it at the channel's next open time slot.", "Add to queue"],
@@ -43,7 +73,7 @@ const drop = $("#drop");
 ["dragleave", "drop"].forEach((e) => drop.addEventListener(e, () => drop.classList.remove("over")));
 drop.addEventListener("drop", (ev) => { ev.preventDefault(); if (ev.dataTransfer.files[0]) pickFile(ev.dataTransfer.files[0]); });
 $("#agFile").onchange = (e) => e.target.files[0] && pickFile(e.target.files[0]);
-const UPLOAD_MAX = () => (S.session?.demo ? 8 : 40) * 1048576;
+const UPLOAD_MAX = () => (S.session?.demo ? 8 : 100) * 1048576;  // the Library's limit (100 MB a file)
 function pickFile(f) {
   if (f.size > UPLOAD_MAX()) return toast(`Files up to ${UPLOAD_MAX() / 1048576} MB here`);
   H.upload = f; H.attach = null; drawAttached();
@@ -136,9 +166,15 @@ function watch(id) {
 function showRun(r) {
   H.run = r; $("#runView").hidden = false;
   window.mpOnRun && window.mpOnRun(r);
-  $("#timeline").innerHTML = r.steps.map((s) => `<li class="step ${s.status}" data-testid="step" data-key="${s.key}">
+  // a step that ran again with nothing new ("Check everything" x4) is one row with its count (the latest result)
+  const groups = [];
+  for (const s of r.steps) {
+    const g = groups.find((x) => x.tool === s.tool && x.label === s.label && (s.tool === "check" || x === groups[groups.length - 1]));
+    if (g) { g.n += 1; g.s = s; } else groups.push({ tool: s.tool, label: s.label, n: 1, s });
+  }
+  $("#timeline").innerHTML = groups.map(({ s, n }) => `<li class="step ${s.status}" data-testid="step" data-key="${s.key}">
       <span class="dot" aria-hidden="true">${STATUS_ICON[s.status] || ""}</span>
-      <div><b>${esc(s.label)}</b>${s.detail ? `<small>${esc(s.detail)}</small>` : ""}${stepExtra(s)}</div></li>`).join("");
+      <div><b>${esc(s.label)}${n > 1 ? ` <span class="xn" data-testid="step-count">×${n}</span>` : ""}</b>${s.detail ? `<small>${esc(s.detail)}</small>` : ""}${stepExtra(s)}</div></li>`).join("");
   const res = r.result || {}, media = res.media || [], busy = ["running", "rendering"].includes(r.status);
   const pk = res.packages || [];
   let html = "";
@@ -194,14 +230,25 @@ function agentExtras(r, busy) {
   $("#agentPlan").hidden = !plan.length;
   $("#agentPlan").innerHTML = plan.map((p) => `<li>${esc(p)}</li>`).join("");
   const th = (res.thread || []).slice(1);
-  $("#agentThread").hidden = !th.length;
-  $("#agentThread").innerHTML = th.map((m) => `<div class="msg ${m.role}" data-testid="thread-msg"><b>${m.role === "user" ? "You" : "Agent"}</b><span>${esc(m.text)}</span></div>`).join("") +
+  $("#agentThread").innerHTML = th.map((m) => `<div class="msg ${m.role}" data-testid="thread-msg"><b>${m.role === "user" ? "You" : "Agent"}</b><span class="md">${m.role === "user" ? esc(m.text) : md(m.text)}</span></div>`).join("") +
+    // someone else's video: ONE question, answered with a button (never typed twice)
+    (res.rights_question && !res.recap && !(res.rights || {}).mode && !busy ? `<div class="st warn ask-card" role="group" aria-label="Video rights" data-testid="rights-card">
+      <span class="md">${md(res.rights_question)}</span><div class="row"><button type="button" class="btn sm" data-testid="rights-yes" data-say="Yes, I have the rights to repost it with credit">Yes, I have the rights</button>
+      <button type="button" class="btn2 sm" data-testid="rights-slides" data-say="Use slides instead">Use slides instead</button></div></div>` : "") +
+    (r.status === "interrupted" ? `<div class="st warn ask-card" data-testid="interrupted"><span>The server restarted while I was working${(res.interrupted || {}).after ? ` (after “${esc(res.interrupted.after)}”)` : ""}. What's made so far is kept.</span>
+      <div class="row"><button type="button" class="btn sm" data-testid="mp-resume">Resume</button></div></div>` : "") +
     ((res.conflicts || []).length ? `<div class="st warn" data-testid="agent-question">${esc(res.conflicts[0].question)}</div>` : "") +
     // the weekly recap's one rights question, answered inline: yes, title cards, or type the story numbers below
     (res.recap && res.recap.awaiting_rights && res.rights_question ? `<div class="st warn" data-testid="recap-rights">${esc(res.rights_question)}
       <div class="row"><button type="button" class="btn primary sm" data-testid="recap-rights-yes" data-say="Yes, use them with credit">Use them with credit</button>
       <button type="button" class="btn ghost sm" data-testid="recap-rights-no" data-say="No, title cards instead">Title cards instead</button></div></div>` : "");
-  $("#agentThread").querySelectorAll("[data-testid^=recap-rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
+  // only the answer buttons (the card itself is data-testid=rights-card: a click on it must not send "undefined")
+  // the rights / Resume card can come before the first reply: show the thread whenever it has anything in it
+  $("#agentThread").hidden = !$("#agentThread").innerHTML.trim();
+  $("#agentThread").querySelectorAll("button[data-say][data-testid^=recap-rights-],button[data-say][data-testid^=rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
+  const rs = $("#agentThread [data-testid=mp-resume]");
+  if (rs) rs.onclick = async () => { rs.disabled = true;
+    try { const n = await api(`/api/agent/runs/${r.id}/resume`, { method: "POST", body: {} }); showRun(n); watch(n.id); } catch (e) { toast(e.message, 5000); rs.disabled = false; } };
   // VIDEO FIRST: the launch video can't be fetched here (YouTube only) or there is none -> an upload button in the chat
   const ask = res.video_ask;
   if (ask && !busy && !(res.upload && res.upload.type === "video")) {
@@ -210,14 +257,14 @@ function agentExtras(r, busy) {
     box.innerHTML = `<span data-testid="video-ask-text">${esc(ask.text)}</span>
       <span class="row"><label class="btn sm primary va-up"><input type="file" accept="${esc(ask.accept || "video/mp4,video/quicktime")}" class="sr" data-testid="video-ask-file">Upload video</label>
       ${ask.launch_url ? `<a class="link" href="${escUrl(ask.launch_url)}" target="_blank" rel="noopener" data-testid="video-ask-open">Open the launch video</a>` : ""}
-      <small class="muted">${esc(ask.label || "MP4/MOV")}, up to ${Number(ask.max_mb) || 40} MB</small></span>`;
+      <small class="muted">${esc(ask.label || "MP4/MOV")}, up to ${Number(ask.max_mb) || 100} MB · or use Upload video below</small></span>`;
     $("#agentThread").appendChild(box);
     $("#agentThread").hidden = false;
     const inp = box.querySelector("[data-testid=video-ask-file]");
     inp.onchange = async () => {
       const f = inp.files[0]; if (!f) return;
       if (!/^video\//.test(f.type) && !/\.(mp4|mov|m4v)$/i.test(f.name)) return toast("Upload an MP4 or MOV video");
-      if (f.size > (Number(ask.max_mb) || 40) * 1048576) return toast(`Videos up to ${Number(ask.max_mb) || 40} MB here`);
+      if (f.size > (Number(ask.max_mb) || 100) * 1048576) return toast(`Videos up to ${Number(ask.max_mb) || 100} MB here`);
       const lab = box.querySelector(".va-up"); lab.classList.add("busy"); lab.lastChild.textContent = "Uploading…";
       try {
         const tok = await uploadFile(f);
@@ -228,8 +275,71 @@ function agentExtras(r, busy) {
   }
   // one edit box for every run, after it finishes (also older runs: the server routes it)
   $("#replyForm").hidden = busy;
-  $("#replyChips").innerHTML = REPLY_CHIPS.map((q) => `<button type="button" class="chip mini" data-testid="reply-chip" data-say="${esc(q)}">${esc(q)}</button>`).join("");
+  $("#replyChips").innerHTML = replyChips(r).map((q) => `<button type="button" class="chip mini" data-testid="reply-chip" data-say="${esc(q)}">${esc(q)}</button>`).join("");
   $("#replyChips").querySelectorAll("[data-say]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
+  drawReady(r, busy);
+  drawTemplates(r, busy);
+  // "where is the post" / "give me an option to upload": the answer points at the thing on the page
+  const f = res.focus, fk = f ? `${r.id}:${f.at}` : "";
+  if (H.focusRun !== r.id) { H.focusRun = r.id; H.focusSeen = fk; }
+  else if (fk && H.focusSeen !== fk && !busy) { H.focusSeen = fk; setTimeout(() => focusOn(f.target), 150); }
+}
+
+function flash(els) { els.forEach((el) => { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2600); }); }
+function focusOn(target) {
+  if (target === "packages") { const p = $("#packages"); p.scrollIntoView({ behavior: "smooth", block: "start" }); flash([...p.querySelectorAll(".pkg")]); }
+  else if (target === "upload") { const u = $("#replyUpload"); u.scrollIntoView({ behavior: "smooth", block: "center" }); flash([u]); u.querySelector("input").focus(); }
+  else if (target === "templates") { const t = $("#mpTpl"); if (!t.hidden) { t.scrollIntoView({ behavior: "smooth", block: "center" }); flash([t]); } }
+}
+window.hqFocusOn = focusOn;
+
+// the final state at the top: what's ready per channel, with its media
+function drawReady(r, busy) {
+  const box = $("#mpReady"); if (!box) return;
+  const pk = (r.result || {}).packages || [];
+  if (!pk.length || busy) { box.hidden = true; box.innerHTML = ""; return; }
+  const word = (p) => (p.sent ? (p.status === "pending_approval" ? "Waiting for approval" : "In Buffer") : p.status === "hold" ? "On hold" : "Ready");
+  box.hidden = false;
+  box.innerHTML = `<span class="mp-ready-h">Your posts</span>` + pk.map((p) => { const f = pkgFiles(p)[0];
+    const th = f ? (f.type === "video" ? `<video src="${escUrl(f.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${escUrl(f.url)}" alt="">`) : `<span class="mp-ready-ph" aria-hidden="true"></span>`;
+    return `<button type="button" class="mp-ready-i st-${esc(p.sent ? "sent" : p.status)}" data-ch="${esc(p.channel_id)}" data-testid="mp-ready-item" aria-label="Go to the ${esc(netName(p.service))} post">${th}<span><b>${esc(netName(p.service))}</b><small>${esc(mediaLabel(p))} · ${word(p)}</small></span></button>`; }).join("");
+  box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => { const c = document.querySelector(`#packages .pkg[data-ch="${CSS.escape(b.dataset.ch)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "start" }); flash([c]); } }));
+}
+
+// "Template: <name> · why" and the Change template chips (previews drawn from this post's own facts in its kit)
+async function drawTemplates(r, busy) {
+  const box = $("#mpTpl"); if (!box) return;
+  const res = r.result || {}, pk = res.packages || [], tp = res.template;
+  if (!tp || !pk.length || busy || r.kind !== "agent" || res.recap) { box.hidden = true; return; }
+  const sl = Object.entries(tp.slide_names || {}).map(([i, n]) => `slide ${esc(i)}: ${esc(n)}`).join(" · ");
+  const slides = pk.some((p) => ["carousel", "photo"].includes(p.format));
+  const line = `<p class="mp-tpl-line" data-testid="mp-template-line"><span class="muted">Template:</span> <b data-testid="mp-template-name">${esc(tp.name)}</b>
+    <span class="muted">· <span data-testid="mp-template-why">${esc(tp.why)}</span>${tp.kit ? ` · in your ${esc(tp.kit)} kit` : ""}${sl ? " · " + sl : ""}</span>
+    ${slides ? "" : `<small class="muted sm">Your posts are Reels; pick a template to make the image channels slides.</small>`}</p>`;
+  const key = [r.id, tp.id, JSON.stringify(tp.slide_names || {}), pk.map((p) => (p.media_urls || [])[0]).join()].join("|");
+  box.hidden = false;
+  if (H.tplKey === key && H.tplHtml) { box.innerHTML = H.tplHtml; wireTpl(r); return; }
+  H.tplKey = key;
+  box.innerHTML = line + `<div class="mp-tpl-row" data-testid="mp-template-chips"><span class="mp-tpl-h">Change template</span><span class="muted sm">Drawing previews…</span></div>`;
+  let t;
+  try { t = await api(`/api/agent/runs/${r.id}/templates`); } catch (_) { t = { options: [] }; }
+  if (H.tplKey !== key) return;
+  H.tplHtml = line + `<div class="mp-tpl-row" role="group" aria-label="Change template" data-testid="mp-template-chips"><span class="mp-tpl-h">Change template</span>
+    ${(t.options || []).map((o) => `<button type="button" class="mp-tpl${o.current ? " on" : ""}" data-tpl="${esc(o.id)}" data-testid="mp-template-chip" aria-pressed="${o.current ? "true" : "false"}" title="${esc(o.about || o.name)}" aria-label="${esc(o.name)}${o.current ? " (in use)" : ""}">
+      ${o.preview ? `<img src="${escUrl(o.preview)}" alt="" loading="lazy">` : `<span class="mp-tpl-ph" aria-hidden="true"></span>`}<span>${esc(o.name)}</span></button>`).join("")}
+    <button type="button" class="mp-tpl more" data-testid="mp-template-all" aria-label="List every template">All templates…</button></div>`;
+  box.innerHTML = H.tplHtml; wireTpl(r);
+}
+function wireTpl(r) {
+  const box = $("#mpTpl");
+  box.querySelectorAll("[data-tpl]").forEach((b) => (b.onclick = async () => {
+    if (b.classList.contains("on")) return;
+    box.querySelectorAll("[data-tpl]").forEach((x) => (x.disabled = true)); b.classList.add("busy");
+    try { const n = await api(`/api/agent/runs/${r.id}/template`, { method: "POST", body: { template: b.dataset.tpl } }); showRun(n); watch(n.id); }
+    catch (e) { toast(e.message, 6000); box.querySelectorAll("[data-tpl]").forEach((x) => (x.disabled = false)); b.classList.remove("busy"); }
+  }));
+  const all = box.querySelector("[data-testid=mp-template-all]");
+  if (all) all.onclick = () => { $("#replyIn").value = "What templates can you use?"; $("#replyForm").requestSubmit(); };
 }
 
 function stepExtra(s) {
@@ -401,6 +511,33 @@ $("#replyForm").addEventListener("submit", async (ev) => {
   try { const r = await api(`/api/agent/runs/${H.run.id}/messages`, { method: "POST", body: { text: t } }); $("#replyIn").value = ""; showRun(r); watch(r.id); }
   catch (e) { toast(e.message, 5000); } finally { b.disabled = false; }
 });
+
+// Upload video in the composer, on every turn of the thread (and drop a file on the thread): it becomes this post's Reel
+const REPLY_MAX = () => (S.session?.demo ? 8 : 100) * 1048576;
+async function replyUpload(f) {
+  if (!H.run) return;
+  if (!/^video\//.test(f.type) && !/\.(mp4|mov|m4v|webm)$/i.test(f.name)) return toast("Upload an MP4 or MOV video");
+  if (f.size > REPLY_MAX()) return toast(`Videos up to ${REPLY_MAX() / 1048576} MB here`);
+  if (BUSY(H.run.status)) return toast("The agent is still working on this post. Upload once it's done.");
+  const lab = $("#replyUpload"), sp = lab.querySelector("span");
+  lab.classList.add("busy"); sp.textContent = "Uploading…";
+  try {
+    const tok = await uploadFile(f);
+    const said = $("#replyIn").value.trim();
+    const n = await api(`/api/agent/runs/${H.run.id}/messages`, { method: "POST", body: { text: said || "Here's the video: " + f.name, media_token: tok } });
+    $("#replyIn").value = ""; showRun(n); watch(n.id);
+  } catch (e) { toast(e.message, 6000); }
+  finally { lab.classList.remove("busy"); sp.textContent = "Upload video"; $("#replyFile").value = ""; }
+}
+window.hqReplyUpload = replyUpload;
+$("#replyFile").onchange = (e) => e.target.files[0] && replyUpload(e.target.files[0]);
+(() => {
+  const rv = $("#runView");
+  const files = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+  ["dragover", "dragenter"].forEach((ev) => rv.addEventListener(ev, (e) => { if (!H.run || !files(e)) return; e.preventDefault(); rv.classList.add("drop-on"); }));
+  rv.addEventListener("dragleave", (e) => { if (!rv.contains(e.relatedTarget)) rv.classList.remove("drop-on"); });
+  rv.addEventListener("drop", (e) => { rv.classList.remove("drop-on"); const f = e.dataTransfer && e.dataTransfer.files[0]; if (!f || !H.run) return; e.preventDefault(); replyUpload(f); });
+})();
 
 async function loadRuns() {
   const box = $("#runList");

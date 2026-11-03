@@ -18,9 +18,11 @@ import re
 import threading
 import time
 import traceback
+import uuid
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, brain_llm, budget, demo_guard, demo_view, editorial_tools, intake, llm, untrusted
+from . import activity, brain_llm, budget, demo_guard, demo_view, editorial_tools, intake, llm, template_pick, untrusted
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -31,6 +33,11 @@ _running: set[int] = set()
 KEYFRAMES_MAX = 4
 KEYFRAME_B64_MAX = 400_000  # one 768 px JPEG frame as a data URL is ~60-150 KB
 _rlock = threading.Lock()
+BOOT = uuid.uuid4().hex[:12]  # this process: a run stamped with another process's id whose heartbeat stopped was cut off
+HEARTBEAT_S = int(os.environ.get("HQ_PROC_HEARTBEAT", "20"))
+ORPHAN_S = int(os.environ.get("HQ_PROC_ORPHAN", "90"))  # no heartbeat this long -> that process is gone (a deploy, a crash)
+INTERRUPTED = ("The server restarted while I was working on this post{at}, so I stopped. Press Resume and I'll pick up from "
+               "the last finished step.")
 
 SYSTEM = """You are HuhQueue's post editor. You turn the person's request into on-brand social posts for their Buffer channels,
 using ONLY the tools. Rules:
@@ -78,8 +85,13 @@ using ONLY the tools. Rules:
   or robot -> hologram_hud, a weekly round-up -> news_package, "cinematic" -> cinematic, "like opus clip" -> opus), and say
   which theme and why in one line of your plan. A reply that asks for another look ("make it more cinematic", "switch to the
   news theme") -> set_theme, which re-renders the video channels.
-- Templates: when the person names a format (weekly recap, GitHub repo post, YC launch, launch Reel, viral trend with credit,
-  editorial cover, text slides) use render_template for the image channels instead of render_carousel.
+- Templates: Context.template is the template the rules picked for this story type and why (a GitHub repo -> the GitHub repo
+  pillar, a funding round -> Funding round, a news story -> News carousel). render_carousel draws it in the run's brand kit;
+  never switch the brand kit or the layout the person didn't ask for. When the person names a template in words ("use the
+  funding template", "editorial style") call set_template with that name; for one slide ("restyle the second slide", "keep
+  slide 1") pass slides / keep so only those slides change. Weekly recap / launch Reel / viral trend: render_template.
+- Rights: Context.rights "news_credit" means the person already confirmed they may repost this video with credit. Never ask
+  again in this run: call render_reel with rights_confirmed true.
 - Always call write_captions, then check (it builds the packages), then finish with one or two sentences.
 - Weekly recap ("7 days what happened in AI", "weekly recap", "AI round-up of the week"): recap_plan, then (if it returns a
   question) finish and ask it; with the answer call render_recap(rights_confirmed), then write_captions and check.
@@ -97,6 +109,101 @@ class Brain:
     def __init__(self, house):
         self.h, self.store = house, house.store
         budget.ensure(self.store)
+        self.store.x("CREATE TABLE IF NOT EXISTS agent_procs (boot TEXT PRIMARY KEY, seen " +
+                     ("DOUBLE PRECISION" if getattr(self.store, "pg", False) else "REAL") + ")")
+        self.beat()
+        if not getattr(house, "sync", False) and os.environ.get("HQ_PROC_SWEEP", "1") != "0":
+            # a weak reference: the loop never keeps a discarded app (and its database connection) alive
+            threading.Thread(target=Brain._beat_loop, args=(weakref.ref(self),), name="agent-heartbeat", daemon=True).start()
+
+    # ---------------------------------------------------------------- runs cut off by a deploy / crash (owner, 3 Nov 2026)
+    def beat(self) -> None:
+        try:
+            self.store.x("INSERT INTO agent_procs(boot,seen) VALUES(?,?) ON CONFLICT(boot) DO UPDATE SET seen=excluded.seen", (BOOT, _now()))
+        except Exception:  # noqa: BLE001  a heartbeat never breaks the app
+            traceback.print_exc()
+
+    @staticmethod
+    def _beat_loop(ref) -> None:
+        n = 0
+        while True:
+            me = ref()
+            if me is None:  # the app is gone (tests make many): stop, so its store can close
+                return
+            me.beat()
+            if n % 3 == 0:
+                try:
+                    me.interrupt_orphans()
+                except Exception:  # noqa: BLE001
+                    traceback.print_exc()
+            del me
+            n += 1
+            time.sleep(HEARTBEAT_S)
+
+    def interrupt_orphans(self, now: float | None = None) -> list[int]:
+        """Every run left "running" by a process that is gone becomes "interrupted" with a Resume button: its process stopped
+        beating (a Render deploy, a crash), or it was never stamped and has been silent for ORPHAN_S. Runs this process is
+        working on, and runs of a live process, are never touched."""
+        now = now or _now()
+        live = {r["boot"] for r in self.store.q("SELECT boot, seen FROM agent_procs") if (r["seen"] or 0) > now - ORPHAN_S}
+        live.add(BOOT)
+        out = []
+        for r in self.store.q("SELECT id, steps, result, updated FROM agent_runs WHERE status IN ('running','rendering')"):
+            rid = r["id"]
+            with _rlock:
+                if rid in _running:
+                    continue
+            try:
+                res = json.loads(r["result"] or "{}") or {}
+                steps = json.loads(r["steps"] or "[]") or []
+            except ValueError:
+                continue
+            boot = res.get("_boot")
+            if boot in live and not (boot == BOOT and (r["updated"] or 0) < now - ORPHAN_S):
+                continue
+            if not boot and (r["updated"] or 0) > now - ORPHAN_S:
+                continue
+            last = next((st.get("label") for st in reversed(steps) if st.get("status") in ("done", "warn")), "")
+            for st in steps:
+                if st.get("status") in ("running", "pending"):
+                    st["status"], st["detail"] = "failed", "Stopped: the server restarted"
+            msg = INTERRUPTED.format(at=f" (after “{last}”)" if last else "")
+            res.setdefault("thread", []).append({"role": "agent", "text": msg, "at": now})
+            res["interrupted"] = {"at": now, "after": last}
+            self.h._save(rid, steps, res, "interrupted")
+            out.append(rid)
+        if out:
+            print(f"agent: marked {len(out)} cut-off run(s) interrupted: {out}", flush=True)
+        return out
+
+    def resume(self, a: Actor, rid: int) -> dict:
+        """Resume an interrupted (or stopped) run from its last finished step: what it already made stays."""
+        self.h.studio._guard_write(a, "agent_reply")
+        run = self.h.run(a, rid)
+        if run["kind"] != "agent":
+            raise ActionError("Only posts made by the agent can be resumed.", 409)
+        with _rlock:
+            if rid in _running:
+                raise ActionError("The agent is already working on this post.", 409)
+        if run["status"] not in ("interrupted", "failed"):
+            raise ActionError("This post isn't stopped.", 409)
+        res = run["result"]
+        res.pop("interrupted", None)
+        res.setdefault("thread", []).append({"role": "user", "text": "Resume", "at": _now()})
+        self.h._save(rid, run["steps"], res, "running")
+        if res.get("recap"):
+            self._spawn(self._recap_go, a, rid, (res["recap"] or {}).get("rights"), not (res["recap"] or {}).get("plan"))
+        elif res.get("story"):
+            self._spawn(self._bg, a, rid, self._resume_tail)
+        else:
+            self._spawn(self._go, a, rid, None)
+        return self.h.run(a, rid)
+
+    def _resume_tail(self, a, rid, tools) -> None:
+        self._ensure_tail(a, rid, tools)
+        res = self.h.run(a, rid)["result"]
+        n = len(res.get("packages") or [])
+        self._say(a, rid, f"Picked up where I stopped: {n} post{'s' if n != 1 else ''} ready below.")
 
     # ---------------------------------------------------------------- start / reply
     def start(self, a: Actor, body: dict) -> dict:
@@ -336,6 +443,9 @@ class Brain:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
         res = run["result"]
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
+        routed = self._route_reply(a, rid, run, text)
+        if routed is not None:
+            return routed
         if (res.get("recap") or {}).get("awaiting_rights") or re.search(r"\bredo the recap\b", text, re.I) and res.get("recap"):
             ans = self.rights_answer(text) if res["recap"].get("awaiting_rights") else res["recap"].get("rights")
             if res["recap"].get("awaiting_rights") and ans is None:
@@ -353,6 +463,238 @@ class Brain:
             return self.h.run(a, rid)
         self.h._save(rid, run["steps"], res, "running")
         self._spawn(self._go, a, rid, text)
+        return self.h.run(a, rid)
+
+    # ---------------------------------------------------------------- replies the app answers itself (owner, 3 Nov 2026)
+    WHERE_RE = re.compile(r"\bwhere(?:'?s| is| are| did)\b[^?.!]{0,40}\b(?:post|posts|it|carousel|reel|slides?|draft)\b|"
+                          r"\b(?:can'?t|cannot|don'?t) (?:see|find)\b[^?.!]{0,30}\b(?:post|it|carousel|reel)\b", re.I)
+    UPLOAD_RE = re.compile(r"\b(?:upload|attach)\b", re.I)
+    UPLOAD_ASK_RE = re.compile(r"\b(?:option|button|let me|give me|can i|how (?:do|can) i|where (?:do|can) i|i (?:want|will|'?ll) (?:to )?upload|"
+                               r"upload (?:it )?here|way to)\b", re.I)
+    VIDEO_GRIPE_RE = re.compile(r"\byou (?:said|found)\b[^.?!]{0,25}\bvideo\b|\b(?:use|post) (?:the |a |that )?(?:video|reel)\b|"
+                                r"\bmake it a reel\b|\bwhere(?:'?s| is) the (?:video|reel)\b|\bproperly with media\b|\bwith (?:the )?video\b", re.I)
+    KIT_RE = re.compile(r"\b(?:use|switch to|change to|apply|try)\s+(?:the\s+|my\s+)?([\w .&'-]{2,40}?)\s+(?:brand\s+)?kit\b", re.I)
+    DEFAULT_RE = re.compile(r"\b(?:make (?:it|this|that) (?:my |the )?default|as (?:my|the) default|my default kit|"
+                            r"for (?:all|every) (?:my )?(?:posts|runs)|from now on|everywhere)\b", re.I)
+    SLIDES_RE = re.compile(r"\buse slides\b|\bslides instead\b|\bno,? (?:use )?(?:the )?(?:slides|carousel)\b|\bcarousel instead\b", re.I)
+
+    def _answer(self, a, rid, run, text: str, focus: str | None = None) -> dict:
+        res = run["result"]
+        res.setdefault("thread", []).append({"role": "agent", "text": text[:1500], "at": _now()})
+        if focus:
+            res["focus"] = {"target": focus, "at": _now()}
+        st = run["status"] if run["status"] not in ("running", "rendering") else ("ready" if res.get("packages") else "failed")
+        self.h._save(rid, run["steps"], res, st)
+        return self.h.run(a, rid)
+
+    def _where_text(self, res: dict) -> str:
+        pk = res.get("packages") or []
+        if not pk:
+            return "There's no post yet: the agent stopped before making one. Reply with what you want, or press Resume."
+        fmt = {"reel": "Reel", "carousel": "carousel", "photo": "image", "text": "text post"}
+        parts = []
+        for p in pk:
+            n = len(p.get("media_urls") or [])
+            what = fmt.get(p.get("format"), p.get("format") or "post")
+            if p.get("format") == "carousel":
+                what += f", {n} slides"
+            state = "in Buffer" if p.get("sent") else ("on hold" if p.get("status") == "hold" else "ready")
+            parts.append(f"{(p.get('service') or '').title()}: {what}, {state}")
+        return ("Your post is right here on this page, under **Your posts** (I've highlighted it): " + "; ".join(parts) +
+                ". Nothing is posted until you press **Save draft** or **Add to queue** on its card.")
+
+    def _templates_text(self, tools: Tools, run: dict) -> str:
+        rec = tools._template_choice(run)
+        tools.save(run)
+        names = [t for t in tools.template_names() if t["id"] not in template_pick.NOT_SUGGESTED or t["id"] == rec["id"]]
+        lines = [f"- **{t['name']}**" + (" (in use)" if t["id"] == rec["id"] else "") + (" · yours" if t.get("custom") else "") for t in names]
+        kit = rec.get("kit") or "your brand kit"
+        return (f"This post uses **{rec['name']}** ({rec['why']}), drawn in {kit}. Templates I can use, all in the same kit:\n" +
+                "\n".join(lines) + "\nSay “use the funding template”, “editorial style” or “restyle slide 2”, or pick one under "
+                "**Change template**.")
+
+    def _route_reply(self, a, rid, run, text: str):
+        """Replies that need no model: the rights answer, "where is the post", the upload button, a brand kit, a template.
+        None -> the usual edit loop."""
+        res = run["result"]
+        if res.get("recap"):
+            return None
+        tools = Tools(self.h, a, rid)
+        if res.get("rights_question") and not (res.get("rights") or {}).get("mode"):
+            ans = self.rights_answer(text)
+            slides = bool(self.SLIDES_RE.search(text))
+            if ans is True or ans is False or slides:
+                self.h._save(rid, run["steps"], res, "running")
+                self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._rights_go(a_, r_, t_, ans is True and not slides))
+                return self.h.run(a, rid)
+        tp = template_pick.template_reply(text, tools._custom_list())
+        if self.WHERE_RE.search(text) and not tp:
+            return self._answer(a, rid, run, self._where_text(res), "packages")
+        if self.UPLOAD_RE.search(text) and self.UPLOAD_ASK_RE.search(text):
+            mb = tools.upload_limit_mb()
+            cr = res.get("video_credit") or ""
+            return self._answer(a, rid, run, f"Use **Upload video** next to Send below, or drop the file onto this thread: MP4 or "
+                                f"MOV, up to {mb} MB. It goes straight into this post's Reel" + (f", credited “{cr}”." if cr else "."), "upload")
+        m = self.KIT_RE.search(text)
+        if m:
+            kt = tools._kit_theme(m.group(1))
+            if kt:
+                self.h._save(rid, run["steps"], res, "running")
+                default = bool(self.DEFAULT_RE.search(text))
+                self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._kit_go(a_, r_, t_, kt, default))
+                return self.h.run(a, rid)
+        gripe = bool(self.VIDEO_GRIPE_RE.search(text)) and tools._has_video(run) and \
+            not any(p.get("format") == "reel" for p in res.get("packages") or [] if p.get("service") == "instagram")
+        if tp and tp.get("list"):
+            msg = self._templates_text(tools, run)
+            if not gripe:
+                return self._answer(a, rid, run, msg, "templates")
+            run["result"].setdefault("thread", []).append({"role": "agent", "text": msg, "at": _now()})
+            self.h._save(rid, run["steps"], run["result"], "running")
+            self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._rights_go(a_, r_, t_, None))
+            return self.h.run(a, rid)
+        if tp:
+            self.h._save(rid, run["steps"], res, "running")
+            self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._template_go(a_, r_, t_, tp))
+            return self.h.run(a, rid)
+        if gripe:
+            self.h._save(rid, run["steps"], res, "running")
+            self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._rights_go(a_, r_, t_, None))
+            return self.h.run(a, rid)
+        return None
+
+    def _bg(self, a, rid, body) -> None:
+        """One background job on a run (the same bookkeeping as _go): never leaves it spinning."""
+        with _rlock:
+            _running.add(rid)
+        tok = activity.begin(**{**(activity._ctx.get() or {}), "internal_app": "huhqueue-agent", "run_id": rid})
+        tools = Tools(self.h, a, rid)
+        try:
+            body(a, rid, tools)
+            run = self.h.run(a, rid)
+            self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
+        except ActionError as e:
+            self._say(a, rid, f"I couldn't do that: {str(e)[:300]}")
+            run = self.h.run(a, rid)
+            self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
+        except Exception as e:  # never leave a run spinning
+            traceback.print_exc()
+            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+        finally:
+            activity.end(tok)
+            with _rlock:
+                _running.discard(rid)
+
+    def _rights_go(self, a, rid, tools: Tools, yes) -> None:
+        """The rights answer (True / False) or None ("you said you found a video"): yes is recorded for this run's video
+        (rights = news_credit) and the Reel is rendered right away; it is never asked again in this run."""
+        run = self.h.run(a, rid)
+        res = run["result"]
+        fm = res.get("found_media") if isinstance(res.get("found_media"), dict) else {}
+        video = (fm.get("best_downloadable") or {}).get("url") or res.get("clip_token") or ""
+        if yes is True:
+            res["rights"] = {"mode": "news_credit", "video": video, "credit": res.get("video_credit") or "", "at": _now()}
+            res["rights_confirmed"] = True
+            res.pop("rights_question", None)
+        elif yes is False:
+            res["rights"] = {"mode": "slides", "video": video, "at": _now()}
+            res.pop("rights_question", None)
+            res.pop("video_ask", None)
+            self.h._save(rid, run["steps"], res)
+            self.call(a, rid, tools, "check", {})
+            self._say(a, rid, "OK, no video: the post stays as slides. Upload your own video any time with **Upload video** below.")
+            return
+        self.h._save(rid, run["steps"], res)
+        chans = run["input"]["channels"]
+        reel = [c["id"] for c in chans if c["service"] in VIDEO_ONLY or c["service"] == "instagram"]
+        feed = [c["id"] for c in chans if c["service"] in ("facebook", "linkedin")]
+        ok = True if (res.get("rights") or {}).get("mode") == "news_credit" else None
+        out = {}
+        if reel:
+            out = self.call(a, rid, tools, "render_reel", {"channel_ids": reel, **({"rights_confirmed": True} if ok else {})})
+        if out.get("needs_confirmation"):  # asked once: the card in the thread has Yes / Use slides instead
+            q = out.get("question") or ""
+            said = {t.get("text") for t in self.h.run(a, rid)["result"].get("thread") or []}
+            if q and q not in said:
+                self._say(a, rid, q)
+            self.call(a, rid, tools, "check", {})
+            return
+        if feed:
+            self.call(a, rid, tools, "render_reel", {"channel_ids": feed, "ratio": "4:5", **({"rights_confirmed": True} if ok else {})},
+                      label="Render the 4:5 feed version")
+        if reel + feed:
+            self.call(a, rid, tools, "write_captions", {"channel_ids": reel + feed})
+        self.call(a, rid, tools, "check", {})
+        res = self.h.run(a, rid)["result"]
+        reels = [p["service"].title() for p in res.get("packages") or [] if p.get("format") == "reel"]
+        cr = res.get("video_credit") or "the creator"
+        if reels:
+            self._say(a, rid, f"Done: {', '.join(reels)} {'is' if len(reels) == 1 else 'are'} now a Reel of the video, credited “{cr}” "
+                              "on screen and in the caption. It's in **Your posts** below.")
+        else:
+            self._say(a, rid, "I couldn't make the Reel from that video. Upload the file with **Upload video** below and I'll use it.")
+
+    def _template_go(self, a, rid, tools: Tools, tp: dict) -> None:
+        out = self.call(a, rid, tools, "set_template", {"template": tp.get("template") or "", "slides": tp.get("slides") or [],
+                                                        "keep": tp.get("keep") or [], "rest": bool(tp.get("rest"))})
+        self.call(a, rid, tools, "check", {})
+        kit = out.get("kit") or "your brand kit"
+        if out.get("slides_changed") == "all":
+            self._say(a, rid, f"Done: the post now uses **{out['name']}**, in {kit}.")
+        elif out.get("slides_changed"):
+            ns = out["slides_changed"]
+            self._say(a, rid, f"Done: slide {', '.join(map(str, ns))} now {'uses' if len(ns) == 1 else 'use'} **{out['name']}**; "
+                              "the other slides stay as they were.")
+        else:
+            self._say(a, rid, f"Done: **{out['name']}** is set. That slide isn't in this post, so nothing else changed.")
+
+    def _kit_go(self, a, rid, tools: Tools, kt: dict, default: bool) -> None:
+        why = tools.use_kit(kt, default)
+        run = self.h.run(a, rid)
+        self._renders(a, rid, tools, run)
+        self.call(a, rid, tools, "write_captions", {})
+        self.call(a, rid, tools, "check", {})
+        tail = "" if default else " Your default kit is unchanged; say “make it my default” to use it on every post."
+        self._say(a, rid, f"Done: this post now uses {why}.{tail}")
+
+    def templates(self, a: Actor, rid: int, previews: bool = True) -> dict:
+        """The run's template and why, 3-4 suggestions with previews from the run's own facts, and every template by name."""
+        run = self.h.run(a, rid)
+        if run["kind"] != "agent":
+            raise ActionError("Templates are for posts made by the agent.", 409)
+        tools = Tools(self.h, a, rid)
+        rec = tools._template_choice(run)
+        pv = tools.template_previews() if previews else {}
+        cat = template_pick.catalog(tools._custom_list())
+        return {"template": {k: rec.get(k) for k in ("id", "name", "why", "auto", "kit", "slide_names")},
+                "options": [{"id": t, "name": cat[t]["name"], "about": cat[t].get("about") or "", "preview": pv.get(t, ""),
+                             "current": t == rec["id"]} for t in rec.get("suggestions") or [] if t in cat],
+                "all": tools.template_names()}
+
+    def set_template(self, a: Actor, rid: int, body: dict) -> dict:
+        """REST / MCP: switch the template by name or id, for the post or the slides given. Runs like a thread reply."""
+        self.h.studio._guard_write(a, "agent_reply")
+        run = self.h.run(a, rid)
+        if run["kind"] != "agent":
+            raise ActionError("Templates are for posts made by the agent.", 409)
+        with _rlock:
+            if rid in _running:
+                raise ActionError("The agent is still working on this post. Try again when it's done.", 409)
+        tools = Tools(self.h, a, rid)
+        custom = tools._custom_list()
+        name = str((body or {}).get("template") or "").strip()
+        cat = template_pick.catalog(custom)
+        tid = name if name in cat else template_pick.named(name, custom)
+        if not tid:
+            raise ActionError(f"I don't have a template called “{name[:40]}”. Pick one of: " +
+                              ", ".join(v["name"] for k, v in cat.items() if k not in template_pick.NOT_SUGGESTED) + ".", 404)
+        ints = lambda xs: [int(x) for x in xs or [] if str(x).lstrip("-").isdigit()]  # noqa: E731
+        tp = {"template": tid, "slides": ints((body or {}).get("slides")), "keep": ints((body or {}).get("keep")), "rest": bool((body or {}).get("rest"))}
+        res = run["result"]
+        res.setdefault("thread", []).append({"role": "user", "text": f"Use the {cat[tid]['name']} template" +
+                                             (f" on slide {', '.join(map(str, tp['slides']))}" if tp["slides"] else ""), "at": _now()})
+        self.h._save(rid, run["steps"], res, "running")
+        self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._template_go(a_, r_, t_, tp))
         return self.h.run(a, rid)
 
     @staticmethod
@@ -471,6 +813,8 @@ class Brain:
             else:
                 self._say(a, rid, f"Your video is branded and ready as a Reel on {n} channel{'s' if n != 1 else ''}. "
                                   "Pick another cover under each video, or reply to change anything.")
+            run = self.h.run(a, rid)  # re-read: _say saved the reply, so the status save keeps it
+            res = run["result"]
             self.h._save(rid, run["steps"], res, "ready" if res.get("packages") else "failed")
         except ActionError as e:
             self._fail(a, rid, str(e))
@@ -570,6 +914,17 @@ class Brain:
         return self.h.run(a, rid)
 
     def _spawn(self, fn, *args):
+        rid = args[1] if len(args) >= 2 and isinstance(args[1], int) else None
+        if rid is not None:  # which process works on it (interrupt_orphans)
+            try:
+                r = self.store.q("SELECT steps, result FROM agent_runs WHERE id=?", (rid,))
+                if r:
+                    res = json.loads(r[0]["result"] or "{}") or {}
+                    if res.get("_boot") != BOOT:
+                        res["_boot"] = BOOT
+                        self.h._save(rid, json.loads(r[0]["steps"] or "[]"), res)
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
         if self.h.sync:
             fn(*args)
         else:
@@ -680,7 +1035,18 @@ class Brain:
                     s["data"] = data
         self.h._save(rid, run["steps"], run["result"])
 
+    @staticmethod
+    def _check_sig(res: dict) -> str:
+        """What the check reads: each channel's files and caption, the conflicts. Same signature -> same answer."""
+        cm = {k: [m.get("url") for m in (v.get("media") or [])] + [v.get("format")] for k, v in (res.get("channel_media") or {}).items()}
+        caps = {k: (v or {}).get("text") for k, v in (res.get("captions") or {}).items()}
+        return json.dumps([cm, caps, res.get("conflicts") or []], sort_keys=True, default=str)
+
     def call(self, a, rid, tools: Tools, name: str, args: dict, label: str | None = None) -> dict:
+        if name == "check":  # once per change (live 3 Nov: "Check everything" x4 with the same "no media" answer)
+            res = self.h.run(a, rid)["result"]
+            if res.get("checks") and "packages" in res and res.get("_check_sig") == self._check_sig(res):
+                return {**res["checks"], "packages": len(res.get("packages") or []), "unchanged": True}
         key = self._step(a, rid, name, args, label)
         try:
             out = tools.run_tool(name, args)
@@ -689,6 +1055,10 @@ class Brain:
             raise
         self._done(a, rid, key, "warn" if (out.get("conflicts") or out.get("problems") or out.get("clipped")) else "done",
                    _result_line(name, out), out)
+        if name == "check":
+            run = self.h.run(a, rid)
+            run["result"]["_check_sig"] = self._check_sig(run["result"])
+            self.h._save(rid, run["steps"], run["result"])
         return out
 
     def _hold(self, a, rid, name: str, args: dict) -> dict:
@@ -724,7 +1094,7 @@ class Brain:
         run = self.h.run(a, rid)
         res, inp = run["result"], run["input"]
         ctx = {"channels": inp["channels"], "intake": {k: inp["intake"][k] for k in ("urls", "format", "seconds", "tone", "rules", "topic")},
-               "kit": {k: v for k, v in self.h.kit(a).items() if k in ("name", "handle", "voice", "colors", "font")},
+               "kit": {k: v for k, v in tools._kit().items() if k in ("name", "handle", "voice", "colors", "font")},
                "ledger": [r["rule"] for r in self.h.rules(a)],
                "state": _state_summary(res)}
         if res.get("upload"):
@@ -742,6 +1112,11 @@ class Brain:
         company = editorial_tools.company_request(inp["prompt"], inp["intake"].get("urls"))
         if company and not res.get("upload"):
             ctx["company"] = company
+        tp = tools._template_choice(run)
+        tools.save(run)
+        ctx["template"] = {k: tp.get(k) for k in ("id", "name", "why")}
+        if (res.get("rights") or {}).get("mode"):
+            ctx["rights"] = res["rights"]["mode"]
         if any(c["service"] in VIDEO_ONLY for c in inp["channels"]) or inp["intake"].get("format") == "reel":
             # a hint for video channels from the person's words ("short punchy explainer" -> opus); the brain decides
             from .media import styles as media_styles
@@ -753,6 +1128,8 @@ class Brain:
         user = (f"Request: {inp['prompt']}\n\nContext: {json.dumps(ctx, default=str)[:5000]}" if message is None else
                 f"The person replied in the thread: {message}\n\nCurrent state (it quotes outside content): "
                 f"{untrusted.wrap(json.dumps(_state_summary(res), default=str)[:9000], 'run state')}\n"
+                f"Template: {json.dumps({k: (res.get('template') or {}).get(k) for k in ('id', 'name', 'why')})}. "
+                f"Rights: {(res.get('rights') or {}).get('mode') or 'not asked'}.\n"
                 "Change only what they asked, then write_captions for the affected channels, check, finish.")
         messages = [{"role": "user", "content": user}]
         brain = {"mode": "tools", "provider": eng["provider"], "model": eng["model"], "fast_model": eng.get("fast_model") or eng["model"],
