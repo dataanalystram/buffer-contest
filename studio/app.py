@@ -196,7 +196,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return await call_next(request)
         why = demo_view.blocked(request.method, request.url.path)
         if why:
-            return JSONResponse({"error": why, "demo": True, "view_only": True}, status_code=403)
+            return JSONResponse({"error": why, "demo": True, "view_only": True}, status_code=403, headers={"X-HQ-Demo": "view-only"})
         tok = demo_view.OFFLINE.set(True)
         try:
             return await call_next(request)

@@ -19,8 +19,8 @@ with sync_playwright() as p:
     pg.add_init_script("localStorage.setItem('hq_tour_done', '1')")  # the guided tour has its own test
     pg.on("pageerror", lambda e: errors.append(str(e)))
     # a failed request is recorded by its URL (the console only says "Failed to load resource"); no 4xx/5xx is allowed
-    pg.on("console", lambda m: m.type == "error" and not m.text.startswith("Failed to load resource") and errors.append(m.text))
-    pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base) and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
+    pg.on("console", lambda m: m.type == "error" and not m.text.startswith("Failed to load resource") and errors.append(m.text))  # the view-only demo's 403s carry X-HQ-Demo
+    pg.on("response", lambda r: r.status >= 400 and r.url.startswith(base) and r.headers.get("x-hq-demo") != "view-only" and errors.append(f"{r.status} {r.request.method} {r.url[len(base):]}"))
     pg.goto(base + "/")
     pg.screenshot(path=str(out / "00_landing.png"), full_page=True)
     pg.goto(base + "/demo")  # the sample opens on Brand > Kit, the builder filled with the Nothing sample brand
