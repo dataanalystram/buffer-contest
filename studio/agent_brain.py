@@ -792,8 +792,8 @@ class Brain:
         ids = [t for t in rec.get("suggestions") or [] if t in cat]
         if everything:
             ids = [rec["id"]] if rec["id"] in cat else []
-            ids += [t for t in cat if t not in ids and (t not in template_pick.NOT_SUGGESTED or t == rec["id"])
-                    and tools._drawable(t) == t or (t == template_pick.NEWS and t not in ids)]
+            ids += [t for t in cat if t not in ids and (t == template_pick.NEWS or
+                                                        (t not in template_pick.NOT_SUGGESTED and tools._drawable(t) == t))]
         pv = tools.template_previews(ids, limit=len(ids)) if previews else {}
         return {"template": {k: rec.get(k) for k in ("id", "name", "why", "auto", "kit", "slide_names")},
                 "options": [{"id": t, "name": cat[t]["name"], "about": cat[t].get("about") or "", "preview": pv.get(t, ""),

@@ -76,7 +76,7 @@ def test_youtu_be_link_is_about_the_source(owner, monkeypatch):  # noqa: F811
     run = h.run(a, rid)
     run["result"]["source"].update(url="https://www.youtube.com/watch?v=SomethingElse", requested_url="")
     h._save(rid, run["steps"], run["result"])
-    assert owner.post(f"/api/agent/runs/{rid}/tools/check", json={}).json()["about_source"] is False
+    assert Tools(h, a, rid).t_check()["about_source"] is False  # (the endpoint skips a check when nothing it signs changed)
 
 
 # ---------------------------------------------------------------- 5 a short cover hook, a real picture
@@ -86,7 +86,7 @@ def test_cover_hook_is_short_and_never_title_plus_subtitle():
     assert cover_hook(long) == "Screen Studio 4.0: The Mac recorder that edits for you"
     assert cover_hook("OpenAI launches GPT-6") == "OpenAI launches GPT-6"
     assert cover_hook("Anthropic raises $5B - the biggest round in AI history so far this year by a very long margin indeed") == "Anthropic raises $5B"
-    assert cover_hook("Claude Code: Claude Code now runs in the browser") == "Claude Code"
+    assert cover_hook("Sora 2: Sora 2") == "Sora 2"  # a subtitle that only repeats the title is dropped
     run = {"result": {"story": {"headline": long, "facts": ["a", "b"], "source": "YouTube"}}, "input": {}}
     d = template_pick.fill("launch", run)
     assert d["title"] == d["hook"] == "Screen Studio 4.0: The Mac recorder that edits for you"
@@ -112,7 +112,7 @@ def test_all_templates_have_previews(owner, monkeypatch):  # noqa: F811
     rid, a = _reel(owner, monkeypatch)
     t = owner.get(f"/api/agent/runs/{rid}/templates?all=1").json()
     assert len(t["options"]) >= 6 and all(o["preview"].startswith("data:image/jpeg") for o in t["options"]), [o["id"] for o in t["options"] if not o["preview"]]
-    assert {"launch", "news"} <= {o["id"] for o in t["options"]} and t["kit"]
+    assert {"launch", template_pick.NEWS} <= {o["id"] for o in t["options"]} and t["kit"]
     few = owner.get(f"/api/agent/runs/{rid}/templates").json()
     assert len(few["options"]) <= 4
 
