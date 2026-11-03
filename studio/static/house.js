@@ -242,9 +242,10 @@ function agentExtras(r, busy) {
     (res.recap && res.recap.awaiting_rights && res.rights_question ? `<div class="st warn" data-testid="recap-rights">${esc(res.rights_question)}
       <div class="row"><button type="button" class="btn primary sm" data-testid="recap-rights-yes" data-say="Yes, use them with credit">Use them with credit</button>
       <button type="button" class="btn ghost sm" data-testid="recap-rights-no" data-say="No, title cards instead">Title cards instead</button></div></div>` : "");
+  // only the answer buttons (the card itself is data-testid=rights-card: a click on it must not send "undefined")
   // the rights / Resume card can come before the first reply: show the thread whenever it has anything in it
   $("#agentThread").hidden = !$("#agentThread").innerHTML.trim();
-  $("#agentThread").querySelectorAll("[data-testid^=recap-rights-],[data-testid^=rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
+  $("#agentThread").querySelectorAll("button[data-say][data-testid^=recap-rights-],button[data-say][data-testid^=rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
   const rs = $("#agentThread [data-testid=mp-resume]");
   if (rs) rs.onclick = async () => { rs.disabled = true;
     try { const n = await api(`/api/agent/runs/${r.id}/resume`, { method: "POST", body: {} }); showRun(n); watch(n.id); } catch (e) { toast(e.message, 5000); rs.disabled = false; } };

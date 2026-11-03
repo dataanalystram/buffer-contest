@@ -139,6 +139,7 @@ def test_owner_sequence_in_the_browser(live, chromium):
         assert page.get_by_test_id("rights-card").count() == 0
         txt = page.get_by_test_id("agent-thread").inner_text()
         assert txt.count("Do you have the right") <= 1 and "now a Reel" in txt
+        assert "couldn't tell what to change" not in txt and "undefined" not in txt  # one click = one answer, no stray send
         # 5 "what templates can you use"
         _say(page, "you said video you found video and also can you check what else brand templates you can use")
         assert "Templates I can use" in page.get_by_test_id("agent-thread").inner_text()
