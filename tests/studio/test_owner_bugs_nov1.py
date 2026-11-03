@@ -144,7 +144,7 @@ def test_e2e_view_all_opens_a_full_library_on_the_same_filter(live, chromium, cl
     page.get_by_test_id("mp-filter").nth(1).click()  # Reels
     page.get_by_test_id("mp-view-all").click()
     page.get_by_test_id("library-item").first.wait_for()
-    assert page.get_by_test_id("library-kind").input_value() == "video"
+    assert page.locator("[data-testid=library-tab][aria-selected=true]").get_attribute("data-type") == "video"
     assert page.get_by_test_id("library-item").count() == 2
     assert not page.get_by_test_id("library-empty").is_visible()
 
