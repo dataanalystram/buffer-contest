@@ -988,7 +988,9 @@ class Tools(EditorialTools):
     # ---------------------------------------------------------------- the run's brand kit (owner, 3 Nov 2026)
     def _kit(self) -> dict:
         """The kit this run draws in: the one the person named in this run's thread, else the account's active kit."""
-        ko = self.state()["result"].get("kit_override") or {}
+        if not self.rid:  # a brand edit outside any run (/api/brand/edit): the account's kit
+            return self.h.kit(self.a)
+        ko = (self.state().get("result") or {}).get("kit_override") or {}
         return ko["kit"] if isinstance(ko.get("kit"), dict) else self.h.kit(self.a)
 
     def _said_default(self) -> bool:
