@@ -95,8 +95,41 @@ def _brief(c: dict) -> dict:
     return {k: c[k] for k in keep if c.get(k) not in (None, "")}
 
 
-def media_find(query: str, max_results: int = 5, http=None, youtube_api_key: str | None = None) -> dict:
+def ph_media(query: str, token: str, http=None) -> tuple[list[dict], str]:
+    """Product Hunt's own media for a product link in the query (API, client-credentials token): the launch videos as
+    official candidates (credit "Video: <maker>"), then the gallery images. ([], note) when there is no link or token."""
+    from . import find as _find
+    from .video_first import is_product_link, ph_lookup
+    link = next((u for u in urls_in(query or "") if is_product_link(u)), "")
+    if not link:
+        return [], ""
+    if not token:
+        return [], "Product Hunt's API isn't configured here, so its launch video and gallery weren't read."
+    try:
+        ph = ph_lookup(link, token, http)
+    except Exception as e:  # noqa: BLE001 - the page/search steps still run
+        return [], f"Product Hunt's API didn't answer ({str(e)[:80]})."
+    if not ph:
+        return [], "Product Hunt has no launch for that link."
+    maker = ph.get("name") or ""
+    out = []
+    for v in (ph.get("all_videos") or [])[:3]:
+        c = _find._cand(v, "direct_post", source_page=link, kind="video")
+        c.update(how="product_hunt", confidence=0.97, official=True, credit=f"Video: {maker}" if maker else c.get("credit", ""),
+                 title=c.get("title") or f"{maker} launch video")
+        out.append(c)
+    for u in (ph.get("images") or [])[:6] + ([ph["thumbnail"]] if ph.get("thumbnail") else []):
+        c = _find._cand(u, "product_hunt", source_page=link, kind="image")
+        c.update(official=True, credit=f"Image: {maker} on Product Hunt" if maker else "Image: Product Hunt")
+        out.append(c)
+    return out, ""
+
+
+def media_find(query: str, max_results: int = 5, http=None, youtube_api_key: str | None = None, ph_token: str = "") -> dict:
+    ph, ph_note = ph_media(query, ph_token, http)
     cands = find_launch_video(query, http=http, max_results=max(max_results, 6), **({"youtube_api_key": youtube_api_key} if youtube_api_key else {}))
+    seen = {c["url"] for c in ph}
+    cands = ph + [c for c in cands if c["url"] not in seen]  # Product Hunt's official launch video first
     vids = [c for c in cands if c["kind"] == "video"]
     best = vids[0] if vids else None
     best_dl = next((c for c in vids if c.get("downloadable")), None)
@@ -107,6 +140,8 @@ def media_find(query: str, max_results: int = 5, http=None, youtube_api_key: str
                 f"the best fetchable video is {best_dl['url']}. Link the launch video in the caption.")
     elif not vids:
         note = "No video found: use the images, or generate some (media_generate_images)."
+    if ph_note:
+        note = (note + " " + ph_note).strip()
     return {"best_video": _brief(best) if best else None, "best_downloadable": _brief(best_dl) if best_dl else None,
             "candidates": [_brief(c) for c in cands[:max_results]], "images": [_brief(c) for c in imgs[:3]], "note": note}
 

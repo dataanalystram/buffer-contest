@@ -28,6 +28,7 @@
 <link rel="stylesheet" href="/static/reelmusic.css">
 <link rel="stylesheet" href="/static/sources.css">
 <link rel="stylesheet" href="/static/brandkit.css">
+<link rel="stylesheet" href="/static/onetake.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -258,36 +259,101 @@
           <div class="take-head" id="tkHead" data-testid="take-head"></div>
           <div class="take-grid">
             <ol class="timeline" id="tkTimeline" data-testid="take-timeline" aria-label="Progress"></ol>
-            <div>
-              <div class="clip-grid" id="clipGrid" data-testid="clip-grid"></div>
-              <div class="spread-bar" id="spreadBar" data-testid="spread-bar" hidden>
-                <span id="spreadCount" class="sm"></span>
-                <label class="sr" for="spreadWeek">Week</label><select id="spreadWeek" data-testid="spread-week"><option value="next">Next week</option><option value="this">This week</option></select>
-                <button class="btn" type="button" id="spreadGo" data-testid="spread-go">Spread into my week</button>
-                <span class="muted xs" id="spreadHelp">Shows the plan on your Planner first. Clips are saved only as Buffer drafts.</span>
-                <span class="muted sm" id="spreadSampleNote" data-testid="spread-sample-note" hidden>This is the sample take, so its clips can't go to your Buffer. Make clips from your own video to spread them into your week.</span>
-              </div>
-              <p class="st-err" id="spreadErr" data-testid="spread-error" role="alert"></p>
+            <div class="tk-clips">
+              <div class="tk-clips-head"><h2 class="card-title" id="tkClipsH">Clips <span class="muted" id="tkClipsN" data-testid="clip-count"></span></h2>
+                <label class="tk-sort"><span class="muted sm">Sort by</span><select id="tkSort" data-testid="clip-sort" aria-label="Sort clips"><option value="score">Score</option><option value="time">Order in the talk</option></select></label></div>
+              <ol class="clip-list" id="clipGrid" data-testid="clip-grid" aria-labelledby="tkClipsH"></ol>
             </div>
+            <aside class="tk-targets panel" id="tkTargets" data-testid="take-targets" aria-labelledby="tkTargetsH">
+              <h2 class="card-title" id="tkTargetsH">Channel targets</h2>
+              <p class="muted xs">What each channel gets from this take. Switch a channel off to leave it out of the Spread.</p>
+              <ul class="tk-tg" id="tkTgList" data-testid="take-target-list"></ul>
+            </aside>
           </div>
+          <div class="spread-bar" id="spreadBar" data-testid="spread-bar" hidden>
+            <span id="spreadCount" class="sm"></span>
+            <label class="sr" for="spreadWeek">Week</label><select id="spreadWeek" data-testid="spread-week"><option value="next">Next week</option><option value="this">This week</option></select>
+            <button class="btn" type="button" id="spreadGo" data-testid="spread-go">Spread into my week</button>
+            <span class="muted xs" id="spreadHelp">Shows the plan on your Planner first. Clips are saved only as Buffer drafts.</span>
+            <span class="muted sm" id="spreadSampleNote" data-testid="spread-sample-note" hidden>This is the sample take, so its clips can't go to your Buffer. Make clips from your own video to spread them into your week.</span>
+          </div>
+          <p class="st-err" id="spreadErr" data-testid="spread-error" role="alert"></p>
         </section>
         <h2 class="sec">Your takes</h2>
         <div id="takeList" class="runlist" data-testid="take-list"></div>
-        <dialog class="pl-dialog clip-dialog" id="clipDialog" data-testid="clip-dialog" aria-labelledby="ceTitle">
-          <form id="ceForm" method="dialog">
-            <h2 class="card-title" id="ceTitle">Trim and caption</h2>
-            <div class="ce-trim"><span class="label">In <b id="ceIn" data-testid="clip-in"></b></span>
-              <span class="row"><button type="button" class="btn2 sm" data-nudge="s:-0.5" data-testid="clip-in-earlier" aria-label="Start half a second earlier">−0.5 s</button><button type="button" class="btn2 sm" data-nudge="s:0.5" data-testid="clip-in-later" aria-label="Start half a second later">+0.5 s</button></span>
-              <span class="label">Out <b id="ceOut" data-testid="clip-out"></b></span>
-              <span class="row"><button type="button" class="btn2 sm" data-nudge="e:-0.5" data-testid="clip-out-earlier" aria-label="End half a second earlier">−0.5 s</button><button type="button" class="btn2 sm" data-nudge="e:0.5" data-testid="clip-out-later" aria-label="End half a second later">+0.5 s</button></span>
-              <span class="muted sm" id="ceLen" data-testid="clip-length"></span></div>
-            <div class="ce-words" id="ceWords" data-testid="clip-words" aria-label="Transcript around the clip"></div>
-            <p class="muted xs" id="ceTrimNote"></p>
-            <div class="field"><label class="label" for="ceHook">Cover hook (a line you said in this clip)</label><input id="ceHook" data-testid="clip-hook-input" maxlength="120"></div>
-            <div class="field"><label class="label" for="ceCaption">Post caption for <select id="ceSvc" data-testid="clip-caption-service" aria-label="Network"></select></label><textarea id="ceCaption" data-testid="clip-caption" rows="4" maxlength="5000"></textarea></div>
-            <p class="st-err" id="ceErr" data-testid="clip-edit-error" role="alert"></p>
-            <div class="pl-dlg-act"><span></span><span class="row"><button class="btn2 sm" type="button" id="ceCancel" data-testid="clip-edit-cancel">Cancel</button>
-              <button class="btn sm" type="submit" id="ceSave" data-testid="clip-edit-save">Save</button></span></div>
+        <dialog class="ce-dialog" id="clipDialog" data-testid="clip-dialog" aria-labelledby="ceTitle">
+          <form id="ceForm" method="dialog" class="ce">
+            <header class="ce-head">
+              <span class="ce-mark" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg></span>
+              <div><h2 class="card-title" id="ceTitle">Trim &amp; caption</h2><p class="muted sm" id="ceSub">Edit the timing, fix the transcript, and write each channel's caption.</p></div>
+              <button type="button" class="btn2 sm icon ce-x" id="ceClose" data-testid="clip-edit-close" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+            </header>
+            <div class="ce-body">
+              <div class="ce-prev">
+                <div class="ce-stage" id="ceStage">
+                  <video id="cePlayer" data-testid="clip-player" playsinline preload="metadata"></video>
+                  <span class="ce-cc" id="ceCcText" data-testid="clip-cc-text" aria-hidden="true" hidden></span>
+                  <span class="ce-n" data-testid="clip-position"><button type="button" class="ce-nav" id="cePrevClip" data-testid="clip-prev" aria-label="Previous clip"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button><span id="ceNum"></span><button type="button" class="ce-nav" id="ceNextClip" data-testid="clip-next" aria-label="Next clip"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button></span>
+                </div>
+                <div class="ce-ctl">
+                  <button type="button" class="btn2 sm icon" id="cePlay" data-testid="clip-play" aria-label="Play"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg></button>
+                  <span class="ce-time" id="ceTime" data-testid="clip-time">0:00 / 0:00</span>
+                  <button type="button" class="btn2 sm ce-ccb" id="ceCc" data-testid="clip-cc" aria-pressed="false" title="Show the captions as you've edited them">CC</button>
+                </div>
+                <div class="ce-bar" aria-hidden="true"><i id="ceBar"></i></div>
+                <p class="muted xs" id="cePrevNote" data-testid="clip-preview-note"></p>
+              </div>
+              <div class="ce-side">
+                <div class="ce-tabs" role="tablist" aria-label="Edit">
+                  <button type="button" role="tab" id="ceTabTrim" data-cetab="trim" data-testid="clip-tab-trim" aria-selected="true" aria-controls="cePaneTrim">Trim</button>
+                  <button type="button" role="tab" id="ceTabText" data-cetab="text" data-testid="clip-tab-transcript" aria-selected="false" aria-controls="cePaneText">Transcript</button>
+                  <button type="button" role="tab" id="ceTabCap" data-cetab="cap" data-testid="clip-tab-caption" aria-selected="false" aria-controls="cePaneCap">Caption</button>
+                  <button type="button" role="tab" id="ceTabMusic" data-cetab="music" data-testid="clip-tab-music" aria-selected="false" aria-controls="cePaneMusic" hidden>Music</button>
+                </div>
+                <section class="ce-pane" id="cePaneTrim" role="tabpanel" aria-labelledby="ceTabTrim">
+                  <div class="ce-row"><h3 class="ce-h">Clip timing</h3><span class="muted sm">Total duration <b id="ceLen" data-testid="clip-length"></b></span></div>
+                  <div class="ce-io">
+                    <div class="ce-io-g"><span class="label">In</span><output id="ceIn" data-testid="clip-in"></output>
+                      <button type="button" class="btn2 sm" data-nudge="s:-0.5" data-testid="clip-in-earlier" aria-label="Start half a second earlier">−0.5 s</button><button type="button" class="btn2 sm" data-nudge="s:0.5" data-testid="clip-in-later" aria-label="Start half a second later">+0.5 s</button></div>
+                    <div class="ce-io-g"><span class="label">Out</span><output id="ceOut" data-testid="clip-out"></output>
+                      <button type="button" class="btn2 sm" data-nudge="e:-0.5" data-testid="clip-out-earlier" aria-label="End half a second earlier">−0.5 s</button><button type="button" class="btn2 sm" data-nudge="e:0.5" data-testid="clip-out-later" aria-label="End half a second later">+0.5 s</button></div>
+                  </div>
+                  <div class="ce-strip" id="ceStrip" data-testid="clip-filmstrip">
+                    <div class="ce-frames" id="ceFrames"></div>
+                    <div class="ce-sel" id="ceSel"></div>
+                    <button type="button" class="ce-hd ce-h-in" id="ceHIn" data-testid="clip-handle-in" role="slider" aria-label="In point" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></button>
+                    <button type="button" class="ce-hd ce-h-out" id="ceHOut" data-testid="clip-handle-out" role="slider" aria-label="Out point" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></button>
+                  </div>
+                  <div class="ce-strip-lab muted xs"><span id="ceLo"></span><span id="ceHi"></span></div>
+                  <p class="muted xs" id="ceTrimNote" data-testid="clip-trim-note"></p>
+                </section>
+                <section class="ce-pane" id="cePaneText" role="tabpanel" aria-labelledby="ceTabText" hidden>
+                  <div class="field"><label class="label" for="ceText">Transcript <span class="muted">(editable)</span></label>
+                    <textarea id="ceText" data-testid="clip-transcript" rows="6" maxlength="6000"></textarea>
+                    <span class="muted xs">Fixing a word here fixes it in the burned-in captions. The timing follows the voice.</span></div>
+                  <div class="field"><label class="label" for="ceHook">Cover hook <span class="muted">(a line you said in this clip)</span></label>
+                    <input id="ceHook" data-testid="clip-hook-input" maxlength="120" aria-describedby="ceHookHelp">
+                    <span class="muted xs" id="ceHookHelp" data-testid="clip-hook-help">At least 3 words, quoted from the transcript.</span></div>
+                </section>
+                <section class="ce-pane" id="cePaneCap" role="tabpanel" aria-labelledby="ceTabCap" hidden>
+                  <span class="label" id="ceSvcL">Post caption for</span>
+                  <div class="chips ce-svcs" id="ceSvcs" data-testid="clip-caption-services" role="group" aria-labelledby="ceSvcL"></div>
+                  <div class="ce-cap"><label class="sr" for="ceCaption">Caption</label><textarea id="ceCaption" data-testid="clip-caption" rows="6" maxlength="5000"></textarea>
+                    <div class="ce-cap-foot"><button type="button" class="link sm" id="ceRewrite" data-testid="clip-rewrite">Rewrite with AI</button>
+                      <span class="ce-count" id="ceCount" data-testid="clip-caption-count" aria-live="polite"></span></div>
+                    <div class="ce-len" aria-hidden="true"><i id="ceLenBar"></i></div></div>
+                </section>
+                <section class="ce-pane" id="cePaneMusic" role="tabpanel" aria-labelledby="ceTabMusic" hidden>
+                  <div id="ceMusic" data-testid="clip-music"></div>
+                </section>
+              </div>
+            </div>
+            <footer class="ce-foot">
+              <p class="muted xs ce-dirty" id="ceDirty" data-testid="clip-edit-status" aria-live="polite"></p>
+              <p class="st-err" id="ceErr" data-testid="clip-edit-error" role="alert"></p>
+              <span class="row"><button class="btn2" type="button" id="ceCancel" data-testid="clip-edit-cancel">Cancel</button>
+                <button class="btn" type="submit" id="ceSave" data-testid="clip-edit-save">Save changes</button></span>
+            </footer>
           </form>
         </dialog>
       </div>
@@ -424,6 +490,7 @@
           <button type="button" role="tab" data-sub="sources" data-testid="news-tab-sources" aria-selected="false">Sources</button>
         </div>
         <section class="sub" data-sub="feed" data-testid="news-feed">
+          <div id="nfFor" class="nf-for" data-testid="news-interests" hidden></div>
           <div id="stories" class="nf-grid" data-testid="story-list"></div>
           <div class="row nf-pager"><button class="btn2 sm" type="button" id="nfMore" data-testid="news-more" hidden>Show more</button></div>
           <div id="nfPager" class="pg-wrap" data-testid="news-pager" hidden></div>
@@ -616,6 +683,7 @@
 <script src="/static/library.js"></script>
 <script src="/static/planner.js"></script>
 <script src="/static/take.js"></script>
+<script src="/static/takeedit.js"></script>
 <script src="/static/tour.js"></script>
 <script src="/static/connect.js"></script>
 <script src="/static/shell.js"></script>

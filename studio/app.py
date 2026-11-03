@@ -868,6 +868,12 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def take_adjust(rid: int, clip_id: str, request: Request, body: dict = Body(...)):
         return house.takes.adjust(actor(request, write=True), rid, clip_id, body)
 
+    @app.post("/api/takes/{rid}/clips/{clip_id}/rewrite")
+    def take_rewrite(rid: int, clip_id: str, request: Request, body: dict = Body(default={})):
+        """rewrite_clip_caption: an AI suggestion for one clip's caption on one network (not saved until adjust_clip)."""
+        return house.takes.rewrite_caption(actor(request, write=True), rid, clip_id, str(body.get("service") or ""),
+                                           str(body.get("text") or ""))
+
     @app.post("/api/takes/{rid}/place")
     def take_place(rid: int, request: Request, body: dict = Body(default={})):
         """place_clips_in_week: dry_run (default) returns the plan + confirm_token; confirm_token creates Buffer drafts."""
