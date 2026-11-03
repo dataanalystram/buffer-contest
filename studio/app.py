@@ -748,6 +748,32 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "This link expired or is not valid. Ask get_media_preview for a new one."}, status_code=403)
         return media(token, request)
 
+    @app.get("/api/media/{token}/preview")
+    def media_preview(token: str, request: Request, frames_at: str = "0,1,2", width: int = 480):
+        """get_media_preview: frame stills (base64 JPEG) of your own video or image, and a 15-minute signed link."""
+        from . import mcp_parity
+        try:
+            times = [float(x) for x in frames_at.split(",") if x.strip()][:mcp_parity.MAX_FRAMES]
+        except ValueError:
+            raise ActionError("frames_at is seconds separated by commas, e.g. 0,1,2", 400)
+        out = mcp_parity.media_preview(studio, actor(request), {"media_token": token, "frames_at": times, "width": width})
+        out["images"] = out.pop("_mcp_images", [])
+        return out
+
+    @app.post("/api/buffer/drafts/{post_id}/media")
+    def draft_media(post_id: str, request: Request, body: dict = Body(...)):
+        """replace_draft_media: new media on a Buffer draft (any draft); the old one is deleted only with delete_old + confirm."""
+        from . import mcp_parity
+        a = actor(request, write=True)
+        studio._guard_write(a, "replace_draft_media")
+        return mcp_parity.replace_draft_media(studio, a, {**(body or {}), "post_id": post_id})
+
+    @app.get("/api/agent/pages")
+    def agent_pages(request: Request, page: str = ""):
+        """get_page_context: what each page shows and which MCP tools do the same things there."""
+        from . import mcp_parity
+        return mcp_parity.page_context(studio, actor(request), {"page": page})
+
     @app.get("/api/media/health")
     def media_health(request: Request, refresh: int = 0):
         """Ready posts whose files are gone (deleted from the Library): the startup / periodic check's result for you."""
