@@ -293,9 +293,9 @@ def test_sample_workspace_library_is_read_only(tmp_path):
     assert len([i for i in lst["items"] if i["id"].startswith("sample-") and i["kind"] == "video"]) == 5
     assert c.post("/api/library/upload?name=a.mp4", content=MP4).status_code == 403
     assert c.delete("/api/library/1").status_code == 403
-    # the sample still takes a Make a post upload (kept as run media, not in a Library)
-    up = c.post("/api/media", json={"name": "me.jpg", "data": base64.b64encode(jpeg(600, 800)).decode()}).json()
-    assert up["token"] and "library_id" not in up
+    # the view-only demo takes no uploads at all (Make a post runs on the sample media)
+    up = c.post("/api/media", json={"name": "me.jpg", "data": base64.b64encode(jpeg(600, 800)).decode()})
+    assert up.status_code == 403 and up.json()["view_only"] and "upload your file" in up.json()["error"]
 
 
 def test_transcribe_job_round_trip(owner, monkeypatch):

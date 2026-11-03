@@ -37,11 +37,11 @@ def test_fix_and_reschedule_a_failed_post_clears_it(client):
     c = demo(client)
     failed = {g["key"]: g for g in c.get("/api/inbox").json()["groups"]}["failed"]["items"][0]
     r = c.post(f"/api/posts/{failed['id']}/reschedule", json={"due_at": "2099-01-05T09:00:00Z"})
-    assert r.status_code == 200, r.text
+    # the view-only demo shows the failed post and its Fix and reschedule, but moving it is refused and nothing changes
+    assert r.status_code == 403 and r.json()["view_only"], r.text
+    assert "In the real app this would change this post in Buffer." in r.json()["error"]
     after = {g["key"]: g for g in c.get("/api/inbox").json()["groups"]}
-    assert after["failed"]["count"] == 0 and after["failed"]["summary"] == "Nothing has bounced."
-    cal = c.get("/api/calendar").json()["items"]
-    assert any(i["id"] == failed["id"] and i["state"] == "scheduled" for i in cal)
+    assert after["failed"]["count"] >= 1 and any(i["id"] == failed["id"] for i in after["failed"]["items"])
 
 
 def test_calendar_shows_failed_posts_with_the_reason(client):

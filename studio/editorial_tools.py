@@ -130,7 +130,7 @@ class EditorialTools:
         if not name:
             raise ActionError("Name the company (research_company name='ernd').")
         if self.demo and not demo_guard.take(self.store, self.a.uid, "research"):
-            raise ActionError(demo_guard.WHY["research"])
+            raise ActionError(demo_guard.why("research"))
         run = self.state()
         res = run["result"]
         urls = [u for u in (urls or (run["input"].get("intake") or {}).get("urls") or []) if isinstance(u, str)][:4]

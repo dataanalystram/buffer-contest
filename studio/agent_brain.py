@@ -20,7 +20,7 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, brain_llm, budget, demo_guard, editorial_tools, intake, llm, untrusted
+from . import activity, brain_llm, budget, demo_guard, demo_view, editorial_tools, intake, llm, untrusted
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -102,7 +102,7 @@ class Brain:
     def start(self, a: Actor, body: dict) -> dict:
         self.h.studio._guard_write(a, "agent_run")
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
-            raise ActionError(demo_guard.WHY["run"], 429)
+            raise ActionError(demo_guard.why("run"), 429)
         prompt = str(body.get("prompt") or body.get("query") or "").strip()
         if len(prompt) > intake.MAX_PROMPT:
             raise ActionError(f"Prompts up to {intake.MAX_PROMPT:,} characters.", 413)
@@ -573,7 +573,7 @@ class Brain:
         if self.h.sync:
             fn(*args)
         else:
-            _pool.submit(self._safe, fn, *args)
+            demo_view.submit(_pool, self._safe, fn, *args)  # carries the demo's no-outbound guard into the thread
 
     def _safe(self, fn, *args):
         try:
@@ -898,7 +898,9 @@ class Brain:
         it = inp["intake"]
         up = res.get("upload") or {}
         company = "" if up else editorial_tools.company_request(inp["prompt"], it.get("urls"))
-        if company:
+        # the company plan researches live pages; a demo with research closed (always, in the view-only demo) takes the
+        # news plan, which reads the bundled sample story
+        if company and not (tools.demo and not demo_guard.allowed(self.store, a.uid, "research")):
             return self._company_plan(a, rid, tools, company, brain)
         from_upload = bool(up) and not it["source_url"] and (res.get("source") or {}).get("via") == "upload"
         plan = [f"Read your {up['type']}" + (" and transcribe it" if up.get("type") == "video" else "")] if up else []
