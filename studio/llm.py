@@ -107,7 +107,8 @@ def public_view(store, uid: str, settings) -> dict:
 
 def chat(engine: dict, system: str, user: str, *, http: httpx.Client | None = None, max_tokens: int = 1800,
          want_json: bool = True, timeout: float = 60) -> str:
-    from . import netguard
+    from . import netguard, untrusted
+    system, user = untrusted.scrub(untrusted.with_notice(system)), untrusted.scrub(user)  # outside text is data; no secrets
     base = check_engine(engine)  # every call, not only when the key was saved
     hosts = allowed_hosts(engine)
     https_only = (engine.get("provider") != "free") or base.startswith("https://")
