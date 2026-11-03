@@ -686,7 +686,8 @@ class House:
             self._save(rid, d["steps"], d["result"], "failed")
         if isinstance(d.get("result"), dict):
             self.annotate_media(d["result"])
-        return d
+        from . import mcp_runs  # what an MCP client (Claude, ChatGPT...) did on this run: its steps and its brain line
+        return mcp_runs.merge(self.store, d)
 
     def _sweep_quietly(self) -> None:
         try:
@@ -736,6 +737,8 @@ class House:
         return out
 
     def _save(self, rid: int, steps: list, result: dict, status: str | None = None) -> None:
+        from . import mcp_runs
+        steps, result = mcp_runs.strip(steps, result)  # MCP steps live in mcp_calls, merged on read (never stored twice)
         if isinstance(result, dict) and result.get("packages"):  # media_state is read fresh on every view, never stored
             result = {**result, "packages": [{k: v for k, v in p.items() if k not in ("media_state", "media_missing")}
                                              if isinstance(p, dict) else p for p in result["packages"]]}

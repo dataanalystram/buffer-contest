@@ -90,6 +90,9 @@ async function choose(id) {
   try {
     const st = await api("/api/ai/engine", { method: "PUT", body: { engine: id } });
     paint(st);
+    // Make a post's chip and footer read H_STATE.brain: refresh it, so the new pick shows at once (it was stale: NVIDIA)
+    try { const b = await api("/api/agent/brain"); if (window.H_STATE) window.H_STATE.brain = b.brain; } catch (_) {}
+    if (window.hcDrawModel) window.hcDrawModel();
     const o = id === "auto" ? AUTO : st.engines.find((x) => x.id === id);
     if (window.toast) toast(st.note || `Your agent now uses ${o ? (o.short || o.label) : id}`, st.note ? 6000 : 3000);
     const f = q(`[data-eng="${id}"]`); if (f && document.activeElement && document.activeElement.closest && document.activeElement.closest("#aiEngines")) f.focus();
