@@ -208,7 +208,7 @@
 .lp-grid.lp-list .lp-thw.stack::before,.lp-grid.lp-list .lp-thw.stack::after{display:none}
 .lp-grid.lp-list .lp-badge,.lp-grid.lp-list .lp-dur{display:none}
 .lp-grid.lp-list .lp-th{border-radius:8px}
-.lp-grid.lp-list .lp-info{grid-column:3;grid-row:1;padding:0;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.2fr);align-items:center;column-gap:16px}
+.lp-grid.lp-list .lp-info{grid-column:3;grid-row:1;padding:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) minmax(0,.8fr);align-items:center;column-gap:16px}
 .lp-grid.lp-list .lp-trow{grid-column:1 / -1;grid-row:1}
 .lp-grid.lp-list .lp-meta{grid-column:1;grid-row:2}
 .lp-grid.lp-list .lp-by{grid-column:2;grid-row:2}

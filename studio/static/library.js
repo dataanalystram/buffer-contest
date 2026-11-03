@@ -266,6 +266,8 @@ document.addEventListener("keydown", (e) => {
 // ---------------------------------------------------------------- tabs, filters, search, layout
 function libPaintControls() {
   document.querySelectorAll("#libTabs [role=tab]").forEach((b) => { const on = b.dataset.type === LIB.f.type; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
+  const tl = $("#libTabs"), st = tl.querySelector("[aria-selected=true]");  // keep the chosen tab in view on a phone
+  if (st && (st.offsetLeft < tl.scrollLeft || st.offsetLeft + st.offsetWidth > tl.scrollLeft + tl.clientWidth)) tl.scrollLeft = st.offsetLeft - 8;
   $("#libPills").innerHTML = FILTERS.map((f) => {
     const cur = LIB.f[f.key], label = cur ? ((f.opts.find(([v]) => v === cur) || [])[1] || cur) : f.all;
     return `<span class="lp-mw"><button type="button" class="lp-pill${cur ? " on" : ""}" data-f="${f.key}" data-testid="library-filter-${f.key.replace("_", "-")}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(f.label)}: ${esc(label)}">${f.icon}<span class="lp-pill-k">${esc(f.label)}</span><span class="lp-pill-v">${esc(label)}</span>${IC.chev}</button>
