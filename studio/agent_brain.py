@@ -54,9 +54,6 @@ using ONLY the tools. Rules:
 - A YouTube link: read_url reads the real video (title, channel, description from the YouTube Data API or oEmbed) and
   looks for the file itself (the YouTube fallback route, then the maker's own copy on its website). The facts come from
   that video only. "with my <name> brand kit" / "in my theme" (intake.style) says how to style it, never what it is about.
-- A YouTube link: read_url reads the real video (title, channel, description from the YouTube Data API or oEmbed) and
-  looks for the file itself (the YouTube fallback route, then the maker's own copy on its website). The facts come from
-  that video only. "with my <name> brand kit" / "in my theme" (intake.style) says how to style it, never what it is about.
 - Context.theme "none" means "No style: post my video as it is": render_reel only fits it to the frame with the logo and the
   end card; never add captions, a theme or music then.
 - Plan first: reply with a short numbered plan (one line per step), then call the tools in that order.
