@@ -212,7 +212,11 @@ $("#ceForm").addEventListener("submit", async (ev) => {
 $("#spreadGo").onclick = async () => {
   const b = $("#spreadGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Finding open slots…`;
   try {
-    const out = await api(`/api/takes/${T.take.id}/place`, { method: "POST", body: { dry_run: true, week_of: $("#spreadWeek").value } });
+    // only the channels selected in the chips (owner bug 2 Nov 2026: the Spread planned every channel of the take)
+    const takeCh = new Set((T.take.input.channels || []).map((x) => x.id));
+    const chosen = [...T.sel].filter((id) => takeCh.has(id));
+    if (!chosen.length) { const m = "Select at least one of this take's channels above to spread it."; $("#spreadErr").textContent = m; toast(m, 6000); return; }
+    const out = await api(`/api/takes/${T.take.id}/place`, { method: "POST", body: { dry_run: true, week_of: $("#spreadWeek").value, channel_ids: chosen } });
     T.plan = out;
     $("#spreadErr").textContent = "";
     if (!out.plan.placements.length) { const m = out.plan.unplaced[0]?.why || "No open posting slots that week."; $("#spreadErr").textContent = m; toast(m, 6000); return; }
