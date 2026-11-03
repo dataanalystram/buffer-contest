@@ -129,14 +129,23 @@
 #runView.hc .hc-send:disabled{opacity:.45}
 .hc-cfoot{display:none}
 @media (max-width:1180px){.hc-hint{display:none}}
+/* touch sizes: every control in the dock is a 44 px target (the design system's rule) */
+@media (max-width:860px),(pointer:coarse){
+  #runView.hc .mp-composer .quickfix .chip{min-height:44px;height:44px}
+  .hc-attach.btn2,.hc-attach,.hc-pill,#runView.hc .hc-send{height:44px;min-height:44px}
+  .hc-attach.btn2,.hc-attach,#runView.hc .hc-send{min-width:44px}
+  #runView.hc .hc-dock .mp-acts.hc-ready .btn,#runView.hc .hc-dock .mp-acts.hc-ready .btn2{min-height:44px;height:44px}
+  .hc-newb{min-height:44px;height:44px}.hc-search input{height:44px}.hc-th-r{min-height:44px;width:44px;margin:0}
+  .hc-menu,.hc-chip,#runView.hc #mpNew{min-height:44px;height:44px}.hc-menu{width:44px}
+}
 @media (max-width:860px){
   .hc-dock{bottom:calc(68px + env(safe-area-inset-bottom))}
   #runView.hc .mp-composer.revise{bottom:auto}
 }
 @media (max-width:600px){
   .hc-attach-l,.hc-send-l{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-  .hc-attach.btn2,.hc-attach{width:36px;padding:0;justify-content:center}
-  #runView.hc .hc-send{width:36px;padding:0;justify-content:center}
+  .hc-attach.btn2,.hc-attach{width:44px;padding:0;justify-content:center}
+  #runView.hc .hc-send{width:44px;padding:0;justify-content:center}
   .hc-pill{max-width:58%}
   .hc-dock{padding:6px 0 8px;margin-left:-2px;margin-right:-2px}
   #runView.hc .mp-acts.hc-ready{position:static;flex-wrap:wrap}
@@ -185,7 +194,7 @@
 
 /* ---------------------------------------------------------------- Settings nav: neutral and quiet */
 #tab-settings.set-tabs>.set-nav{border:0;background:none;padding:0;gap:1px}
-.set-nav button{min-height:40px;border-radius:9px;font-weight:500;color:var(--muted)}
+.set-nav button{min-height:44px;border-radius:9px;font-weight:500;color:var(--muted)}
 .set-nav button:hover{background:var(--hov-bg);color:var(--ink)}
 .set-nav button.on,.set-nav button[aria-selected=true]{background:var(--sel-bg);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--sel-line)}
 .set-nav button:focus-visible{outline:2px solid var(--focus,var(--ink));outline-offset:-2px}
@@ -195,7 +204,7 @@
 }
 
 /* ---------------------------------------------------------------- Make a post start screen: tighter hierarchy */
-.mp2 .mp-chips .chip,.mp2 #mpChips .chip,.mp2 #mpChips button{min-height:36px}
+@media (min-width:861px) and (pointer:fine){.mp2 #mpChips .chip,.mp2 #mpChips button{min-height:36px}}
 .mp2 #agQuery{resize:none}
 
 /* ---------------------------------------------------------------- reduced motion: no movement at all */
