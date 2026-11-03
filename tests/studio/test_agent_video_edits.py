@@ -186,3 +186,21 @@ def test_spread_plans_only_the_selected_channels():
     run = {"input": {"channels": [{"id": "yt"}, {"id": "ig"}]}, "result": {"clips": [{"id": "c1", "url": "u", "status": "ready"}]}}
     with pytest.raises(ActionError, match="None of the selected channels"):
         t._plan(None, run, ["other"], None, None)
+
+
+def test_trim_cuts_inside_the_window_the_reel_shows(owner, renders, monkeypatch):  # noqa: F811
+    """Live 3 Nov 2026: the news Reel showed an auto-picked window (14-74 s) of an 89 s film; "trim the first 3 seconds"
+    re-cut from 3 s to the film's end (86 s). The cut is relative to what the person sees: 17-74 s."""
+    from studio.house import House
+    rid = _video_run(owner)
+    owner.post(f"/api/agent/runs/{rid}/tools/render_reel", json={"channel_ids": ["ch_yt"], "style": "huhbyte_news"})
+    first = renders[-1]
+    real = House.media_meta
+    monkeypatch.setattr(House, "media_meta", lambda self, a, t: {"type": "video", "clip": [14.0, 74.0, "auto"]}
+                        if t == f"r{len(renders) - 1}.mp4" else real(self, a, t))
+    n0 = len(renders)
+    owner.post(f"/api/agent/runs/{rid}/messages", json={"text": "trim the first 3 seconds"})
+    assert first["clip"] is None and renders[n0:] and all(c["clip"] == [17.0, 74.0] for c in renders[n0:])
+    n1 = len(renders)  # a later edit keeps that cut; a second trim adds up
+    owner.post(f"/api/agent/runs/{rid}/messages", json={"text": "trim the first 2 seconds"})
+    assert all(c["clip"] == [19.0, 74.0] for c in renders[n1:])

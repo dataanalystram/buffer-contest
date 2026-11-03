@@ -1227,6 +1227,23 @@ class Tools(EditorialTools):
             self._refresh_packages()
         return out
 
+    def _shown_window(self, res: dict) -> list | None:
+        """[start, end] in the source that the run's current Reel shows (the worker records it on the file), or None."""
+        for v in (res.get("channel_media") or {}).values():
+            if v.get("format") != "reel" or not v.get("media"):
+                continue
+            try:
+                meta = self.h.media_meta(self.a, (v["media"][0] or {}).get("token") or "") or {}
+            except Exception:  # noqa: BLE001  no record: cut from the start of the source
+                meta = {}
+            c = meta.get("clip")
+            if isinstance(c, (list, tuple)) and len(c) >= 2:
+                try:
+                    return [float(c[0]), float(c[1])]
+                except (TypeError, ValueError):
+                    return None
+        return None
+
     def t_edit_video(self, cut_first_s: float | None = None, end_s: float | None = None, captions: bool | None = None,
                      theme: str | None = None, ratio: str | None = None, channel_ids: list | None = None) -> dict:
         """Plain-word edits on THIS run's video ('trim the first 3 seconds and add captions', 'switch to the Nothing theme',
@@ -1238,8 +1255,17 @@ class Tools(EditorialTools):
         ed = dict(res.get("video_edits") or {})
         did = []
         if cut_first_s not in (None, "") or end_s not in (None, ""):
-            c0 = max(0.0, float(cut_first_s or 0))
-            c1 = float(end_s) if end_s not in (None, "") else c0 + 600.0  # the worker clamps the end to the source
+            # The seconds are the ones the person SEES: relative to the window the current Reel shows (a news Reel is an
+            # auto-picked 60 s window of a longer film). Live 3 Nov 2026: "trim the first 3 seconds" of a 68 s Reel came
+            # back 86 s, because the cut restarted from the source's 3 s and ran to its end.
+            base = ed.get("clip") or self._shown_window(res)
+            b0 = float(base[0]) if base else 0.0
+            b1 = float(base[1]) if base and len(base) > 1 and base[1] is not None else None
+            c0 = b0 + max(0.0, float(cut_first_s or 0))
+            if end_s not in (None, ""):
+                c1 = b0 + float(end_s)
+            else:
+                c1 = b1 if b1 is not None and b1 > c0 + 1 else c0 + 600.0  # the worker clamps the end to the source
             if c1 <= c0 + 1:
                 raise ActionError("The cut must leave at least one second.")
             ed["clip"] = [round(c0, 2), round(c1, 2)]
