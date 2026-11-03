@@ -802,7 +802,9 @@ class Brain:
         it = inp["intake"]
         up = res.get("upload") or {}
         company = "" if up else editorial_tools.company_request(inp["prompt"], it.get("urls"))
-        if company:
+        # the company plan researches live pages; a demo with research closed (always, in the view-only demo) takes the
+        # news plan, which reads the bundled sample story
+        if company and not (tools.demo and not demo_guard.allowed(self.store, a.uid, "research")):
             return self._company_plan(a, rid, tools, company, brain)
         from_upload = bool(up) and not it["source_url"] and (res.get("source") or {}).get("via") == "upload"
         plan = [f"Read your {up['type']}" + (" and transcribe it" if up.get("type") == "video" else "")] if up else []
