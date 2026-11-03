@@ -628,25 +628,72 @@ class Library:
         self.store.x("UPDATE library_items SET storage='trash', token=?, meta=? WHERE id=?",
                      (TRASH_TOKEN + d["token"], json.dumps(meta), d["id"]))
 
-    def trash(self, a: Actor) -> dict:
-        rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND storage='trash' ORDER BY id DESC LIMIT 200", (a.uid,))
+    def _bin_rows(self, a: Actor, ids: list[int] | None = None) -> list[dict]:
+        sql, args = "SELECT * FROM library_items WHERE user_id=? AND storage='trash'", [a.uid]
+        if ids is not None:
+            sql += f" AND id IN ({','.join('?' * len(ids))})"
+            args += ids
         out = []
-        for r in rows:
-            m = json.loads(r["meta"] or "{}")
-            t = m.get("trash") or {}
-            out.append({"id": r["id"], "name": r["name"], "kind": r["kind"], "size": int(r["size"] or 0), "deleted_at": t.get("at"),
-                        "purge_at": (t.get("at") or 0) + TRASH_DAYS * 86400})
-        return {"items": out, "days": TRASH_DAYS}
+        for r in self.store.q(sql + " ORDER BY id DESC", tuple(args)):
+            d = dict(r)
+            d["meta"] = json.loads(d["meta"] or "{}")
+            out.append(d)
+        return out
+
+    def trash(self, a: Actor, offset: int = 0, per: int = 0) -> dict:
+        """The Bin: items deleted in the last TRASH_DAYS days, newest first, each with how long until it's removed for good."""
+        if demo_guard.is_demo(a.uid):
+            return {"items": [], "days": TRASH_DAYS, "total": 0}
+        rows, now = self._bin_rows(a), _now()
+        runs = self._runs(a) if rows else []
+        out = []
+        for d in rows:
+            t = d["meta"].get("trash") or {}
+            at = t.get("at") or 0
+            purge = at + TRASH_DAYS * 86400
+            left = max(0.0, purge - now)
+            used, _, sched = self._uses(d, runs, t.get("tokens") or [t.get("token")])
+            url = f"/api/library/bin/{d['id']}/file"
+            ntok = len(t.get("tokens") or [1])
+            out.append({"id": d["id"], "name": d["name"], "kind": d["kind"], "mime": d["mime"], "source": d["source"],
+                        "size": int(d["size"] or 0), "created": d["created"], "deleted_at": at, "purge_at": purge,
+                        "days_left": int(-(-left // 86400)) if left else 0, "url": url, "thumb": url if d["kind"] != "video" else "",
+                        "slides": [f"{url}?i={i}" for i in range(ntok)] if d["kind"] == "carousel" else None,
+                        "used_in": [{k: v for k, v in u.items() if not k.startswith("_")} for u in used],
+                        "scheduled_use": bool(sched)})
+        total = len(out)
+        if per:
+            per, offset = max(1, min(int(per), 200)), max(0, int(offset or 0))
+            out = out[offset:offset + per]
+        return {"items": out, "days": TRASH_DAYS, "total": total}
+
+    def bin_file(self, a: Actor, iid, i: int = 0) -> dict:
+        """A binned item's file, for its owner only (the Bin's thumbnails and preview); /m/<token> still serves nothing."""
+        rows = self._bin_rows(a, [int(iid)])
+        if not rows:
+            raise ActionError("That item isn't in the Bin.", 404)
+        d = rows[0]
+        t = d["meta"].get("trash") or {}
+        if (t.get("storage") or "media") == "chunks":
+            return self._file_of({**d, "storage": "chunks"}, i)
+        toks = [TRASH_TOKEN + x for x in (t.get("tokens") or [t.get("token")]) if x]
+        return self._file_of({**d, "storage": "media", "meta": {"tokens": toks}, "token": toks[0] if toks else ""}, i)
 
     def restore(self, a: Actor, iid) -> dict:
         if demo_guard.is_demo(a.uid):
             raise ActionError("Sample items can't be changed. Connect Buffer to manage your own Library.", 403)
         self.h.studio._guard_write(a, "restore_library_item")
-        rows = self.store.q("SELECT * FROM library_items WHERE id=? AND user_id=? AND storage='trash'", (int(iid), a.uid))
+        try:
+            iid = int(iid)
+        except (TypeError, ValueError):
+            raise ActionError("No such Library item.", 404)
+        rows = self.store.q("SELECT * FROM library_items WHERE id=? AND user_id=? AND storage='trash'", (iid, a.uid))
         if not rows:
-            raise ActionError("That item isn't in the Trash (it may have been removed for good after "
+            raise ActionError("That item isn't in the Bin (it may have been removed for good after "
                               f"{TRASH_DAYS} days).", 404)
-        r = dict(rows[0])
+        return self._restore_row(a, dict(rows[0]))
+
+    def _restore_row(self, a: Actor, r: dict) -> dict:
         m = json.loads(r["meta"] or "{}")
         t = m.pop("trash", {}) or {}
         storage, tok = t.get("storage") or "media", t.get("token") or r["token"].removeprefix(TRASH_TOKEN)
@@ -657,18 +704,57 @@ class Library:
         self.store.audit(a.uid, a.label, "restore_library_item", "safety", {"kind": r["kind"], "bytes": int(r["size"] or 0)})
         return {"restored": True, "id": r["id"]}
 
+    def restore_many(self, a: Actor, ids) -> dict:
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("Sample items can't be changed. Connect Buffer to manage your own Library.", 403)
+        self.h.studio._guard_write(a, "restore_library_item")
+        ids = self._ids(ids)
+        rows = {d["id"]: d for d in self._bin_rows(a, ids)}
+        done = []
+        for iid in ids:
+            if iid in rows:
+                d = rows[iid]
+                self._restore_row(a, {**d, "meta": json.dumps(d["meta"])})
+                done.append(iid)
+        return {"restored": done, "missing": [i for i in ids if i not in rows]}
+
+    def purge(self, a: Actor, ids=None, everything: bool = False) -> dict:
+        """Delete permanently from the Bin: the listed ids, or everything=true (Empty bin). Can't be undone. An item a post
+        scheduled in Buffer still uses is refused (Buffer fetches the file again when it publishes)."""
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("Sample items can't be deleted. Connect Buffer to manage your own Library.", 403)
+        self.h.studio._guard_write(a, "purge_library_bin")
+        want = None if everything else self._ids(ids)
+        rows = self._bin_rows(a, want)[:self.MAX_BULK]
+        runs = self._runs(a) if rows else []
+        done, refused = [], []
+        for d in rows:
+            t = d["meta"].get("trash") or {}
+            _, _, sched = self._uses(d, runs, t.get("tokens") or [t.get("token")])
+            if sched:
+                refused.append({"id": d["id"], "status": 409, "needs_force": False,
+                                "error": f"“{d['name']}” can't be deleted permanently: it's used in a post scheduled in Buffer "
+                                         f"(“{sched[0]['title'][:60]}”), and Buffer fetches the file again when it publishes."})
+                continue
+            self._purge_row(d)
+            done.append(d["id"])
+        if want is not None:
+            have = {d["id"] for d in rows}
+            refused += [{"id": i, "status": 404, "needs_force": False, "error": "That item isn't in the Bin."} for i in want if i not in have]
+        if done:
+            self.store.audit(a.uid, a.label, "purge_library_bin", "safety", {"items": len(done), "everything": bool(everything)})
+        return {"purged": done, "refused": refused}
+
     def purge_trash(self, days: float | None = None) -> int:
-        """Remove for good what has been in the Trash longer than ``days`` (TRASH_DAYS). Returns how many items."""
+        """Remove for good what has been in the Bin longer than ``days`` (TRASH_DAYS). Returns how many items."""
         cutoff = _now() - (TRASH_DAYS if days is None else days) * 86400
         n = 0
-        for r in self.store.q("SELECT id,user_id,meta FROM library_items WHERE storage='trash'"):
-            t = (json.loads(r["meta"] or "{}") or {}).get("trash") or {}
-            if (t.get("at") or 0) > cutoff:
+        for r in self.store.q("SELECT * FROM library_items WHERE storage='trash'"):
+            d = dict(r)
+            d["meta"] = json.loads(d["meta"] or "{}") or {}
+            if ((d["meta"].get("trash") or {}).get("at") or 0) > cutoff:
                 continue
-            if t.get("storage") == "media":
-                for x in t.get("tokens") or []:
-                    self.store.x("DELETE FROM media WHERE token=? AND user_id=?", (TRASH_TOKEN + x, r["user_id"]))
-            self._drop(r["id"])
+            self._purge_row(d)
             n += 1
         return n
 
@@ -686,6 +772,71 @@ class Library:
             out["run"] = self.h.brain.start(a, {"prompt": body["prompt"], "media_token": tok, "channel_ids": body.get("channel_ids"),
                                                 "format": body.get("format")})
         return out
+
+
+    # ---------------------------------------------------------------- Create draft (owner ask, 3 Nov 2026)
+    def draft_prefill(self, a: Actor, iid) -> dict:
+        """What "Create draft" opens with: the item's media and, per channel, the caption (and options) its run wrote, so a
+        draft can be saved without re-opening the run. Channels the run posted to (with this media) start ticked."""
+        d = self._row(a, iid)
+        runs = self._runs(a)
+        pub = self._public(d, runs)
+        toks = d["meta"].get("tokens") or [d["token"]]
+        rid = pub.get("run_id") or next((u["run_id"] for u in pub["used_in"]), None)
+        run = next((r for r in runs if r["run_id"] == rid), None)
+        pkgs = {p.get("channel_id"): p for p in ((run or {}).get("_res") or {}).get("packages") or [] if isinstance(p, dict)}
+
+        def uses_item(p):
+            blob = json.dumps(p.get("media_urls") or []) + json.dumps(p.get("media") or [])
+            return any(t in blob for t in toks)
+        mine = [c for c, p in pkgs.items() if uses_item(p)] or list(pkgs)
+        chans = []
+        for c in self.h.studio.channels(a):
+            if c.get("isDisconnected"):
+                continue
+            p = pkgs.get(c["id"]) or {}
+            chans.append({"channel_id": c["id"], "service": c.get("service"), "name": c.get("displayName") or c.get("name"),
+                          "text": p.get("text") or "", "options": p.get("options") or {}, "from_run": bool(p),
+                          "selected": c["id"] in mine})
+        media = [{"url": self.h.media_url(t), "type": "video" if d["kind"] == "video" else "photo"} for t in toks]
+        return {"item": pub, "run_id": rid, "media": media, "media_urls": [m["url"] for m in media], "channels": chans,
+                "default_text": next((p.get("text") for p in pkgs.values() if p.get("text")), "")}
+
+    def draft_from_library(self, a: Actor, iid, body: dict) -> dict:
+        """Save the item as a Buffer DRAFT on each picked channel, through the same preview -> submit path as every other
+        composer (preflight, media reach check, agent policy). body: {channels: [{channel_id, text, options?}], dry_run?}.
+        Never publishes; one channel's refusal doesn't stop the others."""
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("Sample items can't be drafted in the sample workspace. Connect Buffer to use your Library.", 403)
+        want = body.get("channels") or [{"channel_id": c} for c in (body.get("channel_ids") or [])]
+        if not want or not isinstance(want, list):
+            raise ActionError("Pick at least one channel.")
+        if len(want) > 20:
+            raise ActionError("Up to 20 channels at a time.")
+        pre = self.draft_prefill(a, iid)
+        known = {c["channel_id"]: c for c in pre["channels"]}
+        out = []
+        for w in want:
+            cid = str((w or {}).get("channel_id") or "")
+            c = known.get(cid)
+            if not c:
+                out.append({"channel_id": cid, "ok": False, "error": "That channel isn't connected."})
+                continue
+            text = str(w.get("text") if w.get("text") is not None else (c["text"] or pre["default_text"]))
+            opts = w.get("options") if isinstance(w.get("options"), dict) else c["options"]
+            try:
+                prev = self.h.studio.preview_post(a, {"channel_id": cid, "text": text, "media_urls": pre["media_urls"], "mode": "draft",
+                                                      "options": opts or {}})
+                if body.get("dry_run"):
+                    out.append({"channel_id": cid, "ok": True, "preview": prev["preview"], "warnings": prev["warnings"]})
+                    continue
+                res = self.h.studio.submit_post(a, prev["confirm_token"])
+                out.append({"channel_id": cid, "ok": True, "status": res.get("status"), "mode": res.get("mode") or "draft",
+                            "buffer_post_id": (res.get("post") or {}).get("id"), "approval_id": res.get("approval_id"),
+                            "warnings": prev["warnings"]})
+            except (ActionError, BufferError) as e:
+                out.append({"channel_id": cid, "ok": False, "error": str(e)})
+        return {"item_id": pre["item"]["id"], "run_id": pre["run_id"], "results": out, "saved": sum(1 for r in out if r["ok"])}
 
 
 # ---------------------------------------------------------------- REST + MCP
