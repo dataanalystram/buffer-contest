@@ -22,7 +22,7 @@ import uuid
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, brain_llm, budget, demo_guard, demo_view, editorial_tools, intake, llm, template_pick, untrusted
+from . import activity, brain_llm, budget, chat_context, demo_guard, demo_view, editorial_tools, intake, llm, template_pick, untrusted
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -447,7 +447,6 @@ class Brain:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
         res = run["result"]
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
-        from . import chat_context  # long threads: older turns folded into one run summary (the UI says so)
         summ = chat_context.summarize(run)
         if summ:
             res["thread_summary"] = summ
@@ -1151,6 +1150,8 @@ class Brain:
         own_words = inp["prompt"] if message is None else message
         tainted = bool(res.get("source") or res.get("upload"))
         for turn in range(MAX_TURNS):
+            if turn > chat_context.TOOL_KEEP_TURNS:  # old tool results -> short stubs (each call re-sends the history)
+                messages = chat_context.shrink_tool_results(messages)
             out = brain_llm.call(eng, self.store, a.uid, label, system=SYSTEM, messages=messages, tools=SPECS + [_CHECK_SPEC],
                                  max_tokens=2000, http=self.h.http)
             if turn == 0 and out["text"]:
@@ -1555,7 +1556,6 @@ def _result_line(tool: str, out: dict) -> str:
 
 def _conversation(run: dict, tools) -> str:
     """The compacted thread for a reply: pinned facts + the run summary of older turns + the last turns verbatim."""
-    from . import chat_context
     try:
         kit = tools._kit()
     except Exception:  # noqa: BLE001

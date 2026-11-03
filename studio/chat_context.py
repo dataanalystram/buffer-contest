@@ -26,6 +26,10 @@ THRESHOLD = 10       # compaction starts once the thread is longer than this
 TURN_CHARS = 140     # each folded turn keeps at most this many characters
 SUMMARY_CHARS = 2400  # the run summary never grows past this (oldest folded lines go first)
 TITLE_MAX = 80
+PROMPT_TURN_CHARS = 300   # each kept turn in the agent's prompt (the UI shows them whole)
+PROMPT_SUMMARY_CHARS = 1200
+TOOL_KEEP_TURNS = 2       # inside one reply, tool results older than this many model turns are shortened
+TOOL_STUB_CHARS = 400
 
 TITLES_SCHEMA = ("CREATE TABLE IF NOT EXISTS chat_titles (user_id TEXT, run_id INTEGER, title TEXT, updated REAL)",
                  "CREATE UNIQUE INDEX IF NOT EXISTS chat_titles_user_run ON chat_titles(user_id, run_id)")
@@ -85,14 +89,49 @@ def summarize(run: dict) -> dict | None:
     return {"summarized": c["summarized"], "kept": len(c["kept"]), "summary": c["summary"], "at": time.time()}
 
 
+def prompt_facts(run: dict, kit: dict | None = None) -> dict:
+    """The pinned facts in the agent's prompt, slim: the source, story and captions are already in the run state it reads."""
+    f = pinned(run, kit)
+    return {"rights": f["rights"] or "not asked", "kit": f["kit"]["name"], "template": f["template"].get("name") or f["template"].get("id") or "",
+            "template_id": f["template"].get("id") or "", "channels": [c["service"] for c in f["channels"]], "format": f["format"],
+            "theme": f["theme"], "rules": f["rules"]}
+
+
 def prompt_block(run: dict, kit: dict | None = None) -> str:
-    """What the agent reads about the conversation on a reply: pinned facts, the run summary, the last turns."""
+    """What the agent reads about the conversation on a reply: pinned facts, the run summary, the last turns (clipped)."""
     c = compact((run.get("result") or {}).get("thread") or [])
-    turns = "\n".join(f"{'Person' if t.get('role') == 'user' else 'Agent'}: {_clip(t.get('text'), 600)}" for t in c["kept"])
-    out = f"Pinned facts (always true for this post): {json.dumps(pinned(run, kit), default=str)[:3000]}\n"
+    turns = "\n".join(f"{'Person' if t.get('role') == 'user' else 'Agent'}: {_clip(t.get('text'), PROMPT_TURN_CHARS)}" for t in c["kept"][:-1])
+    out = f"Pinned facts (always true for this post): {json.dumps(prompt_facts(run, kit), separators=(',', ':'), default=str)[:1500]}\n"
     if c["summarized"]:
-        out += c["summary"] + "\n"
-    return out + "Latest messages:\n" + turns
+        s = c["summary"]
+        out += (s if len(s) <= PROMPT_SUMMARY_CHARS else s[:PROMPT_SUMMARY_CHARS] + " …") + "\n"
+    return out + ("Messages before this reply:\n" + turns if turns else "")
+
+
+def shrink_tool_results(messages: list, keep: int = TOOL_KEEP_TURNS) -> list:
+    """Inside one reply's tool loop, every model call re-sends the whole history. Tool results older than the last `keep`
+    model turns are cut to a short stub (the run state keeps what they found: story, media, captions), so a long loop stops
+    paying for the same 6 KB results again and again. Tool calls and their ids stay paired, so both API shapes stay valid."""
+    idx = []  # positions of tool-result turns: anthropic = a user turn of tool_result blocks; openai = one role=tool message each
+    for i, m in enumerate(messages):
+        if m.get("role") == "tool" or (m.get("role") == "user" and isinstance(m.get("content"), list)
+                                        and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"])):
+            if m.get("role") == "tool" and idx and idx[-1][-1] == i - 1 and messages[i - 1].get("role") == "tool":
+                idx[-1].append(i)  # openai: one turn's results are consecutive role=tool messages
+            else:
+                idx.append([i])
+    note = " …[earlier tool result shortened; the run state keeps it]"
+    for group in idx[:-keep] if keep else idx:
+        for i in group:
+            m = messages[i]
+            if m.get("role") == "tool":
+                if isinstance(m.get("content"), str) and len(m["content"]) > TOOL_STUB_CHARS:
+                    messages[i] = {**m, "content": m["content"][:TOOL_STUB_CHARS] + note}
+            else:
+                messages[i] = {**m, "content": [{**b, "content": b["content"][:TOOL_STUB_CHARS] + note}
+                                                if isinstance(b, dict) and isinstance(b.get("content"), str) and len(b["content"]) > TOOL_STUB_CHARS
+                                                else b for b in m["content"]]}
+    return messages
 
 
 def context(house, a, rid: int) -> dict:
