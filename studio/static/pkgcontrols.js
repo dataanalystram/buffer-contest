@@ -30,15 +30,15 @@ function undo(p, sent) {
 function music(p, sent) {
   if (p.service !== "instagram") return "";
   if (!isReel(p)) {
-    return `<div class="pc-music" data-testid="pkg-music-ctl"><small class="muted sm">Music</small>
+    return `<div class="pc-music" data-testid="pkg-music"><small class="muted sm">Music</small>
       <p class="muted sm pc-note" data-testid="music-carousel-note">Add music to a carousel in the Instagram app: Buffer can put Instagram music on Reels only.</p></div>`;
   }
   const au = (p.options || {}).ig_audio;
-  const seg = sent ? `<span class="muted sm">${au ? "" : "None"}</span>` : `<div class="pc-seg" role="radiogroup" aria-label="Music for this Reel">
-      <button type="button" role="radio" aria-checked="${!au}" class="${au ? "" : "on"}" data-testid="music-none">None</button>
-      <button type="button" role="radio" aria-checked="${!!au}" class="${au ? "on" : ""}" data-testid="music-ig">Instagram music</button></div>`;
+  const seg = sent ? `<span class="muted sm">${au ? "" : "None"}</span>` : `<div class="pc-seg" role="radiogroup" aria-label="Music for this Reel" data-testid="music-seg">
+      <button type="button" role="radio" aria-checked="${!au}" class="${au ? "" : "on"}" data-testid="music-off">None</button>
+      <button type="button" role="radio" aria-checked="${!!au}" class="${au ? "on" : ""}" data-testid="music-add">Instagram music</button></div>`;
   const chip = au && window.HQMusicChip ? window.HQMusicChip(au, { actions: !sent }) : "";
-  return `<div class="pc-music pkg-music" data-testid="pkg-music-ctl"><small class="muted sm">Music</small>${seg}${chip}
+  return `<div class="pc-music pkg-music" data-testid="pkg-music"><small class="muted sm">Music</small>${seg}${chip}
     ${au ? "" : `<small class="muted xs">Nothing is added unless you pick it.</small>`}</div>`;
 }
 function card(p, sent) { return changed(p) + music(p, sent) + (undo(p, sent) ? `<div class="pc-row">${undo(p, sent)}</div>` : ""); }
@@ -57,7 +57,7 @@ function wire(el, r, pk) {
     try { showRun(await api(`/api/agent/runs/${r.id}/undo`, { method: "POST", body: { channel: pk.channel_id } })); toast("Back to the previous version"); }
     catch (e) { toast(e.message, 6000); un.disabled = false; }
   };
-  const none = el.querySelector("[data-testid=music-none]"), ig = el.querySelector("[data-testid=music-ig]");
+  const none = el.querySelector("[data-testid=music-off]"), ig = el.querySelector("[data-testid=music-add]");
   if (none) none.onclick = async () => {
     if (none.classList.contains("on")) return;
     none.disabled = true;

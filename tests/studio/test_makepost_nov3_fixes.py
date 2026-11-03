@@ -376,7 +376,7 @@ def test_ui_contract_for_the_new_controls():
     js = (st / "pkgcontrols.js").read_text()
     html = (st / "index.html").read_text()
     assert "pkgcontrols.js" in html and "pkgcontrols.css" in html
-    for tid in ("pkg-changed", "pkg-update-draft", "pkg-undo", "pkg-music-ctl", "music-none", "music-ig", "music-carousel-note",
+    for tid in ("pkg-changed", "pkg-update-draft", "pkg-undo", "pkg-music", "music-seg", "music-off", "music-add", "music-carousel-note",
                 "ask-card", "ask-choice", "tpl-all-dialog", "tpl-all-item"):
         assert f'data-testid="{tid}"' in js or f'"data-testid", "{tid}"' in js, tid
     hj = (st / "house.js").read_text()

@@ -148,7 +148,8 @@ def clean_audio(raw) -> dict | None:
         st = int(raw.get("start_ms") or 0)
     except (TypeError, ValueError):
         st = 0
-    out["start_ms"] = max(0, min(st, max(0, dur - 1000)))
+    if st > 0:  # only a start someone chose is kept (the UI has no start: Instagram picks the part)
+        out["start_ms"] = min(st, max(0, dur - 1000))
     return out
 
 
