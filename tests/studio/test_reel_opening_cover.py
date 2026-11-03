@@ -173,3 +173,44 @@ def test_media_url_serves_multi_and_odd_ranges_whole(human):
     assert anon.get(f"/m/{tok}", headers={"Range": "bytes=9999-"}).status_code == 416
     assert anon.head(f"/m/{tok}").status_code == 200
     assert actions.THUMB_OFFSET_SERVICES == ("instagram", "tiktok", "pinterest")
+
+
+# ---------------------------------------------------------------------------------------------- createPost idempotency
+def test_create_post_timeout_finds_the_post_buffer_already_made_instead_of_a_second_draft():
+    from datetime import datetime, timezone
+
+    import httpx
+
+    from studio.buffer_api import BufferClient, BufferError
+    calls = []
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    class Store:
+        def user(self, uid):
+            return {"org_id": "org1"}
+
+    def gql(q, variables=None, uid=None, **k):
+        calls.append(q.split("(")[0].strip())
+        if "createPost" in q:
+            raise httpx.ReadTimeout("lost answer")
+        return {"posts": {"edges": [{"node": {"id": "p_old", "text": "other", "status": "draft", "channelId": "ig", "createdAt": now}},
+                                    {"node": {"id": "p1", "text": "hi", "status": "draft", "channelId": "ig", "createdAt": now}}]}}
+    c = BufferClient.__new__(BufferClient)
+    c.store, c.gql, c._drop_posts = Store(), gql, lambda uid=None: None
+    inp = {"channelId": "ig", "text": "hi", "mode": "addToQueue", "saveToDraft": True, "assets": []}
+    assert c.create_post("u1", inp)["id"] == "p1"
+    assert calls == ["mutation", "query"]  # one createPost, one read: never a second createPost
+
+    def gql_none(q, variables=None, uid=None, **k):
+        if "createPost" in q:
+            raise BufferError("Buffer returned HTTP 502", 502)
+        return {"posts": {"edges": []}}
+    c.gql = gql_none
+    with pytest.raises(BufferError):
+        c.create_post("u1", inp)  # nothing was made: the failure is reported, the caller may retry
+
+    def gql_refused(q, variables=None, uid=None, **k):
+        raise BufferError("Buffer could not complete the request (BAD_USER_INPUT: x)")
+    c.gql = gql_refused
+    with pytest.raises(BufferError):
+        c.create_post("u1", inp)  # a refusal is not looked up
