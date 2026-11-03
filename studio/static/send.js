@@ -100,7 +100,7 @@
     // "New code" ends the code on screen at once (replace), so only one code is ever live from this page
     const body = JSON.stringify(S.code ? { replace: S.code } : {});
     const d = await json("/api/send-codes", { method: "POST", headers: { "Content-Type": "application/json", "X-HQ-CSRF": S.csrf }, body });
-    $("#sdStopped").hidden = true; $("#sdCode").classList.remove("off"); $("#sdQr").classList.remove("off");
+    $("#sdStopped").hidden = true; $("#sdCopy").hidden = false; $("#sdStop").hidden = false; $("#sdCode").classList.remove("off"); $("#sdQr").classList.remove("off");
     S.code = norm(d.code); S.link = d.url;
     $("#sdMine").hidden = false;
     $("#sdCode").textContent = d.code;
@@ -128,6 +128,7 @@
           stopPoll(); S.code = ""; S.link = "";
           $("#sdCode").classList.add("off"); $("#sdQr").classList.add("off");
           $("#sdStopped").hidden = false; $("#sdDropWrap").hidden = true;
+          $("#sdCopy").hidden = true; $("#sdStop").hidden = true;
         } catch (e) { err($("#sdErr"), e.message); }
       };
       $("#sdCopy").onclick = async () => {
