@@ -39,6 +39,21 @@ def _poison(v, key=""):
     return v
 
 
+def _seed(path, body):
+    """The hermetic test server has read no feeds, so give the views at least one item to draw (then it gets poisoned)."""
+    now = time.time()
+    if path == "/api/sources/library" and isinstance(body, dict) and not body.get("items"):
+        cat = (body.get("categories") or [{"name": ""}])[0].get("name", "")
+        body["items"] = [{"id": "x1", "url": "https://example.com/a", "title": "A story", "summary": "Summary", "source": "Example",
+                          "type": "article", "type_label": "Article", "category": cat, "published": now, "also": [], "also_n": 0,
+                          "discussion": "https://news.ycombinator.com/item?id=1"}]
+        body.setdefault("updated", now)
+    if path == "/api/library" and isinstance(body, dict) and not body.get("items"):
+        body["items"] = [{"id": "l1", "kind": "photo", "name": "photo.png", "size": 1000, "created": now, "source": "upload",
+                          "url": "/static/favicon.svg", "thumb": "/static/favicon.svg", "used_in": [], "read_only": True}]
+    return body
+
+
 def _until(fn, timeout=30.0):
     end = time.time() + timeout
     while time.time() < end:
@@ -92,6 +107,7 @@ def test_hostile_outside_content_renders_as_text(demo_live, chromium):
         except Exception:
             return route.fulfill(response=r)
         hit.add(path)
+        body = _seed(path, body)
         route.fulfill(response=r, body=json.dumps(_poison(body)), headers={**{k: v for k, v in r.headers.items() if k.lower() not in ("content-length", "content-encoding")},
                                                                                  "content-type": "application/json"})
 
