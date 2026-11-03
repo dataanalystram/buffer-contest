@@ -84,7 +84,8 @@ def _page(chromium, base, w, h=900):
 
 
 def _open(page, base, rid):
-    page.goto(base + "/#/agent")
+    # ?tab=agent: boot() ends with showTab(?tab or "inbox"); on a slow boot that landed after showRun and hid the thread
+    page.goto(base + "/?tab=agent")
     page.wait_for_function("() => typeof window.showRun === 'function' && typeof api === 'function'")
     page.evaluate(f"async () => {{ window.showTab && showTab('agent'); const r = await api('/api/agent/runs/{rid}'); showRun(r); }}")
     page.get_by_test_id("package").first.wait_for()
