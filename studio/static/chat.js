@@ -105,6 +105,10 @@
   const phoneMq = matchMedia("(max-width:600px)");
   const placeActs = () => { if (phoneMq.matches) dock.parentNode.insertBefore(acts, dock); else dock.insertBefore(acts, reply); };
   placeActs(); if (phoneMq.addEventListener) phoneMq.addEventListener("change", placeActs);
+  // jumps inside the thread (scrollIntoView, keyboard focus) land clear of the sticky bar and the dock, never under them
+  const pad = () => { const d = dock.offsetHeight, b = bar.offsetHeight, nav = matchMedia("(max-width:860px)").matches && d ? 68 : 0;
+    docEl.style.scrollPaddingBottom = d ? `${d + nav + 8}px` : ""; docEl.style.scrollPaddingTop = d ? `${(document.querySelector("header.top") || {}).offsetHeight + b + 8 || 0}px` : ""; };
+  if (window.ResizeObserver) new ResizeObserver(pad).observe(dock);
   // a phone gets the short placeholder (the long one wrapped onto a second, cut-off line)
   const ri0 = document.getElementById("replyIn"), longPh = ri0.placeholder, mq = matchMedia("(max-width:600px)");
   const ph = () => { ri0.placeholder = mq.matches ? "Ask for a change…" : longPh; };

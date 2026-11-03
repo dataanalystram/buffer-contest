@@ -32,7 +32,8 @@
 }
 
 /* ---------------------------------------------------------------- threads: an inline column, hideable */
-.hc-main{max-width:920px}
+.hc-main{max-width:960px}
+:root.threads-hidden .hc-main{max-width:1120px}  /* the conversation takes the room the threads gave up */
 .hc-side{padding:10px;gap:8px;border-radius:14px}
 @media (min-width:1101px){
   #runView.hc{grid-template-columns:var(--hc-side-w) minmax(0,1fr);column-gap:24px}
