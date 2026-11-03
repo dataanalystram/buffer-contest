@@ -7,5 +7,4 @@ tests/test_unsplash.py:generic-api-key:48
 b33d2a1518dbc3a89920d5d860f9038483df7c20:tests/studio/test_house.py:generic-api-key:211
 tests/studio/test_house.py:generic-api-key:217
 4fc1ed8d7c9c10bc447cb34683bcfab1fca27d95:tests/studio/test_theme_modal_e2e.py:private-key:160
-tests/studio/test_house.py:generic-api-key:232
 tests/studio/test_house.py:generic-api-key:235
