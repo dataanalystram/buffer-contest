@@ -28,6 +28,7 @@
 <link rel="stylesheet" href="/static/reelmusic.css">
 <link rel="stylesheet" href="/static/sources.css">
 <link rel="stylesheet" href="/static/brandkit.css">
+<link rel="stylesheet" href="/static/ledger.css">
 <link rel="stylesheet" href="/static/onetake.css">
 </head>
 <body>
@@ -434,8 +435,9 @@
           <details class="panel bk-more" data-testid="bk-more"><summary>More kit settings: voice, front and end card styles or uploads, hashtags, and a template preview</summary><div id="bsKitMount"></div></details></section>
         <section class="sub" data-sub="templates" data-testid="brand-templates" hidden><div id="bsTplMount"></div></section>
         <section class="sub" data-sub="ledger" data-testid="brand-ledger" hidden>
-          <p class="muted">What HuhQueue has learned from your corrections. Every render and caption follows these, and the brand check names the rule when something is off.</p>
-          <form class="quick" id="ruleForm"><label class="sr" for="ruleIn">New rule</label><input id="ruleIn" data-testid="rule-input" placeholder="Teach a rule in plain words: “never say game-changer”, “logo bottom right”, “max 2 hashtags”"><button class="btn2 big" data-testid="rule-add" type="submit">Add rule</button></form>
+          <p class="muted">The rules your posts follow. Teach one in plain words, or just edit captions: when you make the same change three times, HuhQueue suggests a rule, and nothing applies until you accept it. Every draft shows which rules it followed.</p>
+          <form class="lg-teach" id="ruleForm" data-testid="rule-form"><div class="quick"><label class="sr" for="ruleIn">New rule</label><input id="ruleIn" data-testid="rule-input" placeholder="Teach a rule: “never say game-changer”, “say launch not drop”, “max 2 hashtags”"><button class="btn2 big" data-testid="rule-add" type="submit">Add rule</button></div>
+            <details class="lg-scope-d" data-testid="rule-scope-toggle"><summary id="ruleScopeLbl">Applies to: <b data-scope-label>All channels</b></summary><fieldset class="lg-scope" id="ruleScope" aria-labelledby="ruleScopeLbl" data-testid="rule-scope"></fieldset></details></form>
           <div id="ledger" data-testid="ledger"></div>
         </section>
       </div>
@@ -679,6 +681,7 @@
 <script src="/static/keyframes.js"></script>
 <script src="/static/reelmusic.js"></script>
 <script src="/static/house.js"></script>
+<script src="/static/ledger.js"></script>
 <script src="/static/makepost.js"></script>
 <script src="/static/library.js"></script>
 <script src="/static/planner.js"></script>

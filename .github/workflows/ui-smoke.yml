@@ -28,7 +28,7 @@ jobs:
         run: python scripts/mpv2_shots.py http://127.0.0.1:8899 shots/mpv2
       - name: Browser tests (e2e, guided tour, responsive)
         if: always()
-        run: python -m pytest tests/studio/test_e2e_studio.py tests/studio/test_take_e2e.py tests/studio/test_browsers.py tests/studio/test_tour_e2e.py tests/studio/test_responsive.py tests/studio/test_activity_e2e.py tests/studio/test_brand_kit_v2_e2e.py tests/studio/test_agent_ux_nov3_e2e.py tests/studio/test_xss_e2e.py -q
+        run: python -m pytest tests/studio/test_e2e_studio.py tests/studio/test_take_e2e.py tests/studio/test_browsers.py tests/studio/test_tour_e2e.py tests/studio/test_responsive.py tests/studio/test_activity_e2e.py tests/studio/test_brand_kit_v2_e2e.py tests/studio/test_agent_ux_nov3_e2e.py tests/studio/test_xss_e2e.py tests/studio/test_style_ledger_e2e.py -q
       - if: always()
         run: cp /tmp/uv.log shots/server.log || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

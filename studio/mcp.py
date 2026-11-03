@@ -155,6 +155,10 @@ from . import share_import as _share  # noqa: E402  import_from_link (Drive, Dro
 
 TOOLS += _send.TOOLS + _share.TOOLS
 READ_ONLY |= _send.READ_ONLY
+from . import ledger as _ledger  # noqa: E402  Style Ledger v2: rules, suggestions, check_draft, review links
+
+TOOLS += _ledger.TOOLS
+READ_ONLY |= _ledger.READ_ONLY
 from . import mcp_client_brain as _cb  # noqa: E402  client brain: the hands without HuhQueue's AI (docs/MCP_TOOLS.md)
 
 TOOLS += _cb.TOOLS
@@ -297,7 +301,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _uploads.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
-    for _mod in (_send, _share):
+    for _mod in (_send, _share, _ledger):
         extra = _mod.call_tool(studio, actor, name, args)
         if extra is not NotImplemented:
             return extra

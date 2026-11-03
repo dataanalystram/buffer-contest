@@ -165,6 +165,14 @@ def parse_correction(text: str) -> list[dict]:
         words = [w.strip() for w in re.split(r"\s+or\s+|\s*,\s*|\s+and\s+", m.group(1)) if w.strip()]
         if words:
             out.append(_rule("text", {"type": "banned_words", "words": words}, f"Never use: {', '.join(words)}", src))
+    for m in re.finditer(r"\b(?:use|say|write)\s+[\"“']?([^\"”',.;!]+?)[\"”']?\s+(?:instead of|not|rather than)\s+[\"“']?([^\"”'.;!]+?)[\"”']?(?:[.;!]|$)", t):
+        to, frm = m.group(1).strip(), [w.strip() for w in re.split(r"\s+or\s+|\s*,\s*", m.group(2)) if w.strip()]
+        if to and frm and len(to) <= 40:
+            out.append(_rule("text", {"type": "prefer_words", "from": frm, "to": to}, f"Say “{to}”, not {', '.join('“' + w + '”' for w in frm)}", src))
+    for m in re.finditer(r"\breplace\s+[\"“']?([^\"”',.;!]+?)[\"”']?\s+with\s+[\"“']?([^\"”',.;!]+?)[\"”']?(?:[.;!]|$)", t):
+        frm, to = m.group(1).strip(), m.group(2).strip()
+        if to and frm and len(to) <= 40 and "logo" not in frm:
+            out.append(_rule("text", {"type": "prefer_words", "from": [frm], "to": to}, f"Say “{to}”, not “{frm}”", src))
     if re.search(r"\bno (?:more )?emojis?\b|\bwithout emojis?\b|\bdon'?t use emojis?\b", t):
         out.append(_rule("text", {"type": "no_emoji"}, "No emojis in captions", src))
     m = re.search(r"(?:max(?:imum)?|at most|no more than|only)\s+(\d+)\s+hashtags?", t)
@@ -232,12 +240,12 @@ def parse_correction(text: str) -> list[dict]:
 
 RULE_SCHEMA_HINT = (
     'Return JSON {"rules":[{"kind":"text"|"visual","check":{...},"rule":"short human rule"}]}. check.type is one of: '
-    'banned_words{words}, no_emoji, max_hashtags{n}, no_exclamation, ends_with{text}, require_text{text}, caption_case{value:"lower"}, '
+    'banned_words{words}, prefer_words{from:[words], to}, no_emoji, max_hashtags{n}, no_exclamation, ends_with{text}, require_text{text}, caption_case{value:"lower"}, '
     'max_length{n}, logo_position{pos:tl|tr|bl|br}, logo_scale{scale:0.05-0.2}, end_card{on, cta?}, headline_case{value:upper|sentence}, '
     'headline_max_words{n}, accent_color{hex}, font{name:anton|poppins|inter|figtree|serif|dot}, overlay{value:0-0.9}, source_credit{on}. '
     'Only rules the correction clearly implies; [] if none.')
 
-VALID_TYPES = {"banned_words", "no_emoji", "max_hashtags", "no_exclamation", "ends_with", "require_text", "caption_case",
+VALID_TYPES = {"banned_words", "prefer_words", "no_emoji", "max_hashtags", "no_exclamation", "ends_with", "require_text", "caption_case",
                "max_length", "logo_position", "logo_scale", "end_card", "headline_case", "headline_max_words", "accent_color",
                "font", "overlay", "source_credit"}
 
@@ -254,6 +262,12 @@ def clean_rules(rules: list, source: str) -> list[dict]:
                                   "font", "overlay", "source_credit"} else "text"
         out.append(_rule(kind, r["check"], str(r.get("rule") or ty)[:160], source))
     return out
+
+
+def for_channel(rules: list[dict], service: str | None) -> list[dict]:
+    """The rules that apply on one network: every rule for all channels, plus the ones scoped to this network."""
+    svc = (service or "").lower()
+    return [r for r in rules if not r.get("scope") or (svc and svc in r["scope"])]
 
 
 def visual_params(kit: dict, rules: list[dict]) -> dict:
@@ -293,14 +307,16 @@ def visual_params(kit: dict, rules: list[dict]) -> dict:
     return p
 
 
-def apply_text_rules(text: str, rules: list[dict]) -> str:
-    """Fix what can be fixed mechanically (banned words, emoji, hashtags, case, sign-off) before checking."""
+def apply_text_rules(text: str, rules: list[dict], trace: list | None = None) -> str:
+    """Fix what can be fixed mechanically (banned words, emoji, hashtags, case, sign-off) before checking. With ``trace``,
+    every rule that changed the text appends {rule_id, before, after}: the Style Ledger keeps them as the rule's examples."""
     out = text or ""
     for r in rules:
         if r.get("kind") != "text" or not r.get("active", True):
             continue
         c = r["check"]
         ty = c["type"]
+        was = out
         if ty == "banned_words":
             for w in c.get("words", []):
                 out = re.sub(rf"\s*\b{re.escape(w)}\b", "", out, flags=re.I)
@@ -318,6 +334,12 @@ def apply_text_rules(text: str, rules: list[dict]) -> str:
             out = out.rstrip() + "\n\n" + c["text"]
         elif ty == "require_text" and c.get("text") and c["text"].lower() not in out.lower():
             out = out.rstrip() + " " + c["text"]
+        elif ty == "prefer_words" and c.get("to"):
+            for w in c.get("from", []):
+                out = re.sub(rf"\b{re.escape(w)}\b", lambda m, to=c["to"]: to[:1].upper() + to[1:] if m.group(0)[:1].isupper() else to,
+                             out, flags=re.I)
+        if trace is not None and out != was and r.get("id") is not None:
+            trace.append({"rule_id": r["id"], "before": was, "after": out})
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
@@ -336,6 +358,9 @@ def brand_check(text: str, render_meta: dict | None, rules: list[dict], kit: dic
         if ty == "banned_words":
             hit = [w for w in c.get("words", []) if re.search(rf"\b{re.escape(w)}\b", text, re.I)]
             add(r, not hit, f"uses {', '.join(hit)}" if hit else "")
+        elif ty == "prefer_words":
+            hit = [w for w in c.get("from", []) if re.search(rf"\b{re.escape(w)}\b", text, re.I)]
+            add(r, not hit, f"says {', '.join(hit)} (use {c.get('to')})" if hit else "")
         elif ty == "no_emoji":
             e = EMOJI_RE.findall(text)
             add(r, not e, f"{len(e)} emoji" if e else "")

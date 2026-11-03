@@ -24,7 +24,7 @@ from typing import Callable
 from urllib.parse import urljoin, urlparse, urlunparse
 
 from .. import netguard
-from . import find
+from . import find, youtube_info
 
 PH_GRAPHQL = "https://api.producthunt.com/v2/api/graphql"
 PH_FIELDS = ("id name tagline description slug url website createdAt featuredAt votesCount "
@@ -147,7 +147,7 @@ def yt_allowed() -> bool:
     return bool(os.environ.get("HQ_YT_FALLBACK"))
 
 
-LAUNCH_HOWS = {"product_hunt", "yc_launch", "official_channel"}  # the launch film the maker posted for the launch itself
+LAUNCH_HOWS = {"product_hunt", "yc_launch", "official_channel", "linked"}  # the launch film the maker posted for the launch itself
 HERO_RX = re.compile(r"(?:^|[/_.-])(?:hero|loop|loops|background|bg|banner|ambient|header|backdrop|splash)(?:[/_.-]|\d|$)", re.I)
 YC_LAUNCH_RX = re.compile(r"^https?://(?:www\.)?ycombinator\.com/(?:launches|companies)/", re.I)
 
@@ -264,6 +264,31 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
     elif not website:
         website = next((u for u in links if not find.platform_of(u) and not YC_LAUNCH_RX.match(u)), "")
 
+    # a0. a YouTube video link (owner bug, 3 Nov 2026): the real video's details (Data API / oEmbed), then the maker's own
+    #     website, so the official copy there is the fallback when YouTube itself can't be downloaded here.
+    linked, linked_info, linked_site_ok = None, None, False
+    yt_link = "" if ph_link else next((u for u in links if youtube_info.is_youtube_video(u)), "")
+    if yt_link:
+        linked_info = youtube_info.video_info(yt_link, http, youtube_api_key or "")
+        if linked_info:
+            name = name or linked_info["channel"]
+            linked = find._cand(linked_info["url"], "linked", kind="video", title=linked_info["title"], uploader=linked_info["channel"],
+                                thumbnail=linked_info["thumbnail"], author_url=linked_info["channel_url"], duration=linked_info["duration"],
+                                source_page=yt_link)
+            linked["confidence"] = 0.97
+            cands.append(linked)
+            site_how = ""
+            if not website:
+                website, site_how = youtube_info.find_site(name, linked_info["links"], http)
+            linked_site_ok = bool(website)
+            via = "the YouTube Data API" if linked_info["via"] == "youtube_api" else "YouTube oEmbed"
+            steps.append({"step": "linked_video", "ok": True, "found": 1, "url": yt_link,
+                          "note": f"Read “{linked_info['title']}” by {linked_info['channel']} ({via})"
+                                  + (f"; its website is {find.host_of(website)} ({site_how})" if website else f"; {site_how}")})
+        else:
+            steps.append({"step": "linked_video", "ok": False, "found": 0, "url": yt_link,
+                          "note": "YouTube didn't give this video's details (private, removed or not answering)."})
+
     # a1. a YC launch page (ycombinator.com/launches/...): the founders' launch video is embedded there (usually YouTube)
     for yl in [u for u in links if YC_LAUNCH_RX.match(u)][:1]:
         found, note = 0, ""
@@ -340,6 +365,16 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
         if not c.get("official") and _maker_match(c, name, dom):
             c["official"] = True
 
+    if linked is not None:
+        # the linked video counts as the maker's own when its channel has a website of the same name; else it is someone
+        # else's video and the rights question applies. With the operator's YouTube fallback on, a server bot check on
+        # the metadata read doesn't stop the worker (it fetches through the fallback route).
+        linked["official"] = linked_site_ok
+        if linked_site_ok:
+            linked["confidence"] = 0.98
+        if yt_allowed() and linked.get("blocked") == "platform_bot_check":
+            linked["downloadable"], linked["blocked"] = True, ""
+
     # c. the official channel, by web search, when nothing fetchable came from the maker yet
     if name and not any(_fetchable(c) and not is_hero_loop(c) for c in cands):  # a hero loop alone: still look for the launch film
         found, note, extra = 0, "", []
@@ -381,7 +416,9 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
             c["note"] = c.get("note") or "the website's hero loop (used only when the launch video can't be fetched)"
     official = [c for c in ranked if c.get("official")]
     pick = next((c for c in official if _fetchable(c)), None)
-    launch = pick or (official or [None])[0]  # the video we use; else the best official one anywhere (the YouTube original)
+    launch = pick or (official or [None])[0]
+    if linked is not None and not pick:
+        launch = linked if not launch or launch.get("platform") == "youtube" else launch  # the video we use; else the best official one anywhere (the YouTube original)
     maker = name or (launch or {}).get("uploader") or dom or "the maker"
     credit = f"Video: {maker}"
     for c in ranked:
@@ -389,11 +426,26 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
         if name and not c.get("company"):
             c["company"] = name
     limit = int(upload_limit_mb)
-    if pick:
+    if pick and linked is not None:
+        status, ask = "found", ""
+        if pick is linked:
+            plan_line = f"Video found: the video in your link ({maker} on YouTube), fetched through the YouTube fallback, branded as a Reel with credit"
+        else:
+            plan_line = (f"Video found: {maker}'s own copy on {find.host_of(pick['url']) or 'its website'} (YouTube blocks downloads "
+                         "here), branded as a Reel with credit")
+    elif pick:
         status, ask = "found", ""
         where = {"direct": "its website", "vimeo": "Vimeo", "loom": "Loom", "x": "X", "youtube": "YouTube",
                  "wistia": "Wistia"}.get(pick["platform"], pick["platform"])
         plan_line = f"Video found: {maker}'s launch video ({where}), branded as a Reel with credit"
+    elif linked is not None:
+        status = "youtube_only"
+        how = "with your YouTube Data API key" if linked_info["via"] == "youtube_api" else "through YouTube's oEmbed"
+        ask = (f"I read the video's details {how}: “{linked_info['title']}” by {linked_info['channel']}. The YouTube Data API gives "
+               f"details, not the video file, and YouTube blocks downloads from our servers"
+               + (f"; {find.host_of(website)} has no copy I can use" if website else "") +
+               f". Upload the file ({ACCEPT}, up to {limit} MB) and I'll brand it with the credit “Video: {linked_info['channel']}”.")
+        plan_line = "The video is on YouTube only and can't be downloaded here: asking you to upload it"
     elif launch:
         status = "youtube_only" if launch["platform"] == "youtube" else "blocked"
         site = find.NAMES.get(launch["platform"], launch["platform"])
@@ -406,7 +458,9 @@ def research_video(query: str, *, http=None, ph_token: str = "", youtube_api_key
     return {"status": status, "video": _slim(pick) if pick else None, "launch_video": _slim(launch) if launch else None,
             "best_downloadable": _slim(pick) if pick else None, "best_video": _slim(launch) if launch else None,
             "candidates": [_slim(c) for c in ranked[:6]], "credit": credit, "maker": maker, "website": website, "product": product,
-            "images": list(dict.fromkeys(i for i in images if i))[:8], "steps": steps, "plan_line": plan_line, "ask": ask,
+            "images": list(dict.fromkeys(i for i in ([linked_info["thumbnail"]] if linked_info and linked_info.get("thumbnail") else []) + images if i))[:8],
+            "steps": steps, "plan_line": plan_line, "ask": ask,
+            "youtube": ({k: linked_info.get(k) for k in ("title", "channel", "channel_url", "via", "published", "duration")} if linked_info else None),
             "upload": {"accept": "video/mp4,video/quicktime", "max_mb": limit, "label": ACCEPT}}
 
 
