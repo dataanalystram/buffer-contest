@@ -49,7 +49,7 @@ def live(tmp_path):
         pk = [_pk(ch, svc, name, text) for ch, svc, name in CHS]
         rids.append(st.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
                          ("acc_1", "agent", json.dumps({"prompt": "Acme's travel agent", "channels": []}), "ready", "[]",
-                          json.dumps({"packages": pk, "story": STORY, "source": SRC, "thread": []}), time.time(), time.time())))
+                          json.dumps({"packages": pk, "media": [], "story": STORY, "source": SRC, "thread": []}), time.time(), time.time())))
     server = serve(app, port)
     yield f"http://127.0.0.1:{port}", rids, fake
     server.should_exit = True
@@ -136,10 +136,10 @@ def test_style_ledger_teach_learn_accept_and_review(live, chromium, width):
         _open_run(page, rids[3])
         ta = page.locator("[data-testid=pkg-text]").first
         ta.fill(ta.input_value() + " ")
-        page.wait_for_selector("[data-testid=pkg-ledger]", timeout=20000)
-        assert "game-changer" in page.locator("[data-testid=brand-check]").first.inner_text()
+        time.sleep(1.2)  # saved: the check now runs the learned rule
         page.evaluate(f"(async () => showRun(await api('/api/agent/runs/{rids[3]}')))()")
         page.wait_for_selector("[data-testid=pkg-ledger] [data-testid=pkg-applied]", timeout=20000)
+        assert "game-changer" in page.locator("[data-testid=brand-check]").first.inner_text()
         box = page.locator("[data-testid=pkg-ledger]").first
         box.locator("[data-testid=pkg-applied] summary").click()
         assert box.locator("[data-testid=pkg-applied-rule]", has_text="game-changer").count() == 1
