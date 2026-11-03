@@ -221,6 +221,7 @@
   }
   async function useKit(what, btn) {
     if (btn.classList.contains("on")) { templatePreviews(); return; }
+    if (!what.id && demoSays(`add the ${(btn.querySelector("b") || {}).textContent || "sample"} brand kit and make it the kit every template uses`)) return;
     btn.disabled = true; btn.setAttribute("aria-busy", "true");
     const t0 = performance.now();
     const known = what.id && B.kitsMeta && (B.kitsMeta.kits || []).find((k) => k.id === what.id);

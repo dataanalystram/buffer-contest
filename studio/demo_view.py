@@ -78,6 +78,7 @@ WOULD = [
     (r"^/api/brand/(from-website|onboard)$", None, "import your brand from your website"),
     (r"^/api/brand/samples/[^/]+/schedule$", None, "schedule this sample in your Buffer queue"),
     (r"^/api/brand-kits/[^/]+$", "DELETE", "delete this brand kit"),
+    (r"^/api/brand-kits$", "POST", "add this brand kit and make it the kit every template uses"),
     (r"^/api/brand", None, "save your brand kit"),
     (r"^/api/templates/slots", None, "schedule a template to post on a timetable"),
     (r"^/api/device-link$", None, "make a one-time link to open your account on another device"),

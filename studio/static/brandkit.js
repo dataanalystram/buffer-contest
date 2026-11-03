@@ -283,6 +283,8 @@
     refreshLegacy(); settingsCard();
   }
   async function addSample(sid) {
+    const s = ((K.meta && K.meta.samples) || []).find((x) => x.id === sid);
+    if (demoSays(`add the ${s ? s.name : "sample"} brand kit and make it the kit every template uses`)) return;
     try {
       const r = await api("/api/brand-kits", { method: "POST", body: { sample: sid } });
       await load(r.id); await setActive(r.id);
