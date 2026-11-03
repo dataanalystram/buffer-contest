@@ -1524,6 +1524,11 @@ class House:
         if meta.get("covers_b64"):
             meta["covers"] = self._store_covers(a, meta.pop("covers_b64"))
         meta.pop("covers_b64", None)
+        src_tok = json.loads(job["spec"]).get("source")
+        if isinstance(src_tok, str) and src_tok and kind in ("media_render", "cover_swap", ""):
+            # the video this render was made from: re-editing a finished reel starts again from it (mcp edit_video), so the
+            # cover, title card, logo and end card are never stacked a second time (owner bug 3 Nov 2026, Click reel)
+            meta.setdefault("source_token", src_tok)
         tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta)
         self.store.x("UPDATE render_jobs SET status='done', media_token=?, updated=? WHERE id=?", (tok, _now(), jid))
         if run_inline and job["run_id"] and self._run_kind(job["run_id"]) != "agent":  # the agent brain waits on its own job

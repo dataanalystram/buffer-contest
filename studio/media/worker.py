@@ -118,7 +118,7 @@ def _covers(spec: dict, source_path: str, brand: dict, style: str, ratio: str, t
     return out, png, idx
 
 
-def cover_swap(video: bytes, cover: bytes, secs: float, replace: float | None = None) -> tuple[bytes, dict]:
+def cover_swap(video: bytes, cover: bytes, secs: float | None = None, replace: float | None = None) -> tuple[bytes, dict]:
     """Put another cover variant on the Reel's opening frames: ``replace`` seconds of the old cover frames are swapped
     for ``secs`` of the new one (replace=0: the cover is added in front, e.g. a "No style" video). The sound follows."""
     from . import ff
@@ -128,7 +128,8 @@ def cover_swap(video: bytes, cover: bytes, secs: float, replace: float | None = 
         (tmp / "cover.jpg").write_bytes(cover)
         pr = ff.probe(str(tmp / "in.mp4"))
         W, H = pr["width"], pr["height"]
-        secs = max(0.3, float(secs or 0.6))
+        from .compose import cover_frame_secs, cover_thumb_ms
+        secs = cover_frame_secs(secs)
         rep = secs if replace is None else max(0.0, float(replace))
         fc = (f"[0:v]scale={W}:{H},setsar=1,fps=30,format=yuv420p[c];[1:v]trim=start={rep:.3f},setpts=PTS-STARTPTS,fps=30,"
               f"format=yuv420p,setsar=1[m];[c][m]concat=n=2:v=1:a=0[v]")
@@ -146,7 +147,7 @@ def cover_swap(video: bytes, cover: bytes, secs: float, replace: float | None = 
         got = ff.probe(str(tmp / "out.mp4"))
         return (tmp / "out.mp4").read_bytes(), {"type": "video", "width": got["width"], "height": got["height"],
                                                 "duration": round(got["duration"], 2), "cover_frame_secs": secs,
-                                                "thumbnail_offset_ms": int(secs * 500)}
+                                                "thumbnail_offset_ms": cover_thumb_ms(secs)}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
