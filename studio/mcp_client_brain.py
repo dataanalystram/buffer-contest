@@ -136,6 +136,8 @@ TOOLS: list[dict[str, Any]] = [
      "render_status(job_id) every 10-20 s until status is done, then show download_url.",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC,
          "start_s": {"type": "number"}, "end_s": {"type": "number"},
+         "rerender_finished": {"type": "boolean", "description": "A finished HuhQueue reel is re-edited from its original "
+                               "upload (no second cover / end card). true keeps the finished reel as the source."},
          "cut_first_s": {"type": "number", "description": "Remove this many seconds from the start"},
          "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]},
          "captions": {"type": ["boolean", "string"], "enum": [True, False, "auto", "replace", "on", "off"],
@@ -254,6 +256,34 @@ def _video_source(h, a: Actor, args: dict) -> tuple[str, dict]:
     if not meta:
         raise ActionError("Unknown media token. Upload or import the video first (library_upload_url).", 404)
     return tok, meta
+
+
+def _is_finished_reel(meta: dict) -> bool:
+    """A video HuhQueue already rendered (its cover frame, title card, logo and end card are in the picture)."""
+    return meta.get("kind") == "render" and meta.get("type", "video") == "video" and (
+        meta.get("renderer") == "studio.media" or "cover_frame_secs" in meta or "source_token" in meta)
+
+
+def _unfinished(h, a: Actor, tok: str, meta: dict, args: dict) -> tuple[str, dict]:
+    """edit_video / render on a finished HuhQueue reel would brand it twice: a second end card after the first, the logo
+    bug over the old cover and cards (owner bug 3 Nov 2026: the Click reel re-rendered over MCP came back 1.6 s longer with
+    two end cards). Start again from the video it was made from; refuse when that is unknown, unless the caller says
+    rerender_finished: true (then the old cards stay in the picture, which is what they asked for)."""
+    if not _is_finished_reel(meta) or args.get("rerender_finished") is True:
+        return tok, meta
+    seen = {tok}
+    src = meta.get("source_token")
+    while src and src not in seen:
+        seen.add(src)
+        m2 = h.media_meta(a, src)
+        if not m2:
+            break
+        if not _is_finished_reel(m2):
+            return src, {**m2, "_from_finished": tok}
+        src = m2.get("source_token")
+    raise ActionError("That video is already a finished HuhQueue reel (its cover, title card and end card are baked in), so "
+                      "editing it again would add a second end card and logo. Pass the original upload (media_token / "
+                      "library_id) instead, or rerender_finished: true to keep the old cards in the picture.", 409)
 
 
 def _img_bytes(h, url: str) -> bytes | None:
@@ -623,11 +653,14 @@ def _video_spec(h, a, args, tok, meta) -> dict:
 def t_edit_video(studio, a, args):
     h = studio.house
     studio._guard_write(a, "edit_video")
-    tok, meta = _video_source(h, a, args)
+    tok, meta = _unfinished(h, a, *_video_source(h, a, args), args)
     if meta.get("type") not in (None, "video"):
         raise ActionError("That media is not a video.")
     spec = _video_spec(h, a, args, tok, meta)
     out = _queue_video(h, a, spec)
+    if meta.get("_from_finished"):
+        out = {**out, "note": "That video was already a finished reel, so this edit starts again from its original upload "
+                              "(one cover, one end card)."}
     return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "captions_mode", "music", "covers", "cover_hook")
                             if spec.get(k) is not None}}
 

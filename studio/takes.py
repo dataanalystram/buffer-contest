@@ -542,6 +542,8 @@ class Takes:
             o["ig_type"] = "reel"
             if clip.get("music"):  # the Reel's Instagram music (Trim & caption > Music), sent as metadata.instagram.audio
                 o["ig_audio"] = clip["music"]
+        if service == "facebook":
+            o["fb_type"] = "reel"  # a 9:16 clip is a Facebook Reel, not a feed video
         if service == "youtube":
             o["title"] = (clip.get("hook") or "").rstrip("…")[:100]
             o["category_id"] = "22"

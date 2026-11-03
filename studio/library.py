@@ -912,6 +912,18 @@ def parse_range(header: str, size: int) -> tuple[int, int] | None:
     return (start, end) if start <= end else None
 
 
+def range_unsatisfiable(header: str, size: int) -> bool:
+    """416 only for a single, well-formed byte range that starts past the end (RFC 9110 15.5.17). A multi-range, an
+    unknown unit or a malformed header is ignored and the whole file is served with 200, as RFC 9110 14.2 allows: media
+    fetchers (Buffer, Instagram, sandboxed agent proxies) must never be refused a plain GET over a Range they sent."""
+    if not header.startswith("bytes=") or "," in header or size <= 0:
+        return False
+    a_, _, b_ = header[6:].strip().partition("-")
+    if a_.isdigit():
+        return int(a_) >= size
+    return a_ == "" and b_ == "0"
+
+
 def add_routes(app, house, actor) -> None:
     lib = house.library
 
@@ -919,7 +931,7 @@ def add_routes(app, house, actor) -> None:
         size = f["size"]
         headers = {"Accept-Ranges": "bytes", "Cache-Control": cache, "Content-Disposition": "inline"}
         rng = parse_range(request.headers.get("range", ""), size)
-        if request.headers.get("range") and rng is None:
+        if rng is None and range_unsatisfiable(request.headers.get("range", ""), size):
             return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
         if rng:
             s, e = rng

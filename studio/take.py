@@ -41,7 +41,7 @@ from . import untrusted  # stdlib only: safe in the slim video-worker venv
 FONT_DIR = Path(__file__).parent / "fonts"
 CLIP_W, CLIP_H = int(os.environ.get("HQ_CLIP_W", "720")), int(os.environ.get("HQ_CLIP_H", "1280"))
 MIN_CLIP, MAX_CLIP, TARGET_CLIP = 20.0, 60.0, 38.0
-COVER_SECS = 0.5            # branded cover frame prepended to every clip; thumbnailOffset points into it
+COVER_SECS = 0.2            # branded cover frame prepended to every clip; thumbnailOffset points into it (6 frames, never a held still)
 END_SECS = 2.0
 SAFE_BOTTOM = 0.20          # bottom 20% stays clear of captions (Instagram/TikTok UI)
 FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"

@@ -29,7 +29,9 @@ REQUIRED_METADATA = {"instagram": {"type": "post", "shouldShareToFeed": True}, "
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
 CONFIRM_TTL = 15 * 60
 PROBE_MAX = 60 * 1024 * 1024  # media preflight downloads at most this much per file
-OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts", "ig_type", "thumbnail_offset_ms", "ig_audio")
+OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts", "ig_type", "thumbnail_offset_ms", "ig_audio", "fb_type",
+               "first_comment", "alt_text")
+FIRST_COMMENT_SERVICES = ("instagram", "facebook", "linkedin")  # metadata.<svc>.firstComment in Buffer's PostInputMetaData
 AUDIO_TYPES = ("music", "originalSound")  # Buffer's InstagramAudioType
 THUMB_OFFSET_SERVICES = ("instagram", "tiktok", "pinterest")  # Buffer honours video.metadata.thumbnailOffset here only
 
@@ -71,6 +73,10 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
     thumb = options.get("thumbnail_offset_ms") if channel["service"] in THUMB_OFFSET_SERVICES else None
     if urls:
         inp["assets"] = [_asset(u, thumb) for u in urls]
+        alts = options.get("alt_text") or []
+        for asset, alt in zip(inp["assets"], alts):  # ImageMetadataInput.altText: screen readers on every network
+            if alt and "image" in asset:
+                asset["image"]["metadata"] = {"altText": alt}
     if mode == "draft" and due_at:
         # a draft that already has its time: it sits in the week as a draft and never publishes until a person schedules it
         inp.update(mode="customScheduled", dueAt=due_at, saveToDraft=True)
@@ -86,8 +92,16 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
         inp.update(mode="customScheduled", dueAt=due_at)
     svc = channel["service"]
     meta = dict(REQUIRED_METADATA.get(svc, {}))
+    has_video = any("video" in x for x in inp["assets"])
     if svc == "instagram" and options.get("ig_type") in ("reel", "story", "post"):
         meta["type"] = options["ig_type"]
+    elif svc == "instagram" and has_video:
+        meta["type"] = "reel"  # Instagram publishes every feed video as a Reel; say so instead of leaving Buffer to convert "post"
+    if svc == "facebook" and options.get("fb_type") in ("reel", "story", "post"):
+        meta["type"] = options["fb_type"] if (has_video or options["fb_type"] != "reel") else "post"
+    fc = str(options.get("first_comment") or "").strip()
+    if fc and svc in FIRST_COMMENT_SERVICES:  # Buffer adds the first comment right after it publishes
+        meta["firstComment"] = fc[:2200]
     au = options.get("ig_audio") if svc == "instagram" else None
     if au and any("video" in a for a in inp["assets"]):
         # Instagram music on a Reel: metadata.instagram.audio (InstagramAudioSelectionInput, experimental and not in
@@ -104,6 +118,7 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
         meta["title"] = (options.get("title") or text.split("\n")[0])[:100]
         if options.get("category_id"):
             meta["categoryId"] = str(options["category_id"])
+        meta["madeForKids"] = False  # COPPA: an explicit "not for kids" (Buffer's default too, but never left implicit)
     if svc == "pinterest":
         if options.get("board_id"):
             meta["boardServiceId"] = options["board_id"]
@@ -180,9 +195,16 @@ def clean_options(raw) -> dict:
                 out[k] = max(0, int(v))
             except (TypeError, ValueError):
                 continue
-        elif k == "ig_type":
+        elif k in ("ig_type", "fb_type"):
             if str(v) in ("reel", "story", "post"):
                 out[k] = str(v)
+        elif k == "alt_text":
+            vals = v if isinstance(v, list) else [v]
+            alts = [str(x or "").strip()[:1000] for x in vals[:10]]
+            if any(alts):
+                out[k] = alts
+        elif k == "first_comment":
+            out[k] = str(v).strip()[:2200]
         elif k == "ig_audio":
             au = clean_audio(v)
             if au:

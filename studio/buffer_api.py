@@ -242,7 +242,7 @@ class BufferClient:
         try:
             j = r.json()
         except ValueError:
-            raise BufferError(f"Buffer returned HTTP {r.status_code}")
+            raise BufferError(f"Buffer returned HTTP {r.status_code}", r.status_code if r.status_code >= 500 else None)
         if r.status_code >= 400 or j.get("errors"):
             e = (j.get("errors") or [{}])[0]
             code = (e.get("extensions") or {}).get("code", "")
@@ -411,11 +411,48 @@ class BufferClient:
                  ... on PostActionSuccess { post { id text status dueAt channelId } }
                  ... on MutationError { message } } }"""
         # Buffer answers HTTP 200 even when it refuses: the reason is in createPost.message (a typed MutationError)
-        r = self.gql(q, {"input": inp}, uid=uid).get("createPost") or {}
+        try:
+            r = self.gql(q, {"input": inp}, uid=uid).get("createPost") or {}
+        except (httpx.TransportError, BufferError) as e:
+            # a timeout / 5xx after Buffer may already have made the post: look before anyone retries, so a retry never
+            # leaves a second draft (createPost has no idempotency key)
+            if isinstance(e, BufferError) and (e.status or 0) < 500:
+                raise
+            made = self._just_created(uid, inp)
+            if not made:
+                raise
+            self._drop_posts(uid)
+            return made
         self._drop_posts(uid)
         if not r.get("post"):
             raise BufferError(r.get("message") or "Buffer rejected the post without saying why", 422)
         return r["post"]
+
+    def _just_created(self, uid: str, inp: dict, window_s: int = 900) -> dict | None:
+        """The post createPost may have made before its answer was lost: same channel, same text, created in the last
+        ``window_s`` seconds. One read; None when there is none (or the read fails too)."""
+        u = self.store.user(uid) or {}
+        if not u.get("org_id"):
+            return None
+        q = """query($i: PostsInput!) { posts(first: 20, input: $i) { edges { node { id text status dueAt channelId createdAt } } } }"""
+        i = {"organizationId": u["org_id"], "filter": {"channelIds": [inp["channelId"]],
+                                                     "status": ["draft", "scheduled", "sending", "sent", "needs_approval"]},
+             "sort": [{"field": "createdAt", "direction": "desc"}]}
+        try:
+            edges = self.gql(q, {"i": i}, uid=uid)["posts"]["edges"]
+        except Exception:  # noqa: BLE001  (the original failure is what the caller reports)
+            return None
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        for e in edges:
+            n = e.get("node") or {}
+            try:
+                age = (now - datetime.fromisoformat(str(n.get("createdAt") or "").replace("Z", "+00:00"))).total_seconds()
+            except ValueError:
+                continue
+            if n.get("channelId") == inp["channelId"] and (n.get("text") or "") == (inp.get("text") or "") and age <= window_s:
+                return {k: n.get(k) for k in ("id", "text", "status", "dueAt", "channelId")}
+        return None
 
     def edit_post(self, uid: str, inp: dict) -> dict:
         """editPost: only the fields given change (Buffer keeps text, assets and slot when they are omitted)."""
