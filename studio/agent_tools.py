@@ -1472,7 +1472,19 @@ class Tools(EditorialTools):
         out = self.h.remember(self.a, f"End every video with {text}")
         return {"rules": [r["rule"] for r in out.get("added") or []]}
 
+    def own_words(self) -> list[str]:
+        """What the person typed in this run: the request and their replies (never a page, a transcript or a caption)."""
+        run = self.state()
+        res = run.get("result") or {}
+        return [str((run.get("input") or {}).get("prompt") or "")] + [str(m.get("text") or "") for m in res.get("thread") or []
+                                                                      if m.get("role") == "user"]
+
     def t_remember_rule(self, correction: str) -> dict:
+        from .ledger import from_person
+        if not from_person(correction, self.own_words()):  # a rule only from the person's own words (prompt injection)
+            self.h.store.audit(self.a.uid, "system", "rule_held", "safety", {"run": self.rid, "rule": str(correction)[:160]})
+            return {"rules": [], "held": True, "message": "Not saved: a Style Ledger rule comes only from the person's own words in "
+                                                          "this run, and they didn't say this. Ask them, or let them add it in Brand."}
         out = self.h.remember(self.a, correction)
         return {"rules": [r["rule"] for r in out.get("added") or []], "message": out.get("message", "")}
 
@@ -1560,7 +1572,8 @@ class Tools(EditorialTools):
         d = self.model_json("captions", "You write social captions for a brand. Use only the facts given; keep every figure exactly as written; "
                             "no hype words like game-changer or revolutionary; one caption per network, each under its limit. Follow each "
                             "network's tone instructions and conventions exactly: the tone decides the hook, sentence length and energy.",
-                            json.dumps({"brand_voice": kit.get("voice", ""), "rules": brand.rules_prompt(rules), "story": {"headline": st["headline"],
+                            json.dumps({"brand_voice": kit.get("voice", ""), "rules": brand.rules_prompt([r for r in rules if not r.get("scope")]),
+                                        "story": {"headline": st["headline"],
                                         "facts": st["facts"], "why": st.get("why", ""), "link": article["url"]},
                                         **({"their_video": {"shows": ((res.get("upload") or {}).get("seen") or {}).get("summary", ""),
                                                             "says": ((res.get("upload") or {}).get("transcript") or "")[:600],
@@ -1569,7 +1582,9 @@ class Tools(EditorialTools):
                                            if res.get("upload") else {}),
                                         "networks": {c["service"]: {"limit": limits[c["service"]], "tone": tones.get(c["id"], "") or default_tone,
                                                                     "tone_instructions": guide(c),
-                                                                    "conventions": CHANNEL_STYLE.get(c["service"], "hook line, then the link.")}
+                                                                    "conventions": CHANNEL_STYLE.get(c["service"], "hook line, then the link."),
+                                                                    **({"channel_rules": brand.rules_prompt([r for r in rules if r.get("scope") and c["service"] in r["scope"]])}
+                                                                       if any(r.get("scope") and c["service"] in r["scope"] for r in rules) else {})}
                                                      for c in chans},
                                         **({"keyword": keyword} if keyword else {}),
                                         "format": "Return JSON {network: caption}. Every caption opens with a hook line, never a plain "
@@ -1583,13 +1598,14 @@ class Tools(EditorialTools):
             groups = {}
         for tn, cs in groups.items():
             voice = "; ".join(x for x in [kit.get("voice", ""), tone_instructions(tn, "" if tones.get(cs[0]["id"]) else prompt),
-                                          brand.rules_prompt(rules)] if x)
+                                          brand.rules_prompt([r for r in rules if not r.get("scope")])] if x)
             drafts += drafter.draft(cs, article, ai=ai, http=self.h.http, tone=voice)
         if ai and groups:
             self.h._ai_audit(self.a, eng, "captions")
         caps = res.setdefault("captions", {})
+        trace: list = []
         for d in drafts:
-            raw = brand.apply_text_rules(cap_hashtags(keyword_first(tidy(d["text"], st), keyword)), rules)
+            raw = brand.apply_text_rules(cap_hashtags(keyword_first(tidy(d["text"], st), keyword)), brand.for_channel(rules, d["service"]), trace)
             if d["service"] == "youtube":
                 raw = dedupe_youtube(raw, st["headline"])
             text = drafter.fit(d["service"], raw)
@@ -1597,6 +1613,7 @@ class Tools(EditorialTools):
                                      "trimmed": text != raw}
         res["story"] = st
         self.save(run)
+        self.h.ledger.record_examples(self.a.uid, trace)  # the Style Ledger shows what each rule really changed
         # the full saved text: a 160-character preview made the brain report a "cut off" caption that was complete
         return {"captions": {d["service"]: caps[d["channel_id"]]["text"] for d in drafts},
                 "complete": {d["service"]: not caps[d["channel_id"]]["trimmed"] for d in drafts},
@@ -1611,6 +1628,7 @@ class Tools(EditorialTools):
         kit, rules = self.h.kit(self.a), self.h.rules(self.a)
         st = self._story(run)
         packages, problems = [], []
+        from .ledger import evidence as _evidence
         old = {p["channel_id"]: p for p in res.get("packages") or []}
         skipped = []
         for c in run["input"]["channels"]:
@@ -1625,7 +1643,7 @@ class Tools(EditorialTools):
             media = cm["media"]
             main = next((m for m in media if m["type"] == "video"), None) or (media[0] if media else None)
             meta = self.h.media_meta(self.a, main["token"]) if main and main.get("token") else None
-            chk = brand.brand_check(cap["text"], meta, rules, kit)
+            chk = brand.brand_check(cap["text"], meta, brand.for_channel(rules, c["service"]), kit)
             clipped = self._clipped(media)
             if clipped:
                 problems.append(f"{c['service']}: text clipped on {len(clipped)} image(s)")
@@ -1640,6 +1658,7 @@ class Tools(EditorialTools):
                                  self._urls_for(c["service"], media)), "format": cm["format"], "note": cm.get("note", ""),
                   "ratio": cm.get("ratio") or ("9:16" if cm["format"] == "reel" else "4:5"),
                   "check": chk, "clipped": clipped, "status": status,
+                  "applied_rules": self.h.ledger.applied(rules, c["service"]), "evidence": _evidence(res.get("story"), res.get("source")),
                   "idempotency_key": hashlib.sha256(f"{self.rid}:{c['id']}".encode()).hexdigest()[:16]}
             if c["service"] == "youtube":
                 pk["options"] = {"title": st["headline"][:100], "category_id": "28"}

@@ -747,7 +747,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.post("/api/ledger")
     def ledger_add(request: Request, body: dict = Body(...)):
-        return house.remember(actor(request, write=True), body.get("correction", ""))
+        return house.ledger.add(actor(request, write=True), body.get("correction", ""), body.get("scope"))
 
     @app.post("/api/ledger/{rule_id}")
     def ledger_toggle(rule_id: int, request: Request, body: dict = Body(...)):
@@ -759,7 +759,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.post("/api/check")
     def check(request: Request, body: dict = Body(...)):
-        return house.check(actor(request), body.get("text", ""), body.get("media_token", ""))
+        return house.check(actor(request), body.get("text", ""), body.get("media_token", ""), str(body.get("service") or ""))
 
     @app.get("/api/ai")
     def ai_get(request: Request):
@@ -908,6 +908,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     # ------------------------------------------------------------ Brand studio + Sources agent (UI = REST = MCP)
     from . import brand_routes
     brand_routes.add_routes(app, house, actor)
+    from . import ledger as ledger_mod  # Style Ledger v2: groups, scope, suggestions from edits, check_draft, review links
+    ledger_mod.add_routes(app, house, actor)
     from . import brand_onboard  # website -> brand kit -> "Your brand" stills; the demo's sample brands (UI = REST = MCP)
     brand_onboard.add_routes(app, house, actor)
     from . import brand_kits  # several kits, one active; the builder's live gallery (UI = REST = MCP)

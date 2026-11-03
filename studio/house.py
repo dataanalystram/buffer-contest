@@ -161,6 +161,8 @@ class House:
         self.library = Library(self)
         from .uploads import Uploads
         self.uploads = Uploads(self)  # create_upload / upload_media_chunk (any MCP client, no public host)
+        from .ledger import Ledger
+        self.ledger = Ledger(self)  # Style Ledger v2: groups, scope, learned suggestions, evidence, review links
         from .send import Send
         self.send = Send(self)  # Send a file page: a short code + QR, any device drops a file into the Library
         from .share_import import Importer
@@ -275,10 +277,16 @@ class House:
             d = dict(r)
             d["check"] = json.loads(d.pop("spec"))
             d["active"] = bool(d["active"])
+            for k in ("scope", "examples", "evidence"):  # Style Ledger v2 columns (JSON lists; NULL on older rows)
+                try:
+                    d[k] = json.loads(d.get(k) or "[]")
+                except ValueError:
+                    d[k] = []
+            d["origin"] = d.get("origin") or "taught"
             out.append(d)
         return out
 
-    def remember(self, a: Actor, correction: str, rules: list[dict] | None = None) -> dict:
+    def remember(self, a: Actor, correction: str, rules: list[dict] | None = None, scope=None, origin: str | None = None) -> dict:
         """A correction in plain words -> ledger rules. Rule writer first; an AI model only when it matched nothing."""
         self.studio._guard_write(a, "remember_rule")
         correction = (correction or "").strip()[:500]
@@ -302,15 +310,18 @@ class House:
                                             "“never say X”, “no end card”, “use #FF5A1F as the accent”.", "ledger": self.rules(a)}
         added = []
         existing = self.rules(a)
+        from .ledger import norm_scope
+        sc = norm_scope(scope)
         for r in found:
-            # a newer rule of the same single-valued type replaces the old one
-            if r["check"]["type"] not in ("banned_words", "require_text"):
+            # a newer rule of the same single-valued type replaces the old one (for the same channels)
+            if r["check"]["type"] not in ("banned_words", "require_text", "prefer_words"):
                 for old in existing:
-                    if old["check"]["type"] == r["check"]["type"]:
+                    if old["check"]["type"] == r["check"]["type"] and (old.get("scope") or []) == (sc if r["kind"] == "text" else []):
                         self.store.x("UPDATE style_rules SET active=0 WHERE id=?", (old["id"],))
             rid = self.store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created) VALUES(?,?,?,?,?,1,?)",
                                (a.uid, r["kind"], json.dumps(r["check"]), r["rule"], r["source"], _now()))
             added.append({**r, "id": rid})
+        self.ledger.stamp(a, added, scope, origin)
         self.store.audit(a.uid, a.label, "remember_rule", "read", {"rules": [r["rule"] for r in added], "engine": engine_used})
         return {"added": added, "ledger": self.rules(a), "engine": engine_used}
 
@@ -327,9 +338,9 @@ class House:
         self.store.x("DELETE FROM style_rules WHERE id=? AND user_id=?", (rule_id, a.uid))
         return {"deleted": rule_id}
 
-    def check(self, a: Actor, text: str, media_token: str = "") -> dict:
+    def check(self, a: Actor, text: str, media_token: str = "", service: str = "") -> dict:
         meta = self.media_meta(a, media_token) if media_token else None
-        res = brand.brand_check(text, meta, self.rules(a), self.kit(a))
+        res = brand.brand_check(text, meta, brand.for_channel(self.rules(a), service) if service else self.rules(a), self.kit(a))
         if res["failed"]:
             for f in res["failed"]:
                 if f["rule_id"]:
@@ -955,7 +966,7 @@ class House:
             article = {**article, "description": (story.get("why") or article.get("description", "")),
                        "paragraphs": story["facts"] + article.get("paragraphs", [])[:3]}
         chans = inp["channels"]
-        tone = "; ".join(x for x in [kit.get("voice", ""), brand.rules_prompt(rules)] if x)
+        tone = "; ".join(x for x in [kit.get("voice", ""), brand.rules_prompt([r for r in rules if not r.get("scope")])] if x)
         if eng and eng["style"] == "openai":
             eng = self._ai_reserve(a, eng)
         ai = {"base_url": eng["base_url"], "api_key": eng["api_key"], "model": eng["model"]} if eng and eng["style"] == "openai" else None
@@ -968,16 +979,21 @@ class House:
         self._save(rid, steps, res)
         main = next((m for m in res["media"] if m["type"] == "video"), None) or (res["media"][0] if res["media"] else None)
         packages, fails = [], 0
+        trace: list = []
+        from .ledger import evidence as _evidence
+        ev = _evidence(res.get("story"), res.get("article") or res.get("source"))
         for d in drafts:
             svc = d["service"]
-            text = drafter.fit(svc, brand.apply_text_rules(d["text"], rules))
+            scoped = brand.for_channel(rules, svc)
+            text = drafter.fit(svc, brand.apply_text_rules(d["text"], scoped, trace))
             meta = self.media_meta(a, main["token"]) if main and main.get("token") else None  # the sample clip has no token
-            chk = brand.brand_check(text, meta, rules, kit)
+            chk = brand.brand_check(text, meta, scoped, kit)
             fails += len(chk["failed"])
             urls = self._media_for(svc, res)
             packages.append({"channel_id": d["channel_id"], "service": svc, "channel_name": d["channel_name"], "text": text,
                              "length": drafter.count(svc, text), "limit": drafter.limit_for(svc), "media_urls": urls,
-                             "check": chk, "status": "ready"})
+                             "check": chk, "status": "ready", "applied_rules": self.ledger.applied(rules, svc), "evidence": ev})
+        self.ledger.record_examples(a.uid, trace)
         res["packages"] = packages
         self._step(steps, "check", "done" if not fails else "warn",
                    "Every package passes the ledger" if not fails else f"{fails} rule issue(s): see each package", {"failed": fails})
@@ -1599,13 +1615,19 @@ class House:
         for pk in res.get("packages", []):
             if pk["channel_id"] == channel_id:
                 main = next((m for m in res["media"] if m["type"] == "video"), None) or (res["media"][0] if res["media"] else None)
+                before = pk.get("text") or ""
                 pk["text"] = text
                 pk["length"] = drafter.count(pk["service"], text)
                 if channel_id in (res.get("captions") or {}):  # agent runs: the edit survives the next check
                     res["captions"][channel_id]["text"] = text
-                pk["check"] = brand.brand_check(text, self.media_meta(a, main["token"]) if main else None, self.rules(a), self.kit(a))
+                rules = self.rules(a)
+                pk["check"] = brand.brand_check(text, self.media_meta(a, main["token"]) if main else None,
+                                                brand.for_channel(rules, pk["service"]), self.kit(a))
+                pk["applied_rules"] = self.ledger.applied(rules, pk["service"])
                 self._save(rid, run["steps"], res)
-                return pk
+                # Style Ledger v2: a person's edit is a signal; the same kind of edit in enough posts becomes a suggestion
+                new = self.ledger.record_edit(a, rid, channel_id, pk["service"], before, text) if a.kind == "human" else []
+                return {**pk, "suggestions": new}
         raise ActionError("No package for that channel in this run.", 404)
 
     def schedule_package(self, a: Actor, rid: int, channel_id: str, mode: str = "queue", due_at: str | None = None,
