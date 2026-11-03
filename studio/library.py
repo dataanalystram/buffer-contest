@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS library_chunks (item_id INTEGER, n INTEGER, data BLOB
 CREATE TABLE IF NOT EXISTS library_media (token TEXT PRIMARY KEY, item_id INTEGER, user_id TEXT);
 """
 TABLES = ("library_items", "library_chunks", "library_media")
+TRASH_DAYS = 7  # a deleted item stays restorable this long (see Library.delete)
+TRASH_TOKEN = "trash~"  # a trashed item's media rows keep their bytes under this prefix, so /m/<token> no longer serves them
 
 # (mime, extension, kind) from the file's first bytes. Anything else is refused.
 def sniff(head: bytes) -> tuple[str, str, str] | None:
@@ -325,7 +327,7 @@ class Library:
             iid = int(iid)
         except (TypeError, ValueError):
             raise ActionError("No such Library item.", 404)
-        rows = self.store.q("SELECT * FROM library_items WHERE id=? AND user_id=? AND storage<>'pending'", (iid, a.uid))
+        rows = self.store.q("SELECT * FROM library_items WHERE id=? AND user_id=? AND storage NOT IN ('pending','trash')", (iid, a.uid))
         if not rows:
             raise ActionError("No such Library item.", 404)
         d = dict(rows[0])
@@ -416,7 +418,8 @@ class Library:
         else:
             runs = self._runs(a)
             self.backfill(a, runs)
-            rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND storage<>'pending' ORDER BY created DESC, id DESC LIMIT ?",
+            rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND storage NOT IN ('pending','trash') "
+                                "ORDER BY created DESC, id DESC LIMIT ?",
                                 (a.uid, max(1, min(int(limit or 200), 500))))
             by_run = {r["run_id"]: r for r in runs}
             items = []
@@ -512,13 +515,70 @@ class Library:
         if live and not force:
             raise ActionError(f"“{d['name']}” is used in {len(live)} post{'s' if len(live) > 1 else ''} that hasn't gone out yet "
                               f"(“{live[0]['title'][:60]}”). Delete it anyway?", 409)
+        self._trash(a, d)
+        self.store.audit(a.uid, a.label, "delete_library_item", "safety", {"kind": d["kind"], "bytes": int(d["size"] or 0), "forced": bool(live),
+                                                                            "trash_days": TRASH_DAYS})
+        return {"deleted": True, "id": d["id"], "was_used_in": [u["run_id"] for u in pub["used_in"]], "in_trash_days": TRASH_DAYS,
+                "restore": f"POST /api/library/{d['id']}/restore"}
+
+    # ---------------------------------------------------------------- trash (owner bug, 2 Nov 2026)
+    # Nine Library items were deleted in 43 s on 2 Nov (20:50 GMT), five of them past the "used in a post that hasn't gone
+    # out" warning, and the files of six ready posts were gone for good (/healthz missing_files 9 -> 42). A delete now
+    # moves the item to the Trash for TRASH_DAYS: it leaves the Library at once and its files stop being served (the
+    # posts that used them show "missing" exactly as before), but the bytes are kept and POST /api/library/{id}/restore
+    # brings the item and every post's files back. purge_trash() removes them for good after TRASH_DAYS.
+    def _trash(self, a: Actor, d: dict) -> None:
         toks = d["meta"].get("tokens") or [d["token"]]
+        meta = {**d["meta"], "trash": {"at": _now(), "storage": d["storage"], "tokens": toks, "token": d["token"]}}
         if d["storage"] == "media":
-            for t in toks:
-                self.store.x("DELETE FROM media WHERE token=? AND user_id=?", (t, a.uid))
-        self._drop(d["id"])
-        self.store.audit(a.uid, a.label, "delete_library_item", "safety", {"kind": d["kind"], "bytes": int(d["size"] or 0), "forced": bool(live)})
-        return {"deleted": True, "id": d["id"], "was_used_in": [u["run_id"] for u in pub["used_in"]]}
+            for t in toks:  # the media row keeps its bytes under a token nothing resolves
+                self.store.x("UPDATE media SET token=? WHERE token=? AND user_id=?", (TRASH_TOKEN + t, t, a.uid))
+        self.store.x("UPDATE library_items SET storage='trash', token=?, meta=? WHERE id=?",
+                     (TRASH_TOKEN + d["token"], json.dumps(meta), d["id"]))
+
+    def trash(self, a: Actor) -> dict:
+        rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND storage='trash' ORDER BY id DESC LIMIT 200", (a.uid,))
+        out = []
+        for r in rows:
+            m = json.loads(r["meta"] or "{}")
+            t = m.get("trash") or {}
+            out.append({"id": r["id"], "name": r["name"], "kind": r["kind"], "size": int(r["size"] or 0), "deleted_at": t.get("at"),
+                        "purge_at": (t.get("at") or 0) + TRASH_DAYS * 86400})
+        return {"items": out, "days": TRASH_DAYS}
+
+    def restore(self, a: Actor, iid) -> dict:
+        if demo_guard.is_demo(a.uid):
+            raise ActionError("Sample items can't be changed. Connect Buffer to manage your own Library.", 403)
+        self.h.studio._guard_write(a, "restore_library_item")
+        rows = self.store.q("SELECT * FROM library_items WHERE id=? AND user_id=? AND storage='trash'", (int(iid), a.uid))
+        if not rows:
+            raise ActionError("That item isn't in the Trash (it may have been removed for good after "
+                              f"{TRASH_DAYS} days).", 404)
+        r = dict(rows[0])
+        m = json.loads(r["meta"] or "{}")
+        t = m.pop("trash", {}) or {}
+        storage, tok = t.get("storage") or "media", t.get("token") or r["token"].removeprefix(TRASH_TOKEN)
+        if storage == "media":
+            for x in t.get("tokens") or [tok]:
+                self.store.x("UPDATE media SET token=? WHERE token=? AND user_id=?", (x, TRASH_TOKEN + x, a.uid))
+        self.store.x("UPDATE library_items SET storage=?, token=?, meta=? WHERE id=?", (storage, tok, json.dumps(m), r["id"]))
+        self.store.audit(a.uid, a.label, "restore_library_item", "safety", {"kind": r["kind"], "bytes": int(r["size"] or 0)})
+        return {"restored": True, "id": r["id"]}
+
+    def purge_trash(self, days: float | None = None) -> int:
+        """Remove for good what has been in the Trash longer than ``days`` (TRASH_DAYS). Returns how many items."""
+        cutoff = _now() - (TRASH_DAYS if days is None else days) * 86400
+        n = 0
+        for r in self.store.q("SELECT id,user_id,meta FROM library_items WHERE storage='trash'"):
+            t = (json.loads(r["meta"] or "{}") or {}).get("trash") or {}
+            if (t.get("at") or 0) > cutoff:
+                continue
+            if t.get("storage") == "media":
+                for x in t.get("tokens") or []:
+                    self.store.x("DELETE FROM media WHERE token=? AND user_id=?", (TRASH_TOKEN + x, r["user_id"]))
+            self._drop(r["id"])
+            n += 1
+        return n
 
     def use(self, a: Actor, iid, body: dict | None = None) -> dict:
         """Attach an item to a new post. With a prompt it starts the agent run right away (make_post); without, it
@@ -611,6 +671,15 @@ def add_routes(app, house, actor) -> None:
             raise ActionError("Bad Content-Length.", 400)
         nm = name or request.headers.get("x-file-name", "") or "upload"
         return await lib.save_stream(a, nm, request.stream(), declared, "take" if source == "take" else "upload")
+
+    @app.get("/api/library/trash")
+    def library_trash(request: Request):
+        """Items deleted in the last TRASH_DAYS days; restore one with POST /api/library/{id}/restore."""
+        return lib.trash(actor(request))
+
+    @app.post("/api/library/{iid}/restore")
+    def library_restore(iid: int, request: Request):
+        return lib.restore(actor(request, write=True), iid)
 
     @app.get("/api/library/{iid}")
     def library_item(iid: int, request: Request):

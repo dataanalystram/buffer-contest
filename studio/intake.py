@@ -189,3 +189,42 @@ def refine(text: str, services: list[str]) -> dict:
     if re.search(r"\bredo|re-?render|again\b", t) and not out["actions"]:
         out["actions"].append({"do": "rerender"})
     return out
+
+
+_NUM = r"(\d{1,3}(?:\.\d+)?)"
+_SECS = r"\s*(?:s|sec|secs|second|seconds)\b"
+_WORDNUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+
+
+def video_edits(text: str) -> dict:
+    """Plain-word video edits in a thread reply -> edit_video arguments (live pass 2 Nov 2026: "trim the first 3 seconds and
+    add captions", "switch to the Nothing theme", "make a 4:5 version" did nothing to the video). {} when none."""
+    t = " " + re.sub(r"\s+", " ", (text or "").lower()) + " "
+    for w, n in _WORDNUM.items():
+        t = re.sub(rf"\b{w}\b(?=\s*(?:s|sec|secs|second|seconds)\b)", str(n), t)
+    out: dict = {}
+    m = re.search(r"\b(?:trim|cut|remove|drop|skip|chop|lose)\b(?: off)?(?: the)? (?:first|opening|initial) " + _NUM + _SECS, t) or \
+        re.search(r"\b(?:trim|cut|remove|drop|skip|chop)\b " + _NUM + _SECS + r"(?: off)? (?:from |of |at )?(?:the )?(?:start|beginning|front|top)", t) or \
+        re.search(r"\b(?:start|begin)(?: it| the video)? (?:at|from) " + _NUM + _SECS, t)
+    if m:
+        out["cut_first_s"] = float(m.group(1))
+    if re.search(r"\b(?:no|remove|drop|without|turn off|hide)(?: the)? (?:captions|subtitles|subs)\b|\b(?:captions|subtitles) off\b", t):
+        out["captions"] = False
+    elif re.search(r"\b(?:captions|subtitles|subs)\b", t) and re.search(
+            r"\b(?:add|burn|with|turn on|put|include|show|caption it|captions on|subtitles on)\b", t):
+        out["captions"] = True
+    m = re.search(r"\b(4|1|9|16)\s*(?::|x|by|/)\s*(5|1|16|9)\b", t)
+    if m and f"{m.group(1)}:{m.group(2)}" in ("4:5", "1:1", "9:16"):
+        out["ratio"] = f"{m.group(1)}:{m.group(2)}"
+    elif re.search(r"\bsquare (?:version|video|one|cut)\b|\bmake it square\b", t):
+        out["ratio"] = "1:1"
+    if re.search(r"\b(?:auto|automatic) theme\b|\btheme:? auto\b|\b(?:you|agent) (?:pick|choose) the theme\b", t):
+        out["theme"] = "auto"
+    else:
+        m = re.search(r"\b(?:switch|change|move|go|set)(?: it| the video| the theme)? (?:to|back to) (?:the |my |a )?([a-z0-9][\w .&'-]{1,30}?) (?:theme|kit|brand kit|brand|look|style)\b", t) or \
+            re.search(r"\b(?:use|in|with|apply|try) (?:the |my |a )?([a-z0-9][\w .&'-]{1,30}?) (?:theme|kit|brand kit|look|style)\b", t)
+        if m:
+            name = m.group(1).strip()
+            if name not in ("same", "other", "another", "new", "different", "video", "this", "that"):
+                out["theme"] = name
+    return out

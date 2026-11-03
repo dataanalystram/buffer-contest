@@ -184,9 +184,34 @@ def color_candidates(vars_: dict[str, list[str]], css: str) -> list[dict]:
         got = parse_css_color(lit)
         if got and got[1] >= 0.6 and sat(got[0]) >= 0.3 and to_hex(got[0]) not in FRAMEWORK_DEFAULTS:
             freq[to_hex(got[0])] += 1
+    # Where a raw colour is used says more than how often. A brand colour fills blocks and cards (Wispr Flow's dark green
+    # pricing blocks); a colour used only on a call-to-action button, or for error / warning states and strikethroughs
+    # (Wispr's coral #FF6C4C), is not the brand colour even at the same count.
+    fill, cta, state = Counter(), Counter(), Counter()
+    for sel, body in re.findall(r"([^{}@;]+)\{([^{}]*)\}", _COMMENT.sub("", css)):
+        is_cta = bool(re.search(r"button|\bbtn|\bcta|\[type=.?submit", sel, re.I))
+        is_state = bool(re.search(r"error|invalid|warning|danger|strike|alert", sel, re.I))
+        for prop, val in re.findall(r"([a-z-]+)\s*:\s*([^;]+)", body, re.I):
+            for lit in _COLOR_LIT.findall(val):
+                got = parse_css_color(lit)
+                if not got:
+                    continue
+                hx = to_hex(got[0])
+                if is_state:
+                    state[hx] += 1
+                elif "background" in prop.lower():
+                    (cta if is_cta else fill)[hx] += 1
     for hx, n in freq.most_common(6):
         rgb = tuple(int(hx[i:i + 2], 16) for i in (1, 3, 5))
-        out.append({"rgb": rgb, "score": min(1.2, 0.15 * n) * (0.35 + sat(rgb)), "source": f"most used colour in the CSS ({n}x)"})
+        w, why = 1.0, ""
+        if fill.get(hx):
+            w, why = 1.35, ", fills blocks and cards"
+        elif cta.get(hx):
+            w, why = 0.55, ", only on call-to-action buttons"
+        elif state.get(hx) and state[hx] * 2 >= n:
+            w, why = 0.5, ", mostly error / state styles"
+        out.append({"rgb": rgb, "score": min(1.2, 0.15 * n) * (0.35 + sat(rgb)) * w,
+                    "source": f"most used colour in the CSS ({n}x{why})"})
     out.sort(key=lambda c: -c["score"])
     return out
 
@@ -627,6 +652,12 @@ def raster_candidates(url: str, info: dict) -> list[dict]:
     return out[:8]
 
 
+def _fix_spacing(text: str) -> str:
+    """Page text glued across tags ("type,<br>just") gets its missing space back (studio.templates.fix_spacing)."""
+    from .templates import fix_spacing
+    return fix_spacing(text or "")
+
+
 def logo_palette(img) -> list[tuple]:
     """Saturated colours in a logo image (RGBA), most frequent first."""
     from PIL import Image
@@ -745,7 +776,7 @@ def extract(url: str, html: str, css_texts: list[str] | None = None, fetch=None)
     head = fonts["head"]["bundled"]
     kit = {"name": info["name"], "handle": info["handle"], "website": url, "colors": pal["colors"],
            "font": head, "body_font": fonts["body"]["bundled"], "headline_case": "upper" if head == "anton" else "title",
-           "voice": voice["sample"][:300], "voice_notes": voice["notes"],
+           "voice": _fix_spacing(voice["sample"])[:300], "voice_notes": voice["notes"],
            "front_card": {"style": "glow" if pal["dark"] else "minimal"}, "end_card": {"style": "glow" if pal["dark"] else "minimal",
                                                                                     "cta": f"Follow {info['name']}"[:28], "line": ""}}
     return {"kit": kit, "logo_png": _to_png(logo) if logo is not None else None, "mark_png": _to_png(mark) if mark is not None else None,

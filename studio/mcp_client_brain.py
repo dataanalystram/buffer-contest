@@ -600,6 +600,7 @@ def _video_spec(h, a, args, tok, meta) -> dict:
         cv = cv if isinstance(cv, dict) else {}
         spec["covers"] = True
         spec["cover_hook"] = str(cv.get("title") or args.get("hook") or "")[:120]
+        spec["cover_title_given"] = bool(str(cv.get("title") or "").strip())  # keep the client's words on the cover
         try:
             spec["cover_index"] = max(0, min(2, int(cv.get("index") or 0)))
         except (TypeError, ValueError):
