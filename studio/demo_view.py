@@ -54,6 +54,8 @@ ALLOW = [
     # The News radar's recorded sample scan (the demo's scan never fetches) and its dry-run packages; a real send
     # (dry_run false) is refused inside SourcesAgent.draft.
     ("POST", r"/api/sources/scan"), ("POST", r"/api/sources/draft"),
+    # One take's The Spread: the dry-run plan on the Planner; placing it (confirm_token) is refused inside Takes.place.
+    ("POST", r"/api/takes/\d+/place"),
 ]
 # Agent tools that change settings or send: refused in the demo however they are reached (button, REST or the agent).
 BLOCKED_TOOLS = {
@@ -97,7 +99,6 @@ WOULD = [
     (r"^/api/send-codes$", None, "make a code to send a file from your phone"),
     (r"^/api/sources/refresh$", None, "scan your sources for new stories"),
     (r"^/api/sources/", None, "change your News sources"),
-    (r"^/api/takes/\d+/place$", None, "place these clips in your Buffer queue"),
     (r"^/api/takes/\d+/clips/", None, "save your clip edit"),
     (r"^/api/takes$", None, "split your own long video into clips on the video worker"),
     (r"^/api/worker/", None, "hand this job to the video worker"),

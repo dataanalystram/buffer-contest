@@ -705,6 +705,10 @@ class Takes:
         if run["result"].get("sample") and not demo.is_demo(a.uid):
             raise ActionError("The sample take can only be spread in the sample workspace (/demo).", 403)
         token = (body.get("confirm_token") or "").strip()
+        if (token or body.get("dry_run") is False) and demo.is_demo(a.uid):
+            from .demo_view import message, view_only
+            if view_only():  # the view-only demo shows The Spread's plan (dry run) but never places the clips
+                raise ActionError(message("place these clips in your Buffer as drafts"), 403)
         if not token:
             if body.get("dry_run") is False and a.kind == "agent":
                 raise ActionError("Agents place clips in two steps: call with dry_run first, show the plan, then confirm_token.", 400)
