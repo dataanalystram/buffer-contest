@@ -167,7 +167,7 @@ function clipRow(c, n, k) {
     <span class="clip-n" aria-hidden="true">${n}</span>
     <div class="clip-body">
       <p class="clip-hook" data-testid="clip-hook">${esc(c.hook)}</p>
-      <p class="muted xs clip-meta"><span data-testid="clip-dur">${secs((c.end || 0) - (c.start || 0)).replace(/^0:/, "") } s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.score != null ? ` · <span class="pill sm clip-score" data-testid="clip-score">Score ${Math.round(c.score)}</span>` : ""}</p>
+      <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.score != null ? ` · <span class="pill sm clip-score" data-testid="clip-score">Score ${Math.round(c.score)}</span>` : ""}</p>
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
       ${st}
       <div class="clip-pf">${pfMini(c)}</div>
