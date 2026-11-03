@@ -91,7 +91,7 @@
     box.innerHTML = sec("publish", "Publish through Buffer") + sec("research", "Research") + sec("ai", "AI engines") + sec("apps", "AI apps");
     box.querySelectorAll(".integ-act[data-act]").forEach((b) => (b.onclick = () => {
       if (b.dataset.act === "key") openKey(b.dataset.key);
-      else if (b.dataset.act === "ai") document.getElementById(b.textContent.includes("key") ? "aiKeysH" : "aiH")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      else if (b.dataset.act === "ai") { showTab("settings", "ai"); setTimeout(() => document.getElementById(b.textContent.includes("key") ? "aiKeysH" : "aiH")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }
       else if (b.dataset.act === "apps") showTab("apps");
     }));
   }
@@ -176,7 +176,7 @@
   // open Settings at Integrations, or straight at one key's dialog: data-integ="integ-ph" (News -> Sources) or
   // /?tab=settings&sub=integ-ph
   window.integOpen = function (id) {
-    showTab("settings");
+    showTab("settings", "integrations");
     const key = /^integ-([a-z]+)$/.test(id || "") ? id.slice(6) : "";
     const go = (n) => {
       if (key && I.data) { openKey(key); return; }

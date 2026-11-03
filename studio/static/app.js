@@ -333,9 +333,11 @@ const TAB_ALIAS = {
   home: ["inbox"], approvals: ["inbox", ""], calendar: ["planner"], queue: ["planner"],
   studio: ["agent", "quick"], radar: ["news", "feed"], sources: ["news", "scan"],
   brandstudio: ["brand", "kit"], ledger: ["brand", "ledger"], templates: ["brand", "templates"],
-  connect: ["apps"], agents: ["apps"], ai: ["settings", ""],
+  connect: ["apps"], agents: ["apps"], ai: ["settings", "ai"], integrations: ["settings", "integrations"],
 };
-const SUB_DEFAULT = { agent: "agent", news: "feed", brand: "kit" };
+const SUB_DEFAULT = { agent: "agent", news: "feed", brand: "kit", settings: "account" };
+// Settings sidebar (3 Nov 2026): old deep links still land on the right page (?tab=settings&sub=integ-ph, sub=engine)
+const SUB_ALIAS = { settings: (s) => (/^integ(rations|-[a-z]+)?$/.test(s) ? "integrations" : /^(ai|engine|ai-engine|keys|logs)$/.test(s) ? "ai" : /^(channels|setup|appearance)$/.test(s) ? "account" : s) };
 document.querySelectorAll(".rail button[data-tab]").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 // phone: a bottom bar with the four everyday screens and a Menu sheet for the rest (Esc or Close returns focus).
 // On a desktop the sheet is just the lower part of the rail, so nothing is listed twice.
@@ -356,6 +358,7 @@ document.addEventListener("click", (e) => {
 function subTab(tab, sub) {
   const root = document.getElementById("tab-" + tab); if (!root) return "";
   const subs = [...root.querySelectorAll(":scope > .sub[data-sub]")]; if (!subs.length) return "";
+  if (SUB_ALIAS[tab]) sub = SUB_ALIAS[tab](sub || "");
   if (!subs.some((x) => x.dataset.sub === sub)) sub = SUB_DEFAULT[tab] || subs[0].dataset.sub;
   subs.forEach((x) => (x.hidden = x.dataset.sub !== sub));
   root.querySelectorAll(":scope > .pg-tabs [data-sub]").forEach((b) => { const on = b.dataset.sub === sub; b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
@@ -367,9 +370,10 @@ document.querySelectorAll(".pg-tabs").forEach((seg) => {
   const tab = seg.closest(".tab").id.slice(4);
   seg.querySelectorAll("[data-sub]").forEach((b) => (b.onclick = () => { const sub = subTab(tab, b.dataset.sub); urlFor(tab, sub); }));
   seg.addEventListener("keydown", (e) => { // arrow keys move between sub-tabs (WAI-ARIA tabs)
-    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const fwd = ["ArrowRight", "ArrowDown"].includes(e.key), back = ["ArrowLeft", "ArrowUp"].includes(e.key);  // Down/Up: the vertical Settings nav
+    if (!fwd && !back) return;
     const bs = [...seg.querySelectorAll("[data-sub]")], i = bs.indexOf(document.activeElement); if (i < 0) return;
-    const n = bs[(i + (e.key === "ArrowRight" ? 1 : bs.length - 1)) % bs.length]; n.click(); n.focus(); e.preventDefault();
+    const n = bs[(i + (fwd ? 1 : bs.length - 1)) % bs.length]; n.click(); n.focus(); e.preventDefault();
   });
 });
 function urlFor(name, sub) {
@@ -805,7 +809,7 @@ async function disconnect() {
 }
 $("#deviceBtn").onclick = deviceLink; $("#setDevice").onclick = deviceLink;
 $("#logoutBtn").onclick = logout; $("#setLogout").onclick = logout;
-$("#disconnectBtn").onclick = disconnect; $("#setDisconnect").onclick = disconnect;
+$("#disconnectBtn").onclick = disconnect; $("#setDisconnect").onclick = disconnect; $("#setPrivDelete").onclick = disconnect;
 document.querySelectorAll("#acctMenu [data-go]").forEach((b) => b.addEventListener("click", () => ($("#acctMenu").hidden = true)));
 
 boot().catch((e) => toast(e.message, 6000));
