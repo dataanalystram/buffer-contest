@@ -21,7 +21,7 @@ import os
 
 from . import activity as activity_mod
 from . import staticver
-from . import buffer_api, demo, demo_guard, house as house_mod, inbox as inbox_mod, limits as reqlimits, mcp, mcp_oauth
+from . import buffer_api, demo, demo_guard, demo_view, house as house_mod, inbox as inbox_mod, limits as reqlimits, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
 from .config import Settings, load_settings
@@ -175,6 +175,33 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 return JSONResponse({"error": "Too many requests from this network. Wait a minute, or connect Buffer."},
                                     status_code=429, headers={"Retry-After": str(int(wait) + 1)})
         return await call_next(request)
+
+    # The view-only demo (studio/demo_view.py): a demo session's writes are answered "In the real app this would ..."
+    # without touching data, and nothing it does (or the background work it starts) may call out of the server.
+    demo_view.install()
+
+    def _demo_uid(request: Request) -> str | None:
+        sess = store.session(request.cookies.get(COOKIE))
+        uid = sess.get("user_id") if sess else None
+        if not uid:
+            auth = request.headers.get("authorization", "")
+            ag = studio.resolve_agent(auth[7:].strip()) if auth.lower().startswith("bearer ") else None
+            uid = ag.uid if ag else None
+        return uid if demo_guard.is_demo(uid) else None
+
+    @app.middleware("http")
+    async def _demo_view_only(request: Request, call_next):
+        uid = _demo_uid(request) if request.url.path.startswith(("/api/", "/mcp", "/oauth/", "/send/", "/u/")) else None
+        if not uid:
+            return await call_next(request)
+        why = demo_view.blocked(request.method, request.url.path)
+        if why:
+            return JSONResponse({"error": why, "demo": True, "view_only": True}, status_code=403, headers={"X-HQ-Demo": "view-only"})
+        tok = demo_view.OFFLINE.set(True)
+        try:
+            return await call_next(request)
+        finally:
+            demo_view.OFFLINE.reset(tok)
 
     @app.middleware("http")
     async def _headers(request: Request, call_next):
@@ -422,7 +449,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def demo_start(request: Request, url: str = ""):
         ip = demo_guard.client_ip(request)
         if not demo_guard.workspace_ok(store, ip):
-            return RedirectResponse("/?error=" + quote(demo_guard.WHY["workspace"]), 302)
+            return RedirectResponse("/?error=" + quote(demo_guard.why("workspace")), 302)
         sid = request.cookies.get(COOKIE)
         if sid:
             store.drop_session(sid)
