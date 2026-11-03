@@ -721,7 +721,7 @@ def review_page(view: dict | None, done: str = "", error: str = "") -> str:
                      f'<p class="rv-text">{e(d["text"])}</p>{rules}</article>')
     ev = "".join(f'<li class="{"ok" if x["found"] else "warn"}"><b>{e(x["claim"])}</b>'
                  + (f'<q>{e(x["quote"])}</q>' if x["quote"] else '<span>Not found in the source text</span>')
-                 + (f' <a href="{e(x["url"])}" rel="noopener noreferrer nofollow" target="_blank">{e(x["site"] or "Source")}</a>' if x["url"] else "")
+                 + (f' <a href="{e(x["url"])}" rel="noopener noreferrer nofollow" target="_blank">{e(x["site"] or "Source")}</a>' if str(x["url"] or "").lower().startswith(("https://", "http://")) else "")
                  + "</li>" for x in view["evidence"])
     if done or status in ("approved", "changes_requested"):
         msg = done or ("Approved." if status == "approved" else "Changes requested.")

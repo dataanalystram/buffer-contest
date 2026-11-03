@@ -192,7 +192,7 @@
         <ul>${rules.map((r) => `<li data-testid="pkg-applied-rule"><span>${esc(r.rule)}</span><small class="muted">${esc(r.scope && r.scope.length ? scopeText(r.scope) : r.origin === "learned" ? "learned" : "")}</small></li>`).join("")}</ul></details>` : ""}
       ${ev.length ? `<details data-testid="pkg-evidence"><summary>Sources: ${ev.length - miss} of ${ev.length} fact${ev.length === 1 ? "" : "s"} found in ${esc(ev[0].site || "the source")}${miss ? ` · ${miss} not found` : ""}</summary>
         <ul class="lg-evl">${ev.map((x) => `<li class="${x.found ? "ok" : "warn"}" data-testid="pkg-evidence-item"><b>${esc(x.claim)}</b>${x.quote ? `<q>${esc(x.quote)}</q>` : `<span class="sm">${x.found ? "" : "Not found in the source text: check it before posting."}</span>`}
-          ${x.url ? `<a class="link sm" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.site || "Source")}</a>` : ""}</li>`).join("")}</ul></details>` : ""}
+          ${x.url ? `<a class="link sm" href="${(window.escUrl || esc)(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.site || "Source")}</a>` : ""}</li>`).join("")}</ul></details>` : ""}
       <button type="button" class="link sm" data-review="${esc(p.channel_id)}" data-testid="pkg-review-link">Share for review</button>
     </div>`;
   };
