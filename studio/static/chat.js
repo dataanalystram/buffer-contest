@@ -11,7 +11,8 @@
   const root = document.getElementById("tab-agent"), rv = document.getElementById("runView");
   if (!root || !rv) return;
   const KEEP = 6;  // turns the server keeps word for word (studio/chat_context.py KEEP_LAST)
-  const HC = { rows: [], q: "", trace: {}, showOld: {}, ctxFor: 0, panelFor: "", lastFocus: null };
+  const HC = { rows: [], q: "", trace: {}, showOld: {}, ctxFor: 0, ctxKey: "", panelFor: "", lastFocus: null, shown: 25, dirty: true };
+  const PAGE = 25;  // the sidebar draws 25 threads, then 25 more as you scroll (the rows come from the Recent fetch, no extra call)
   const ic = (d) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const I = {
     plus: '<path d="M12 5v14M5 12h14"/>', menu: '<path d="M4 7h16M4 12h16M4 17h16"/>', search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
@@ -98,9 +99,14 @@
     return "Older";
   }
   const STATE = { ready: "Ready", draft: "In Buffer", scheduled: "Scheduled", running: "Working", failed: "Stopped", interrupted: "Interrupted" };
-  function drawList() {
+  // lazy: nothing is drawn until the sidebar can be seen (a thread is open, or the phone drawer), then a page at a time
+  const sideVisible = () => root.classList.contains("mp-in-thread") && (rv.classList.contains("hc-side-open") || !matchMedia("(max-width:1100px)").matches);
+  function drawList(force) {
+    if (!force && !sideVisible()) { HC.dirty = true; return; }
+    HC.dirty = false;
     const box = document.getElementById("hcList"), q = HC.q.trim().toLowerCase(), cur = run() && run().id;
-    const rows = HC.rows.filter((x) => !q || String(x.title || "").toLowerCase().includes(q));
+    const all = HC.rows.filter((x) => !q || String(x.title || "").toLowerCase().includes(q));
+    const rows = all.slice(0, HC.shown);
     if (!rows.length) { box.innerHTML = `<p class="muted sm hc-empty">${HC.rows.length ? "No thread matches." : "Your posts show up here as threads."}</p>`; return; }
     let html = "", g = "";
     for (const x of rows) {
@@ -111,9 +117,15 @@
           <span class="hc-th-t">${esc(x.title || "Your post")}</span><small class="hc-th-s st-${esc(x.state || x.status)}">${esc(STATE[x.state] || x.state || x.status || "")}${x.summarized ? " · summarized" : ""}</small></button>
         ${x.kind === "take" ? "" : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}</li>`;
     }
-    box.innerHTML = html + "</ul>";
+    box.innerHTML = html + "</ul>" + (all.length > rows.length
+      ? `<button type="button" class="link sm hc-more" data-testid="chat-thread-more">Show ${Math.min(PAGE, all.length - rows.length)} more</button>` : "");
+    const more = box.querySelector(".hc-more");
+    if (more) {
+      more.onclick = () => { HC.shown += PAGE; drawList(true); };
+      if (window.IntersectionObserver) { const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { io.disconnect(); HC.shown += PAGE; drawList(true); } }, { root: box }); io.observe(more); }
+    }
   }
-  document.getElementById("hcQ").addEventListener("input", (e) => { HC.q = e.target.value; drawList(); });
+  document.getElementById("hcQ").addEventListener("input", (e) => { HC.q = e.target.value; HC.shown = PAGE; drawList(true); });
   document.getElementById("hcList").addEventListener("click", async (e) => {
     const r = e.target.closest("[data-rename]"); if (r) return rename(r.dataset.rename);
     const o = e.target.closest("[data-open]"); if (!o) return;
@@ -151,6 +163,7 @@
   window.mpRecent = (rows) => { if (recent) recent(rows); HC.rows = rows || []; drawList(); drawTitle(); };
   function sideDrawer(open) {
     rv.classList.toggle("hc-side-open", open); menuB.setAttribute("aria-expanded", String(open)); scrimSync();
+    if (open && HC.dirty) drawList(true);
     if (open) document.getElementById("hcQ").focus(); else if (side.contains(document.activeElement)) menuB.focus();
   }
   menuB.onclick = () => sideDrawer(!rv.classList.contains("hc-side-open"));
@@ -244,10 +257,13 @@
     const pk = res.packages || [], ready = pk.filter((p) => p.status === "ready").length;
     readyTxt.textContent = ready ? `${ready} post${ready === 1 ? "" : "s"} ready to send` : "";
     ctxB.querySelector("span").textContent = summ.summarized ? "Context · summarized" : "Context";
+    if (HC.dirty) drawList();
     drawTitle(); drawModel();
     if (HC.panelFor && !document.querySelector(`#packages .pkg[data-ch="${sel(HC.panelFor)}"]`)) closePanel();
     else if (HC.panelFor) openPanel(HC.panelFor, false);
-    if (!drawer.hidden && HC.ctxFor === r.id) loadCtx(false);
+    // the open drawer refreshes only when the thread changed (a new turn, a new status), never on every poll tick
+    const key = `${r.id}:${thread.length}:${r.status}:${(res.packages || []).length}`;
+    if (!drawer.hidden && HC.ctxFor === r.id && key !== HC.ctxKey) { HC.ctxKey = key; loadCtx(false); }
   }
   document.getElementById("mpTrace").addEventListener("toggle", (e) => { const r = run(); if (r && !HC.syncing) HC.trace[r.id] = e.target.open; });
   // the post cards: a Preview button opens the side panel
@@ -330,6 +346,7 @@
         <p class="muted xs">The facts above are always sent in full, however long the thread gets.</p></section>`;
   }
   function openCtx() {
+    const r = run(); if (r) HC.ctxKey = `${r.id}:${((r.result || {}).thread || []).length}:${r.status}:${((r.result || {}).packages || []).length}`;
     drawer.hidden = false; ctxB.setAttribute("aria-expanded", "true"); scrimSync();
     document.getElementById("hcCtxX").focus(); loadCtx(true);
   }

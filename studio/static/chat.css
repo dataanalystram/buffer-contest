@@ -172,3 +172,4 @@
 #runView.hc .mp-composer .quickfix::-webkit-scrollbar{display:none}
 #runView.hc .mp-composer .quickfix .chip{flex:none;white-space:nowrap}
 #runView.hc .mp-acts.hc-ready .btn,#runView.hc .mp-acts.hc-ready .btn2{min-height:40px}
+.hc-more{display:block;width:100%;min-height:44px;margin-top:6px;text-align:center}
