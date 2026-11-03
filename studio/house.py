@@ -1624,6 +1624,8 @@ class House:
                 pk["check"] = brand.brand_check(text, self.media_meta(a, main["token"]) if main else None,
                                                 brand.for_channel(rules, pk["service"]), self.kit(a))
                 pk["applied_rules"] = self.ledger.applied(rules, pk["service"])
+                from .ledger import evidence as _evidence
+                pk["evidence"] = _evidence(res.get("story"), res.get("source") or res.get("article"))
                 self._save(rid, run["steps"], res)
                 # Style Ledger v2: a person's edit is a signal; the same kind of edit in enough posts becomes a suggestion
                 new = self.ledger.record_edit(a, rid, channel_id, pk["service"], before, text) if a.kind == "human" else []
