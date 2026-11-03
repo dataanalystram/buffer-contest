@@ -499,8 +499,9 @@ class Tools(EditorialTools):
         return tok or ""
 
     def upload_limit_mb(self) -> int:
-        from .house import MAX_UPLOAD
-        return (demo_guard.DEMO_FILE_MAX if self.demo else MAX_UPLOAD) // (1024 * 1024)
+        """The limit the thread's Upload video button really has: the Library's (100 MB a file); the sample workspace's own."""
+        from . import library
+        return (demo_guard.DEMO_FILE_MAX if self.demo else library.FILE_MAX) // (1024 * 1024)
 
     def t_find_video(self, query: str = "") -> dict:
         """studio.media.video_first: Product Hunt API -> the maker's site -> the official channel. A downloadable maker
