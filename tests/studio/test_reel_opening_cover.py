@@ -214,3 +214,12 @@ def test_create_post_timeout_finds_the_post_buffer_already_made_instead_of_a_sec
     c.gql = gql_refused
     with pytest.raises(BufferError):
         c.create_post("u1", inp)  # a refusal is not looked up
+
+
+def test_alt_text_rides_on_each_image():
+    opts = clean_options({"alt_text": ["Slide one: a chart", "", "x" * 2000]})
+    inp = build_post_input(IG, "hi", "", "draft", None, ["https://hq.example/m/1.jpg", "https://hq.example/m/2.jpg",
+                                                          "https://hq.example/m/3.jpg"], opts)
+    assert inp["assets"][0]["image"] == {"url": "https://hq.example/m/1.jpg", "metadata": {"altText": "Slide one: a chart"}}
+    assert "metadata" not in inp["assets"][1]["image"] and len(inp["assets"][2]["image"]["metadata"]["altText"]) == 1000
+    assert "alt_text" not in clean_options({"alt_text": ["", None]})

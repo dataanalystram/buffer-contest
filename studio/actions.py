@@ -30,7 +30,7 @@ VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
 CONFIRM_TTL = 15 * 60
 PROBE_MAX = 60 * 1024 * 1024  # media preflight downloads at most this much per file
 OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts", "ig_type", "thumbnail_offset_ms", "ig_audio", "fb_type",
-               "first_comment")
+               "first_comment", "alt_text")
 FIRST_COMMENT_SERVICES = ("instagram", "facebook", "linkedin")  # metadata.<svc>.firstComment in Buffer's PostInputMetaData
 AUDIO_TYPES = ("music", "originalSound")  # Buffer's InstagramAudioType
 THUMB_OFFSET_SERVICES = ("instagram", "tiktok", "pinterest")  # Buffer honours video.metadata.thumbnailOffset here only
@@ -73,6 +73,10 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
     thumb = options.get("thumbnail_offset_ms") if channel["service"] in THUMB_OFFSET_SERVICES else None
     if urls:
         inp["assets"] = [_asset(u, thumb) for u in urls]
+        alts = options.get("alt_text") or []
+        for asset, alt in zip(inp["assets"], alts):  # ImageMetadataInput.altText: screen readers on every network
+            if alt and "image" in asset:
+                asset["image"]["metadata"] = {"altText": alt}
     if mode == "draft" and due_at:
         # a draft that already has its time: it sits in the week as a draft and never publishes until a person schedules it
         inp.update(mode="customScheduled", dueAt=due_at, saveToDraft=True)
@@ -194,6 +198,11 @@ def clean_options(raw) -> dict:
         elif k in ("ig_type", "fb_type"):
             if str(v) in ("reel", "story", "post"):
                 out[k] = str(v)
+        elif k == "alt_text":
+            vals = v if isinstance(v, list) else [v]
+            alts = [str(x or "").strip()[:1000] for x in vals[:10]]
+            if any(alts):
+                out[k] = alts
         elif k == "first_comment":
             out[k] = str(v).strip()[:2200]
         elif k == "ig_audio":
