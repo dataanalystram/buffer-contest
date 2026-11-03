@@ -12,7 +12,7 @@ async function copyText(text, btn) {
   const was = btn.textContent; btn.textContent = "Copied"; if (window.toast) toast("Copied"); setTimeout(() => (btn.textContent = was), 1600);
 }
 function goConnect() {
-  if (window.showTab) showTab("settings");
+  if (window.showTab) showTab("settings", "integrations");
   setTimeout(() => { const c = document.getElementById("useInClaude"); if (!c) return; c.scrollIntoView({ block: "start", behavior: "smooth" });
     c.classList.add("integ-flash"); setTimeout(() => c.classList.remove("integ-flash"), 1600); }, 120);
 }

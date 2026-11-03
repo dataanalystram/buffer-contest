@@ -22,7 +22,7 @@ import uuid
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, brain_llm, budget, demo_guard, demo_view, editorial_tools, intake, llm, template_pick, untrusted
+from . import activity, brain_llm, budget, chat_context, demo_guard, demo_view, editorial_tools, intake, llm, template_pick, untrusted
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -447,6 +447,9 @@ class Brain:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
         res = run["result"]
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
+        summ = chat_context.summarize(run)
+        if summ:
+            res["thread_summary"] = summ
         routed = self._route_reply(a, rid, run, text)
         if routed is not None:
             return routed
@@ -1263,6 +1266,7 @@ class Brain:
                 f"{untrusted.wrap(json.dumps(_state_summary(res), default=str)[:9000], 'run state')}\n"
                 f"Template: {json.dumps({k: (res.get('template') or {}).get(k) for k in ('id', 'name', 'why')})}. "
                 f"Rights: {(res.get('rights') or {}).get('mode') or 'not asked'}.\n"
+                + _conversation(run, tools) +
                 "Change only what they asked, then write_captions for the affected channels, check, finish.")
         messages = [{"role": "user", "content": user}]
         brain = {"mode": "tools", "provider": eng["provider"], "model": eng["model"], "fast_model": eng.get("fast_model") or eng["model"],
@@ -1275,6 +1279,8 @@ class Brain:
         own_words = inp["prompt"] if message is None else message
         tainted = bool(res.get("source") or res.get("upload"))
         for turn in range(MAX_TURNS):
+            if turn > chat_context.TOOL_KEEP_TURNS:  # old tool results -> short stubs (each call re-sends the history)
+                messages = chat_context.shrink_tool_results(messages)
             out = brain_llm.call(eng, self.store, a.uid, label, system=SYSTEM, messages=messages, tools=SPECS + [_CHECK_SPEC],
                                  max_tokens=2000, http=self.h.http)
             if turn == 0 and out["text"]:
@@ -1675,6 +1681,19 @@ def _result_line(tool: str, out: dict) -> str:
     if tool == "save_buffer_drafts":
         return ", ".join(f"{d['service']}: {d['status']}" for d in out.get("drafts") or [])
     return ""
+
+
+def _conversation(run: dict, tools) -> str:
+    """The compacted thread for a reply: pinned facts + the run summary of older turns + the last turns verbatim.
+    A short thread adds nothing at all (no block, no wrapper, no kit lookup), so a quick reply costs what it did before."""
+    if len((run.get("result") or {}).get("thread") or []) <= chat_context.SHORT_THREAD:
+        return ""
+    try:
+        kit = tools._kit()
+    except Exception:  # noqa: BLE001
+        kit = {}
+    block = chat_context.prompt_block(run, kit)[:6000]
+    return f"Conversation so far (it quotes the thread): {untrusted.wrap(block, 'thread')}\n" if block else ""  # short thread: nothing
 
 
 def _state_summary(res: dict) -> dict:

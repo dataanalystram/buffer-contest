@@ -950,6 +950,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     brand_kits.add_routes(app, house, actor)
     from . import agent_routes  # agent brain, natural-language edits, onboarding, recommendations (UI = REST = MCP)
     agent_routes.add_routes(app, house, actor)
+    from . import chat_context  # Make a post chat: the context drawer, compaction, thread titles (UI = REST = MCP)
+    chat_context.add_routes(app, house, actor)
     from . import reel_audio  # Instagram music on Reels (search + pick per package; UI = REST = MCP)
     reel_audio.add_routes(app, house, actor)
     from . import post_controls  # Update draft, Undo, Music (None / Instagram), the run's brand kit (UI = REST = MCP)

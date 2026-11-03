@@ -84,7 +84,7 @@ def test_switch_kits_restyles_the_gallery_start_your_own_and_save(demo_live, chr
         page.click("[data-testid=bk-save]")
         _until(lambda: page.locator("[data-testid=bk-kit-acme-rockets]").count() == 1
                and "Active" in page.inner_text("[data-testid=bk-kit-acme-rockets]"))
-        page.goto(base + "/?tab=settings")
+        page.goto(base + "/?tab=settings&sub=brand")  # Settings sidebar: Brand & templates page (3 Nov 2026)
         page.wait_for_selector("[data-testid=settings-brand-name]")
         assert page.inner_text("[data-testid=settings-brand-name]") == "Acme Rockets"
         assert not errors, errors
