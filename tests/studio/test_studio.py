@@ -156,7 +156,7 @@ def test_post_input_shapes():
     ig = {"id": "ch_ig", "service": "instagram"}
     inp = build_post_input(ig, "hi", "https://cdn/x.mp4", "schedule", "2026-11-02T09:00:00.000Z")
     assert inp["assets"] == [{"video": {"url": "https://cdn/x.mp4"}}] and inp["mode"] == "customScheduled"
-    assert inp["metadata"] == {"instagram": {"type": "post", "shouldShareToFeed": True}}
+    assert inp["metadata"] == {"instagram": {"type": "reel", "shouldShareToFeed": True}}  # a video is a Reel
     yt = build_post_input({"id": "y", "service": "youtube"}, "Title line\nbody", "", "now", None)
     assert yt["metadata"]["youtube"]["title"] == "Title line" and yt["mode"] == "shareNow"
 
