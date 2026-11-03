@@ -13,13 +13,14 @@ import re
 import time
 from urllib.parse import urlparse
 
-from . import brand, demo_guard, demo_view, drafter, factcheck, hbstyle, intake, llm, netguard, reader, render, sources, untrusted, vision
+from . import brand, demo_guard, demo_view, drafter, factcheck, hbstyle, intake, llm, netguard, reader, render, sources, template_pick, untrusted, vision
 from .media import styles as media_styles
 from .actions import ActionError
 from . import editorial_tools
 from .editorial_tools import EditorialTools
 
 VIDEO_ONLY = {"tiktok", "youtube"}
+_PREVIEWS: dict = {}  # (run, template, kit+story key) -> data URL: the Change template chips
 TEXT_FIRST = {"twitter", "threads", "bluesky", "mastodon"}
 VIDEO_WAIT = int(os.environ.get("HQ_VIDEO_WAIT", "300"))
 RECAP_WAIT = int(os.environ.get("HQ_RECAP_WAIT", "1800"))  # the recap fetches 5-7 stories' media and renders ~8 videos
@@ -105,6 +106,13 @@ SPECS = [
     {"name": "render_template", "description": "Render a post template in the brand for the run's channels (each at its frame) instead of the default "
                                             "carousel, using the story's facts and hero image unless data says otherwise. data: the template's fields.",
      "input_schema": {"type": "object", "required": ["template"], "properties": {"template": S, "data": {"type": "object"}, "channel_ids": IDS}}},
+    {"name": "set_template", "description": "Switch the post's template BY NAME or id ('funding', 'GitHub repo pillar', 'editorial', "
+                                         "'text slides', 'news carousel', a custom template's name). slides: only those slides change "
+                                         "('the second slide' -> [2]); keep: slides that stay; rest: restyle every slide but the kept ones. "
+                                         "Always drawn in the active brand kit. Then check.",
+     "input_schema": {"type": "object", "required": ["template"], "properties": {"template": S, "slides": {"type": "array", "items": {"type": "integer"}},
+                                                                               "keep": {"type": "array", "items": {"type": "integer"}},
+                                                                               "rest": {"type": "boolean"}, "channel_ids": IDS}}},
     {"name": "create_template", "description": "Save a NEW reusable post template for this workspace when the person asks for one (e.g. "
      "'make me a funding announcement template'): name, layout (kit | bold_news | editorial | minimal | playful), fields [{key, label, "
      "sample}] and up to 8 slides of type front {kicker,title,sub} | bullets {title, items} | story {title,body,tag,source} | stat "
@@ -134,10 +142,10 @@ LABELS = {"read_upload": "Read your upload", "read_url": "Read your link", "x_oe
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
           "find_media": "Find media", "find_video": "Look for the launch video", "set_cover": "Swap the cover", "generate_images": "Make images", "check": "Check everything", "finish": "Done",
           "list_themes": "Look at the themes", "set_theme": "Set the video theme", "edit_video": "Edit the video", "list_templates": "Look at the templates",
-          "render_template": "Render a template", "create_template": "Save a new template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap",
+          "render_template": "Render a template", "set_template": "Change the template", "create_template": "Save a new template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap",
           **editorial_tools.LABELS}
 WRITES = {"generate_images", "render_recap", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media",
-          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "edit_video", "render_template", "set_cover",
+          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "edit_video", "render_template", "set_template", "set_cover",
           "create_template"} | editorial_tools.WRITES
 
 
@@ -512,8 +520,9 @@ class Tools(EditorialTools):
         return tok or ""
 
     def upload_limit_mb(self) -> int:
-        from .house import MAX_UPLOAD
-        return (demo_guard.DEMO_FILE_MAX if self.demo else MAX_UPLOAD) // (1024 * 1024)
+        """The limit the thread's Upload video button really has: the Library's (100 MB a file); the sample workspace's own."""
+        from . import library
+        return (demo_guard.DEMO_FILE_MAX if self.demo else library.FILE_MAX) // (1024 * 1024)
 
     def t_find_video(self, query: str = "") -> dict:
         """studio.media.video_first: Product Hunt API -> the maker's site -> the official channel. A downloadable maker
@@ -773,7 +782,7 @@ class Tools(EditorialTools):
 
     # ---------------------------------------------------------------- rendering
     def _ctx(self):
-        kit, rules = self.h.kit(self.a), self.h.rules(self.a)
+        kit, rules = self._kit(), self.h.rules(self.a)
         return kit, rules, brand.visual_params(kit, rules), self.h._logo_bytes(kit)
 
     def _story(self, run) -> dict:
@@ -877,10 +886,256 @@ class Tools(EditorialTools):
     def t_render_carousel(self, channel_ids: list | None = None) -> dict:
         run = self.state()
         ids = [c["id"] for c in self.channels(run, channel_ids) if c["service"] not in VIDEO_ONLY]
+        rec = self._template_choice(run)
+        tid = self._drawable(rec["id"])
+        if tid != template_pick.NEWS:  # the story type's template (a GitHub repo -> the repo pillar), in the active kit
+            self.save(run)
+            out = self.t_render_template(tid, None, ids)
+            return {**out, "format": "carousel", "template_why": rec["why"], "clipped": []}
         media = self._slides_45(run, carousel=True)
-        self._set_media(run, ids, media, "carousel")
+        self._set_media(run, ids, media, "carousel", {"template": template_pick.NEWS})
         self.save(run)
-        return {"channels": ids, "format": "carousel", "media": [m["url"] for m in media], "clipped": self._clipped(media)}
+        return {"channels": ids, "format": "carousel", "media": [m["url"] for m in media], "clipped": self._clipped(media),
+                "template": template_pick.NEWS, "template_why": rec["why"]}
+
+    # ---------------------------------------------------------------- templates: which one and why (studio/template_pick.py)
+    def _custom_list(self) -> list[dict]:
+        from . import custom_templates
+        try:
+            return custom_templates.attach(self.h).list(self.a)
+        except Exception:  # noqa: BLE001  the workspace's own templates never break a run
+            return []
+
+    def _template_choice(self, run) -> dict:
+        """The run's template record {id, name, why, auto, suggestions, kit}: the person's choice once they made one (it is
+        never switched back), else the story-type rule. Stored on the run as result.template (the UI's "Template: ... · why")."""
+        res = run["result"]
+        cur = res.get("template") if isinstance(res.get("template"), dict) else None
+        if cur and not cur.get("auto"):
+            return cur
+        p = template_pick.pick(run, self._has_video(run), self._custom_list())
+        rec = {"id": p["id"], "name": p["name"], "why": p["why"], "type": p["type"], "auto": True, "suggestions": p["suggestions"],
+               "kit": (self._kit().get("name") or "").strip()}
+        if {k: (cur or {}).get(k) for k in ("id", "why", "suggestions", "kit")} != {k: rec[k] for k in ("id", "why", "suggestions", "kit")}:
+            res["template"] = rec
+            self.save(run)  # kept on the run whichever tool asked first (render_reel's slides-for-now reload the run after)
+        return res["template"]
+
+    DRAWN = {"github_repo", "funding", "yc_launch", "text_slides", "launch", "tutorial", "breaking", "editorial_cover", "quote"}
+
+    def _drawable(self, tid: str) -> str:
+        """The template the carousel step draws for a record id: a reel / recap / editorial id draws the News carousel there."""
+        return tid if tid in self.DRAWN or str(tid).startswith("custom:") else template_pick.NEWS
+
+    def _auto_slides(self, run) -> list[dict]:
+        """4:5 slides in the run's template (the fallback while a video waits for the person's OK, or when there is none)."""
+        tid = self._drawable(self._template_choice(run)["id"])
+        if tid == template_pick.NEWS:
+            return self._slides_45(run, carousel=True)
+        try:
+            return self._template_media(run, tid, "4:5")
+        except Exception:  # noqa: BLE001
+            return self._slides_45(run, carousel=True)
+
+    def _template_images(self, run, template: str, ratio: str, data: dict | None = None) -> list:
+        from . import custom_templates, templates
+        kit, _rules, _p, logo = self._ctx()  # the run's kit: a template change never switches the kit or its layout
+        st = run["result"].get("story") or {}
+        if template == "github_repo" and "repo_info" not in run["result"]:
+            repo = template_pick.github_repo([(run["result"].get("source") or {}).get("url") or "", run["input"].get("source_url") or "",
+                                              *((run["input"].get("intake") or {}).get("urls") or [])])
+            run["result"]["repo_info"] = {} if self.demo else template_pick.repo_info(repo, self.h.http)
+        img, _use = self._hero(run) if st else (None, "")
+        d = template_pick.fill(template, run, data) if st else dict(data or {})
+        if img:
+            if not d.get("hero"):
+                d["hero"] = img
+            if not d.get("image"):
+                d["image"] = img
+        b = templates.Brand(kit, logo)
+        if custom_templates.is_custom(template):
+            try:
+                cspec = custom_templates.attach(self.h).spec(self.a, template)
+            except custom_templates.TemplateError as e:
+                raise ActionError(str(e))
+            return custom_templates.render_slides(cspec, d, b, ratio)
+        return templates.slides(template, d, b, ratio)
+
+    def _template_media(self, run, template: str, ratio: str, data: dict | None = None) -> list[dict]:
+        from . import templates
+        ims = self._template_images(run, template, ratio, data)
+        return [self._keep(templates.jpeg(im), f"{template}-{i + 1}.jpg", {"type": "photo", "template": template, "width": im.width,
+                                                                          "height": im.height}) for i, im in enumerate(ims)]
+
+    def template_previews(self, ids: list[str] | None = None) -> dict[str, str]:
+        """Small first-slide previews of the suggested templates, drawn from THIS run's facts in the run's kit. Returned as
+        data URLs and cached in memory (nothing is stored, so viewing a run never writes)."""
+        import base64
+        import io
+
+        from PIL import Image
+        run = self.state()
+        res = run["result"]
+        st = res.get("story") or {}
+        if not st:
+            return {}
+        rec = self._template_choice(run)
+        kit, _rules, p, logo = self._ctx()
+        key = hashlib.sha256(json.dumps([st.get("headline"), kit.get("colors"), kit.get("font"), kit.get("theme"), kit.get("logo")],
+                                        sort_keys=True, default=str).encode()).hexdigest()[:16]
+        out = {}
+        for tid in (ids or rec.get("suggestions") or [])[:4]:
+            ck = (self.rid, tid, key)
+            if ck in _PREVIEWS:
+                out[tid] = _PREVIEWS[ck]
+                continue
+            try:
+                draw = self._drawable(tid)
+                if draw == template_pick.NEWS:
+                    img, use = self._hero(run)
+                    raw, _m = render.news_card(st["headline"], kit, dict(p), image=img if use == "hero" else None,
+                                               inset=img if use == "inset" else None, logo=logo, ratio="4:5", label=st.get("label", ""),
+                                               credit=st.get("source", ""), hi=self._hi(st["headline"]))
+                    im = Image.open(io.BytesIO(raw)).convert("RGB")
+                else:
+                    im = self._template_images(run, draw, "4:5")[0].convert("RGB")
+                im.thumbnail((240, 300))
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=78)
+                _PREVIEWS[ck] = out[tid] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+                while len(_PREVIEWS) > 240:
+                    _PREVIEWS.pop(next(iter(_PREVIEWS)))
+            except Exception:  # noqa: BLE001  a preview that can't be drawn is a chip without a picture
+                continue
+        return out
+
+    # ---------------------------------------------------------------- the run's brand kit (owner, 3 Nov 2026)
+    def _kit(self) -> dict:
+        """The kit this run draws in: the one the person named in this run's thread, else the account's active kit."""
+        if not self.rid:  # a brand edit outside any run (/api/brand/edit): the account's kit
+            return self.h.kit(self.a)
+        ko = (self.state().get("result") or {}).get("kit_override") or {}
+        return ko["kit"] if isinstance(ko.get("kit"), dict) else self.h.kit(self.a)
+
+    def _said_default(self) -> bool:
+        """The person's last reply asked to make the kit their default ("make it my default", "from now on")."""
+        last = next((t.get("text") or "" for t in reversed(self.state()["result"].get("thread") or []) if t.get("role") == "user"), "")
+        return bool(re.search(r"\b(?:make (?:it|this|that) (?:my |the )?default|as (?:my|the) default|my default kit|"
+                              r"for (?:all|every) (?:my )?(?:posts|runs)|from now on|everywhere)\b", last, re.I))
+
+    def use_kit(self, kt: dict, default: bool = False) -> str:
+        """Use a brand kit for THIS run only (result.kit_override), or make it the account's active kit when the person said
+        so. Returns the line for the thread."""
+        from . import brand_kits
+        bk = brand_kits.attach(self.h)
+        run = self.state()
+        res = run["result"]
+        if default:
+            if not kt["active"]:
+                bk.activate(self.a, kt["kit_id"])
+            res.pop("kit_override", None)
+            self.save(run)
+            return f"your {kt['name']} brand kit (now your default kit)"
+        if kt["active"] and not res.get("kit_override"):
+            return f"your {kt['name']} brand kit"
+        if kt["active"]:
+            res.pop("kit_override", None)
+        else:
+            kit, cs = bk.kit_view(self.a, kt["kit_id"])
+            res["kit_override"] = {"id": kt["kit_id"], "name": kt["name"], "kit": kit, "caption_style": cs}
+        self.save(run)
+        return f"your {kt['name']} brand kit (this post only)"
+
+    def t_set_template(self, template: str, slides: list | None = None, keep: list | None = None, rest: bool | None = None,
+                       channel_ids: list | None = None) -> dict:
+        """The person picked a template (by name or id), for the whole post or only the slides they named."""
+        run = self.state()
+        res = run["result"]
+        custom = self._custom_list()
+        cat = template_pick.catalog(custom)
+        cur = self._template_choice(run)
+        tid = template if template in cat else (template_pick.named(template or "", custom) or "")
+        slides = [int(x) for x in slides or [] if str(x).lstrip("-").isdigit()]
+        keep = [int(x) for x in keep or [] if str(x).lstrip("-").isdigit()]
+        if not tid and (slides or keep or rest):  # "restyle slide 2": the next suggestion that isn't the current one
+            tid = next((x for x in cur.get("suggestions") or [] if x != cur["id"] and self._drawable(x) == x), "text_slides")
+        if not tid:
+            raise ActionError(f"I don't have a template called “{(template or '')[:40]}”. Pick one of: " +
+                              ", ".join(v["name"] for k, v in cat.items() if k not in template_pick.NOT_SUGGESTED) + ".")
+        info = cat[tid]
+        if tid == "editorial_story" and not (res.get("editorial") or {}).get("spec"):
+            raise ActionError("The editorial story template needs its research first. Say “make it an editorial post about <company>”.")
+        if tid in ("launch_reel", "viral_trend"):  # a Reel template: the video channels and Instagram get the Reel
+            vids = [c["id"] for c in self.channels(run, channel_ids) if c["service"] in VIDEO_ONLY or c["service"] == "instagram"]
+            out = self.t_render_reel(vids)
+            run = self.state()
+            run["result"]["template"] = {**cur, "id": tid, "name": info["name"], "why": "you asked for it", "auto": False}
+            self.save(run)
+            self._refresh_packages()
+            return {"template": tid, "name": info["name"], **{k: out[k] for k in ("channels", "format", "needs_confirmation", "question") if k in out}}
+        if info.get("kind") == "single" and not slides and not rest:
+            slides = [1]  # a one-image template restyles the cover; the other slides and the Follow card stay
+        cm = res.get("channel_media") or {}
+        chans = [c for c in self.channels(run, channel_ids) if c["service"] not in VIDEO_ONLY
+                 and (channel_ids or (cm.get(c["id"]) or {}).get("format") in (None, "carousel", "photo"))]
+        if not chans:  # every image channel is a Reel now: the template goes on them as a carousel (they asked for it)
+            chans = [c for c in self.channels(run, channel_ids) if c["service"] not in VIDEO_ONLY]
+        ids = [c["id"] for c in chans]
+        if not ids:
+            raise ActionError("This post has no image channel for a template (YouTube and TikTok take videos only).")
+        old = {cid: list((cm.get(cid) or {}).get("media") or []) for cid in ids
+               if (cm.get(cid) or {}).get("format") in ("carousel", "photo")}
+        draw = self._drawable(tid)
+        if draw == template_pick.NEWS:
+            media = self._slides_45(run, carousel=True)
+            self._set_media(run, ids, media, "carousel", {"template": template_pick.NEWS})
+            self.save(run)
+        else:
+            self.save(run)
+            self.t_render_template(draw, None, ids)
+        run = self.state()
+        res = run["result"]
+        cm = res.get("channel_media") or {}
+        partial = bool(slides or keep or rest)
+        changed: list[int] = []
+        if partial:
+            for cid in ids:
+                o, new = old.get(cid), list((cm.get(cid) or {}).get("media") or [])
+                if not o or not new:
+                    continue
+                body = len(o) - 1 if len(o) > 1 else len(o)  # the last slide is the Follow card: never restyled
+                want = slides or [i for i in range(1, body + 1) if i not in keep]
+                merged = list(o)
+                for i in want:
+                    idx = body if i == -1 else i
+                    if not 1 <= idx <= body:
+                        continue
+                    merged[idx - 1] = new[min(idx, max(1, len(new) - 1)) - 1]
+                    if idx not in changed:
+                        changed.append(idx)
+                sl = {**((cm.get(cid) or {}).get("slide_templates") or {}), **{str(i): tid for i in want}}
+                cm[cid] = {**(cm.get(cid) or {}), "media": merged, "format": "carousel" if len(merged) > 1 else "photo",
+                           "template": cur["id"], "slide_templates": sl}
+            self._set_media(run, [], [], "carousel")  # rebuilds result.media from channel_media
+        rec = {**cur, "auto": False, "why": "you asked for it"}
+        if partial and changed:
+            rec["slides"] = {**(cur.get("slides") or {}), **{str(i): tid for i in changed}}
+            rec["slide_names"] = {**(cur.get("slide_names") or {}), **{str(i): info["name"] for i in changed}}
+        else:
+            rec.update(id=tid, name=info["name"], slides={}, slide_names={})
+        sugg = [rec["id"]] + [x for x in cur.get("suggestions") or [] if x != rec["id"]]
+        rec["suggestions"] = (sugg + ([cur["id"]] if cur["id"] not in sugg else []))[:4]
+        res["template"] = rec
+        self.save(run)
+        self._refresh_packages()
+        return {"template": tid, "name": info["name"], "channels": ids, "slides_changed": sorted(changed) if partial else "all",
+                "kit": rec.get("kit") or ""}
+
+    def template_names(self) -> list[dict]:
+        """The templates by name (the thread's answer to "what templates can you use")."""
+        cat = template_pick.catalog(self._custom_list())
+        return [{"id": k, "name": v["name"], "about": v.get("about") or "", "custom": bool(v.get("custom"))}
+                for k, v in cat.items() if k not in ("weekly_recap", "midweek_recap")]
 
     def t_render_reel(self, channel_ids: list | None = None, seconds: int | None = None, captions: bool | None = None,
                       style: str | None = None, music: str | None = None, rights_confirmed: bool | None = None,
@@ -904,10 +1159,10 @@ class Tools(EditorialTools):
             style = theme  # the theme the person picked in Make a post (or set in the thread) styles every video
         if not style and captions:  # captions asked for, no look named: the active brand kit's caption style (owner, 2 Nov 2026)
             from . import brand_kits
-            style = brand_kits.active_caption_style(self.h, self.a) or None
+            style = (run["result"].get("kit_override") or {}).get("caption_style") or brand_kits.active_caption_style(self.h, self.a) or None
         found = run["result"].get("found_media") if isinstance(run["result"].get("found_media"), dict) else {}
         branded = run["result"].get("clip_owned") or bool((found.get("best_downloadable") or {}).get("official"))
-        if not style and branded:  # "Let the agent choose" on their own / the maker's video: a fitting theme, branded throughout
+        if not style and (branded or found.get("best_downloadable")):  # a real video (theirs, the maker's, or a credited one): a fitting theme
             inp = run.get("input") or {}
             style = media_styles.pick_theme(" ".join([inp.get("prompt") or "", (inp.get("intake") or {}).get("tone") or ""]),
                                             (inp.get("intake") or {}).get("topic") or "")[0]
@@ -922,6 +1177,7 @@ class Tools(EditorialTools):
             fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
             self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": captions_mode != "off", "style": style, "note": note, "ratio": ratio,
                                                    **({"clip": clip} if clip else {}),
+                                                   **({"template": self._drawable(self._template_choice(run)["id"])} if fmt == "carousel" else {}),
                                                    **(self._cover_info(media) if fmt == "reel" else {})})
             self.save(run)
             out = {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note, "style": style, "ratio": ratio,
@@ -951,7 +1207,7 @@ class Tools(EditorialTools):
         media: list[dict] = []
         if rest:
             ed = (res.get("editorial_media") or {}).get("4:5")
-            media = ed or self._slides_45(run, carousel=True)
+            media = ed or self._auto_slides(run)
             self._set_media(run, rest, media, "carousel", {"note": editorial_tools.NO_VIDEO_NOTE, "ratio": "4:5",
                                                           **({"template": "editorial_story"} if ed else {})})
         self._plan_note(res)
@@ -1102,6 +1358,8 @@ class Tools(EditorialTools):
         gen = res.get("generated_images") or []
         if clip_tok and res.get("clip_owned"):
             rights_confirmed = True  # the person's own upload: nothing to ask
+        if (res.get("rights") or {}).get("mode") == "news_credit" or res.get("rights_confirmed"):
+            rights_confirmed = True  # they answered the rights question in this run: never asked again (owner, 3 Nov 2026)
         if not clip_tok and not cand and not gen:
             media, note = self._reel(run, seconds=seconds, ratio=ratio)
             return media, note + " No video to edit, so the styled edit wasn't used (find_media or generate_images first).", ""
@@ -1118,14 +1376,13 @@ class Tools(EditorialTools):
                    "Do you have the right to repost it (or is it fair commentary)?")
             res["rights_question"] = ask
             self.save(run)
-            frames = self._reel_frames(run)
-            return frames or self._slides_45(run, carousel=True), "Slides for now: the video needs your OK first. " + ask, ask
+            return self._auto_slides(run), "Slides for now: the video needs your OK first. " + ask, ask
         res.pop("rights_question", None)
         if rights_confirmed and not official:
             res["rights_confirmed"] = True
         from . import brand_kits
         add_logo = (run.get("input") or {}).get("add_logo", True) is not False
-        spec = {"kind": "media_render", "style": sid, "brand_colors": bool((run.get("input") or {}).get("brand_colors")) or brand_kits.brand_accent_wins(self.h, self.a), "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
+        spec = {"kind": "media_render", "style": sid, "brand_colors": bool((run.get("input") or {}).get("brand_colors")) or (not res.get("kit_override") and brand_kits.brand_accent_wins(self.h, self.a)), "ratio": ratio, "hook": st["headline"], "facts": list(st.get("facts") or [])[:4],
                 "credit": credit, "names": [n for n in (st.get("company"), (cand or {}).get("company")) if n], "music": music or "auto",
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "source": clip_tok, "candidate": cand,
@@ -1185,13 +1442,15 @@ class Tools(EditorialTools):
             rows, active = bk._rows(self.a), bk._active(self.a)
         except Exception:  # noqa: BLE001
             return None
+        ko = (self.state()["result"].get("kit_override") or {}).get("id")
         for r in rows:
             if (r.get("name") or "").strip().lower() == n:
                 k = json.loads(r.get("data") or "{}")
                 th = k.get("theme")
                 th = th.get("id") if isinstance(th, dict) else th if isinstance(th, str) else None
                 style = th if th and media_styles.known(th) else ({"news": "huhbyte_news"}.get(k.get("caption_style"), k.get("caption_style")) or "opus")
-                return {"kit_id": r["id"], "name": r["name"], "style": media_styles.resolve(style), "active": r["id"] == active}
+                return {"kit_id": r["id"], "name": r["name"], "style": media_styles.resolve(style), "active": r["id"] == active,
+                        "in_run": r["id"] == (ko or active)}
         return None
 
     def _resolve_theme(self, theme: str) -> tuple[str, str, str]:
@@ -1207,12 +1466,9 @@ class Tools(EditorialTools):
         if media_styles.known(sid):
             return sid, media_styles.config(sid).get("label", sid), ""
         kt = self._kit_theme(t)
-        if kt:
-            if not kt["active"]:
-                from . import brand_kits
-                brand_kits.attach(self.h).activate(self.a, kt["kit_id"])  # "switch to the Nothing theme": their own words
-            lab = f"{kt['name']} brand kit"
-            return kt["style"], lab, f"your {kt['name']} brand kit" + ("" if kt["active"] else " (now your active kit)")
+        if kt:  # "switch to the Nothing theme": THIS run only, unless they said "make it my default" (live 3 Nov: account-wide)
+            why = self.use_kit(kt, self._said_default())
+            return kt["style"], f"{kt['name']} brand kit", why
         raise ActionError(f"Unknown theme {theme}. Pick one of {', '.join(media_styles.ALL_IDS)}, 'auto', 'none' or a brand kit name.")
 
     def _refresh_packages(self) -> None:
@@ -1385,6 +1641,21 @@ class Tools(EditorialTools):
         run = self.state()
         kit, _rules, _p, logo = self._ctx()
         st = run["result"].get("story") or {}
+        if not custom:  # the run's own facts in every field (template_pick.fill): a render never shows the sample company
+            b = templates.Brand(kit, logo)
+            chans = [c for c in self.channels(run, channel_ids) if c["service"] not in VIDEO_ONLY]
+            by_ratio: dict[str, list[str]] = {}
+            for c in chans:
+                spec = templates.CHANNELS.get(c["service"], templates.CHANNELS["instagram"])
+                by_ratio.setdefault(spec["ratio"], []).append(c["id"])
+            out = {"template": template, "channels": [], "media": []}
+            for ratio, ids in by_ratio.items():
+                media = self._template_media(run, template, ratio, data)
+                self._set_media(run, ids, media, "carousel" if len(media) > 1 else "photo", {"template": template, "ratio": ratio})
+                out["channels"] += ids
+                out["media"] += [m["url"] for m in media]
+            self.save(run)
+            return out
         img, _use = self._hero(run) if st else (None, "")
         d = dict(data or {})
         if st:
@@ -1546,7 +1817,7 @@ class Tools(EditorialTools):
         learned = self.h.remember(self.a, t) if re.search(r"logo|end ?card|case|overlay|credit|words|#[0-9a-f]{6}|font", t, re.I) else {"added": []}
         changed += [r["rule"] for r in learned.get("added") or [] if r["rule"] not in changed]
         return {"changed": changed or ["nothing I could apply"],
-                "kit": {k: v for k, v in self.h.kit(self.a).items() if k in ("colors", "font", "name", "handle")}}
+                "kit": {k: v for k, v in self._kit().items() if k in ("colors", "font", "name", "handle")}}
 
     def t_edit_channel_media(self, channel: str, seconds: int | None = None, format: str | None = None, captions: bool | None = None) -> dict:
         run = self.state()
@@ -1572,7 +1843,7 @@ class Tools(EditorialTools):
     def t_write_captions(self, channel_ids: list | None = None, tone: str = "", hook: str = "") -> dict:
         run = self.state()
         res = run["result"]
-        kit, rules = self.h.kit(self.a), self.h.rules(self.a)
+        kit, rules = self._kit(), self.h.rules(self.a)
         st = self._story(run)
         src = res.get("source") or {}
         cm_all = res.get("channel_media") or {}
@@ -1657,7 +1928,7 @@ class Tools(EditorialTools):
         """Brand check + clipping + 'is this about THE source' + fact conflicts, then one package per channel."""
         run = self.state()
         res = run["result"]
-        kit, rules = self.h.kit(self.a), self.h.rules(self.a)
+        kit, rules = self._kit(), self.h.rules(self.a)
         st = self._story(run)
         packages, problems = [], []
         old = {p["channel_id"]: p for p in res.get("packages") or []}

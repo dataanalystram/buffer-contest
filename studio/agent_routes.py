@@ -132,6 +132,22 @@ def add_routes(app: FastAPI, house, actor) -> None:
     def run_tool(rid: int, name: str, request: Request, body: dict = Body(default={})):
         return house.brain.tool(actor(request, write=True), rid, name, body or {})
 
+    @app.get("/api/agent/runs/{rid}/templates")
+    def run_templates(rid: int, request: Request):
+        """The run's template (name and why), 3-4 suggestions with small previews drawn from the run's own facts in its
+        brand kit, and every template by name."""
+        return house.brain.templates(actor(request), rid)
+
+    @app.post("/api/agent/runs/{rid}/template")
+    def run_template(rid: int, request: Request, body: dict = Body(...)):
+        """Switch the template by name or id ({"template": "funding", "slides": [2]}); same as replying "use the funding template"."""
+        return house.brain.set_template(actor(request, write=True), rid, body or {})
+
+    @app.post("/api/agent/runs/{rid}/resume")
+    def run_resume(rid: int, request: Request):
+        """Resume a run the server cut off (a deploy, a crash) from its last finished step."""
+        return house.brain.resume(actor(request, write=True), rid)
+
     @app.get("/api/themes")
     def themes_list(request: Request):
         """Every video look (the four edit styles + the themes) with its gallery still and loop, for the theme picker."""
@@ -229,6 +245,14 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "set_theme", "description": "Set a post run's video theme and re-render its video channels in it (e.g. 'cinematic', 'news_package'). Same as replying 'switch to the X theme'. theme 'none' = no style: post the video as it is (fit to the frame, logo, end card; no captions, theme or music).",
      "inputSchema": {"type": "object", "required": ["run_id", "theme"], "properties": {"run_id": {"type": "integer"}, "theme": {"type": "string", "description": "A theme id from list_themes, 'auto' or 'none'"}}}},
+    {"name": "set_template", "description": "Switch a post run's template BY NAME or id ('funding', 'GitHub repo pillar', 'editorial', 'text slides', 'news carousel', or a custom template's name), drawn in the run's brand kit. slides: only those slides change (e.g. [2] for 'the second slide'); keep: slides that stay. Same as replying 'use the funding template'.",
+     "inputSchema": {"type": "object", "required": ["run_id", "template"], "properties": {"run_id": {"type": "integer"}, "template": {"type": "string"},
+                                                                                      "slides": {"type": "array", "items": {"type": "integer"}},
+                                                                                      "keep": {"type": "array", "items": {"type": "integer"}}}}},
+    {"name": "get_post_templates", "description": "A post run's template (name and why it was picked), the 3-4 suggested others, and every template the agent can use, by name.",
+     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
+    {"name": "resume_post", "description": "Resume a post run the server cut off (status 'interrupted': a deploy or a crash) from its last finished step.",
+     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
     {"name": "set_cover", "description": "Pick another of the 3 branded cover variants (index 0-2, in the run's package covers) for one channel: its Reel's opening frame becomes that cover (Instagram/TikTok use it as the cover via the thumbnail offset); the 1280x720 variant is the YouTube thumbnail.",
      "inputSchema": {"type": "object", "required": ["run_id", "channel", "index"], "properties": {"run_id": {"type": "integer"}, "channel": {"type": "string", "description": "channel id or network name"},
                                                                                                 "index": {"type": "integer", "minimum": 0, "maximum": 2}}}},
@@ -249,7 +273,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "get_brain", "description": "Which AI runs the in-app agent for this account (Claude, their own key, the free model or the rule writer) and the included budget left.",
      "inputSchema": {"type": "object", "properties": {}}},
 ] + agent_brain.tool_specs_for_mcp()
-READ_ONLY = {"get_onboarding", "get_brain", "list_themes", "get_ai_engine", "get_ai_logs", "list_ai_keys"}
+READ_ONLY = {"get_onboarding", "get_brain", "list_themes", "get_post_templates", "get_ai_engine", "get_ai_logs", "list_ai_keys"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
@@ -266,6 +290,12 @@ def call_tool(studio, actor, name: str, args: dict):
             return {"themes": media_styles.describe_themes(), "categories": media_styles.theme_categories(), "default": "auto"}
         if name == "set_theme":
             return h.brain.tool(actor, int(args.get("run_id") or 0), "set_theme", {"theme": str(args.get("theme") or ""), "why": "you picked it"})
+        if name == "set_template":
+            return h.brain.set_template(actor, int(args.get("run_id") or 0), args)
+        if name == "get_post_templates":
+            return h.brain.templates(actor, int(args.get("run_id") or 0), previews=False)
+        if name == "resume_post":
+            return h.brain.resume(actor, int(args.get("run_id") or 0))
         if name == "set_cover":
             return h.brain.tool(actor, int(args.get("run_id") or 0), "set_cover", {"channel": str(args.get("channel") or ""),
                                                                                     "index": int(args.get("index") or 0)})
