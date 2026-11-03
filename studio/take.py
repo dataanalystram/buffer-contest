@@ -36,6 +36,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from . import untrusted  # stdlib only: safe in the slim video-worker venv
+
 FONT_DIR = Path(__file__).parent / "fonts"
 CLIP_W, CLIP_H = int(os.environ.get("HQ_CLIP_W", "720")), int(os.environ.get("HQ_CLIP_H", "1280"))
 MIN_CLIP, MAX_CLIP, TARGET_CLIP = 20.0, 60.0, 38.0
@@ -185,7 +187,8 @@ def miner_prompt(sents: list[dict], n: int) -> str:
     return (f"Pick the {n} best moments for {int(MIN_CLIP)}-{int(MAX_CLIP)} second clips. A moment is a run of whole sentences "
             "[start..end] that makes sense on its own, opens with a strong line and ends cleanly. Moments must not overlap. "
             "Return JSON {\"moments\": [{\"start\": <sentence index>, \"end\": <sentence index>, \"hook\": <an exact quote of "
-            "3-14 words from those sentences>, \"why\": <one short reason>, \"score\": <0-100>}]}.\nTRANSCRIPT:\n" + "\n".join(lines))
+            "3-14 words from those sentences>, \"why\": <one short reason>, \"score\": <0-100>}]}.\nTRANSCRIPT:\n"
+            + untrusted.wrap("\n".join(lines), "video transcript", limit=60000))
 
 
 def validate_llm(data, sents: list[dict], n: int) -> list[dict]:

@@ -157,6 +157,9 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
     Raises budget.BudgetExceeded (before the call) or llm.LLMError. A failed call is logged too (ok=0, the error in a few
     words), so Settings > AI engine > Logs shows what was tried and why the agent moved on."""
     t0 = time.monotonic()
+    from . import untrusted
+    system = untrusted.scrub(untrusted.with_notice(system))  # outside text is data; no secret ever rides in a prompt
+    messages = _scrub_messages(messages)
     try:
         return _call(engine, store, uid, label, system=system, messages=messages, tools=tools, max_tokens=max_tokens,
                      fast=fast, purpose=purpose, http=http, timeout=timeout, t0=t0)
@@ -165,6 +168,22 @@ def call(engine: dict, store, uid: str, label: str, *, system: str, messages: li
         _log(engine, store, uid, label, model, {"in": 0, "out": 0, "cw": 0, "cr": 0, "cost": 0.0}, purpose,
              latency=time.monotonic() - t0, error=str(e))
         raise
+
+
+def _scrub_messages(messages: list) -> list:
+    """The same history with every string scrubbed of secrets (keys, tokens), in either API's message shape."""
+    from . import untrusted
+
+    def s(v):
+        if isinstance(v, str):
+            return untrusted.scrub(v)
+        if isinstance(v, list):
+            return [s(x) for x in v]
+        if isinstance(v, dict):
+            return {k: (s(x) if k not in ("id", "tool_use_id", "tool_call_id", "type", "role", "name", "data", "media_type") else x)
+                    for k, x in v.items()}
+        return v
+    return [s(m) for m in messages]
 
 
 def _call(engine: dict, store, uid: str, label: str, *, system: str, messages: list, tools: list | None, max_tokens: int,
