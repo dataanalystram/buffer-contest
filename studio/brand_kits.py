@@ -253,6 +253,16 @@ def theme_cards_for(kit: dict, logo: bytes | None, W: int = 360, H: int = 640, h
 
 
 KIT_LABELS = {"carousel_cover": "Carousel cover 4:5", "thumbnail": "Thumbnail 16:9", "end_card": "End card"}
+TPL_PREFIX = "tpl:"  # a template's first slide in a kit: the Templates tab's "Every template in <kit>" previews
+
+
+def template_card(kit: dict, logo: bytes | None, tpl: str):
+    """The first slide of a template, drawn in this kit (4:5, the sample data), or None for an unknown template."""
+    if tpl not in templates.TEMPLATES:
+        return None
+    b = brand_onboard.brand_for(kit, logo)
+    ims = templates.slides(tpl, None, b, "4:5")
+    return ims[0] if ims else None
 
 
 def kit_cards(kit: dict, logo: bytes | None, ids=None) -> list[dict]:
@@ -277,7 +287,7 @@ def kit_cards(kit: dict, logo: bytes | None, ids=None) -> list[dict]:
 # card, the size, the format and PREVIEW_VERSION), in memory (LRU) and on disk, so a kit seen once (by anyone: the two
 # sample kits are drawn at start-up) is instant after that, across workers and restarts on the same disk. The builder
 # gets small WebP files by URL (/api/brand-kits/preview-img/<key>.webp) that the browser caches as immutable.
-PREVIEW_VERSION = 3
+PREVIEW_VERSION = 4  # 4: layout variants, logo sizing by visual bounds, template preview cards
 RENDER_FIELDS = ("name", "handle", "colors", "font", "body_font", "headline_case", "front_card", "end_card", "theme")
 MEM_MAX = 400
 DISK_MAX = 3000
@@ -424,7 +434,8 @@ def render_cards(kit: dict, logo: bytes | None, ids: list[str], w: int, fmt: str
     card it has to draw, so the cards a request asks for are drawn first."""
     from .media import styles
     out: dict[str, dict] = {}
-    labels = {**KIT_LABELS, **{i: (styles.THEMES.get(i) or styles.STYLE_PRESETS.get(i) or {}).get("label", i) for i in styles.ALL_IDS}}
+    labels = {**KIT_LABELS, **{i: (styles.THEMES.get(i) or styles.STYLE_PRESETS.get(i) or {}).get("label", i) for i in styles.ALL_IDS},
+              **{TPL_PREFIX + t: v.get("name", t) for t, v in templates.TEMPLATES.items()}}
     keys = {cid: card_key(kit, logo, cid, w, fmt) for cid in ids}
     demand = not background and any(cache_get(k) is None for k in keys.values())
     if demand:
@@ -449,7 +460,14 @@ def _render_cards(kit, logo, ids, w, fmt, stats, background, out, labels, keys) 
                 v = cache_get(key)  # drawn by another request (or the warm-up) while this one waited
                 if v is None:
                     t0 = time.perf_counter()
-                    if cid in KIT_CARDS:
+                    if cid.startswith(TPL_PREFIX):
+                        try:
+                            im = template_card(kit, logo, cid[len(TPL_PREFIX):])
+                        except Exception as e:  # noqa: BLE001  (one template that can't draw never blanks the others)
+                            print(f"template preview {cid}: {e.__class__.__name__}", flush=True)
+                            im = None
+                        got = [{"image": im}] if im is not None else [{"error": "This template can't be drawn in this kit."}]
+                    elif cid in KIT_CARDS:
                         got = kit_cards(kit, logo, ids=[cid])
                     else:
                         W, H = theme_size(w or 360)
@@ -778,24 +796,30 @@ class BrandKits:
         if not_this_samples_logo(ref, k.get("name")):  # a renamed sample previews without the sample's logo
             ref = ""
         logo = self.logo_bytes(a, ref)
-        part = body.get("part") if body.get("part") in ("kit", "themes") else "all"
+        part = body.get("part") if body.get("part") in ("kit", "themes", "templates") else "all"
         w = max(120, min(int(body.get("width") or (420 if part == "kit" else 240)), 420))
-        ids: list[str] = (list(KIT_CARDS) if part != "themes" else []) + (list(styles.ALL_IDS) if part != "kit" else [])
-        if isinstance(body.get("ids"), list) and part == "themes":
-            asked = {str(i) for i in body["ids"]}
+        if part == "templates":  # each template's first slide in this kit (the Templates tab asks one template per call)
+            ids = [TPL_PREFIX + t for t in templates.TEMPLATES]
+        else:
+            ids = (list(KIT_CARDS) if part != "themes" else []) + (list(styles.ALL_IDS) if part != "kit" else [])
+        if isinstance(body.get("ids"), list) and part in ("themes", "templates"):
+            asked = {str(i) if part == "themes" or str(i).startswith(TPL_PREFIX) else TPL_PREFIX + str(i) for i in body["ids"]}
             ids = [i for i in ids if i in asked]
         fmt, size = ("jpg", 0) if as_urls else (("jpg" if body.get("format") == "jpeg" else "webp"), w)
         misses = [i for i in ids if cache_get(card_key(k, logo, i, size, fmt)) is None]
         if misses:
             from .userlocks import rate_hit
-            if not rate_hit(_gallery, a.uid, time.time(), GALLERY_PER_MIN):  # B4: one lock for the shared window
+            # B4: one lock for the shared window; the Templates tab asks one template per call, so it has its own, wider one
+            tpl = part == "templates"
+            if not rate_hit(_gallery, a.uid + (":tpl" if tpl else ""), time.time(), GALLERY_PER_MIN * (3 if tpl else 1)):
                 raise KitError("Too many gallery redraws this minute. Pause for a moment.")
         stats: dict = {}
         got = render_cards(k, logo, ids, size, fmt, stats)
         out = []
         for cid in ids:
             c = got[cid]
-            item = {"id": cid, "label": c["label"], "group": "kit" if cid in KIT_CARDS else "theme"}
+            item = {"id": cid[len(TPL_PREFIX):] if cid.startswith(TPL_PREFIX) else cid, "label": c["label"],
+                    "group": "kit" if cid in KIT_CARDS else "template" if cid.startswith(TPL_PREFIX) else "theme"}
             if "bytes" not in c:
                 item["error"] = c.get("error")
             elif as_urls:
@@ -833,6 +857,8 @@ class BrandKits:
             n += len(render_cards(k, lb, list(KIT_CARDS), 420, "webp", background=True))
         for k, lb in kits:
             n += len(render_cards(k, lb, list(styles.ALL_IDS), 240, "webp", background=True))
+        for k, lb in kits:  # the Templates tab's previews for the sample kits
+            n += len(render_cards(k, lb, [TPL_PREFIX + t for t in templates.TEMPLATES], 240, "webp", background=True))
         return {"cards": n, "ms": int((time.time() - t0) * 1000)}
 
 

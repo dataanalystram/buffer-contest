@@ -172,7 +172,10 @@ def _map_faces(fs, m, size) -> list[tuple[int, int, int, int]]:
 
 
 # ------------------------------------------------------------------------------------------------ headline
-def hook_words(text: str, name: str = "", max_words: int = 5) -> tuple[list[str], int]:
+AS_WRITTEN_MAX = 10  # edit_video's cover.title says "max ~10 words"; textfit wraps it to 3 lines
+
+
+def hook_words(text: str, name: str = "", max_words: int = 5, as_written: bool = False) -> tuple[list[str], int]:
     """A 2-5 word cover line from the hook, and the index of its key word (drawn in the accent).
 
     A short hook is kept as written. A long one becomes "<Name>: <payoff>" (the product name, then the last content words,
@@ -181,6 +184,11 @@ def hook_words(text: str, name: str = "", max_words: int = 5) -> tuple[list[str]
     payoff's last word."""
     t = re.sub(r"https?://\S+", "", text or "").strip()
     t = re.sub(r"[“”\"`]", "", t)
+    if as_written:  # a cover title the client wrote (edit_video cover.title): keep its words, up to AS_WRITTEN_MAX
+        kept = [w.rstrip(".,;!?") for w in t.split() if w.strip(".,;:!?()[]")]
+        if 2 <= len(kept) <= AS_WRITTEN_MAX:
+            key = next((i for i, w in enumerate(kept) if re.search(r"[$€£₹]|\d", w)), len(kept) - 1)
+            return kept, key
     words = [w.strip(".,;:!?()[]") for w in t.split() if w.strip(".,;:!?()[]")]
     if not words:
         words = (name or "Watch this").split()
@@ -408,7 +416,8 @@ def score_variant(info: dict, frame_score: float) -> float:
 
 
 def make_covers(video: str | None = None, image: Image.Image | bytes | None = None, hook: str = "", brand: dict | None = None,
-                name: str = "", clip: tuple[float, float] | None = None, n_variants: int = 3, frames=None) -> dict:
+                name: str = "", clip: tuple[float, float] | None = None, n_variants: int = 3, frames=None,
+                as_written: bool = False) -> dict:
     """Three cover variants, best first: {"variants": [{layout, frame_t, source, score, info, images: {ratio: Image}}],
     "words", "key"}. ``frames`` (tests) replaces FFmpeg sampling with [(t, Image)]."""
     brand = dict(brand or {})
@@ -423,7 +432,7 @@ def make_covers(video: str | None = None, image: Image.Image | bytes | None = No
         cands = ([hq] + cands) if (not cands or cands[0]["score"] < 0.3) else (cands + [hq])
     if not cands:
         return {"variants": [], "words": [], "key": 0, "note": "No usable frame or image for a cover."}
-    words, key = hook_words(hook, name)
+    words, key = hook_words(hook, name, as_written=as_written)
     plans = [(cands[min(i, len(cands) - 1)] if i < 2 else cands[0], layout) for i, layout in enumerate(LAYOUTS[:n_variants])]
     variants = []
     for c, layout in plans:

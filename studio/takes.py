@@ -806,7 +806,12 @@ class Takes:
         if not clips:
             raise ActionError("No ready clips to place yet.")
         allowed = {c["id"] for c in run["input"]["channels"]}
-        ids = [c for c in (channel_ids or list(allowed)) if c in allowed] or list(allowed)
+        if channel_ids:  # the chips the person selected: only those (never every channel of the take as a fallback)
+            ids = [c for c in channel_ids if c in allowed]
+            if not ids:
+                raise ActionError("None of the selected channels are in this take. Select one of its channels to spread it.", 400)
+        else:
+            ids = list(allowed)
         chans = {c["id"]: c for c in self.studio.channels(a)}
         ids = [i for i in ids if i in chans]
         if not ids:
@@ -831,7 +836,7 @@ class Takes:
         days = sorted({s["day"] for v in slots.values() for s in v})
         for d in days:
             try:
-                lim = self.studio.buffer.daily_limits(a.uid, ids, f"{d}T12:00:00.000Z")
+                lim = _daily_limits_cached(self.studio.buffer, a.uid, ids, d)
             except Exception:  # noqa: BLE001
                 lim = []
             for st in lim or []:
@@ -1019,3 +1024,23 @@ def apply_transcript(cur: list[dict], text: str) -> list[dict]:
         step = (e0 - s0) / len(put)
         out += [{"w": t, "s": round(s0 + k * step, 3), "e": round(s0 + (k + 1) * step, 3)} for k, t in enumerate(put)]
     return out
+
+
+_LIMITS: dict[tuple, tuple[float, list]] = {}
+LIMITS_TTL = 600.0  # Spread previews re-ask Buffer's daily limits for up to 7 days each click: one read per 10 minutes
+
+
+def _daily_limits_cached(buffer, uid: str, ids: list[str], day: str) -> list:
+    """Buffer's daily posting limits for one day, cached per account + channels + day (live 2 Nov 2026: testing burned the
+    app's 24 h Buffer budget). Only successful reads are kept."""
+    import time as _t
+    key = (uid, tuple(sorted(ids)), day)
+    hit = _LIMITS.get(key)
+    if hit and _t.time() - hit[0] < LIMITS_TTL:
+        return hit[1]
+    lim = buffer.daily_limits(uid, ids, f"{day}T12:00:00.000Z") or []
+    if lim:
+        if len(_LIMITS) > 500:
+            _LIMITS.clear()
+        _LIMITS[key] = (_t.time(), lim)
+    return lim

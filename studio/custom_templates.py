@@ -190,9 +190,13 @@ def render_slides(spec: dict, data: dict | None, b: templates.Brand, ratio: str 
             items = f.get("items") or []
             items = items if isinstance(items, list) else [x.strip() for x in str(items).split(";") if x.strip()]
             out.append(templates.bullets_slide(b, ratio, str(f.get("title") or ""), [str(x) for x in items][:5], n=n))
-        elif t in ("story", "stat"):
+        elif t == "story":
             out.append(templates.story_slide(b, ratio, i + 1, str(f.get("title") or ""), str(f.get("body") or ""),
                                              str(f.get("tag") or ""), str(f.get("source") or ""), n=n))
+        elif t == "stat":  # the figure (title) is the big number; what it means (body) is the line under it
+            out.append(templates.story_slide(b, ratio, i + 1, str(f.get("body") or f.get("sub") or ""), "",
+                                             str(f.get("tag") or ""), str(f.get("source") or ""), n=n,
+                                             big=str(f.get("title") or "")))
         elif t == "quote":
             out.append(templates.quote_card(b, ratio, str(f.get("quote") or ""), str(f.get("speaker") or ""), str(f.get("role") or ""), n=n))
         elif t == "breaking":

@@ -90,9 +90,15 @@ SPECS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "set_theme", "description": "Set this run's video theme (the person picked one, or asked 'make it more cinematic' / 'switch to the news "
                                       "theme') and re-render its video channels in it. why: one line for the plan.",
-     "input_schema": {"type": "object", "required": ["theme"], "properties": {"theme": {"type": "string", "enum": ["news", "none"] + media_styles.ALL_IDS,
-                                                                                       "description": "none = no style: post the video as it is (fit to the frame, logo, end card)"},
+     "input_schema": {"type": "object", "required": ["theme"], "properties": {"theme": {"type": "string", "enum": ["auto", "news", "none"] + media_styles.ALL_IDS,
+                                                                                       "description": "auto = let the agent pick from the story; none = no style: post the video as it is (fit to the frame, logo, end card)"},
                                                                              "why": S, "rerender": {"type": "boolean"}}}},
+    {"name": "edit_video", "description": "Edit THIS run's video and re-render its video channels (the person replied 'trim the first 3 seconds and add "
+                                       "captions', 'switch to the Nothing theme', 'make a 4:5 version'). Edits add up across replies. cut_first_s: "
+                                       "seconds cut off the start; captions: true/false; theme: a theme id, 'auto', 'none' or one of their brand kit "
+                                       "names; ratio '4:5' renders the feed channels (Instagram, Facebook, LinkedIn) at 4:5 (YouTube/TikTok stay 9:16).",
+     "input_schema": {"type": "object", "properties": {"cut_first_s": {"type": "number"}, "end_s": {"type": "number"}, "captions": {"type": "boolean"},
+                                                        "theme": S, "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}, "channel_ids": IDS}}},
     {"name": "list_templates", "description": "The brand's post templates (HuhByte formats: editorial cover, text slides, launch Reel, weekly and "
                                            "mid-week recap, GitHub repo pillar, YC launch, viral trend; plus breaking, quote, tutorial).",
      "input_schema": {"type": "object", "properties": {}}},
@@ -127,11 +133,11 @@ LABELS = {"read_upload": "Read your upload", "read_url": "Read your link", "x_oe
           "add_end_card": "Set the end card", "edit_brand": "Update your brand kit", "edit_channel_media": "Re-render one channel",
           "write_captions": "Write captions", "save_buffer_drafts": "Save Buffer drafts", "remember_rule": "Remember a rule",
           "find_media": "Find media", "find_video": "Look for the launch video", "set_cover": "Swap the cover", "generate_images": "Make images", "check": "Check everything", "finish": "Done",
-          "list_themes": "Look at the themes", "set_theme": "Set the video theme", "list_templates": "Look at the templates",
+          "list_themes": "Look at the themes", "set_theme": "Set the video theme", "edit_video": "Edit the video", "list_templates": "Look at the templates",
           "render_template": "Render a template", "create_template": "Save a new template", "recap_plan": "Plan the weekly recap", "render_recap": "Render the recap",
           **editorial_tools.LABELS}
 WRITES = {"generate_images", "render_recap", "render_cover", "render_carousel", "render_reel", "add_end_card", "edit_brand", "edit_channel_media",
-          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "render_template", "set_cover",
+          "write_captions", "save_buffer_drafts", "remember_rule", "set_theme", "edit_video", "render_template", "set_cover",
           "create_template"} | editorial_tools.WRITES
 
 
@@ -501,6 +507,9 @@ class Tools(EditorialTools):
             (res.get("story") or {}).get("headline") or ""
         if not q:
             raise ActionError("Give find_video a link or a product name.")
+        extra = [u for u in (it.get("urls") or []) if u and u not in q]  # the person's own links (a YC launch page) always count
+        if extra:
+            q = " ".join([q, *extra])
         yt = ""
         if not self.demo:
             try:
@@ -535,8 +544,8 @@ class Tools(EditorialTools):
         elif not (res.get("upload") or {}).get("type") == "video":
             res["video_ask"] = {"text": r["ask"], "status": r["status"], "max_mb": r["upload"]["max_mb"], "accept": r["upload"]["accept"],
                                 "label": r["upload"]["label"], "launch_url": (r["launch_video"] or {}).get("url", ""), "credit": r["credit"]}
-            if r["ask"] not in {t.get("text") for t in res.get("thread") or []}:
-                self.thread(run, "agent", r["ask"])
+            # not said yet: a later step (research_company -> find_video, find_media) may still find it. check() says it
+            # once at the end when the run really has no video (live 2 Nov: "No video found" posted, then it was found).
         self.save(run)
         return {"status": r["status"], "video": r["video"], "launch_video": r["launch_video"], "credit": r["credit"],
                 "maker": r["maker"], "website": r["website"], "steps": r["steps"], "ask": r["ask"], "plan_line": r["plan_line"],
@@ -853,7 +862,7 @@ class Tools(EditorialTools):
 
     def t_render_reel(self, channel_ids: list | None = None, seconds: int | None = None, captions: bool | None = None,
                       style: str | None = None, music: str | None = None, rights_confirmed: bool | None = None,
-                      ratio: str | None = None) -> dict:
+                      ratio: str | None = None, clip: list | None = None, captions_mode: str | None = None) -> dict:
         run = self.state()
         ids = [c["id"] for c in self.channels(run, channel_ids)]
         if not self._has_video(run):  # NO VIDEO -> NO REEL (owner, 1 Nov 2026): never a text-on-gradient video
@@ -861,6 +870,13 @@ class Tools(EditorialTools):
         ratio = ratio if ratio in ("9:16", "4:5", "1:1") else "9:16"
         if any(c["service"] in VIDEO_ONLY for c in self.channels(run, ids)):
             ratio = "9:16"  # YouTube Shorts / TikTok are vertical only
+        ed = run["result"].get("video_edits") or {}  # plain-word edits from the thread (edit_video) stay on every re-render
+        clip = clip or ed.get("clip")
+        captions_mode = captions_mode or ed.get("captions_mode")
+        if not style and ed.get("theme"):
+            style = ed["theme"]
+        if captions_mode == "on":
+            captions = True
         theme = (run.get("input") or {}).get("theme") or ""
         if not style and theme and theme != "auto" and media_styles.known(theme):
             style = theme  # the theme the person picked in Make a post (or set in the thread) styles every video
@@ -873,17 +889,23 @@ class Tools(EditorialTools):
             inp = run.get("input") or {}
             style = media_styles.pick_theme(" ".join([inp.get("prompt") or "", (inp.get("intake") or {}).get("tone") or ""]),
                                             (inp.get("intake") or {}).get("topic") or "")[0]
+        if not style and clip:
+            style = "none"  # a cut is a styled-pipeline edit; "none" keeps the video as it is otherwise
         if rights_confirmed is None and run["result"].get("rights_confirmed"):
             rights_confirmed = True  # they already said yes for this clip; a theme change doesn't ask again
         if style:
-            media, note, ask = self._media_reel(run, style, seconds=seconds, music=music, rights_confirmed=bool(rights_confirmed), ratio=ratio)
+            media, note, ask = self._media_reel(run, style, seconds=seconds, music=music, rights_confirmed=bool(rights_confirmed), ratio=ratio,
+                                                clip=clip, captions_mode=captions_mode)
             run = self.state()
             fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
-            self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": True, "style": style, "note": note, "ratio": ratio,
+            self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": captions_mode != "off", "style": style, "note": note, "ratio": ratio,
+                                                   **({"clip": clip} if clip else {}),
                                                    **(self._cover_info(media) if fmt == "reel" else {})})
             self.save(run)
-            out = {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note, "style": style,
+            out = {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note, "style": style, "ratio": ratio,
                    "clipped": self._clipped([m for m in media if m["type"] == "photo"])}
+            if media and media[0].get("duration"):
+                out["duration_s"] = media[0]["duration"]  # the rendered file's real length, never the length asked for
             if ask:
                 out.update(needs_confirmation=True, question=ask)
             return out
@@ -1032,7 +1054,8 @@ class Tools(EditorialTools):
         return [{"token": tok, "url": self.h.media_url(tok), "type": "video", "name": (res.get("upload") or {}).get("name") or "your video",
                  "role": "original"}]
 
-    def _media_reel(self, run, style: str, seconds=None, music=None, rights_confirmed=False, ratio: str = "9:16") -> tuple[list[dict], str, str]:
+    def _media_reel(self, run, style: str, seconds=None, music=None, rights_confirmed=False, ratio: str = "9:16",
+                    clip: list | None = None, captions_mode: str | None = None) -> tuple[list[dict], str, str]:
         """A styled Reel from the real video via studio.media (worker kind ``media_render``). Returns (media, note, question):
         a third-party video without the person's OK is not rendered; the question asks for it (docs/MEDIA_PIPELINE.md, Risks)."""
         from .media import styles as media_styles
@@ -1097,6 +1120,10 @@ class Tools(EditorialTools):
             spec["cover_image"] = hero_tok
         if seconds and sid not in ("opus", "hype"):
             spec["clip"] = [0, float(seconds)]
+        if clip:  # edit_video: the person's own cut (the worker keeps it inside the source)
+            spec["clip"] = [round(float(clip[0]), 2), round(float(clip[1]), 2)]
+        if captions_mode in ("on", "off", "auto", "replace"):
+            spec["captions_mode"], spec["captions"] = captions_mode, captions_mode != "off"
         frames = [] if (clip_tok or cand) else gen
         media, note = self._video_job(run, spec, frames, f" Style: {sid}.")
         return media, note, ""
@@ -1124,24 +1151,181 @@ class Tools(EditorialTools):
         return {"themes": media_styles.describe_themes(), "current": (run.get("input") or {}).get("theme") or "auto",
                 "chosen": run["result"].get("theme")}
 
+    def _kit_theme(self, name: str) -> dict | None:
+        """'the Nothing theme' names one of their brand kits: {kit_id, name, style, active}. The kit's own video theme when
+        it has one, else its caption style."""
+        n = re.sub(r"\b(?:theme|kit|brand|look|style)\b", "", str(name or ""), flags=re.I).strip().lower()
+        if not n:
+            return None
+        try:
+            from . import brand_kits
+            bk = brand_kits.attach(self.h)
+            rows, active = bk._rows(self.a), bk._active(self.a)
+        except Exception:  # noqa: BLE001
+            return None
+        for r in rows:
+            if (r.get("name") or "").strip().lower() == n:
+                k = json.loads(r.get("data") or "{}")
+                th = k.get("theme")
+                th = th.get("id") if isinstance(th, dict) else th if isinstance(th, str) else None
+                style = th if th and media_styles.known(th) else ({"news": "huhbyte_news"}.get(k.get("caption_style"), k.get("caption_style")) or "opus")
+                return {"kit_id": r["id"], "name": r["name"], "style": media_styles.resolve(style), "active": r["id"] == active}
+        return None
+
+    def _resolve_theme(self, theme: str) -> tuple[str, str, str]:
+        """theme -> (style id, label, why). 'auto' picks from the story; a brand kit name switches to that kit."""
+        t = str(theme or "").strip()
+        if t.lower() == "auto":
+            run = self.state()
+            inp = run.get("input") or {}
+            sid, why = media_styles.pick_theme(" ".join([inp.get("prompt") or "", (inp.get("intake") or {}).get("tone") or ""]),
+                                               (inp.get("intake") or {}).get("topic") or ((run["result"].get("story") or {}).get("headline") or ""))
+            return sid, media_styles.config(sid).get("label", sid), f"auto: {why}"[:200]
+        sid = media_styles.resolve(t)
+        if media_styles.known(sid):
+            return sid, media_styles.config(sid).get("label", sid), ""
+        kt = self._kit_theme(t)
+        if kt:
+            if not kt["active"]:
+                from . import brand_kits
+                brand_kits.attach(self.h).activate(self.a, kt["kit_id"])  # "switch to the Nothing theme": their own words
+            lab = f"{kt['name']} brand kit"
+            return kt["style"], lab, f"your {kt['name']} brand kit" + ("" if kt["active"] else " (now your active kit)")
+        raise ActionError(f"Unknown theme {theme}. Pick one of {', '.join(media_styles.ALL_IDS)}, 'auto', 'none' or a brand kit name.")
+
+    def _refresh_packages(self) -> None:
+        """After a re-render the packages carry the new files (media_urls, note, media), not only channel_media."""
+        if self.state()["result"].get("packages"):
+            self.t_check()
+
     def t_set_theme(self, theme: str, why: str = "", rerender: bool | None = None) -> dict:
-        sid = media_styles.resolve(theme)
-        if not media_styles.known(sid):
-            raise ActionError(f"Unknown theme {theme}. Pick one of {', '.join(media_styles.ALL_IDS)}.")
+        sid, label, auto_why = self._resolve_theme(theme)
+        auto = str(theme or "").strip().lower() == "auto"
         run = self.state()
-        run["input"]["theme"] = sid
-        label = media_styles.config(sid).get("label", sid)
-        run["result"]["theme"] = {"id": sid, "label": label, "why": (why or "you chose it")[:200]}
+        run["input"]["theme"] = "auto" if auto else sid
+        run["result"]["theme"] = {"id": sid, "label": label, "why": (auto_why or why or "you chose it")[:200]}
+        if (run["result"].get("video_edits") or {}).get("theme"):
+            run["result"]["video_edits"]["theme"] = sid  # the newest choice wins over an earlier thread edit
         self.save(run)
         self.store.x("UPDATE agent_runs SET input=? WHERE id=?", (json.dumps(run["input"]), self.rid))  # the run's theme from now on
-        out = {"theme": sid, "label": label, "why": run["result"]["theme"]["why"], "rerendered": []}
+        out = {"theme": sid, "label": label, "why": run["result"]["theme"]["why"], "rerendered": [], **({"auto": True} if auto else {})}
         vids = [cid for cid, v in (run["result"].get("channel_media") or {}).items() if v.get("format") == "reel"]
         if vids and rerender is not False:
-            r = self.t_render_reel(vids, style=sid, seconds=None)
-            out["rerendered"] = r.get("channels", [])
-            out["note"] = r.get("note", "")
+            groups: dict[str, list] = {}
+            for cid in vids:
+                groups.setdefault((run["result"]["channel_media"][cid].get("ratio") or "9:16"), []).append(cid)
+            notes = []
+            for ratio, ids in groups.items():
+                r = self.t_render_reel(ids, style=sid, seconds=None, ratio=ratio)
+                out["rerendered"] += r.get("channels", [])
+                notes.append(r.get("note", ""))
+                if r.get("duration_s"):
+                    out["duration_s"] = r["duration_s"]
+                if r.get("needs_confirmation"):
+                    out.update(needs_confirmation=True, question=r.get("question"))
+            out["note"] = " ".join(n for n in notes if n)
+            self._refresh_packages()
+        return out
+
+    def _shown_window(self, res: dict) -> list | None:
+        """[start, end] in the source that the run's current Reel shows (the worker records it on the file), or None."""
+        for v in (res.get("channel_media") or {}).values():
+            if v.get("format") != "reel" or not v.get("media"):
+                continue
+            try:
+                meta = self.h.media_meta(self.a, (v["media"][0] or {}).get("token") or "") or {}
+            except Exception:  # noqa: BLE001  no record: cut from the start of the source
+                meta = {}
+            c = meta.get("clip")
+            if isinstance(c, (list, tuple)) and len(c) >= 2:
+                try:
+                    return [float(c[0]), float(c[1])]
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    def t_edit_video(self, cut_first_s: float | None = None, end_s: float | None = None, captions: bool | None = None,
+                     theme: str | None = None, ratio: str | None = None, channel_ids: list | None = None) -> dict:
+        """Plain-word edits on THIS run's video ('trim the first 3 seconds and add captions', 'switch to the Nothing theme',
+        'make a 4:5 version'). Edits add up across replies; every video channel is re-rendered with all of them."""
+        run = self.state()
+        res = run["result"]
+        if not self._has_video(run):
+            raise ActionError("This post has no video to edit yet. Upload one (reply with the file) and I'll brand it.")
+        ed = dict(res.get("video_edits") or {})
+        did = []
+        if cut_first_s not in (None, "") or end_s not in (None, ""):
+            # The seconds are the ones the person SEES: relative to the window the current Reel shows (a news Reel is an
+            # auto-picked 60 s window of a longer film). Live 3 Nov 2026: "trim the first 3 seconds" of a 68 s Reel came
+            # back 86 s, because the cut restarted from the source's 3 s and ran to its end.
+            base = ed.get("clip") or self._shown_window(res)
+            b0 = float(base[0]) if base else 0.0
+            b1 = float(base[1]) if base and len(base) > 1 and base[1] is not None else None
+            c0 = b0 + max(0.0, float(cut_first_s or 0))
+            if end_s not in (None, ""):
+                c1 = b0 + float(end_s)
+            else:
+                c1 = b1 if b1 is not None and b1 > c0 + 1 else c0 + 600.0  # the worker clamps the end to the source
+            if c1 <= c0 + 1:
+                raise ActionError("The cut must leave at least one second.")
+            ed["clip"] = [round(c0, 2), round(c1, 2)]
+            did.append(f"cut the first {c0:g} s" if cut_first_s not in (None, "") else f"cut to {c0:g}-{c1:g} s")
+        if captions is not None:
+            ed["captions_mode"] = "on" if captions else "off"
+            did.append("captions on" if captions else "captions off")
+        style, label = None, ""
+        if theme:
+            style, label, why = self._resolve_theme(theme)
+            ed["theme"] = style
+            run = self.state()
+            res = run["result"]
+            run["input"]["theme"] = style
+            res["theme"] = {"id": style, "label": label, "why": (why or "you asked")[:200]}
+            self.store.x("UPDATE agent_runs SET input=? WHERE id=?", (json.dumps(run["input"]), self.rid))
+            did.append(f"{label} look")
+        res["video_edits"] = ed
+        self.save(run)
+        style = style or ed.get("theme")
+        if not style:
+            cur = (run.get("input") or {}).get("theme") or ""
+            prev = next((v.get("style") for v in (res.get("channel_media") or {}).values() if v.get("format") == "reel" and v.get("style")), None)
+            style = cur if cur and cur != "auto" and media_styles.known(cur) else ((res.get("theme") or {}).get("id") or prev or "")
+        if ed.get("captions_mode") == "on" and media_styles.resolve(style or "none") == "none":
+            from . import brand_kits  # captions asked on a plain video: the brand kit's caption look
+            style = brand_kits.caption_style_for(self.h, self.a)
+        style = style or "none"
+        chans = self.channels(run, channel_ids)
+        cm = res.get("channel_media") or {}
+        groups: dict[str, list] = {}
+        skipped = []
+        if ratio:
+            for c in chans:
+                if c["service"] in VIDEO_ONLY and ratio != "9:16":
+                    skipped.append(c["service"])  # YouTube Shorts / TikTok stay vertical
+                    continue
+                groups.setdefault(ratio, []).append(c["id"])
+            did.append(f"{ratio} version")
+            for c in chans:  # the vertical-only channels still get the other edits asked in the same reply
+                if c["service"] in VIDEO_ONLY and ratio != "9:16" and (cm.get(c["id"]) or {}).get("format") == "reel" and len(did) > 1:
+                    groups.setdefault((cm[c["id"]].get("ratio") or "9:16"), []).append(c["id"])
+        else:
+            for c in chans:
+                v = cm.get(c["id"]) or {}
+                if v.get("format") == "reel" or (not channel_ids and c["service"] in VIDEO_ONLY | {"instagram"}) or channel_ids:
+                    groups.setdefault(v.get("ratio") or "9:16", []).append(c["id"])
+        if not groups:
+            raise ActionError("None of this post's channels can take that edit" + (f" ({', '.join(skipped)} stay 9:16)." if skipped else "."))
+        out = {"edits": did, "style": style, "theme_label": label or media_styles.config(style).get("label", style), "renders": []}
+        for rt, ids in groups.items():
+            r = self.t_render_reel(ids, style=style, ratio=rt, clip=ed.get("clip"), captions_mode=ed.get("captions_mode"),
+                                   rights_confirmed=True if res.get("clip_owned") else None)
+            out["renders"].append({"channels": [c["service"] for c in self.channels(self.state(), ids)], "ratio": rt, "format": r.get("format"),
+                                   "url": (r.get("media") or [""])[0], "duration_s": r.get("duration_s"), "note": r.get("note", "")})
             if r.get("needs_confirmation"):
                 out.update(needs_confirmation=True, question=r.get("question"))
+        if skipped:
+            out["kept_vertical"] = skipped
+        self._refresh_packages()
         return out
 
     def t_list_templates(self) -> dict:
@@ -1503,7 +1687,15 @@ class Tools(EditorialTools):
                 pk["reel"] = self._media_info(cm["reel"], [m["url"] for m in cm["reel"]], "9:16")
             packages.append(pk)
         res["packages"] = packages
+        for pk in packages:  # a package with nothing to post is not "ready" (live 2 Nov: a YouTube carousel with 0 media passed)
+            if not pk["media_urls"] and pk["format"] != "text":
+                problems.append(f"{pk['service']}: no media to post" + (" (YouTube needs a video)" if pk["service"] in VIDEO_ONLY else ""))
+                if not pk.get("sent"):
+                    pk["status"] = "hold"
         self._no_video_plan_note(run)
+        ask = res.get("video_ask") or {}
+        if ask.get("text") and not self._has_video(run) and ask["text"] not in {t.get("text") for t in res.get("thread") or []}:
+            self.thread(run, "agent", ask["text"])  # the search is over and there is still no video: ask for the upload now
         src_url = ((res.get("source") or {}).get("url") or "").split("?")[0].rstrip("/")
         want = (run["input"].get("source_url") or "").split("?")[0].rstrip("/")
         about = not want or (src_url.lower().replace("twitter.com", "x.com") == want.lower().replace("twitter.com", "x.com"))
