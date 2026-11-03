@@ -20,7 +20,6 @@ import base64
 import hashlib
 import hmac
 import os
-import subprocess
 import tempfile
 import threading
 import time
@@ -92,14 +91,19 @@ def _own_token(house, a, args: dict) -> str:
 
 
 def _frames(path: str, times: list[float], width: int) -> list[tuple[float, bytes]]:
+    from . import mediasafe
     from .media import ff
+    try:
+        mediasafe.check_source(path)  # a real media file before any decoder (SECURITY_RULES: uploads checked first)
+    except Exception as e:  # noqa: BLE001
+        raise ActionError(f"That file can't be previewed: {str(e)[:120]}", 415)
     out = []
     for t in times:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             jpg = f.name
         try:
-            subprocess.run([ff.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.2f}", "-i", path, "-frames:v", "1",
-                            "-vf", f"scale={width}:-2", "-q:v", "5", jpg], check=True, timeout=30, capture_output=True)
+            mediasafe.run([ff.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.2f}", "-i", path, "-frames:v", "1",
+                           "-vf", f"scale={width}:-2", "-q:v", "5", jpg], timeout=30, check=True)  # protocol/format whitelists
             data = open(jpg, "rb").read()
             if data:
                 out.append((t, data))
