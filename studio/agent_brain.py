@@ -480,6 +480,19 @@ class Brain:
     KIT_RE = re.compile(r"\b(?:use|switch to|change to|apply|try)\s+(?:the\s+|my\s+)?([\w .&'-]{2,40}?)\s+(?:brand\s+)?kit\b", re.I)
     DEFAULT_RE = re.compile(r"\b(?:make (?:it|this|that) (?:my |the )?default|as (?:my|the) default|my default kit|"
                             r"for (?:all|every) (?:my )?(?:posts|runs)|from now on|everywhere)\b", re.I)
+    # owner, 3 Nov 2026: "change brand kit" with no name must ask which; "list my kits" lists the account's own kits only
+    KIT_ASK_RE = re.compile(r"\b(?:change|switch|swap|pick|choose|use|try|another|different|other)\b[^.?!]{0,25}\b(?:brand\s*)?kit\b", re.I)
+    KIT_TO_RE = re.compile(r"\b(?:change|switch|swap|set|move)\s+(?:the\s+|my\s+|this\s+)?(?:brand\s+)?kit\s+(?:to|for)\s+(?:the\s+|my\s+)?"
+                           r"([\w .&'-]{2,40}?)(?:\s+(?:brand\s+)?kit)?\s*(?:[.!?,]|$|\s+and\b|\s+for\b)", re.I)
+    KIT_LIST_RE = re.compile(r"\b(?:list|show|what|which)\b[^.?!]{0,30}\b(?:brand\s*)?kits\b|\bkits do i have\b", re.I)
+    UNDO_RE = re.compile(r"^\s*(?:undo|undo (?:that|it|the (?:last )?change)|go back|revert(?: it| that)?|put it back|"
+                         r"(?:go )?back to the (?:reel|video|carousel|previous(?: version)?|old(?: version)?|last version))\b", re.I)
+    MUSIC_NONE_RE = re.compile(r"\b(?:no|remove|without|drop|take (?:off|out)|turn off|delete|mute|lose)\s+(?:the\s+|any\s+|all\s+)?"
+                               r"(?:music|song|track|soundtrack|audio track|bgm)\b|\bmusic\s*(?::\s*)?(?:off|none)\b", re.I)
+    MUSIC_WORDS = (r"(?:music|song|track|soundtrack|bgm|beat|lo-?fi|chill(?:hop)?|upbeat|piano|jazz|hip[\s-]?hop|edm|ambient|acoustic|"
+                   r"phonk|synthwave|trending (?:song|sound|audio))")
+    MUSIC_ADD_RE = re.compile(r"\b(?:add|use|put|pick|play|with|give (?:it|the reel)|set|try|change (?:the )?(?:music|song|track) to)\b"
+                              r"[^.?!]{0,40}?\b" + MUSIC_WORDS + r"\b", re.I)
     SLIDES_RE = re.compile(r"\buse slides\b|\bslides instead\b|\bno,? (?:use )?(?:the )?(?:slides|carousel)\b|\bcarousel instead\b", re.I)
 
     def _answer(self, a, rid, run, text: str, focus: str | None = None) -> dict:
@@ -531,6 +544,9 @@ class Brain:
                 self.h._save(rid, run["steps"], res, "running")
                 self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._rights_go(a_, r_, t_, ans is True and not slides))
                 return self.h.run(a, rid)
+        routed = self._route_controls(a, rid, run, text, tools)
+        if routed is not None:
+            return routed
         tp = template_pick.template_reply(text, tools._custom_list())
         if self.WHERE_RE.search(text) and not tp:
             return self._answer(a, rid, run, self._where_text(res), "packages")
@@ -566,6 +582,98 @@ class Brain:
             self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._rights_go(a_, r_, t_, None))
             return self.h.run(a, rid)
         return None
+
+    def _route_controls(self, a, rid, run, text: str, tools: Tools):
+        """Owner bug list, 3 Nov 2026: the Reel -> carousel answer, Undo, Music (none / Instagram), brand kits."""
+        from . import post_controls
+        res = run["result"]
+        ask = res.get("ask") or {}
+        if ask.get("kind") == "reel_to_carousel":
+            t = text.strip().lower()
+            choice = ("keep" if re.search(r"^(?:keep\b|no\b(?! music)|nope\b|stay\b|leave it\b)", t) else
+                      "switch" if re.search(r"^(?:switch\b|yes\b|yep\b|ok(?:ay)?\b|go ahead\b|do it\b|make it (?:a |the )?carousel\b)", t) else "")
+            if choice:
+                tp = {"template": ask.get("template") or "", "slides": [], "keep": [], "rest": False, "reel": choice}
+                self.h._save(rid, run["steps"], res, "running")
+                self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._template_go(a_, r_, t_, tp))
+                return self.h.run(a, rid)
+        if self.UNDO_RE.search(text) and res.get("media_versions"):
+            self.h._save(rid, run["steps"], res)
+            try:
+                return post_controls.undo_package_media(self.h, a, rid, "")
+            except ActionError as e:
+                return self._answer(a, rid, self.h.run(a, rid), str(e))
+        if self.MUSIC_NONE_RE.search(text) or self.MUSIC_ADD_RE.search(text):
+            self.h._save(rid, run["steps"], res)
+            return self._music_reply(a, rid, text)
+        if self.KIT_LIST_RE.search(text):
+            kits = post_controls.available_kits(self.h, a)
+            ko = (res.get("kit_override") or {}).get("name")
+            lines = [f"- **{k['name']}**" + (" (your default)" if k["active"] else "") + (" · this post" if ko == k["name"] else "")
+                     for k in kits]
+            return self._answer(a, rid, run, ("Your brand kits:\n" + "\n".join(lines) +
+                                              "\nSay “use the <name> kit” to use one on this post only.") if kits else
+                                "You have no brand kits yet. Make one in Brand › Brand kits.")
+        m = self.KIT_TO_RE.search(text)
+        named = m.group(1).strip() if m else ""
+        if named and not tools._kit_theme(named):
+            return self._kit_ask(a, rid, run, f"I don't have a kit called “{named[:40]}”.")
+        if named:
+            kt = tools._kit_theme(named)
+            self.h._save(rid, run["steps"], res, "running")
+            default = bool(self.DEFAULT_RE.search(text))
+            self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._kit_go(a_, r_, t_, kt, default))
+            return self.h.run(a, rid)
+        km = self.KIT_RE.search(text)
+        if self.KIT_ASK_RE.search(text) and not (km and tools._kit_theme(km.group(1))):
+            return self._kit_ask(a, rid, run, "")
+        return None
+
+    def _kit_ask(self, a, rid, run, why: str) -> dict:
+        """"change the brand kit" without a usable name: ask which, the account's available kits as the choices."""
+        from . import post_controls
+        ch = post_controls.kit_choice(self.h, a, why)
+        run["result"]["ask"] = {"kind": "brand_kit", "question": ch["question"], "at": _now(),
+                                "choices": [{"label": n, "say": f"Use the {n} brand kit"} for n in ch["choices"]]}
+        return self._answer(a, rid, run, ch["question"])
+
+    def _music_reply(self, a, rid, text: str) -> dict:
+        """"add music" / "use lofi" / "no music": the run's Music control (post_controls.set_post_music)."""
+        from . import post_controls
+        none = bool(self.MUSIC_NONE_RE.search(text))
+        q = ""
+        if not none:
+            m = re.search(r"\b(?:add|use|put|pick|play|with|try|set|change (?:the )?(?:music|song|track) to)\s+(.+?)\s*[.!?]*$", text, re.I)
+            q = m.group(1) if m else text
+            q = re.sub(r"\b(?:music|song|track|soundtrack|bgm|on (?:the|this|it)|to (?:the|this|it)|the reel|instagram|some|a|an|the|please)\b",
+                       " ", q, flags=re.I)
+            q = re.sub(r"\s+", " ", q).strip(" ,")
+        try:
+            out = post_controls.set_post_music(self.h, a, rid, "", "none" if none else "instagram", None, q)
+        except ActionError as e:
+            return self._answer(a, rid, self.h.run(a, rid), f"I couldn't change the music: {e}")
+        run = self.h.run(a, rid)
+        res = run["result"]
+        if out.get("needs_choice"):
+            res["ask"] = {"kind": "music", "question": out["question"], "at": _now(),
+                          "choices": [{"label": (c.get("title") or "")[:40], "body": {"music": "instagram", "audio": c}}
+                                      for c in out.get("choices") or []]}
+            lst = "\n".join(f"- **{c.get('title')}**" + (f" · {c.get('display_artist')}" if c.get("display_artist") else "")
+                            for c in out.get("choices") or [])
+            return self._answer(a, rid, run, out["question"] + ("\n" + lst if lst else ""))
+        if (res.get("ask") or {}).get("kind") == "music":
+            res.pop("ask", None)
+        if out["music"] == "none":
+            msg = "Done: no music on this post." if out.get("changed") else "This post has no music (that's the default)."
+        elif out["music"] == "instagram":
+            t = out["track"]
+            alt = ", ".join(x.get("title", "") for x in out.get("alternatives") or [])
+            msg = (f"Done: **{t.get('title')}**" + (f" · {t.get('display_artist')}" if t.get("display_artist") else "") +
+                   " is on the Reel as Instagram music (Buffer adds it when it posts; Instagram picks the part that plays)." +
+                   (f" Other picks: {alt}. Say “use <title> music” or open **Music** on the card." if alt else ""))
+        else:
+            msg = out.get("message") or "Music can't be added here."
+        return self._answer(a, rid, run, msg)
 
     def _bg(self, a, rid, body) -> None:
         """One background job on a run (the same bookkeeping as _go): never leaves it spinning."""
@@ -640,10 +748,20 @@ class Brain:
 
     def _template_go(self, a, rid, tools: Tools, tp: dict) -> None:
         out = self.call(a, rid, tools, "set_template", {"template": tp.get("template") or "", "slides": tp.get("slides") or [],
-                                                        "keep": tp.get("keep") or [], "rest": bool(tp.get("rest"))})
+                                                        "keep": tp.get("keep") or [], "rest": bool(tp.get("rest")),
+                                                        **({"reel": tp["reel"]} if tp.get("reel") else {})})
+        if out.get("needs_choice"):  # a Reel is never turned into a carousel without asking (owner, 3 Nov 2026)
+            self._say(a, rid, f"{out['question']} **Keep Reel** leaves the video as it is; **Switch** makes it the "
+                              f"**{out['name']}** carousel with the video as slide 2 (Undo brings the Reel back).")
+            return
         self.call(a, rid, tools, "check", {})
         kit = out.get("kit") or "your brand kit"
-        if out.get("slides_changed") == "all":
+        if out.get("kept_reel"):
+            self._say(a, rid, "OK, it stays a Reel: nothing changed.")
+        elif out.get("video_slide"):
+            self._say(a, rid, f"Done: the post is now the **{out['name']}** carousel, in {kit}, with the video as slide 2. "
+                              "Press **Back to the Reel** on its card to undo.")
+        elif out.get("slides_changed") == "all":
             self._say(a, rid, f"Done: the post now uses **{out['name']}**, in {kit}.")
         elif out.get("slides_changed"):
             ns = out["slides_changed"]
@@ -661,19 +779,27 @@ class Brain:
         tail = "" if default else " Your default kit is unchanged; say “make it my default” to use it on every post."
         self._say(a, rid, f"Done: this post now uses {why}.{tail}")
 
-    def templates(self, a: Actor, rid: int, previews: bool = True) -> dict:
-        """The run's template and why, 3-4 suggestions with previews from the run's own facts, and every template by name."""
+    def templates(self, a: Actor, rid: int, previews: bool = True, everything: bool = False) -> dict:
+        """The run's template and why, 3-4 suggestions with previews from the run's own facts, and every template by name.
+        everything=True ("All templates…"): every built-in and custom template, each with its first slide drawn from this
+        run's facts in the run's kit (owner, 3 Nov 2026: the chip did nothing)."""
         run = self.h.run(a, rid)
         if run["kind"] != "agent":
             raise ActionError("Templates are for posts made by the agent.", 409)
         tools = Tools(self.h, a, rid)
         rec = tools._template_choice(run)
-        pv = tools.template_previews() if previews else {}
         cat = template_pick.catalog(tools._custom_list())
+        ids = [t for t in rec.get("suggestions") or [] if t in cat]
+        if everything:
+            ids = [rec["id"]] if rec["id"] in cat else []
+            ids += [t for t in cat if t not in ids and (t == template_pick.NEWS or
+                                                        (t not in template_pick.NOT_SUGGESTED and tools._drawable(t) == t))]
+        pv = tools.template_previews(ids, limit=len(ids)) if previews else {}
         return {"template": {k: rec.get(k) for k in ("id", "name", "why", "auto", "kit", "slide_names")},
                 "options": [{"id": t, "name": cat[t]["name"], "about": cat[t].get("about") or "", "preview": pv.get(t, ""),
-                             "current": t == rec["id"]} for t in rec.get("suggestions") or [] if t in cat],
-                "all": tools.template_names()}
+                             "current": t == rec["id"], "custom": bool(cat[t].get("custom")),
+                             "kind": cat[t].get("kind") or "carousel"} for t in ids],
+                "all": tools.template_names(), "kit": rec.get("kit") or (tools._kit().get("name") or "")}
 
     def set_template(self, a: Actor, rid: int, body: dict) -> dict:
         """REST / MCP: switch the template by name or id, for the post or the slides given. Runs like a thread reply."""
@@ -694,9 +820,12 @@ class Brain:
                               ", ".join(v["name"] for k, v in cat.items() if k not in template_pick.NOT_SUGGESTED) + ".", 404)
         ints = lambda xs: [int(x) for x in xs or [] if str(x).lstrip("-").isdigit()]  # noqa: E731
         tp = {"template": tid, "slides": ints((body or {}).get("slides")), "keep": ints((body or {}).get("keep")), "rest": bool((body or {}).get("rest"))}
+        if str((body or {}).get("reel") or "").lower() in ("keep", "switch"):
+            tp["reel"] = str(body["reel"]).lower()
         res = run["result"]
-        res.setdefault("thread", []).append({"role": "user", "text": f"Use the {cat[tid]['name']} template" +
-                                             (f" on slide {', '.join(map(str, tp['slides']))}" if tp["slides"] else ""), "at": _now()})
+        said = {"keep": "Keep the Reel", "switch": f"Switch to the {cat[tid]['name']} carousel"}.get(tp.get("reel") or "")
+        res.setdefault("thread", []).append({"role": "user", "text": said or (f"Use the {cat[tid]['name']} template" +
+                                             (f" on slide {', '.join(map(str, tp['slides']))}" if tp["slides"] else "")), "at": _now()})
         self.h._save(rid, run["steps"], res, "running")
         self._spawn(self._bg, a, rid, lambda a_, r_, t_: self._template_go(a_, r_, t_, tp))
         return self.h.run(a, rid)

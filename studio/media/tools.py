@@ -42,7 +42,7 @@ SPECS = [
      "description": "Word-level transcript of a fetched video for captions and auto-clipping. names: product/company names to spell right.",
      "input_schema": {"type": "object", "required": ["path"], "properties": {"path": S, "names": {"type": "array", "items": S}, "model": S}}},
     {"name": "media_render", "worker": True,
-     "description": "Edit the video (or images) into branded shorts in one style for every ratio needed (9:16, 4:5, 1:1): hook in the first second, captions, credit, Follow end card, music under silent video. Third-party video needs rights_confirmed.",
+     "description": "Edit the video (or images) into branded shorts in one style for every ratio needed (9:16, 4:5, 1:1): hook in the first second, captions, credit, Follow end card; music only when asked (music: cinematic | pulse; auto = none: a silent video stays silent). Third-party video needs rights_confirmed.",
      "input_schema": {"type": "object", "required": ["style", "hook"], "properties": {
          "source_path": S, "images": {"type": "array", "items": S},
          "style": {"type": "string", "enum": ["news"] + _styles.ALL_IDS, "description": "A base style or a video theme"},

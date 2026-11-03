@@ -634,6 +634,15 @@ class BrandKits:
                              "logo_url": f"/static/brands/{s['id']}/logo.png"} for s in brand_onboard.samples()],
                 "max": MAX_KITS, "themes": _theme_list(), "kit_cards": [{"id": i, "label": KIT_LABELS[i]} for i in KIT_CARDS]}
 
+    def available(self, a) -> dict:
+        """list() for agents and chat (owner, 3 Nov 2026: "list my kits" answered with the sample brands): the account's
+        own kits, minus the untouched sample brands unless one is active; no sample / example catalogue."""
+        full = self.list(a)
+        kits = [k for k in full["kits"] if k.get("active") or (k.get("kit") or {}).get("label") != brand_onboard.SAMPLE_LABEL]
+        return {"kits": kits, "active_id": full["active_id"],
+                "available": [{"id": k["id"], "name": k["name"], "active": k["active"]} for k in kits],
+                "hidden_samples": len(full["kits"]) - len(kits)}
+
     def _cached_kit_cards(self, a, row: dict | None) -> dict | None:
         """The active kit's own cards when they are already in the preview cache (the warmed sample kits, or a kit seen
         before), so the builder can paint them straight from the list, one round trip before the preview call."""
@@ -977,8 +986,9 @@ def add_routes(app, house, actor) -> None:
         return Response(md, media_type="text/markdown; charset=utf-8", headers={"Cache-Control": "private, no-store"})
 
     @app.get("/api/brand-kits")
-    def kits_list(request: Request):
-        return call(bk.list, actor(request))
+    def kits_list(request: Request, available: int = 0):
+        """Every kit + the sample catalogue (the builder); ?available=1 = list_brand_kits: the account's usable kits only."""
+        return call(bk.available if available else bk.list, actor(request))
 
     @app.post("/api/brand-kits")
     def kits_create(request: Request, body: dict = Body(...)):
@@ -1011,9 +1021,11 @@ _KIT_PROPS = {"name": {"type": "string"}, "handle": {"type": "string"}, "logo": 
               "caption_style": {"type": "string", "enum": list(CAPTION_STYLES)}, "end_text": {"type": "string"}, "end_cta": {"type": "string"},
               "website": {"type": "string"}, "voice": {"type": "string"}}
 TOOLS: list[dict[str, Any]] = [
-    {"name": "list_brand_kits", "description": "The workspace's brand kits (name, handle, logo, colours as background / primary / accent / "
-     "text, fonts, caption style, end card) and which one is active. Every template and video theme renders from the active kit.",
-     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "list_brand_kits", "description": "This account's AVAILABLE brand kits (name, handle, logo, colours as background / primary / "
+     "accent / text, fonts, caption style, end card) and which one is active. Every template and video theme renders from the active "
+     "kit. The untouched sample brands (Nothing, Linear, Notion) and the sample catalogue are left out unless include_samples is true "
+     "(or one of them is the active kit). To change one post's kit use use_brand_kit; with no kit named, ask the person which.",
+     "inputSchema": {"type": "object", "properties": {"include_samples": {"type": "boolean"}}}},
     {"name": "create_brand_kit", "description": "Create a brand kit from fields, from a website (url: logo, colours, fonts and voice are "
      "read from it, no AI), or from a sample brand (sample: nothing | linear | notion). activate: true makes it the active kit at once.",
      "inputSchema": {"type": "object", "properties": {**_KIT_PROPS, "url": {"type": "string"},
@@ -1043,7 +1055,7 @@ def call_tool(studio, actor, name: str, args: dict):
     bk = attach(studio.house)
     try:
         if name == "list_brand_kits":
-            return bk.list(actor)
+            return bk.list(actor) if args.get("include_samples") else bk.available(actor)
         if name == "create_brand_kit":
             return bk.create(actor, args)
         if name == "update_brand_kit":

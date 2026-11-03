@@ -148,7 +148,8 @@ def clean_audio(raw) -> dict | None:
         st = int(raw.get("start_ms") or 0)
     except (TypeError, ValueError):
         st = 0
-    out["start_ms"] = max(0, min(st, max(0, dur - 1000)))
+    if st > 0:  # only a start someone chose is kept (the UI has no start: Instagram picks the part)
+        out["start_ms"] = min(st, max(0, dur - 1000))
     return out
 
 
@@ -702,6 +703,35 @@ class Studio:
         self.store.audit(a.uid, a.label, "update_post", "draft" if draft else "public",
                          {"buffer_post_id": post_id, "channel": ch["service"], "due_at": inp.get("dueAt"), "text": "text" in inp})
         return {"status": "updated", "post": out, "service": ch["service"]}
+
+    def replace_draft(self, a: Actor, post_id: str, p: dict) -> dict:
+        """Put new media (and caption) on a Buffer DRAFT a Make a post package made, after the post was re-rendered or its
+        template changed (editPost: id, text, assets, metadata, saveToDraft). Only a draft: a scheduled or sent post is
+        never changed here, so a re-render can never touch what publishes. Returns {status: updated, post}."""
+        post, ch = self._find_post(a, post_id)
+        if post["status"] != "draft":
+            raise ActionError("That post is no longer a draft in Buffer (it was scheduled or sent), so it isn't changed here.", 409)
+        if p.get("channel_id") and p["channel_id"] != ch["id"]:
+            raise ActionError("That Buffer draft is on another channel.", 409)
+        self._guard_write(a, "replace_draft")
+        clean, _ch, warnings, _pf = self._validate(a, {**p, "channel_id": ch["id"], "mode": "draft", "due_at": None})
+        urls = clean.get("media_urls") or ([clean["media_url"]] if clean["media_url"] else [])
+        if urls and not demo_guard.is_demo(a.uid):
+            problems = self._reach(urls)
+            if problems:
+                raise ActionError(mediareach.message(problems), 422)
+        full = build_post_input(ch, clean["text"], clean["media_url"], "draft", None, clean.get("media_urls"), clean.get("options"))
+        inp = {"id": post_id, "text": full["text"], "assets": full["assets"], "saveToDraft": True}
+        if full.get("metadata"):
+            inp["metadata"] = full["metadata"]
+        try:
+            out = self.buffer.edit_post(a.uid, inp)
+        except BufferError as e:
+            self.store.audit(a.uid, a.label, "replace_draft", "draft", {"buffer_post_id": post_id, "error": str(e)}, ok=False)
+            raise
+        self.store.audit(a.uid, a.label, "replace_draft", "draft", {"buffer_post_id": post_id, "channel": ch["service"],
+                                                                    "assets": len(inp["assets"])})
+        return {"status": "updated", "post": out, "service": ch["service"], "warnings": warnings}
 
     def reschedule_post(self, a: Actor, post_id: str, due_at: str, override_warnings: bool = False) -> dict:
         return self.update_post(a, post_id, due_at=due_at, override_warnings=override_warnings)
