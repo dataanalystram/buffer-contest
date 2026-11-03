@@ -130,9 +130,14 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 
 | Tool | Brain | What it does |
 |---|---|---|
-| `list_library` | no model | The person's Library: every uploaded photo/video and every image, carousel and Reel the agent made, with type, size, date and which posts used each one. |
+| `list_library` | no model | The person's Library: every uploaded photo/video and every image, carousel and Reel the agent made, with type, size, date, which posts used each one and `run_id` (the run that made it, for View run; null for uploads). `offset`/`per` page it (`total`); `bin_count` is how many items are in the Bin. |
 | `use_library_item` | no model | Use a Library item in a new post. |
-| `delete_library_item` | no model | Delete one Library item (the file and its record). |
+| `delete_library_item` | no model | Delete one Library item. `mode`: `bin` (default, restorable for 7 days) or `permanent` (the file and its record are removed now; can't be undone). Warns (409) while a post that hasn't gone out or a post scheduled in Buffer uses it (`force: true` goes ahead); a permanent delete of media a scheduled post uses is always refused. REST: `DELETE /api/library/{id}?mode=bin\|permanent&force=0\|1`. |
+| `bulk_delete_library` | no model | Delete up to 200 items (`ids`, `mode` bin \| permanent, `force`). Each item is checked like a single delete; returns `deleted` and `refused` (with `error`, `needs_force`). REST: `POST /api/library/bulk-delete`. |
+| `list_library_bin` | no model | The Bin: items deleted in the last 7 days with `days_left`, `purge_at`, `used_in`, `scheduled_use` (`offset`, `per` page it). REST: `GET /api/library/bin`. |
+| `restore_library_items` | no model | Restore `ids` from the Bin (their files come back for every post that used them): `restored`, `missing`. REST: `POST /api/library/bin/restore`; one item: `POST /api/library/{id}/restore`. |
+| `purge_library_bin` | no model | Delete Bin items permanently: `ids`, or `all: true` (Empty bin). Can't be undone; media a scheduled post uses is refused. REST: `POST /api/library/bin/purge`. Items left in the Bin are removed for good after 7 days anyway. |
+| `draft_from_library` | no model | Create draft from a Library item: without `channels` it returns the prefill (`media`, per-channel `text` from the item's run, `selected`, `run_id`); with `channels: [{channel_id, text?}]` it saves Buffer DRAFTS (never published) through the same preview -> submit path as every composer (`dry_run: true` previews only). REST: `GET` / `POST /api/library/{id}/draft`. |
 
 ### Sources, templates and recurring slots
 
