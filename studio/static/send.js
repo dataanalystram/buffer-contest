@@ -97,7 +97,10 @@
 
   // ---- signed in: a code + QR for another device
   async function makeCode() {
-    const d = await json("/api/send-codes", { method: "POST", headers: { "Content-Type": "application/json", "X-HQ-CSRF": S.csrf }, body: "{}" });
+    // "New code" ends the code on screen at once (replace), so only one code is ever live from this page
+    const body = JSON.stringify(S.code ? { replace: S.code } : {});
+    const d = await json("/api/send-codes", { method: "POST", headers: { "Content-Type": "application/json", "X-HQ-CSRF": S.csrf }, body });
+    $("#sdStopped").hidden = true; $("#sdCode").classList.remove("off"); $("#sdQr").classList.remove("off");
     S.code = norm(d.code); S.link = d.url;
     $("#sdMine").hidden = false;
     $("#sdCode").textContent = d.code;
@@ -117,7 +120,16 @@
     S.csrf = sess.csrf || "";
     if (sess.connected && !sess.demo) {
       try { await makeCode(); showDrop(); } catch (e) { return showEnter(e.message); }
-      $("#sdNew").onclick = async () => { try { await makeCode(); $("#sdList").innerHTML = ""; status(); } catch (e) { err($("#sdErr"), e.message); } };
+      $("#sdNew").onclick = async () => { try { await makeCode(); $("#sdList").innerHTML = ""; $("#sdDropWrap").hidden = false; status(); startPoll(); } catch (e) { err($("#sdErr"), e.message); } };
+      $("#sdStop").onclick = async () => {  // Stop receiving: the code stops working everywhere, now
+        if (!S.code) return;
+        try {
+          await json(`/api/send-codes?code=${S.code}`, { method: "DELETE", headers: { "X-HQ-CSRF": S.csrf } });
+          stopPoll(); S.code = ""; S.link = "";
+          $("#sdCode").classList.add("off"); $("#sdQr").classList.add("off");
+          $("#sdStopped").hidden = false; $("#sdDropWrap").hidden = true;
+        } catch (e) { err($("#sdErr"), e.message); }
+      };
       $("#sdCopy").onclick = async () => {
         try { await navigator.clipboard.writeText(S.link); $("#sdCopy").textContent = "Copied"; setTimeout(() => ($("#sdCopy").textContent = "Copy link"), 1500); }
         catch (_) { $("#sdPage").textContent = S.link.replace(/^https?:\/\//, ""); $("#sdCopy").textContent = "Copy it from above"; }

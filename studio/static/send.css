@@ -39,3 +39,7 @@
 .sd-how li span{color:var(--muted)}
 .sd-how code{font-family:var(--mono);font-size:.92em}
 @media (max-width:760px){.sd{padding-block:var(--space-6) var(--space-16)}.sd-card{padding:var(--space-5);margin-top:var(--space-6)}.sd-code{grid-template-columns:minmax(0,1fr)}.sd-how ul{grid-template-columns:minmax(0,1fr)}.sd-drop{min-height:200px}.sd-list li{grid-template-columns:minmax(0,1fr)}}
+
+/* Stop receiving: the old code and QR are struck through and dimmed, so nobody scans a dead code */
+.sd-bigcode.off { text-decoration: line-through; opacity: .45; }
+.sd-qr img.off { opacity: .12; filter: grayscale(1); }
