@@ -87,7 +87,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <figure class="dk-ex"><img src="/static/examples/huhbyte/overview-recap.jpg" alt="HuhByte AI weekly recap carousel, front card to end card" loading="lazy" decoding="async"><figcaption>HuhByte AI: the weekly recap carousel.</figcaption></figure>
 <figure class="dk-ex"><img src="/static/examples/buffer/overview-covers.jpg" alt="Buffer concept example: one breaking cover rendered for eight channels" loading="lazy" decoding="async"><figcaption>Buffer concept example: one cover, eight channels.</figcaption></figure>
 <h2 id="ledger">Style Ledger</h2>
-<p>Every correction you give becomes a written rule ("logo bottom right", "max 2 hashtags"). Each render and caption is checked against all of them, and a failed check names the rule. Add rules in plain words and turn them on or off in <b>Brand</b>, <b>Style Ledger</b>; only a person can change a rule, and agents propose them with <code>remember_rule</code>.</p>
+<p>Every correction you give becomes a written rule ("logo bottom right", "max 2 hashtags", "say launch, not drop"). Rules are grouped (voice, words to avoid or use, hashtags, emojis, calls to action, visual and brand), each shows where it came from (taught by you, learned from your edits, added by an AI app, or your brand kit), which channels it applies to, and before and after examples of what it changed. Each render and caption is checked against all of them, and a failed check names the rule.</p><p><b>Learned from your edits.</b> When you edit a caption the agent wrote, HuhQueue notes what kind of change it was. After the same change in three posts it suggests a rule ("Suggested: never use game-changer, from 3 of your edits"). Nothing applies until you accept it, and a dismissed suggestion does not come back.</p><p><b>On every draft.</b> Each draft lists the rules it followed and, for each fact, the line of the source it came from (or a warning when it is not in the source). <b>Share for review</b> makes a read-only link that expires (72 hours by default) where someone can approve or ask for changes; their answer shows in the post's thread. Rules come only from your own words: text on a page or in a video that says "never say X" cannot add one. AI apps use <code>list_style_rules</code>, <code>add_style_rule</code>, <code>update_style_rule</code> and <code>delete_style_rule</code> (both with a confirm step), <code>list_rule_suggestions</code>, <code>decide_rule_suggestion</code>, <code>check_draft</code> and <code>create_review_link</code>.</p>
 <h2 id="api">API and MCP</h2>
 <div class="dk-table"><table><thead><tr><th>In the app</th><th>REST</th><th>MCP</th></tr></thead><tbody>
 <tr><td>Load the screen</td><td><code>GET /api/brand-studio</code></td><td><code>get_brand</code>, <code>list_templates</code>, <code>list_brand_examples</code></td></tr>
@@ -322,7 +322,7 @@ _GROUPS = [  # (path prefix, section title)
     ("/api/agent", "Make a post (agent)"), ("/api/recommendations", "Make a post (agent)"), ("/api/onboarding", "Make a post (agent)"),
     ("/api/takes", "One take"),
     ("/api/radar", "News"), ("/api/sources", "News"), ("/api/news", "News"),
-    ("/api/brand", "Brand"), ("/api/templates", "Brand"), ("/api/ledger", "Brand"),
+    ("/api/brand", "Brand"), ("/api/templates", "Brand"), ("/api/ledger", "Brand"), ("/api/review-links", "Make a post (agent)"),
     ("/api/ai", "AI engine"),
     ("/api/integrations", "Integrations (your keys)"),
     ("/api/agent-tokens", "AI apps, tokens and safety"), ("/api/safety", "AI apps, tokens and safety"),
@@ -410,6 +410,15 @@ _DESC = {
     "POST /api/brand-studio/preview": "Live preview of a template in your kit", "POST /api/brand/edit": "Change the brand in plain words",
     "POST /api/brand/from-website": "Import logo, colours and fonts from your website", "POST /api/brand/preview": "Preview the brand kit as rendered cards",
     "POST /api/ledger": "Add a Style Ledger rule", "DELETE /api/ledger/{rule_id}": "Delete a Style Ledger rule",
+    "GET /api/ledger": "The Style Ledger: rules by group with source, scope and examples, rules from the kit, and suggestions",
+    "GET /api/ledger/rules/{rule_id}": "One rule with its examples and the edits it was learned from",
+    "PATCH /api/ledger/rules/{rule_id}": "Change a rule's wording, its channels, or turn it on or off (people only)",
+    "GET /api/ledger/suggestions": "Rules suggested from your repeated caption edits",
+    "POST /api/ledger/suggestions/{sid}": "Accept or dismiss a suggested rule",
+    "POST /api/check/draft": "Check a draft for one network: rules applied, failures, the fixed text and the source evidence",
+    "GET /api/agent/runs/{rid}/review-links": "The review links made for a run and what each reviewer decided",
+    "POST /api/agent/runs/{rid}/review-links": "Make a read-only, expiring review link for a run's drafts",
+    "DELETE /api/review-links/{lid}": "Turn a review link off",
     "POST /api/ledger/{rule_id}": "Turn a Style Ledger rule on or off (people only)", "GET /api/templates": "The templates you can render",
     "GET /api/templates/recap": "This week's recap stories from your posts", "POST /api/templates/render": "Render a template for your channels",
     "GET /api/templates/slots": "Recurring template slots", "POST /api/templates/slots": "Add a recurring slot", "DELETE /api/templates/slots/{sid}": "Delete a recurring slot",

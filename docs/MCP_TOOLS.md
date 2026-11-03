@@ -327,3 +327,14 @@ The older `owns` / `rights_confirmed` / `credit` fields still work.
 `get_activity {"tab": "agent"}` lists every MCP call with the app and the model the client reported. The budget ledger
 row `mcp_client_brain` counts the calls at $0; the user's allowance (`get_brain` -> budget) does not move on a client-brain
 run. `tests/studio/test_mcp_client_brain.py` asserts an MCP run makes zero Anthropic calls.
+
+## Style Ledger v2 (studio/ledger.py)
+
+| Tool | What it does |
+|---|---|
+| `list_style_rules` | Every rule by group (voice, words, hashtags, emojis, cta, visual) with origin (taught / learned from N edits / agent / brand kit), scope, on/off, examples, plus open suggestions. `group`, `channel` filter. |
+| `add_style_rule` | A rule in plain words, optional `scope` (networks). Only when the person asked. |
+| `update_style_rule` / `delete_style_rule` | Two steps: a preview with `confirm_token`, then the same call with it after the person says yes. On/off stays in the app (people only). |
+| `list_rule_suggestions` / `decide_rule_suggestion` | Rules suggested from 3 similar caption edits; accept (optionally scoped) or dismiss, with a confirm step. Never applied unaccepted. |
+| `check_draft` | Rules that apply on one network, failures, the auto-fixed text, and with `run_id` + `channel_id` the source line behind every fact. |
+| `create_review_link` / `list_review_links` | A read-only, expiring link (default 72 h, max 14 days) where a reviewer approves or requests changes; the answer lands in the run's thread. |

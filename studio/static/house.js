@@ -440,6 +440,7 @@ function pkgCard(p) {
     <label class="sr" for="pt-${esc(p.channel_id)}">Caption for ${esc(p.channel_name)}</label>
     <textarea id="pt-${esc(p.channel_id)}" data-testid="pkg-text" rows="5" ${sent ? "disabled" : ""}>${esc(p.text)}</textarea>
     ${checkList(p.check)}
+    ${window.ledgerDraft ? window.ledgerDraft(p) : ""}
     ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.mode === "draft" ? " as a draft (not posted)" : ""}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
       : `<div class="pkg-act"><select data-testid="pkg-mode" aria-label="What to do with this post">${PKG_MODES.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
         <button class="btn sm" data-testid="pkg-send"${p.media_state && p.media_state !== "ok" ? ` disabled title="${esc(MEDIA_GONE)}"` : ""}>${PKG_MODES[0][3]}</button></div><small class="muted sm pkg-help" data-testid="pkg-help">${esc(help)}</small>`}
@@ -454,7 +455,7 @@ function wirePackages(r) {
     ta.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
       try { const p = await api(`/api/agent/runs/${r.id}/packages/${ch}`, { method: "POST", body: { text: ta.value } });
         el.querySelector("[data-testid=pkg-count]").textContent = `${p.length}/${p.limit}`;
-        el.querySelector(".chk-res").outerHTML = checkList(p.check); } catch (e) { toast(e.message); } }, 450); };
+        el.querySelector(".chk-res").outerHTML = checkList(p.check); window.ledgerSuggested?.(p.suggestions); } catch (e) { toast(e.message); } }, 450); };
     // a video's length when the server didn't record it: read from the file itself
     const v = el.querySelector("[data-testid=pkg-video]");
     const setDur = () => { const f = el.querySelector("[data-testid=pkg-format]"); if (!f || !f.textContent.includes("…")) return;
@@ -580,25 +581,8 @@ async function readyBadge() {
 }
 
 // ---------------------------------------------------------------- Style Ledger + brand check (the kit itself: brandstudio.js)
-window.loadLedger = async function () { try { drawLedger((await api("/api/brand")).rules); } catch (e) { $("#ledger").innerHTML = `<div class="st err">${esc(e.message)}</div>`; } };
-// the brand check of the sample cover against the ledger, shown under the kit's live preview
+// the brand check of the sample cover against the ledger, shown under the kit's live preview (the Ledger itself: ledger.js)
 window.brandCheck = async function (box) { try { const p = await api("/api/brand/preview", { method: "POST" }); box.innerHTML = checkList(p.check); } catch (_) { box.innerHTML = ""; } };
-function drawLedger(rules) {
-  const box = $("#ledger");
-  box.innerHTML = rules.length ? `<ul class="rules">${rules.map((r) => `<li class="${r.active ? "" : "off"}" data-testid="rule-row"><span class="tag ${r.kind}">${r.kind === "visual" ? "Look" : "Words"}</span>
-      <div class="rtxt"><b>${esc(r.rule)}</b><small>From “${esc(r.source)}”${r.hits ? ` · caught ${r.hits} time${r.hits > 1 ? "s" : ""}` : ""}</small></div>
-      <label class="switch sm"><input type="checkbox" role="switch" data-act="${r.id}" ${r.active ? "checked" : ""} aria-label="Rule on"><span></span></label>
-      <button class="link danger" data-del="${r.id}" aria-label="Delete rule">Delete</button></li>`).join("")}</ul>`
-    : `<div class="empty"><b>No rules yet</b><span>Correct a post (“logo smaller”, “no hype”) and HuhQueue writes the rule here. Or teach one above.</span></div>`;
-  box.querySelectorAll("[data-act]").forEach((c) => (c.onchange = async () => { await api(`/api/ledger/${c.dataset.act}`, { method: "POST", body: { active: c.checked } }); loadLedger(); }));
-  box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => { await api(`/api/ledger/${b.dataset.del}`, { method: "DELETE" }); loadLedger(); }));
-}
-$("#ruleForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault(); const v = $("#ruleIn").value.trim(); if (!v) return;
-  try { const r = await api("/api/ledger", { method: "POST", body: { correction: v } });
-    toast(r.added.length ? "Learned: " + r.added.map((x) => x.rule).join(" · ") : r.message, 5000);
-    if (r.added.length) $("#ruleIn").value = ""; drawLedger(r.ledger); } catch (e) { toast(e.message, 5000); }
-});
 // ---------------------------------------------------------------- AI engine
 // Settings > AI engine (engine cards, Your keys, Logs) is drawn by aiengine.js; this keeps H.ai for the agent screen.
 async function loadAI() {

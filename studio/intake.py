@@ -33,6 +33,20 @@ TONES = {"formal": r"\bformal|professional|corporate\b", "punchy": r"\bpunchy|sn
          "casual": r"\bcasual|friendly|\bfun\b", "explainer": r"\bexplain(?:er)?\b|\bsimple\b|\beli5\b|beginner"}
 
 
+# "with my HuhByte AI brand kit", "in my theme", "using the Aviern kit": how to style the post, never what it is about
+# (owner bug, 3 Nov 2026: "can you get this video with huhbyte ai brand kit" became a carousel about our own brand kit).
+STYLE_RE = re.compile(r"\b(?:with|using|in|on|use)\s+(?:my|our|the|your)?\s*((?:[\w.@&'-]+\s+){0,4}?)"
+                      r"(brand\s*kit|kit|theme|branding|brand style|style|template|look and feel|look)\b", re.I)
+
+
+def style_hint(text: str) -> dict:
+    """{"text", "kit", "what"} for a styling instruction in the prompt, else {}."""
+    m = STYLE_RE.search(URL_RE.sub(" ", text or ""))
+    if not m:
+        return {}
+    return {"text": m.group(0).strip(), "kit": m.group(1).strip()[:60], "what": re.sub(r"\s+", " ", m.group(2).lower())}
+
+
 def clean_url(u: str) -> str:
     u = (u or "").strip().rstrip(".,;:!?)…")
     if not u.lower().startswith(("http://", "https://")):
@@ -90,8 +104,9 @@ def parse(prompt: str, connected: list[dict] | None = None) -> dict:
     if m:
         secs = max(5, min(180, int(m.group(1))))
     tone = next((k for k, pat in TONES.items() if re.search(pat, t)), "")
-    topic = topic_of(raw, rules)
-    return {"prompt": raw, "truncated": len((prompt or "").strip()) > MAX_PROMPT, "urls": found,
+    style = style_hint(raw)
+    topic = topic_of(raw.replace(style["text"], " ") if style else raw, rules)
+    return {"style": style,"prompt": raw, "truncated": len((prompt or "").strip()) > MAX_PROMPT, "urls": found,
             "source_url": found[0] if found else "", "extra_urls": found[1:], "channel_ids": chan_ids, "channels_why": chan_why,
             "format": fmt, "seconds": secs, "tone": tone, "rules": rules, "topic": topic[:200], "research": asks_research(raw),
             "kind": "link" if found else ("topic" if topic else "empty")}

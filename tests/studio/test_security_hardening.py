@@ -251,6 +251,8 @@ def test_app_boot_migrates_and_logs_counts_only(tmp_path, capsys):
 
 # ------------------------------------------------------------------ sweep: every route is authenticated or listed public
 PUBLIC = {  # path -> why it is open to anyone
+    "/review/{tok}": "a review link: read-only drafts behind an unguessable, expiring token (studio/ledger.py)",
+    "/review/{tok}/decision": "a review link's approve / request changes, only on its own token",
     "/openapi.json": "API description (open source)", "/api/docs": "redirects to /docs/api", "/docs/api": "API reference page",
     "/": "landing / app shell", "/privacy": "privacy notice", "/static/{name}": "static assets", "/api/stats": "public counters",
     "/static/examples/{brand}/{name}": "pre-rendered example brand gallery (committed files)",

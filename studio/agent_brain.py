@@ -58,6 +58,9 @@ using ONLY the tools. Rules:
   "Video: <maker>" on screen and in the caption; youtube_only or none -> do NOT make a Reel: the carousel for image channels,
   video-only channels skipped, and the app already asked the person to upload the file (say it again in finish).
 - A Product Hunt link: read_url reads it through Product Hunt's API and the maker's site (the page itself blocks servers).
+- A YouTube link: read_url reads the real video (title, channel, description from the YouTube Data API or oEmbed) and
+  looks for the file itself (the YouTube fallback route, then the maker's own copy on its website). The facts come from
+  that video only. "with my <name> brand kit" / "in my theme" (intake.style) says how to style it, never what it is about.
 - Context.theme "none" means "No style: post my video as it is": render_reel only fits it to the frame with the logo and the
   end card; never add captions, a theme or music then.
 - Plan first: reply with a short numbered plan (one line per step), then call the tools in that order.
@@ -420,6 +423,7 @@ class Brain:
         if run["kind"] != "agent":
             raise ActionError("Agent tools work on runs started with make_post.")
         tools = Tools(self.h, a, rid)
+        tools.direct = a.kind == "human"  # a person pressed it (e.g. confirming a held rule); an AI app's call is checked
         out = self.call(a, rid, tools, name, args or {})
         run = self.h.run(a, rid)
         if name == "check" and run["result"].get("packages"):
