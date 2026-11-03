@@ -456,6 +456,22 @@ class House:
             return u[len(base):].split("?", 1)[0].split("#", 1)[0]
         return u[3:].split("?", 1)[0] if u.startswith("/m/") else ""
 
+    def media_removed(self, tokens) -> tuple[set[str], set[str]]:
+        """Of these (absent) tokens: (the ones in the person's Library Bin, the ones they deleted for good)."""
+        from .library import TRASH_TOKEN
+        toks = sorted({t for t in tokens if t})
+        binned: set[str] = set()
+        deleted: set[str] = set()
+        for i in range(0, len(toks), 200):
+            part = toks[i:i + 200]
+            marks = ",".join("?" for _ in part)
+            tr = tuple(TRASH_TOKEN + t for t in part)
+            binned |= {r["token"].removeprefix(TRASH_TOKEN) for r in self.store.q(f"SELECT token FROM media WHERE token IN ({marks})", tr)}
+            binned |= {r["token"].removeprefix(TRASH_TOKEN) for r in self.store.q(
+                f"SELECT token FROM library_items WHERE storage='trash' AND token IN ({marks})", tr)}
+            deleted |= {r["token"] for r in self.store.q(f"SELECT token FROM library_purged WHERE token IN ({marks})", tuple(part))}
+        return binned, deleted - binned
+
     def media_present(self, tokens) -> set[str]:
         """Which of these tokens still have a file (a media row or a chunked Library upload)."""
         toks = sorted({t for t in tokens if t})
@@ -522,19 +538,29 @@ class House:
             toks |= {self.media_token_of(u) for pk in pks if isinstance(pk, dict) for u in self._pkg_urls(pk)}
         toks.discard("")
         have = self.media_present(toks)
+        binned, deleted = self.media_removed(toks - have)
         bad = []
+        n_bin = n_del = 0
         for rid, uid, pks in runs:
             st = self.media_state(pks, have)
-            n = sum(len(v["missing"]) for v in st.values())
-            if n:
-                bad.append({"run_id": rid, "user_id": uid, "missing": n,
-                            "state": "missing" if any(v["state"] == "missing" for v in st.values()) else "partial"})
+            gone_t = [self.media_token_of(u) for v in st.values() for u in v["missing"]]
+            b_, d_ = sum(t in binned for t in gone_t), sum(t in deleted for t in gone_t)
+            n_bin, n_del = n_bin + b_, n_del + d_
+            if gone_t:
+                row = {"run_id": rid, "user_id": uid, "missing": len(gone_t) - b_ - d_,
+                       "state": "missing" if any(v["state"] == "missing" for v in st.values()) else "partial"}
+                row.update({k: v for k, v in (("in_bin", b_), ("deleted", d_)) if v})
+                bad.append(row)
         gone = {self.media_token_of(u) for _, _, pks in runs for st in [self.media_state(pks, have)] for v in st.values() for u in v["missing"]}
+        gone -= {""}
+        # files the person moved to the Library Bin or deleted themselves are expected, not missing (owner, 3 Nov 2026)
         self.media_health = {"checked_at": _now(), "runs_checked": len(runs), "files_checked": len(toks),
-                             "files_missing": sum(b["missing"] for b in bad), "unique_files_missing": len(gone - {""}), "runs": bad}
-        if bad:
-            print(f"media check: {len(bad)} ready run(s) reference missing files: "
-                  + ", ".join(f"#{b['run_id']} ({b['missing']})" for b in bad[:10]), flush=True)
+                             "files_missing": sum(b["missing"] for b in bad), "unique_files_missing": len(gone - binned - deleted),
+                             "files_in_bin": n_bin, "files_deleted_by_owner": n_del, "runs": bad}
+        unexplained = [b for b in bad if b["missing"]]
+        if unexplained:
+            print(f"media check: {len(unexplained)} ready run(s) reference missing files: "
+                  + ", ".join(f"#{b['run_id']} ({b['missing']})" for b in unexplained[:10]), flush=True)
         return self.media_health
 
     def media_health_for(self, a: Actor) -> dict:

@@ -233,8 +233,18 @@
           <span class="muted sm lib-usage" id="libUsage" data-testid="library-usage"></span>
           <span class="lib-ins" id="libIns"><label class="btn sm lib-up" id="libUpBtn">Upload<input id="libFile" data-testid="library-upload" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" hidden></label><button type="button" class="btn2 sm" id="libLinkBtn" data-testid="library-from-link">From a link</button><a class="btn2 sm" id="libSendBtn" href="/send" target="_blank" rel="noopener" data-testid="library-send-device">Send from a device</a></span>
         </div>
+        <div class="lib-views" data-testid="library-views">
+          <span class="lib-seg" role="group" aria-label="Library view"><button type="button" class="on" id="libViewItems" data-testid="library-view-items" aria-pressed="true">Library</button><button type="button" id="libViewBin" data-testid="library-view-bin" aria-pressed="false">Bin<span class="lib-count" id="libBinCount" data-testid="library-bin-count" hidden></span></button></span>
+          <label class="lib-selall" id="libSelAllWrap"><input type="checkbox" id="libSelAll" data-testid="library-select-all"> Select all on this page</label>
+          <span class="muted sm lib-binnote" id="libBinNote" data-testid="library-bin-note" hidden>Deleted items stay here for 7 days, then they're removed for good.</span>
+          <button type="button" class="btn2 sm danger" id="libEmptyBin" data-testid="library-empty-bin" hidden>Empty bin</button>
+        </div>
         <div id="libGrid" class="lib-grid" data-testid="library-grid" aria-live="polite"></div>
         <div id="libPager" class="pg-wrap" data-testid="library-pager" hidden></div>
+        <div class="lib-bulk" id="libBulk" data-testid="library-bulk-bar" role="region" aria-label="Selected items" hidden>
+          <b id="libBulkN" data-testid="library-bulk-count">0 selected</b>
+          <span class="lib-bulk-acts"><button type="button" class="btn sm" id="libBulkBin" data-testid="library-bulk-bin">Move to Bin</button><button type="button" class="btn sm" id="libBulkRestore" data-testid="library-bulk-restore" hidden>Restore</button><button type="button" class="btn2 sm danger" id="libBulkPerm" data-testid="library-bulk-permanent">Delete permanently</button><button type="button" class="btn2 sm" id="libBulkCancel" data-testid="library-bulk-cancel">Cancel</button></span>
+        </div>
       </div>
       <div class="tab" id="tab-take" data-testid="take" hidden>
         <h1 class="page-title">One take</h1>
@@ -692,6 +702,26 @@
     <label class="sr" for="libLinkUrl">Share link</label><input id="libLinkUrl" type="url" inputmode="url" data-testid="library-link-url" placeholder="https://drive.google.com/file/d/…/view" autocomplete="off" spellcheck="false" required>
     <p class="st err" id="libLinkErr" data-testid="library-link-error" role="alert" hidden></p>
     <div class="lib-link-acts"><button type="button" class="btn2 sm" id="libLinkCancel" data-testid="library-link-cancel">Cancel</button><button type="submit" class="btn sm" id="libLinkGo" data-testid="library-link-go">Import</button></div>
+  </form>
+</dialog>
+<dialog class="lib-link lib-del" id="libDel" data-testid="library-delete-dialog" aria-labelledby="libDelTitle">
+  <form method="dialog" id="libDelForm">
+    <h2 id="libDelTitle" class="h3">Delete</h2>
+    <p class="muted sm" id="libDelUsed" data-testid="library-delete-used" hidden></p>
+    <label class="lib-opt"><input type="radio" name="libDelMode" value="bin" checked data-testid="library-delete-bin"><span><b>Move to Bin</b><small>Kept for 7 days. Restore it from the Bin any time before then.</small></span></label>
+    <label class="lib-opt"><input type="radio" name="libDelMode" value="permanent" data-testid="library-delete-permanent"><span><b>Delete permanently</b><small>The file and its record are removed now. This can't be undone.</small></span></label>
+    <p class="st err" id="libDelErr" data-testid="library-delete-error" role="alert" hidden></p>
+    <div class="lib-link-acts"><button type="button" class="btn2 sm" id="libDelCancel" data-testid="library-delete-cancel">Cancel</button><button type="submit" class="btn sm" id="libDelGo" data-testid="library-delete-go">Move to Bin</button></div>
+  </form>
+</dialog>
+<dialog class="lib-link lib-draft" id="libDraft" data-testid="library-draft-dialog" aria-labelledby="libDraftTitle">
+  <form method="dialog" id="libDraftForm">
+    <h2 id="libDraftTitle" class="h3">Create draft</h2>
+    <p class="muted sm">Saved as a draft in Buffer on the channels you pick. Nothing is published.</p>
+    <div class="lib-draft-media" id="libDraftMedia" data-testid="library-draft-media"></div>
+    <div class="lib-draft-chs" id="libDraftChs" data-testid="library-draft-channels"></div>
+    <p class="st err" id="libDraftErr" data-testid="library-draft-error" role="alert" hidden></p>
+    <div class="lib-link-acts"><button type="button" class="btn2 sm" id="libDraftCancel" data-testid="library-draft-cancel">Cancel</button><button type="submit" class="btn sm" id="libDraftGo" data-testid="library-draft-save">Save draft</button></div>
   </form>
 </dialog>
 <dialog class="lib-pick" id="libPick" data-testid="library-picker" aria-labelledby="libPickTitle">
