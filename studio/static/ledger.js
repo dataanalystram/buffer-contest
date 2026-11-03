@@ -17,8 +17,9 @@
     catch (e) { box.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
   };
 
-  function scopePicker(sel, name) {
+  function scopePicker(sel, name, folded) {
     const services = (L.data && L.data.services) || Object.keys(NET);
+    if (folded) return `<details class="lg-scope-d"><summary>Applies to: <b data-scope-label>${esc(scopeText(sel).replace(/ only$/, ""))}</b></summary>${scopePicker(sel, name)}</details>`;
     return `<fieldset class="lg-scope" data-testid="${name}"><legend class="sr">Channels</legend>
       <label class="lg-pill"><input type="checkbox" value="all" ${!sel || !sel.length ? "checked" : ""}><span>All channels</span></label>
       ${services.map((s) => `<label class="lg-pill"><input type="checkbox" value="${esc(s)}" ${sel && sel.includes(s) ? "checked" : ""}><span>${esc(net(s))}</span></label>`).join("")}</fieldset>`;
@@ -34,17 +35,25 @@
       const all = fs.querySelector('input[value="all"]');
       if (ev.target === all && all.checked) fs.querySelectorAll('input:not([value="all"])').forEach((i) => (i.checked = false));
       else if (ev.target !== all) all.checked = !fs.querySelector('input:not([value="all"]):checked');
+      const lab = fs.closest("details, form")?.querySelector("[data-scope-label]");
+      if (lab) lab.textContent = scopeText(readScope(fs)).replace(/ only$/, "");
     });
   }
 
+  // one change as "removed → added", with the sentence it sits in underneath (the whole before line struck through was
+  // hard to read: the change is what matters)
+  function change(x) {
+    const del = x.removed ? `<del>${esc(x.removed)}</del>` : `<span class="muted">(nothing)</span>`;
+    const ins = x.added ? `<ins>${esc(x.added)}</ins>` : `<span class="muted">removed</span>`;
+    return `<span class="lg-chg">${del}<span class="lg-arrow" aria-hidden="true">→</span>${ins}</span><small class="lg-ctx">${esc(x.after || x.before)}</small>`;
+  }
   function exampleList(ex) {
     if (!ex || !ex.length) return "";
-    return `<ul class="lg-ex" data-testid="rule-examples">${ex.map((x) => `<li><span class="lg-b"><s>${esc(x.before)}</s></span><span class="lg-arrow" aria-hidden="true">→</span><span class="lg-a">${esc(x.after)}</span></li>`).join("")}</ul>`;
+    return `<ul class="lg-ex" data-testid="rule-examples">${ex.map((x) => `<li>${change(x)}</li>`).join("")}</ul>`;
   }
   function editList(ed) {
     if (!ed || !ed.length) return "";
-    return `<ol class="lg-ex lg-edits" data-testid="rule-edits">${ed.map((x) => `<li><small class="muted">${esc(net(x.service || ""))}${x.at ? " · " + esc(new Date(x.at * 1000).toLocaleDateString()) : ""}</small>
-      <span class="lg-b"><s>${esc(x.before)}</s></span><span class="lg-arrow" aria-hidden="true">→</span><span class="lg-a">${esc(x.after)}</span></li>`).join("")}</ol>`;
+    return `<ol class="lg-ex lg-edits" data-testid="rule-edits">${ed.map((x) => `<li><small class="muted lg-when">${esc(net(x.service || ""))}${x.at ? " · " + esc(new Date(x.at * 1000).toLocaleDateString()) : ""}</small>${change(x)}</li>`).join("")}</ol>`;
   }
 
   function ruleRow(r) {
@@ -82,7 +91,7 @@
       <div class="lg-txt"><b data-testid="suggestion-text">Suggested: ${esc(s.rule)}</b><span class="lg-meta"><span class="lg-src learned">From ${s.edit_count} of your edits</span>
         ${s.services?.length ? `<span>${esc(s.services.map(net).join(", "))}</span>` : ""}</span></div>
       <details class="lg-why"><summary>See the edits</summary>${editList(s.edits)}</details>
-      ${s.kind === "text" ? scopePicker(s.scope, "suggestion-scope") : ""}
+      ${s.kind === "text" ? scopePicker(s.scope, "suggestion-scope", true) : ""}
       <div class="row tight"><button type="button" class="btn sm" data-accept="${s.id}" data-testid="suggestion-accept">Accept</button>
         <button type="button" class="btn2 sm" data-dismiss="${s.id}" data-testid="suggestion-dismiss">Dismiss</button></div>
       <small class="muted sm">Nothing changes until you accept.</small></li>`;

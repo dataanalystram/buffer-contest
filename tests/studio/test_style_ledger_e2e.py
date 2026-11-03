@@ -98,7 +98,7 @@ def test_style_ledger_teach_learn_accept_and_review(live, chromium, width):
         page.wait_for_selector("[data-testid=rule-form]", state="visible", timeout=20000)
         page.wait_for_selector("[data-testid=ledger-stats]", timeout=20000)
         page.fill("[data-testid=rule-input]", "never say synergy")
-        page.locator("#ruleScope label", has_text="LinkedIn").click()
+        page.click("[data-testid=rule-scope-toggle] summary"); page.locator("#ruleScope label", has_text="LinkedIn").click()
         page.click("[data-testid=rule-add]")
         page.wait_for_selector("[data-testid=rule-row][data-group=words]", timeout=20000)
         row = page.locator("[data-testid=rule-row][data-group=words]").first

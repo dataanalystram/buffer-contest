@@ -129,7 +129,9 @@ def _snip(before: str, after: str, pad: int = 6) -> dict:
 
     def cut(ws, x, y, n):
         return ("… " if x > 0 else "") + " ".join(ws[x:y]) + (" …" if y < n else "")
-    return {"before": cut(a, i1, i2, len(a))[:220], "after": cut(b, j1, j2, len(b))[:220]}
+    removed = " … ".join(" ".join(a[o[1]:o[2]]) for o in ops if o[2] > o[1])
+    added = " … ".join(" ".join(b[o[3]:o[4]]) for o in ops if o[4] > o[3])
+    return {"before": cut(a, i1, i2, len(a))[:220], "after": cut(b, j1, j2, len(b))[:220], "removed": removed[:120], "added": added[:120]}
 
 
 def _tok(w: str) -> str:
@@ -551,7 +553,7 @@ class Ledger:
         check = json.loads(r["spec"])
         sc = norm_scope(scope) if scope is not None else json.loads(r["scope"] or "[]")
         ids = json.loads(r["edits"] or "[]")
-        examples = [{k: e[k] for k in ("before", "after")} for e in self.edits_for(a, ids)[:EXAMPLES_KEPT]]
+        examples = [{k: e.get(k, "") for k in ("before", "after", "removed", "added")} for e in self.edits_for(a, ids)[:EXAMPLES_KEPT]]
         if check["type"] not in ("banned_words", "require_text", "prefer_words"):
             for old in self.h.rules(a):
                 if old["check"]["type"] == check["type"] and (old.get("scope") or []) == sc:
@@ -710,7 +712,7 @@ def review_page(view: dict | None, done: str = "", error: str = "") -> str:
     for d in view["drafts"]:
         media = "".join(f'<video src="{e(u)}" controls playsinline preload="metadata"></video>' if _is_video(u)
                         else f'<img src="{e(u)}" alt="{e(d["service"])} image {i + 1}" loading="lazy">' for i, u in enumerate(d["media"][:4]))
-        rules = ""
+        rules = (f'<p class="rv-chk">Brand check: {e(d["check"])}</p>' if d["check"] and d["check"] != "Passes every rule" else "")
         if d["applied"]:
             rules = (f'<details><summary>{len(d["applied"])} brand rule{"s" if len(d["applied"]) != 1 else ""} applied</summary><ul>'
                      + "".join(f'<li>{e(r["rule"])}</li>' for r in d["applied"]) + "</ul></details>")

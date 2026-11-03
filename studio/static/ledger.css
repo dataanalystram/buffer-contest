@@ -37,9 +37,18 @@
 .lg-detail{margin-top:10px;padding:12px;border-radius:10px;background:var(--sunken);display:grid;gap:8px}
 .lg-detail p{margin:0}
 .lg-ex{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-.lg-ex li{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:start;font-size:13px;line-height:1.45}
-.lg-edits li{grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr)}
 .lg-b s{color:var(--muted);text-decoration-color:var(--bad)}
+.lg-ex li{display:grid;grid-template-columns:minmax(0,1fr);gap:2px}
+.lg-edits li{grid-template-columns:minmax(0,1fr)}
+.lg-chg{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:14px}
+.lg-chg del{color:var(--bad);text-decoration-thickness:1.5px}
+.lg-chg ins{text-decoration:none;font-weight:600;color:var(--ink);background:color-mix(in srgb,var(--ok) 14%,transparent);border-radius:4px;padding:0 4px}
+.lg-ctx{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.lg-when{font-size:12px}
+.lg-scope-d summary{cursor:pointer;font-size:13px;color:var(--muted);list-style-position:inside}
+.lg-scope-d summary b{color:var(--ink);font-weight:600}
+.lg-scope-d[open] summary{margin-bottom:8px}
+.rv-chk{font-size:13px;color:var(--warn);margin:0}
 .lg-a{color:var(--ink)}
 .lg-arrow{color:var(--muted)}
 .lg-edit{display:grid;gap:10px;margin-top:10px}
@@ -64,8 +73,6 @@
 .lg-share small{flex-basis:100%}
 @media (max-width:640px){
   .lg-main{gap:12px}
-  .lg-ex li,.lg-edits li{grid-template-columns:minmax(0,1fr)}
-  .lg-arrow{display:none}
   .lg-teach{padding:12px}
 }
 @media (prefers-reduced-motion:reduce){.lg-pill span{transition:none}}
