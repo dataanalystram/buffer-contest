@@ -993,7 +993,8 @@ class Tools(EditorialTools):
             try:
                 data, meta = self.h.render_job_local(spec)
                 self.h.finish_video(jid, data, meta, run_inline=False)
-                return [self.h._job_media(jid)], "Rendered on this server." + note_extra
+                media = [self.h._job_media(jid)]
+                return media, f"Rendered on this server{self._len_note(media)}." + note_extra
             except Exception as e:
                 self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (str(e)[:500], time.time(), jid))
                 if own:
@@ -1011,7 +1012,8 @@ class Tools(EditorialTools):
             row = self.store.q("SELECT status, error FROM render_jobs WHERE id=?", (jid,))[0]
             self.store.x("UPDATE agent_runs SET updated=? WHERE id=?", (time.time(), self.rid))
             if row["status"] == "done":
-                return [self.h._job_media(jid)], "Rendered by the video worker." + note_extra
+                media = [self.h._job_media(jid)]
+                return media, f"Rendered by {self.h.backend_label(why)}{self._len_note(media)}." + note_extra
             if row["status"] == "failed":
                 if own:
                     return own, f"The branded render failed ({(row['error'] or '')[:120]}), so this is your video as uploaded."
@@ -1020,6 +1022,19 @@ class Tools(EditorialTools):
         if own:
             return own, "The video worker took too long, so this is your video as uploaded. Reply “redo the reel” to try again."
         return frames or self._slides_45(run, carousel=True), "The video worker took too long; slides instead. Reply “redo the reel” to try again."
+
+    def _len_note(self, media: list[dict]) -> str:
+        """", 12.4 s long": the rendered file's real length (from the worker's meta), never the length that was asked for."""
+        try:
+            meta = self.h.media_meta(self.a, media[0]["token"]) or {}
+            d = float(meta.get("duration") or 0)
+        except Exception:  # noqa: BLE001
+            d = 0.0
+        if d <= 0:
+            return ""
+        if media:
+            media[0]["duration"] = round(d, 1)
+        return f", {d:.1f} s long"
 
     def _own_clip(self, run, spec: dict) -> list[dict]:
         """The person's own uploaded video, as uploaded: the fallback when a branded render can't be made (never slides
@@ -1085,7 +1100,7 @@ class Tools(EditorialTools):
                 "official": official, "rights_confirmed": bool(rights_confirmed or official),
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "source": clip_tok, "candidate": cand,
                 "slides": [] if (clip_tok or cand) else [m["token"] for m in gen], "image_prompt": st["headline"],
-                "brand_pass": sid != "none", "add_logo": add_logo,
+                "brand_pass": sid != "none", "add_logo": add_logo, "owns": bool(clip_tok and res.get("clip_owned")),
                 # one "logo" key: the kit's logo token, or "" when they turned the logo off (a bool here broke job_spec)
                 "logo": (kit.get("logo") or "") if add_logo else "",
                 "cover_hook": st.get("cover_hook") or "", "covers": True}

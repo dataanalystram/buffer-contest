@@ -606,7 +606,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             sw, sh, dur, has_a = 1920, 1080, max(6.0, 3.5 * len(images)), False
         words = captions.fix_names(list(words or []), names)
         if clip:
-            c0, c1, why = float(clip[0]), float(clip[1]), "given"
+            c0, c1 = clamp_clip(clip, dur if source else 0.0)
+            why = "given"
         elif cfg["autoclip"] and source:
             c0, c1, why = pick_clip(words, dur, *cfg["clip_range"])
         else:
@@ -777,7 +778,7 @@ def render_plain(source: str, *, out: str, ratio: str = "9:16", brand: dict | No
     try:
         pr = ff.probe(source)
         sw, sh, dur, has_a = pr["width"] or 1920, pr["height"] or 1080, pr["duration"], pr["has_audio"]
-        c0, c1 = (float(clip[0]), float(clip[1])) if clip else (0.0, min(dur, max_main))
+        c0, c1 = clamp_clip(clip, dur) if clip else (0.0, min(dur, max_main))
         D = max(0.5, c1 - c0)
         close = abs((sw / sh) - (W / H)) / (W / H) < 0.12
         src = f"[0:v]setpts=PTS-STARTPTS,fps={FPS},setsar=1"
@@ -969,9 +970,30 @@ def _theme_text(cfg: dict, L: dict, D: float, highlight: str | None = None) -> s
     return out
 
 
+def clamp_clip(clip, dur: float) -> tuple[float, float]:
+    """A requested cut, kept inside the source: asking for 30 s of a 9 s clip gives the 9 s it has. Without this the
+    picture ended with the source while the audio ran on to the asked length (owner bug 2 Nov 2026: a screencast Reel
+    was 14.4 s of video under 38 s of audio, so it looked frozen)."""
+    c0, c1 = float(clip[0] or 0), float(clip[1] or 0)
+    if dur and dur > 0:
+        c0 = min(max(0.0, c0), max(0.0, dur - 0.5))
+        c1 = min(c1, dur) if c1 > 0 else dur
+    if c1 <= c0:
+        c1 = c0 + 0.5
+    return c0, c1
+
+
 def _mux_audio(video: str, speech_src: str | None, c0: float, D: float, cover_s: float, total: float, wav: str | None,
                out: str) -> None:
-    """Final pass: copy the joined video, build the audio (real sound first, music ducked under it), -14 LUFS."""
+    """Final pass: copy the joined video, build the audio (real sound first, music ducked under it), -14 LUFS.
+    The audio never outlasts the picture: ``total`` is cut to the joined video's real length."""
+    try:
+        vlen = float(ff.probe(video).get("duration") or 0)
+    except Exception:  # noqa: BLE001  a probe failure keeps the planned length
+        vlen = 0.0
+    if vlen > 0.3:
+        total = min(total, vlen)
+        D = min(D, max(0.3, total - cover_s))
     args = ["-y", "-v", "error", "-i", video]
     parts = []
     n = 1
