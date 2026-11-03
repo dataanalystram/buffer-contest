@@ -894,8 +894,10 @@ class Tools(EditorialTools):
         p = template_pick.pick(run, self._has_video(run), self._custom_list())
         rec = {"id": p["id"], "name": p["name"], "why": p["why"], "type": p["type"], "auto": True, "suggestions": p["suggestions"],
                "kit": (self._kit().get("name") or "").strip()}
-        res["template"] = rec
-        return rec
+        if {k: (cur or {}).get(k) for k in ("id", "why", "suggestions", "kit")} != {k: rec[k] for k in ("id", "why", "suggestions", "kit")}:
+            res["template"] = rec
+            self.save(run)  # kept on the run whichever tool asked first (render_reel's slides-for-now reload the run after)
+        return res["template"]
 
     DRAWN = {"github_repo", "funding", "yc_launch", "text_slides", "launch", "tutorial", "breaking", "editorial_cover", "quote"}
 
@@ -1153,6 +1155,7 @@ class Tools(EditorialTools):
             fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
             self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": captions_mode != "off", "style": style, "note": note, "ratio": ratio,
                                                    **({"clip": clip} if clip else {}),
+                                                   **({"template": self._drawable(self._template_choice(run)["id"])} if fmt == "carousel" else {}),
                                                    **(self._cover_info(media) if fmt == "reel" else {})})
             self.save(run)
             out = {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note, "style": style, "ratio": ratio,
