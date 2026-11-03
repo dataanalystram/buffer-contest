@@ -135,15 +135,15 @@ def test_tabs_search_filters_layout_and_pages(live, chromium, close_contexts, w)
     pw.expect(_cards(page)).to_have_count(12)
     # grid | list, kept across a reload
     page.get_by_test_id("library-layout-list").click()
-    assert "list" in page.get_by_test_id("library-grid").get_attribute("class")
+    assert "lp-list" in page.get_by_test_id("library-grid").get_attribute("class")
     assert page.get_by_test_id("library-layout-list").get_attribute("aria-pressed") == "true"
     _shot(page, f"lp-list-{w}.png")
     _no_overflow(page)
     page.reload(wait_until="domcontentloaded")
     _cards(page).first.wait_for()
-    assert "list" in page.get_by_test_id("library-grid").get_attribute("class")
+    assert "lp-list" in page.get_by_test_id("library-grid").get_attribute("class")
     page.get_by_test_id("library-layout-grid").click()
-    assert "list" not in page.get_by_test_id("library-grid").get_attribute("class")
+    assert "lp-list" not in page.get_by_test_id("library-grid").get_attribute("class")
     assert not errors, errors
 
 

@@ -124,7 +124,7 @@ async function loadLibrary() {
 function libDraw(d) {
   const grid = $("#libGrid"), { fmtSize } = window.HQ_FMT;
   grid.setAttribute("aria-busy", "false");
-  grid.classList.toggle("list", LIB.layout === "list");
+  grid.classList.toggle("lp-list", LIB.layout === "list");
   $("#libUsage").textContent = d.read_only ? "Sample items · read-only" : `${fmtSize(d.used)} of ${fmtSize(d.quota)} used · files up to ${fmtSize(d.file_max)}`;
   $("#libIns").hidden = !!d.read_only;
   $("#libLinkMax").textContent = fmtSize(d.file_max);
@@ -290,7 +290,7 @@ document.querySelectorAll("#libTabs [role=tab]").forEach((b) => {
 });
 function libSetLayout(l) {
   LIB.layout = l; try { localStorage.setItem("hq_lib_layout", l); } catch (_) { /* private mode */ }
-  $("#libGrid").classList.toggle("list", l === "list"); libPaintControls();
+  $("#libGrid").classList.toggle("lp-list", l === "list"); libPaintControls();
 }
 $("#libGridBtn").onclick = () => libSetLayout("grid");
 $("#libListBtn").onclick = () => libSetLayout("list");
@@ -434,7 +434,7 @@ async function loadBin() {
 // draws the Bin from an /api/library/bin answer: loadBin after it fetches, and the boot-end redraw from LIB.binData
 function binDraw(d) {
   const grid = $("#libGrid");
-  grid.setAttribute("aria-busy", "false"); grid.classList.toggle("list", LIB.layout === "list");
+  grid.setAttribute("aria-busy", "false"); grid.classList.toggle("lp-list", LIB.layout === "list");
   libBinCount(d.total);
   const per = LIB.per, pages = Math.max(1, Math.ceil(d.items.length / per));
   LIB.binPage = Math.min(LIB.binPage || 1, pages);
