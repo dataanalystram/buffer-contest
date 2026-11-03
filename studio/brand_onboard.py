@@ -149,6 +149,10 @@ class BrandOnboard:
         if sid and demo:  # the sample workspace gets the cached extraction: instant, no network
             return self._from_sample(sid, t0)
         if demo and not demo_guard.take(self.store, a.uid, "import"):
+            from .demo_view import view_only
+            if view_only():
+                raise OnboardError("The demo doesn't import live websites (it makes no outbound calls). Try the Linear or "
+                                   "Notion sample brands, or connect Buffer to import any site.")
             raise OnboardError("Live website import is limited in the free sample (3 a day). Try the Linear or Notion sample "
                                "brands, or connect Buffer to import any site.")
         got = self._live(url)
@@ -246,7 +250,7 @@ class BrandOnboard:
     def preview(self, a, body: dict, as_urls: bool = False) -> dict:
         t0 = time.time()
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
-            raise OnboardError(demo_guard.WHY["run"])
+            raise OnboardError(demo_guard.why("run"))
         from .userlocks import rate_hit
         if not rate_hit(_previews, a.uid, time.time(), PREVIEWS_PER_MIN):  # B4: one lock for the shared window
             raise OnboardError("Too many preview redraws this minute. Pause for a moment.")

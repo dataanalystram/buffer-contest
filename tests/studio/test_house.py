@@ -41,6 +41,9 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(reader, "read_article", lambda url, http=None: {**ARTICLE, "url": url})
     monkeypatch.setattr(netguard, "_host_ok", lambda host: True)  # hermetic: no DNS for the example hosts
     monkeypatch.setattr(house.House, "_fetch_bytes", lambda self, url, limit: jpeg() if url else None)
+    # these tests drive the real-account features (rules, AI keys, tokens, the worker) through the sample workspace, so
+    # they run on the capped demo; the view-only demo has its own tests (test_demo_view_only.py)
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")
     c = TestClient(create_app(s))
     c.get("/demo", follow_redirects=False)
     c.headers["x-hq-csrf"] = c.get("/api/session").json()["csrf"]

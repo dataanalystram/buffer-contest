@@ -209,22 +209,25 @@ def test_sample_take_end_to_end_in_the_demo_drafts_only(demo):
     assert dry["dry_run"] and dry["confirm_token"].startswith("cf_") and len(plan["placements"]) == 5
     assert len(demo.get("/api/calendar").json()["items"]) == before                    # a dry run creates nothing
     assert len({p["day"] for p in plan["placements"]}) == 5
-    out = demo.post(f"/api/takes/{t['id']}/place", json={"confirm_token": dry["confirm_token"]}).json()
-    assert out["placed"] == 5 and out["failed"] == 0 and "drafts" in out["message"]
-    items = demo.get("/api/calendar").json()["items"]
-    new = [i for i in items if i["state"] == "draft" and i["type"] == "video"]
-    assert sorted(i["when"] for i in new) == sorted(p["at"] for p in plan["placements"])
-    assert not any(i["state"] in ("scheduled", "sent") and i["type"] == "video" for i in items)  # never published
-    again = demo.post(f"/api/takes/{t['id']}/place", json={"confirm_token": dry["confirm_token"]})
-    assert again.status_code == 410
+    # the view-only demo shows the plan, but placing it is refused with the friendly line and nothing is created
+    out = demo.post(f"/api/takes/{t['id']}/place", json={"confirm_token": dry["confirm_token"]})
+    assert out.status_code == 403 and "In the real app this would place these clips" in out.json()["error"]
+    assert demo.post(f"/api/takes/{t['id']}/place", json={"dry_run": False}).status_code == 403
+    assert len(demo.get("/api/calendar").json()["items"]) == before
     t2 = demo.get(f"/api/takes/{t['id']}").json()
-    assert all(c["placements"][0]["status"] == "draft" for c in t2["clips"])
-    # the second spread skips the slots the first one took
-    plan2 = demo.post(f"/api/takes/{t['id']}/place", json={"dry_run": True}).json()["plan"]
-    assert not {p["at"] for p in plan2["placements"]} & {p["at"] for p in plan["placements"]}
+    assert not any(c.get("placements") for c in t2["clips"])
 
 
-def test_sample_clip_caption_edit_works_but_trim_needs_a_worker(demo):
+def test_sample_clip_edits_are_refused_in_the_view_only_demo(demo):
+    t = demo.post("/api/takes/sample", json={}).json()
+    r = demo.patch(f"/api/takes/{t['id']}/clips/c2", json={"caption": "Biofilms, explained in 30 seconds.", "service": "instagram"})
+    assert r.status_code == 403 and r.json()["error"] == "In the real app this would save your clip edit. The demo doesn't change anything."
+    after = demo.get(f"/api/takes/{t['id']}").json()
+    assert next(c for c in after["clips"] if c["id"] == "c2")["post_captions"]["instagram"] != "Biofilms, explained in 30 seconds."
+
+
+def test_sample_clip_caption_edit_works_but_trim_needs_a_worker(demo, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # the clip editor's rules, on the capped demo's sample take
     t = demo.post("/api/takes/sample", json={}).json()
     r = demo.patch(f"/api/takes/{t['id']}/clips/c2", json={"caption": "Biofilms, explained in 30 seconds.", "service": "instagram"})
     assert r.status_code == 200
@@ -235,7 +238,8 @@ def test_sample_clip_caption_edit_works_but_trim_needs_a_worker(demo):
     assert r.status_code == 400 and "extract, don't invent" in r.json()["error"]
 
 
-def test_agent_spread_is_two_step_and_review_tokens_go_to_the_approval_inbox(demo):
+def test_agent_spread_is_two_step_and_review_tokens_go_to_the_approval_inbox(demo, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # agent tokens + MCP are real-account features; this is the capped demo
     t = demo.post("/api/takes/sample", json={}).json()
     tok = agent_token(demo, policy="review", cap=20)
     res, body = mcp_call(demo, tok, "place_clips_in_week", {"take_id": t["id"], "dry_run": False})
@@ -259,7 +263,8 @@ def test_agent_spread_is_two_step_and_review_tokens_go_to_the_approval_inbox(dem
     assert [c["id"] for c in one["clips"]] == ["c1", "c2", "c3", "c4", "c5"] and "words" not in one["clips"][0]
 
 
-def test_mcp_lists_the_one_take_tools(demo):
+def test_mcp_lists_the_one_take_tools(demo, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # agent tokens + MCP are real-account features; this is the capped demo
     tok = agent_token(demo)
     r = demo.post("/mcp", headers={"Authorization": f"Bearer {tok}"}, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()
     names = {x["name"] for x in r["result"]["tools"]}
