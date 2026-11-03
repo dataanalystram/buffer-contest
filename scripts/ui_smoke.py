@@ -63,7 +63,11 @@ with sync_playwright() as p:
     time.sleep(1.5)
     pg.screenshot(path=str(out / "05_revised.png"), full_page=True)
     pg.locator("[data-testid=pkg-send]").first.click()
-    pg.wait_for_selector("[data-testid=pkg-sent]", timeout=20000)
+    # the sample workspace is view-only: Send answers "In the real app this would …" (a toast) instead of sending
+    end, toasts = time.time() + 20, []
+    while time.time() < end and not pg.locator("[data-testid=pkg-sent]").count() and not any("In the real app this would" in t for t in toasts):
+        toasts.append(pg.locator("#toast").text_content() or ""); time.sleep(0.2)
+    assert pg.locator("[data-testid=pkg-sent]").count() or any("In the real app this would" in t for t in toasts), "Send neither sent nor answered the demo line"
     pg.click("[data-testid=tab-planner]")
     pg.click("[data-testid=planner-view-month]")
     pg.wait_for_selector("[data-testid=planner-day]", timeout=20000)

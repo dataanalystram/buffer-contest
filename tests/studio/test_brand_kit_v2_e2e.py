@@ -51,7 +51,9 @@ def test_templates_tab_lists_every_kit_and_picking_one_redraws_the_templates(dem
         assert time.time() - t0 < 1.5, f"cached kit previews took {time.time() - t0:.2f}s"
         # the view-only demo won't save a new kit: adding the Notion sample answers the friendly line, nothing is added
         page.click("[data-testid=tpl-kit-add-notion]")
-        page.get_by_text("The demo doesn't change anything.").first.wait_for()
+        # the answer is a toast; at phone width a later toast can replace it quickly, so watch #toast's text over time
+        seen = []
+        _until(lambda: seen.append(page.locator("#toast").text_content() or "") or any("The demo doesn't change anything." in t for t in seen), timeout=30)
         assert page.locator("[data-testid=tpl-kit-notion]").count() == 0
         assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 1
         page.click("[data-testid=brand-tab-kit]")  # the builder followed the switch
