@@ -75,10 +75,10 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
     page.get_by_test_id("clip-caption").fill("Biofilms on a space station, in 30 seconds.")
     page.get_by_test_id("clip-edit-save").click()
     # the view-only demo shows the editor but saving is refused with the friendly line
-    page.get_by_test_id("toast").filter(has_text="In the real app this would save your clip edit").wait_for()
-    if dlg.is_visible():
-        page.keyboard.press("Escape")
-        dlg.wait_for(state="hidden")
+    err = page.get_by_test_id("clip-edit-error")
+    err.filter(has_text="In the real app this would save your clip edit").wait_for()
+    page.keyboard.press("Escape")
+    dlg.wait_for(state="hidden")
     # The Spread: plan first (ghost cards on the Planner), nothing saved yet
     page.get_by_test_id("spread-go").click()
     page.get_by_test_id("planner-spread").wait_for()
