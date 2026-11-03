@@ -502,6 +502,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             sess = store.session(sid)
             if sess and sess.get("user_id"):
                 store.audit(sess["user_id"], "you", "logout", "auth", {})
+                try:  # signing out ends the Send-a-file codes this person made in the browser (an AI app's codes stay)
+                    store.x("DELETE FROM send_codes WHERE user_id=? AND (agent IS NULL OR agent='')", (sess["user_id"],))
+                except Exception:  # noqa: BLE001  (no send_codes table yet)
+                    pass
             store.drop_session(sid)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(COOKIE, path="/")
