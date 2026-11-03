@@ -8,3 +8,7 @@
   media: out https://huhqueue-studio.onrender.com/m/eBZf4VBpCnT7pyaxCQi8zj4p.mp4 cover https://huhqueue-studio.onrender.com/m/LHU9Iwclj3Zpx_YbVDsDXIvZ.jpg
 - Fix PR #77 (fix/cover-title-as-written, 2ba6dc2): local check title kept as 7 words, 9/9 layouts fit+safe. Needs CI then merge.
 - FINDING (state drift): kit library said active=Nothing(id5) (resource brand-kit/active + design.md) while house kit (get_brand, used by edit_video) = HuhByte. Realigned via set_active_brand_kit 8 (HuhByte AI) ~00:30 UTC; now agree. Kits: 5 Nothing, 6 Linear, 7 Notion, 8 HuhByte AI.
+- Step4 PASS w/ finding: create_template funding announcement (1.6s) + job opening (0.4s); render_template active kit(8 HuhByte) and kit_id=6 (Linear) each ~1.4-1.6s, 4 slides 4:5 JPG (not PNG), kit applied correctly, Follow end card last; delete both OK, list_templates shows no custom left.
+  BUG: custom stat slide drew slide number "02" big and the figure small -> fix PR #79 (fix/custom-stat-slide 8ff6eeb). Note: unknown slots (sub on stat) silently dropped.
+  Sheets: e2e/templates/sheet_*.jpg
+- main CI on e47d808: test success, worker-imports success.
