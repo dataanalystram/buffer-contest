@@ -132,6 +132,52 @@ def _sample_items() -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------- Library filters (GET /api/library ?type= &created_by= ...)
+TYPES = ("video", "carousel", "image", "audio")
+SOURCES = {"agent": ("generated",), "you": ("upload", "take", "link", "send"), "sample": ("sample",)}
+USED_IN = ("used", "unused", "draft", "scheduled", "sent")
+DATES = {"1d": 1, "7d": 7, "30d": 30, "90d": 90, "365d": 365}
+GENERIC_NAME = re.compile(r"^(Reel\.mp4|Image\.jpg|Carousel \(\d+ slides\))$")
+
+
+def _filters(type: str = "", created_by: str = "", used_in: str = "", run="", date: str = "") -> dict:
+    """Checks the Library filters and returns them normalised; ``all`` / empty means no filter. A bad value is a 400."""
+    def one(name, v, allowed):
+        v = str(v or "").strip().lower()
+        if v in ("", "all"):
+            return ""
+        if v not in allowed:
+            raise ActionError(f"{name} must be one of: all, {', '.join(allowed)}.", 400)
+        return v
+    out = {"type": one("type", type, TYPES), "created_by": one("created_by", created_by, tuple(SOURCES)),
+           "used_in": one("used_in", used_in, USED_IN), "date": one("date", date, tuple(DATES)), "run": None}
+    r = str(run or "").strip().lower()
+    if r not in ("", "all"):
+        if not r.isdigit():
+            raise ActionError("run must be a run id.", 400)
+        out["run"] = int(r)
+    out["since"] = _now() - DATES[out["date"]] * 86400 if out["date"] else 0
+    return out
+
+
+def _keep(i: dict, f: dict) -> bool:
+    """One item against every filter but type (the tabs count per type): who made it, date, used in, run."""
+    src = SOURCES.get(f.get("created_by") or "")
+    if src and i.get("source") not in src:
+        return False
+    if f.get("since") and (i.get("created") or 0) < f["since"]:
+        return False
+    uses = i.get("used_in") or []
+    u = f.get("used_in")
+    if (u == "used" and not uses) or (u == "unused" and uses):
+        return False
+    if u in ("draft", "scheduled", "sent") and not any(x.get(u) for x in uses):
+        return False
+    if f.get("run") and i.get("run_id") != f["run"] and not any(x.get("run_id") == f["run"] for x in uses):
+        return False
+    return True
+
+
 NOT_MEDIA = "Upload a JPG, PNG, WebP or GIF image, or an MP4, MOV or WebM video."
 
 
@@ -342,7 +388,7 @@ class Library:
         out = {"id": d["id"], "name": d["name"], "kind": d["kind"], "mime": d["mime"], "source": d["source"], "size": int(d["size"] or 0),
                "created": d["created"], "url": url, "thumb": url if d["kind"] != "video" else "",
                "width": d["meta"].get("width"), "height": d["meta"].get("height"), "duration": d["meta"].get("duration"),
-               "media_token": d["token"], "read_only": False}
+               "format": d["meta"].get("format") or "", "media_token": d["token"], "read_only": False}
         if d["kind"] == "carousel":
             out["slides"] = [f"{url}?i={i}" for i in range(len(tokens))]
         if runs is not None:
@@ -416,10 +462,18 @@ class Library:
                     continue
         return n
 
-    def list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200, offset: int = 0, per: int = 0) -> dict:
+    def list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200, offset: int = 0, per: int = 0,
+             type: str = "", created_by: str = "", used_in: str = "", run: str | int = "", date: str = "") -> dict:
         """The Library (newest first). ``per``/``offset`` page it (``total`` is the count before paging); the answer also
-        carries ``bin_count`` so the Library screen shows its Bin badge without a second request."""
-        out = self._list(a, q, kind, limit)
+        carries ``bin_count`` so the Library screen shows its Bin badge without a second request.
+
+        Server-side filters (Library premium, 3 Nov 2026), all optional and combinable: ``type`` video | carousel | image |
+        audio, ``created_by`` agent | you | sample, ``used_in`` used | unused | draft | scheduled | sent, ``run`` a run id
+        (items that run made or that a post of it uses), ``date`` 1d | 7d | 30d | 90d | 365d, and ``q`` (name, title, the
+        runs that used it, the type). ``facets`` carries per-type counts (every filter but ``type``) for the tabs and the
+        runs to offer in the Generation filter. Unknown filter values are a 400, never a silent "everything"."""
+        flt = _filters(type, created_by, used_in, run, date)
+        out = self._list(a, q, kind, 500 if per else limit, flt)
         out["total"] = len(out["items"])
         if per:
             per, offset = max(1, min(int(per), 200)), max(0, int(offset or 0))
@@ -429,16 +483,27 @@ class Library:
         out["bin_days"] = TRASH_DAYS
         return out
 
-    def _list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200) -> dict:
+    def _list(self, a: Actor, q: str = "", kind: str = "", limit: int = 200, flt: dict | None = None) -> dict:
+        flt = flt or {}
         if demo_guard.is_demo(a.uid):
             items = _sample_items()
+            for i in items:
+                i.setdefault("title", i["name"])
+                i.setdefault("run_id", None)
             used = 0
         else:
-            runs = self._runs(a)
+            runs = self._runs(a)  # one query for every run; each item's "used in" is matched in memory (no N+1)
             self.backfill(a, runs)
-            rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND storage NOT IN ('pending','trash') "
-                                "ORDER BY created DESC, id DESC LIMIT ?",
-                                (a.uid, max(1, min(int(limit or 200), 500))))
+            where, args = ["user_id=?", "storage NOT IN ('pending','trash')"], [a.uid]
+            if flt.get("since"):  # the cheap filters go to SQL (date, who made it); type stays in memory for the tab counts
+                where.append("created >= ?")
+                args.append(flt["since"])
+            src = SOURCES.get(flt.get("created_by") or "")
+            if src:
+                where.append(f"source IN ({','.join('?' * len(src))})")
+                args.extend(src)
+            rows = self.store.q(f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY created DESC, id DESC LIMIT ?",
+                                (*args, max(1, min(int(limit or 200), 500))))
             by_run = {r["run_id"]: r for r in runs}
             items = []
             for r in rows:
@@ -449,6 +514,8 @@ class Library:
                 if it["kind"] == "video" and own:  # a still for a video card: the run's own picture, else the story's
                     it["thumb"] = own["_thumb"] or ""
                     it["thumb_src"] = own["_thumb_src"]
+                # a generic generated name ("Reel.mp4", "Carousel (4 slides)") reads as its run's headline on the card
+                it["title"] = own["title"] if own and GENERIC_NAME.match(it["name"]) else it["name"]
                 items.append(it)
             used = self.used(a.uid)
         if kind in ("video", "image", "carousel"):
@@ -457,10 +524,23 @@ class Library:
             items = [i for i in items if any(u.get("draft") for u in i.get("used_in") or [])]
         elif kind in ("upload", "generated"):
             items = [i for i in items if (i["source"] in ("upload", "take", "link", "send")) == (kind == "upload")]
+        items = [i for i in items if _keep(i, flt)]
         if q:
-            ql = q.lower()
-            items = [i for i in items if ql in i["name"].lower() or any(ql in u["title"].lower() for u in i.get("used_in") or [])]
-        return {"items": items, "used": used, "quota": QUOTA, "file_max": FILE_MAX, "read_only": demo_guard.is_demo(a.uid)}
+            ql = q.lower().strip()
+            items = [i for i in items if ql in i["name"].lower() or ql in (i.get("title") or "").lower() or ql in i["kind"]
+                     or any(ql in u["title"].lower() for u in i.get("used_in") or [])]
+        types = {t: sum(1 for i in items if i["kind"] == t) for t in TYPES}
+        seen: dict = {}
+        for i in items:  # the Generation filter offers the runs behind what's listed (newest first, at most 50)
+            for rid, title in [(i.get("run_id"), i.get("title"))] + [(u["run_id"], u["title"]) for u in i.get("used_in") or []]:
+                if rid and rid not in seen and len(seen) < 50:
+                    seen[rid] = {"run_id": rid, "title": str(title or "A post")[:90]}
+        if flt.get("type"):
+            items = [i for i in items if i["kind"] == flt["type"]]
+        facets = {"types": {"all": sum(types.values()), **types},
+                  "runs": sorted(seen.values(), key=lambda r: -int(r["run_id"]) if str(r["run_id"]).isdigit() else 0)}
+        return {"items": items, "used": used, "quota": QUOTA, "file_max": FILE_MAX, "read_only": demo_guard.is_demo(a.uid),
+                "facets": facets, "filters": {k: v for k, v in flt.items() if k != "since" and v not in ("", None)}}
 
     def item(self, a: Actor, iid) -> dict:
         return self._public(self._row(a, iid), self._runs(a))
@@ -842,8 +922,15 @@ class Library:
 # ---------------------------------------------------------------- REST + MCP
 TOOLS = [
     {"name": "list_library", "description": "The person's Library: every uploaded photo/video and every image, carousel and Reel the agent made, "
-                                            "with type, size, date and which posts used each one. q searches names and post titles; kind: video | image | carousel | upload | generated.",
+                                            "with type, size, date and which posts used each one. q searches names, titles and post titles; kind: video | image | carousel | upload | generated. "
+                                            "Filters: type video|carousel|image|audio, created_by agent|you|sample, used_in used|unused|draft|scheduled|sent, "
+                                            "run <run id>, date 1d|7d|30d|90d|365d; facets has per-type counts and the runs behind the items.",
      "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}, "kind": {"type": "string"},
+                                                                    "type": {"type": "string", "enum": ["all", "video", "carousel", "image", "audio"]},
+                                                                    "created_by": {"type": "string", "enum": ["all", "agent", "you", "sample"]},
+                                                                    "used_in": {"type": "string", "enum": ["all", "used", "unused", "draft", "scheduled", "sent"]},
+                                                                    "run": {"type": "string", "description": "a run id: items it made or that its posts use"},
+                                                                    "date": {"type": "string", "enum": ["all", "1d", "7d", "30d", "90d", "365d"]},
                                                                     "offset": {"type": "integer"}, "per": {"type": "integer", "description": "page size (1-200); total is the count before paging"}}}},
     {"name": "delete_library_item", "description": "Delete one Library item. mode=bin (default) moves it to the Bin for 7 days (restore_library_items brings it back); "
                                                   "mode=permanent removes the file and its record now and can't be undone. Refused with a warning (409) while a post that hasn't gone out "
@@ -877,7 +964,7 @@ def call_tool(studio, actor, name: str, args: dict):
     lib = studio.house.library
     if name == "list_library":
         return lib.list(actor, str(args.get("q") or ""), str(args.get("kind") or ""), offset=int(args.get("offset") or 0),
-                        per=int(args.get("per") or 0))
+                        per=int(args.get("per") or 0), **{k: str(args.get(k) or "") for k in ("type", "created_by", "used_in", "run", "date")})
     if name == "delete_library_item":
         return lib.delete(actor, args.get("item_id"), bool(args.get("force")), str(args.get("mode") or "bin"))
     if name == "bulk_delete_library":
@@ -930,8 +1017,10 @@ def add_routes(app, house, actor) -> None:
         return Response(f["read"](0, None), media_type=f["mime"], headers=headers)
 
     @app.get("/api/library")
-    def library_list(request: Request, q: str = "", kind: str = "", offset: int = 0, per: int = 0):
-        return lib.list(actor(request), q, kind, offset=offset, per=per)
+    def library_list(request: Request, q: str = "", kind: str = "", offset: int = 0, per: int = 0, type: str = "",
+                     created_by: str = "", used_in: str = "", run: str = "", date: str = ""):
+        return lib.list(actor(request), q, kind, offset=offset, per=per, type=type, created_by=created_by, used_in=used_in,
+                        run=run, date=date)
 
     @app.post("/api/library/upload")
     async def library_upload(request: Request, name: str = "", source: str = "upload"):
