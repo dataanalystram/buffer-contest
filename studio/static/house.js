@@ -230,7 +230,6 @@ function agentExtras(r, busy) {
   $("#agentPlan").hidden = !plan.length;
   $("#agentPlan").innerHTML = plan.map((p) => `<li>${esc(p)}</li>`).join("");
   const th = (res.thread || []).slice(1);
-  $("#agentThread").hidden = !th.length;
   $("#agentThread").innerHTML = th.map((m) => `<div class="msg ${m.role}" data-testid="thread-msg"><b>${m.role === "user" ? "You" : "Agent"}</b><span class="md">${m.role === "user" ? esc(m.text) : md(m.text)}</span></div>`).join("") +
     // someone else's video: ONE question, answered with a button (never typed twice)
     (res.rights_question && !res.recap && !(res.rights || {}).mode && !busy ? `<div class="st warn ask-card" role="group" aria-label="Video rights" data-testid="rights-card">
@@ -243,6 +242,8 @@ function agentExtras(r, busy) {
     (res.recap && res.recap.awaiting_rights && res.rights_question ? `<div class="st warn" data-testid="recap-rights">${esc(res.rights_question)}
       <div class="row"><button type="button" class="btn primary sm" data-testid="recap-rights-yes" data-say="Yes, use them with credit">Use them with credit</button>
       <button type="button" class="btn ghost sm" data-testid="recap-rights-no" data-say="No, title cards instead">Title cards instead</button></div></div>` : "");
+  // the rights / Resume card can come before the first reply: show the thread whenever it has anything in it
+  $("#agentThread").hidden = !$("#agentThread").innerHTML.trim();
   $("#agentThread").querySelectorAll("[data-testid^=recap-rights-],[data-testid^=rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
   const rs = $("#agentThread [data-testid=mp-resume]");
   if (rs) rs.onclick = async () => { rs.disabled = true;

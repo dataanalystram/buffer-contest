@@ -231,6 +231,7 @@
 .mp-attach.busy{opacity:.7;pointer-events:none}.mp-attach:focus-within{outline:2px solid var(--ink);outline-offset:2px}
 #runView.drop-on{outline:2px dashed var(--ink);outline-offset:6px;border-radius:16px}
 .md b{font-weight:700}.md code{font-size:.92em;padding:0 4px;border-radius:4px;background:var(--mp-line)}.md ul{margin:4px 0;padding-left:20px}.md a{text-decoration:underline}
+.st.ask-card{display:flex;flex-direction:column;align-items:flex-start}
 .ask-card .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.ask-card .btn,.ask-card .btn2{min-height:44px}
 .step .xn{font-weight:500;color:var(--muted);font-size:12px;margin-left:4px}
 .flash{animation:hqflash 2.4s ease-out}
