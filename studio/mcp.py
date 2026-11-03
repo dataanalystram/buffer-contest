@@ -6,6 +6,7 @@ Studio action, so an agent can do exactly what the UI and REST API can, under th
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from .actions import ActionError, Actor, Studio
@@ -387,13 +388,19 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
                 return ok({"content": [{"type": "text", "text": str(e)}], "isError": True})
             hint = _cb.server_ai_hint(name)  # no model call: the client is the brain unless the person chose server AI
             return ok({"content": [{"type": "text", "text": json.dumps(hint, indent=1)}], "structuredContent": hint, "isError": False})
-        from . import brain_llm
+        from . import brain_llm, mcp_runs
         tok = brain_llm.client_brain(not (isinstance(args, dict) and args.get("server_ai") is True))
+        hint = str(meta.get("model") or meta.get("huhqueue/model") or "")[:80] if isinstance(meta, dict) else ""
+        t0 = time.monotonic()
+        clean = {k: v for k, v in args.items() if k != "server_ai"} if isinstance(args, dict) else {}
         try:
-            result = call_tool(studio, actor, name, {k: v for k, v in args.items() if k != "server_ai"} if isinstance(args, dict) else {})
+            result = call_tool(studio, actor, name, clean)
+            # the run's thread shows what the external agent did: one visible step per tool call (studio/mcp_runs.py)
+            mcp_runs.record(studio.store, actor, name, clean, result, True, int((time.monotonic() - t0) * 1000), model_hint=hint)
             return ok({"content": [{"type": "text", "text": json.dumps(result, indent=1, default=str)}],
                        "structuredContent": result if isinstance(result, dict) else {"items": result}, "isError": False})
         except (ActionError, BufferError) as e:
+            mcp_runs.record(studio.store, actor, name, clean, None, False, int((time.monotonic() - t0) * 1000), str(e), model_hint=hint)
             return ok({"content": [{"type": "text", "text": str(e)}], "isError": True})
         finally:
             brain_llm.client_brain_end(tok)

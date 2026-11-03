@@ -221,13 +221,13 @@ function showRun(r) {
 }
 
 function agentExtras(r, busy) {
-  const res = r.result || {}, br = res.brain || {}, agent = r.kind === "agent";
+  const res = r.result || {}, br = res.brain || {}, agent = r.kind === "agent" || br.mode === "mcp";
   $("#agentBrain").hidden = !agent || !br.mode;
   if (agent && br.mode) {
     // the same words in the run view and the composer, after a reply too (QA: "free starter" showed while Claude ran)
-    $("#agentBrain").textContent = (br.mode === "tools" ? "Planned and run by " : "Standard plan, written with ") + brainName(br) +
+    $("#agentBrain").textContent = br.mode === "mcp" ? `Made in ${brainName(br)}. ${br.hint || ""}`.trim() : (br.mode === "tools" ? "Planned and run by " : "Standard plan, written with ") + brainName(br) +
       ((res.notes || []).length ? " · " + res.notes[res.notes.length - 1] : "");
-    $("#agEngine").textContent = "Writing with: " + brainName(br);
+    if (br.mode !== "mcp") $("#agEngine").textContent = "Writing with: " + brainName(br);  // a reply here runs our engine, not the app
   }
   const plan = res.plan || [];
   $("#agentPlan").hidden = !plan.length;
@@ -559,7 +559,8 @@ async function loadRuns() {
 }
 
 function brainName(b) {
-  if (!b) return "the built-in writer";
+  if (!b || typeof b !== "object") return "the built-in writer";
+  if (b.mode === "mcp") return b.label || "Your AI app · via MCP";  // an AI app drove this run: its model is chosen there
   if (b.source === "free starter") return "the free starter model";
   const m = b.model || b.provider || b.source || "the built-in writer";
   return b.fast_model && b.fast_model !== b.model ? `${m} (captions: ${b.fast_model})` : m;
