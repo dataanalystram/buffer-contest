@@ -119,7 +119,7 @@ def test_style_ledger_teach_learn_accept_and_review(live, chromium, width):
         card = page.locator("[data-testid=rule-suggestion]").first
         assert "game-changer" in card.inner_text() and "From 3 of your edits" in card.inner_text()
         assert not [t for t in page.locator("[data-testid=rule-text]").all_inner_texts() if "game-changer" in t]
-        card.locator("summary").click()
+        card.locator(".lg-why summary").click()
         assert card.locator("[data-testid=rule-edits] li").count() == 3
         _shot(page, "ledger-suggestion", width)
         _no_overflow(page)
