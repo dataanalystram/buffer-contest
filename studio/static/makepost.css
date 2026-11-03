@@ -211,3 +211,30 @@
 .agent-form .mp-tools .mp-fmt{width:auto}
 @media (max-width:720px){.agent-form .mp-tools .mp-fmt{flex:1;min-width:0}}
 @media (max-width:640px){.mp-theme{padding:0 12px 12px}}
+
+/* Make a post thread polish (owner, 3 Nov 2026): ready summary, template chips, upload in the composer, markdown, flash */
+.mp-ready{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 14px;padding:10px;border:1px solid var(--mp-line);border-radius:14px;background:var(--paper)}
+.mp-ready-h{font-weight:700;font-size:14px;margin-right:4px}
+.mp-ready-i{display:inline-flex;align-items:center;gap:8px;min-height:48px;padding:4px 10px 4px 4px;border:1px solid var(--mp-line);border-radius:12px;background:var(--raised);color:var(--ink);cursor:pointer;text-align:left;max-width:100%}
+.mp-ready-i img,.mp-ready-i video,.mp-ready-ph{width:36px;height:44px;object-fit:cover;border-radius:8px;background:var(--mp-line);flex:none}
+.mp-ready-i span{display:flex;flex-direction:column;min-width:0}.mp-ready-i b{font-size:13px}.mp-ready-i small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mp-ready-i.st-hold{border-color:var(--warn,#c80)}.mp-ready-i:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.mp-tpl-box{margin:6px 0 12px;padding:10px 12px;border:1px solid var(--mp-line);border-radius:14px;background:var(--paper)}
+.mp-tpl-line{margin:0 0 8px;font-size:14px;line-height:1.45}.mp-tpl-line small{display:block;margin-top:2px}
+.mp-tpl-row{display:flex;gap:8px;overflow-x:auto;align-items:stretch;padding-bottom:2px;scrollbar-width:thin}
+.mp-tpl-h{flex:none;align-self:center;font-size:13px;font-weight:600;color:var(--muted);margin-right:2px}
+.mp-tpl{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;width:92px;padding:6px;border:1px solid var(--mp-line);border-radius:12px;background:var(--raised);color:var(--ink);cursor:pointer;font-size:12px;line-height:1.2;text-align:center}
+.mp-tpl img,.mp-tpl-ph{width:78px;height:98px;object-fit:cover;border-radius:8px;background:var(--mp-line)}
+.mp-tpl.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}.mp-tpl.busy{opacity:.6}.mp-tpl:disabled{cursor:default}
+.mp-tpl.more{justify-content:center;min-height:44px;font-weight:600}
+.mp-attach{display:inline-flex;align-items:center;gap:6px;min-height:44px;border-radius:12px;cursor:pointer;white-space:nowrap;flex:none}
+.mp-attach.busy{opacity:.7;pointer-events:none}.mp-attach:focus-within{outline:2px solid var(--ink);outline-offset:2px}
+#runView.drop-on{outline:2px dashed var(--ink);outline-offset:6px;border-radius:16px}
+.md b{font-weight:700}.md code{font-size:.92em;padding:0 4px;border-radius:4px;background:var(--mp-line)}.md ul{margin:4px 0;padding-left:20px}.md a{text-decoration:underline}
+.ask-card .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.ask-card .btn,.ask-card .btn2{min-height:44px}
+.step .xn{font-weight:500;color:var(--muted);font-size:12px;margin-left:4px}
+.flash{animation:hqflash 2.4s ease-out}
+@keyframes hqflash{0%,30%{box-shadow:0 0 0 3px var(--ink)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.flash{animation:none;box-shadow:0 0 0 3px var(--ink)}}
+.mp-thread .packages .pkg{scroll-margin-top:16px}
+@media (max-width:520px){.mp-attach span{display:none}.mp-attach{padding:0 12px}.mp-ready-i{flex:1 1 100%}.mp-tpl{width:84px}.mp-tpl img,.mp-tpl-ph{width:70px;height:88px}}

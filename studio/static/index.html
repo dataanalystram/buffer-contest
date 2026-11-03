@@ -150,6 +150,7 @@
         </div>
         <section id="runView" class="mp-thread" data-testid="run-view" hidden>
           <div class="mp-thread-bar"><button type="button" class="btn2 sm" id="mpNew" data-testid="mp-new">← New post</button><span class="mp-status" id="mpStatus" data-testid="mp-status" role="status" aria-live="polite"></span></div>
+          <div class="mp-ready" id="mpReady" data-testid="mp-ready" aria-label="What's ready" hidden></div>
           <div class="mp-msg user" id="mpUser" data-testid="mp-user-msg"></div>
           <div class="mp-msg agent" data-testid="mp-agent-msg">
             <div class="mp-who"><span class="mp-av" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg></span><b>HuhQueue agent</b><span id="agentBrain" class="muted sm" data-testid="agent-brain" hidden></span></div>
@@ -162,6 +163,7 @@
           <div id="agentThread" class="thread" data-testid="agent-thread" hidden></div>
           <h2 class="sec" id="pkgHead" data-testid="packages-head" hidden>Your posts — review and send</h2>
           <p class="muted sm pkg-intro" id="pkgHelp" hidden>One post per channel, each with its own media. Edit anything, then choose what to do with it. Nothing is posted until you press the button.</p>
+          <div class="mp-tpl-box" id="mpTpl" data-testid="mp-template" hidden></div>
           <div id="packages" class="packages" data-testid="packages"></div>
           <div class="mp-acts" id="mpActs" data-testid="mp-actions" hidden>
             <button type="button" class="btn" id="mpApprove" data-testid="mp-approve">Approve all as Buffer drafts</button>
@@ -171,6 +173,7 @@
           <form class="revise mp-composer" id="replyForm" data-testid="reply-form" hidden>
             <label class="sr" for="replyIn">Ask the agent to change something</label>
             <div class="row"><textarea id="replyIn" data-testid="reply-input" rows="1" maxlength="4000" placeholder="Ask the agent to change something…"></textarea>
+              <label class="btn2 mp-attach" id="replyUpload" data-testid="reply-upload" title="Upload a video for this post (MP4 or MOV, up to 100 MB). You can also drop it on the thread."><input type="file" id="replyFile" class="sr" data-testid="reply-file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm" aria-label="Upload a video for this post"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l8-8"/></svg><span>Upload video</span></label>
               <button class="btn" data-testid="reply-go" type="submit" aria-label="Send">Send</button></div>
             <div class="quickfix" id="replyChips" data-testid="reply-chips"></div>
           </form>
