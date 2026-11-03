@@ -112,8 +112,10 @@ def test_style_ledger_teach_learn_accept_and_review(live, chromium, width):
         for i, rid in enumerate(rids[:3]):
             _open_run(page, rid)
             ta = page.locator("[data-testid=pkg-text]").first
-            ta.fill(ta.input_value().replace("game-changer", ["big step", "real help", "useful upgrade"][i]))
-            time.sleep(1.2)  # the editor saves 450 ms after typing stops
+            with page.expect_response(lambda r: f"/api/agent/runs/{rid}/packages/" in r.url and r.request.method == "POST",
+                                      timeout=20000) as saved:  # the editor saves 450 ms after typing stops; wait for it
+                ta.fill(ta.input_value().replace("game-changer", ["big step", "real help", "useful upgrade"][i]))
+            assert saved.value.ok
         page.evaluate("showTab('brand', 'brand'); document.querySelector('[data-testid=brand-tab-ledger]').click()")
         page.wait_for_selector("[data-testid=rule-suggestion]", timeout=20000)
         card = page.locator("[data-testid=rule-suggestion]").first
@@ -135,8 +137,9 @@ def test_style_ledger_teach_learn_accept_and_review(live, chromium, width):
         # 4. a draft: the check cites the learned rule, the rules it follows and where its facts came from
         _open_run(page, rids[3])
         ta = page.locator("[data-testid=pkg-text]").first
-        ta.fill(ta.input_value() + " ")
-        time.sleep(1.2)  # saved: the check now runs the learned rule
+        with page.expect_response(lambda r: f"/api/agent/runs/{rids[3]}/packages/" in r.url and r.request.method == "POST",
+                                  timeout=20000):  # saved: the check now runs the learned rule
+            ta.fill(ta.input_value() + " ")
         page.evaluate(f"(async () => showRun(await api('/api/agent/runs/{rids[3]}')))()")
         page.wait_for_selector("[data-testid=pkg-ledger] [data-testid=pkg-applied]", timeout=20000)
         assert "game-changer" in page.locator("[data-testid=brand-check]").first.inner_text()

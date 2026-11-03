@@ -28,6 +28,7 @@ API = {"items": [{"snippet": {"title": "Introducing Screen Studio 4.0", "channel
 @pytest.fixture(autouse=True)
 def hermetic(monkeypatch):
     monkeypatch.setattr(netguard, "_host_ok", lambda host: True)
+    monkeypatch.setattr(netguard, "_pinnable", lambda c, url: False)  # respx matches host names; CI has no proxy, so it would pin to IPs
     monkeypatch.setenv("HQ_MEDIA_YTDLP", "0")
     monkeypatch.delenv("HQ_YT_FALLBACK", raising=False)
     monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
