@@ -6,7 +6,7 @@ set -euo pipefail
 src="$1"; out="$2"; label="${3:-reel}"
 mkdir -p "$out"
 v="$out/$label.mp4"
-if [[ "$src" == http* ]]; then curl -fsSL --max-time 300 -o "$v" "$src"; else cp "$src" "$v"; fi
+if [[ "$src" == http* ]]; then curl -fsSL --max-time 300 -o "$v" "$src"; elif [[ "$(realpath "$src")" != "$(realpath -m "$v")" ]]; then cp "$src" "$v"; fi
 dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$v")
 echo "duration=$dur"
 for t in 0 0.25 0.5 1 1.5 2 3; do
