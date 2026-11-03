@@ -148,15 +148,18 @@ def test_template_by_name_and_per_slide(owner, monkeypatch):  # noqa: F811
 def test_mcp_chooses_the_template_by_name(owner, monkeypatch):  # noqa: F811
     _fake_reels(monkeypatch, owner)
     rid, a = _seed(owner)
-    tok = owner.post("/api/agent-tokens", json={"name": "Claude", "policy": "auto"}).json()["token"]
-    names = {t["name"] for t in mcp_call(owner, tok, "tools/list" if False else "list_templates", {}).get("templates", [])} if False else set()
-    out = mcp_call(owner, tok, "set_template", {"run_id": rid, "template": "Funding round"})
-    assert "error" not in json.dumps(out)[:200].lower() or "result" in out, out
-    res = _run(owner, rid)["result"]
-    assert res["template"]["id"] == "funding" and res["channel_media"]["ch_ig"]["template"] == "funding"
-    got = mcp_call(owner, tok, "get_post_templates", {"run_id": rid})
-    assert "Funding round" in json.dumps(got)
-    del names
+    tok = owner.post("/api/agent-tokens", json={"name": "Claude", "policy": "review", "daily_cap": 20}).json()["token"]
+    r = owner.post("/mcp", headers={"Authorization": f"Bearer {tok}"}, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    names = {t["name"] for t in r.json()["result"]["tools"]}
+    assert {"set_template", "get_post_templates", "resume_post", "post_set_template"} <= names
+    res, out = mcp_call(owner, tok, "set_template", {"run_id": rid, "template": "Funding round"})
+    assert not res["isError"], out
+    got = _run(owner, rid)["result"]
+    assert got["template"]["id"] == "funding" and got["channel_media"]["ch_ig"]["template"] == "funding"
+    res, t = mcp_call(owner, tok, "get_post_templates", {"run_id": rid})
+    assert not res["isError"] and t["template"]["name"] == "Funding round"
+    res, bad = mcp_call(owner, tok, "set_template", {"run_id": rid, "template": "no such thing"})
+    assert res["isError"] and "Pick one of" in bad
 
 
 # ---------------------------------------------------------------- 2 rights: answered once, the Reel right away
