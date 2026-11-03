@@ -941,7 +941,7 @@ class Tools(EditorialTools):
         from . import templates
         ims = self._template_images(run, template, ratio, data)
         return [self._keep(templates.jpeg(im), f"{template}-{i + 1}.jpg", {"type": "photo", "template": template, "width": im.width,
-                                                                          "height": im.height}, "slide") for i, im in enumerate(ims)]
+                                                                          "height": im.height}) for i, im in enumerate(ims)]
 
     def template_previews(self, ids: list[str] | None = None) -> dict[str, str]:
         """Small first-slide previews of the suggested templates, drawn from THIS run's facts in the run's kit. Returned as
@@ -989,7 +989,7 @@ class Tools(EditorialTools):
     def _kit(self) -> dict:
         """The kit this run draws in: the one the person named in this run's thread, else the account's active kit."""
         ko = self.state()["result"].get("kit_override") or {}
-        return ko["kit"] if isinstance(ko.get("kit"), dict) else self._kit()
+        return ko["kit"] if isinstance(ko.get("kit"), dict) else self.h.kit(self.a)
 
     def _said_default(self) -> bool:
         """The person's last reply asked to make the kit their default ("make it my default", "from now on")."""
