@@ -169,9 +169,11 @@ def friendly(e: BaseException, base: str = "") -> str:
     from urllib.parse import urlparse
     app_host = urlparse(base).hostname or ""
     if isinstance(e, httpx.HTTPStatusError):
-        code, host = e.response.status_code, e.request.url.host
-        if app_host and host == app_host:
+        code, host, path = e.response.status_code, e.request.url.host, e.request.url.path or ""
+        if app_host and host == app_host and path.startswith(("/api/worker", "/api/oidc")):
             return f"The video worker couldn't talk to HuhQueue (HTTP {code})."
+        if app_host and host == app_host:  # a source link on our own host (a /m/ file, or any page there) answered an error
+            return f"Couldn't download the video: the source link returned {code}"
         return f"Couldn't download the video: the link returned {code}"
     if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
         return "Couldn't download the video: the link didn't answer"

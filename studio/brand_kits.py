@@ -495,6 +495,13 @@ class BrandKits:
         """The sample workspace starts with Nothing (active) and HuhByte AI, so the builder is filled the moment it opens."""
         if self._rows(a):
             return
+        from .userlocks import held
+        with held(a.uid):  # B3: two first loads at once seed once
+            if self._rows(a):
+                return
+            self._seed_demo_locked(a)
+
+    def _seed_demo_locked(self, a) -> None:
         s = brand_onboard.sample("nothing")
         nid = None
         if s:
@@ -512,21 +519,24 @@ class BrandKits:
     def _seed_huhbyte(self, a) -> None:
         """Every signed-in workspace gets HuhByte AI as a ready kit next to the samples (owner, 2 Nov 2026), once. It is
         never activated here, so a person's own active kit stays active; deleting it is respected."""
-        ex = self.bs.extras(a)
-        if ex.get("seeded_huhbyte"):
+        if self.bs.extras(a).get("seeded_huhbyte"):
             return
-        rows = self._rows(a)
-        if not any((r["name"] or "").strip().casefold() == "huhbyte ai" for r in rows) and len(rows) < MAX_KITS:
-            self._insert(a, example_kit("huhbyte"))
-        ex = self.bs.extras(a)
-        ex["seeded_huhbyte"] = True
-        self.bs._put(a, ex)
+        from .userlocks import held
+        with held(a.uid):  # B3: check-then-insert under the workspace lock, so parallel first loads seed one HuhByte kit
+            if self.bs.extras(a).get("seeded_huhbyte"):
+                return
+            rows = self._rows(a)
+            if not any((r["name"] or "").strip().casefold() == "huhbyte ai" for r in rows) and len(rows) < MAX_KITS:
+                self._insert(a, example_kit("huhbyte"))
+            self.bs.update_extras(a, {"seeded_huhbyte": True})
 
     def _insert(self, a, k: dict) -> int:
-        if len(self._rows(a)) >= MAX_KITS:
-            raise KitError(f"Up to {MAX_KITS} brand kits per workspace.")
-        now = time.time()
-        return self.store.x("INSERT INTO brand_kit_library(user_id,name,data,created,updated) VALUES(?,?,?,?,?)",
+        from .userlocks import held
+        with held(a.uid):  # B3: the cap is checked and the row inserted under one lock (no 13th kit from a race)
+            if len(self._rows(a)) >= MAX_KITS:
+                raise KitError(f"Up to {MAX_KITS} brand kits per workspace.")
+            now = time.time()
+            return self.store.x("INSERT INTO brand_kit_library(user_id,name,data,created,updated) VALUES(?,?,?,?,?)",
                             (a.uid, k.get("name") or "Untitled kit", json.dumps(k), now, now))
 
     def _get(self, a, kid: int) -> dict:
@@ -556,9 +566,7 @@ class BrandKits:
             r["data"] = json.dumps(k)
             self.store.x("UPDATE brand_kit_library SET data=? WHERE id=? AND user_id=?", (r["data"], r["id"], a.uid))
             if r["id"] == self._active(a):  # the active kit's renders follow at once
-                ex = self.bs.extras(a)
-                ex["theme"] = k["theme"]
-                self.bs._put(a, ex)
+                self.bs.update_extras(a, {"theme": k["theme"]})
 
     def design_md(self, a, kid: int) -> str:
         k = json.loads(self._get(a, kid)["data"] or "{}")
@@ -658,8 +666,23 @@ class BrandKits:
             return self.activate(a, kid)
         return self._out(a, self._get(a, kid), self._active(a))
 
-    def update(self, a, kid: int, body: dict) -> dict:
+    def update(self, a, kid: int | None, body: dict) -> dict:
+        """kit_id missing = the active kit (B1: one update_brand_kit tool; the client brain's copy patched the house kit)."""
         self.studio._guard_write(a, "update_brand_kit")
+        from .userlocks import held
+        with held(a.uid):
+            return self._update_locked(a, kid, body)
+
+    def _update_locked(self, a, kid: int | None, body: dict) -> dict:
+        if not kid:
+            kid = self._active(a)
+            if not kid:  # no kit library yet (a workspace that never opened the builder): the house kit is the brand
+                patch = {k: body[k] for k in ("name", "handle", "website", "font", "voice", "colors", "end_card") if k in body}
+                if body.get("head_font") and "font" not in patch:
+                    patch["font"] = body["head_font"]
+                if not patch:
+                    raise KitError("Pass the fields to change (name, handle, website, font, voice, colors, end_card).")
+                return {"kit": self.house.save_kit(a, patch), "active": True, "id": None}
         row = self._get(a, kid)
         k = normalize(body, json.loads(row["data"] or "{}"))
         _drop_sample_badge(k, row["name"])
@@ -667,7 +690,10 @@ class BrandKits:
         self.store.x("UPDATE brand_kit_library SET name=?, data=?, updated=? WHERE id=?", (k.get("name") or row["name"], json.dumps(k), time.time(), row["id"]))
         self.store.audit(a.uid, a.label, "update_brand_kit", "read", {"kit": row["id"], "fields": sorted(body)[:20]})
         if row["id"] == self._active(a) or body.get("activate"):
-            return self.activate(a, row["id"])
+            out = self.activate(a, row["id"])
+            if isinstance(body.get("end_card"), dict) and "on" in body["end_card"]:  # the render switch lives on the house kit
+                self.house.save_kit(a, {"end_card": {"on": bool(body["end_card"]["on"])}})
+            return out
         return self._out(a, self._get(a, kid), self._active(a))
 
     def _check_logo(self, a, k: dict) -> None:
@@ -677,6 +703,11 @@ class BrandKits:
 
     def activate(self, a, kid: int) -> dict:
         self.studio._guard_write(a, "set_active_brand_kit")
+        from .userlocks import held
+        with held(a.uid):  # B2: one lock, one extras write (the kit fields, active_kit, example and caption style together)
+            return self._activate_locked(a, kid)
+
+    def _activate_locked(self, a, kid: int) -> dict:
         row = self._get(a, kid)
         k = json.loads(row["data"] or "{}")
         ref = str(k.get("logo") or "")
@@ -697,23 +728,21 @@ class BrandKits:
                  "hashtags": k.get("hashtags") or [], "label": k.get("label") or "", "theme": k.get("theme") or None}
         if logo_tok:
             patch["logo"] = logo_tok
-        self.bs.save(a, patch)
-        if not logo_tok:  # a kit without a logo clears the old one, so no other brand's mark stays on the renders
+        else:  # a kit without a logo clears the old one, so no other brand's mark stays on the renders
             self.house.save_kit(a, {"logo": ""})
-        ex = self.bs.extras(a)
-        ex["active_kit"] = row["id"]
-        ex["example"] = next((e for e, v in brand_examples.EXAMPLES.items() if v["kit"]["name"] == k.get("name")), "")
-        ex["caption_style"] = k.get("caption_style") or "opus"
-        self.bs._put(a, ex)
+        self.bs.save(a, patch, extra={"active_kit": row["id"], "caption_style": k.get("caption_style") or "opus",
+                                      "example": next((e for e, v in brand_examples.EXAMPLES.items() if v["kit"]["name"] == k.get("name")), "")})
         self.store.audit(a.uid, a.label, "set_active_brand_kit", "read", {"kit": row["id"]})
         return {**self._out(a, row, row["id"]), "applied": True}
 
     def delete(self, a, kid: int) -> dict:
         self.studio._guard_write(a, "delete_brand_kit")
-        row = self._get(a, kid)
-        if row["id"] == self._active(a):
-            raise KitError("That's the active kit. Make another kit active first.")
-        self.store.x("DELETE FROM brand_kit_library WHERE id=? AND user_id=?", (row["id"], a.uid))
+        from .userlocks import held
+        with held(a.uid):  # never delete a kit another session is activating right now
+            row = self._get(a, kid)
+            if row["id"] == self._active(a):
+                raise KitError("That's the active kit. Make another kit active first.")
+            self.store.x("DELETE FROM brand_kit_library WHERE id=? AND user_id=?", (row["id"], a.uid))
         return {"deleted": row["id"]}
 
     def palette(self, a, logo_ref: str) -> dict:
@@ -758,11 +787,9 @@ class BrandKits:
         fmt, size = ("jpg", 0) if as_urls else (("jpg" if body.get("format") == "jpeg" else "webp"), w)
         misses = [i for i in ids if cache_get(card_key(k, logo, i, size, fmt)) is None]
         if misses:
-            now = time.time()
-            hits = [t for t in _gallery.get(a.uid, []) if now - t < 60]
-            if len(hits) >= GALLERY_PER_MIN:
+            from .userlocks import rate_hit
+            if not rate_hit(_gallery, a.uid, time.time(), GALLERY_PER_MIN):  # B4: one lock for the shared window
                 raise KitError("Too many gallery redraws this minute. Pause for a moment.")
-            _gallery[a.uid] = hits + [now]
         stats: dict = {}
         got = render_cards(k, logo, ids, size, fmt, stats)
         out = []
@@ -941,8 +968,13 @@ TOOLS: list[dict[str, Any]] = [
                                                       "sample": {"type": "string", "enum": list(brand_onboard.SAMPLE_IDS),
                                                                  "description": "start from a sample brand (not affiliated)"},
                                                       "activate": {"type": "boolean"}}}},
-    {"name": "update_brand_kit", "description": "Change fields of a brand kit. When it is the active kit, every template follows at once.",
-     "inputSchema": {"type": "object", "required": ["kit_id"], "properties": {"kit_id": {"type": "integer"}, **_KIT_PROPS}}},
+    {"name": "update_brand_kit", "description": "Change fields of a brand kit (no HuhQueue AI). Leave out kit_id to change the ACTIVE kit "
+     "(what every render uses); give kit_id for another kit in list_brand_kits. When it is the active kit, every template, theme, "
+     "carousel and end card follows at once. colors take background / primary / accent / text, or the renderer names "
+     "primary (ground) / accent / text; font is the headline font; end_card {line, cta, on}.",
+     "inputSchema": {"type": "object", "properties": {"kit_id": {"type": "integer", "description": "omit = the active kit"}, **_KIT_PROPS,
+                     "font": {"type": "string", "enum": list(templates.HEAD_FONTS), "description": "same as head_font"},
+                     "end_card": {"type": "object", "properties": {"on": {"type": "boolean"}, "line": {"type": "string"}, "cta": {"type": "string"}}}}}},
     {"name": "set_active_brand_kit", "description": "Make a brand kit the active one: every template, video theme, carousel, thumbnail and "
      "end card renders from it from now on.", "inputSchema": {"type": "object", "required": ["kit_id"], "properties": {"kit_id": {"type": "integer"}}}},
     {"name": "preview_brand_kit", "description": "Render the whole gallery in a kit without saving: every video theme's title card, the "
@@ -963,7 +995,7 @@ def call_tool(studio, actor, name: str, args: dict):
         if name == "create_brand_kit":
             return bk.create(actor, args)
         if name == "update_brand_kit":
-            return bk.update(actor, int(args.get("kit_id") or 0), {k: v for k, v in args.items() if k != "kit_id"})
+            return bk.update(actor, int(args.get("kit_id") or 0) or None, {k: v for k, v in args.items() if k != "kit_id"})
         if name == "set_active_brand_kit":
             return bk.activate(actor, int(args.get("kit_id") or 0))
         if name == "preview_brand_kit":

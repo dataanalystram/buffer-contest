@@ -177,6 +177,11 @@ class House:
 
     def save_kit(self, a: Actor, patch: dict) -> dict:
         self.studio._guard_write(a, "save_brand_kit")  # SECURITY_RULES 4: kill switch + daily cap for agents
+        from .userlocks import held
+        with held(a.uid):  # B2: read-modify-write of the kit row
+            return self._save_kit_locked(a, patch)
+
+    def _save_kit_locked(self, a: Actor, patch: dict) -> dict:
         cur = self.kit(a)
         allowed = {"name", "handle", "website", "font", "logo", "voice"}
         for k in allowed & set(patch):
@@ -1155,6 +1160,17 @@ class House:
             gh_ok, gh_why = self._dispatch_github_actions(jid, workflow, inputs, ttl)
             return gh_ok, f"{why}; fallback: {gh_why}"
         return self._dispatch_github_actions(jid, workflow, inputs, ttl)
+
+    @staticmethod
+    def backend_label(why: str) -> str:
+        """Which worker took the job, from _dispatch_github's answer: InstaBox, or GitHub Actions (also as InstaBox's
+        fallback). Replies name the real backend (owner bug 2 Nov 2026: an InstaBox render was called the GitHub worker)."""
+        w = str(why or "")
+        if "fallback:" in w:
+            return "the GitHub Actions video worker (InstaBox fallback)"
+        if w.startswith("InstaBox"):
+            return "the InstaBox video worker"
+        return "the GitHub Actions video worker"
 
     def _dispatch_github_actions(self, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:
         """The GitHub Actions render run (the default backend, and the fallback when InstaBox fails)."""

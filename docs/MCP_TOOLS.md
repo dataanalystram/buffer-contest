@@ -100,6 +100,7 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 
 | Tool | Brain | What it does |
 |---|---|---|
+| `update_brand_kit` | no model | Change kit fields; no `kit_id` = the active kit (one tool: the client-brain duplicate was removed on 2 Nov 2026). |
 | `get_brand` | no model | The user's brand kit (name, handle, colors, font, logo, end card, voice) and the Style Ledger rules. |
 | `brand_check` | no model | Check a caption (and optionally a HuhQueue media token) against every Style Ledger rule. |
 | `remember_rule` | client brain \* | Save a brand rule to the Style Ledger without a run (e.g. from the user's feedback on past posts). |
@@ -141,6 +142,8 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `get_template_video` | client brain * | Status of a template Reel the video worker is rendering (render_template's video_job.id), with its URL when done. |
 | `schedule_template_slot` | client brain * | Add a recurring Planner slot for a template (e.g. weekly_recap every mon 20:00 Europe/Dublin). |
 | `templates_slot_run` | client brain * | Fire a recurring template slot now: render it from this week's posts and put one Buffer DRAFT per channel at the slot's next time. |
+| `create_template` | no model | Build a NEW custom template for this workspace (funding announcement, job opening...): name, base layout (kit / bold_news / editorial / minimal / playful), fields, up to 8 slides (front, bullets, story, stat, quote, breaking) with `{field}` placeholders. Renders in the active kit, Follow end card last, shown in the Templates tab as `custom:<slug>`, recorded in the Style Ledger. Max 20 per workspace. |
+| `update_template` / `delete_template` | no model | Change or delete a custom template (`template: custom:<slug>`). |
 
 ### Onboarding and the in-app brain
 
@@ -188,6 +191,29 @@ These act on one post run (`run_id`), the same steps HuhQueue's in-app agent tak
 | `post_x_oembed` | client brain \* | Read an X/Twitter post through the public oEmbed endpoint: author, handle, text, date. |
 
 92 tools in total (from `tools/list`, 92 as of this branch).
+
+## Prompts and resources
+
+`prompts/list` and `prompts/get` give the recipes as ready prompts (the client's model follows them; no HuhQueue AI):
+`launch_video_in_my_brand(link, channel?, seconds?)`, `product_hunt_to_reel_draft(product_hunt_url)`,
+`carousel_from_link(link, slides?)`, `one_take_clips(video_url, clips?)`, `new_template(purpose)`.
+
+`resources/list` and `resources/read` give read-only context: `huhqueue://brand-kit/active` (JSON),
+`huhqueue://brand-kit/active/design.md`, `huhqueue://themes`, `huhqueue://templates` (built-in + custom),
+`huhqueue://docs/MCP_TOOLS.md` (this file) and `huhqueue://docs/DESIGN.md`.
+
+## Covers
+
+`edit_video(cover={title, image_url?, index?, opening_frame?})` renders the 3 branded cover variants on the worker; the
+chosen one becomes the Reel's opening frames (so Instagram and TikTok show it as the thumbnail). `render_status` returns
+`covers[].urls` and `cover_url`. `create_package(cover={url, frame_s})` puts the cover on the package (Planner, previews)
+and sends `frame_s` as Buffer's `thumbnailOffset` for Instagram, TikTok and Pinterest Reels.
+
+## Several sessions at once
+
+Brand kit writes (activate, update, save, the HuhByte seed, the kit cap) run under a per-workspace lock, so parallel
+sessions never lose a write or make a duplicate kit. The active kit is per workspace: to render in another kit without
+switching it under another session, pass `kit_id` to `render_template`.
 
 ## Recipes (client brain, $0 HuhQueue AI)
 

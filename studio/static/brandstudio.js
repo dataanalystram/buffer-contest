@@ -119,9 +119,10 @@
     try {
       const d = await api("/api/brand-studio");
       B.tpls = d.templates; B.styles = d.styles; B.examples = d.examples; B.slots = d.slots; B.channels = d.channels;
-      $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+      // custom templates (create_template over MCP / REST / the agent) carry custom: true and show with a "Custom" mark
+      $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}${t.custom ? " · Custom" : ""}</option>`).join("");
       $("#bsTplR").innerHTML = $("#bsTpl").innerHTML;
-      $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single").map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+      $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single" && !t.custom).map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
       $("#bsSvc").innerHTML = Object.entries(d.channels).filter(([, c]) => !c.video_only).map(([k, c]) => `<option value="${k}">${esc(c.label)} (${c.ratio})</option>`).join("");
       $("#bsTpl").value = B.tpl; $("#bsSvc").value = B.svc;
       fillKit(d.kit); examples(d.active); slots();
@@ -244,7 +245,7 @@
         const r = await api("/api/brand-studio/preview", { method: "POST", body: { template: t.id, service: "instagram", width: 240, max: 1 } });
         if (seq !== B.tplSeq) return;
         const f = box.querySelector(`[data-tpl="${t.id}"]`);
-        if (f) f.innerHTML = `<img src="${r.slides[0]}" alt="${esc(t.name)} in your kit" data-testid="tpl-preview"><figcaption>${esc(t.name)}</figcaption>`;
+        if (f) f.innerHTML = `<img src="${r.slides[0]}" alt="${esc(t.name)} in your kit" data-testid="tpl-preview"><figcaption>${esc(t.name)}${t.custom ? ' <span class="bs-custom" data-testid="tpl-custom">Custom</span>' : ""}</figcaption>`;
       } catch (e) { if (seq !== B.tplSeq) return; }
     }
     box.classList.remove("stale"); box.setAttribute("aria-busy", "false");
