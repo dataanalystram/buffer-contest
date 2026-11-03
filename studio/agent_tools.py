@@ -1128,7 +1128,7 @@ class Tools(EditorialTools):
         return [self._keep(templates.jpeg(im), f"{template}-{i + 1}.jpg", {"type": "photo", "template": template, "width": im.width,
                                                                           "height": im.height}) for i, im in enumerate(ims)]
 
-    def template_previews(self, ids: list[str] | None = None) -> dict[str, str]:
+    def template_previews(self, ids: list[str] | None = None, limit: int = 4) -> dict[str, str]:
         """Small first-slide previews of the suggested templates, drawn from THIS run's facts in the run's kit. Returned as
         data URLs and cached in memory (nothing is stored, so viewing a run never writes)."""
         import base64
@@ -1145,7 +1145,7 @@ class Tools(EditorialTools):
         key = hashlib.sha256(json.dumps([st.get("headline"), kit.get("colors"), kit.get("font"), kit.get("theme"), kit.get("logo")],
                                         sort_keys=True, default=str).encode()).hexdigest()[:16]
         out = {}
-        for tid in (ids or rec.get("suggestions") or [])[:4]:
+        for tid in (ids or rec.get("suggestions") or [])[:max(1, min(int(limit or 4), 24))]:
             ck = (self.rid, tid, key)
             if ck in _PREVIEWS:
                 out[tid] = _PREVIEWS[ck]

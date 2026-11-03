@@ -779,19 +779,27 @@ class Brain:
         tail = "" if default else " Your default kit is unchanged; say “make it my default” to use it on every post."
         self._say(a, rid, f"Done: this post now uses {why}.{tail}")
 
-    def templates(self, a: Actor, rid: int, previews: bool = True) -> dict:
-        """The run's template and why, 3-4 suggestions with previews from the run's own facts, and every template by name."""
+    def templates(self, a: Actor, rid: int, previews: bool = True, everything: bool = False) -> dict:
+        """The run's template and why, 3-4 suggestions with previews from the run's own facts, and every template by name.
+        everything=True ("All templates…"): every built-in and custom template, each with its first slide drawn from this
+        run's facts in the run's kit (owner, 3 Nov 2026: the chip did nothing)."""
         run = self.h.run(a, rid)
         if run["kind"] != "agent":
             raise ActionError("Templates are for posts made by the agent.", 409)
         tools = Tools(self.h, a, rid)
         rec = tools._template_choice(run)
-        pv = tools.template_previews() if previews else {}
         cat = template_pick.catalog(tools._custom_list())
+        ids = [t for t in rec.get("suggestions") or [] if t in cat]
+        if everything:
+            ids = [rec["id"]] if rec["id"] in cat else []
+            ids += [t for t in cat if t not in ids and (t not in template_pick.NOT_SUGGESTED or t == rec["id"])
+                    and tools._drawable(t) == t or (t == template_pick.NEWS and t not in ids)]
+        pv = tools.template_previews(ids, limit=len(ids)) if previews else {}
         return {"template": {k: rec.get(k) for k in ("id", "name", "why", "auto", "kit", "slide_names")},
                 "options": [{"id": t, "name": cat[t]["name"], "about": cat[t].get("about") or "", "preview": pv.get(t, ""),
-                             "current": t == rec["id"]} for t in rec.get("suggestions") or [] if t in cat],
-                "all": tools.template_names()}
+                             "current": t == rec["id"], "custom": bool(cat[t].get("custom")),
+                             "kind": cat[t].get("kind") or "carousel"} for t in ids],
+                "all": tools.template_names(), "kit": rec.get("kit") or (tools._kit().get("name") or "")}
 
     def set_template(self, a: Actor, rid: int, body: dict) -> dict:
         """REST / MCP: switch the template by name or id, for the post or the slides given. Runs like a thread reply."""
