@@ -12,7 +12,9 @@
 .lg-scope-label{font-size:12px;color:var(--muted)}
 .lg-stats{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:14px;color:var(--muted);margin:0 0 16px}
 .lg-stats b{color:var(--ink);font-variant-numeric:tabular-nums}
-.lg-filter{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 24px;overflow-x:auto}
+.lg-filter{display:flex;flex-wrap:nowrap;gap:4px;margin:8px 0 24px;overflow-x:auto;scrollbar-width:none;max-width:100%}
+.lg-filter::-webkit-scrollbar{display:none}
+.lg-filter button{white-space:nowrap;flex:none}
 .lg-filter small{font-size:12px;opacity:.75;font-variant-numeric:tabular-nums}
 .lg-h{font-size:18px;font-weight:600;margin:0 0 4px;display:flex;align-items:baseline;gap:8px}
 .lg-h small{font-size:12px;font-weight:400;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -67,6 +69,7 @@
 .lg-evl li{display:grid;gap:2px;padding-left:10px;border-left:2px solid var(--ok)}
 .lg-evl li.warn{border-left-color:var(--warn)}
 .lg-evl q{color:var(--muted);font-size:12px}
+.lg-evl a{justify-self:start;text-align:left}
 .lg-draft [data-review]{justify-self:start}
 .lg-share{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .lg-share input{flex:1;min-width:0;font-family:var(--mono);font-size:12px}

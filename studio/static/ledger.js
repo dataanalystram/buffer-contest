@@ -175,7 +175,8 @@
       try {
         const r = await api("/api/ledger", { method: "POST", body: { correction: v, scope: readScope(fs) } });
         toast(r.added.length ? "Learned: " + r.added.map((x) => x.rule).join(" · ") : r.message, 5000);
-        if (r.added.length) { $("#ruleIn").value = ""; if (fs) fs.querySelectorAll("input").forEach((i) => (i.checked = i.value === "all")); }
+        if (r.added.length) { $("#ruleIn").value = ""; if (fs) fs.querySelectorAll("input").forEach((i) => (i.checked = i.value === "all"));
+          const lab = form.querySelector("[data-scope-label]"); if (lab) lab.textContent = "All channels"; }
         loadLedger();
       } catch (e) { toast(e.message, 5000); }
     });
