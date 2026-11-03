@@ -89,7 +89,10 @@ WRITES = [  # (method, path, body): delete, wipe, send, schedule, connect, setti
     ("POST", "/api/device-link", {}),
     ("POST", "/api/ideas", {"title": "x"}),
     ("POST", "/api/takes", {"url": "https://youtu.be/x"}),
-    ("POST", "/api/sources/scan", {}),
+    ("POST", "/api/sources/refresh", {}),
+    ("POST", "/api/brand-kits", {"sample": "notion"}),
+    ("POST", "/api/brand/samples/linear/schedule", {}),
+    ("PATCH", "/api/takes/1/clips/c2", {"caption": "x"}),
     ("PUT", "/api/prefs/appearance", {"mode": "dark"}),
     ("POST", "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
 ]
@@ -182,3 +185,33 @@ def test_outbound_guard_blocks_any_client_while_offline():
     assert httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200))).get("https://x.test/").status_code == 200
     assert "https://api.anthropic.com/v1/x" in demo_view.refused()
     json.dumps(demo_view.refused())
+
+
+def test_the_demo_still_shows_everything_without_calling_out(world):
+    """View-only, not empty: the sample runs, One take's plan, the brand kits and the template previews all still work,
+    and none of them reaches Buffer, a model, the worker or any other host."""
+    app, calls, _ = world
+    a = _demo(app)
+    kits = a.get("/api/brand-kits").json()["kits"]
+    assert [k["name"] for k in kits] == ["Nothing", "HuhByte AI"]
+    assert a.post(f"/api/brand-kits/{kits[1]['id']}/activate", json={}).status_code == 200  # switching sample kits is viewing
+    assert a.get("/api/brand-studio").json()["kit"]["name"] == "HuhByte AI"
+    assert a.post("/api/brand-studio/examples/buffer").json()["kit"]["name"] == "Buffer"
+    assert a.post("/api/brand/extract", json={"url": "https://www.notion.com"}).json()["source"] == "sample"
+    live = a.post("/api/brand/extract", json={"url": "https://acme.example"})
+    assert live.status_code >= 400 and "no outbound calls" in live.json()["error"]
+    pv = a.post("/api/brand-studio/preview", json={"template": "launch", "service": "instagram", "width": 200, "max": 1}).json()
+    assert pv["slides"][0].startswith("data:image/")
+    reel = a.post("/api/templates/render", json={"template": "weekly_recap", "services": ["instagram"], "video": True}).json()
+    assert reel["video"]["example"] is True
+    t = a.post("/api/takes/sample", json={}).json()
+    assert t["status"] == "ready" and len(t["clips"]) == 5
+    plan = a.post(f"/api/takes/{t['id']}/place", json={"dry_run": True}).json()
+    assert plan["dry_run"] and len(plan["plan"]["placements"]) == 5
+    scan = a.post("/api/sources/scan", json={}).json()
+    assert scan["sample"] is True
+    assert a.post("/api/sources/draft", json={"run_id": scan["run_id"]}).json()["packages"]
+    run = a.post("/api/agent/runs", json={"query": "AI agents", "format": "carousel"}).json()
+    assert run["status"] == "ready", run.get("steps")
+    assert a.get("/api/calendar").status_code == 200 and a.get("/api/inbox").status_code == 200
+    assert calls == []
