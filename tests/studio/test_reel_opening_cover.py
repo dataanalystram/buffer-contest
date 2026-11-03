@@ -70,8 +70,14 @@ def test_cover_is_one_short_opening_still_never_followed_by_the_title_card(tmp_p
     px = Image.open(compose.frame_at(m["path"], 0.1, str(tmp_path / "f0.png"))).convert("RGB").getpixel((540, 960))
     assert abs(px[0] - 201) < 14 and abs(px[2] - 250) < 14  # the frame the thumbnailOffset points at is the cover
     # the end: the facts card then ONE end card (never two end cards)
-    tail = [s for s in _stills(m["path"], max(0.0, m["duration"] - 8.0)) if s[1] >= 1.0]
-    assert sum(1 for s in tail if abs(s[1] - compose.CARD_SECS) < 0.4) == 1, tail
+    tail = [s for s in _stills(m["path"], max(0.0, m["duration"] - 9.0)) if s[1] >= 1.0]
+    assert len(tail) == 2, tail  # the facts card, then the end card
+    last = Image.open(compose.frame_at(m["path"], m["duration"] - 0.3, str(tmp_path / "last.png"))).convert("L").resize((54, 96))
+
+    def same(t):
+        im = Image.open(compose.frame_at(m["path"], t, str(tmp_path / f"s{t:.2f}.png"))).convert("L").resize((54, 96))
+        return sum(abs(x - y) for x, y in zip(im.getdata(), last.getdata())) / (54 * 96) < 6
+    assert sum(1 for st, d in tail if same(st + d / 2)) == 1, tail  # the end card shows once
 
 
 @needs_ff
