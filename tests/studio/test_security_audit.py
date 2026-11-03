@@ -246,7 +246,8 @@ def test_6_anonymous_and_sample_requests_are_rate_limited_per_ip(client, human):
     assert all(human.get("/api/session").status_code == 200 for _ in range(8))  # a real account is never slowed
 
 
-def test_6_the_sample_ai_cap_is_atomic_under_parallel_calls(app):
+def test_6_the_sample_ai_cap_is_atomic_under_parallel_calls(app, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # the capped demo; the default view-only demo refuses uploads and AI outright
     store = app.state.store
     uid = demo_guard.PREFIX + "race"
     demo_guard.register(store, uid, "203.0.113.50")
@@ -262,7 +263,8 @@ def test_6_the_sample_ai_cap_is_atomic_under_parallel_calls(app):
     assert sum(got) == demo_guard.CAPS["ai"][0]  # exactly the cap, never more
 
 
-def test_6_sample_uploads_are_capped_per_file_and_per_day(client):
+def test_6_sample_uploads_are_capped_per_file_and_per_day(client, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # the capped demo; the default view-only demo refuses uploads and AI outright
     client.get("/demo")
     csrf = client.get("/api/session").json()["csrf"]
     client.headers["X-HQ-CSRF"] = csrf
@@ -278,6 +280,7 @@ def test_6_sample_uploads_are_capped_per_file_and_per_day(client):
 
 # ------------------------------------------------------------------ 7. unbounded upload body (HQ-UPLOAD-UNBOUNDED-BODY)
 def test_7_upload_authenticates_first_and_caps_the_body_before_decoding(client, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # the capped demo; the default view-only demo refuses uploads and AI outright
     anon = TestClient(client.app, base_url="https://hq.test")
     assert anon.post("/api/media", json={"name": "a.jpg", "data": "AAAA"}).status_code == 401  # no body work for strangers
     monkeypatch.setattr(limits, "MEDIA_MAX", 2000)

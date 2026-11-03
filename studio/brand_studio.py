@@ -273,7 +273,7 @@ class BrandStudio:
         if not self._known(a, tpl):
             raise StudioError("Unknown template.")
         if demo_guard.is_demo(a.uid) and not demo_guard.allowed(self.store, a.uid, "run"):
-            raise StudioError(demo_guard.WHY["run"])
+            raise StudioError(demo_guard.why("run"))
         from .userlocks import rate_hit
         if not rate_hit(_previews, a.uid, time.time(), PREVIEWS_PER_MIN):  # B4: one lock for the shared window
             raise StudioError("Too many preview redraws this minute. Pause for a moment.")
@@ -333,7 +333,7 @@ class BrandStudio:
         self.studio._guard_write(a, "render_template")
         demo = demo_guard.is_demo(a.uid)
         if demo and not demo_guard.take(self.store, a.uid, "run"):
-            raise StudioError(demo_guard.WHY["run"])
+            raise StudioError(demo_guard.why("run"))
         kit, b = self.kit_brand(a, body.get("kit_id"))
         services = [s for s in (body.get("services") or kit.get("channels") or ["instagram"]) if s in templates.CHANNELS][:6]
         data = body.get("data") if isinstance(body.get("data"), dict) else None

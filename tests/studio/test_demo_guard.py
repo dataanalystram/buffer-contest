@@ -9,11 +9,28 @@ from studio.store import Store
 UID, UID2 = demo_guard.PREFIX + "ws1", demo_guard.PREFIX + "ws2"
 
 
+@pytest.fixture(autouse=True)
+def _capped_demo(monkeypatch):
+    """These tests cover the capped (spending) demo, kept behind HQ_DEMO_VIEW_ONLY=0; the default view-only demo spends
+    nothing at all and is tested in test_demo_view_only.py."""
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")
+
+
 @pytest.fixture
 def store(tmp_path):
     st = Store(str(tmp_path / "g.db"), "k" * 64)
     demo_guard.ensure(st)
     return st
+
+
+def test_view_only_demo_never_spends(store, monkeypatch):
+    monkeypatch.delenv("HQ_DEMO_VIEW_ONLY")
+    demo_guard.register(store, UID, "1.2.3.4")
+    for kind in demo_guard.SPEND_KINDS:
+        assert demo_guard.take(store, UID, kind) is False and demo_guard.allowed(store, UID, kind) is False
+        assert demo_guard.left(store, UID)[kind] == 0
+    assert demo_guard.take(store, "acc_1", "ai") is True  # real accounts are untouched
+    assert "spends nothing" in demo_guard.why("ai")
 
 
 def test_real_accounts_are_never_capped(store):
