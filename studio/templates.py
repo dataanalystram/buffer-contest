@@ -468,7 +468,10 @@ def end_card(b: Brand, ratio: str, n=None) -> Image.Image:
     return im
 
 
-def story_slide(b: Brand, ratio: str, num: int, title: str, body: str, tag: str = "", source: str = "", n=None) -> Image.Image:
+def story_slide(b: Brand, ratio: str, num: int, title: str, body: str, tag: str = "", source: str = "", n=None,
+                big: str = "") -> Image.Image:
+    """A numbered story card. ``big`` replaces the slide number with a figure (custom templates' stat slide: "$1.3M"),
+    shrunk until it fits the frame's width."""
     W, H, m, wide = _frame(ratio)
     style = "grid" if b.front_style == "grid" else ("minimal" if b.front_style == "minimal" else "plain")
     im = _ground(W, H, b, style)
@@ -476,8 +479,12 @@ def story_slide(b: Brand, ratio: str, num: int, title: str, body: str, tag: str 
     ink, muted = _ink(b, style)
     _logo(im, b, int(W * (0.16 if not wide else 0.11)), (m, m), style)
     nf = b.head(int(min(W, H) * (0.3 if not wide else 0.36)))
-    num_t = f"{num:02d}"
+    num_t = (big or "").strip()[:16] or f"{num:02d}"
     nb = d.textbbox((0, 0), num_t, font=nf)
+    room = (W * 0.45) if wide else (W - 2 * m)
+    while big and nb[2] - nb[0] > room and nf.size > 40:  # a long figure ("$1,300,000") shrinks to the width
+        nf = b.head(int(nf.size * 0.9))
+        nb = d.textbbox((0, 0), num_t, font=nf)
     nw, nh = nb[2] - nb[0], nb[3] - nb[1]
     gap = int(min(W, H) * 0.035)
     x0, maxw = (m + nw + int(W * 0.05), W - 2 * m - nw - int(W * 0.05)) if wide else (m, W - 2 * m)
