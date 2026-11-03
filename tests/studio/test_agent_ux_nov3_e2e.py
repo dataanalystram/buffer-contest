@@ -18,7 +18,7 @@ from studio.config import load_settings
 from . import conftest
 from .browsers import free_port, serve
 from .conftest import FakeBuffer
-from .test_agent_core import OWNER_CHANNELS, jpeg
+from .test_agent_core import OWNER_CHANNELS, Router, jpeg
 from .test_agent_ux_nov3 import FACTS, GH, PROMPT, VID
 
 pw = pytest.importorskip("playwright.sync_api")
@@ -34,7 +34,7 @@ def live(tmp_path, monkeypatch):
     s = load_settings(client_id="cid", client_secret="sec", public_url=f"http://127.0.0.1:{port}", session_secret="u" * 64,
                       db_path=str(tmp_path / "ux.db"), secure_cookies=False, ai_base_url="")
     s.extra.update(sync_agent=True)
-    app = create_app(s, http=httpx.Client(transport=httpx.MockTransport(fake)))
+    app = create_app(s, http=httpx.Client(transport=httpx.MockTransport(Router(fake))))
     h = app.state.house
     h.sync, h.worker_mode = True, "local"
     monkeypatch.setattr(house.House, "_fetch_bytes", lambda self, url, limit: jpeg() if url else None)
