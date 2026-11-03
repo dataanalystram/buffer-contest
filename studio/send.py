@@ -103,9 +103,11 @@ def net_key(ip: str) -> str:
         addr = ipaddress.ip_address((ip or "").strip())
     except ValueError:
         return ip or "unknown"
-    if addr.version == 6 and addr.ipv4_mapped is None:
+    if addr.version == 6:
+        if addr.ipv4_mapped:
+            return str(addr.ipv4_mapped)
         return str(ipaddress.ip_network(f"{addr}/64", strict=False))
-    return str(addr.ipv4_mapped or addr)
+    return str(addr)
 
 
 def _too_many_wrong(ip: str) -> bool:

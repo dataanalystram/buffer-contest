@@ -210,7 +210,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 staticver.cache_header(request.url.path[len("/static/"):], request.query_params.get("v")):
             resp.headers["Cache-Control"] = staticver.IMMUTABLE  # a versioned URL (staticver): a deploy changes the URL
         elif request.url.path in PAGES or request.url.path.startswith(("/static/", "/docs", "/send")):
-            resp.headers["Cache-Control"] = "no-cache"  # always revalidate, so a deploy is picked up at once
+            if "no-store" not in resp.headers.get("cache-control", ""):  # /send/<code>/status says no-store: keep it
+                resp.headers["Cache-Control"] = "no-cache"  # always revalidate, so a deploy is picked up at once
         elif request.url.path.startswith("/api/") and "cache-control" not in resp.headers:
             resp.headers["Cache-Control"] = "no-store"  # API answers carry CSRF tokens and private data: never cached
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")

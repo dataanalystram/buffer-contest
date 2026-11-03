@@ -216,8 +216,8 @@ def test_non_media_is_refused_whatever_the_name_says(human, phone, body):
 
 
 @pytest.mark.parametrize("name,want", [
-    ("../../../etc/passwd.jpg", "passwd.jpg"), ("..\\..\\boot.ini", "boot.mp4"),
-    ('<img src=x onerror=alert(1)>.svg', "img src_x onerror_alert_1.mp4"), ("a\x00b\r\nc.html", "a_b_c.mp4"),
+    ("../../../etc/passwd.jpg", "passwd.mp4"), ("..\\..\\boot.ini", "boot.mp4"),
+    ('<img src=x onerror=alert(1)>.svg', "img src_x onerror_alert(1).mp4"), ("a\x00b\r\nc.html", "a_b_c.mp4"),
 ])
 def test_names_lose_paths_markup_and_the_clients_extension(human, phone, name, want):
     code = _code(human)
@@ -225,7 +225,7 @@ def test_names_lose_paths_markup_and_the_clients_extension(human, phone, name, w
     assert r.status_code == 200, r.text
     got = r.json()["name"]
     assert "/" not in got and "\\" not in got and "<" not in got and got.endswith(".mp4")
-    assert got == want or got.split(".")[0] in want
+    assert got == want
 
 
 def test_declared_size_over_the_cap_is_refused_before_reading(human, phone):
@@ -417,4 +417,5 @@ def test_access_log_never_holds_a_code_or_upload_token():
         rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d', ("1.2.3.4", "GET", path, "1.1", 200), None)
         f.filter(rec)
         assert rec.args[2] == want
-    assert any(isinstance(x, send_mod.RedactSecretPaths) for x in logging.getLogger("uvicorn.access").filters) or True
+    send_mod.redact_access_log()
+    assert any(isinstance(x, send_mod.RedactSecretPaths) for x in logging.getLogger("uvicorn.access").filters)
