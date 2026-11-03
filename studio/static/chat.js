@@ -21,7 +21,13 @@
     x: '<path d="M6 6l12 12M18 6L6 18"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
     expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>', chip: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
     fold: '<path d="M4 6h16M4 12h10M4 18h7"/>',
+    panel: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/>', clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/>',
+    up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   };
+  // the threads column: inline (and hideable, kept in localStorage hq_threads) on a wide screen, an overlay below 1101 px
+  const TKEY = "hq_threads", overlayMq = matchMedia("(max-width:1100px)"), docEl = document.documentElement;
+  const isOverlay = () => overlayMq.matches;
+  const threadsHidden = () => docEl.classList.contains("threads-hidden");
   const safeUrl = (u) => (typeof u === "string" && (/^https?:\/\//i.test(u) || /^\/(?!\/)/.test(u)) ? u : "");
   const busyRun = (r) => !!r && ["running", "rendering"].includes(r.status);
   const run = () => window.H_STATE && window.H_STATE.run;
@@ -51,12 +57,13 @@
   drawer.hidden = true;
   drawer.innerHTML = `<div class="hc-panel-head"><b id="hcCtxT">What the agent knows</b><button type="button" class="btn2 sm icon" id="hcCtxX" data-testid="chat-context-close" aria-label="Close">${ic(I.x)}</button></div><div class="hc-ctx-body" id="hcCtxBody" aria-live="polite"></div>`;
   const scrim = el("div", "hc-scrim", { id: "hcScrim", "data-testid": "chat-scrim" }); scrim.hidden = true;
+  const sideScrim = el("div", "hc-side-scrim", { id: "hcSideScrim", "data-testid": "chat-sidebar-scrim" }); sideScrim.hidden = true;
   // move house.js's thread nodes into the centered column (their ids and test ids stay)
   [...rv.children].forEach((n) => main.appendChild(n));
   // chat order: the request, the agent's answer, then what's ready (house.js drew the ready summary first)
   const readyBox = document.getElementById("mpReady"), agentMsg = main.querySelector(".mp-msg.agent");
   if (readyBox && agentMsg) agentMsg.after(readyBox);
-  rv.append(side, main, panel);
+  rv.append(side, sideScrim, main, panel);
   document.body.append(drawer, scrim);
 
   // the bar: threads (phone), title, model, context, new post
@@ -64,7 +71,7 @@
   const mpNew = document.getElementById("mpNew");
   mpNew.innerHTML = `${ic(I.plus)}<span>New post</span>`; mpNew.setAttribute("aria-label", "New post");
   const menuB = el("button", "btn2 sm icon hc-menu", { type: "button", id: "hcMenu", "data-testid": "chat-sidebar-open", "aria-label": "Threads", "aria-controls": "hcSide", "aria-expanded": "false" });
-  menuB.innerHTML = ic(I.menu);
+  menuB.innerHTML = ic(I.panel);
   const head = el("div", "hc-head");
   head.innerHTML = `<h2 class="hc-title" id="hcTitle" data-testid="chat-title">Post</h2>`;
   head.appendChild(document.getElementById("mpStatus"));
@@ -75,19 +82,47 @@
   bar.append(model, ctxB);
   bar.appendChild(mpNew);
   // the composer gets a footer with the model; the actions row becomes the Ready to send bar
+  // the composer: one prompt box (text on top; attach, the model pill and Send in a row under it), the quick fixes as a
+  // compact row above it, and the Ready to send bar above that, all in one sticky dock with a solid backing, so nothing in
+  // the thread ever shows through or under it (patterns from assistant-ui / AI Elements prompt input, our own code)
   const reply = document.getElementById("replyForm"), acts = document.getElementById("mpActs");
-  const cfoot = el("div", "hc-cfoot");
-  cfoot.innerHTML = `<span class="muted xs">Enter to send · Shift+Enter for a new line</span><button type="button" class="link xs hc-cmodel" id="hcCModel" data-testid="chat-composer-model" data-go="settings:ai"></button>`;
-  reply.appendChild(cfoot);
+  const row0 = reply.querySelector(".row"), up = document.getElementById("replyUpload"), go = reply.querySelector("[data-testid=reply-go]"), qf = document.getElementById("replyChips");
+  const pbox = el("div", "hc-box", { "data-testid": "chat-prompt-box" }), tools = el("div", "hc-ctools");
+  up.classList.add("hc-attach"); const upl = up.querySelector("span"); if (upl) upl.className = "hc-attach-l";
+  const cmodel = el("button", "hc-pill hc-cmodel", { type: "button", id: "hcCModel", "data-testid": "chat-composer-model", "data-go": "settings:ai" });
+  const hint = el("span", "hc-hint muted xs"); hint.textContent = "Enter to send · Shift+Enter for a new line";
+  go.classList.add("hc-send"); go.innerHTML = `${ic(I.up)}<span class="hc-send-l">Send</span>`;
+  tools.append(up, cmodel, el("span", "hc-sp", { "aria-hidden": "true" }), hint, go);
+  pbox.append(document.getElementById("replyIn"), tools);
+  reply.insertBefore(pbox, row0); row0.remove();
+  reply.insertBefore(qf, pbox);
   acts.classList.add("hc-ready"); acts.setAttribute("role", "region"); acts.setAttribute("aria-label", "Ready to send");
   const readyTxt = el("span", "hc-ready-t", { id: "hcReadyT", "data-testid": "chat-ready-text" });
   acts.prepend(readyTxt);
-  reply.parentNode.insertBefore(acts, reply);  // right above the composer, sticky with it
+  const dock = el("div", "hc-dock", { id: "hcDock", "data-testid": "chat-dock" });
+  reply.parentNode.insertBefore(dock, reply); dock.appendChild(reply);
+  // the Ready bar rides in the dock on a wide screen; on a phone it stays in the thread (the dock would cover half of it)
+  const phoneMq = matchMedia("(max-width:600px)");
+  const placeActs = () => { if (phoneMq.matches) dock.parentNode.insertBefore(acts, dock); else dock.insertBefore(acts, reply); };
+  placeActs(); if (phoneMq.addEventListener) phoneMq.addEventListener("change", placeActs);
   // a phone gets the short placeholder (the long one wrapped onto a second, cut-off line)
   const ri0 = document.getElementById("replyIn"), longPh = ri0.placeholder, mq = matchMedia("(max-width:600px)");
   const ph = () => { ri0.placeholder = mq.matches ? "Ask for a change…" : longPh; };
   ph(); if (mq.addEventListener) mq.addEventListener("change", ph);
-  if (window.ResizeObserver) new ResizeObserver(() => rv.style.setProperty("--hc-composer", reply.offsetHeight + "px")).observe(reply);
+  // drafts: what you typed for a thread stays with that thread (switching threads, toggling sidebars, a reload)
+  const DKEY = "hq_drafts";
+  const drafts = () => { try { return JSON.parse(localStorage.getItem(DKEY) || "{}") || {}; } catch (_) { return {}; } };
+  const saveDrafts = (d) => { const ks = Object.keys(d); ks.slice(0, Math.max(0, ks.length - 20)).forEach((k) => delete d[k]); try { localStorage.setItem(DKEY, JSON.stringify(d)); } catch (_) { /* full or private */ } };
+  let draftT = 0;
+  ri0.addEventListener("input", () => { clearTimeout(draftT); draftT = setTimeout(() => { const r = run(); if (!r) return; const d = drafts(); delete d[r.id];
+    if (ri0.value.trim()) d[r.id] = ri0.value; saveDrafts(d); }, 250); });
+  function syncDraft(r) {
+    if (!r) return;
+    if (HC.draftFor !== r.id) {
+      HC.draftFor = r.id; const t = drafts()[r.id] || "";
+      if (ri0.value !== t) { ri0.value = t; ri0.style.height = "auto"; if (t) ri0.style.height = Math.min(160, ri0.scrollHeight) + "px"; }
+    } else if (!ri0.value) { const d = drafts(); if (d[r.id]) { delete d[r.id]; saveDrafts(d); } }
+  }
 
   // ------------------------------------------------------------ the thread sidebar (past runs = conversations)
   const day = 86400000;
@@ -100,13 +135,14 @@
   }
   const STATE = { ready: "Ready", draft: "In Buffer", scheduled: "Scheduled", running: "Working", failed: "Stopped", interrupted: "Interrupted" };
   // lazy: nothing is drawn until the sidebar can be seen (a thread is open, or the phone drawer), then a page at a time
-  const sideVisible = () => root.classList.contains("mp-in-thread") && (rv.classList.contains("hc-side-open") || !matchMedia("(max-width:1100px)").matches);
+  const sideVisible = () => root.classList.contains("mp-in-thread") && (isOverlay() ? rv.classList.contains("hc-side-open") : !threadsHidden());
   function drawList(force) {
     if (!force && !sideVisible()) { HC.dirty = true; return; }
     HC.dirty = false;
     const box = document.getElementById("hcList"), q = HC.q.trim().toLowerCase(), cur = run() && run().id;
     const all = HC.rows.filter((x) => !q || String(x.title || "").toLowerCase().includes(q));
     const rows = all.slice(0, HC.shown);
+    if (!HC.loaded) { box.innerHTML = `<div class="hc-sk" data-testid="chat-thread-skeleton" aria-busy="true" aria-label="Loading threads">${'<span class="sk sk-row"></span>'.repeat(5)}</div>`; return; }
     if (!rows.length) { box.innerHTML = `<p class="muted sm hc-empty">${HC.rows.length ? "No thread matches." : "Your posts show up here as threads."}</p>`; return; }
     let html = "", g = "";
     for (const x of rows) {
@@ -114,7 +150,7 @@
       if (gg !== g) { if (g) html += "</ul>"; g = gg; html += `<h3 class="hc-grp">${esc(g)}</h3><ul class="hc-ul">`; }
       const on = String(x.id) === String(cur);
       html += `<li class="hc-li${on ? " on" : ""}" data-id="${esc(x.id)}"><button type="button" class="hc-th" data-open="${esc(x.id)}" data-kind="${esc(x.kind)}" data-testid="chat-thread"${on ? ' aria-current="true"' : ""}>
-          <span class="hc-th-t">${esc(x.title || "Your post")}</span><small class="hc-th-s st-${esc(x.state || x.status)}">${esc(STATE[x.state] || x.state || x.status || "")}${x.summarized ? " · summarized" : ""}</small></button>
+          <span class="hc-th-t" title="${esc(x.title || "Your post")}">${esc(x.title || "Your post")}</span><small class="hc-th-s st-${esc(x.state || x.status)}">${esc(STATE[x.state] || x.state || x.status || "")}${x.summarized ? " · summarized" : ""}</small></button>
         ${x.kind === "take" ? "" : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}</li>`;
     }
     box.innerHTML = html + "</ul>" + (all.length > rows.length
@@ -160,13 +196,54 @@
   }
   // house.js loadRuns -> makepost.js mpRecent(rows) -> here too
   const recent = window.mpRecent;
-  window.mpRecent = (rows) => { if (recent) recent(rows); HC.rows = rows || []; drawList(); drawTitle(); };
+  window.mpRecent = (rows) => { if (recent) recent(rows); HC.rows = rows || []; HC.loaded = true; drawList(); drawTitle(); };
+  // the overlay (narrow screens): a modal panel with its own scrim; Esc, the scrim or a click outside closes it; Tab stays inside
   function sideDrawer(open) {
-    rv.classList.toggle("hc-side-open", open); menuB.setAttribute("aria-expanded", String(open)); scrimSync();
+    if (!isOverlay()) open = false;
+    const was = rv.classList.contains("hc-side-open");
+    rv.classList.toggle("hc-side-open", open); sideScrim.hidden = !open;
+    if (open) { side.setAttribute("role", "dialog"); side.setAttribute("aria-modal", "true"); } else { side.removeAttribute("role"); side.removeAttribute("aria-modal"); }
+    syncToggle(); scrimSync();
     if (open && HC.dirty) drawList(true);
-    if (open) document.getElementById("hcQ").focus(); else if (side.contains(document.activeElement)) menuB.focus();
+    if (open) document.getElementById("hcQ").focus(); else if (was && side.contains(document.activeElement)) menuB.focus();
   }
-  menuB.onclick = () => sideDrawer(!rv.classList.contains("hc-side-open"));
+  // the inline column (wide screens): one button shows and hides it; the chat takes the room. Draft, scroll and the open
+  // thread stay put: nothing is redrawn, and the message under the middle of the screen is kept in place while it moves.
+  function anchorKeep(fn) {
+    const kids = [...main.children].filter((n) => !n.hidden && n.offsetParent);
+    const mid = innerHeight / 2, a = kids.find((n) => { const r = n.getBoundingClientRect(); return r.bottom > mid; });
+    const before = a ? a.getBoundingClientRect().top : 0;
+    fn();
+    if (!a) return;
+    const end = performance.now() + 260, keep = () => { const d = a.getBoundingClientRect().top - before; if (Math.abs(d) > 1) window.scrollBy(0, d); if (performance.now() < end) requestAnimationFrame(keep); };
+    requestAnimationFrame(keep);
+  }
+  function setThreads(show, persist) {
+    anchorKeep(() => docEl.classList.toggle("threads-hidden", !show));
+    if (persist) { try { localStorage.setItem(TKEY, show ? "open" : "hidden"); } catch (_) { /* private mode */ } }
+    syncToggle();
+    if (show && HC.dirty) drawList(true);
+    if (!show && side.contains(document.activeElement)) menuB.focus();
+  }
+  function syncToggle() {
+    const open = isOverlay() ? rv.classList.contains("hc-side-open") : !threadsHidden();
+    menuB.setAttribute("aria-expanded", String(open));
+    menuB.setAttribute("aria-label", open ? "Hide threads" : "Show threads"); menuB.title = open ? "Hide threads" : "Show threads";
+    menuB.classList.toggle("on", open);
+  }
+  menuB.onclick = () => (isOverlay() ? sideDrawer(!rv.classList.contains("hc-side-open")) : setThreads(threadsHidden(), true));
+  const onMq = () => { if (!isOverlay()) sideDrawer(false); syncToggle(); };
+  if (overlayMq.addEventListener) overlayMq.addEventListener("change", onMq);
+  side.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab" || !rv.classList.contains("hc-side-open")) return;
+    const f = [...side.querySelectorAll("button,input,a[href],[tabindex]:not([tabindex='-1'])")].filter((n) => !n.disabled && n.offsetParent);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  sideScrim.onclick = () => sideDrawer(false);
+  syncToggle();
   document.getElementById("hcSideX").onclick = () => sideDrawer(false);
   document.getElementById("hcNew").onclick = () => { sideDrawer(false); mpNew.click(); };
 
@@ -187,7 +264,7 @@
   function drawModel() {
     const n = modelName();
     model.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>`; model.setAttribute("aria-label", `Model: ${n}. Open Settings, AI engine`);
-    document.getElementById("hcCModel").textContent = "Model: " + n;
+    cmodel.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>`; cmodel.setAttribute("aria-label", `Model: ${n}. Open Settings, AI engine`); cmodel.title = `Model: ${n}`;
   }
 
   // ------------------------------------------------------------ after every render of the run: decorate
@@ -244,13 +321,17 @@
       at.hidden = false;
     } else at.classList.remove("hc-hide-old");
     // the steps: one "Working… N steps" row, folded unless you opened it (a failure opens it)
+    // the steps: a live list while it works (pending, running, done), the time it has taken, folded into one row once done;
+    // a run with no recorded steps shows "Thinking…" while it works and no row at all after (never "0 steps")
     const tr = document.getElementById("mpTrace"), steps = r.steps || [], cur = steps.find((s) => s.status === "running");
-    const sum = document.getElementById("mpTraceSum");
-    const t = busy ? `Working… ${steps.length} step${steps.length === 1 ? "" : "s"}${cur ? " · " + cur.label : ""}` :
-      `${r.status === "failed" ? "Stopped after" : "Worked through"} ${steps.length} step${steps.length === 1 ? "" : "s"}`;
-    if (sum.textContent !== t) sum.textContent = t;
+    const done = steps.filter((s) => ["done", "warn", "skipped"].includes(s.status)).length;
+    tr.hidden = !busy && !steps.length;
+    traceText(r);
     tr.classList.toggle("hc-working", busy);
-    const want = HC.trace[r.id] ?? ["failed", "interrupted"].includes(r.status);
+    tr.dataset.state = busy ? "working" : r.status === "failed" ? "failed" : "done";
+    tr.style.setProperty("--hc-prog", steps.length ? String(done / steps.length) : "0");
+    clearInterval(HC.tick); if (busy) HC.tick = setInterval(() => { const x = run(); if (x && busyRun(x)) traceText(x); else clearInterval(HC.tick); }, 1000);
+    const want = HC.trace[r.id] ?? (busy ? steps.length > 0 : ["failed", "interrupted"].includes(r.status));
     if (tr.open !== want) { HC.syncing = true; tr.open = want; setTimeout(() => { HC.syncing = false; }, 0); }
     previews();
     // Ready to send
@@ -264,6 +345,21 @@
     // the open drawer refreshes only when the thread changed (a new turn, a new status), never on every poll tick
     const key = `${r.id}:${thread.length}:${r.status}:${(res.packages || []).length}`;
     if (!drawer.hidden && HC.ctxFor === r.id && key !== HC.ctxKey) { HC.ctxKey = key; loadCtx(false); }
+  }
+  const secs = (n) => (n < 60 ? `${Math.max(0, Math.round(n))}s` : `${Math.floor(n / 60)}m ${String(Math.round(n % 60)).padStart(2, "0")}s`);
+  function traceText(r) {
+    const steps = r.steps || [], busy = busyRun(r), cur = steps.find((s) => s.status === "running"), n = steps.length;
+    const t0 = Number(r.created) || 0, t1 = busy ? Date.now() / 1000 : Number(r.updated) || t0;
+    const took = t0 && t1 >= t0 ? secs(t1 - t0) : "";
+    const t = busy ? (n ? `Working… ${n} step${n === 1 ? "" : "s"}${cur ? " · " + cur.label : ""}` : "Thinking…") :
+      `${r.status === "failed" ? "Stopped after" : "Worked through"} ${n} step${n === 1 ? "" : "s"}`;
+    const sum = document.getElementById("mpTraceSum");
+    if (sum.textContent !== t) sum.textContent = t;
+    let tm = document.getElementById("hcTraceTime");
+    if (!tm) { tm = el("span", "hc-trace-time", { id: "hcTraceTime", "data-testid": "mp-trace-time" }); sum.after(tm); }
+    const tt = took ? (busy ? took : `${took}`) : "";
+    if (tm.textContent !== tt) tm.textContent = tt;
+    tm.hidden = !tt;
   }
   document.getElementById("mpTrace").addEventListener("toggle", (e) => { const r = run(); if (r && !HC.syncing) HC.trace[r.id] = e.target.open; });
   // the post cards: a Preview button opens the side panel
@@ -279,7 +375,7 @@
   }
   new MutationObserver(() => previews()).observe(document.getElementById("packages"), { childList: true });
   const onRun = window.mpOnRun;
-  window.mpOnRun = (r) => { if (onRun) onRun(r); rv.classList.toggle("hc-busy", busyRun(r)); setTimeout(decorate, 0); };
+  window.mpOnRun = (r) => { if (onRun) onRun(r); rv.classList.toggle("hc-busy", busyRun(r)); syncDraft(r); setTimeout(decorate, 0); };
 
   // ------------------------------------------------------------ side panel: one post full size
   function openPanel(ch, focus) {
@@ -290,7 +386,7 @@
     const media = (p.media && p.media.length ? p.media : (p.media_urls || []).map((u) => ({ url: u, type: /\.(mp4|mov|m4v|webm)(\?|$)/i.test(u) ? "video" : "photo" })));
     document.getElementById("hcPanelT").textContent = `${p.channel_name || ""} · ${typeof netName === "function" ? netName(p.service) : p.service}`;
     const wrap = el("div", "hc-pv");
-    const fmt = el("p", "muted sm hc-pv-fmt"); fmt.textContent = window.HQ_MEDIA_LABEL ? window.HQ_MEDIA_LABEL(p) : (p.format || ""); wrap.appendChild(fmt);
+    const fmt = el("p", "muted sm hc-pv-fmt"); fmt.textContent = window.HQ_MEDIA_LABEL ? window.HQ_MEDIA_LABEL(p).split(" · ").filter((x) => x !== "…").join(" · ") : (p.format || ""); wrap.appendChild(fmt);
     if (!media.length) { const n = el("p", "muted sm"); n.textContent = "Text only: no image or video on this post."; wrap.appendChild(n); }
     media.forEach((m, i) => {
       const u = safeUrl(m.url); if (!u) return;
@@ -372,7 +468,7 @@
   // a click outside the threads drawer (phone) closes it
   document.addEventListener("click", (e) => { if (rv.classList.contains("hc-side-open") && !side.contains(e.target) && !menuB.contains(e.target)) sideDrawer(false); });
   // leaving the thread (New post, Discover) closes its panels
-  mpNew.addEventListener("click", () => { closePanel(); closeCtx(); rv.classList.remove("hc-side-open"); menuB.setAttribute("aria-expanded", "false"); scrimSync(); });
+  mpNew.addEventListener("click", () => { closePanel(); closeCtx(); if (rv.classList.contains("hc-side-open")) sideDrawer(false); scrimSync(); });
 
   // the start screen's prompt sends on Enter too (Shift+Enter: new line), like the thread composer
   const aq = document.getElementById("agQuery");

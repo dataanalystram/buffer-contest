@@ -1,0 +1,204 @@
+/* Independently collapsible sidebars, a neutral thread list and Settings nav, the prompt box, the agent's step list and
+   skeletons (owner, 3 Nov 2026). Loaded last; only the tokens in style.css (no new colours, no gradients, no glows).
+   Motion: 180 ms on width / grid track / transform only, and only after the first frame (html.hq-anim), so a restored
+   state never animates in; prefers-reduced-motion turns it off. */
+:root{--rail-w:232px;--rail-mini:64px;--hc-side-w:264px;--sb-ease:cubic-bezier(.2,0,0,1);--sb-t:180ms;
+  --sel-bg:color-mix(in oklab,var(--ink) 6%,transparent);--sel-line:color-mix(in oklab,var(--ink) 16%,transparent);--hov-bg:color-mix(in oklab,var(--ink) 4%,transparent)}
+
+/* ---------------------------------------------------------------- main sidebar: 232 px, or a 64 px icon rail */
+.rail-toggle{display:none}
+.hq-tip{position:fixed;z-index:80;max-width:240px;padding:5px 9px;border-radius:6px;background:var(--ink);color:var(--paper);font-size:12px;font-weight:600;
+  line-height:1.3;white-space:nowrap;pointer-events:none;box-shadow:var(--float)}
+.hq-tip[hidden]{display:none}
+@media (min-width:861px){
+  .shell{flex-wrap:nowrap}
+  .rail{flex:0 0 auto;width:var(--rail-w);max-width:none;position:sticky;top:var(--hc-top,64px);align-self:flex-start;height:calc(100dvh - var(--hc-top,64px));
+    overflow-y:auto;overflow-x:hidden;padding:12px 12px 24px;scrollbar-width:thin}
+  .rail button{position:relative;flex:none;white-space:nowrap;overflow:hidden}
+  .rail button > span:not(.badge){overflow:hidden;text-overflow:ellipsis}
+  .rail-toggle{display:grid;place-items:center;align-self:flex-end;width:36px;height:36px!important;min-height:36px;padding:0!important;margin:0 2px 8px;
+    border-radius:8px;color:var(--muted)}
+  .rail-toggle:focus-visible,.rail button:focus-visible{outline:2px solid var(--focus,var(--ink));outline-offset:-2px}
+  :root.rail-collapsed .rail{width:var(--rail-mini);padding:12px 10px 24px}
+  :root.rail-collapsed .rail button{justify-content:center;gap:0;padding:0}
+  :root.rail-collapsed .rail button > span:not(.badge){position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}  /* kept as the accessible name */
+  :root.rail-collapsed .rail-toggle{align-self:center;margin:0 0 8px}
+  :root.rail-collapsed .rail .rail-sep::before{left:6px;right:6px}
+  :root.rail-collapsed .rail .badge{position:absolute;top:3px;right:3px;margin:0;min-width:16px;height:16px;padding:0 4px;font-size:10px;line-height:16px;border-radius:999px;
+    display:grid;place-items:center;background:var(--sunken);color:var(--ink)}
+  :root.rail-collapsed .rail .badge.hot{background:var(--accent);color:var(--on-accent)}
+  :root.rail-collapsed .rail .badge[hidden]{display:none}
+  :root.hq-anim .rail{transition:width var(--sb-t) var(--sb-ease),padding var(--sb-t) var(--sb-ease)}
+}
+
+/* ---------------------------------------------------------------- threads: an inline column, hideable */
+#runView.hc{grid-template-columns:var(--hc-side-w) minmax(0,1fr);column-gap:24px}
+.hc-main{max-width:920px}
+.hc-side{width:var(--hc-side-w);padding:10px;gap:8px;border-radius:14px}
+:root.hq-anim #runView.hc{transition:grid-template-columns var(--sb-t) var(--sb-ease),column-gap var(--sb-t) var(--sb-ease)}
+@media (min-width:1101px){
+  :root.threads-hidden #runView.hc{grid-template-columns:0px minmax(0,1fr);column-gap:0}
+  :root.threads-hidden .hc-side{opacity:0;transform:translateX(-12px);visibility:hidden;pointer-events:none}
+  :root.hq-anim .hc-side{transition:opacity 150ms var(--sb-ease),transform var(--sb-t) var(--sb-ease),visibility 0s linear 0s}
+  :root.hq-anim.threads-hidden .hc-side{transition:opacity 120ms var(--sb-ease),transform var(--sb-t) var(--sb-ease),visibility 0s linear var(--sb-t)}
+}
+/* the toggle in the chat bar: every width; its state is aria-expanded */
+.hc-menu{display:inline-grid!important;place-items:center;flex:none;width:40px;height:40px;padding:0;border-radius:10px;border-color:var(--line);color:var(--muted)}
+.hc-menu:hover{color:var(--ink)}
+.hc-menu[aria-expanded=true]{color:var(--ink);background:var(--sel-bg);border-color:var(--sel-line)}
+.hc-menu .ic{width:18px;height:18px}
+/* narrow screens: an overlay with a scrim, never squeezing the conversation */
+.hc-side-scrim{display:none}
+@media (max-width:1100px){
+  .hc-side-scrim:not([hidden]){display:block;position:fixed;inset:0;z-index:41;background:rgba(10,10,12,.48)}
+  #runView.hc-side-open::before{content:none}
+  .hc-side{width:min(320px,86vw);top:var(--hc-top);border-radius:0 14px 14px 0;transform:translateX(-104%)}
+  :root.hq-anim .hc-side{transition:transform var(--sb-t) var(--sb-ease),visibility 0s linear var(--sb-t)}
+  :root.hq-anim #runView.hc-side-open .hc-side{transition:transform var(--sb-t) var(--sb-ease),visibility 0s}
+}
+
+/* ---------------------------------------------------------------- the thread list: neutral, outlined selection */
+.hc-side-head{min-height:40px}
+.hc-side-t{font-size:13px;font-weight:700;letter-spacing:.01em}
+.hc-newb{min-height:34px;height:34px;padding:0 10px;border-radius:9px;border-color:var(--line);font-size:13px}
+.hc-newb .ic{width:16px;height:16px}
+.hc-search input{height:36px;border-radius:9px;background:transparent;font-size:13px}
+.hc-search input:focus{border-color:var(--line-strong);outline:none}
+.hc-grp{font-size:11px;letter-spacing:.04em;margin:14px 8px 4px;font-weight:600}
+.hc-ul{gap:1px}
+.hc-li{position:relative;border-radius:9px;box-shadow:none}
+.hc-li:hover{background:var(--hov-bg)}
+.hc-li.on{background:var(--sel-bg);box-shadow:inset 0 0 0 1px var(--sel-line)}
+.hc-th{min-height:44px;padding:6px 8px 6px 10px;gap:1px;border-radius:9px}
+.hc-th:focus-visible,.hc-th-r:focus-visible{outline:2px solid var(--focus,var(--ink));outline-offset:-2px}
+.hc-th-t{font-size:13.5px;font-weight:500;line-height:1.35;-webkit-line-clamp:1;color:var(--ink)}
+.hc-li.on .hc-th-t{font-weight:600}
+.hc-th-s{font-size:12px}
+.hc-th-r{width:34px;min-height:34px;margin:5px 4px 5px 0;opacity:0;border-radius:8px}
+.hc-li:hover .hc-th-r,.hc-th-r:focus-visible,.hc-li.on .hc-th-r{opacity:.75}
+.hc-th-r:hover{opacity:1;background:var(--hov-bg)}
+.hc-th-r .ic{width:15px;height:15px}
+@media (hover:none){.hc-th-r{opacity:.75}}
+.hc-ren input{border-color:var(--line-strong)}
+
+/* ---------------------------------------------------------------- the chat bar */
+#runView.hc .mp-thread-bar{background:var(--paper);backdrop-filter:none;-webkit-backdrop-filter:none;padding:10px 0;min-height:60px}
+.hc-chip{min-height:36px;height:36px;border-color:var(--line);font-weight:500;background:transparent}
+.hc-chip:hover{border-color:var(--line-strong)}
+.hc-ctxb[aria-expanded=true]{background:var(--sel-bg);color:var(--ink);border-color:var(--sel-line)}
+#runView.hc #mpNew{min-height:36px;height:36px;border-color:var(--line)}
+.hc-title{font-size:15px;font-weight:600}
+
+/* ---------------------------------------------------------------- the dock: Ready to send + quick fixes + prompt box */
+.hc-dock{position:sticky;bottom:0;z-index:6;display:flex;flex-direction:column;gap:8px;margin-top:16px;padding:8px 0 14px;background:var(--paper)}
+.hc-dock:not(:has(> :not([hidden]))){display:none}
+#runView.hc .hc-dock .mp-acts.hc-ready{position:static;margin:0;box-shadow:none;background:var(--raised);border-color:var(--line);padding:6px 6px 6px 12px;gap:6px;flex-wrap:nowrap}
+#runView.hc .hc-dock .mp-acts.hc-ready .btn,#runView.hc .hc-dock .mp-acts.hc-ready .btn2{min-height:36px;height:36px;padding:0 12px;font-size:13px;white-space:nowrap}
+#runView.hc .mp-acts.hc-ready{background:var(--raised);border-color:var(--line);box-shadow:none}
+#runView.hc .mp-acts.hc-ready .btn{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.hc-ready-t{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#runView.hc .mp-composer.revise{position:static;margin:0;padding:0;border:0;background:none;box-shadow:none;display:flex;flex-direction:column;gap:6px}
+#runView.hc .mp-composer:focus-within{box-shadow:none}
+#runView.hc .mp-composer .quickfix{margin:0;padding:0 0 2px;gap:6px;-webkit-mask-image:none;mask-image:none}
+#runView.hc .mp-composer .quickfix:empty{display:none}
+#runView.hc .mp-composer .quickfix .chip{min-height:30px;height:30px;padding:0 11px;font-size:12.5px;border-radius:999px;border-color:var(--line);background:transparent}
+#runView.hc .mp-composer .quickfix .chip:hover{border-color:var(--line-strong);background:var(--hov-bg)}
+.hc-box{display:flex;flex-direction:column;gap:4px;padding:10px 10px 8px 14px;border:1px solid var(--line);border-radius:16px;background:var(--raised)}
+:root.hq-anim .hc-box{transition:border-color var(--fast) ease-out}
+.hc-box:focus-within{border-color:var(--line-strong)}
+.hc-box textarea{width:100%;min-height:26px;max-height:160px;padding:4px 0;border:0;outline:0;background:transparent;resize:none;font:inherit;font-size:15px;line-height:1.45;color:var(--ink);box-shadow:none}
+.hc-box textarea:focus,.hc-box textarea:focus-visible{outline:0;box-shadow:none}
+.hc-ctools{display:flex;align-items:center;gap:6px;min-width:0}
+.hc-sp{flex:1;min-width:0}
+.hc-attach.btn2,.hc-attach{display:inline-flex;align-items:center;gap:6px;height:34px;min-height:34px;padding:0 10px;border-radius:999px;border:1px solid var(--line);background:transparent;
+  color:var(--muted);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;flex:none}
+.hc-attach:hover{color:var(--ink);border-color:var(--line-strong)}
+.hc-attach:focus-within{outline:2px solid var(--focus,var(--ink));outline-offset:2px}
+.hc-attach .ic{width:16px;height:16px}
+.hc-pill{display:inline-flex;align-items:center;gap:6px;height:34px;min-width:0;max-width:min(300px,42%);padding:0 10px;border:1px solid var(--line);border-radius:999px;
+  background:transparent;color:var(--muted);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.hc-pill span{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hc-pill .ic{width:15px;height:15px;flex:none}
+.hc-pill:hover{color:var(--ink);border-color:var(--line-strong)}
+.hc-hint{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+#runView.hc .hc-send{display:inline-flex;align-items:center;gap:6px;height:34px;min-height:34px;padding:0 14px 0 11px;border-radius:999px;flex:none;
+  background:var(--ink);color:var(--paper);border:1px solid var(--ink);font-size:13px;font-weight:600}
+#runView.hc .hc-send .ic{width:16px;height:16px}
+#runView.hc .hc-send:disabled{opacity:.45}
+.hc-cfoot{display:none}
+@media (max-width:1180px){.hc-hint{display:none}}
+@media (max-width:860px){
+  .hc-dock{bottom:calc(68px + env(safe-area-inset-bottom))}
+  #runView.hc .mp-composer.revise{bottom:auto}
+}
+@media (max-width:600px){
+  .hc-attach-l,.hc-send-l{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .hc-attach.btn2,.hc-attach{width:36px;padding:0;justify-content:center}
+  #runView.hc .hc-send{width:36px;padding:0;justify-content:center}
+  .hc-pill{max-width:58%}
+  .hc-dock{padding:6px 0 8px;margin-left:-2px;margin-right:-2px}
+  #runView.hc .mp-acts.hc-ready{position:static;flex-wrap:wrap}
+  .hc-ready-t{flex-basis:100%;white-space:normal}
+}
+
+/* ---------------------------------------------------------------- overlap fixes in the thread */
+#pkgHelp{margin-bottom:12px}
+.mp-ready-i small{white-space:nowrap}
+.mp-ready{background:transparent;border-color:var(--line)}
+.mp-ready-i{border-color:var(--line);background:var(--raised)}
+
+/* ---------------------------------------------------------------- the agent's steps: live list, elapsed time, folded */
+#runView.hc .mp-trace{border-color:var(--line);background:transparent;padding:0 12px}
+#runView.hc .mp-trace[hidden]{display:none}
+#runView.hc .mp-trace summary{min-height:40px;font-weight:600;font-size:13.5px;color:var(--ink)}
+#runView.hc .mp-trace summary::before{width:6px;height:6px;border-width:0 1.5px 1.5px 0;color:var(--muted)}
+#runView.hc .mp-trace.hc-working summary::after{order:-1;width:12px;height:12px;border:1.5px solid var(--line-strong);border-top-color:var(--ink);margin:0 2px 0 0}
+#mpTraceSum{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hc-trace-time{margin-left:auto;padding-left:10px;font-weight:500;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;flex:none}
+.hc-trace-time[hidden]{display:none}
+#runView.hc .mp-trace .timeline{padding:2px 0 10px}
+#runView.hc .mp-trace .timeline::before{left:8px;top:10px;bottom:14px;width:1px}
+#runView.hc .mp-trace .step{gap:10px;padding:4px 0 6px;align-items:flex-start}
+#runView.hc .mp-trace .step .dot{width:17px;height:17px;border-width:1.5px;font-size:10px;margin-top:1px;background:var(--paper);border-color:var(--line-strong);color:var(--muted)}
+#runView.hc .mp-trace .step.done .dot,#runView.hc .mp-trace .step.warn .dot{background:var(--paper);border-color:var(--ok);color:var(--ok)}
+#runView.hc .mp-trace .step.warn .dot{border-color:var(--warn);color:var(--warn)}
+#runView.hc .mp-trace .step.failed .dot{background:var(--paper);border-color:var(--bad);color:var(--bad)}
+#runView.hc .mp-trace .step.running .dot{border-color:var(--ink)}
+#runView.hc .mp-trace .step.running .dot .spin{width:9px;height:9px;border-width:1.5px}
+#runView.hc .mp-trace .step b{font-size:13.5px;font-weight:500}
+#runView.hc .mp-trace .step.running b{font-weight:600}
+#runView.hc .mp-trace .step.pending b{color:var(--subtle)}
+#runView.hc .mp-trace .step small{font-size:12.5px}
+
+/* ---------------------------------------------------------------- skeletons (thread list, posts) */
+.sk{display:block;border-radius:8px;background:color-mix(in oklab,var(--ink) 8%,transparent)}
+:root.hq-anim .sk{animation:hqpulse 1.4s ease-in-out infinite}
+@keyframes hqpulse{50%{opacity:.55}}
+.hc-sk{display:flex;flex-direction:column;gap:6px;padding:10px 4px}
+.sk-row{height:40px}
+.sk-row:nth-child(2n){width:86%}
+.sk-posts{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin:8px 0}
+.sk-post{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--line);border-radius:14px}
+.sk-head{height:18px;width:55%}.sk-media{height:220px;border-radius:10px}.sk-line{height:12px}.sk-line.short{width:62%}
+
+/* ---------------------------------------------------------------- Settings nav: neutral and quiet */
+#tab-settings.set-tabs>.set-nav{border:0;background:none;padding:0;gap:1px}
+.set-nav button{min-height:40px;border-radius:9px;font-weight:500;color:var(--muted)}
+.set-nav button:hover{background:var(--hov-bg);color:var(--ink)}
+.set-nav button.on,.set-nav button[aria-selected=true]{background:var(--sel-bg);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--sel-line)}
+.set-nav button:focus-visible{outline:2px solid var(--focus,var(--ink));outline-offset:-2px}
+@media (max-width:860px){
+  #tab-settings.set-tabs>.set-nav{border-bottom:1px solid var(--line);border-radius:0;padding:0 0 6px;gap:4px}
+  .set-nav button.on,.set-nav button[aria-selected=true]{box-shadow:inset 0 0 0 1px var(--sel-line)}
+}
+
+/* ---------------------------------------------------------------- Make a post start screen: tighter hierarchy */
+.mp2 .mp-chips .chip,.mp2 #mpChips .chip,.mp2 #mpChips button{min-height:36px}
+.mp2 #agQuery{resize:none}
+
+/* ---------------------------------------------------------------- reduced motion: no movement at all */
+@media (prefers-reduced-motion:reduce){
+  :root.hq-anim .rail,:root.hq-anim #runView.hc,:root.hq-anim .hc-side,:root.hq-anim .hc-box{transition:none!important}
+  :root.hq-anim .sk{animation:none}
+  #runView.hc .mp-trace.hc-working summary::after{animation:none}
+}
