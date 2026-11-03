@@ -146,7 +146,12 @@ function pfStrip() {
 document.addEventListener("preflight", pfStrip);
 
 // ---------------------------------------------------------------- boot
+// Every navigation (showTab, a sub-tab, showRun) bumps HQ_NAV. boot() opens its landing tab only when nothing navigated
+// while it loaded: a slow boot that finished after the user (or showRun) opened a screen used to throw them back to the
+// Inbox and hide the chat thread they were in.
+window.HQ_NAV = window.HQ_NAV || 0;
 async function boot() {
+  const nav0 = window.HQ_NAV;
   const p = new URLSearchParams(location.search);
   if (p.get("error")) toast("Buffer: " + p.get("error"), 6000);
   if (p.get("connected")) toast("Connected to Buffer");
@@ -168,17 +173,35 @@ async function boot() {
   setKill(s.user.kill_switch);
   if (window.onbState) await onbState().catch(() => {}); // the channels picked in setup are every composer's default
   await loadChannels();
+  S.bootData = true;  // session + channels are in: a screen drawn from here on has them
   budget(); refreshBadge(); if (typeof readyBadge === "function") readyBadge();
   api("/api/inbox").then((d) => ibBadge(d.waiting)).catch(() => {});
   if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
+  else if (window.HQ_NAV !== nav0) { /* the user (or showRun) already opened a screen while boot loaded: keep it */ }
   else { // the sample opens on the brand kit builder, filled with the sample brand (owner, 2 Nov 2026); once per browser tab
     const firstDemo = s.demo && !p.get("tab") && !sessionStorage.getItem("hq_demo_landed");
     if (firstDemo) sessionStorage.setItem("hq_demo_landed", "1");
     showTab(p.get("tab") || (firstDemo ? "brand" : "inbox"), p.get("sub") || "");
   }
   if (window.onbMaybeOpen) onbMaybeOpen({ justConnected, demo: !!s.demo });
+  if (window.HQ_NAV !== nav0 && S.navEarly) reloadOpenScreen();
+  document.body.dataset.booted = "1";  // tests wait on this for a boot that finished
 }
 
+// A screen opened while boot loaded (a deep link, a click, showRun) drew before /api/session and /api/channels answered:
+// its channel list (Settings, Planner, the agent chips) came out empty. Once boot has them, draw the open screen again,
+// once. A screen with a redraw hook (HS_REDRAW) redraws from what it already fetched; any other reruns its loader.
+// Nothing reruns when every navigation came after the data arrived (S.navEarly stays false).
+function reloadOpenScreen() {
+  const tab = [...document.querySelectorAll(".tab")].find((t) => !t.hidden); if (!tab) return;
+  const name = tab.id.slice(4), sub = tab.dataset.sub || "";
+  window.HQ_RELOADS = (window.HQ_RELOADS || 0) + 1;  // tests count these
+  const redraw = (window.HS_REDRAW || {})[name];
+  if (redraw) return void Promise.resolve().then(() => redraw(sub)).catch(() => {});
+  (window.HS_SUBS || {})[name + ":" + sub]?.();
+  tabLoader(name)();
+}
+const tabLoader = (name) => ({ inbox: loadInbox, news: loadNews, apps: loadApps, settings: loadSettings }[name] || (window.HS_TABS || {})[name] || (() => {}));
 $("#bookmarklet").href = `javascript:location.href='${location.origin}/?url='+encodeURIComponent(location.href)`;
 $("#bookmarklet").onclick = (e) => { e.preventDefault(); toast("Drag this link to your bookmarks bar, then click it on any article."); };
 function setKill(on) {
@@ -333,9 +356,11 @@ const TAB_ALIAS = {
   home: ["inbox"], approvals: ["inbox", ""], calendar: ["planner"], queue: ["planner"],
   studio: ["agent", "quick"], radar: ["news", "feed"], sources: ["news", "scan"],
   brandstudio: ["brand", "kit"], ledger: ["brand", "ledger"], templates: ["brand", "templates"],
-  connect: ["apps"], agents: ["apps"], ai: ["settings", ""],
+  connect: ["apps"], agents: ["apps"], ai: ["settings", "ai"], integrations: ["settings", "integrations"],
 };
-const SUB_DEFAULT = { agent: "agent", news: "feed", brand: "kit" };
+const SUB_DEFAULT = { agent: "agent", news: "feed", brand: "kit", settings: "account" };
+// Settings sidebar (3 Nov 2026): old deep links still land on the right page (?tab=settings&sub=integ-ph, sub=engine)
+const SUB_ALIAS = { settings: (s) => (/^integ(rations|-[a-z]+)?$/.test(s) ? "integrations" : /^(ai|engine|ai-engine|keys|logs)$/.test(s) ? "ai" : /^(channels|setup|appearance)$/.test(s) ? "account" : s) };
 document.querySelectorAll(".rail button[data-tab]").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 // phone: a bottom bar with the four everyday screens and a Menu sheet for the rest (Esc or Close returns focus).
 // On a desktop the sheet is just the lower part of the rail, so nothing is listed twice.
@@ -354,8 +379,10 @@ document.addEventListener("click", (e) => {
   e.preventDefault(); ibGo(g.dataset.go);
 });
 function subTab(tab, sub) {
+  window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
   const root = document.getElementById("tab-" + tab); if (!root) return "";
   const subs = [...root.querySelectorAll(":scope > .sub[data-sub]")]; if (!subs.length) return "";
+  if (SUB_ALIAS[tab]) sub = SUB_ALIAS[tab](sub || "");
   if (!subs.some((x) => x.dataset.sub === sub)) sub = SUB_DEFAULT[tab] || subs[0].dataset.sub;
   subs.forEach((x) => (x.hidden = x.dataset.sub !== sub));
   root.querySelectorAll(":scope > .pg-tabs [data-sub]").forEach((b) => { const on = b.dataset.sub === sub; b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
@@ -367,9 +394,10 @@ document.querySelectorAll(".pg-tabs").forEach((seg) => {
   const tab = seg.closest(".tab").id.slice(4);
   seg.querySelectorAll("[data-sub]").forEach((b) => (b.onclick = () => { const sub = subTab(tab, b.dataset.sub); urlFor(tab, sub); }));
   seg.addEventListener("keydown", (e) => { // arrow keys move between sub-tabs (WAI-ARIA tabs)
-    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const fwd = ["ArrowRight", "ArrowDown"].includes(e.key), back = ["ArrowLeft", "ArrowUp"].includes(e.key);  // Down/Up: the vertical Settings nav
+    if (!fwd && !back) return;
     const bs = [...seg.querySelectorAll("[data-sub]")], i = bs.indexOf(document.activeElement); if (i < 0) return;
-    const n = bs[(i + (e.key === "ArrowRight" ? 1 : bs.length - 1)) % bs.length]; n.click(); n.focus(); e.preventDefault();
+    const n = bs[(i + (fwd ? 1 : bs.length - 1)) % bs.length]; n.click(); n.focus(); e.preventDefault();
   });
 });
 function urlFor(name, sub) {
@@ -379,6 +407,7 @@ function urlFor(name, sub) {
   history.replaceState(null, "", q || demo ? "/?" + (demo + q).replace(/&$/, "") : "/");
 }
 function showTab(name, sub = "") {
+  window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
   if (TAB_ALIAS[name]) {
     if (name === "queue") { try { const s = JSON.parse(localStorage.getItem("hq_planner") || "{}"); s.view = "list"; localStorage.setItem("hq_planner", JSON.stringify(s)); } catch (_) {} }
     const [t, sb] = TAB_ALIAS[name]; if (name === "approvals") setTimeout(() => $("#ibApprSec")?.scrollIntoView({ block: "start" }), 300);
@@ -393,7 +422,7 @@ function showTab(name, sub = "") {
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
   sub = subTab(name, sub);
   urlFor(name, sub);
-  ({ inbox: loadInbox, news: loadNews, apps: loadApps, settings: loadSettings }[name] || (window.HS_TABS || {})[name] || (() => {}))();
+  tabLoader(name)();
 }
 window.showTab = showTab;
 
@@ -774,14 +803,20 @@ $("#killPill").onclick = () => toggleKill(!$("#killToggle").checked);
 
 // ---------------------------------------------------------------- Settings
 function loadSettings() {
-  const s = S.session || {};
-  $("#setWho").textContent = `Signed in with Buffer as ${s.user?.name || s.user?.email || "you"}${s.user?.organization ? ", organization " + s.user.organization : ""}.`;
-  $("#setChannels").innerHTML = S.channels.length ? S.channels.map((c) => `<li data-testid="settings-channel">${avatar(c)}<span><b>${esc(c.displayName || c.name)}</b><small>${esc(netName(c.service))}${c.isDisconnected ? " · reconnect in Buffer" : ""}</small></span></li>`).join("")
-    : `<li class="muted sm">No channels in this Buffer organization yet.</li>`;
+  drawSettingsAccount();
   if (window.onbState) onbState().then((st) => ($("#setOnbState").textContent = st.done ? "Setup is done. Open it again to change what you post, your channels or your brand." : st.skipped ? "You skipped setup. It takes about a minute." : "Setup isn't finished yet."));
   (window.HS_TABS || {}).ai?.();
   (window.HS_TABS || {}).integrations?.();
 }
+// who you are and your Buffer channels, from S (no fetch): loadSettings draws it, and so does a boot that finished after
+// Settings opened (HS_REDRAW.settings), with the Integrations tiles redrawn from the data they already fetched
+function drawSettingsAccount() {
+  const s = S.session || {};
+  $("#setWho").textContent = `Signed in with Buffer as ${s.user?.name || s.user?.email || "you"}${s.user?.organization ? ", organization " + s.user.organization : ""}.`;
+  $("#setChannels").innerHTML = S.channels.length ? S.channels.map((c) => `<li data-testid="settings-channel">${avatar(c)}<span><b>${esc(c.displayName || c.name)}</b><small>${esc(netName(c.service))}${c.isDisconnected ? " · reconnect in Buffer" : ""}</small></span></li>`).join("")
+    : `<li class="muted sm">No channels in this Buffer organization yet.</li>`;
+}
+window.HS_REDRAW = Object.assign(window.HS_REDRAW || {}, { settings: () => { drawSettingsAccount(); window.HQ_INTEGRATIONS?.redraw(); } });
 $("#setOnbOpen").onclick = () => window.onbOpen && onbOpen();
 $("#refreshCh").onclick = () => loadChannels(true).then(() => { loadSettings(); toast("Channels refreshed from Buffer"); });
 
@@ -805,7 +840,10 @@ async function disconnect() {
 }
 $("#deviceBtn").onclick = deviceLink; $("#setDevice").onclick = deviceLink;
 $("#logoutBtn").onclick = logout; $("#setLogout").onclick = logout;
-$("#disconnectBtn").onclick = disconnect; $("#setDisconnect").onclick = disconnect;
+$("#disconnectBtn").onclick = disconnect; $("#setDisconnect").onclick = disconnect; $("#setPrivDelete").onclick = disconnect;
 document.querySelectorAll("#acctMenu [data-go]").forEach((b) => b.addEventListener("click", () => ($("#acctMenu").hidden = true)));
 
-boot().catch((e) => toast(e.message, 6000));
+// after every script has run (DOMContentLoaded): boot() used to start while later scripts (makepost.js, planner.js,
+// integrations.js) were still loading, so its showTab could land before their HS_TABS loaders existed and the tab drew empty
+const startBoot = () => boot().catch((e) => toast(e.message, 6000));
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startBoot); else startBoot();

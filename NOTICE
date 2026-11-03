@@ -290,3 +290,9 @@ Brand kit v2 design-system extraction (studio/design_system.py, studio/layouts.p
             over HTTPS when the operator sets CONTEXT_DEV_API_KEY; otherwise HuhQueue's own CSS reader. The open-source
             extractors dembrandt (MIT, github.com/dembrandt/dembrandt) and design-md-extractor were evaluated; no code from
             them is included. DESIGN.md files describe third-party sites' public styles; trademarks belong to their owners.
+
+Make a post chat interface (studio/static/chat.js, chat.css; 3 Nov 2026)
+  Patterns:  the chat UX of Open WebUI (https://github.com/open-webui/open-webui): a thread sidebar with search and rename,
+             a centered message column, a sticky composer, message actions (copy, retry, edit and resend), collapsible
+             tool steps and artifacts in a side panel. Studied for patterns only; no Open WebUI code, assets or branding
+             are included, so its license terms for copied code do not apply.

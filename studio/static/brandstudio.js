@@ -499,7 +499,7 @@
       const body = { on, x_query: $("#saXq").value }; // the feed list is managed above (one list for the feed and the scan)
       try { await api("/api/sources/settings", { method: "POST", body }); toast("Sources saved"); loadSources(); } catch (e) { toast(e.message); }
     };
-    $("#saAiKey").onclick = () => showTab("settings");
+    $("#saAiKey").onclick = () => showTab("settings", "ai");
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount); else mount();

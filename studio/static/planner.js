@@ -579,6 +579,9 @@ $("#plDlgDraft").onclick = () => plDialogSave(true);
 $("#plDlgCancel").onclick = closeDlg;
 $("#plDlgAgent").onclick = () => { closeDlg(); showTab("agent"); };
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { planner: loadPlanner });
+// a boot that finished after the Planner opened: redraw with the channels it now has, from the calendar already
+// fetched (a fetch still in flight draws everything when it lands; no second /api/calendar)
+window.HS_REDRAW = Object.assign(window.HS_REDRAW || {}, { planner: () => { if (!PL.tz) return loadPlanner(); plControls(); if (PL.data) plDraw(); } });
 let plWasPhone = plPhone();
 addEventListener("resize", () => { const p = plPhone(); if (p !== plWasPhone) { plWasPhone = p; if (!$("#tab-planner").hidden) plDraw(); } });
 
