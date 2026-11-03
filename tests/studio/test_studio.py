@@ -335,11 +335,12 @@ def test_demo_workspace_never_calls_buffer(client, fake):
     client.headers["X-HQ-CSRF"] = s["csrf"]
     assert {c["service"] for c in client.get("/api/channels").json()} >= {"twitter", "linkedin", "bluesky"}
     [appr] = client.get("/api/approvals").json()
-    res = client.post(f"/api/approvals/{appr['id']}/approve", json={}).json()
-    assert res["status"] == "sent_to_buffer"
-    assert any(p["text"] == appr["payload"]["text"] for p in client.get("/api/queue").json())
+    r = client.post(f"/api/approvals/{appr['id']}/approve", json={})  # view-only: the real-app line, nothing changes
+    assert r.status_code == 403 and r.json()["error"].startswith("In the real app this would approve")
+    assert len(client.get("/api/approvals").json()) == 1
     pv = client.post("/api/posts/preview", json={"channel_id": "demo_bsky", "text": "hello", "mode": "draft"}).json()
-    assert client.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]}).json()["post"]["status"] == "draft"
+    r = client.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]})
+    assert r.status_code == 403 and "The demo doesn't change anything." in r.json()["error"]
     assert fake.calls == [] and fake.token_calls == []
 
 

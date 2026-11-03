@@ -114,14 +114,17 @@ def test_demo_kits_nothing_stays_classic_huhbyte_is_bold_and_samples_get_themes(
     assert r["active"] and r["applied"]
     k = client.get("/api/brand-studio").json()["kit"]
     assert k["name"] == "HuhByte AI" and k["theme"]["layout"] == "bold_news"
-    n = client.post("/api/brand-kits", json={"sample": "notion", "activate": True}).json()
-    assert n["kit"]["theme"]["layout"] == "minimal" and n["active"]
-    md = client.get(f"/api/brand-kits/{n['id']}/design.md")
-    assert md.status_code == 200 and md.headers["content-type"].startswith("text/markdown") and "minimal" in md.text
+    # the view-only demo shows the kits (and switches between them) but won't save a new one
+    n = client.post("/api/brand-kits", json={"sample": "notion", "activate": True})
+    assert n.status_code == 403 and n.json()["view_only"] and "The demo doesn't change anything." in n.json()["error"]
+    assert [k["name"] for k in client.get("/api/brand-kits").json()["kits"]] == ["Nothing", "HuhByte AI"]
+    md = client.get(f"/api/brand-kits/{names['HuhByte AI']['id']}/design.md")
+    assert md.status_code == 200 and md.headers["content-type"].startswith("text/markdown") and "bold_news" in md.text
 
 
 def test_a_draft_from_a_url_saves_its_theme_and_design_md_and_the_layout_picker_works(client, monkeypatch):
     monkeypatch.delenv("CONTEXT_DEV_API_KEY", raising=False)
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # saving a kit is a real-account feature; this client is the capped demo
     _csrf(client)
     d = _kit("https://quill.test/", SERIF_HTML, SERIF_CSS)
     body = {"name": "Quill", "colors": {"background": d["colors"]["primary"], "primary": d["colors"]["accent"], "text": d["colors"]["text"]},

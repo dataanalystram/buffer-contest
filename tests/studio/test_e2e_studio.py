@@ -139,8 +139,10 @@ def test_planner_views_filters_and_drag_to_reschedule(live, chromium):
         draft.dispatch_event("dragstart", {"dataTransfer": dt})
         cell.dispatch_event("dragover", {"dataTransfer": dt})
         cell.dispatch_event("drop", {"dataTransfer": dt})  # (no dragend: the card has already left the No date list)
-        page.get_by_test_id("toast").get_by_text("Draft moved").wait_for()
-        page.locator(f"[data-testid=planner-slot][data-day='{day}'][data-hour='14'] [data-ref='{ref}']").wait_for()
+        # the view-only demo shows the drag but refuses the move with the friendly line; the draft stays undated
+        page.get_by_text("In the real app this would change this post in Buffer").first.wait_for()
+        page.wait_for_timeout(500)
+        assert page.locator(f"[data-testid=planner-slot][data-day='{day}'][data-hour='14'] [data-ref='{ref}']").count() == 0
         # sent posts are locked
         assert page.locator("[data-testid=planner-item][data-state=sent][draggable]").count() == 0
         assert not errors, errors
@@ -240,7 +242,8 @@ def test_planner_dialog_preflight(live, chromium):
         dlg.get_by_test_id("preflight-fix").click()
         dlg.locator("[data-testid=preflight-chip][data-status=ok]").wait_for()
         page.get_by_test_id("planner-dialog-save").click()
-        page.get_by_test_id("toast").get_by_text("Scheduled in Buffer").wait_for()
+        # preflight and Fix it run in the view-only demo; the send itself is refused with the friendly line
+        page.get_by_text("In the real app this would").first.wait_for()
         assert not errors, errors
         assert not fake.calls
     finally:
