@@ -91,7 +91,7 @@ with sync_playwright() as p:
     # the view-only sample answers "In the real app this would …" instead of scheduling; a real workspace schedules
     end, toasts = time.time() + 20, []
     while time.time() < end and not any(("Scheduled in Buffer" in t or "In the real app this would" in t) for t in toasts):
-        toasts.append(pg.locator("#toast").text_content() or ""); time.sleep(0.2)
+        toasts += [pg.locator("#toast").text_content() or "", pg.locator("#plDlgErr").text_content() or ""]; time.sleep(0.2)
     if not any(("Scheduled in Buffer" in t or "In the real app this would" in t) for t in toasts):
         print("planner save error:", pg.inner_text("#plDlgErr"))
         raise AssertionError("the planner save neither scheduled nor answered the demo line")
