@@ -45,6 +45,8 @@ const fmtSize = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.m
 window.HQ_FMT = { fmtDur, fmtSize, isVid };
 
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { agent: loadAgent, ai: loadAI });
+// a boot that finished after the agent screen (or a run) opened: redraw the channel chips only, the thread stays
+window.HS_REDRAW = Object.assign(window.HS_REDRAW || {}, { agent: () => agentChips() });
 
 // ---------------------------------------------------------------- agent composer: one prompt, an optional file of yours
 function countPrompt() { const n = $("#agQuery").value.length; $("#agCount").textContent = `${n.toLocaleString()} / 4,000`; $("#agCount").classList.toggle("over", n > 3800); }

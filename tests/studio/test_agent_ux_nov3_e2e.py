@@ -143,6 +143,44 @@ def test_slow_boot_keeps_the_run_the_user_opened(live, chromium):
         ctx.close()
 
 
+def test_slow_boot_fills_the_screen_opened_while_it_loaded(live, chromium):
+    """Settings -> Integrations opened while boot waited on /api/channels drew with no channels. When boot finishes it
+    draws the open screen again, once: the Settings channel list and the Integrations tiles fill without a reload and
+    without a second /api/channels or /api/integrations; a screen opened after boot's data arrived is not drawn twice."""
+    base, app, tmp = live
+    ctx, page = _page(chromium, base, 1280)
+    ctx.add_init_script(SLOW_BOOT)
+    errors, hits = [], []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("request", lambda r: hits.append(r.url.split("?")[0].replace(base, "")) if "/api/" in r.url else None)
+    try:
+        page.goto(base + "/")
+        page.wait_for_function("() => typeof window.showTab === 'function' && typeof api === 'function'")
+        assert page.evaluate("() => !document.body.dataset.booted"), "boot finished before the delayed /api/channels"
+        page.evaluate("() => showTab('settings', 'integrations')")
+        page.get_by_test_id("integ-tile-buffer").wait_for()  # the tiles drew while boot was still waiting
+        assert page.evaluate("() => !document.body.dataset.booted")
+        assert page.get_by_test_id("settings-channel").count() == 0
+        assert page.get_by_test_id("integ-tile-instagram").get_attribute("data-on") == "0"
+        page.wait_for_function("() => document.body.dataset.booted === '1'", timeout=15000)
+        pw.expect(page.get_by_test_id("integ-tile-instagram")).to_have_attribute("data-on", "1")
+        pw.expect(page.get_by_test_id("settings-channel")).to_have_count(len(OWNER_CHANNELS))
+        pw.expect(page.get_by_test_id("settings-tab-integrations")).to_have_attribute("aria-selected", "true")
+        assert page.locator("#tab-settings").is_visible() and page.locator("#tab-inbox").is_hidden()
+        assert page.evaluate("() => window.HQ_RELOADS") == 1
+        page.wait_for_timeout(500)
+        assert hits.count("/api/channels") == 1, hits
+        assert hits.count("/api/integrations") == 1, hits
+        # nothing opened while boot loaded: boot lands on the Inbox itself and draws nothing twice
+        page.goto(base + "/")
+        page.wait_for_function("() => document.body.dataset.booted === '1'", timeout=15000)
+        assert page.locator("#tab-inbox").is_visible()
+        assert not page.evaluate("() => window.HQ_RELOADS")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 def test_owner_sequence_in_the_browser(live, chromium):
     base, app, tmp = live
     if shutil.which("ffmpeg"):

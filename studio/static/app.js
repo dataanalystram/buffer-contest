@@ -173,6 +173,7 @@ async function boot() {
   setKill(s.user.kill_switch);
   if (window.onbState) await onbState().catch(() => {}); // the channels picked in setup are every composer's default
   await loadChannels();
+  S.bootData = true;  // session + channels are in: a screen drawn from here on has them
   budget(); refreshBadge(); if (typeof readyBadge === "function") readyBadge();
   api("/api/inbox").then((d) => ibBadge(d.waiting)).catch(() => {});
   if (shared && /^https?:\/\//.test(shared)) { $("#urlInput").value = shared; showTab("studio"); $("#draftForm").requestSubmit(); }
@@ -183,9 +184,24 @@ async function boot() {
     showTab(p.get("tab") || (firstDemo ? "brand" : "inbox"), p.get("sub") || "");
   }
   if (window.onbMaybeOpen) onbMaybeOpen({ justConnected, demo: !!s.demo });
+  if (window.HQ_NAV !== nav0 && S.navEarly) reloadOpenScreen();
   document.body.dataset.booted = "1";  // tests wait on this for a boot that finished
 }
 
+// A screen opened while boot loaded (a deep link, a click, showRun) drew before /api/session and /api/channels answered:
+// its channel list (Settings, Planner, the agent chips) came out empty. Once boot has them, draw the open screen again,
+// once. A screen with a redraw hook (HS_REDRAW) redraws from what it already fetched; any other reruns its loader.
+// Nothing reruns when every navigation came after the data arrived (S.navEarly stays false).
+function reloadOpenScreen() {
+  const tab = [...document.querySelectorAll(".tab")].find((t) => !t.hidden); if (!tab) return;
+  const name = tab.id.slice(4), sub = tab.dataset.sub || "";
+  window.HQ_RELOADS = (window.HQ_RELOADS || 0) + 1;  // tests count these
+  const redraw = (window.HS_REDRAW || {})[name];
+  if (redraw) return void Promise.resolve().then(() => redraw(sub)).catch(() => {});
+  (window.HS_SUBS || {})[name + ":" + sub]?.();
+  tabLoader(name)();
+}
+const tabLoader = (name) => ({ inbox: loadInbox, news: loadNews, apps: loadApps, settings: loadSettings }[name] || (window.HS_TABS || {})[name] || (() => {}));
 $("#bookmarklet").href = `javascript:location.href='${location.origin}/?url='+encodeURIComponent(location.href)`;
 $("#bookmarklet").onclick = (e) => { e.preventDefault(); toast("Drag this link to your bookmarks bar, then click it on any article."); };
 function setKill(on) {
@@ -363,7 +379,7 @@ document.addEventListener("click", (e) => {
   e.preventDefault(); ibGo(g.dataset.go);
 });
 function subTab(tab, sub) {
-  window.HQ_NAV++;
+  window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
   const root = document.getElementById("tab-" + tab); if (!root) return "";
   const subs = [...root.querySelectorAll(":scope > .sub[data-sub]")]; if (!subs.length) return "";
   if (SUB_ALIAS[tab]) sub = SUB_ALIAS[tab](sub || "");
@@ -391,7 +407,7 @@ function urlFor(name, sub) {
   history.replaceState(null, "", q || demo ? "/?" + (demo + q).replace(/&$/, "") : "/");
 }
 function showTab(name, sub = "") {
-  window.HQ_NAV++;
+  window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
   if (TAB_ALIAS[name]) {
     if (name === "queue") { try { const s = JSON.parse(localStorage.getItem("hq_planner") || "{}"); s.view = "list"; localStorage.setItem("hq_planner", JSON.stringify(s)); } catch (_) {} }
     const [t, sb] = TAB_ALIAS[name]; if (name === "approvals") setTimeout(() => $("#ibApprSec")?.scrollIntoView({ block: "start" }), 300);
@@ -406,7 +422,7 @@ function showTab(name, sub = "") {
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
   sub = subTab(name, sub);
   urlFor(name, sub);
-  ({ inbox: loadInbox, news: loadNews, apps: loadApps, settings: loadSettings }[name] || (window.HS_TABS || {})[name] || (() => {}))();
+  tabLoader(name)();
 }
 window.showTab = showTab;
 
@@ -787,14 +803,20 @@ $("#killPill").onclick = () => toggleKill(!$("#killToggle").checked);
 
 // ---------------------------------------------------------------- Settings
 function loadSettings() {
-  const s = S.session || {};
-  $("#setWho").textContent = `Signed in with Buffer as ${s.user?.name || s.user?.email || "you"}${s.user?.organization ? ", organization " + s.user.organization : ""}.`;
-  $("#setChannels").innerHTML = S.channels.length ? S.channels.map((c) => `<li data-testid="settings-channel">${avatar(c)}<span><b>${esc(c.displayName || c.name)}</b><small>${esc(netName(c.service))}${c.isDisconnected ? " · reconnect in Buffer" : ""}</small></span></li>`).join("")
-    : `<li class="muted sm">No channels in this Buffer organization yet.</li>`;
+  drawSettingsAccount();
   if (window.onbState) onbState().then((st) => ($("#setOnbState").textContent = st.done ? "Setup is done. Open it again to change what you post, your channels or your brand." : st.skipped ? "You skipped setup. It takes about a minute." : "Setup isn't finished yet."));
   (window.HS_TABS || {}).ai?.();
   (window.HS_TABS || {}).integrations?.();
 }
+// who you are and your Buffer channels, from S (no fetch): loadSettings draws it, and so does a boot that finished after
+// Settings opened (HS_REDRAW.settings), with the Integrations tiles redrawn from the data they already fetched
+function drawSettingsAccount() {
+  const s = S.session || {};
+  $("#setWho").textContent = `Signed in with Buffer as ${s.user?.name || s.user?.email || "you"}${s.user?.organization ? ", organization " + s.user.organization : ""}.`;
+  $("#setChannels").innerHTML = S.channels.length ? S.channels.map((c) => `<li data-testid="settings-channel">${avatar(c)}<span><b>${esc(c.displayName || c.name)}</b><small>${esc(netName(c.service))}${c.isDisconnected ? " · reconnect in Buffer" : ""}</small></span></li>`).join("")
+    : `<li class="muted sm">No channels in this Buffer organization yet.</li>`;
+}
+window.HS_REDRAW = Object.assign(window.HS_REDRAW || {}, { settings: () => { drawSettingsAccount(); window.HQ_INTEGRATIONS?.redraw(); } });
 $("#setOnbOpen").onclick = () => window.onbOpen && onbOpen();
 $("#refreshCh").onclick = () => loadChannels(true).then(() => { loadSettings(); toast("Channels refreshed from Buffer"); });
 
