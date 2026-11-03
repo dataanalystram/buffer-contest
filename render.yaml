@@ -27,10 +27,6 @@ services:
         value: dataanalystram/buffer-contest
       - key: GH_DISPATCH_TOKEN     # fine-grained PAT: Actions read/write on this repo only
         sync: false
-      - key: MIGRATE_FROM_URL      # old Render database; copied into Supabase on the first boot, then delete this
-        fromDatabase:
-          name: huhqueue-studio-db
-          property: connectionString
 databases:
   - name: huhqueue-studio-db
     plan: free
