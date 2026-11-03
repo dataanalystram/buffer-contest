@@ -29,6 +29,7 @@ TITLE_MAX = 80
 PROMPT_TURN_CHARS = 200   # each recent turn in the agent's prompt (the UI shows them whole)
 PROMPT_TURNS = 2          # recent turns in the prompt, besides the reply itself
 PROMPT_SUMMARY_CHARS = 420
+SHORT_THREAD = 2          # a thread this short (the reply included) gets no conversation block: the reply costs what main did
 TOOL_KEEP_TURNS = 1       # inside one reply, tool results older than the latest model turn are shortened
 TOOL_STUB_CHARS = 400
 
@@ -99,9 +100,12 @@ def prompt_facts(run: dict, kit: dict | None = None) -> dict:
 
 
 def prompt_block(run: dict, kit: dict | None = None) -> str:
-    """What the agent reads about the conversation on a reply: pinned facts, the run summary, the last turns (clipped)."""
-    c = compact((run.get("result") or {}).get("thread") or [])
+    """What the agent reads about the conversation on a reply: pinned facts, the run summary, the last turns (clipped).
+    Empty for a short thread (<= SHORT_THREAD turns, the reply included): the run state and the reply already say it all."""
     thread = (run.get("result") or {}).get("thread") or []
+    if len(thread) <= SHORT_THREAD:
+        return ""
+    c = compact(thread)
     recent = thread[-PROMPT_TURNS - 1:-1]  # the reply itself is already in the prompt
     turns = "\n".join(f"{'Person' if t.get('role') == 'user' else 'Agent'}: {_clip(t.get('text'), PROMPT_TURN_CHARS)}" for t in recent)
     out = f"Pinned facts (always true for this post): {json.dumps(prompt_facts(run, kit), separators=(',', ':'), default=str)[:1500]}\n"

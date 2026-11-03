@@ -1137,7 +1137,7 @@ class Brain:
                 f"{untrusted.wrap(json.dumps(_state_summary(res), default=str)[:9000], 'run state')}\n"
                 f"Template: {json.dumps({k: (res.get('template') or {}).get(k) for k in ('id', 'name', 'why')})}. "
                 f"Rights: {(res.get('rights') or {}).get('mode') or 'not asked'}.\n"
-                f"Conversation so far (it quotes the thread): {untrusted.wrap(_conversation(run, tools), 'thread')}\n"
+                + _conversation(run, tools) +
                 "Change only what they asked, then write_captions for the affected channels, check, finish.")
         messages = [{"role": "user", "content": user}]
         brain = {"mode": "tools", "provider": eng["provider"], "model": eng["model"], "fast_model": eng.get("fast_model") or eng["model"],
@@ -1555,12 +1555,16 @@ def _result_line(tool: str, out: dict) -> str:
 
 
 def _conversation(run: dict, tools) -> str:
-    """The compacted thread for a reply: pinned facts + the run summary of older turns + the last turns verbatim."""
+    """The compacted thread for a reply: pinned facts + the run summary of older turns + the last turns verbatim.
+    A short thread adds nothing at all (no block, no wrapper, no kit lookup), so a quick reply costs what it did before."""
+    if len((run.get("result") or {}).get("thread") or []) <= chat_context.SHORT_THREAD:
+        return ""
     try:
         kit = tools._kit()
     except Exception:  # noqa: BLE001
         kit = {}
-    return chat_context.prompt_block(run, kit)[:6000]
+    block = chat_context.prompt_block(run, kit)[:6000]
+    return f"Conversation so far (it quotes the thread): {untrusted.wrap(block, 'thread')}\n" if block else ""  # short thread: nothing
 
 
 def _state_summary(res: dict) -> dict:

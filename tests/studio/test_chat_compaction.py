@@ -77,6 +77,27 @@ def test_the_agent_reads_the_compacted_conversation_on_a_reply():
     assert len(out) <= 6000
 
 
+def test_a_short_thread_adds_no_conversation_block():
+    class T:
+        def _kit(self):
+            raise AssertionError("a short thread never looks up the kit")
+    for n in (1, 2):
+        run = _run(3)
+        run["result"]["thread"] = run["result"]["thread"][:n]
+        assert chat_context.prompt_block(run) == "" and agent_brain._conversation(run, T()) == ""
+    assert agent_brain._conversation(_run(3), type("K", (), {"_kit": lambda self: {}})()).startswith("Conversation so far")
+
+
+def test_a_short_thread_reply_costs_what_it_did_before():
+    import importlib.util
+    import pathlib
+    spec = importlib.util.spec_from_file_location("ct", pathlib.Path(__file__).resolve().parents[2] / "scripts" / "compaction_tokens.py")
+    ct = importlib.util.module_from_spec(spec); spec.loader.exec_module(ct)
+    r = ct.report(turns=2)
+    assert r["after"]["first_call"] == r["before"]["first_call"]   # no block, no wrapper: the first call is main's
+    assert r["after"]["total"] <= r["before"]["total"]
+
+
 def test_pinned_facts_without_a_rights_answer_say_it_was_asked():
     run = _run(4)
     run["result"].pop("rights")
