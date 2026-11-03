@@ -729,10 +729,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "not found"}, status_code=404)
         data, size = m["data"], len(m["data"])
         headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
-        from .library import parse_range
+        from .library import parse_range, range_unsatisfiable
         rng_h = request.headers.get("range", "")
         rng = parse_range(rng_h, size)
-        if rng_h and rng is None:
+        if rng is None and range_unsatisfiable(rng_h, size):
             return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
         if rng:
             start, end = rng

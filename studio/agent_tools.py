@@ -2178,6 +2178,10 @@ class Tools(EditorialTools):
                   "idempotency_key": hashlib.sha256(f"{self.rid}:{c['id']}".encode()).hexdigest()[:16]}
             if c["service"] == "youtube":
                 pk["options"] = {"title": st["headline"][:100], "category_id": "28"}
+            has_vid = any(u.lower().split("?")[0].endswith((".mp4", ".mov", ".m4v", ".webm")) for u in pk["media_urls"])
+            if cm["format"] == "reel" and has_vid and c["service"] in ("instagram", "facebook"):
+                # a 9:16 Reel goes out as a Reel on both Meta networks (Facebook defaulted to a feed video "post")
+                pk.setdefault("options", {})["ig_type" if c["service"] == "instagram" else "fb_type"] = "reel"
             if cm.get("covers"):  # the branded cover variants (Reel cover = the opening frame; YouTube thumbnail 1280x720)
                 ci = min(int(cm.get("cover_index") or 0), len(cm["covers"]) - 1)
                 pk["covers"] = [{"variant": i, "layout": x.get("layout"), "score": x.get("score"), "urls": x.get("urls") or {}}
