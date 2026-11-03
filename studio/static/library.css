@@ -261,7 +261,9 @@
   .lp-t{font-size:14px}
   .lp-meta,.lp-by{font-size:12px}
   .lp-by .lp-when{display:none}
-  .lp-bulk{position:sticky;bottom:calc(72px + env(safe-area-inset-bottom,0px));z-index:30;margin:0 0 12px}
+  .lp-bulk{margin:0 0 12px}
+  .lp-bulk.has-sel{position:fixed;left:12px;right:12px;bottom:calc(80px + env(safe-area-inset-bottom,0px));z-index:45;margin:0;flex-wrap:nowrap}
+  .lp-bulk.has-sel .lp-clear{display:none}
   .lp-bulk .lp-act-l{display:none}
   .lp-bulk .lp-act{padding:0 12px}
   .lp-bulk:not(.has-sel) .lp-bulk-acts{display:none}

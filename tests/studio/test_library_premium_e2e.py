@@ -163,11 +163,15 @@ def test_selection_bar_menu_and_bin(live, chromium, close_contexts, w):
     assert page.get_by_test_id("library-bulk-use").is_disabled()  # Use in post / Create draft take exactly one
     if w == 390:  # the selection bar sticks to the bottom of the screen
         box = bar.bounding_box()
-        assert page.evaluate("() => getComputedStyle(document.getElementById('libBulk')).position") == "sticky"
-        assert box["y"] + box["height"] <= 900 and box["y"] > 450, box
+        assert page.evaluate("() => getComputedStyle(document.getElementById('libBulk')).position") == "fixed"
+        assert box["y"] + box["height"] <= 900 - 72 and box["y"] > 700 and box["height"] < 70, box
         _no_overflow(page)
     _shot(page, f"lp-selected-{w}.png")
-    page.get_by_test_id("library-bulk-cancel").click()
+    if w == 390:
+        page.get_by_test_id("library-bulk-more").click()
+        page.get_by_role("menuitem", name="Clear selection").click()
+    else:
+        page.get_by_test_id("library-bulk-cancel").click()
     assert page.get_by_test_id("library-bulk-count").inner_text() == "0 selected"
     # a card's ⋯ menu: opens, keyboard moves through it, Escape closes it and gives focus back
     card = page.locator(f"[data-testid=library-item][data-id='{live['gen']}']")
@@ -196,7 +200,7 @@ def test_selection_bar_menu_and_bin(live, chromium, close_contexts, w):
     page.get_by_test_id("library-view-bin").click()
     pw.expect(page.get_by_test_id("bin-item")).to_have_count(1)
     assert page.get_by_test_id("library-bar").is_hidden() and page.get_by_test_id("library-bin-note").is_visible()
-    assert page.get_by_test_id("library-bulk-restore").is_visible() and page.get_by_test_id("library-bulk-use").is_hidden()
+    assert page.evaluate("() => !document.getElementById('libBulkRestore').hidden && document.getElementById('libBulkUse').hidden")
     _shot(page, f"lp-bin-{w}.png")
     _no_overflow(page)
     page.get_by_test_id("library-view-items").click()
