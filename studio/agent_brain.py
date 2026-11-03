@@ -447,6 +447,10 @@ class Brain:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
         res = run["result"]
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
+        from . import chat_context  # long threads: older turns folded into one run summary (the UI says so)
+        summ = chat_context.summarize(run)
+        if summ:
+            res["thread_summary"] = summ
         routed = self._route_reply(a, rid, run, text)
         if routed is not None:
             return routed
@@ -1134,6 +1138,7 @@ class Brain:
                 f"{untrusted.wrap(json.dumps(_state_summary(res), default=str)[:9000], 'run state')}\n"
                 f"Template: {json.dumps({k: (res.get('template') or {}).get(k) for k in ('id', 'name', 'why')})}. "
                 f"Rights: {(res.get('rights') or {}).get('mode') or 'not asked'}.\n"
+                f"Conversation so far (it quotes the thread): {untrusted.wrap(_conversation(run, tools), 'thread')}\n"
                 "Change only what they asked, then write_captions for the affected channels, check, finish.")
         messages = [{"role": "user", "content": user}]
         brain = {"mode": "tools", "provider": eng["provider"], "model": eng["model"], "fast_model": eng.get("fast_model") or eng["model"],
@@ -1546,6 +1551,16 @@ def _result_line(tool: str, out: dict) -> str:
     if tool == "save_buffer_drafts":
         return ", ".join(f"{d['service']}: {d['status']}" for d in out.get("drafts") or [])
     return ""
+
+
+def _conversation(run: dict, tools) -> str:
+    """The compacted thread for a reply: pinned facts + the run summary of older turns + the last turns verbatim."""
+    from . import chat_context
+    try:
+        kit = tools._kit()
+    except Exception:  # noqa: BLE001
+        kit = {}
+    return chat_context.prompt_block(run, kit)[:6000]
 
 
 def _state_summary(res: dict) -> dict:

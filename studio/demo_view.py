@@ -68,6 +68,7 @@ BLOCKED_TOOLS = {
 WOULD = [
     (r"^/api/agent-tokens$", "POST", "create an agent token for Claude, ChatGPT or your own script"),
     (r"^/api/agent-tokens/", None, "change or revoke that agent token"),
+    (r"^/api/agent/runs/\d+/title$", None, "rename this thread"),
     (r"^/api/agent/runs/\d+/packages/[^/]+/schedule$", None, "schedule this post in your Buffer queue"),
     (r"^/api/agent/runs/\d+/packages/", None, "save this change to the post"),
     (r"^/api/approvals/[^/]+/approve$", None, "approve this post and send it to Buffer"),

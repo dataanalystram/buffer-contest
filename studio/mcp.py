@@ -139,6 +139,10 @@ from . import agent_routes as _agent_routes  # noqa: E402
 
 TOOLS += _agent_routes.TOOLS
 READ_ONLY |= _agent_routes.READ_ONLY
+from . import chat_context as _chat_ctx  # noqa: E402  Make a post chat: get_post_context, rename_post_thread
+
+TOOLS += _chat_ctx.TOOLS
+READ_ONLY |= _chat_ctx.READ_ONLY
 from . import library as _library  # noqa: E402  Library: list_library, delete_library_item, use_library_item
 
 TOOLS += _library.TOOLS
@@ -290,6 +294,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _agent_routes.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _chat_ctx.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     extra = _library.call_tool(studio, actor, name, args)

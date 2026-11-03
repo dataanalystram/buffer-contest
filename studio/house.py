@@ -673,7 +673,8 @@ class House:
         return rid in agent_brain._running
 
     def runs(self, a: Actor, limit: int = 20) -> list[dict]:
-        out = []
+        from .chat_context import titles as _chat_titles  # names given in the Make a post sidebar win
+        out, named = [], _chat_titles(self.store, a.uid)
         for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT ?",
                               (a.uid, limit)):
             d = dict(r)
@@ -698,6 +699,9 @@ class House:
             d["slides"] = max((len(p.get("media") or []) for p in pk if p.get("format") == "carousel"), default=0)
             d["duration"] = first.get("duration") or (res.get("upload") or {}).get("duration") or None
             d["thumb"], d["thumb_src"] = _run_thumb(res, inp), _run_thumb_src(res, inp)
+            if named.get(d["id"]):
+                d["auto_title"], d["title"] = d["title"], named[d["id"]]
+            d["summarized"] = (res.get("thread_summary") or {}).get("summarized", 0)
             sent = [p.get("sent") or {} for p in pk if p.get("sent")]
             d["state"] = ("running" if d["status"] in ("running", "rendering") else "failed" if d["status"] == "failed" else
                           "scheduled" if any(x.get("mode") in ("queue", "schedule") for x in sent) else
