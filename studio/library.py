@@ -506,7 +506,7 @@ class Library:
         have = {r["run_id"] for r in self.store.q("SELECT DISTINCT run_id FROM library_items WHERE user_id=? AND run_id IS NOT NULL", (a.uid,))}
         # a run whose item was deleted for good stays done: its other renders (a cover, another channel's picture) never
         # come back as new Library items after Empty bin (owner bug, 3 Nov 2026)
-        for r in self.store.q("SELECT token FROM library_purged WHERE user_id=? AND token LIKE 'run:%'", (a.uid,)):
+        for r in self.store.q("SELECT token FROM library_purged WHERE user_id=? AND token LIKE ?", (a.uid, "run:%")):
             try:
                 have.add(int(r["token"][4:]))
             except ValueError:
