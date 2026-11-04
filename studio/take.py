@@ -543,13 +543,16 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
         print("face track: MediaPipe not installed, falling back to OpenCV's Haar cascade", flush=True)
         return _face_track_cv2(path, fps, "MediaPipe not installed")
     model_path = model_path or os.environ.get("HQ_FACE_MODEL") or str(Path(tempfile.gettempdir()) / "blaze_face_short_range.tflite")
-    if not Path(model_path).exists():
-        import httpx
-        Path(model_path).write_bytes(httpx.get(FACE_MODEL_URL, timeout=60, follow_redirects=True).content)
-    try:  # MediaPipe needs libEGL/libGLES; a box without them reframes with the centre/blur layout instead of failing
+    try:  # MediaPipe needs libEGL/libGLES and its model; any failure to load it falls back to the Haar cascade the
+        # self-check vouches for, never an escaped error (CodeRabbit, PR #107: it caught only OSError)
+        if not Path(model_path).exists():
+            import httpx
+            got = httpx.get(FACE_MODEL_URL, timeout=60, follow_redirects=True)
+            got.raise_for_status()
+            Path(model_path).write_bytes(got.content)
         det = vision.FaceDetector.create_from_options(vision.FaceDetectorOptions(
             base_options=BaseOptions(model_asset_path=model_path), min_detection_confidence=0.6))
-    except OSError as e:
+    except Exception as e:  # noqa: BLE001
         print(f"face track: MediaPipe couldn't load ({str(e)[:80]}), falling back to OpenCV's Haar cascade", flush=True)
         return _face_track_cv2(path, fps, f"MediaPipe couldn't load: {str(e)[:60]}")
     w, h = 320, 180
