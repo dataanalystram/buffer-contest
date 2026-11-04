@@ -13,7 +13,8 @@ const MODES = [["draft", "Buffer draft"], ["queue", "Add to queue"], ["next", "S
 const S = { csrf: "", channels: [], selected: new Set(), drafts: [], article: null, session: null };
 
 async function api(path, opts = {}) {
-  const o = { method: opts.method || "GET", headers: { "Content-Type": "application/json" }, credentials: "same-origin" };
+  // cache: no-store: an API answer is never reused from the HTTP cache (a purged Library item must not reappear)
+  const o = { method: opts.method || "GET", headers: { "Content-Type": "application/json" }, credentials: "same-origin", cache: "no-store" };
   if (o.method !== "GET") o.headers["X-HQ-CSRF"] = S.csrf;
   if (opts.body !== undefined) o.body = JSON.stringify(opts.body);
   const r = await fetch(path, o);

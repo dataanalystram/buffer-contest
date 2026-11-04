@@ -266,6 +266,13 @@ class Library:
     def used(self, uid: str) -> int:
         return int(self.store.q("SELECT COALESCE(SUM(size),0) AS n FROM library_items WHERE user_id=?", (uid,))[0]["n"] or 0)
 
+    def usage(self, uid: str) -> dict:
+        """The storage meter ("X of 2 GB used"), counted from the rows right now (never cached): every answer that changes
+        it (upload, delete, Bin move, restore, purge) carries it, so the meter moves at once (owner bug, 3 Nov 2026)."""
+        if demo_guard.is_demo(uid):
+            return {"used": 0, "quota": QUOTA, "file_max": FILE_MAX}
+        return {"used": self.used(uid), "quota": QUOTA, "file_max": FILE_MAX}
+
     def check_room(self, a: Actor, size: int | None) -> None:
         """Before a byte is read: the file cap, then the person's quota."""
         if demo_guard.is_demo(a.uid):
@@ -497,6 +504,13 @@ class Library:
         if demo_guard.is_demo(a.uid):
             return 0
         have = {r["run_id"] for r in self.store.q("SELECT DISTINCT run_id FROM library_items WHERE user_id=? AND run_id IS NOT NULL", (a.uid,))}
+        # a run whose item was deleted for good stays done: its other renders (a cover, another channel's picture) never
+        # come back as new Library items after Empty bin (owner bug, 3 Nov 2026)
+        for r in self.store.q("SELECT token FROM library_purged WHERE user_id=? AND token LIKE 'run:%'", (a.uid,)):
+            try:
+                have.add(int(r["token"][4:]))
+            except ValueError:
+                continue
         n = 0
         for r in runs if runs is not None else self._runs(a):
             if r["run_id"] in have or r["status"] in ("running", "rendering"):
@@ -662,8 +676,9 @@ class Library:
         if demo_guard.is_demo(a.uid):
             raise ActionError("Sample items can't be deleted. Connect Buffer to manage your own Library.", 403)
         self.h.studio._guard_write(a, "delete_library_item")
-        d = self._row(a, iid)
-        return self._delete_row(a, d, self._runs(a), force, mode)
+        with self.store.tx():
+            out = self._delete_row(a, self._row(a, iid), self._runs(a), force, mode)
+        return {**out, **self.usage(a.uid)}
 
     @staticmethod
     def _uses(d: dict, runs: list[dict], tokens: list[str] | None = None) -> tuple[list[dict], list[dict], list[dict]]:
@@ -674,7 +689,7 @@ class Library:
         sched = [u for u in used if u.get("scheduled")]
         return used, live, sched
 
-    def _delete_row(self, a: Actor, d: dict, runs: list[dict], force: bool, mode: str) -> dict:
+    def _delete_row(self, a: Actor, d: dict, runs: list[dict], force: bool, mode: str, batch: list | None = None) -> dict:
         used, live, sched = self._uses(d, runs)
         if mode == "permanent" and sched:
             raise ActionError(f"“{d['name']}” can't be deleted permanently: it's used in a post scheduled in Buffer "
@@ -686,7 +701,9 @@ class Library:
             n = len(risky)
             raise ActionError(f"“{d['name']}” is used in {n} post{'s' if n > 1 else ''} {what} "
                               f"(“{risky[0]['title'][:60]}”). Delete it anyway?", 409)
-        if mode == "permanent":
+        if batch is not None:  # bulk delete: the writes go out together afterwards (_trash_many / _purge_rows)
+            batch.append(d)
+        elif mode == "permanent":
             self._purge_row(d)
         else:
             self._trash(a, d)
@@ -698,17 +715,45 @@ class Library:
         return out
 
     def _purge_row(self, d: dict) -> None:
-        """Remove an item's bytes and record for good (its media rows too, live or binned), and note its tokens as deleted
-        by the person, so /healthz doesn't count posts that used them as missing files."""
-        t = d["meta"].get("trash") or {}
-        toks = [x for x in (t.get("tokens") or d["meta"].get("tokens") or [t.get("token") or d["token"]]) if x]
-        toks = [x.removeprefix(TRASH_TOKEN) for x in toks]
-        if (t.get("storage") or d["storage"]) == "media":
-            for x in toks:
-                self.store.x("DELETE FROM media WHERE token IN (?,?) AND user_id=?", (x, TRASH_TOKEN + x, d["user_id"]))
-        for x in toks:
-            self.store.x("INSERT INTO library_purged(token,user_id,at) VALUES(?,?,?) ON CONFLICT(token) DO NOTHING", (x, d["user_id"], _now()))
-        self._drop(d["id"])
+        self._purge_rows([d])
+
+    def _purge_rows(self, rows: list[dict]) -> None:
+        """Remove items' bytes and records for good, in one transaction and a handful of statements whatever the count
+        (owner bug, 3 Nov 2026: Empty bin ran ~6 statements per item against the remote Postgres, a refresh while it
+        ran showed half of it, the next refresh none). Their media rows go (live or binned), their tokens are noted as
+        deleted by the person (/healthz doesn't count posts that used them as missing), and the runs that made them are
+        noted so the Library's backfill never registers a run's other renders as new items after the purge."""
+        if not rows:
+            return
+        toks, media, purged, runs, ids = [], [], [], set(), []
+        for d in rows:
+            t = d["meta"].get("trash") or {}
+            mine = [x for x in (t.get("tokens") or d["meta"].get("tokens") or [t.get("token") or d["token"]]) if x]
+            mine = [x.removeprefix(TRASH_TOKEN) for x in mine]
+            if (t.get("storage") or d["storage"]) == "media":
+                media += [(d["user_id"], x) for x in mine] + [(d["user_id"], TRASH_TOKEN + x) for x in mine]
+            purged += [(x, d["user_id"]) for x in mine]
+            if d.get("run_id"):
+                runs.add((f"run:{d['run_id']}", d["user_id"]))
+            ids.append(int(d["id"]))
+        now, st = _now(), self.store
+        with st.tx():
+            for uid in {u for u, _ in media}:
+                ts = [x for u, x in media if u == uid]
+                for i in range(0, len(ts), 400):
+                    part = ts[i:i + 400]
+                    st.x(f"DELETE FROM media WHERE user_id=? AND token IN ({','.join('?' * len(part))})", (uid, *part))
+            rec = purged + sorted(runs)
+            for i in range(0, len(rec), 300):
+                part = rec[i:i + 300]
+                st.x("INSERT INTO library_purged(token,user_id,at) VALUES " + ",".join(["(?,?,?)"] * len(part)) +
+                     " ON CONFLICT(token) DO NOTHING", tuple(v for tok, uid in part for v in (tok, uid, now)))
+            for i in range(0, len(ids), 400):
+                part = ids[i:i + 400]
+                marks = ",".join("?" * len(part))
+                st.x(f"DELETE FROM library_chunks WHERE item_id IN ({marks})", tuple(part))
+                st.x(f"DELETE FROM library_media WHERE item_id IN ({marks})", tuple(part))
+                st.x(f"DELETE FROM library_items WHERE id IN ({marks})", tuple(part))
 
     MAX_BULK = 200
 
@@ -731,16 +776,31 @@ class Library:
         if demo_guard.is_demo(a.uid):
             raise ActionError("Sample items can't be deleted. Connect Buffer to manage your own Library.", 403)
         self.h.studio._guard_write(a, "delete_library_item")
-        ids, runs = self._ids(ids), self._runs(a)
+        ids = self._ids(ids)
         done, refused = [], []
-        for iid in ids:
-            try:
-                d = self._row(a, iid)
-                done.append(self._delete_row(a, d, runs, force, mode)["id"])
-            except ActionError as e:
-                refused.append({"id": iid, "error": str(e), "status": e.status,
-                                "needs_force": e.status == 409 and "can't be deleted permanently" not in str(e)})
-        return {"mode": mode, "deleted": done, "refused": refused, "in_trash_days": TRASH_DAYS if mode == "bin" else None}
+        with self.store.tx():  # one unit: a refresh meanwhile never shows half a bulk delete
+            runs, batch = self._runs(a), []
+            have = {}
+            if ids:  # every row in one read (was one query per id)
+                for r in self.store.q(f"SELECT * FROM library_items WHERE user_id=? AND storage NOT IN ('pending','trash') "
+                                      f"AND id IN ({','.join('?' * len(ids))})", (a.uid, *ids)):
+                    d = dict(r)
+                    d["meta"] = json.loads(d["meta"] or "{}")
+                    have[d["id"]] = d
+            for iid in ids:
+                try:
+                    if iid not in have:
+                        raise ActionError("No such Library item.", 404)
+                    done.append(self._delete_row(a, have[iid], runs, force, mode, batch)["id"])
+                except ActionError as e:
+                    refused.append({"id": iid, "error": str(e), "status": e.status,
+                                    "needs_force": e.status == 409 and "can't be deleted permanently" not in str(e)})
+            if mode == "permanent":
+                self._purge_rows(batch)
+            else:
+                self._trash_many(a, batch)
+        return {"mode": mode, "deleted": done, "refused": refused, "in_trash_days": TRASH_DAYS if mode == "bin" else None,
+                **self.usage(a.uid)}
 
     # ---------------------------------------------------------------- trash (owner bug, 2 Nov 2026)
     # Nine Library items were deleted in 43 s on 2 Nov (20:50 GMT), five of them past the "used in a post that hasn't gone
@@ -757,6 +817,20 @@ class Library:
         self.store.x("UPDATE library_items SET storage='trash', token=?, meta=? WHERE id=?",
                      (TRASH_TOKEN + d["token"], json.dumps(meta), d["id"]))
 
+    def _trash_many(self, a: Actor, rows: list[dict]) -> None:
+        """_trash for several items: their media rows move under the Bin prefix in one statement per 400 tokens."""
+        toks = [t for d in rows if d["storage"] == "media" for t in (d["meta"].get("tokens") or [d["token"]])]
+        with self.store.tx():
+            for i in range(0, len(toks), 400):
+                part = toks[i:i + 400]
+                self.store.x(f"UPDATE media SET token=? || token WHERE user_id=? AND token IN ({','.join('?' * len(part))})",
+                             (TRASH_TOKEN, a.uid, *part))
+            for d in rows:
+                meta = {**d["meta"], "trash": {"at": _now(), "storage": d["storage"], "tokens": d["meta"].get("tokens") or [d["token"]],
+                                               "token": d["token"]}}
+                self.store.x("UPDATE library_items SET storage='trash', token=?, meta=? WHERE id=?",
+                             (TRASH_TOKEN + d["token"], json.dumps(meta), d["id"]))
+
     def _bin_rows(self, a: Actor, ids: list[int] | None = None) -> list[dict]:
         sql, args = "SELECT * FROM library_items WHERE user_id=? AND storage='trash'", [a.uid]
         if ids is not None:
@@ -772,7 +846,7 @@ class Library:
     def trash(self, a: Actor, offset: int = 0, per: int = 0) -> dict:
         """The Bin: items deleted in the last TRASH_DAYS days, newest first, each with how long until it's removed for good."""
         if demo_guard.is_demo(a.uid):
-            return {"items": [], "days": TRASH_DAYS, "total": 0}
+            return {"items": [], "days": TRASH_DAYS, "total": 0, **self.usage(a.uid)}
         rows, now = self._bin_rows(a), _now()
         runs = self._runs(a) if rows else []
         out = []
@@ -794,7 +868,7 @@ class Library:
         if per:
             per, offset = max(1, min(int(per), 200)), max(0, int(offset or 0))
             out = out[offset:offset + per]
-        return {"items": out, "days": TRASH_DAYS, "total": total}
+        return {"items": out, "days": TRASH_DAYS, "total": total, **self.usage(a.uid)}
 
     def bin_file(self, a: Actor, iid, i: int = 0) -> dict:
         """A binned item's file, for its owner only (the Bin's thumbnails and preview); /m/<token> still serves nothing."""
@@ -820,7 +894,9 @@ class Library:
         if not rows:
             raise ActionError("That item isn't in the Bin (it may have been removed for good after "
                               f"{TRASH_DAYS} days).", 404)
-        return self._restore_row(a, dict(rows[0]))
+        with self.store.tx():
+            out = self._restore_row(a, dict(rows[0]))
+        return {**out, **self.usage(a.uid)}
 
     def _restore_row(self, a: Actor, r: dict) -> dict:
         m = json.loads(r["meta"] or "{}")
@@ -838,14 +914,15 @@ class Library:
             raise ActionError("Sample items can't be changed. Connect Buffer to manage your own Library.", 403)
         self.h.studio._guard_write(a, "restore_library_item")
         ids = self._ids(ids)
-        rows = {d["id"]: d for d in self._bin_rows(a, ids)}
         done = []
-        for iid in ids:
-            if iid in rows:
-                d = rows[iid]
-                self._restore_row(a, {**d, "meta": json.dumps(d["meta"])})
-                done.append(iid)
-        return {"restored": done, "missing": [i for i in ids if i not in rows]}
+        with self.store.tx():
+            rows = {d["id"]: d for d in self._bin_rows(a, ids)}
+            for iid in ids:
+                if iid in rows:
+                    d = rows[iid]
+                    self._restore_row(a, {**d, "meta": json.dumps(d["meta"])})
+                    done.append(iid)
+        return {"restored": done, "missing": [i for i in ids if i not in rows], **self.usage(a.uid)}
 
     def purge(self, a: Actor, ids=None, everything: bool = False) -> dict:
         """Delete permanently from the Bin: the listed ids, or everything=true (Empty bin). Can't be undone. An item a post
@@ -854,38 +931,40 @@ class Library:
             raise ActionError("Sample items can't be deleted. Connect Buffer to manage your own Library.", 403)
         self.h.studio._guard_write(a, "purge_library_bin")
         want = None if everything else self._ids(ids)
-        rows = self._bin_rows(a, want)[:self.MAX_BULK]
-        runs = self._runs(a) if rows else []
-        done, refused = [], []
-        for d in rows:
-            t = d["meta"].get("trash") or {}
-            _, _, sched = self._uses(d, runs, t.get("tokens") or [t.get("token")])
-            if sched:
-                refused.append({"id": d["id"], "status": 409, "needs_force": False,
-                                "error": f"“{d['name']}” can't be deleted permanently: it's used in a post scheduled in Buffer "
-                                         f"(“{sched[0]['title'][:60]}”), and Buffer fetches the file again when it publishes."})
-                continue
-            self._purge_row(d)
-            done.append(d["id"])
-        if want is not None:
-            have = {d["id"] for d in rows}
-            refused += [{"id": i, "status": 404, "needs_force": False, "error": "That item isn't in the Bin."} for i in want if i not in have]
-        if done:
-            self.store.audit(a.uid, a.label, "purge_library_bin", "safety", {"items": len(done), "everything": bool(everything)})
-        return {"purged": done, "refused": refused}
+        with self.store.tx():  # read, check and delete as one unit: a refresh meanwhile sees the Bin before or after
+            rows = self._bin_rows(a, want)
+            runs = self._runs(a) if rows else []
+            ok, done, refused = [], [], []
+            for d in rows:
+                t = d["meta"].get("trash") or {}
+                _, _, sched = self._uses(d, runs, t.get("tokens") or [t.get("token")])
+                if sched:
+                    refused.append({"id": d["id"], "status": 409, "needs_force": False,
+                                    "error": f"“{d['name']}” can't be deleted permanently: it's used in a post scheduled in Buffer "
+                                             f"(“{sched[0]['title'][:60]}”), and Buffer fetches the file again when it publishes."})
+                    continue
+                ok.append(d)
+                done.append(d["id"])
+            self._purge_rows(ok)
+            if want is not None:
+                have = {d["id"] for d in rows}
+                refused += [{"id": i, "status": 404, "needs_force": False, "error": "That item isn't in the Bin."} for i in want if i not in have]
+            if done:
+                self.store.audit(a.uid, a.label, "purge_library_bin", "safety", {"items": len(done), "everything": bool(everything)})
+        return {"purged": done, "refused": refused, **self.usage(a.uid)}
 
     def purge_trash(self, days: float | None = None) -> int:
         """Remove for good what has been in the Bin longer than ``days`` (TRASH_DAYS). Returns how many items."""
         cutoff = _now() - (TRASH_DAYS if days is None else days) * 86400
-        n = 0
+        old: list[dict] = []
         for r in self.store.q("SELECT * FROM library_items WHERE storage='trash'"):
             d = dict(r)
             d["meta"] = json.loads(d["meta"] or "{}") or {}
             if ((d["meta"].get("trash") or {}).get("at") or 0) > cutoff:
                 continue
-            self._purge_row(d)
-            n += 1
-        return n
+            old.append(d)
+        self._purge_rows(old)
+        return len(old)
 
     def use(self, a: Actor, iid, body: dict | None = None) -> dict:
         """Attach an item to a new post. With a prompt it starts the agent run right away (make_post); without, it
@@ -1060,6 +1139,9 @@ def range_unsatisfiable(header: str, size: int) -> bool:
     return a_ == "" and b_ == "0"
 
 
+NO_STORE = "no-store, max-age=0"
+
+
 def add_routes(app, house, actor) -> None:
     lib = house.library
 
@@ -1078,8 +1160,9 @@ def add_routes(app, house, actor) -> None:
         return Response(f["read"](0, None), media_type=f["mime"], headers=headers)
 
     @app.get("/api/library")
-    def library_list(request: Request, q: str = "", kind: str = "", offset: int = 0, per: int = 0, type: str = "",
+    def library_list(request: Request, response: Response, q: str = "", kind: str = "", offset: int = 0, per: int = 0, type: str = "",
                      created_by: str = "", used_in: str = "", run: str = "", date: str = ""):
+        response.headers["Cache-Control"] = NO_STORE  # never a cached list: a purged item must not come back on refresh
         return lib.list(actor(request), q, kind, offset=offset, per=per, type=type, created_by=created_by, used_in=used_in,
                         run=run, date=date)
 
@@ -1095,12 +1178,14 @@ def add_routes(app, house, actor) -> None:
         except ValueError:
             raise ActionError("Bad Content-Length.", 400)
         nm = name or request.headers.get("x-file-name", "") or "upload"
-        return await lib.save_stream(a, nm, request.stream(), declared, "take" if source == "take" else "upload")
+        out = await lib.save_stream(a, nm, request.stream(), declared, "take" if source == "take" else "upload")
+        return {**out, "usage": lib.usage(a.uid)}  # the meter moves with the upload, no second request
 
     @app.get("/api/library/trash")
     @app.get("/api/library/bin")
-    def library_trash(request: Request, offset: int = 0, per: int = 0):
+    def library_trash(request: Request, response: Response, offset: int = 0, per: int = 0):
         """The Bin: items deleted in the last TRASH_DAYS days; restore with POST /api/library/{id}/restore."""
+        response.headers["Cache-Control"] = NO_STORE
         return lib.trash(actor(request), offset, per)
 
     @app.get("/api/library/bin/{iid}/file")

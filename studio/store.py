@@ -15,6 +15,7 @@ the SESSION_SECRET-derived key stays current, so nothing breaks.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import sqlite3
@@ -177,6 +178,37 @@ class Store:
         # prepare_threshold=None: PgBouncer-style poolers (Supabase) can't keep server-side prepared statements.
         return self._psycopg.connect(self.path, autocommit=True, row_factory=self._dict_row, prepare_threshold=None)
 
+    @contextlib.contextmanager
+    def tx(self):
+        """One atomic unit (Library purge, 3 Nov 2026): every q/x inside commits together or not at all, and the store's
+        lock is held throughout, so a request on another thread reads the state before or after, never half of it.
+        Re-entrant: an inner tx() joins the outer one."""
+        with self._lock:
+            if getattr(self, "_tx_depth", 0):
+                self._tx_depth += 1
+                try:
+                    yield self
+                finally:
+                    self._tx_depth -= 1
+                return
+            self._tx_depth = 1
+            try:
+                if self.pg:
+                    if self._db.closed:
+                        self._db = self._connect()
+                    with self._db.transaction():
+                        yield self
+                else:
+                    self._db.execute("BEGIN IMMEDIATE")
+                    try:
+                        yield self
+                    except BaseException:
+                        self._db.execute("ROLLBACK")
+                        raise
+                    self._db.execute("COMMIT")
+            finally:
+                self._tx_depth = 0
+
     # ---- low level
     def _pg(self, sql: str, args: tuple, fetch: bool):
         sql = sql.replace("?", "%s")
@@ -189,7 +221,7 @@ class Store:
                         c.execute(sql, args)
                         return c.fetchall() if fetch else None
                 except self._psycopg.OperationalError:
-                    if attempt:
+                    if attempt or getattr(self, "_tx_depth", 0):  # inside tx(): a reconnect would lose the transaction
                         raise
                     try:
                         self._db.close()
