@@ -101,7 +101,7 @@
 
 /* Grid (feed preview): fills the width at every size, square-ish 4:5 tiles; the No date panel lines up beside it */
 .pl-grid-wrap{max-width:none}
-.pl-grid{grid-template-columns:repeat(auto-fill,minmax(clamp(150px,14vw,240px),1fr));gap:6px}
+.pl-grid{grid-template-columns:repeat(auto-fill,minmax(clamp(140px,11vw,220px),1fr));gap:6px}
 .pl-skel-wrap{padding:4px 0}
 .ib-stats>.hq-skw,.lp-grid>.hq-skw{grid-column:1/-1}
 /* a text-only post has no picture to show: its card gives the room to the words */
