@@ -134,7 +134,7 @@ def test_working_message_appears_updates_and_clears_and_errors_read_plainly(live
     page.evaluate("""() => { const r = window.H_STATE.run, res = r.result || {};
         window.showRun({...r, status: 'failed', result: {...res, thread: [...(res.thread || []), {role: 'user', text: 'Make the hook stronger', at: 1},
           {role: 'agent', text: 'Unexpected error: AttributeError', at: 2}]}}); }""")
-    pw.expect(page.get_by_test_id("chat-retry")).to_be_visible()
+    pw.expect(page.get_by_test_id("chat-retry-run")).to_be_visible()
     txt = page.locator("#runView").inner_text()
     assert "AttributeError" not in txt and "Unexpected error" not in txt
     assert "Something went wrong" in txt
@@ -154,10 +154,11 @@ def test_demo_model_menu_and_back(demo_live, chromium, close_contexts):
     page.goto(base + "/demo")
     page.wait_for_function("() => document.body.dataset.booted === '1'")
     page.evaluate("showTab('agent')")
-    page.evaluate("api('/api/agent/runs', {method: 'POST', body: {query: 'AI agents', format: 'carousel'}}).then((r) => window.showRun(r))")
-    page.get_by_test_id("chat-composer-model").wait_for()
+    page.evaluate("api('/api/agent/runs', {method: 'POST', body: {query: 'AI agents', format: 'carousel'}}).then((r) => { window.showRun(r); window.watchRun(r.id); })")
+    chip = page.get_by_test_id("chat-model")  # the thread bar's model chip opens the same menu
+    chip.wait_for(timeout=90000)
     url0 = page.url
-    page.get_by_test_id("chat-composer-model").click()
+    chip.click()
     menu = page.get_by_test_id("chat-model-menu")
     pw.expect(menu).to_be_visible()
     page.locator("#hcModelMenu [data-eng=nvidia]").wait_for()

@@ -247,7 +247,7 @@ function agentExtras(r, busy) {
     // something broke on our side: a plain sentence (in the thread) and a Retry button that sends the same words again
     (r.status === "failed" && !busy && (res.error || BARE_ERR.test(((th[th.length - 1] || {}).text) || "")) ? `<div class="st warn ask-card" data-testid="chat-retry-card">
       <span>That didn't finish.${res.error && res.error.ref ? ` Reference <code>${esc(res.error.ref)}</code>.` : ""}</span>
-      <div class="row"><button type="button" class="btn sm" data-testid="chat-retry">Retry</button></div></div>` : "") +
+      <div class="row"><button type="button" class="btn sm" data-testid="chat-retry-run">Retry</button></div></div>` : "") +
     // someone else's video: ONE question, answered with a button (never typed twice)
     (res.rights_question && !res.recap && !(res.rights || {}).mode && !busy ? `<div class="st warn ask-card" role="group" aria-label="Video rights" data-testid="rights-card">
       <span class="md">${md(res.rights_question)}</span><div class="row"><button type="button" class="btn sm" data-testid="rights-yes" data-say="Yes, I have the rights to repost it with credit">Yes, I have the rights</button>
@@ -265,7 +265,7 @@ function agentExtras(r, busy) {
   $("#agentThread").hidden = !$("#agentThread").innerHTML.trim();
   if (window.hqAskCard) window.hqAskCard.wire($("#agentThread"), r);  // Keep Reel / Switch, which kit, which track
   $("#agentThread").querySelectorAll("button[data-say][data-testid^=recap-rights-],button[data-say][data-testid^=rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
-  const rt = $("#agentThread [data-testid=chat-retry]");
+  const rt = $("#agentThread [data-testid=chat-retry-run]");
   if (rt) rt.onclick = async () => { rt.disabled = true;
     const again = ((res.error || {}).retry_text || "").trim();
     try { const n = again ? await api(`/api/agent/runs/${r.id}/messages`, { method: "POST", body: { text: again } })
