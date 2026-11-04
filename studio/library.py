@@ -26,7 +26,7 @@ from pathlib import Path
 from fastapi import Body, Request
 from fastapi.responses import Response, StreamingResponse
 
-from . import demo_guard
+from . import blobstore, demo_guard
 from . import metastrip
 from .actions import ActionError, Actor
 from .buffer_api import BufferError
@@ -90,6 +90,13 @@ def ensure(store) -> None:
         store.x("ALTER TABLE library_items ADD COLUMN IF NOT EXISTS agent_id INTEGER")
     elif "agent_id" not in {r["name"] for r in store.q("PRAGMA table_info(library_items)")}:
         store.x("ALTER TABLE library_items ADD COLUMN agent_id INTEGER")
+    # a chunk's object key when its bytes are in R2, and their hash (studio/blobstore.py, docs/STORAGE.md)
+    have = set() if store.pg else {r["name"] for r in store.q("PRAGMA table_info(library_chunks)")}
+    for col in ("storage_key", "sha256"):
+        if store.pg:
+            store.x(f"ALTER TABLE library_chunks ADD COLUMN IF NOT EXISTS {col} TEXT")
+        elif col not in have:
+            store.x(f"ALTER TABLE library_chunks ADD COLUMN {col} TEXT")
     store.x("CREATE INDEX IF NOT EXISTS library_items_user ON library_items(user_id, id)")
     store.x("CREATE INDEX IF NOT EXISTS library_items_run ON library_items(user_id, run_id)")
     store.x("CREATE INDEX IF NOT EXISTS library_items_token ON library_items(token)")
@@ -228,7 +235,7 @@ class _Writer:
         while len(self.buf) >= CHUNK:
             part, self.buf = bytes(self.buf[:CHUNK]), self.buf[CHUNK:]
             self.h.update(part)
-            self.lib.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (self.iid, self.n, part))
+            self.lib._put_chunk(self.a.uid, self.iid, self.n, part)
             self.n += 1
             self.out += len(part)
 
@@ -259,7 +266,7 @@ class _Writer:
         self._flush()
         if self.buf:
             self.h.update(bytes(self.buf))
-            self.lib.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (self.iid, self.n, bytes(self.buf)))
+            self.lib._put_chunk(self.a.uid, self.iid, self.n, bytes(self.buf))
             self.out += len(self.buf)
         return self.lib._finish(self.a, self.iid, self.tok, name, self.kind, self.out, self.h.hexdigest(), self.source)
 
@@ -300,8 +307,21 @@ class Library:
                                                                 _agent_id(a)))
         return iid, tok
 
+    def _put_chunk(self, uid: str, iid: int, n: int, data: bytes) -> None:
+        """One 1 MB chunk: its bytes in the row (db backend) or in R2 under the owner's prefix (studio/blobstore.py)."""
+        inline, key, digest = blobstore.put("lib", uid, data)
+        self.store.x("INSERT INTO library_chunks(item_id,n,data,storage_key,sha256) VALUES(?,?,?,?,?)", (iid, n, inline, key, digest))
+
+    @staticmethod
+    def _chunk(r) -> bytes:
+        try:
+            return blobstore.read(r["data"], r["storage_key"])
+        except blobstore.StorageError as e:
+            raise ActionError(str(e), 503)
+
     def _drop(self, iid: int) -> None:
-        self.store.x("DELETE FROM library_chunks WHERE item_id=?", (iid,))
+        blobstore.release(self.store, "library_chunks", "item_id=?", (iid,))
+        blobstore.sweep_soon(self.store)
         self.store.x("DELETE FROM library_media WHERE item_id=?", (iid,))
         self.store.x("DELETE FROM library_items WHERE id=?", (iid,))
 
@@ -337,7 +357,7 @@ class Library:
         iid, tok = self._new_item(a, source, "upload")
         try:
             for n, i in enumerate(range(0, len(data), CHUNK)):
-                self.store.x("INSERT INTO library_chunks(item_id,n,data) VALUES(?,?,?)", (iid, n, data[i:i + CHUNK]))
+                self._put_chunk(a.uid, iid, n, data[i:i + CHUNK])
         except BaseException:
             self._drop(iid)
             raise
@@ -376,13 +396,13 @@ class Library:
             return
         for off, new in patches:
             for n in range(off // CHUNK, (off + len(new) - 1) // CHUNK + 1):
-                rows = self.store.q("SELECT data FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
+                rows = self.store.q("SELECT data, storage_key FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
                 if not rows:
                     continue
-                buf = bytearray(bytes(rows[0]["data"]))
+                buf = bytearray(self._chunk(rows[0]))
                 lo, hi = max(off, n * CHUNK), min(off + len(new), (n + 1) * CHUNK)
                 buf[lo - n * CHUNK:hi - n * CHUNK] = new[lo - off:hi - off]
-                self.store.x("UPDATE library_chunks SET data=? WHERE item_id=? AND n=?", (bytes(buf), iid, n))
+                blobstore.rewrite(self.store, "library_chunks", "item_id=? AND n=?", (iid, n), bytes(buf))
 
     def _image_size(self, iid: int) -> dict:
         try:
@@ -689,9 +709,9 @@ class Library:
         """Bytes [start, end] of an uploaded item, reading only the chunks that hold them."""
         first = start // CHUNK
         last = (end // CHUNK) if end is not None else None
-        sql = "SELECT n, data FROM library_chunks WHERE item_id=? AND n>=?" + (" AND n<=?" if last is not None else "") + " ORDER BY n"
+        sql = "SELECT n, data, storage_key FROM library_chunks WHERE item_id=? AND n>=?" + (" AND n<=?" if last is not None else "") + " ORDER BY n"
         rows = self.store.q(sql, (iid, first, last) if last is not None else (iid, first))
-        data = b"".join(bytes(r["data"]) for r in rows)
+        data = b"".join(self._chunk(r) for r in rows)
         off = start - first * CHUNK
         return data[off:(end - first * CHUNK + 1) if end is not None else None]
 
@@ -699,10 +719,10 @@ class Library:
         """Every chunk in order, one database read at a time (a whole-file answer never holds the file in memory)."""
         n = 0
         while True:
-            rows = self.store.q("SELECT data FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
+            rows = self.store.q("SELECT data, storage_key FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
             if not rows:
                 return
-            yield bytes(rows[0]["data"])
+            yield self._chunk(rows[0])
             n += 1
 
     def file(self, a: Actor, iid, i: int = 0) -> dict:
@@ -716,10 +736,10 @@ class Library:
                     "iter": lambda: self._iter(d["id"])}
         toks = d["meta"].get("tokens") or [d["token"]]
         tok = toks[max(0, min(int(i or 0), len(toks) - 1))]
-        m = self.store.q("SELECT mime, data, size FROM media WHERE token=?", (tok,))
+        m = self.store.q("SELECT mime, data, size, storage_key FROM media WHERE token=?", (tok,))
         if not m:
             raise ActionError("This file is gone.", 404)
-        blob = bytes(m[0]["data"])
+        blob = self._chunk(m[0])
         return {"mime": m[0]["mime"], "size": len(blob), "read": lambda s, e: blob[s:(e + 1) if e is not None else None], "name": d["name"]}
 
     # ---------------------------------------------------------------- tokens: library uploads work as media tokens
@@ -821,7 +841,7 @@ class Library:
                 ts = [x for u, x in media if u == uid]
                 for i in range(0, len(ts), 400):
                     part = ts[i:i + 400]
-                    st.x(f"DELETE FROM media WHERE user_id=? AND token IN ({','.join('?' * len(part))})", (uid, *part))
+                    blobstore.release(st, "media", f"user_id=? AND token IN ({','.join('?' * len(part))})", (uid, *part))
             rec = purged + sorted(runs)
             for i in range(0, len(rec), 300):
                 part = rec[i:i + 300]
@@ -830,9 +850,10 @@ class Library:
             for i in range(0, len(ids), 400):
                 part = ids[i:i + 400]
                 marks = ",".join("?" * len(part))
-                st.x(f"DELETE FROM library_chunks WHERE item_id IN ({marks})", tuple(part))
+                blobstore.release(st, "library_chunks", f"item_id IN ({marks})", tuple(part))
                 st.x(f"DELETE FROM library_media WHERE item_id IN ({marks})", tuple(part))
                 st.x(f"DELETE FROM library_items WHERE id IN ({marks})", tuple(part))
+        blobstore.sweep_soon(st)  # the objects go after the rows' transaction committed (studio/blobstore.py)
 
     MAX_BULK = 200
 

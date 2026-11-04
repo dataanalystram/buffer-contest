@@ -264,7 +264,9 @@ class House:
         b1, m1 = render.news_card("Your next post, rendered in your brand style", kit, p, logo=logo, ratio="4:5", label="Preview",
                                   credit="example.com")
         b2, _ = render.end_card(kit, p, logo=logo, ratio="4:5")
-        self.store.x("DELETE FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
+        from . import blobstore
+        blobstore.release(self.store, "media", "user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
+        blobstore.sweep_soon(self.store)
         t1 = self.put_media(a, b1, "preview.jpg", kind="preview", meta=m1)
         t2 = self.put_media(a, b2, "preview_end.jpg", kind="preview", meta={"type": "photo"})
         return {"cover": self.media_url(t1), "end": self.media_url(t2), "check": brand.brand_check("", m1, rules, kit)}
@@ -353,19 +355,25 @@ class House:
         mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif",
                 "mp4": "video/mp4", "mov": "video/quicktime", "m4v": "video/mp4", "webm": "video/webm"}.get(ext, "application/octet-stream")
         tok = secrets.token_urlsafe(18) + "." + ext
-        self.store.x("INSERT INTO media(token,user_id,name,mime,data,size,meta,created) VALUES(?,?,?,?,?,?,?,?)",
-                     (tok, a.uid, name[:80], mime, data, len(data), json.dumps({"kind": kind, **(meta or {})}), _now()))
+        from . import blobstore  # the bytes go to R2 when it is configured, else stay in the row (docs/STORAGE.md)
+        inline, key, digest = blobstore.put("media", a.uid, data, mime)
+        self.store.x("INSERT INTO media(token,user_id,name,mime,data,size,meta,created,storage_key,sha256) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (tok, a.uid, name[:80], mime, inline, len(data), json.dumps({"kind": kind, **(meta or {})}), _now(), key, digest))
         return tok
 
     def get_media(self, token: str) -> dict | None:
         from .library import TRASH_TOKEN
         if not token or token.startswith(TRASH_TOKEN):  # /m/trash~<token> must not serve a binned file (owner-only preview)
             return None
-        rows = self.store.q("SELECT token,user_id,mime,data,size,meta FROM media WHERE token=?", (token,))
+        rows = self.store.q("SELECT token,user_id,mime,data,size,meta,storage_key FROM media WHERE token=?", (token,))
         if not rows:
             return self.library.blob(token)  # an uploaded Library file works as a media token everywhere
         d = dict(rows[0])
-        d["data"] = bytes(d["data"])
+        from . import blobstore
+        try:
+            d["data"] = blobstore.read(d["data"], d.pop("storage_key"))
+        except blobstore.StorageError as e:
+            raise ActionError(str(e), 503)
         return d
 
     def media_head(self, token: str) -> dict | None:
@@ -446,7 +454,9 @@ class House:
         cutoff = _now() - days * 86400
         keep = "token NOT IN (SELECT token FROM library_media)"  # Library items are kept until the person deletes them
         n = self.store.q(f"SELECT COUNT(*) AS n FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))[0]["n"]
-        self.store.x(f"DELETE FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))
+        from . import blobstore
+        blobstore.release(self.store, "media", f"created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))
+        blobstore.sweep_soon(self.store)
         return n
 
     # ================================================================ missing media
