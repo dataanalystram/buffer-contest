@@ -104,6 +104,12 @@ using ONLY the tools. Rules:
   is cut off unless write_captions reports complete=false for that channel."""
 
 
+def oops(ref: str) -> str:
+    """What the person reads when something broke on our side: plain words, a reference for the log, what to do next."""
+    return (f"Something went wrong on my side, so I stopped (reference {ref}). What's made so far is kept. "
+            "Press Retry to try again.")
+
+
 def _now() -> float:
     return time.time()
 
@@ -192,6 +198,7 @@ class Brain:
             raise ActionError("This post isn't stopped.", 409)
         res = run["result"]
         res.pop("interrupted", None)
+        res.pop("error", None)
         res.setdefault("thread", []).append({"role": "user", "text": "Resume", "at": _now()})
         self.h._save(rid, run["steps"], res, "running")
         if res.get("recap"):
@@ -367,8 +374,7 @@ class Brain:
         except ActionError as e:
             self._fail(a, rid, str(e))
         except Exception as e:  # never leave a run spinning
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -446,6 +452,7 @@ class Brain:
             if rid in _running:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
         res = run["result"]
+        res.pop("error", None)
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
         summ = chat_context.summarize(run)
         if summ:
@@ -693,8 +700,7 @@ class Brain:
             run = self.h.run(a, rid)
             self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
         except Exception as e:  # never leave a run spinning
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -881,8 +887,7 @@ class Brain:
             run = self.h.run(a, rid)
             self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
         except Exception as e:  # never leave a run spinning
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -955,8 +960,7 @@ class Brain:
         except ActionError as e:
             self._fail(a, rid, str(e))
         except Exception as e:  # never leave a run spinning
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -1118,8 +1122,7 @@ class Brain:
         except ActionError as e:
             self._fail(a, rid, str(e))
         except Exception as e:  # never leave a run spinning (the bug the owner hit)
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -1167,6 +1170,23 @@ class Brain:
         run["result"].setdefault("notes", []).append(text)
         run["result"].setdefault("thread", []).append({"role": "agent", "text": text, "at": _now()})
         self.h._save(rid, run["steps"], run["result"])
+
+    def _crash(self, a, rid, e: BaseException, retry_text: str | None = None) -> None:
+        """An unexpected error: the traceback goes to the log with a short reference, the person gets a plain sentence
+        and a Retry button (never a bare exception class such as "Unexpected error: AttributeError")."""
+        ref = uuid.uuid4().hex[:8]
+        print(f"agent error ref={ref} run={rid}: {e.__class__.__name__}: {str(e)[:300]}", flush=True)
+        traceback.print_exc()
+        try:
+            run = self.h.run(a, rid)
+            if retry_text is None:
+                last = next((m for m in reversed(run["result"].get("thread") or []) if m.get("role") == "user"), None)
+                retry_text = (last or {}).get("text") if len(run["result"].get("thread") or []) > 1 else ""
+            run["result"]["error"] = {"ref": ref, "at": _now(), "retry_text": (retry_text or "")[:intake.MAX_PROMPT]}
+            self.h._save(rid, run["steps"], run["result"])
+        except Exception:  # noqa: BLE001  the plain message below still lands
+            traceback.print_exc()
+        self._fail(a, rid, oops(ref))
 
     def _fail(self, a, rid, why):
         run = self.h.run(a, rid)
