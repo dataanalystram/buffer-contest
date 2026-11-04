@@ -16,13 +16,16 @@ Every outbound fetch of a user-influenced URL goes through ``safe_get`` / ``safe
   so a DNS answer that flips between the check and the connect can't steer the request inside.
 
 The per-hop host check calls ``drafter._public`` at call time, so tests that pin DNS by monkeypatching it still apply.
-Mock transports (tests) are not pinned: they never open a socket, so there is nothing to rebind. Neither is a request an
-operator routes through HTTP(S)_PROXY: the proxy makes the connection and the DNS lookup itself.
+Mock transports (tests) are not pinned: they never open a socket, so there is nothing to rebind. A checked request that
+an HTTP(S)_PROXY / ``proxy=`` mount would carry is refused instead (FetchError, fail closed): the proxy would resolve the
+host again itself, so the vetted address couldn't be pinned (CodeRabbit + Greptile, 4 Nov 2026). Exempt the host with
+NO_PROXY, or unset the proxy.
 """
 from __future__ import annotations
 
 import ipaddress
 import socket
+import zlib
 from contextlib import contextmanager
 from typing import Iterator
 from urllib.parse import urljoin, urlparse
@@ -44,6 +47,56 @@ BLOCKED_HOSTS = {"metadata", "metadata.google.internal", "metadata.goog", "insta
 
 class FetchError(ValueError):
     pass
+
+
+ACCEPT_ENCODING = "gzip"   # an encoding capped_body inflates under a bound (never br / zstd)
+
+
+def _with_encoding(headers: dict | None, value: str = ACCEPT_ENCODING) -> dict:
+    return {**{k: v for k, v in (headers or {}).items() if k.lower() != "accept-encoding"}, "Accept-Encoding": value}
+
+
+def capped_body(r: httpx.Response, limit: int):
+    """Yield ``r``'s body decoded, never more than ``limit`` bytes in all (FetchError past it). Raw bytes are read off the
+    wire and gzip / deflate are inflated with an output bound on every step, so a small compressed answer can't expand
+    past the cap in memory before it is checked (httpx's iter_bytes() decodes a whole chunk first). Other encodings are
+    refused. An in-memory response (a test transport's) was read and decoded when it was built: its content is used."""
+    if r.is_stream_consumed:
+        if len(r.content) > limit:
+            raise FetchError("That page is too large to read.")
+        yield r.content
+        return
+    enc = r.headers.get("content-encoding", "").strip().lower()
+    if enc in ("", "identity"):
+        dec = None
+    elif enc in ("gzip", "x-gzip"):
+        dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    elif enc == "deflate":
+        dec = zlib.decompressobj()
+    else:
+        raise FetchError("That link answered in an encoding that can't be read.")
+    total = wire = 0
+    wire_cap = limit + 65_536   # raw bytes too: endless empty deflate blocks never reach the decoded cap (CodeRabbit)
+    try:
+        for raw in r.iter_raw():
+            wire += len(raw)
+            if wire > wire_cap:
+                raise FetchError("That page is too large to read.")
+            out = raw if dec is None else dec.decompress(raw, limit + 1 - total)
+            total += len(out)
+            if total > limit or (dec is not None and dec.unconsumed_tail):
+                raise FetchError("That page is too large to read.")
+            if out:
+                yield out
+        if dec is not None:
+            out = dec.flush()
+            total += len(out)
+            if total > limit:
+                raise FetchError("That page is too large to read.")
+            if out:
+                yield out
+    except zlib.error:
+        raise FetchError("That link's compressed answer is broken, so it can't be read.")
 
 
 def ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -122,15 +175,34 @@ def _pinnable(c: httpx.Client, url: str) -> bool:
         return True
 
 
+def _proxied(c: httpx.Client, url: str) -> bool:
+    """Would httpx send ``url`` through a proxy mount (HTTP(S)_PROXY / ``proxy=``)? A NO_PROXY-excluded host maps to the
+    client's default transport (not proxied); a test's MockTransport is never a proxy."""
+    try:
+        t = c._transport_for_url(httpx.URL(url))
+    except Exception:  # noqa: BLE001 - an httpx without this helper has no mounts to worry about
+        return False
+    return t is not getattr(c, "_transport", None) and isinstance(t, httpx.HTTPTransport)
+
+
+def _refuse_proxied(c: httpx.Client, url: str) -> None:
+    if _proxied(c, url):   # fail closed: an unpinned proxied fetch could be DNS-rebound (CodeRabbit + Greptile, 4 Nov 2026)
+        raise FetchError("Links can't be read through an HTTP proxy (the vetted address can't be pinned). "
+                         "Exempt the host with NO_PROXY, or unset the proxy.")
+
+
 def pinned_request(c: httpx.Client, method: str, url: str, *, headers: dict | None = None, pin: bool = True,
-                   **kw) -> tuple[httpx.Request, bool]:
+                   ip: str | None = None, **kw) -> tuple[httpx.Request, bool]:
     """Build the request for ``url``. When ``pin`` and the client is a real network client, the URL's host is swapped for
-    the vetted IP from ``resolve_public`` and the original host travels in the Host header and as the TLS SNI (which is
-    also the name the certificate is verified against). Returns (request, pinned)."""
+    the vetted IP from ``resolve_public`` (or ``ip``, an address an earlier call already vetted for this host) and the
+    original host travels in the Host header and as the TLS SNI (which is also the name the certificate is verified
+    against). Returns (request, pinned)."""
+    if pin:
+        _refuse_proxied(c, url)
     if not (pin and _pinnable(c, url)):
         return c.build_request(method, url, headers=headers, **kw), False
     p = urlparse(url)
-    ip = resolve_public(p.hostname or "")
+    ip = ip or resolve_public(p.hostname or "")
     netloc = (f"[{ip}]" if ":" in ip else ip) + (f":{p.port}" if p.port else "")
     host_hdr = (f"[{p.hostname}]" if ":" in (p.hostname or "") else (p.hostname or "")) + (f":{p.port}" if p.port else "")
     hdrs = {**(headers or {}), "Host": host_hdr}
@@ -199,15 +271,63 @@ def safe_get(url: str, *, limit: int = 5_000_000, http: httpx.Client | None = No
              max_hops: int = MAX_HOPS) -> httpx.Response:
     """GET with every hop checked and the body capped at ``limit`` bytes (FetchError past it). Returns a read response
     (``.text``, ``.content``, ``.url`` and ``.status_code`` work as usual)."""
-    with safe_stream(url, http=http, check_host=check_host, https_only=https_only, headers=headers, timeout=timeout,
-                     max_hops=max_hops) as r:
+    with safe_stream(url, http=http, check_host=check_host, https_only=https_only, headers=_with_encoding(headers),
+                     timeout=timeout, max_hops=max_hops) as r:
         buf = bytearray()
-        for chunk in r.iter_bytes():
+        for chunk in capped_body(r, limit):   # the cap bounds memory before decoding (CodeRabbit, 4 Nov 2026)
             buf += chunk
-            if len(buf) > limit:
-                raise FetchError("That page is too large to read.")
         hdrs = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
         return httpx.Response(r.status_code, headers=hdrs, content=bytes(buf), request=r.request)  # body already decoded
+
+
+def safe_once(url: str, *, method: str = "GET", http: httpx.Client | None = None, headers: dict | None = None,
+              timeout: float = 12, limit: int = 5_000_000, truncate: bool = False, https_only: bool = False,
+              check_host: bool = True, ip: str | None = None) -> tuple[httpx.Response, str | None]:
+    """ONE request (HEAD or GET) to ``url``: the URL and host are checked, the connection is pinned to a vetted IP, a
+    redirect is returned as is (never followed; a caller that wants to follow it must check the Location through this
+    module first), and at most ``limit`` body bytes are read (FetchError past it, or a silent stop with ``truncate``).
+    Pass the ``ip`` a previous call returned to make a second probe of the same URL connect to the same vetted address
+    (no second DNS answer to rebind). Returns (read response, the IP it connected to or None)."""
+    if ip is not None and ip_blocked(ipaddress.ip_address(ip)):
+        raise FetchError("That link points to a private address, so it can't be read.")
+    check_url(url, check_host=check_host and ip is None, https_only=https_only)  # a vetted ip: the connection goes there
+    headers = {**(headers or {}), "Accept-Encoding": "identity"}   # the body is read raw: no decompression bomb
+    own = http is None
+    c = http or client(timeout, headers)
+    try:
+        if check_host:
+            _refuse_proxied(c, url)
+        if check_host and _pinnable(c, url):
+            ip = ip or resolve_public(urlparse(url).hostname or "")
+        else:
+            ip = None
+        req, pinned = pinned_request(c, method, url, headers=headers, pin=ip is not None, ip=ip, timeout=timeout)
+        r = c.send(req, stream=True, follow_redirects=False)
+        try:
+            if pinned:
+                _logical(c, r, method, url, headers)
+            buf = bytearray()
+            if method.upper() != "HEAD":
+                enc = r.headers.get("content-encoding", "").strip().lower()
+                if enc not in ("", "identity"):   # CodeRabbit 4 Nov 2026: never decode, so the cap bounds memory
+                    raise FetchError("That link answered with a compressed body, which can't be checked.")
+                # raw bytes off the wire: the cap below is the real allocation bound (an in-memory response, e.g. a test
+                # transport's, was read when it was built: its content is already there, nothing more is allocated)
+                for chunk in ((r.content,) if r.is_stream_consumed else r.iter_raw()):
+                    buf += chunk
+                    if len(buf) > limit:
+                        if truncate:
+                            del buf[limit:]
+                            break
+                        raise FetchError("That page is too large to read.")
+            hdrs = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-encoding", "transfer-encoding")
+                    and not (k.lower() == "content-length" and method.upper() != "HEAD")]
+            return httpx.Response(r.status_code, headers=hdrs, content=bytes(buf), request=r.request), ip
+        finally:
+            r.close()
+    finally:
+        if own:
+            c.close()
 
 
 def safe_post(url: str, *, http: httpx.Client | None = None, json=None, headers: dict | None = None, timeout: float = 60,

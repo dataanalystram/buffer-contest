@@ -14,6 +14,12 @@ So before a post goes to Buffer, each media URL is read here the same way, from 
 
 The answer is one plain sentence per broken link that says what came back and what to do. A link that passed is
 remembered for 10 minutes, so a post to four channels with the same six slides checks each slide once.
+
+Security (SECURITY_RULES 1; CodeRabbit, 4 Nov 2026): the link is user-supplied and the hosted app makes both requests, so
+both go through ``netguard.safe_once``: https only, no user:pass, every address the host resolves to must be public
+(private, loopback, link-local/metadata, CGNAT, IPv4-mapped IPv6, ...), and the connection is pinned to the vetted IP. The
+HEAD's vetted IP is reused for the GET, so a DNS answer that flips between the two can't steer the GET inside. A redirect
+is reported (Buffer won't follow it either), never followed, and the range read is capped at RANGE_MAX bytes.
 """
 from __future__ import annotations
 
@@ -23,12 +29,15 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import netguard
+
 TIMEOUT = 20.0
 OK_TTL = 600
 _OK: dict[str, float] = {}
 
 UA = "HuhQueue-media-check/1.0 (checks a media link the way Buffer reads it)"
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
+RANGE_MAX = 64 * 1024   # bytes read from the range GET even if the server ignores Range and sends the whole file
 
 
 def kind_of(url: str) -> str:
@@ -50,6 +59,14 @@ def _short(url: str) -> str:
     return f"{p.netloc}{path}"
 
 
+def _public_url(url: str) -> bool:
+    try:
+        netguard.check_url(url, https_only=True)
+        return True
+    except ValueError:   # FetchError, or urlparse refusing a malformed Location such as "https://["
+        return False
+
+
 def check_one(url: str, http: httpx.Client, kind: str | None = None) -> str | None:
     """None when Buffer can read the link; otherwise what came back and what to do, in one sentence."""
     kind = kind or kind_of(url)
@@ -62,7 +79,9 @@ def check_one(url: str, http: httpx.Client, kind: str | None = None) -> str | No
         return None
     h = {"User-Agent": UA}
     try:
-        r = http.request("HEAD", url, headers=h, follow_redirects=False, timeout=TIMEOUT)
+        r, ip = netguard.safe_once(url, method="HEAD", http=http, headers=h, timeout=TIMEOUT, https_only=True)
+    except netguard.FetchError as e:
+        return f"The {word} link {where} can't be used: {e} Buffer needs a public https link it can download."
     except httpx.TimeoutException:
         return (f"The {word} link {where} did not answer within {int(TIMEOUT)} s, so Buffer can't read it either. "
                 "If it is on a free host that sleeps, open it once and try again, or upload the file to the Library.")
@@ -70,7 +89,8 @@ def check_one(url: str, http: httpx.Client, kind: str | None = None) -> str | No
         return f"The {word} link {where} could not be reached ({type(e).__name__}). Buffer needs a public link it can download."
     if r.status_code in (301, 302, 303, 307, 308):
         to = r.headers.get("location", "")
-        return (f"The {word} link {where} redirects to {_short(to) if to.startswith('http') else 'another page'} instead of "
+        shown = to.startswith("https://") and _public_url(to)   # never echo an internal redirect target
+        return (f"The {word} link {where} redirects to {_short(to) if shown else 'another page'} instead of "
                 "serving the file. Buffer needs a direct link to the file (not a share, preview or sign-in page). "
                 "Upload the file to the Library (create_upload) and use its link.")
     if r.status_code in (405, 501):
@@ -98,7 +118,10 @@ def check_one(url: str, http: httpx.Client, kind: str | None = None) -> str | No
         return (f"The {word} link {where} doesn't say how big the file is (no Content-Length), which Buffer's reader "
                 "needs. Upload the file to the Library and use that link.")
     try:
-        g = http.get(url, headers={**h, "Range": "bytes=0-1023"}, follow_redirects=False, timeout=TIMEOUT)
+        g, _ = netguard.safe_once(url, method="GET", http=http, headers={**h, "Range": "bytes=0-1023"}, timeout=TIMEOUT,
+                                  https_only=True, ip=ip, limit=RANGE_MAX, truncate=True)
+    except netguard.FetchError as e:
+        return f"The {word} link {where} can't be read: {e}"
     except httpx.HTTPError as e:
         return f"The {word} link {where} answered HEAD but the download failed ({type(e).__name__})."
     if kind == "video" and g.status_code != 206:

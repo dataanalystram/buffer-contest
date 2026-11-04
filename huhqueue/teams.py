@@ -522,6 +522,7 @@ def _target(s, tid: str) -> tuple[list[str], str]:
 
 def involved_channels(s, path: str, query: dict, body) -> tuple[list[str], list[str]]:
     """(channel ids this request touches, statuses of the posts it touches)."""
+    from . import safety   # lazy, like the other cross-module imports here
     chans, statuses = [], []
     parts = path.strip("/").split("/")   # ["api", kind, id, ...]
     kind, ident = (parts[1] if len(parts) > 1 else ""), (parts[2] if len(parts) > 2 else "")
@@ -550,8 +551,9 @@ def involved_channels(s, path: str, query: dict, body) -> tuple[list[str], list[
                     chans += [c.id for c in resolve_channels(s, ids)]
                 except Exception:
                     chans += [str(x) for x in ids]
-        if path in ("/api/bulk", "/api/bulk/approve"):
-            for tid in body.get("ids") or []:
+        bulk_ids = body.get("ids") if isinstance(body.get("ids"), list) else []
+        if path in ("/api/bulk", "/api/bulk/approve") and len(bulk_ids) <= safety.MAX_SCOPE_IDS:   # longer: TOO_MANY
+            for tid in bulk_ids:
                 c, st = _target(s, str(tid))
                 chans, statuses = chans + c, statuses + [st]
         if body.get("channel_id"):
@@ -559,7 +561,19 @@ def involved_channels(s, path: str, query: dict, body) -> tuple[list[str], list[
     for x in str(query.get("channel_id") or "").split(","):
         if x.strip():
             chans.append(x.strip())
+    # every other id the token channel scope resolves (comment_id / post_id / target_id in the body, /api/comments/bulk
+    # comment ids, /api/utm/defaults/{cid}): the same object -> channel resolution for teammates (CodeRabbit, 4 Nov 2026)
+    named, objects = safety.scope_refs(s, "GET", path, query, body)
+    chans += sorted((named | objects) - {safety.UNRESOLVED})
     return list(dict.fromkeys(chans)), statuses
+
+
+def object_only_channels(s, path: str, query: dict, body) -> set[str]:
+    """Channels the request reaches ONLY through an object id (post, target, comment), not by naming the channel. A
+    denial on one of these answers 404 (no id probing); a channel the request names itself keeps its 403."""
+    from . import safety
+    named, objects = safety.scope_refs(s, "GET", path, query, body)
+    return objects - {safety.UNRESOLVED, safety.TOO_MANY} - named
 
 
 def authorize(s, who: Who, method: str, path: str, query: dict, body, scope: str) -> Decision:
@@ -595,18 +609,31 @@ def authorize(s, who: Who, method: str, path: str, query: dict, body, scope: str
         return _deny("Viewers have read-only access" if role == "viewer" else f"Your role ({role}) can't do that - ask an editor")
     # ---- per channel
     chans, statuses = involved_channels(s, path, query, body)
+    from . import safety
+    if safety.TOO_MANY in chans:
+        return _deny(f"At most {safety.MAX_SCOPE_IDS} ids per request", 400)
     d = Decision()
     if who.restricted():
         d.visible = {c for (c,) in s.execute(select(Channel.id)) if who.channel_role(c) != "none"}
     contributor_on = role == "contributor"
+    forbidden = [c for c in chans if who.channel_role(c) == "none"]
+    if forbidden:
+        # a forbidden channel the request NAMES is checked before any reached only through an object id, so the answer
+        # never depends on which channel the object sits on, or whether it exists (CodeRabbit, 4 Nov 2026)
+        via_object = object_only_channels(s, path, query, body)
+        if not read and any(c not in via_object for c in forbidden):
+            return _deny("You don't have access to this channel", 403)
+        return _deny("Not found", 404)   # another channel's post/comment answers like a missing one (no id probing)
     for cid in chans:
         cr = who.channel_role(cid)
-        if cr == "none":
-            return _deny("You don't have access to this channel", 404 if read else 403)
         if need and RANK[cr] < RANK[need]:
             return _deny(f"On this channel you are a {cr}" + (" (read only)" if cr == "viewer" else " - ask an editor"))
         if cr == "contributor":
             contributor_on = True
+    # after the per-channel checks, so a forbidden channel the request NAMES answers the same (403) whether the object
+    # exists or not; then a missing post/target/comment answers like another channel's (404, no id probing)
+    if who.restricted() and safety.UNRESOLVED in safety.scope_refs(s, method, path, query, body)[1]:
+        return _deny("Not found", 404)
     if contributor_on and not read and not NOTE_PATH.match(path):
         st = {x for x in statuses if x}
         action = body.get("action") if isinstance(body, dict) else None

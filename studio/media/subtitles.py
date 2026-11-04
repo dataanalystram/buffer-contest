@@ -222,8 +222,9 @@ def platform_captions(url: str, lang: str | None = None) -> dict | None:
             tr = choose_track(info or {}, lang)
             if not tr:
                 return None
-            # fetched by yt-dlp's own opener: same platform host, same cookies-free session
-            raw = y.urlopen(tr["url"]).read(MAX_CAPTION_BYTES + 1)
+        # The track URL comes from the platform's answer, so it is fetched like any other link (SECURITY_RULES 1): https
+        # only, every redirect hop's host vetted and the connection pinned, body capped (FetchError past the cap -> None)
+        raw = netguard.safe_get(str(tr.get("url") or ""), https_only=True, limit=MAX_CAPTION_BYTES, timeout=30).content
     except Exception:  # noqa: BLE001 - no captions is not an error: Whisper runs instead
         return None
     if len(raw) > MAX_CAPTION_BYTES:

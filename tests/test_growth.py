@@ -285,6 +285,8 @@ FEED = """<?xml version="1.0"?><rss version="2.0"><channel><title>AI Blog</title
 
 
 def test_rss_new_items_once(api, core, channel, monkeypatch):
+    from huhqueue import netguard   # hermetic: no DNS for ai.example (the feed fetch resolves and vets the host)
+    monkeypatch.setattr(netguard, "_getaddrinfo", lambda h, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))])
     feed = {"xml": FEED}
     monkeypatch.setattr(core, "http", httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=feed["xml"]))))
     a = api.post("/api/automations", {"kind": "rss", "channel_ids": [channel["id"]],
