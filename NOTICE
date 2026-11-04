@@ -296,3 +296,16 @@ Make a post chat interface (studio/static/chat.js, chat.css; 3 Nov 2026)
              a centered message column, a sticky composer, message actions (copy, retry, edit and resend), collapsible
              tool steps and artifacts in a side panel. Studied for patterns only; no Open WebUI code, assets or branding
              are included, so its license terms for copied code do not apply.
+
+Loading states (studio/static/loading.js, loading.css; 4 Nov 2026)
+  Source:   two components from 21st.dev, ported from React/Tailwind to vanilla JS and CSS with HuhQueue's own tokens:
+            - Skeleton by shadcn (https://21st.dev/@shadcn/components/skeleton; shadcn/ui, MIT License, (c) 2023 shadcn):
+              a muted block that pulses while content loads.
+            - Busy by zweiundeins (https://21st.dev/@zweiundeins/components/busy, source
+              https://github.com/zweiundeins/starbase/blob/main/components/busy/busy.js; MIT License, (c) zweiundeins):
+              the indeterminate sweep bar, the visually hidden role=status region, and the reduced-motion static state.
+  Changes:  rewritten as small functions (HQLoad.cards/rows/tiles/busy) with our colours; the shimmer gradient and the
+            notched corners were left out (no gradients in our design system); motion stops under prefers-reduced-motion.
+  Licence:  MIT. Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+            associated documentation files, to deal in the Software without restriction, subject to including the
+            copyright notice and this permission notice in all copies or substantial portions of the Software.

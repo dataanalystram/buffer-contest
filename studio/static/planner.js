@@ -87,15 +87,25 @@ function plTitle(r) {
 async function loadPlanner() {
   if (!PL.tz) plLoadState();
   plSaveState(); plControls();
-  const my = ++PL.req;
-  if (!PL.data) $("#plMain").innerHTML = `<div class="pl-skel" data-testid="planner-loading" aria-busy="true"><span></span><span></span><span></span></div>`;
+  const my = ++PL.req, tk = HQLoad.start("planner");  // a newer load aborts this one (loading.js)
+  if (!PL.data) {
+    $("#plMain").innerHTML = `<div class="pl-skel-wrap" data-testid="planner-loading">${HQLoad.cards(PL.view === "grid" ? 8 : 6, "Loading the planner")}</div>`;
+    if (PL.nodate) { const sd = $("#plNoDate"); sd.hidden = false; $("#plBody").classList.add("with-side"); sd.innerHTML = HQLoad.rows(4, "Loading posts with no date"); }
+  } else HQLoad.busy($("#plBody"), true, "Refreshing the planner");
   try {
-    const d = await api("/api/calendar");
-    if (my !== PL.req) return;
+    const d = await api("/api/calendar", { signal: tk.signal });
+    if (my !== PL.req || !tk.live()) return;
     PL.data = d;
     for (const it of d.items) it.z = it.when ? zoned(new Date(it.when), PL.tz) : null;
     if (typeof readyBadgeFrom === "function") readyBadgeFrom(d);
-  } catch (e) { $("#plMain").innerHTML = `<div class="st err">${esc(e.message)}</div>`; return; }
+  } catch (e) {
+    if (HQLoad.aborted(e) || !tk.live()) return;
+    HQLoad.busy($("#plBody"), false); tk.done();
+    $("#plMain").innerHTML = `<div class="st err">${esc(e.message)}</div>`;
+    const sd = $("#plNoDate"); if (sd.querySelector("[data-testid=loading-skeleton]")) { sd.innerHTML = ""; sd.hidden = true; $("#plBody").classList.remove("with-side"); }
+    return;
+  }
+  HQLoad.busy($("#plBody"), false); tk.done();
   plControls(); plDraw();
   if (PL.open) { // opened from the Inbox: jump to the post's week and open it
     const i = plFind(PL.open); PL.open = "";
@@ -179,9 +189,17 @@ function plDraw() {
   const side = $("#plNoDate");
   side.hidden = !PL.nodate; $("#plBody").classList.toggle("with-side", PL.nodate);
   if (PL.nodate) {
-    side.innerHTML = `<div class="pl-side-head"><b>No date</b><span class="pill sm" data-testid="planner-nodate-count">${undated.length}</span></div>
-      <p class="muted xs">Drag a draft onto the calendar to give it a time.</p>
-      ${undated.length ? undated.map((i) => plCard(i, "side")).join("") : `<p class="pl-side-empty" data-testid="planner-nodate-empty">Nothing without a date. Drafts you save without a time land here.</p>`}`;
+    const f = PL.ndf || "all", nd = undated.filter((i) => i.kind !== "ghost");
+    const n = { all: nd.length, draft: nd.filter((i) => i.state === "draft").length, ready: nd.filter((i) => i.state === "ready" || i.state === "approval").length };
+    const shown = nd.filter((i) => f === "all" || (f === "draft" ? i.state === "draft" : i.state === "ready" || i.state === "approval"));
+    side.innerHTML = `<div class="pl-side-head"><div class="pl-side-t"><b>No date</b><span class="pl-side-n" data-testid="planner-nodate-count">${undated.length}</span></div>
+      <p class="muted xs">Drag a post onto the calendar to schedule it.</p></div>
+      <div class="pl-ndf" role="group" aria-label="Show">${[["all", "All"], ["draft", "Drafts"], ["ready", "Ready"]].map(([k, l]) => `<button type="button" class="pl-ndf-b${f === k ? " on" : ""}" data-ndf="${k}" aria-pressed="${f === k}" data-testid="planner-nodate-filter">${l}<span>${n[k]}</span></button>`).join("")}</div>
+      <div class="pl-ndl" role="list">${shown.length ? shown.map(plRow).join("") : `<p class="pl-side-empty" data-testid="planner-nodate-empty">${undated.length ? "Nothing here with this filter." : "Nothing without a date. Drafts you save without a time land here."}</p>`}</div>`;
+    side.querySelectorAll("[data-ndf]").forEach((b) => (b.onclick = () => {
+      const refocus = document.activeElement === b; PL.ndf = b.dataset.ndf; plDraw();
+      if (refocus) { const nb = $(`#plNoDate [data-ndf="${PL.ndf}"]`); if (nb) nb.focus(); }  // the redraw replaced the focused button
+    }));
   }
   plWire();
   const sc = $(".pl-week-scroll");
@@ -222,9 +240,32 @@ function plWhen(i) { return i.z ? timeLabel(i.z.h, i.z.mi) : "No date"; }
 // a compact chip for the week and month grids
 function plChip(i) {
   return `<button type="button" class="pl-chip s-${esc(i.state)}${i.draggable ? "" : " locked"}" data-testid="planner-item" data-ref="${esc(i.ref)}" data-state="${esc(i.state)}" data-ch="${esc(i.channel_id)}" ${i.draggable ? ' draggable="true"' : ''}
-    title="${esc(PL_STATES[i.state] + " · " + (i.channel || "") + " · " + netName(i.service) + "\n" + i.text)}">${netMark(i.service, i.channel_id, true)}<span class="t">${esc(plWhen(i))}</span><span class="c">${esc(i.text || "(media)")}</span></button>`;
+    title="${esc(PL_STATES[i.state] + " · " + (i.channel || "") + " · " + netName(i.service) + "\n" + i.text)}"><span class="pl-chip-th" aria-hidden="true">${plThumb(i)}</span><span class="pl-chip-b"><span class="t">${esc(plWhen(i))}</span><span class="pl-chip-m">${netMark(i.service, i.channel_id, true)}<span class="c">${esc(i.text || "(media)")}</span></span></span></button>`;
 }
-// a full card for the list view and the No date sidebar
+// a compact row for the No date panel (owner ask, 4 Nov 2026): drag handle, thumbnail, title, channel, status, a ⋯ menu
+// with the same actions the full card has; a missing-media note is a short badge, not a paragraph
+const GRIP = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/></svg>';
+function plActs(i) {
+  const a = [];
+  if (i.kind === "ready") a.push(["run", "planner-open-run", "Open"], ["reschedule", "planner-reschedule", "Schedule"]);
+  if (i.kind === "buffer" && i.state !== "sent") a.push(["edit", "planner-edit", "Edit"], ["reschedule", "planner-reschedule", "Schedule"]);
+  if (i.kind === "approval") a.push(["approve", "planner-approve", "Approve"], ["reschedule", "planner-reschedule", "Set time"]);
+  if (i.state === "draft") a.push(["delete", "planner-delete", "Delete draft"]);
+  return a;
+}
+function plRow(i) {
+  const acts = plActs(i), short = { draft: "Draft", ready: "Ready", approval: "Approval", failed: "Failed", scheduled: "Scheduled", sent: "Sent" }[i.state] || i.state;
+  const gone = i.media_state === "missing" || (i.error && /media/i.test(i.error));
+  return `<article class="pl-row s-${esc(i.state)}" role="listitem" data-testid="planner-nodate-item" data-ref="${esc(i.ref)}" data-ch="${esc(i.channel_id)}" data-state="${esc(i.state)}" ${i.draggable ? 'draggable="true"' : ""} tabindex="0" aria-label="${esc((i.text || "Post") + ", " + (PL_STATES[i.state] || i.state) + ", " + (i.channel || netName(i.service)))}">
+    ${i.draggable ? `<span class="pl-grip" title="Drag onto the calendar">${GRIP}</span>` : `<span class="pl-grip off" aria-hidden="true"></span>`}
+    <span class="pl-thumb">${plThumb(i)}</span>
+    <div class="pl-row-b"><b class="pl-row-t" title="${esc(i.text || "")}">${esc(i.text || "(media only)")}</b>
+      <span class="pl-row-m">${netMark(i.service, i.channel_id, true)}<span class="pl-pill s-${esc(i.state)}" data-testid="planner-status">${esc(short)}</span>${gone ? `<span class="pl-pill warn" data-testid="planner-error" title="${esc(i.error || "Media deleted")}">Media missing</span>` : i.error ? `<span class="pl-pill warn pl-err" data-testid="planner-error" title="${esc(i.error)}">${esc(i.error)}</span>` : ""}</span></div>
+    ${acts.length ? `<details class="pl-rmenu"><summary aria-label="More actions" data-testid="planner-row-menu"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></svg></summary>
+      <div class="pl-rmenu-l" role="menu">${acts.map(([act, tid, l]) => `<button type="button" role="menuitem" class="${act === "delete" ? "danger" : ""}" data-act="${act}" data-ref="${esc(i.ref)}" data-testid="${tid}">${esc(l)}</button>`).join("")}</div></details>` : ""}
+  </article>`;
+}
+// a full card for the list view
 function plCard(i, where) {
   const acts = [];
   if (i.kind === "buffer" && i.state !== "sent") acts.push(`<button type="button" class="link" data-testid="planner-edit" data-act="edit" data-ref="${esc(i.ref)}">Edit</button>`,
@@ -378,6 +419,8 @@ function plWire() {
   const root = $("#tab-planner");
   root.querySelectorAll("#plMain [data-act], #plNoDate [data-act]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plAct(b.dataset.act, b.dataset.ref, b); }));
   root.querySelectorAll(".pl-chip,.pl-tile").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); plOpenItem(plFind(b.dataset.ref)); }));
+  root.querySelectorAll(".pl-row").forEach((r) => { r.onclick = (e) => { if (e.target.closest(".pl-rmenu")) return; plOpenItem(plFind(r.dataset.ref)); };
+    r.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === r) { e.preventDefault(); plOpenItem(plFind(r.dataset.ref)); } }; });
   root.querySelectorAll("[data-drop]").forEach((col) => {
     col.ondragover = (e) => { e.preventDefault(); col.classList.add("over"); };
     col.ondragleave = () => col.classList.remove("over");

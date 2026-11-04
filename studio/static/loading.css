@@ -1,0 +1,26 @@
+/* Loading states (owner ask, 4 Nov 2026). Ported from 21st.dev, MIT (see NOTICE): shadcn's Skeleton (a muted block,
+   pulsing) and zweiundeins' Busy bar (an indeterminate sweep + a visually hidden status). Our tokens only; no gradients. */
+.hq-vh{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.hq-sk{display:block;border-radius:8px;background:color-mix(in oklab,var(--ink) 9%,transparent)}
+@media (prefers-reduced-motion:no-preference){.hq-sk{animation:hq-sk-pulse 1.6s cubic-bezier(.4,0,.6,1) infinite}}
+@keyframes hq-sk-pulse{50%{opacity:.45}}
+.hq-skw{position:relative;width:100%}
+.hq-sk-l{height:12px;width:72%;border-radius:6px}.hq-sk-l.w1{width:58%}.hq-sk-l.w2{width:84%}.hq-sk-l.sm{width:40%;height:10px}.hq-sk-l.big{height:26px;width:52%}
+.hq-sk-rows{display:grid;gap:10px}
+.hq-sk-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--raised)}
+.hq-sk-th{width:48px;height:48px;border-radius:10px;flex:none}
+.hq-sk-lines{display:grid;gap:8px;flex:1;min-width:0}
+.hq-sk-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+.hq-sk-card{display:grid;gap:10px;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--raised)}
+.hq-sk-media{aspect-ratio:4/5;width:100%;border-radius:10px}
+.hq-sk-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.hq-sk-tile{display:grid;gap:12px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--raised)}
+/* Busy bar: sits on the top edge of the region it covers */
+[aria-busy=true]:has(> .hq-busy){position:relative}
+.hq-busy{position:absolute;left:0;right:0;top:0;height:2px;overflow:hidden;border-radius:2px;z-index:3;pointer-events:none;background:color-mix(in oklab,var(--hc-lav,#C9ACFA) 18%,transparent)}
+.hq-busy[hidden]{display:none}
+.hq-busy-fill{position:absolute;inset-block:0;left:0;width:34%;background:var(--hc-lav,#C9ACFA)}
+@media (prefers-reduced-motion:no-preference){.hq-busy-fill{animation:hq-busy-sweep 1.1s cubic-bezier(.4,0,.2,1) infinite}}
+@media (prefers-reduced-motion:reduce){.hq-busy-fill{width:100%;opacity:.5}}
+@keyframes hq-busy-sweep{from{transform:translateX(-105%)}to{transform:translateX(320%)}}
+@media (forced-colors:active){.hq-sk,.hq-busy-fill{forced-color-adjust:none;background:CanvasText}.hq-busy{outline:1px solid CanvasText}}

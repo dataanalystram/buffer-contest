@@ -71,7 +71,7 @@
   const mpNew = document.getElementById("mpNew");
   mpNew.innerHTML = `${ic(I.plus)}<span>New post</span>`; mpNew.setAttribute("aria-label", "New post");
   const menuB = el("button", "btn2 sm icon hc-menu", { type: "button", id: "hcMenu", "data-testid": "chat-sidebar-open", "aria-label": "Threads", "aria-controls": "hcSide", "aria-expanded": "false" });
-  menuB.innerHTML = ic(I.panel);
+  menuB.innerHTML = `${ic(I.panel)}<span class="hc-menu-l">Hide threads</span>`;
   const head = el("div", "hc-head");
   head.innerHTML = `<h2 class="hc-title" id="hcTitle" data-testid="chat-title">Post</h2>`;
   head.appendChild(document.getElementById("mpStatus"));
@@ -181,9 +181,47 @@
     const o = e.target.closest("[data-open]"); if (!o) return;
     sideDrawer(false);
     if (o.dataset.kind === "take") return window.openTake && window.openTake(o.dataset.open);
-    try { const x = await api(`/api/agent/runs/${o.dataset.open}`); window.showRun(x); if (busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
-    catch (err) { toast(err.message, 5000); }
+    // the clicked thread is marked at once and the conversation shows a skeleton until its run arrives; a quicker second
+    // click aborts this request, so the earlier thread never lands over the later one (loading.js)
+    const tk = HQLoad.start("thread"), H = window.H_STATE || {};
+    // the previous thread's poll stops here: a late answer for it can never redraw over the thread picked now (house.js watch)
+    clearTimeout(H.poll); H.watching = null;
+    markThread(o.dataset.open);
+    threadLoading(true);
+    try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; const mx = H.missed === String(x.id); H.missed = null; threadLoading(false); window.showRun(x); if (mx || busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
+    catch (err) {
+      if (HQLoad.aborted(err) || !tk.live()) return;
+      toast(err.message, 5000);
+      // the thread did not load: the list marks the thread still on screen again, and that thread is fetched again while the
+      // skeleton and the inert dock stay up (a reply sent meanwhile or progress made shows up, and no caption or schedule
+      // edit can start on a card that is about to be redrawn); if that fetch fails too, the copy on screen comes back as it was
+      const cur = H.run; if (!cur) { threadLoading(false); return; }
+      markThread(cur.id);
+      // a reply answered while this loaded was not drawn (house.js sets H.missed): the thread is polled once more, so the
+      // reply shows up even if the copy fetched here, or the copy on screen, predates it
+      const missed = () => { const m = H.missed === String(cur.id); H.missed = null; return m; };
+      try { const y = await api(`/api/agent/runs/${cur.id}`, { signal: tk.signal }); if (!tk.live()) return; threadLoading(false); window.showRun(y); if (missed() || busyRun(y)) window.watchRun(y.id); }
+      catch (e2) { if (HQLoad.aborted(e2) || !tk.live()) return; threadLoading(false); if (missed() || busyRun(cur)) window.watchRun(cur.id); }
+    }
+    finally { if (tk.live()) tk.done(); }
   });
+  // leaving the thread view (New post, a recent post, a Discover story): the thread request in flight is aborted, so its
+  // answer (or its recovery fetch) never reopens a thread over the screen picked now, and the skeleton and inert dock go
+  // (the open thread's poll stops too, so a late poll answer can't replace the screen picked now)
+  window.hcCancelThread = () => { HQLoad.start("thread").done(); const W = window.H_STATE; if (W) { clearTimeout(W.poll); W.watching = null; } threadLoading(false); };
+  function markThread(id) {
+    document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = String(li.dataset.id) === String(id); li.classList.toggle("on", on); const b = li.querySelector(".hc-th"); if (!b) return; if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); });
+  }
+  // a skeleton over the conversation while another thread loads (the old thread's messages never stay up as if current)
+  function threadLoading(on) {
+    let sk = document.getElementById("hcLoading");
+    rv.classList.toggle("hc-loading", on);
+    if (on && !sk) { sk = el("div", "hc-loading-sk", { id: "hcLoading" }); sk.innerHTML = HQLoad.rows(4, "Loading the thread"); main.insertBefore(sk, main.children[1] || null); }
+    if (sk) sk.hidden = !on;
+    // the composer and the Ready bar belong to the thread still on screen: inert until the picked one arrives, so nothing
+    // typed or approved meanwhile goes to the previous thread
+    const dk = document.getElementById("hcDock"); if (dk) { dk.inert = on; dk.classList.toggle("hc-dock-wait", on); }
+  }
   function rename(id) {
     const li = document.querySelector(`#hcList .hc-li[data-id="${sel(id)}"]`); if (!li) return;
     const row = HC.rows.find((x) => String(x.id) === String(id)) || {};
@@ -243,6 +281,7 @@
     const open = isOverlay() ? rv.classList.contains("hc-side-open") : !threadsHidden();
     menuB.setAttribute("aria-expanded", String(open));
     menuB.setAttribute("aria-label", open ? "Hide threads" : "Show threads"); menuB.title = open ? "Hide threads" : "Show threads";
+    menuB.querySelector(".hc-menu-l").textContent = open ? "Hide threads" : "Show threads";
     menuB.classList.toggle("on", open);
   }
   menuB.onclick = () => (isOverlay() ? sideDrawer(!rv.classList.contains("hc-side-open")) : setThreads(threadsHidden(), true));
