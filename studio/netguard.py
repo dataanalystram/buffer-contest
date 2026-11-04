@@ -222,6 +222,7 @@ def safe_once(url: str, *, method: str = "GET", http: httpx.Client | None = None
     if ip is not None and ip_blocked(ipaddress.ip_address(ip)):
         raise FetchError("That link points to a private address, so it can't be read.")
     check_url(url, check_host=check_host and ip is None, https_only=https_only)  # a vetted ip: the connection goes there
+    headers = {**(headers or {}), "Accept-Encoding": "identity"}   # the body is read raw: no decompression bomb
     own = http is None
     c = http or client(timeout, headers)
     try:
@@ -236,7 +237,12 @@ def safe_once(url: str, *, method: str = "GET", http: httpx.Client | None = None
                 _logical(c, r, method, url, headers)
             buf = bytearray()
             if method.upper() != "HEAD":
-                for chunk in r.iter_bytes():
+                enc = r.headers.get("content-encoding", "").strip().lower()
+                if enc not in ("", "identity"):   # CodeRabbit 4 Nov 2026: never decode, so the cap bounds memory
+                    raise FetchError("That link answered with a compressed body, which can't be checked.")
+                # raw bytes off the wire: the cap below is the real allocation bound (an in-memory response, e.g. a test
+                # transport's, was read when it was built: its content is already there, nothing more is allocated)
+                for chunk in ((r.content,) if r.is_stream_consumed else r.iter_raw()):
                     buf += chunk
                     if len(buf) > limit:
                         if truncate:

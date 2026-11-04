@@ -131,3 +131,11 @@ def test_notify_webhook_never_follows_redirects_inside(core, monkeypatch):
     monkeypatch.setattr(core, "prefs", lambda: {"notify_webhook_url": "https://ntfy.test/topic"})
     events.webhook(core, {"message": "hi", "level": "info"})
     assert len(t.seen) == 1
+
+
+@pytest.mark.parametrize("ip", ["fd00:ec2::254", "100.100.100.200", "192.0.0.192", "::ffff:100.100.100.200"])
+def test_cloud_metadata_ips_outside_link_local_are_refused_under_lan_too(ip):
+    """CodeRabbit (4 Nov 2026): the 'lan' policy (webhooks, HUHQ_ALLOW_PRIVATE_URLS=1) allowed the AWS IPv6, Alibaba and
+    Oracle metadata addresses because they are not link-local. They are refused under every policy now."""
+    assert netguard.ip_blocked(ip, "lan") and netguard.ip_blocked(ip, "public")
+    assert not netguard.ip_blocked("192.168.1.20", "lan")   # a LAN n8n stays allowed

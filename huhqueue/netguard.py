@@ -42,6 +42,7 @@ BLOCKED_NETS = [ipaddress.ip_network(n) for n in (
     "::/128", "::1/128", "64:ff9b:1::/48", "100::/64", "2001::/23", "2001:db8::/32", "fc00::/7", "fe80::/10",
     "fec0::/10", "ff00::/8",
 )]
+METADATA_IPS = [ipaddress.ip_network(n) for n in ("fd00:ec2::254/128", "100.100.100.200/32", "192.0.0.192/32")]  # AWS v6, Alibaba, Oracle
 METADATA_HOSTS = {"metadata", "metadata.google.internal", "metadata.goog", "instance-data", "instance-data.ec2.internal"}
 
 
@@ -66,6 +67,8 @@ def ip_blocked(ip, policy: str = "public") -> bool:
             return True
         if ip.ipv4_mapped:
             return False
+    if any(ip in n for n in METADATA_IPS if n.version == ip.version):   # cloud metadata outside link-local: every policy
+        return True
     if policy == "lan":
         if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
             return True

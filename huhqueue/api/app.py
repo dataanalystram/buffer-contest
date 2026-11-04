@@ -700,14 +700,15 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
             return app.state.media_dict(m)
 
     @app.delete("/api/media/{mid}")
-    def media_delete(mid: str, force: bool = False):
-        from .pro_content import media_usage
+    def media_delete(mid: str, request: Request, force: bool = False):
+        from .pro_content import filter_usage, media_usage
         with core.db.session() as s:
             m = s.get(Media, mid)
             if m:
                 use = media_usage(s, mid)
-                if use["uses"] and not force:
-                    return _err(409, f"This file is used in {use['uses']} post(s) or idea(s) - delete with force=true", usage=use)
+                if use["uses"] and not force:   # block on the FULL usage; list only the caller's visible channels' posts
+                    shown = filter_usage(use, getattr(request.state, "visible_channels", None), recount=False)
+                    return _err(409, f"This file is used in {use['uses']} post(s) or idea(s) - delete with force=true", usage=shown)
                 media_svc.delete(core, m)
                 s.delete(m)
         return {"ok": True}

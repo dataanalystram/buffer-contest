@@ -65,7 +65,7 @@ def test_forbidden_and_missing_ids_look_the_same(app, api, core, channel):
     t = theirs["targets"][0]["id"]
     a, b = c.get(f"/api/targets/{t}"), c.get("/api/targets/tgt_doesnotexist")
     assert a.status_code == b.status_code == 404 and a.json() == b.json()
-    a, b = c.patch(f"/api/comments/cm_other", json={"flagged": True}), c.patch("/api/comments/cm_nope", json={"flagged": True})
+    a, b = c.patch("/api/comments/cm_other", json={"flagged": True}), c.patch("/api/comments/cm_nope", json={"flagged": True})
     assert a.status_code == b.status_code == 404 and a.json() == b.json()
 
 
@@ -132,3 +132,24 @@ def test_teammate_without_channel_access_gets_404_for_its_objects(app, api, core
     _hidden(ed.post("/api/comments/bulk", {"ids": ["cm_other"], "action": "resolve"}))
     with core.db.session() as s:
         assert s.get(Comment, "cm_other").status == "open"
+
+
+def test_media_delete_409_lists_only_visible_posts_but_still_blocks(app, api, core, channel, image_file):
+    """CodeRabbit (4 Nov 2026): DELETE /api/media/{id} returned the unfiltered usage in its 409 body. The block is still
+    decided on the FULL usage (a hidden channel's post keeps the file), but the body lists only the caller's posts."""
+    from .conftest import upload
+    m = upload(api, image_file)[0]
+    other = api.post("/api/connect/fake/token", {"access_token": "tok-2", "username": "other_brand"}).json()
+    api.post("/api/posts", {"caption": "secret caption", "channel_ids": [other["id"]], "media_ids": [m["id"]], "when": "draft"})
+    c = TestClient(app, headers={"Authorization": f"Bearer {_tok(api, [channel['id']])}"})
+    r = c.delete(f"/api/media/{m['id']}")
+    assert r.status_code == 409 and "secret" not in r.text and other["id"] not in r.text
+    assert api.get(f"/api/media/{m['id']}/usage").json()["uses"] == 1   # not deleted
+
+
+def test_non_list_ids_do_not_crash_the_scope_check(app, api, core, channel):
+    _setup(app, api, core, channel)
+    from huhqueue import safety
+    with core.db.session() as s:
+        assert safety.scope_refs(s, "POST", "/api/bulk", {}, {"ids": 5}) == (set(), set())
+        assert safety.scope_refs(s, "POST", "/api/comments/bulk", {}, {"ids": "cm_other"}) == (set(), set())

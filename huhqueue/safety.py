@@ -148,7 +148,8 @@ def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], 
             if body.get(k):
                 refs.append(body[k])
         on_comments = path.startswith("/api/comments")
-        for oid in body.get("ids") or []:          # bulk actions: comment ids on /api/comments/*, post targets elsewhere
+        raw_ids = body.get("ids")
+        for oid in raw_ids if isinstance(raw_ids, list) else []:   # bulk: comment ids on /api/comments/*, post targets elsewhere
             objects |= _comment_channels(s, oid) if on_comments else _target_channels(s, oid)
         objects |= _post_channels(s, body.get("post_id"))
         objects |= _target_channels(s, body.get("target_id"))

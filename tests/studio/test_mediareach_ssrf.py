@@ -138,3 +138,47 @@ def test_public_link_still_passes(monkeypatch):
     _dns(monkeypatch, {"cdn.example.com": ["93.184.216.34"]})
     monkeypatch.setattr(drafter, "_public", netguard.public_host)
     assert mediareach.check_one("https://cdn.example.com/v.mp4", httpx.Client(transport=Recorder())) is None
+
+
+def test_compressed_range_body_is_refused_not_decoded(monkeypatch):
+    """CodeRabbit (4 Nov 2026): iter_bytes() decodes before the cap, so a small gzip chunk could inflate past RANGE_MAX.
+    The probe asks for identity, reads raw bytes, and refuses a compressed answer instead of decoding it."""
+    import gzip
+    _dns(monkeypatch, {"zip.test": ["93.184.216.34"]})
+    asked = {}
+
+    def routes(req):
+        if req.method == "HEAD":
+            return httpx.Response(200, headers={"content-type": "video/mp4", "content-length": "9"}, request=req)
+        asked["ae"] = req.headers.get("accept-encoding")
+        return httpx.Response(206, content=gzip.compress(MP4[:24] + b"\x00" * 5_000_000),
+                              headers={"content-type": "video/mp4", "content-encoding": "gzip"}, request=req)
+    msg = mediareach.check_one("https://zip.test/v.mp4", httpx.Client(transport=Recorder(routes)))
+    assert msg and "compressed" in msg and asked["ae"] == "identity"
+
+
+def test_caption_track_is_fetched_through_netguard(monkeypatch):
+    """CodeRabbit (4 Nov 2026): the caption track was opened with yt-dlp's urlopen, which follows redirects unchecked.
+    It now goes through netguard.safe_get, which vets every hop."""
+    from studio.media import subtitles as S
+    seen = []
+
+    def fake_safe_get(url, **k):
+        seen.append((url, k.get("https_only"), k.get("limit")))
+        raise netguard.FetchError("That link points to a private address, so it can't be read.")
+
+    class FakeYDL:
+        def __init__(self, *a, **k): ...
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def extract_info(self, *a, **k):
+            return {"subtitles": {"en": [{"ext": "vtt", "url": "https://captions.test/t.vtt"}]}}
+        def urlopen(self, *a, **k):
+            raise AssertionError("yt-dlp's opener must not fetch the track")
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYDL))   # no yt-dlp in the web env
+    monkeypatch.setattr(netguard, "safe_get", fake_safe_get)
+    monkeypatch.setattr(netguard, "check_url", lambda u, **k: u)
+    assert S.platform_captions("https://www.youtube.com/watch?v=abcdefghijk") is None
+    assert seen == [("https://captions.test/t.vtt", True, S.MAX_CAPTION_BYTES)]
