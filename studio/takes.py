@@ -420,8 +420,7 @@ class Takes(TakeBin):
         # Each read-modify-write runs under the take's lock, the same one delete / restore / purge take (take_bin.py), so a
         # callback already past its cancelled check can't save an old result over the Bin's. Picking the moments (AI
         # engines, up to minutes) runs outside it; the take is read again, and checked again, before the result is saved.
-        lk = self._job_lock(jid)
-        with lk:
+        with self._job_lock(jid):  # a fresh context each time (the lock itself is per take)
             first = self._on_analysis(jid, analysis, error)
         if first.get("done") is not None:
             return first["done"]
@@ -430,7 +429,7 @@ class Takes(TakeBin):
             mined = self._mine(run, analysis, eng, chat)
         except take.TakeError as e:
             mined = e
-        with lk:
+        with self._job_lock(jid):
             if self.job_cancelled(jid):
                 return {"ok": False, "cancelled": True}
             fresh = self._run(a, rid)
