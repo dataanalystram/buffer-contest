@@ -144,13 +144,13 @@ function libMeter(d) {
 function binDrop(ids) {
   const gone = new Set(ids.map(String)), d = LIB.binData; if (!d) return;
   const items = d.items.filter((x) => !gone.has(String(x.id)));
-  LIB.bin = items; LIB.binData = { ...d, items, total: items.length }; binDraw(LIB.binData);
+  LIB.bin = items; LIB.binData = { ...d, items, total: items.length }; if (LIB.view === "bin") binDraw(LIB.binData);
 }
 async function libPurge(body, ids) {
   binDrop(ids);
   const b = $("#libEmptyBin"); b.disabled = true;
   try { const r = await api("/api/library/bin/purge", { method: "POST", body }); libMeter(r); return r; }
-  finally { b.disabled = false; loadBin({ keep: true }); }
+  finally { b.disabled = false; loadLibrary({ keep: true }); }  // the current view: a purge that ends after a switch to Library must not leave it loading
 }
 // draws the Library from an /api/library answer: loadLibrary after it fetches, and the boot-end redraw from LIB.data
 function libDraw(d) {
@@ -390,7 +390,7 @@ async function libBulkPermanent() {
 $("#libBulkPerm").onclick = libBulkPermanent;
 $("#libBulkPermMenu").onclick = libBulkPermanent;
 $("#libBulkRestore").onclick = async () => {
-  try { const r = await api("/api/library/bin/restore", { method: "POST", body: { ids: selItems().map((x) => +x.id) } }); libMeter(r); libSelClear(); loadBin({ keep: true }); toast(`${plural(r.restored.length, "item")} restored`); }
+  try { const r = await api("/api/library/bin/restore", { method: "POST", body: { ids: selItems().map((x) => +x.id) } }); libMeter(r); libSelClear(); loadLibrary({ keep: true }); toast(`${plural(r.restored.length, "item")} restored`); }
   catch (e) { toast(e.message, 6000); }
 };
 
@@ -483,7 +483,7 @@ function binDraw(d) {
     : `<div class="lp-empty" data-testid="bin-empty"><span class="lp-empty-ic" aria-hidden="true">${IC.bin}</span><b>The Bin is empty</b><span>Items you move to the Bin stay here for ${d.days} days, then they're removed for good.</span></div>`;
   grid.querySelectorAll(".lp-bin").forEach((el) => {
     const it = d.items.find((x) => String(x.id) === el.dataset.id); wireSel(el);
-    el.querySelector("[data-act=restore]").onclick = async () => { try { const r = await api(`/api/library/${it.id}/restore`, { method: "POST", body: {} }); libMeter(r); LIB.sel.delete(String(it.id)); toast("Restored to your Library"); loadBin({ keep: true }); } catch (e) { toast(e.message, 5000); } };
+    el.querySelector("[data-act=restore]").onclick = async () => { try { const r = await api(`/api/library/${it.id}/restore`, { method: "POST", body: {} }); libMeter(r); LIB.sel.delete(String(it.id)); toast("Restored to your Library"); loadLibrary({ keep: true }); } catch (e) { toast(e.message, 5000); } };
     el.querySelector("[data-act=purge]").onclick = async () => {
       if (!(await hqConfirm(`Delete “${it.name}” permanently? The file is removed now. This can't be undone.`, { ok: "Delete permanently", danger: true }))) return;
       try { LIB.sel.delete(String(it.id)); const r = await libPurge({ ids: [it.id] }, [it.id]); if (r.refused.length) toast(r.refused[0].error, 7000); else toast("Deleted permanently"); } catch (e) { toast(e.message, 5000); }

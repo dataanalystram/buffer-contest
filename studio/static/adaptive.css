@@ -24,8 +24,8 @@
   border-radius:12px;background:var(--raised);color:var(--ink);font:inherit;text-align:left;cursor:pointer}
 .pkg-tab span{display:grid;line-height:1.25}.pkg-tab b{font-size:14px}.pkg-tab small{font-size:12px;color:var(--muted)}
 .pkg-tab:hover{border-color:var(--line-strong)}
-.pkg-tab.on{border-color:var(--hc-lav,#C9ACFA);box-shadow:inset 0 0 0 1px var(--hc-lav,#C9ACFA)}
-.pkg-tab:focus-visible{outline:2px solid var(--hc-lav,#C9ACFA);outline-offset:2px}
+.pkg-tab.on{border-color:var(--hc-lav);box-shadow:inset 0 0 0 1px var(--hc-lav)}
+.pkg-tab:focus-visible{outline:2px solid var(--hc-lav);outline-offset:2px}
 /* overflow cue on a narrow strip: solid edge shadows (no gradient), only while there is more to scroll */
 @media (max-width:760px){
   .pkg-tabs-wrap::before,.pkg-tabs-wrap::after{content:"";position:absolute;top:2px;bottom:2px;width:1px;pointer-events:none;box-shadow:0 0 14px 10px var(--paper);opacity:.9}
@@ -57,16 +57,16 @@
 .pl-side{gap:10px;padding:14px}
 .pl-side-head{display:grid;gap:2px;justify-content:stretch}
 .pl-side-t{display:flex;align-items:center;gap:8px;font-size:15px}
-.pl-side-n{min-width:24px;height:22px;padding:0 7px;border-radius:999px;display:inline-grid;place-items:center;font-size:12px;font-weight:700;background:color-mix(in oklab,var(--hc-lav,#C9ACFA) 22%,transparent);color:var(--ink);font-variant-numeric:tabular-nums}
+.pl-side-n{min-width:24px;height:22px;padding:0 7px;border-radius:999px;display:inline-grid;place-items:center;font-size:12px;font-weight:700;background:color-mix(in oklab,var(--hc-lav) 22%,transparent);color:var(--ink);font-variant-numeric:tabular-nums}
 .pl-ndf{display:flex;gap:6px;flex-wrap:wrap}
 .pl-ndf-b{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
 .pl-ndf-b span{font-size:11px;font-variant-numeric:tabular-nums;opacity:.85}
 .pl-ndf-b:hover{color:var(--ink);border-color:var(--line-strong)}
-.pl-ndf-b.on{background:var(--hc-lav,#C9ACFA);border-color:var(--hc-lav,#C9ACFA);color:#16101f}
+.pl-ndf-b.on{background:var(--hc-lav);border-color:var(--hc-lav);color:var(--hc-on-lav)}
 .pl-ndl{display:flex;flex-direction:column;gap:6px}
 .pl-row{position:relative;display:grid;grid-template-columns:16px 52px minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 6px 8px 4px;border:1px solid var(--line);border-radius:12px;background:var(--paper);cursor:pointer}
 .pl-row:hover{border-color:var(--line-strong)}
-.pl-row:focus-visible{outline:2px solid var(--hc-lav,#C9ACFA);outline-offset:1px}
+.pl-row:focus-visible{outline:2px solid var(--hc-lav);outline-offset:1px}
 .pl-row[draggable=true]{cursor:grab}.pl-row.dragging{opacity:.4}
 .pl-grip{display:grid;place-items:center;color:var(--subtle)}.pl-grip .ic{width:16px;height:16px;fill:currentColor;stroke:none}
 .pl-row .pl-thumb{width:52px;height:52px;border-radius:9px;overflow:hidden;display:grid;place-items:center;background:var(--sunken);flex:none}
@@ -76,9 +76,10 @@
 .pl-row-m{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .pl-row-m .chmark{width:16px;height:16px}
 .pl-pill{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--line);color:var(--muted)}
+.pl-pill.pl-err{display:inline-block;line-height:18px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pl-pill.s-draft{color:var(--ink)}
-.pl-pill.s-ready,.pl-pill.s-approval{border-color:color-mix(in oklab,var(--hc-lav,#C9ACFA) 60%,transparent);color:var(--ink)}
-.pl-pill.warn{border-color:color-mix(in oklab,var(--warn,#d97706) 60%,transparent);color:var(--warn,#d97706)}
+.pl-pill.s-ready,.pl-pill.s-approval{border-color:color-mix(in oklab,var(--hc-lav) 60%,transparent);color:var(--ink)}
+.pl-pill.warn{border-color:color-mix(in oklab,var(--warn) 60%,transparent);color:var(--warn)}
 .pl-rmenu{position:relative}
 .pl-rmenu summary{list-style:none;width:32px;height:32px;display:grid;place-items:center;border-radius:8px;color:var(--muted);cursor:pointer}
 .pl-rmenu summary::-webkit-details-marker{display:none}

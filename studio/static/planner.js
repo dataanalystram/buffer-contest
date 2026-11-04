@@ -260,7 +260,7 @@ function plRow(i) {
     ${i.draggable ? `<span class="pl-grip" title="Drag onto the calendar">${GRIP}</span>` : `<span class="pl-grip off" aria-hidden="true"></span>`}
     <span class="pl-thumb">${plThumb(i)}</span>
     <div class="pl-row-b"><b class="pl-row-t" title="${esc(i.text || "")}">${esc(i.text || "(media only)")}</b>
-      <span class="pl-row-m">${netMark(i.service, i.channel_id, true)}<span class="pl-pill s-${esc(i.state)}" data-testid="planner-status">${esc(short)}</span>${gone ? `<span class="pl-pill warn" data-testid="planner-error" title="${esc(i.error || "Media deleted")}">Media missing</span>` : ""}</span></div>
+      <span class="pl-row-m">${netMark(i.service, i.channel_id, true)}<span class="pl-pill s-${esc(i.state)}" data-testid="planner-status">${esc(short)}</span>${gone ? `<span class="pl-pill warn" data-testid="planner-error" title="${esc(i.error || "Media deleted")}">Media missing</span>` : i.error ? `<span class="pl-pill warn pl-err" data-testid="planner-error" title="${esc(i.error)}">${esc(i.error)}</span>` : ""}</span></div>
     ${acts.length ? `<details class="pl-rmenu"><summary aria-label="More actions" data-testid="planner-row-menu"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></svg></summary>
       <div class="pl-rmenu-l" role="menu">${acts.map(([act, tid, l]) => `<button type="button" role="menuitem" class="${act === "delete" ? "danger" : ""}" data-act="${act}" data-ref="${esc(i.ref)}" data-testid="${tid}">${esc(l)}</button>`).join("")}</div></details>` : ""}
   </article>`;
