@@ -173,19 +173,32 @@
     if (o.dataset.kind === "take") return window.openTake && window.openTake(o.dataset.open);
     // the clicked thread is marked at once and the conversation shows a skeleton until its run arrives; a quicker second
     // click aborts this request, so the earlier thread never lands over the later one (loading.js)
-    const tk = HQLoad.start("thread");
-    document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = li.dataset.id === o.dataset.open; li.classList.toggle("on", on); const b = li.querySelector(".hc-th"); if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); });
+    const tk = HQLoad.start("thread"), H = window.H_STATE || {};
+    // the previous thread's poll stops here: a late answer for it can never redraw over the thread picked now (house.js watch)
+    clearTimeout(H.poll); H.watching = null;
+    markThread(o.dataset.open);
     threadLoading(true);
     try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; threadLoading(false); window.showRun(x); if (busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
-    catch (err) { if (!HQLoad.aborted(err) && tk.live()) { threadLoading(false); toast(err.message, 5000); } }
+    catch (err) {
+      if (HQLoad.aborted(err) || !tk.live()) return;
+      // the thread did not load: the list marks the thread still on screen again, and that thread's poll resumes if it was working
+      threadLoading(false); if (H.run) { markThread(H.run.id); if (busyRun(H.run)) window.watchRun(H.run.id); }
+      toast(err.message, 5000);
+    }
     finally { if (tk.live()) tk.done(); }
   });
+  function markThread(id) {
+    document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = String(li.dataset.id) === String(id); li.classList.toggle("on", on); const b = li.querySelector(".hc-th"); if (!b) return; if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); });
+  }
   // a skeleton over the conversation while another thread loads (the old thread's messages never stay up as if current)
   function threadLoading(on) {
     let sk = document.getElementById("hcLoading");
     rv.classList.toggle("hc-loading", on);
     if (on && !sk) { sk = el("div", "hc-loading-sk", { id: "hcLoading" }); sk.innerHTML = HQLoad.rows(4, "Loading the thread"); main.insertBefore(sk, main.children[1] || null); }
     if (sk) sk.hidden = !on;
+    // the composer and the Ready bar belong to the thread still on screen: inert until the picked one arrives, so nothing
+    // typed or approved meanwhile goes to the previous thread
+    const dk = document.getElementById("hcDock"); if (dk) { dk.inert = on; dk.classList.toggle("hc-dock-wait", on); }
   }
   function rename(id) {
     const li = document.querySelector(`#hcList .hc-li[data-id="${sel(id)}"]`); if (!li) return;

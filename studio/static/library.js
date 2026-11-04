@@ -531,7 +531,9 @@ async function openDraft(it) {
   };
 }
 
-$("#libQ").addEventListener("input", () => { HQLoad.busy($("#libGrid").parentElement, true, "Searching"); clearTimeout(LIB.t); LIB.t = setTimeout(() => { LIB.page = 1; LIB.sel.clear(); loadLibrary(); }, 250); });
+// typing invalidates at once: the request for the old query is aborted and the skeleton replaces the old cards; the API
+// call itself stays debounced (250 ms)
+$("#libQ").addEventListener("input", () => { HQLoad.start("library"); ++LIB.seq; libLoading(Math.min(LIB.per, 8)); clearTimeout(LIB.t); LIB.t = setTimeout(() => { LIB.page = 1; LIB.sel.clear(); loadLibrary(); }, 250); });
 $("#libQ").addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#libQ").value) { e.stopPropagation(); $("#libQ").value = ""; LIB.page = 1; loadLibrary(); } });
 $("#libAddBtn").onclick = (e) => { e.stopPropagation(); toggleMenu($("#libAddBtn"), $("#libAddMenu")); };
 $("#libUpBtn").onclick = () => { closeMenus(); $("#libFile").click(); };

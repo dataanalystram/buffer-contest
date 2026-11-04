@@ -148,11 +148,14 @@ window.hqAddKeyframes = addKeyframes;
 
 function watch(id) {
   // keeps polling through a failed request (a deploy, a cold start): one error used to stop the UI at "Write captions"
-  clearTimeout(H.poll);
+  clearTimeout(H.poll); H.watching = id;
   let errs = 0;
   const tick = async () => {
+    if (H.watching !== id) return;  // another thread was picked since (chat.js stops this poll)
     try {
-      const r = await api(`/api/agent/runs/${id}`); errs = 0; showRun(r);
+      const r = await api(`/api/agent/runs/${id}`); errs = 0;
+      if (H.watching !== id) return;  // the answer landed after another thread was picked: never drawn over it
+      showRun(r);
       if (["running", "rendering"].includes(r.status)) H.poll = setTimeout(tick, 1400);
       else { loadRuns(); readyBadge(); }
     } catch (e) {
@@ -476,7 +479,7 @@ function pkgTabs(r, pk) {
   if (PKG_TAB.run !== r.id || !pk.some((p) => p.channel_id === PKG_TAB.ch)) { PKG_TAB.run = r.id; PKG_TAB.ch = pk[0].channel_id; }
   return `<div class="pkg-tabs-wrap"><div class="pkg-tabs" role="tablist" aria-label="Channels in this post" data-testid="pkg-tabs">${pk.map((p) => { const on = p.channel_id === PKG_TAB.ch, ch = chOf(p.channel_id);
     return `<button type="button" role="tab" class="pkg-tab${on ? " on" : ""}" id="pkt-${esc(p.channel_id)}" aria-selected="${on}" aria-controls="pkp-${esc(p.channel_id)}" tabindex="${on ? 0 : -1}" data-tab="${esc(p.channel_id)}" data-testid="pkg-tab">
-      ${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : ""}<span><b>${esc(netName(p.service))}</b><small>${esc(fmtLine(p))}</small></span></button>`; }).join("")}</div></div>`;
+      ${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : ""}<span><b>${esc(p.channel_name || netName(p.service))}</b><small>${esc([p.channel_name ? netName(p.service) : "", fmtLine(p)].filter(Boolean).join(" · "))}</small></span></button>`; }).join("")}</div></div>`;
 }
 function pkgSelect(ch, focus) {
   const box = $("#packages"); if (!box.classList.contains("multi")) return;
@@ -555,7 +558,7 @@ function wirePackages(r) {
 
 $("#replyForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  const t = $("#replyIn").value.trim(); if (!t || !H.run) return;
+  const t = $("#replyIn").value.trim(); if (!t || !H.run || $("#runView").classList.contains("hc-loading")) return;  // never to the previous thread
   const b = $("[data-testid=reply-go]"); b.disabled = true;
   try { const r = await api(`/api/agent/runs/${H.run.id}/messages`, { method: "POST", body: { text: t } }); $("#replyIn").value = ""; showRun(r); watch(r.id); }
   catch (e) { toast(e.message, 5000); } finally { b.disabled = false; }
@@ -564,7 +567,7 @@ $("#replyForm").addEventListener("submit", async (ev) => {
 // Upload video in the composer, on every turn of the thread (and drop a file on the thread): it becomes this post's Reel
 const REPLY_MAX = () => (S.session?.demo ? 8 : 100) * 1048576;
 async function replyUpload(f) {
-  if (!H.run) return;
+  if (!H.run || $("#runView").classList.contains("hc-loading")) return;  // another thread is loading: never this one's upload
   if (!/^video\//.test(f.type) && !/\.(mp4|mov|m4v|webm)$/i.test(f.name)) return toast("Upload an MP4 or MOV video");
   if (f.size > REPLY_MAX()) return toast(`Videos up to ${REPLY_MAX() / 1048576} MB here`);
   if (BUSY(H.run.status)) return toast("The agent is still working on this post. Upload once it's done.");

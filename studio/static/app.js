@@ -483,9 +483,13 @@ async function loadInbox() {
   else HQLoad.busy($("#tab-inbox"), true, "Refreshing");
   const [d, sched, lim] = await Promise.all([api("/api/inbox", sig).catch((e) => ({ error: e.message, aborted: HQLoad.aborted(e) })), api("/api/queue?status=scheduled", sig).catch(() => []), api("/api/limits", sig).catch(() => null)]);
   if (!tk.live() || d.aborted) return;
-  tk.done(); HQLoad.busy($("#tab-inbox"), false); loadInbox.drawn = true;
+  tk.done(); HQLoad.busy($("#tab-inbox"), false);
   box.removeAttribute("aria-busy");
-  if (d.error) { box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(d.error)}</div>`; return; }
+  if (d.error) {  // a failed first load: the stats skeleton goes too, so nothing keeps announcing "Loading your inbox"
+    const st = $("#ibStats"); if (st.querySelector("[data-testid=loading-skeleton]")) st.innerHTML = "";
+    box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(d.error)}</div>`; return;
+  }
+  loadInbox.drawn = true;
   ibBadge(d.waiting);
   const G = Object.fromEntries(d.groups.map((g) => [g.key, g]));
   // the dashboard shows approvals as cards above, and the Buffer plan only where it is real (never in the sample)

@@ -49,6 +49,7 @@
 #runView.hc-loading .hc-main>:not(.mp-thread-bar):not(#hcLoading):not(.hc-dock){visibility:hidden;height:0;overflow:hidden;margin:0;padding:0}
 .hc-loading-sk{padding:8px 0 24px}
 .hc-loading-sk[hidden]{display:none}
+.hc-dock.hc-dock-wait{opacity:.55;pointer-events:none}
 
 /* ---------------------------------------------------------------- Planner */
 /* the No date panel: a proper panel (header + count, All / Drafts / Ready chips, compact rows) */
@@ -97,7 +98,7 @@
 .pl-chip-m{display:flex;align-items:center;gap:5px;min-width:0}
 .pl-week .pl-chip .t,.pl-dayv .pl-chip .t{font-weight:700;color:var(--ink);font-size:12px}
 .pl-chip.s-draft{border-style:solid}
-@media (min-width:1600px){.pl-week{grid-template-columns:60px repeat(7,minmax(120px,1fr))}}
+@media (min-width:1600px){.pl-week:not(.pl-dayv){grid-template-columns:60px repeat(7,minmax(120px,1fr))}}
 
 /* Grid (feed preview): fills the width at every size, square-ish 4:5 tiles; the No date panel lines up beside it */
 .pl-grid-wrap{max-width:none}

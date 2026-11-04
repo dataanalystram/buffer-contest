@@ -98,7 +98,13 @@ async function loadPlanner() {
     PL.data = d;
     for (const it of d.items) it.z = it.when ? zoned(new Date(it.when), PL.tz) : null;
     if (typeof readyBadgeFrom === "function") readyBadgeFrom(d);
-  } catch (e) { if (HQLoad.aborted(e) || !tk.live()) return; HQLoad.busy($("#plBody"), false); $("#plMain").innerHTML = `<div class="st err">${esc(e.message)}</div>`; return; }
+  } catch (e) {
+    if (HQLoad.aborted(e) || !tk.live()) return;
+    HQLoad.busy($("#plBody"), false); tk.done();
+    $("#plMain").innerHTML = `<div class="st err">${esc(e.message)}</div>`;
+    const sd = $("#plNoDate"); if (sd.querySelector("[data-testid=loading-skeleton]")) { sd.innerHTML = ""; sd.hidden = true; $("#plBody").classList.remove("with-side"); }
+    return;
+  }
   HQLoad.busy($("#plBody"), false); tk.done();
   plControls(); plDraw();
   if (PL.open) { // opened from the Inbox: jump to the post's week and open it
@@ -190,7 +196,10 @@ function plDraw() {
       <p class="muted xs">Drag a post onto the calendar to schedule it.</p></div>
       <div class="pl-ndf" role="group" aria-label="Show">${[["all", "All"], ["draft", "Drafts"], ["ready", "Ready"]].map(([k, l]) => `<button type="button" class="pl-ndf-b${f === k ? " on" : ""}" data-ndf="${k}" aria-pressed="${f === k}" data-testid="planner-nodate-filter">${l}<span>${n[k]}</span></button>`).join("")}</div>
       <div class="pl-ndl" role="list">${shown.length ? shown.map(plRow).join("") : `<p class="pl-side-empty" data-testid="planner-nodate-empty">${undated.length ? "Nothing here with this filter." : "Nothing without a date. Drafts you save without a time land here."}</p>`}</div>`;
-    side.querySelectorAll("[data-ndf]").forEach((b) => (b.onclick = () => { PL.ndf = b.dataset.ndf; plDraw(); }));
+    side.querySelectorAll("[data-ndf]").forEach((b) => (b.onclick = () => {
+      const refocus = document.activeElement === b; PL.ndf = b.dataset.ndf; plDraw();
+      if (refocus) { const nb = $(`#plNoDate [data-ndf="${PL.ndf}"]`); if (nb) nb.focus(); }  // the redraw replaced the focused button
+    }));
   }
   plWire();
   const sc = $(".pl-week-scroll");
