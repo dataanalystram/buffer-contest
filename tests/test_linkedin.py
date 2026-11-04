@@ -16,6 +16,16 @@ from huhqueue.models import Channel, Event
 from huhqueue.services import oauth
 from huhqueue.worker import Worker
 
+
+@pytest.fixture(autouse=True)
+def _unpinned_outbound(monkeypatch):
+    """These tests mock outbound calls by host name (respx). netguard pins each vetted request to its resolved IP, which
+    respx would see instead, so here DNS answers one public address and requests keep their host name; pinning itself is
+    covered in tests/test_outbound_ssrf.py."""
+    from huhqueue import netguard
+    monkeypatch.setattr(netguard, "_getaddrinfo", lambda h, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))])
+    monkeypatch.setattr(netguard, "_pinnable", lambda c, url: False)
+
 URN = "urn:li:share:7001"
 
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import httpx
 
+from .. import netguard
 from ..models import Media
 from . import media as media_svc
 
@@ -71,10 +72,16 @@ def import_photo(core, photo_id: str, width: int = 2160) -> dict:
     p = _get(core, f"/photos/{photo_id}")
     info = _photo(p)
     loc = (p.get("links") or {}).get("download_location")
+    from urllib.parse import urlparse
+    if loc and (urlparse(loc).scheme != "https" or urlparse(loc).hostname != "api.unsplash.com"):
+        loc = None   # only ever ping Unsplash's own API with our key (the value comes from an API answer)
     if loc:   # required by the API guidelines: tells Unsplash the photo was used
         try:
-            core.http.get(loc, headers={"Authorization": f"Client-ID {_key(core)}"}, timeout=20)
-        except httpx.HTTPError:
+            # vetted + pinned like every outbound fetch, no redirects followed: the URL text alone can't keep our key off an
+            # internal address (CodeRabbit, 4 Nov 2026)
+            netguard.request(core.http, "GET", loc, policy="public", follow=False, limit=64 * 1024,
+                             headers={"Authorization": f"Client-ID {_key(core)}"}, timeout=20)
+        except (httpx.HTTPError, netguard.FetchError):
             pass
     raw = (p.get("urls") or {}).get("raw") or (p.get("urls") or {}).get("full")
     if not raw:
