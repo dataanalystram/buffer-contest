@@ -560,9 +560,12 @@ $("#replyForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const t = $("#replyIn").value.trim(); if (!t || !H.run || $("#runView").classList.contains("hc-loading")) return;  // never to the previous thread
   const b = $("[data-testid=reply-go]"); b.disabled = true;
-  try { const r = await api(`/api/agent/runs/${H.run.id}/messages`, { method: "POST", body: { text: t } }); $("#replyIn").value = ""; showRun(r); watch(r.id); }
+  const rid = H.run.id;  // the reply belongs to the thread it was written in, even if another one is picked while it sends
+  try { const r = await api(`/api/agent/runs/${rid}/messages`, { method: "POST", body: { text: t } }); if (onRun(rid)) { $("#replyIn").value = ""; showRun(r); watch(r.id); } else toast("Sent to the previous thread"); }
   catch (e) { toast(e.message, 5000); } finally { b.disabled = false; }
 });
+// still on this run, and no other thread loading over it: an answer for it may be drawn
+const onRun = (rid) => !!H.run && String(H.run.id) === String(rid) && !$("#runView").classList.contains("hc-loading");
 
 // Upload video in the composer, on every turn of the thread (and drop a file on the thread): it becomes this post's Reel
 const REPLY_MAX = () => (S.session?.demo ? 8 : 100) * 1048576;
@@ -573,11 +576,13 @@ async function replyUpload(f) {
   if (BUSY(H.run.status)) return toast("The agent is still working on this post. Upload once it's done.");
   const lab = $("#replyUpload"), sp = lab.querySelector("span");
   lab.classList.add("busy"); sp.textContent = "Uploading…";
+  // the run and the words are taken when the upload starts: the video goes to the thread it was dropped on, never to
+  // one picked while it uploads, and the answer is drawn only while that thread is still on screen
+  const rid = H.run.id, said = $("#replyIn").value.trim();
   try {
     const tok = await uploadFile(f);
-    const said = $("#replyIn").value.trim();
-    const n = await api(`/api/agent/runs/${H.run.id}/messages`, { method: "POST", body: { text: said || "Here's the video: " + f.name, media_token: tok } });
-    $("#replyIn").value = ""; showRun(n); watch(n.id);
+    const n = await api(`/api/agent/runs/${rid}/messages`, { method: "POST", body: { text: said || "Here's the video: " + f.name, media_token: tok } });
+    if (onRun(rid)) { $("#replyIn").value = ""; showRun(n); watch(n.id); } else toast("Video added to the previous thread");
   } catch (e) { toast(e.message, 6000); }
   finally { lab.classList.remove("busy"); sp.textContent = "Upload video"; $("#replyFile").value = ""; }
 }
