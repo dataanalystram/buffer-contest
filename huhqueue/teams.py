@@ -559,7 +559,18 @@ def involved_channels(s, path: str, query: dict, body) -> tuple[list[str], list[
     for x in str(query.get("channel_id") or "").split(","):
         if x.strip():
             chans.append(x.strip())
+    # every other id the token channel scope resolves (comment_id / post_id / target_id in the body, /api/comments/bulk
+    # comment ids, /api/utm/defaults/{cid}): the same object -> channel resolution for teammates (CodeRabbit, 4 Nov 2026)
+    from . import safety
+    named, objects = safety.scope_refs(s, "GET", path, query, body)
+    chans += sorted((named | objects) - {safety.UNRESOLVED})
     return list(dict.fromkeys(chans)), statuses
+
+
+def names_object(s, path: str, body) -> bool:
+    """True when the request reaches a channel through an object id (post, target, comment), not a channel id."""
+    from . import safety
+    return bool(safety.scope_refs(s, "GET", path, {}, body)[1] - {safety.UNRESOLVED})
 
 
 def authorize(s, who: Who, method: str, path: str, query: dict, body, scope: str) -> Decision:
@@ -599,10 +610,15 @@ def authorize(s, who: Who, method: str, path: str, query: dict, body, scope: str
     if who.restricted():
         d.visible = {c for (c,) in s.execute(select(Channel.id)) if who.channel_role(c) != "none"}
     contributor_on = role == "contributor"
+    by_object = None
     for cid in chans:
         cr = who.channel_role(cid)
         if cr == "none":
-            return _deny("You don't have access to this channel", 404 if read else 403)
+            if by_object is None:
+                by_object = names_object(s, path, body)
+            if read or by_object:   # another channel's post/comment answers like a missing one (no id probing)
+                return _deny("Not found", 404)
+            return _deny("You don't have access to this channel", 403)
         if need and RANK[cr] < RANK[need]:
             return _deny(f"On this channel you are a {cr}" + (" (read only)" if cr == "viewer" else " - ask an editor"))
         if cr == "contributor":

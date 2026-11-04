@@ -112,3 +112,23 @@ def test_media_usage_hides_other_channels(app, api, core, channel, image_file):
     r = c.get(f"/api/media/{m['id']}/usage")
     assert r.status_code == 200 and "secret" not in r.text
     assert {p["channel_id"] for p in r.json()["posts"]} == {channel["id"]}
+
+
+def test_teammate_without_channel_access_gets_404_for_its_objects(app, api, core, channel):
+    """The same pattern on the teammate path (teams.authorize): a teammate with 'none' on a channel gets 404, not 403,
+    for that channel's posts / targets / comments, on reads and writes, and body comment ids are resolved too."""
+    from .test_teams import member
+    other = api.post("/api/connect/fake/token", {"access_token": "tok-2", "username": "other_brand"}).json()
+    theirs = api.post("/api/posts", {"caption": "secret caption", "channel_ids": [other["id"]], "when": "draft"}).json()
+    with core.db.session() as s:
+        s.add(Comment(id="cm_other", channel_id=other["id"], external_id="x1", author="fan", text="hi", status="open"))
+    ed = member(app, api, "editor", access={other["id"]: "none"}, name="Eli")
+    _hidden(ed.get(f"/api/posts/{theirs['id']}/notes"))
+    _hidden(ed.post(f"/api/posts/{theirs['id']}/notes", {"text": "x"}))
+    _hidden(ed.patch(f"/api/targets/{theirs['targets'][0]['id']}", {"caption": "hijack"}))
+    _hidden(ed.patch("/api/comments/cm_other", {"flagged": True}))
+    _hidden(ed.post("/api/comments/suggest-reply", {"comment_id": "cm_other"}))
+    _hidden(ed.post("/api/comments/start-post", {"comment_id": "cm_other"}))
+    _hidden(ed.post("/api/comments/bulk", {"ids": ["cm_other"], "action": "resolve"}))
+    with core.db.session() as s:
+        assert s.get(Comment, "cm_other").status == "open"
