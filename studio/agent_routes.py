@@ -259,6 +259,8 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}, "all": {"type": "boolean"}, "previews": {"type": "boolean"}}}},
     {"name": "resume_post", "description": "Resume a post run the server cut off (status 'interrupted': a deploy or a crash) from its last finished step.",
      "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
+    {"name": "stop_post", "description": "Stop the agent working on a post run after the step it is on (what it made is kept; resume_post carries on). Same as the chat's Stop button and POST /api/agent/runs/{id}/stop.",
+     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
     {"name": "set_cover", "description": "Pick another of the 3 branded cover variants (index 0-2, in the run's package covers) for one channel: its Reel's opening frame becomes that cover (Instagram/TikTok use it as the cover via the thumbnail offset); the 1280x720 variant is the YouTube thumbnail.",
      "inputSchema": {"type": "object", "required": ["run_id", "channel", "index"], "properties": {"run_id": {"type": "integer"}, "channel": {"type": "string", "description": "channel id or network name"},
                                                                                                 "index": {"type": "integer", "minimum": 0, "maximum": 2}}}},
@@ -303,6 +305,8 @@ def call_tool(studio, actor, name: str, args: dict):
                                      everything=bool(args.get("all")))
         if name == "resume_post":
             return h.brain.resume(actor, int(args.get("run_id") or 0))
+        if name == "stop_post":
+            return h.brain.stop(actor, int(args.get("run_id") or 0))
         if name == "set_cover":
             return h.brain.tool(actor, int(args.get("run_id") or 0), "set_cover", {"channel": str(args.get("channel") or ""),
                                                                                     "index": int(args.get("index") or 0)})

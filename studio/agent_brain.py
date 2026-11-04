@@ -205,6 +205,7 @@ class Brain:
         res = run["result"]
         res.pop("interrupted", None)
         res.pop("error", None)
+        res.pop("stopped", None)
         res.setdefault("thread", []).append({"role": "user", "text": "Resume", "at": _now()})
         self.h._save(rid, run["steps"], res, "running")
         if res.get("recap"):
@@ -473,6 +474,7 @@ class Brain:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
         res = run["result"]
         res.pop("error", None)
+        res.pop("stopped", None)
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
         summ = chat_context.summarize(run)
         if summ:
@@ -1140,6 +1142,10 @@ class Brain:
             status = "ready" if res.get("packages") else "failed"
             if res.get("conflicts"):
                 status = "ready"  # packages are on hold; the question is in the thread
+            with _rlock:  # Stop pressed during the last step: no later step boundary would see it
+                if rid in _stop_req:
+                    _stop_req.discard(rid)
+                    raise StopRun(STOPPED)
             self.h._save(rid, run["steps"], res, status)
         except ActionError as e:
             self._fail(a, rid, str(e))
@@ -1196,7 +1202,13 @@ class Brain:
     def _crash(self, a, rid, e: BaseException, retry_text: str | None = None) -> None:
         """An unexpected error: the traceback goes to the log with a short reference, the person gets a plain sentence
         and a Retry button (never a bare exception class such as "Unexpected error: AttributeError")."""
-        if isinstance(e, StopRun):
+        if isinstance(e, StopRun):  # a stopped run keeps status "failed" and says so: the chat shows Resume for it
+            try:
+                run = self.h.run(a, rid)
+                run["result"]["stopped"] = {"at": _now()}
+                self.h._save(rid, run["steps"], run["result"])
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
             return self._fail(a, rid, STOPPED)
         ref = uuid.uuid4().hex[:8]
         print(f"agent error ref={ref} run={rid}: {e.__class__.__name__}: {str(e)[:300]}", flush=True)

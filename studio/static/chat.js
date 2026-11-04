@@ -557,13 +557,14 @@
   const MM = { from: null, busy: false };
   const KEYED = { own: true, "gemini-studio": true, nvidia: true, hf: true, claude: true };  // a saved key of yours unlocks these
   function mmItems() { return [...mm.querySelectorAll("[role=menuitemradio]")]; }
+  function mmNav() { return [...mm.querySelectorAll("[role=menuitemradio],.hc-mm-key")]; }  // arrows also reach "Add a key"
   function mmDraw(st) {
     const sel = st.selected || "auto";
     const rows = [{ id: "auto", short: "Automatic", model: (st.order_labels || []).slice(0, 3).join(" → "), available: true, reason: "" }, ...(st.engines || [])];
     mm.innerHTML = `<div class="hc-mm-h"><b>Model</b><small>${esc(st.runs_label ? "Now running: " + st.runs_label : "")}</small></div>` +
       rows.map((o) => {
         const on = o.id === sel, dis = !o.available && o.id !== "auto";
-        const keyLink = dis && KEYED[o.id] ? `<button type="button" class="link xs hc-mm-key" data-go="settings:ai" data-testid="chat-model-addkey" tabindex="-1">${ic(I.key)}Add a key in Settings</button>` : "";
+        const keyLink = dis && KEYED[o.id] ? `<button type="button" class="link xs hc-mm-key" data-go="settings:ai" data-testid="chat-model-addkey" role="menuitem" tabindex="-1">${ic(I.key)}Add a key in Settings</button>` : "";
         return `<div class="hc-mm-row${on ? " on" : ""}${dis ? " na" : ""}"><button type="button" role="menuitemradio" class="hc-mm-i" data-eng="${esc(o.id)}"
             data-testid="chat-model-option" aria-checked="${on}" ${dis ? 'aria-disabled="true"' : ""} tabindex="-1">
           <span class="hc-mm-ck" aria-hidden="true">${on ? ic(I.check) : ""}</span>
@@ -618,7 +619,7 @@
     if (!mm.hidden && MM.from === b) mmClose(); else mmOpen(b);
   }));
   mm.addEventListener("keydown", (e) => {
-    const items = mmItems(), i = items.indexOf(document.activeElement);
+    const items = mmNav(), i = items.indexOf(document.activeElement);
     const go = (n) => { e.preventDefault(); if (items.length) items[(n + items.length) % items.length].focus(); };
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mmClose(); }
     else if (e.key === "ArrowDown") go(i + 1);
@@ -626,7 +627,7 @@
     else if (e.key === "Home") go(0);
     else if (e.key === "End") go(items.length - 1);
     else if (e.key === "Tab") mmClose(false);
-    else if ((e.key === "Enter" || e.key === " ") && i >= 0) { e.preventDefault(); mmPick(items[i]); }
+    else if ((e.key === "Enter" || e.key === " ") && i >= 0) { e.preventDefault(); if (items[i].classList.contains("hc-mm-key")) items[i].click(); else mmPick(items[i]); }
   });
   document.addEventListener("click", (e) => { if (!mm.hidden && !mm.contains(e.target) && !model.contains(e.target) && !cmodel.contains(e.target)) mmClose(false); });
   window.addEventListener("resize", mmPlace);
@@ -651,14 +652,14 @@
   // (house.js watch -> showRun -> decorate). The page follows it down unless you scrolled up; then "Jump to latest"
   // brings you back. No new step for 60 s: "Still working, this step can take a minute". Reduced motion: no animation.
   // A run the server cut off shows house.js's Resume card instead (status "interrupted").
-  const wk = el("div", "msg agent hc-work", { id: "hcWork", "data-testid": "chat-working", role: "status", "aria-live": "polite" });
+  const wk = el("div", "msg agent hc-work", { id: "hcWork", "data-testid": "chat-working" });
   wk.hidden = true;
   wk.innerHTML = `<b><span class="hc-av a" aria-hidden="true">${ic(I.bot)}</span>Agent</b>
     <span class="hc-work-b"><span class="hc-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span class="hc-work-t" data-testid="chat-working-step">Thinking…</span>
-      <span class="hc-work-s muted xs" data-testid="chat-working-time"></span>
+      <span class="hc-work-t" data-testid="chat-working-step" role="status" aria-live="polite">Thinking…</span>
+      <span class="hc-work-s muted xs" data-testid="chat-working-time" aria-hidden="true"></span>
       <button type="button" class="btn2 sm hc-work-stop" data-testid="chat-working-stop">${ic(I.stop)}<span>Stop</span></button></span>
-    <span class="hc-work-slow muted xs" data-testid="chat-working-slow" hidden>Still working, this step can take a minute.</span>`;
+    <span class="hc-work-slow muted xs" data-testid="chat-working-slow" role="status" hidden>Still working, this step can take a minute.</span>`;
   const wkDock = reply.closest(".mp-composer") || reply;
   (wkDock.parentNode || main).insertBefore(wk, wkDock);
   const jump = el("button", "hc-jump", { type: "button", "data-testid": "chat-jump-latest" });
@@ -667,7 +668,9 @@
   const W = { rid: null, key: "", at: 0, pinned: true, t: 0 };
   const nearEnd = () => innerHeight + scrollY >= document.documentElement.scrollHeight - 160;
   function toLatest(smooth) { wk.scrollIntoView({ block: "end", behavior: smooth && !reduced() ? "smooth" : "auto" }); }
-  window.addEventListener("scroll", () => { if (wk.hidden) return; W.pinned = nearEnd(); jump.hidden = W.pinned; }, { passive: true });
+  const chatOn = () => !root.hidden && !rv.hidden && !wk.hidden;  // the pill belongs to the chat screen only
+  window.addEventListener("scroll", () => { if (!chatOn()) { jump.hidden = true; return; } W.pinned = nearEnd(); jump.hidden = W.pinned; }, { passive: true });
+  new MutationObserver(() => { if (!chatOn()) jump.hidden = true; }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
   jump.onclick = () => { W.pinned = true; jump.hidden = true; toLatest(true); };
   wk.querySelector(".hc-work-stop").onclick = async (e) => {
     const b = e.currentTarget, r = run(); if (!r) return;
@@ -696,6 +699,7 @@
     const was = wk.hidden; wk.hidden = false;
     wkText(r);
     clearInterval(W.t); W.t = setInterval(() => { const x = run(); if (x && busyRun(x)) wkText(x); else clearInterval(W.t); }, 1000);
+    if (!chatOn()) { jump.hidden = true; return; }
     if (W.pinned) { jump.hidden = true; requestAnimationFrame(() => toLatest(!was)); } else jump.hidden = false;
   }
   // tests: age the last progress past 60 s without waiting

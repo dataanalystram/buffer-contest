@@ -105,10 +105,10 @@ def test_stop_stops_at_the_next_step_and_resume_carries_on(owner, monkeypatch): 
     got = _run(owner, rid)
     assert seen["n"] >= 2
     assert got["status"] == "failed" and got["result"]["thread"][-1]["text"] == agent_brain.STOPPED
-    assert "error" not in got["result"]
+    assert "error" not in got["result"] and got["result"]["stopped"]
     monkeypatch.setattr(agent_brain.Brain, "_step", real)
     assert owner.post(f"/api/agent/runs/{rid}/resume", json={}).status_code == 200
-    assert _run(owner, rid)["status"] == "ready"
+    assert _run(owner, rid)["status"] == "ready" and "stopped" not in _run(owner, rid)["result"]
     # Stop on a run nothing works on is a no-op that says so; an unknown run is a 404
     out = owner.post(f"/api/agent/runs/{rid}/stop", json={})
     assert out.status_code == 200 and out.json()["stopping"] is False

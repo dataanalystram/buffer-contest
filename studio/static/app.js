@@ -413,8 +413,9 @@ function urlFor(name, sub) {
   const url = q || demo ? "/?" + (demo + q).replace(/&$/, "") : "/";
   const st = { hq: name, sub: sub || "" }, cur = history.state || {};
   const same = cur.hq === name && (cur.sub || "") === (sub || "");
-  if (name === "planner" && same) return;  // the Planner's own URL (its filters) stays
-  if (NAV.first || NAV.popping || same) history.replaceState(st, "", name === "planner" && NAV.popping ? location.href : url);
+  // the Planner's own URL (its filters: a shared link, a reload, Back/Forward) stays on its entry
+  const keepPl = name === "planner" && (same || NAV.first || NAV.popping) && new URLSearchParams(location.search).get("tab") === "planner";
+  if (NAV.first || NAV.popping || same) history.replaceState(st, "", keepPl ? location.href : url);
   else history.pushState(st, "", url);
   NAV.first = false;
 }
