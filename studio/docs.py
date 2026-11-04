@@ -405,7 +405,7 @@ _DESC = {
     "POST /api/agent/runs/{rid}/messages": "Tell a run what to change, in plain words", "GET /api/themes": "Every video look (edit styles + themes) with its gallery still and loop",
     "POST /api/agent/runs/{rid}/theme": "Set a run's video theme and re-render its videos", "GET /api/agent/runs/{rid}/templates": "A run's template, why it was picked, and suggestions with previews",
     "POST /api/agent/runs/{rid}/template": "Switch a run's template by name, for the post or one slide",
-    "POST /api/agent/runs/{rid}/resume": "Resume a run a server restart cut off",
+    "POST /api/agent/runs/{rid}/resume": "Resume a run a server restart cut off", "POST /api/agent/runs/{rid}/stop": "Stop the agent working on a run after its current step (Resume carries on)",
     "GET /api/agent/runs/{rid}/context": "What the agent knows for a thread (source, kit, template, channels, rights, rules) and its compaction",
     "POST /api/agent/runs/{rid}/title": "Rename a Make a post thread in the sidebar", "POST /api/agent/runs/{rid}/packages/{channel_id}": "Edit one channel's post in a run",
     "POST /api/agent/runs/{rid}/packages/{channel_id}/schedule": "Send one channel's post to Buffer (or to approval)",
