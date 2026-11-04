@@ -65,12 +65,13 @@ def add_upload_routes(app, house, actor) -> None:
 
 
 def add_thread_routes(app, house, actor) -> None:
-    """Threads (studio/thread_bin.py): read earlier ones, and delete / restore One take threads. Ids are public (thr_...)."""
+    """Threads (studio/thread_bin.py): read earlier ones, delete / restore any thread (the conversation only, never media).
+    Ids are public (thr_...)."""
     tb = house.threads
 
     @app.get("/api/threads/bin")
     def thread_bin_list(request: Request):
-        """list_thread_bin: One take threads in the Bin with days left."""
+        """list_thread_bin: deleted threads in the Bin with days left."""
         return tb.list(actor(request))
 
     @app.post("/api/threads/bin/purge")
@@ -90,11 +91,11 @@ def add_thread_routes(app, house, actor) -> None:
         return tb.get_thread(actor(request), tid, cursor or None)
 
     @app.delete("/api/threads/{tid}")
-    def thread_delete(tid: str, request: Request, takes: str = "keep"):
-        """delete_thread: ?takes=keep (thread only) or ?takes=delete (thread and its take, into the take Bin)."""
-        return tb.delete(actor(request, write=True), tid, takes)
+    def thread_delete(tid: str, request: Request, takes: str = ""):
+        """delete_thread: the conversation into the Bin (7 days); media is never deleted (?takes=delete is refused)."""
+        return tb.delete(actor(request, write=True), tid, takes or None)
 
     @app.post("/api/threads/{tid}/restore")
     def thread_restore(tid: str, request: Request):
-        """restore_thread: the thread back in the sidebar, and its take if it was deleted with it."""
+        """restore_thread: the thread back in the sidebar (within 7 days)."""
         return tb.restore(actor(request, write=True), tid)

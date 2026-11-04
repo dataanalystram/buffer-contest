@@ -8,15 +8,17 @@ never a thread id in the public API. A thread today holds one run (a Make a post
 updated_at, run_ids, a short summary; ``get_thread(thread_id, cursor)`` -> the messages (paginated, oldest first), the
 runs / takes inside and their outputs. Read-only.
 
-**Deleting a One take thread** (the same Bin model as the Library and the take Bin: 7 days, restore, purge):
+**Deleting a thread is like deleting chat history** (owner, 4 Nov 2026 23:45): it removes the conversation only and
+NEVER deletes media. Takes, clips, uploads, posts and Library files all stay where they are (One take, the Library,
+Buffer). Every thread can be deleted: Make a post and One take, ready, running, failed or errored. The Bin model is the
+Library's: 7 days, restore, purge.
 
-* ``takes: "keep"`` (delete thread only): the thread leaves the sidebar; the take and its clips stay in One take. Purge
-  (or 7 days) removes the conversation for good (its messages, its custom title, the MCP steps shown on it).
-* ``takes: "delete"`` (the thread and its take): the take also goes to the take Bin (studio/take_bin.py: files stop
-  being served, a running job is cancelled). Restore brings both back. Purge removes the take, its jobs and every stored
-  file in one transaction, noting the tokens as deleted by their owner, so /healthz never counts them missing.
-
-The delete state lives on the take's run: ``result.thread_bin``. Make a post threads aren't deletable here (no takes inside).
+* ``delete_thread``: the thread leaves the sidebar, list_threads and get_thread (a row in ``thread_deleted``; the run itself
+  is untouched, so nothing a worker or a running agent writes can bring it back or lose it).
+* ``restore_thread``: back within 7 days.
+* ``purge_thread_bin`` (or 7 days): the conversation goes for good (its messages, summary, custom title and the MCP steps
+  shown on it). The run's outputs stay. The row stays as a tombstone (``purged_at``), so the thread id answers 404 for
+  good and the thread never comes back.
 
 Scope before existence: someone else's thread id and a missing one are the same 404, and nothing in an answer names
 another person's objects.
@@ -32,11 +34,13 @@ import time
 from .actions import ActionError, Actor
 from .take_bin import TRASH_DAYS
 
-TAKES_CHOICES = ("keep", "delete")
 MAX_IDS = 200
 ID_RE = re.compile(r"^thr_[a-z2-7]{26}$")
 SCHEMA = ("CREATE TABLE IF NOT EXISTS thread_ids (public_id TEXT PRIMARY KEY, user_id TEXT, run_id INTEGER, created REAL)",
-          "CREATE UNIQUE INDEX IF NOT EXISTS thread_ids_run ON thread_ids(run_id)")
+          "CREATE UNIQUE INDEX IF NOT EXISTS thread_ids_run ON thread_ids(run_id)",
+          # a deleted thread (the Bin) and, once purged, its tombstone; the run in agent_runs is never changed by a delete
+          "CREATE TABLE IF NOT EXISTS thread_deleted (run_id INTEGER PRIMARY KEY, user_id TEXT, deleted_at REAL, purged_at REAL)",
+          "CREATE INDEX IF NOT EXISTS thread_deleted_user ON thread_deleted(user_id)")
 LIST_MAX, PAGE_MSGS, SCAN = 50, 50, 500
 TEXT_MAX = 2000
 
@@ -51,18 +55,17 @@ TOOLS = [
      "inside it with their outputs (post captions per channel and media, or a take's clips). Then continue_run(run_id) to keep "
      "working on it.",
      "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": _th["schema"], "cursor": {"type": "string"}}}},
-    {"name": "delete_thread", "description": "Delete a One take thread from the conversation sidebar into the Bin (restorable for 7 days "
-     "with restore_thread, then removed for good). takes: 'keep' (default) deletes the thread only, the take and its clips stay "
-     "in One take; 'delete' also moves its take to the take Bin (its files stop being served, a running job is cancelled).",
-     "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {
-         "thread_id": _th["schema"],
-         "takes": {"type": "string", "enum": list(TAKES_CHOICES), "description": "keep (thread only) or delete (thread and its take)"}}}},
-    {"name": "restore_thread", "description": "Restore a One take thread from the Bin; a take deleted with it comes back too, with its files.",
+    {"name": "delete_thread", "description": "Delete a thread (Make a post or One take, in any state, failed ones too) from the "
+     "conversation sidebar into the Bin, like deleting chat history: only the conversation goes. Media is NEVER deleted: "
+     "takes, clips, uploads, posts and Library files stay. Restorable for 7 days with restore_thread, then the conversation "
+     "is removed for good. To delete a take itself, use delete_take.",
      "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": _th["schema"]}}},
-    {"name": "list_thread_bin", "description": "One take threads deleted in the last 7 days, with what happened to each one's take and days_left.",
+    {"name": "restore_thread", "description": "Restore a deleted thread from the Bin (within 7 days).",
+     "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": _th["schema"]}}},
+    {"name": "list_thread_bin", "description": "Threads deleted in the last 7 days (id, title, kind, days_left). Their media was never deleted.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "purge_thread_bin", "description": "Remove One take threads in the Bin for good: thread_ids, or all=true. A take deleted with "
-     "its thread is removed with all its files; a kept take stays. Can't be undone.",
+    {"name": "purge_thread_bin", "description": "Remove threads in the Bin for good: thread_ids, or all=true. Only the conversation goes "
+     "(messages, summary, custom title, MCP steps); media stays. Can't be undone.",
      "inputSchema": {"type": "object", "properties": {"thread_ids": {"type": "array", "items": {"type": "string"}},
                                                       "all": {"type": "boolean"}}}},
 ]
@@ -85,6 +88,7 @@ def _ensure(store) -> None:
         store.x(s.replace(" REAL", " DOUBLE PRECISION") if store.pg else s)
     if store.pg:
         store.x("ALTER TABLE thread_ids ENABLE ROW LEVEL SECURITY")
+        store.x("ALTER TABLE thread_deleted ENABLE ROW LEVEL SECURITY")
     store._thread_ids_ok = True
 
 
@@ -125,18 +129,10 @@ def resolve(store, uid: str, tid) -> int:
     return int(rows[0]["run_id"])
 
 
-def hidden(status: str, res: dict) -> bool:
-    """Is this take's thread out of the sidebar? (in the thread Bin, or purged). A take deleted with its thread but
-    restored from the take Bin brings its thread back."""
-    tb = (res or {}).get("thread_bin")
-    if not isinstance(tb, dict):
-        return False
-    if tb.get("purged"):
-        return True
-    if tb.get("takes") == "delete" and status == "binned" and ((res.get("bin") or {}).get("at") or 0) > (tb.get("at") or 0):
-        return False  # the take was restored from the take Bin and deleted again on its own: this marker is stale, and the
-        # take's own Bin clock (take_bin.py) decides when it goes, never the older thread deletion time
-    return not (tb.get("takes") == "delete" and status != "binned")
+def deleted_ids(store, uid: str) -> set[int]:
+    """This person's runs whose thread is deleted (in the Bin, or purged: a tombstone)."""
+    _ensure(store)
+    return {int(r["run_id"]) for r in store.q("SELECT run_id FROM thread_deleted WHERE user_id=?", (uid,))}
 
 
 def _has_table(store, name: str) -> bool:
@@ -206,12 +202,13 @@ class ThreadBin:
         q = (query or "").strip().lower()[:200]
         from .chat_context import titles as _titles
         named = _titles(self.store, a.uid)
+        gone = deleted_ids(self.store, a.uid)
         rows = self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
                             "ORDER BY updated DESC, id DESC LIMIT ?", (a.uid, SCAN))
         items = []
         for r in rows:
             inp, res = json.loads(r["input"] or "{}") or {}, json.loads(r["result"] or "{}") or {}
-            if r["kind"] == "take" and hidden(r["status"], res):
+            if r["id"] in gone:
                 continue
             title, summ = self._title(r["kind"], inp, res, named, r["id"]), self._summary(r["kind"], r["status"], inp, res)
             if q and q not in title.lower() and q not in summ.lower():
@@ -229,8 +226,8 @@ class ThreadBin:
         rid = resolve(self.store, a.uid, tid)
         run = self.h.run(a, rid)  # merges the MCP steps; 404 for anyone else's
         res, inp = run.get("result") or {}, run.get("input") or {}
-        if run["status"] in ("archived", "binned") or (run["kind"] == "take" and hidden(run["status"], res)):
-            raise ActionError("No such thread.", 404)  # what list_threads hides, get_thread hides (tidied or in a Bin)
+        if run["status"] in ("archived", "binned") or rid in deleted_ids(self.store, a.uid):
+            raise ActionError("No such thread.", 404)  # what list_threads hides, get_thread hides (tidied, in a Bin, or deleted)
         off = _cursor_in(cursor)
         msgs = [m for m in res.get("thread") or [] if isinstance(m, dict)]
         page = [{"role": m.get("role"), "text": _clip(m.get("text")), "at": m.get("at")} for m in msgs[off:off + PAGE_MSGS]]
@@ -252,86 +249,65 @@ class ThreadBin:
                 "next": f"continue_run(run_id={rid}) to keep working on this thread" if run["kind"] != "take"
                 else f"list_clips(take_id={rid}) for the clips' full detail"}
 
-    # ------------------------------------------------------------------ delete / restore (One take threads)
-    def _row(self, a: Actor, tid) -> dict:
-        rid = resolve(self.store, a.uid, tid)
-        rows = self.store.q("SELECT id,status,input,result FROM agent_runs WHERE id=? AND user_id=? AND kind='take'", (rid, a.uid))
-        if not rows:
-            raise ActionError("No such thread.", 404)
-        d = dict(rows[0])
-        d["input"], d["result"] = json.loads(d["input"] or "{}"), json.loads(d["result"] or "{}") or {}
-        d["tid"] = tid.strip().lower()
-        return d
-
-    def _save(self, rid: int, res: dict) -> None:
-        self.store.x("UPDATE agent_runs SET result=?, updated=? WHERE id=?", (json.dumps(res, default=str), _now(), rid))
-
+    # ------------------------------------------------------------------ delete / restore (every thread; never media)
     def _guard(self, a: Actor, action: str) -> None:
         self.h.studio._guard_write(a, action)
         from . import demo_guard
         if demo_guard.is_demo(a.uid):
             raise ActionError("The sample workspace is view-only. Connect Buffer to manage your own threads.", 403)
 
-    def delete(self, a: Actor, tid, takes="keep") -> dict:
+    def _run_row(self, a: Actor, tid) -> dict:
+        rid = resolve(self.store, a.uid, tid)  # malformed, missing or someone else's: 404
+        rows = self.store.q("SELECT id,kind,status FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
+        if not rows:
+            raise ActionError("No such thread.", 404)
+        return {"id": int(rows[0]["id"]), "kind": rows[0]["kind"], "status": rows[0]["status"], "tid": tid.strip().lower()}
+
+    def delete(self, a: Actor, tid, takes=None) -> dict:
         self._guard(a, "delete_thread")
-        takes = "keep" if takes in (None, "") else takes
-        if takes not in TAKES_CHOICES:
-            raise ActionError("takes is 'keep' (delete the thread only) or 'delete' (the thread and its take).")
-        # the take's lock first, then the store's (the order worker callbacks and the take Bin use: no lock-order deadlock)
-        with self.h.takes._take_lock(resolve(self.store, a.uid, tid)), self.store.tx():
-            run = self._row(a, tid)
-            if hidden(run["status"], run["result"]):
-                raise ActionError("No such thread.", 404)
-            take_out = None
-            if takes == "delete" and run["status"] != "binned":
-                take_out = self.h.takes.delete_take(a, run["id"])
-                run = self._row(a, tid)
-            res = run["result"]
-            res["thread_bin"] = {"at": _now(), "takes": takes}
-            self._save(run["id"], res)
-        self.store.audit(a.uid, a.label, "delete_thread", "safety", {"thread": run["tid"], "takes": takes, "trash_days": TRASH_DAYS})
-        return {"deleted": True, "thread_id": run["tid"], "takes": takes, "in_bin_days": TRASH_DAYS,
-                "take": ("moved to the take Bin" if takes == "delete" else "kept in One take"),
-                "cancelled_jobs": (take_out or {}).get("cancelled_jobs", 0), "restore": f"POST /api/threads/{run['tid']}/restore"}
+        if takes not in (None, "", "keep"):
+            raise ActionError("Deleting a thread never deletes media: the take, its clips and uploads stay. "
+                              "To delete a take, use delete_take in One take.")
+        run = self._run_row(a, tid)
+        with self.store.tx():
+            if self.store.q("SELECT 1 FROM thread_deleted WHERE run_id=?", (run["id"],)):
+                raise ActionError("No such thread.", 404)  # already in the Bin, or purged (a tombstone)
+            self.store.x("INSERT INTO thread_deleted(run_id,user_id,deleted_at,purged_at) VALUES(?,?,?,NULL)", (run["id"], a.uid, _now()))
+        self.store.audit(a.uid, a.label, "delete_thread", "safety", {"thread": run["tid"], "kind": run["kind"], "trash_days": TRASH_DAYS})
+        return {"deleted": True, "thread_id": run["tid"], "in_bin_days": TRASH_DAYS, "media": "kept",
+                "note": "Only the conversation is deleted. Takes, clips, uploads, posts and Library files stay.",
+                "restore": f"POST /api/threads/{run['tid']}/restore"}
 
     def restore(self, a: Actor, tid) -> dict:
         self._guard(a, "restore_thread")
-        with self.h.takes._take_lock(resolve(self.store, a.uid, tid)), self.store.tx():  # take lock, then store (as delete)
-            run = self._row(a, tid)
-            tb = run["result"].get("thread_bin")
-            if not isinstance(tb, dict) or tb.get("purged") or not hidden(run["status"], run["result"]):
+        run = self._run_row(a, tid)
+        with self.store.tx():
+            rows = self.store.q("SELECT purged_at FROM thread_deleted WHERE run_id=? AND user_id=?", (run["id"], a.uid))
+            if not rows or rows[0]["purged_at"] is not None:
                 raise ActionError("That thread isn't in the Bin.", 404)
-            take_out = None
-            if tb.get("takes") == "delete" and run["status"] == "binned":
-                take_out = self.h.takes.restore_take(a, run["id"])
-                run = self._row(a, tid)
-            res = run["result"]
-            res.pop("thread_bin", None)
-            self._save(run["id"], res)
+            self.store.x("DELETE FROM thread_deleted WHERE run_id=? AND user_id=? AND purged_at IS NULL", (run["id"], a.uid))
         self.store.audit(a.uid, a.label, "restore_thread", "safety", {"thread": run["tid"]})
-        return {"restored": True, "thread_id": run["tid"], "take_restored": bool(take_out),
-                **({"take_status": take_out["status"]} if take_out else {})}
+        return {"restored": True, "thread_id": run["tid"]}
 
     # ------------------------------------------------------------------ the Bin
     def list(self, a: Actor) -> dict:
         from . import demo_guard
         if demo_guard.is_demo(a.uid):
             return {"threads": [], "days": TRASH_DAYS}
+        _ensure(self.store)
         now, out = _now(), []
-        rows = self.store.q("SELECT id,status,input,result FROM agent_runs WHERE user_id=? AND kind='take' AND result LIKE ? "
-                            "ORDER BY id DESC LIMIT 500", (a.uid, '%"thread_bin"%'))
-        keep = []
+        rows = self.store.q("SELECT d.run_id, d.deleted_at, r.kind, r.status, r.input, r.result FROM thread_deleted d "
+                            "JOIN agent_runs r ON r.id=d.run_id AND r.user_id=d.user_id WHERE d.user_id=? AND d.purged_at IS NULL "
+                            "ORDER BY d.deleted_at DESC", (a.uid,))
+        from .chat_context import titles as _titles
+        named = _titles(self.store, a.uid)
+        ids = public_ids(self.store, a.uid, [int(r["run_id"]) for r in rows])
         for r in rows:
-            res = json.loads(r["result"] or "{}") or {}
-            tb = res.get("thread_bin")
-            if isinstance(tb, dict) and not tb.get("purged") and hidden(r["status"], res):
-                keep.append((r, res, tb))
-        ids = public_ids(self.store, a.uid, [r["id"] for r, _, _ in keep])
-        for r, res, tb in keep:
-            inp = json.loads(r["input"] or "{}") or {}
-            at = tb.get("at") or 0
+            inp, res = json.loads(r["input"] or "{}") or {}, json.loads(r["result"] or "{}") or {}
+            at = r["deleted_at"] or 0
             sec = max(0.0, at + TRASH_DAYS * 86400 - now)
-            out.append({"thread_id": ids[r["id"]], "title": "One take: " + (inp.get("name") or "your video"), "takes": tb.get("takes"),
+            out.append({"thread_id": ids[int(r["run_id"])], "title": self._title(r["kind"], inp, res, named, int(r["run_id"])),
+                        "kind": "take" if r["kind"] == "take" else "post", "status": r["status"],
                         "deleted_at": at, "purge_at": at + TRASH_DAYS * 86400, "days_left": int(-(-sec // 86400)) if sec else 0})
         return {"threads": out, "days": TRASH_DAYS}
 
@@ -362,37 +338,30 @@ class ThreadBin:
         return {"purged_threads": done, "refused": refused}
 
     def _purge_one(self, uid: str, rid: int, cut: float | None = None) -> bool:
-        with self.h.takes._take_lock(rid):  # take lock, then store (as delete); takes._purge below re-enters it (RLock)
-            return self._purge_one_locked(uid, rid, cut)
-
-    def _purge_one_locked(self, uid: str, rid: int, cut: float | None = None) -> bool:
+        """The conversation goes for good; the run's outputs (posts, media, a take and its clips) stay. A take's result is
+        rewritten under its lock (the one worker callbacks take), so a callback never loses its write or brings messages back."""
+        import contextlib
+        kind = self.store.q("SELECT kind FROM agent_runs WHERE id=? AND user_id=?", (rid, uid))
+        lock = self.h.takes._take_lock(rid) if kind and kind[0]["kind"] == "take" else contextlib.nullcontext()
         st = self.store
-        with st.tx():
-            rows = st.q("SELECT id,status,result FROM agent_runs WHERE id=? AND user_id=? AND kind='take'", (rid, uid))
-            if not rows:
+        with lock, st.tx():
+            d = st.q("SELECT deleted_at, purged_at FROM thread_deleted WHERE run_id=? AND user_id=?", (rid, uid))
+            if not d or d[0]["purged_at"] is not None:
                 return False
-            res = json.loads(rows[0]["result"] or "{}") or {}
-            tb = res.get("thread_bin")
-            if not isinstance(tb, dict) or tb.get("purged") or not hidden(rows[0]["status"], res):
+            if cut is not None and (d[0]["deleted_at"] or 0) > cut:  # the 7-day sweep: restored and deleted again since it looked
                 return False
-            if cut is not None and (tb.get("at") or 0) > cut:  # the 7-day sweep: restored and deleted again since it looked
-                return False
+            rows = st.q("SELECT status, result FROM agent_runs WHERE id=? AND user_id=?", (rid, uid))
+            if rows:
+                if rows[0]["status"] in ("running", "queued") and (not kind or kind[0]["kind"] != "take"):
+                    return False  # a Make a post run still writing its conversation: the sweep purges it once it ends
+                res = json.loads(rows[0]["result"] or "{}") or {}
+                if res.get("thread") or res.get("thread_summary"):
+                    res["thread"] = []
+                    res.pop("thread_summary", None)
+                    st.x("UPDATE agent_runs SET result=? WHERE id=? AND user_id=?", (json.dumps(res, default=str), rid, uid))
             self._drop_conversation(uid, rid)
-            if not (tb.get("takes") == "delete" and rows[0]["status"] == "binned"):
-                res["thread"] = []
-                res.pop("thread_summary", None)
-                res["thread_bin"] = {"purged": True, "at": _now(), "takes": "keep"}
-                self._save(rid, res)
-                return True
-        # the take goes with its thread: its run, jobs and every stored file in one transaction (+ library_purged notes,
-        # so /healthz never counts them missing), then its uploaded source on disk (studio/take_bin.py _purge)
-        done_t, _, _ = self.h.takes._purge(uid, [rid], [])
-        if done_t:
-            try:
-                st.x("DELETE FROM thread_ids WHERE run_id=? AND user_id=?", (rid, uid))
-            except Exception:  # noqa: BLE001
-                pass
-        return bool(done_t)
+            st.x("UPDATE thread_deleted SET purged_at=? WHERE run_id=? AND user_id=?", (_now(), rid, uid))  # the tombstone
+        return True
 
     def _drop_conversation(self, uid: str, rid: int) -> None:
         # the tables are made on first use (chat_titles on the first rename): look before deleting, never catch a failed
@@ -402,14 +371,12 @@ class ThreadBin:
                 self.store.x(f"DELETE FROM {table} WHERE user_id=? AND run_id=?", (uid, rid))  # nosec B608 - fixed names
 
     def purge_expired(self, days: float | None = None) -> int:
-        """Threads in the Bin longer than TRASH_DAYS are removed for good (the media check loop, every 6 hours)."""
+        """Threads in the Bin longer than TRASH_DAYS lose their conversation for good (the media check loop, every 6 hours)."""
+        _ensure(self.store)
         cut = _now() - (TRASH_DAYS if days is None else days) * 86400
         n = 0
-        for r in self.store.q("SELECT id,user_id,status,result FROM agent_runs WHERE kind='take' AND result LIKE ?", ('%"thread_bin"%',)):
-            res = json.loads(r["result"] or "{}") or {}
-            tb = res.get("thread_bin")
-            if isinstance(tb, dict) and not tb.get("purged") and hidden(r["status"], res) and (tb.get("at") or 0) <= cut:
-                n += self._purge_one(r["user_id"], r["id"], cut)  # the deletion time is checked again under the take's lock
+        for r in self.store.q("SELECT run_id, user_id FROM thread_deleted WHERE purged_at IS NULL AND deleted_at <= ?", (cut,)):
+            n += self._purge_one(r["user_id"], int(r["run_id"]), cut)  # the deletion time is checked again under the lock
         return n
 
 
@@ -425,7 +392,7 @@ def call_tool(studio, actor, name: str, args: dict):
     if name == "list_thread_bin":
         return tb.list(actor)
     if name == "delete_thread":
-        return tb.delete(actor, args.get("thread_id"), args.get("takes") or "keep")
+        return tb.delete(actor, args.get("thread_id"), args.get("takes"))
     if name == "restore_thread":
         return tb.restore(actor, args.get("thread_id"))
     return tb.purge(actor, args.get("thread_ids"), args.get("all") is True)

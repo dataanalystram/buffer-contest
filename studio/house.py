@@ -170,7 +170,7 @@ class House:
         from .take_upload import TakeUploads
         self.take_uploads = TakeUploads(self)  # One take's long videos: multipart straight to the bucket (R2), off unless configured  # create_upload / upload_media_chunk (any MCP client, no public host)
         from .thread_bin import ThreadBin
-        self.threads = ThreadBin(self)  # thread ids, list/get threads, delete/restore One take threads (studio/thread_bin.py)
+        self.threads = ThreadBin(self)  # thread ids, list/get threads, delete/restore any thread, never its media (studio/thread_bin.py)
         from .ledger import Ledger
         self.ledger = Ledger(self)  # Style Ledger v2: groups, scope, learned suggestions, evidence, review links
         from .send import Send
@@ -718,18 +718,19 @@ class House:
     def runs(self, a: Actor, limit: int = 20) -> list[dict]:
         from .chat_context import titles as _chat_titles  # names given in the Make a post sidebar win
         out, named = [], _chat_titles(self.store, a.uid)
+        from .thread_bin import deleted_ids as _deleted_threads
+        gone = _deleted_threads(self.store, a.uid)  # threads deleted from the sidebar (the conversation only; media stays)
         # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads
         for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
                               "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, limit)):
             d = dict(r)
+            if d["id"] in gone:
+                continue
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
             from .headline import title as _title  # never the raw request with its URL (owner P0)
             d["title"] = _title((res.get("story") or {}).get("headline") or "", _req(inp), "Your media" if d["kind"] == "media" else "Your post")
             d["legacy"] = d["kind"] in ("media", "news")
             if d["kind"] == "take":
-                from .thread_bin import hidden as _thread_hidden
-                if _thread_hidden(d["status"], res):  # deleted from the sidebar (thread Bin); the take may still be in One take
-                    continue
                 # (the take's clip cover used to be overwritten by the generic line below: the blank 5th Recent card)
                 d["title"] = "One take: " + (inp.get("name") or "your video")
                 d["cover"] = next((c.get("cover_url") for c in res.get("clips") or [] if c.get("cover_url")), "") or \
