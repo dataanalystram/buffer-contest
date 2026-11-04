@@ -24,5 +24,5 @@ jobs:
       - name: Split the Buffer Commit kickoff into 5 clips
         env: {HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite", HQ_SOURCE: "${{ github.event.inputs.source }}"}
         run: python scripts/demo_buffer_split.py --source "$HQ_SOURCE" --out demo_out --model small
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: demo-split-bundle, path: demo_out/, retention-days: 14}
