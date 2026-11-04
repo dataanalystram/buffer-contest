@@ -155,3 +155,25 @@ def test_gzip_bomb_is_capped_before_it_is_inflated():
     br = httpx.Response(200, headers={"content-encoding": "br"}, stream=httpx.ByteStream(b"x"))
     with pytest.raises(netguard.FetchError):
         list(netguard.capped_body(br, 1_000))
+
+
+def test_raw_bytes_are_capped_even_when_they_inflate_to_nothing():
+    """CodeRabbit (4 Nov 2026): endless empty deflate blocks never reach the decoded cap; the raw bytes are capped too."""
+    import zlib
+    co = zlib.compressobj(wbits=16 + zlib.MAX_WBITS)
+    head = co.compress(b"") + co.flush(zlib.Z_SYNC_FLUSH)   # gzip header
+    empty = b"\x00\x00\x00\xff\xff"                         # an empty stored block: inflates to nothing
+    assert empty and zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(head + empty * 10) == b""
+
+    def chunks():
+        yield head
+        while True:
+            yield empty * 1000
+
+    class S(httpx.SyncByteStream):
+        def __iter__(self):
+            return chunks()
+    r = httpx.Response(200, headers={"content-encoding": "gzip"}, stream=S())
+    with pytest.raises(netguard.FetchError):
+        for _ in netguard.capped_body(r, 10_000):
+            pass

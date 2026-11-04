@@ -77,9 +77,13 @@ def capped_body(r: httpx.Response, limit: int):
         dec = zlib.decompressobj()
     else:
         raise FetchError("That link answered in an encoding that can't be read.")
-    total = 0
+    total = wire = 0
+    wire_cap = limit + 65_536   # raw bytes too: endless empty deflate blocks never reach the decoded cap (CodeRabbit)
     try:
         for raw in r.iter_raw():
+            wire += len(raw)
+            if wire > wire_cap:
+                raise FetchError("That page is too large to read.")
             out = raw if dec is None else dec.decompress(raw, limit + 1 - total)
             total += len(out)
             if total > limit or (dec is not None and dec.unconsumed_tail):

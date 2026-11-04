@@ -181,3 +181,17 @@ def test_oversized_ids_list_is_refused_before_any_lookup(app, api, core, channel
     assert r.status_code == 400 and not any(str(x).startswith("tgt_") for x in calls), r.text
     with core.db.session() as s:
         assert safety.TOO_MANY in safety.scope_refs(s, "POST", "/api/comments/bulk", {}, {"ids": ids})[1]
+
+
+def test_restricted_teammate_gets_404_for_a_missing_post_like_a_forbidden_one(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): GET /api/posts/{missing}/notes answered 200 [] to a restricted teammate but 404 for another
+    channel's post, so ids could be probed. A path object that doesn't resolve is 404 for restricted teammates too."""
+    from .test_teams import member
+    other = api.post("/api/connect/fake/token", {"access_token": "tok-2", "username": "other_brand"}).json()
+    theirs = api.post("/api/posts", {"caption": "secret caption", "channel_ids": [other["id"]], "when": "draft"}).json()
+    mine = api.post("/api/posts", {"caption": "mine", "channel_ids": [channel["id"]], "when": "draft"}).json()
+    ed = member(app, api, "editor", access={other["id"]: "none"}, name="Ana")
+    a, b = ed.get(f"/api/posts/{theirs['id']}/notes"), ed.get("/api/posts/post_doesnotexist/notes")
+    assert a.status_code == b.status_code == 404 and a.json() == b.json()
+    assert ed.get(f"/api/posts/{mine['id']}/notes").status_code == 200
+    assert api.get("/api/posts/post_doesnotexist/notes").status_code == 200   # the owner: unchanged
