@@ -40,3 +40,56 @@ re-rendered any more; its rendered clips stay.
 {parts:[1,2,...]} · `GET /api/takes/uploads/{id}` · `POST /api/takes/uploads/{id}/complete` {parts:[{part_number, etag}]} ·
 `DELETE /api/takes/uploads/{id}` · then `POST /api/takes` {upload_id, owns: true}. Someone else's upload and a missing one
 are the same 404.
+
+
+## Faces: local detection, checked in CI, and Jev as a second opinion (4 Nov 2026)
+
+**Local first, on every sampled frame.** The worker samples the take at 2 fps (320 px wide) and runs MediaPipe's Face
+Detector (BlazeFace short range); when MediaPipe can't load (no libEGL / libGLES) it uses OpenCV's Haar frontal-face
+cascade. Both live in `studio/media/facedetect.py`; the take's `providers.faces` says which one ran.
+
+**No silent failures.** The worker self-check (`python -m studio.media.selfcheck --kind take_analyze`, before every
+analyze job) only counts a detector that loads AND finds the face in a committed public-domain portrait
+(`tests/studio/fixtures/media/face_armstrong_pd.jpg`, credited in NOTICE). CI's worker-imports `take_analyze` job runs
+`python -m studio.media.facedetect --check` in the worker's own venv: both detectors must find a sane face box in the
+portrait, none in a blank frame, and agree on where the face is; it prints the median ms per frame. An OpenCV or
+MediaPipe upgrade that breaks detection fails CI. (OpenCV stays `<5` on all three opencv-* packages: mediapipe pulls in
+`opencv-contrib-python` 5 otherwise, and 5 drops `CascadeClassifier`.)
+
+**Jev (TypeSafe `jev-latest`) as a second opinion, on a few keyframes only** (`studio/media/jev_faces.py`):
+
+* Which frames: the first frame after each scene cut that the local detector didn't cover confidently (`scene_start`),
+  then stretches with no local face (`no_local_face`) or only a weak one (`low_confidence`), spread over the take. At
+  most `HQ_JEV_FACE_CAP` per take (default 12). Calls run 4 at a time with a 20 s timeout.
+* What it asks, per frame, in one request: a Noul "Is a person's face visible in `frame`?" and a Box "the main speaker's
+  face in `frame`". A Box always returns a box, so code only uses it when the Noul is a clear yes (>= 0.7) and the box is
+  sane; <= 0.3 is "no face"; in between is unsettled and ignored.
+* The model judges, the code decides: a Jev face replaces a missing or weak local sample at its keyframe and holds for
+  1 s over local-empty samples (never over a confident local face); `crop_plan`'s median + EMA smoothing then applies.
+* Images: the frame re-encoded from raw pixels as baseline JPEG (no EXIF / metadata), 280-1568 px per side, sent as
+  multipart with `TypeSafe-Danger-Zone-Images: true`.
+* Never fails a take: any error, timeout or odd answer is recorded on that frame and the take keeps the local faces
+  (centred crop where there are none), logged in the worker output.
+* Recorded on the take: `face_jev` in `GET /api/takes/{id}` / `list_clips`: `enabled`, `why`, `calls`, `used`, `errors`,
+  `fallback`, and per frame `t`, `why`, `verdict` (face / no_face / unsettled / error), `face_visible`, `box`, `used`, `ms`.
+* Who pays, who may use it: off unless `TYPESAFE_API_KEY` is set on the worker (take.yml reads the repo secret). It is
+  HuhQueue's key, so it runs for takes a person starts in the app (send `jev: false` to skip it). An MCP app gets it only
+  with `jev: true`, which answers `needs_user_approval` (studio/consent.py) until the person approves, or when the person
+  turned on "Allow paid APIs" for that app.
+* Measured on the portrait (480x600), 4 Nov 2026: one live Jev call returned the face box in ~1.1 s for ~1,190 input
+  tokens; local OpenCV Haar ~45 ms (320 px) to ~110 ms (480 px) per frame on the build sandbox (MediaPipe's is in the CI log).
+
+## Threads: reading earlier ones, and deleting a One take thread (4 Nov 2026)
+
+Every thread has a public id (`thr_` + 128 random bits); tools and URLs use it, never the internal run number.
+`list_threads` / `GET /api/threads` and `get_thread` / `GET /api/threads/{thread_id}` let a connected AI app read the
+person's earlier threads (own threads only; a foreign id is a 404). `start_post` and `continue_run` answers carry
+`thread_id`.
+
+Each One take thread in the sidebar has a delete button; the dialog offers **Delete thread only** (the take and its clips
+stay in One take) or **Delete thread and its take** (the take goes to the take Bin: its files stop being served, a render
+still running stops). Both stay in the Bin for 7 days (restore brings the thread back, and its take if it went with it),
+then they are removed for good: the conversation's custom title and MCP steps, and with the take every stored file, noted
+as deleted by its owner so `/healthz` shows no missing files. REST: `DELETE /api/threads/{thread_id}?takes=keep|delete`,
+`POST /api/threads/{thread_id}/restore`, `GET /api/threads/bin`, `POST /api/threads/bin/purge`. MCP: `delete_thread`,
+`restore_thread`, `list_thread_bin`, `purge_thread_bin`.
