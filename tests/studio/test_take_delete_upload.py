@@ -481,3 +481,28 @@ def test_a_mixed_clip_with_a_padded_shot_reports_the_fallback_and_a_later_render
                json={"data": base64.b64encode(MP4_HEAD).decode(), "cover": base64.b64encode(b"\xff\xd8").decode(), "meta": meta})
     w.post(f"/api/worker/jobs/{rjid}", headers={"x-job-token": rjt}, json={"meta": {"clips": 3}})
     assert human.get(f"/api/takes/{t['id']}").json()["face_fallback"]["clips"] == ["c1"]
+
+
+def test_picking_moments_holds_no_lock_and_a_take_deleted_meanwhile_gets_nothing(human, app, monkeypatch):
+    """Greptile / CodeRabbit, PR #107: the AI moment pick (up to minutes) ran under a lock every take shared."""
+    import threading
+    house, sent = app.state.house, []
+    monkeypatch.setattr(house, "_dispatch_github", lambda jid, workflow="", inputs=None, ttl=1800: (sent.append((jid, house.issue_job_token(jid, ttl))), (True, ""))[1])
+    monkeypatch.setattr(house.takes, "_mode", lambda: "github")
+    up = human.post("/api/media", json={"name": "talk.mp4", "data": base64.b64encode(MP4_HEAD + b"0" * 64).decode()}).json()
+    t = human.post("/api/takes", json={"media_token": up["token"], "owns": True}).json()
+    real, seen = house.takes._mine, {}
+
+    def slow_mine(run, analysis, eng, chat):
+        out = {}
+        th = threading.Thread(target=lambda: out.update(r=human.delete(f"/api/takes/{t['id']}").json()))
+        th.start()
+        th.join(10)                                       # would hang if the take's lock were held while picking
+        seen["deleted"] = out.get("r", {}).get("deleted")
+        return real(run, analysis, eng, chat)
+    monkeypatch.setattr(house.takes, "_mine", slow_mine)
+    w = TestClient(app, base_url="https://hq.test")
+    r = w.post(f"/api/worker/jobs/{sent[0][0]}", headers={"x-job-token": sent[0][1]}, json={"analysis": ANALYSIS}).json()
+    assert seen["deleted"] is True and r.get("cancelled")
+    row = app.state.store.q("SELECT status, result FROM agent_runs WHERE id=?", (t["id"],))[0]
+    assert row["status"] == "binned" and not json.loads(row["result"]).get("clips") and len(sent) == 1   # no render queued
