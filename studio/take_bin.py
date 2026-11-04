@@ -259,8 +259,12 @@ class TakeBin:
             self.store.audit(a.uid, a.label, "purge_take_bin", "safety", {"takes": len(done_t), "clips": len(done_c), "everything": bool(everything)})
         return {"purged_takes": done_t, "purged_clips": [{"take_id": t, "clip_id": c} for t, c in done_c], "refused": refused_out}
 
-    def _purge(self, uid: str, take_ids: list[int], pairs: list[tuple[int, str]]):
-        """Remove binned takes and clips of this person for good: records and files in one transaction."""
+    def _purge(self, uid: str, take_ids: list[int], pairs: list[tuple[int, str]], binned_before: float | None = None):
+        """Remove binned takes and clips of this person for good: records and files in one transaction. binned_before (the
+        7-day sweep): only what is still in the Bin since before then, re-read under the take's lock, so a take restored
+        and deleted again meanwhile keeps its new seven days (Greptile, PR #107)."""
+        def expired(b) -> bool:
+            return binned_before is None or ((b or {}).get("at") or 0) <= binned_before
         done_t, done_c, files = [], [], []
         st = self.store
         locks = contextlib.ExitStack()  # every take this touches, in id order (no lock-order deadlock), before the transaction
@@ -272,6 +276,8 @@ class TakeBin:
                 if not rows:
                     continue
                 res = json.loads(rows[0]["result"] or "{}")
+                if not expired(res.get("bin")):
+                    continue
                 inp = json.loads(rows[0]["input"] or "{}")
                 toks = set((res.get("bin") or {}).get("tokens") or [])
                 toks |= {t for c in res.get("clips") or [] for t in clip_tokens(c) + ((c.get("bin") or {}).get("tokens") or [])}
@@ -294,7 +300,7 @@ class TakeBin:
                 res = json.loads(rows[0]["result"] or "{}")
                 keep, toks = [], []
                 for c in res.get("clips") or []:
-                    if c.get("id") in cids and c.get("status") == "binned":
+                    if c.get("id") in cids and c.get("status") == "binned" and expired(c.get("bin")):
                         toks += (c.get("bin") or {}).get("tokens") or clip_tokens(c)
                         done_c.append((rid, c["id"]))
                     else:
@@ -333,12 +339,12 @@ class TakeBin:
             res = json.loads(r["result"] or "{}")
             if r["status"] == "binned":
                 if ((res.get("bin") or {}).get("at") or 0) <= cut:
-                    t, _, _ = self._purge(r["user_id"], [r["id"]], [])
+                    t, _, _ = self._purge(r["user_id"], [r["id"]], [], binned_before=cut)
                     n += len(t)
                 continue
             old = [(r["id"], c["id"]) for c in res.get("clips") or [] if c.get("status") == "binned" and ((c.get("bin") or {}).get("at") or 0) <= cut]
             if old:
-                _, c, _ = self._purge(r["user_id"], [], old)
+                _, c, _ = self._purge(r["user_id"], [], old, binned_before=cut)
                 n += len(c)
         return n
 
