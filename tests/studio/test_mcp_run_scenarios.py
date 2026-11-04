@@ -299,3 +299,29 @@ def test_h_ambiguous_request_instructions_say_ask_and_continue_run_joins_the_old
     assert "run_id" in _err(human, tok, "continue_run", {"reason": "x"})
     assert "No such post run" in _err(human, tok, "continue_run", {"run_id": 999999})
     assert _runs(human) == 2
+
+
+def test_h2_continue_run_validates_input_and_never_leaks_another_accounts_run(human, page):  # noqa: F811
+    """Another account's run answers exactly like a missing one (404, no existence leak); bad input is a 400, never a 500."""
+    tok = _chat(human)
+    store = human.app.state.store
+    now = time.time()
+    theirs = store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
+                     ("someone-else", "client", "{}", "ready", "[]", json.dumps({"packages": [], "thread": []}), now, now))
+    missing = _err(human, tok, "continue_run", {"run_id": theirs + 1000})
+    assert _err(human, tok, "continue_run", {"run_id": theirs, "reason": "peek"}) == missing
+    assert json.loads(store.q("SELECT result FROM agent_runs WHERE id=?", (theirs,))[0]["result"]) == {"packages": [], "thread": []}
+    for bad in ("abc", 1.5, True, [1], {"x": 1}, 10**30, "99999999999999999999999"):
+        assert "run_id is the number" in _err(human, tok, "continue_run", {"run_id": bad}), bad
+        assert "run_id is the number" in _err(human, tok, "start_post", {"run_id": bad, "title": "x", "user_asked": True}), bad
+    h = {"Authorization": f"Bearer {tok}"}
+    r = human.post("/api/agent/continue-run", headers=h, json={"run_id": theirs})
+    assert r.status_code == 404
+    for bad in ("abc", 10**30, None):
+        r = human.post("/api/agent/continue-run", headers=h, json={"run_id": bad})
+        assert r.status_code == 400, (bad, r.status_code, r.text)
+    r = human.post("/api/agent/continue-run", headers=h, json={"run_id": theirs + 1000, "format": 7, "reason": ["x"]})
+    assert r.status_code == 404
+    # the person's own REST call: same rules
+    assert human.post("/api/agent/continue-run", json={"run_id": theirs}).status_code == 404
+    assert human.post("/api/agent/continue-run", json={"run_id": "x"}).status_code == 400

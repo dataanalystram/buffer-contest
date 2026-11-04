@@ -92,11 +92,15 @@ def is_agent(a: Actor) -> bool:
 
 
 def _rid(v: Any) -> int | None:
-    if v in (None, "", 0, "0"):
+    if v in (None, "", 0, "0") and not isinstance(v, bool):
         return None
     try:
+        if isinstance(v, (bool, float)):
+            raise ValueError
         n = int(v)
     except (TypeError, ValueError):
+        raise ActionError("run_id is the number start_post or create_package returned.") from None
+    if n > 2**53:  # past any real id (and past what the database takes): a plain 400, never a 500
         raise ActionError("run_id is the number start_post or create_package returned.")
     return n if n > 0 else None
 
