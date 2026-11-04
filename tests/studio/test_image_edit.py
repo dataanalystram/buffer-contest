@@ -426,3 +426,18 @@ def test_image_calls_count_against_the_agent_tokens_daily_cap(human, web):
         assert not res["isError"] and out["ok"], out
     res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "1:1"}]})
     assert res["isError"] and "daily cap" in str(out)
+
+
+def test_reencoded_webp_carries_no_location_data():
+    im = Image.new("RGB", (120, 80), (40, 90, 200))
+    ex = Image.Exif()
+    ex[0x8825] = {2: (53.0, 20.0, 0.0)}  # GPSInfo
+    ex[0x010F] = "PhoneMaker"  # camera make
+    buf = io.BytesIO()
+    im.save(buf, "WEBP", exif=ex.tobytes())
+    data = buf.getvalue()
+    opened, ext = image_edit.open_image(data)
+    clean, ext = image_edit.strip_meta(data, ext, opened)
+    back = Image.open(io.BytesIO(clean))
+    assert ext == "png" and not back.getexif() and b"PhoneMaker" not in clean and "exif" not in back.info
+
