@@ -144,9 +144,25 @@ def strip_meta(data: bytes, ext: str, im) -> tuple[bytes, str]:
     up = ImageOps.exif_transpose(im)
     up = up.convert("RGBA" if up.mode in ("RGBA", "LA", "P") else "RGB")
     clean = Image.frombytes(up.mode, up.size, up.tobytes())  # pixels only: no info / EXIF / XMP / ICC carried over
-    buf = io.BytesIO()
-    clean.save(buf, "PNG", optimize=True)
-    return metastrip.strip_bytes("png", buf.getvalue()), "png"  # belt and braces: no eXIf / text chunk survives
+    data, _ = png_within_cap(clean)  # a 15 MB WebP / AVIF can be a 40 MB PNG: shrink it so it opens again (Greptile #103)
+    return metastrip.strip_bytes("png", data), "png"  # belt and braces: no eXIf / text chunk survives
+
+
+def png_within_cap(im, cap: int | None = None) -> tuple[bytes, Any]:
+    """(PNG bytes, the image they encode), always within the media cap (MAX_FETCH) so every stored file opens again with
+    open_image. Lossless when it fits; otherwise downscaled (LANCZOS) by the size ratio until it does. A lossy 15 MB
+    WebP / AVIF re-encoded losslessly, or a 4096 px cut-out with transparency, can be several times the cap as PNG."""
+    from PIL import Image
+    cap = cap or MAX_FETCH
+    for _ in range(6):
+        buf = io.BytesIO()
+        im.save(buf, "PNG", optimize=True)
+        data = buf.getvalue()
+        if len(data) <= cap:
+            return data, im
+        k = min(0.9, (cap / len(data)) ** 0.5 * 0.95)  # PNG size ~ pixel count: one step usually lands under the cap
+        im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.LANCZOS)
+    raise ImageFetchError("too_large", "could not fit the image under 15 MB")
 
 
 # ------------------------------------------------------------------------------------------------ storage
@@ -161,7 +177,8 @@ def _store(h, a: Actor, im, name: str, kind: str, rid: int | None, meta: dict | 
     has_alpha = im.mode == "RGBA" and im.getchannel("A").getextrema()[0] < 255
     buf = io.BytesIO()
     if has_alpha:
-        im.save(buf, "PNG", optimize=True)
+        data, im = png_within_cap(im)  # stays openable by the next edit (a 4096 px RGBA PNG can pass 15 MB)
+        buf.write(data)
         name = name.rsplit(".", 1)[0] + ".png"
     else:
         im.convert("RGB").save(buf, "JPEG", quality=92, optimize=True)
@@ -210,8 +227,11 @@ def fetch_image(studio, a: Actor, args: dict) -> dict:
         raise ImageFetchError(code or "unreachable", why if why.startswith("http_") else "")
     im, ext = open_image(data)
     clean, ext = strip_meta(data, ext, im)
-    from PIL import ImageOps
+    from PIL import Image, ImageOps
     im = ImageOps.exif_transpose(im)  # the size and preview of what is stored (a rotated PNG is stored upright)
+    with Image.open(io.BytesIO(clean)) as stored:  # header only: a re-encode that had to shrink to fit the cap
+        if stored.size != im.size and ext == "png":
+            im = im.resize(stored.size)
     from urllib.parse import urlparse
     tok = h.put_media(a, clean, f"source.{ext}", kind="source",
                       meta={"type": "photo", "width": im.width, "height": im.height, "run_id": rid,
