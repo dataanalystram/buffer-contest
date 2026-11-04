@@ -463,3 +463,21 @@ def test_crop_pans_keep_their_keys_in_order():
     keys = take.crop_plan(faces, 0, 10, 1920, 1080, [])["keys"]
     ts = [t for t, _ in keys]
     assert ts == sorted(ts) and len(set(keys)) == len(keys)
+
+
+def test_a_mixed_clip_with_a_padded_shot_reports_the_fallback_and_a_later_render_clears_it(human, app, monkeypatch):
+    house, sent = app.state.house, []
+    monkeypatch.setattr(house, "_dispatch_github", lambda jid, workflow="", inputs=None, ttl=1800: (sent.append((jid, house.issue_job_token(jid, ttl))), (True, ""))[1])
+    monkeypatch.setattr(house.takes, "_mode", lambda: "github")
+    up = human.post("/api/media", json={"name": "talk.mp4", "data": base64.b64encode(MP4_HEAD + b"0" * 64).decode()}).json()
+    t = human.post("/api/takes", json={"media_token": up["token"], "owns": True}).json()
+    w = TestClient(app, base_url="https://hq.test")
+    w.post(f"/api/worker/jobs/{sent[0][0]}", headers={"x-job-token": sent[0][1]}, json={"analysis": ANALYSIS})
+    rjid, rjt = sent[1]
+    for cid in ("c1", "c2", "c3"):
+        meta = {**_fake_mp4_meta(), "layout": "mixed", "face_fallback": "no face found, centered crop used"} if cid == "c1" else \
+               {**_fake_mp4_meta(), "layout": "track"}
+        w.post(f"/api/worker/jobs/{rjid}/clips/{cid}", headers={"x-job-token": rjt},
+               json={"data": base64.b64encode(MP4_HEAD).decode(), "cover": base64.b64encode(b"\xff\xd8").decode(), "meta": meta})
+    w.post(f"/api/worker/jobs/{rjid}", headers={"x-job-token": rjt}, json={"meta": {"clips": 3}})
+    assert human.get(f"/api/takes/{t['id']}").json()["face_fallback"]["clips"] == ["c1"]

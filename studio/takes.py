@@ -564,7 +564,7 @@ class Takes(TakeBin):
             return {"ok": False}
         layouts = [c["meta"].get("layout") for c in ok if c.get("meta")]
         cov = [c["meta"].get("face_coverage") for c in ok if c.get("meta", {}).get("layout") == "track"]
-        nofaces = [c["id"] for c in ok if (c.get("meta") or {}).get("layout") in ("pad", "center")]
+        nofaces = [c["id"] for c in ok if (c.get("meta") or {}).get("layout") in ("pad", "center") or (c.get("meta") or {}).get("face_fallback")]
         if nofaces:  # said on the take, never a silent fallback (owner ask, 4 Nov 2026)
             res["face_fallback"] = {"clips": nofaces, "note": "no face found, centered crop used"}
         else:  # a later render that found faces clears an earlier render's note
@@ -1033,7 +1033,7 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
             take.frame_at(str(out), 0.4, str(cover))  # the hook is on screen from frame 0
             rf = got["reframe"]
             meta = {"type": "video", "style": "opus", "ratio": r, "duration": got["duration"], "width": got["width"],
-                    "height": got["height"], "layout": {"track": "track", "pad": "pad"}.get(rf["mode"], "center"),
+                    "height": got["height"], "layout": {"track": "track", "pad": "pad", "fit": "fit"}.get(rf["mode"], "center"),  # fit: a vertical source, no fallback
                     "face_coverage": rf.get("face_coverage"), "captions": got["captions"], "burned_subs": got["burned_subs"],
                     "caption_problems": got["caption_problems"], "cover_offset_ms": 400, "credit": spec.get("credit") or ""}
             yield (c["id"] if i == 0 else f"{c['id']}@{r}"), out.read_bytes(), cover.read_bytes(), meta

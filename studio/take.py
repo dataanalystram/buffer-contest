@@ -866,7 +866,7 @@ def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes
                 "face_coverage": round(cov_ratio, 3) if cov_ratio is not None else None,
                 "moment": {k: m.get(k) for k in ("start", "end")}, "caption_band": caption_box(ass, H), "probe": pf,
                 "audio": {"loudnorm": LOUDNESS, "fade_in": FADE_IN, "fade_out": FADE_OUT} if src.get("audio", True) else None,
-                "face_fallback": None if "track" in modes or set(modes) <= {"fit"} else "no face found, centered crop used"}
+                "face_fallback": "no face found, centered crop used" if any(x not in ("track", "fit") for x in modes) else None}  # any padded shot, mixed clips too
         if meta["face_fallback"]:
             print(f"render: clip {m.get('id', '')} {meta['face_fallback']}", flush=True)
         return data, cover, meta
