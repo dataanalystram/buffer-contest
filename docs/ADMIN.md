@@ -13,8 +13,14 @@ account. Code: `studio/admin.py` (routes + actions), `studio/admin_ui/` (the pag
   parameter can't reveal the route either. `/admin` is in `robots.txt` as Disallow.
 - There are **no MCP tools** for admin, on purpose.
 
+## This deployment (huhqueue-studio.onrender.com)
+The only admin is Ram's own studio account: Buffer account **somarajuramprasadie@gmail.com**, studio user id
+**`6ad9d04ef3e1acb6edfdc760`** (read from `users` on 4 Nov 2026). Set on the Render service:
+`HQ_ADMIN_IDS=6ad9d04ef3e1acb6edfdc760` (the id, not the email: an id can't be claimed by another Buffer account).
+
 ## What it shows
-Per account: Buffer id, name and email, organisation, created, **last sign-in** (time, a coarse network such as
+Who signs in. Per account: the Buffer identity we already store from the OAuth sign-in (Buffer account id, name,
+email, organisation), **first sign-in** (when the account row was created by its first Buffer sign-in), **last sign-in** (time, a coarse network such as
 `203.0.113.0/24` or `2001:db8:1::/48`, and the browser family and OS; never the full IP or user agent), **last active**
 (`users.last_seen`, written at most every 5 minutes, or an agent token's last use), runs (`agent_runs`), posts sent
 through HuhQueue (`submit_post` in the activity log, which keeps 90 days), storage used (media rows + Library files), and

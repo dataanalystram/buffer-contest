@@ -35,8 +35,8 @@
     const block = u.status === "blocked"
       ? `<button type="button" data-act="unblock" data-testid="admin-unblock" data-id="${esc(u.id)}">Unblock</button>`
       : `<button type="button" data-act="block" data-testid="admin-block" data-id="${esc(u.id)}"${self ? " disabled title=\"You can't block yourself\"" : ""}>Block</button>`;
-    return `<tr data-testid="admin-user"><td><b>${esc(u.name || "(no name)")}</b><small>${esc(u.email)}</small><small><code>${esc(u.id)}</code></small></td>
-      <td>${esc(when(u.created))}</td>
+    return `<tr data-testid="admin-user"><td><b>${esc(u.name || "(no name)")}</b><small>${esc(u.email)}</small>${u.org ? `<small>${esc(u.org)}</small>` : ""}<small><code>${esc(u.id)}</code></small></td>
+      <td>${esc(when(u.first_signin))}</td>
       <td>${esc(when(u.last_signin))}<small>${esc(u.last_signin_ip)}${u.last_signin_ua ? " · " + esc(u.last_signin_ua) : ""}</small></td>
       <td>${esc(when(u.last_seen))}</td><td>${esc(u.runs)}</td><td>${esc(u.posts)}</td><td>${esc(size(u.storage_bytes))}</td>
       <td><span class="pill ${esc(u.status)}">${esc(u.status)}</span></td>

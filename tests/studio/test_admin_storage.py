@@ -129,7 +129,8 @@ def test_admin_by_email_sees_users_with_coarse_signin_details(app, human, monkey
     assert adm.get("/admin/admin.js").status_code == 200
     d = adm.get("/api/admin/users").json()
     me = next(u for u in d["users"] if u["id"] == "acc_1")
-    assert me["email"] == "ram@example.com" and me["status"] == "active"
+    assert me["email"] == "ram@example.com" and me["name"] == "Ram" and me["org"] == "HuhByte" and me["status"] == "active"
+    assert me["first_signin"] and me["last_signin"] and me["first_signin"] <= me["last_signin"]
     assert me["last_signin_ip"] == "203.0.113.0/24" and me["last_signin_ua"] == "Safari on macOS"
     assert "203.0.113.77" not in adm.get("/api/admin/users").text
     assert {"db_bytes", "storage_backend", "db_media_bytes"} <= set(d["overview"]) and d["overview"]["storage_backend"] == "db"

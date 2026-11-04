@@ -105,9 +105,13 @@ def users(store, q: str = "", limit: int = 100, offset: int = 0, include_demo: b
                           "OR (storage='trash' AND meta LIKE ?) GROUP BY user_id", ('%"storage": "chunks"%',))
     agent_seen = _by_user(store, "SELECT user_id, MAX(last_used) AS n FROM agent_tokens GROUP BY user_id")
     signin: dict = {}
+    first: dict = {}
     if rows:
         ids = [r["id"] for r in rows]
         marks = ",".join("?" * len(ids))
+        first = {r["user_id"]: r["n"] for r in store.q(
+            f"SELECT user_id, MIN(ts) AS n FROM audit WHERE user_id IN ({marks}) AND action IN ('connect_buffer','device_signed_in') "
+            f"AND ok=1 GROUP BY user_id", tuple(ids))}
         for r in store.q(f"SELECT user_id, ts, ip, ua FROM audit WHERE id IN (SELECT MAX(id) FROM audit WHERE user_id IN ({marks}) "
                          f"AND action IN ('connect_buffer','device_signed_in') AND ok=1 GROUP BY user_id)", tuple(ids)):
             signin[r["user_id"]] = dict(r)
@@ -120,7 +124,10 @@ def users(store, q: str = "", limit: int = 100, offset: int = 0, include_demo: b
             status = "demo"
         seen = max(float(r["last_seen"] or 0), float(agent_seen.get(r["id"]) or 0)) or None
         out.append({"id": r["id"], "name": r["name"] or "", "email": r["email"] or "", "org": r["org_name"] or "",
-                    "created": r["created"], "last_signin": s.get("ts"), "last_signin_ip": coarse_ip(s.get("ip")),
+                    # first sign-in: the account row is created by the first Buffer OAuth sign-in (the activity log
+                    # only keeps 90 days, so its oldest sign-in is used only when it is older, e.g. a copied database)
+                    "created": r["created"], "first_signin": min(x for x in (r["created"], first.get(r["id"])) if x) if
+                    (r["created"] or first.get(r["id"])) else None, "last_signin": s.get("ts"), "last_signin_ip": coarse_ip(s.get("ip")),
                     "last_signin_ua": coarse_ua(s.get("ua")), "last_seen": seen,
                     "runs": int(runs.get(r["id"]) or 0), "posts": int(posts.get(r["id"]) or 0),
                     "storage_bytes": int(media.get(r["id"]) or 0) + int(lib.get(r["id"]) or 0),
