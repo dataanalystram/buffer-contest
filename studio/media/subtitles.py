@@ -222,7 +222,9 @@ def platform_captions(url: str, lang: str | None = None) -> dict | None:
             tr = choose_track(info or {}, lang)
             if not tr:
                 return None
-            # fetched by yt-dlp's own opener: same platform host, same cookies-free session
+            # fetched by yt-dlp's own opener: same platform host, same cookies-free session. The track URL comes from
+            # the platform's answer, so vet its host like any other link before opening it (SECURITY_RULES 1)
+            netguard.check_url(str(tr.get("url") or ""), https_only=True)
             raw = y.urlopen(tr["url"]).read(MAX_CAPTION_BYTES + 1)
     except Exception:  # noqa: BLE001 - no captions is not an error: Whisper runs instead
         return None
