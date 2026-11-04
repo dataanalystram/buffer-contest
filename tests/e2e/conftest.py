@@ -98,6 +98,18 @@ def goto(page, server, hash_):
     page.goto(server["base"] + "/#" + hash_)
 
 
+def poll(page, js, timeout=15):
+    """Wait until an async JS predicate resolves truthy. page.wait_for_function() can't do this: it treats the
+    returned Promise itself as truthy and returns at once, so an `async () => ...` predicate never actually waits."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if page.evaluate(js):
+            return
+        if time.monotonic() > deadline:
+            raise AssertionError(f"timed out after {timeout}s waiting for: {js.strip()[:120]}")
+        page.wait_for_timeout(200)
+
+
 def api(page, method, path, body=None):
     """Call the API from inside the logged-in page (same cookies + CSRF) - used only for setup/asserts."""
     return page.evaluate("""async ([m, p, b]) => {
