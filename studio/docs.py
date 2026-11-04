@@ -356,6 +356,7 @@ _DESC = {
     "GET /api/uploads/limits": "The upload limits: per-file MB, Library quota, chunk size, link imports, send codes",
     "GET /api/uploads/recent": "list_recent_uploads: the newest files you uploaded, sent from a device or imported from a link",
     "POST /api/send-codes": "create_send_code: a short code, link and QR for the Send a file page (any device, 30 minutes, 10 files)",
+    "DELETE /api/send-codes": "Stop receiving: ?code=ABCD-EFGH ends that send code at once; no code ends every code you made (an AI app: only its own)",
     "POST /api/library/import": "import_from_link: a Google Drive, Dropbox, OneDrive or iCloud share link (or a direct link) into your Library",
     "GET /api/library/{iid}": "One Library item, with the posts that use it",
     "GET /api/library/{iid}/file": "Stream a Library file (supports range requests for video)",
