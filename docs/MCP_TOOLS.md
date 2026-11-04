@@ -53,7 +53,7 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 | `update_brand_kit` | client brain | Change the brand kit directly (no HuhQueue AI): name, handle, website, font, voice, colors {primary, accent, text} as hex, end_card {on, line, cta}. |
 | `create_upload` | client brain | For a local file when the app can run curl (Claude Code, Codex, Cursor, scripts): a one-time upload URL on HuhQueue's own domain (`PUT /u/<token>`, 15 minutes, one use, up to 100 MB, `max_mb`) plus the exact curl command. The answer carries `if_unreachable`: what to do when the sandbox is network-blocked. |
 | `upload_media_chunk` | client brain | Last resort for **small** files (a few MB): base64 chunks of at most 2 MB (decoded), in order, under one `upload_id`. Pass `total_size` on the first chunk: over 4 MB the answer carries `advice` (use the Send a file page or a share link); every error carries the same guidance. |
-| `create_send_code` | client brain | **Best way in from a chat app** (Claude.ai, ChatGPT): a short code (`K7PD-3QXA`), a link `/send/<code>` and a QR code. The user opens it on any device and drags the file in (10 files, 30 minutes, Library caps). |
+| `create_send_code` | client brain | **Best way in from a chat app** (Claude.ai, ChatGPT): a short code (`K7PD-3QXA`), a link `/send/<code>` and a QR code. The user opens it on any device and drags the file in (10 files, 30 minutes, Library caps). Only the code's hash is stored; **Stop receiving** or **New code** ends it at once, and a code an app made also stops when that app's token is revoked or expires, or while the kill switch is on. |
 | `list_recent_uploads` | client brain | The newest files the user uploaded, sent from a device or imported from a link (`minutes`, `limit`): `library_id`, `media_token`, `name`, `kind`, `bytes`, `from`, `when`. |
 | `import_from_link` | client brain | A Google Drive, Dropbox, OneDrive / SharePoint or iCloud Drive share link ("anyone with the link"), or any direct https link, streamed into the Library up to the per-file limit. Drive's large-file "Download anyway" page is followed; a sign-in page says how to share the file publicly; folders are refused. |
 | `finish_upload` | client brain | Join the chunks into one Library item: `library_id`, `media_token`, `url`, `kind`, `bytes`. |
@@ -202,7 +202,7 @@ These act on one post run (`run_id`), the same steps HuhQueue's in-app agent tak
 | `post_write_captions` | client brain \* | Write one caption per channel in the brand voice and the ledger's text rules. |
 | `post_x_oembed` | client brain \* | Read an X/Twitter post through the public oEmbed endpoint: author, handle, text, date. |
 
-161 tools in total (from `tools/list` on 3 Nov 2026, feat/mcp-client-templates: 157 on main + get_template, get_media_preview, replace_draft_media, get_page_context; `test_tools_list_parity_and_page_context` checks the count matches). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
+161 tools in total (from `tools/list` on main, 4 Nov 2026, after #94, #96 and #97; `test_tools_list_parity_and_page_context` checks the count matches). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
 
 ## Runs made from an AI app, previews, draft media and page context (3 Nov 2026)
 
@@ -398,3 +398,12 @@ run. `tests/studio/test_mcp_client_brain.py` asserts an MCP run makes zero Anthr
 | `list_rule_suggestions` / `decide_rule_suggestion` | Rules suggested from 3 similar caption edits; accept (optionally scoped) or dismiss, with a confirm step. Never applied unaccepted. |
 | `check_draft` | Rules that apply on one network, failures, the auto-fixed text, and with `run_id` + `channel_id` the source line behind every fact. |
 | `create_review_link` / `list_review_links` | A read-only, expiring link (default 72 h, max 14 days) where a reviewer approves or requests changes; the answer lands in the run's thread. |
+
+## What the MCP server keeps about calls
+
+Each tool call is logged so the person can see what their AI apps asked for (`studio/mcp_runs.py`, table `mcp_calls`): the tool
+name, a summary of whitelisted arguments, status, duration, client, app, token name, model hint, time and the post run it belongs
+to. Calls not attached to a run are swept after 24 hours; calls attached to a run stay with it until the person deletes their
+data (Disconnect and delete removes every row). Media the tools hand out is served at `/m/<token>` links: a random 144-bit token,
+not signed and with no expiry, publicly cacheable for 1 day, so treat a `/m/` link like the file itself. The 15-minute
+`/ms/<exp>/<sig>/<token>` link from `get_media_preview` is the only signed media link.

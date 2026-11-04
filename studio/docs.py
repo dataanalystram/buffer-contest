@@ -27,11 +27,12 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>For a fast text-only post from a link, switch to <b>Quick text posts</b> on the same screen.</p>
 <h2 id="plan">4. Plan and approve</h2>
 <p>Ready posts land in the <a href="/docs/planner">Planner</a>, and anything waiting for a person shows in the <a href="/docs/inbox">Inbox</a> under <b>Waiting for your approval</b>. Approve, and it goes to Buffer at its time.</p>
-<h2 id="screens">The nine screens</h2>
-<p>One job, one place. On a computer the side rail lists all nine; on a phone the bottom bar holds the everyday four and <b>Menu</b> holds the rest.</p>
+<h2 id="screens">The ten screens</h2>
+<p>One job, one place. On a computer the side rail lists all ten; on a phone the bottom bar holds the everyday four and <b>Menu</b> holds the rest.</p>
 <div class="dk-table"><table><thead><tr><th>Screen</th><th>What it is for</th></tr></thead><tbody>
 <tr><td><b>Inbox</b></td><td>Your day: posts waiting for your approval, today's queue, what needs attention, agent activity and posts recommended for you</td></tr>
 <tr><td><b>Make a post</b></td><td>With the agent, or <b>Quick text posts</b> from a link</td></tr>
+<tr><td><b>Library</b></td><td>Every file you uploaded or sent from a device and every image, carousel and Reel the agent made; deleted items wait 7 days in the <b>Bin</b></td></tr>
 <tr><td><b>One take</b></td><td>One long video into a week of clips</td></tr>
 <tr><td><b>Planner</b></td><td>Week, Month, Day, List, Board and Grid</td></tr>
 <tr><td><b>News</b></td><td><b>For you</b>, <b>Story scan</b> and the <b>Sources</b> you follow</td></tr>
@@ -191,13 +192,17 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <ul><li><b>Send a file:</b> the app calls <code>create_send_code</code> and gives you a short code and a link. Open <a href="/send">/send</a> on any device (your phone works: scan the QR code), drop the file in, and the app finds it with <code>list_recent_uploads</code>. In HuhQueue: Library, <b>Send from a device</b>.</li>
 <li><b>A share link:</b> share the file from Google Drive, Dropbox, OneDrive or iCloud with "anyone with the link" and give the link to the app (<code>import_from_link</code>), or paste it in Library, <b>From a link</b>.</li></ul>
 <p>Files up to 100 MB each, in a 200 MB Library. Apps that can run curl (Claude Code, Codex, Cursor) use <code>create_upload</code> instead.</p>
+<p><b>How a send code is kept.</b> A code lasts 30 minutes and takes up to 10 files, and HuhQueue stores only its hash. <b>Stop receiving</b> or <b>New code</b> ends it at once. A code an AI app made also stops when that app's token is revoked or expires, or while the kill switch is on.</p>
 <h2 id="rest">REST</h2>
 <p>The endpoints the interface uses accept the same token as <code>Authorization: Bearer hq_…</code>. The reference is at <a href="/docs/api">/docs/api</a>.</p>"""),
     ("security", "Security and privacy", "How your Buffer connection, data and agents are protected, and how to delete everything.", "activity", """
 <p>The short version: Buffer tokens are encrypted at rest and never reach the browser, the site loads only its own scripts, agents work on a leash, and one button deletes your data.</p>
 <ul><li><a href="/privacy">Privacy policy</a>: what we store, why, for how long, and subprocessors.</li><li><a href="/security">Security</a>: sign-in, browser policy, agents, server checks and how to report a problem.</li><li><a href="/terms">Terms of use</a>.</li></ul>
 <h2 id="activity">See what happened</h2>
-<p><b>Activity</b> lists every action on your account, by you or your agents, with the time.</p>
+<p><b>Activity</b> lists every action on your account, by you or your agents, with the time. Entries are kept 90 days; the IP address and browser of a sign-in are blanked after 30 days. Calls an AI app makes are logged with the tool name, a summary of allowed arguments, status, duration and time: calls not tied to a post run are removed after 24 hours, and calls tied to a run stay with that run until you delete your data.</p>
+<h2 id="media">Your media</h2>
+<p>Location and camera metadata is removed when a file is stored: EXIF, XMP and IPTC from JPEG, text and EXIF chunks from PNG, and GPS positions in MP4 and MOV are blanked. WebP, GIF and WebM files are stored as sent. Buffer fetches your media from <code>/m/</code> links. Each is a random 144-bit token, not a signed or expiring link: anyone who has the link can open the file until you delete it, and it may be cached publicly for up to 1 day.</p>
+<p>A deleted Library item waits 7 days in the <b>Bin</b>, then is removed for good (checked every 6 hours). <b>Delete permanently</b> and <b>Empty bin</b> remove the records and files at once. Media a post scheduled in Buffer uses can't be deleted permanently.</p>
 <h2 id="delete">Delete everything</h2>
 <p><b>Settings</b>, <b>Account</b> (or the account menu), <b>Disconnect and delete my data</b>.</p>"""),
     ("faq", "FAQ", "Short answers to what people ask first.", None, """

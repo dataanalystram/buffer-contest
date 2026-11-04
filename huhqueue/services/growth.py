@@ -828,7 +828,7 @@ def parse_feed(xml_text: str) -> dict:
     for it in items:
         it["summary"] = re.sub(r"\s+", " ", html.unescape(TAG_RE.sub(" ", it["summary"] or ""))).strip()[:280]
         it["title"] = html.unescape(it["title"])
-        it["key"] = hashlib.sha1((it["guid"] or it["link"] or it["title"]).encode()).hexdigest()[:16]
+        it["key"] = hashlib.sha1((it["guid"] or it["link"] or it["title"]).encode(), usedforsecurity=False).hexdigest()[:16]
     return {"title": html.unescape(title), "items": items}
 
 

@@ -1,13 +1,16 @@
 """Build studio/static/{privacy,terms,security}.html from one template. Every claim here was checked against the code on
 31 Oct 2026 (studio/store.py tables and delete_user, studio/app.py cookies and CSP, studio/demo.py TTL, studio/mcp_oauth.py
-token lifetimes, studio/demo_guard.py caps, studio/sources.py research hosts). Change the code, then change this file.
+token lifetimes, studio/demo_guard.py caps, studio/sources.py research hosts) and again on 4 Nov 2026 for the Library,
+Bin, Send a file and MCP call log (studio/library.py TRASH_DAYS and purge_trash, studio/house.py start_media_check,
+studio/metastrip.py, studio/send.py TTL / MAX_FILES / code hashing, studio/mcp_runs.py KEEP_UNCLAIMED, studio/activity.py
+AUDIT_RETENTION_DAYS and SIGNIN_IP_DAYS, /m/ Cache-Control in studio/app.py). Change the code, then change this file.
 
     python scripts/build_legal.py"""
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[1] / "studio" / "static"
-UPDATED = "31 October 2026"
-UPDATED_ISO = "2026-10-31"
+UPDATED = "4 November 2026"
+UPDATED_ISO = "2026-11-04"
 
 
 def chrome(slug: str, title: str, desc: str, head: str, body: str) -> str:
@@ -70,10 +73,13 @@ page("privacy", "Privacy policy", "Privacy", "What HuhQueue keeps, why, for how 
            ["Connected AI apps (MCP OAuth)", "To let Claude, ChatGPT and others sign in", "Client name and redirect address; codes and refresh tokens as hashes"],
            ["Approvals and drafts", "Posts waiting for you, and agent runs", "The post text, media links and the run's steps"],
            ["Brand kit and Style Ledger", "To make posts in your style", "Colours, fonts, logo, voice and the rules you taught"],
-           ["Media", "Files you upload and media HuhQueue renders", "Stored in the database; served to Buffer by an unguessable link"],
+           ["Library media", "Files you upload or send from a device, and media HuhQueue renders", "Stored in the database. Location and camera metadata is removed on upload: JPEG EXIF, XMP and IPTC, PNG text and EXIF chunks; GPS positions in MP4 and MOV are blanked. WebP, GIF and WebM files are stored as sent"],
+           ["Media links (<code>/m/</code>)", "So Buffer and the networks can fetch your media", "Each link is a random 144-bit token, not a signed or expiring link: anyone who has it can open the file until you delete it, and it may be cached publicly for up to 1 day"],
+           ["Send-a-file codes", "To let another device drop files into your Library", "Stored only as a hash; each code lasts 30 minutes and takes up to 10 files"],
+           ["AI app call log", "So you can see what your AI apps asked for", "Tool name, a summary of allowed arguments, status, duration, client, app, token name, model hint, time and the run it belongs to"],
            ["Feeds", "News radar", "The feed addresses you follow"],
            ["Your AI key (optional)", "To use your own model", "Encrypted at rest; never shown again after saving"],
-           ["Activity log", "So you can see what you and your agents did", "Action, who did it, a short detail and the time"]])),
+           ["Activity log", "So you can see what you and your agents did", "Action, who did it, a short detail and the time; for sign-ins, the IP address and browser"]])),
       ("use", "How we use it", """<ul><li>To read your Buffer organization, channels and posts, and to create posts, drafts and ideas in your Buffer account when you, or an agent you authorized within the rules you set, submit them.</li>
 <li>To check each post against the rules of its network before it goes to Buffer (preflight).</li>
 <li>We do not sell or share your data, and we do not use it for advertising or to train models.</li></ul>"""),
@@ -82,6 +88,12 @@ page("privacy", "Privacy policy", "Privacy", "What HuhQueue keeps, why, for how 
       ("retention", "How long we keep it", table(["Data", "Kept for"],
           [["Your account and everything listed above", "Until you disconnect and delete, which removes it at once"],
            ["Sessions", "30 days, or until you sign out"],
+           ["Activity log", "90 days"],
+           ["Sign-in IP address and browser (in the activity log)", "30 days, then blanked"],
+           ["Library items you delete", "7 days in the Bin, then removed for good (checked every 6 hours). Delete permanently or Empty bin removes the records and files at once; media a scheduled post uses can't be deleted permanently"],
+           ["Send-a-file codes", "30 minutes or 10 files, whichever comes first; Stop receiving or New code ends a code at once. A code an AI app made also stops when that app's token is revoked or expires, or while the kill switch is on"],
+           ["AI app calls not tied to a post run", "24 hours"],
+           ["AI app calls tied to a post run", "Until you delete your data"],
            ["Sample workspaces (/demo)", "1 day, then deleted with their sample data"],
            ["One-time device links", "10 minutes, single use"],
            ["MCP sign-in codes", "10 minutes, single use"],
@@ -93,7 +105,7 @@ page("privacy", "Privacy policy", "Privacy", "What HuhQueue keeps, why, for how 
            ["Supabase", "The production database (Postgres)", "The stored data listed above"],
            ["GitHub Actions", "Rendering videos (Reels, One take clips)", "The media and settings of a render job, for that job only"],
            ["Your AI provider (optional)", "Writing captions with a model", "The page text and brief for a draft"]])),
-      ("rights", "Your rights and choices", """<ul><li><b>Delete:</b> Account menu, <b>Disconnect and delete my data</b>, removes your account, tokens, sessions, agent tokens, approvals, brand kit, rules, media, runs, renders, AI settings, feeds and activity log.</li>
+      ("rights", "Your rights and choices", """<ul><li><b>Delete:</b> Account menu, <b>Disconnect and delete my data</b>, removes your account, tokens, sessions, agent tokens, approvals, brand kit, rules, media and Library (including the Bin), runs, renders, AI settings, feeds, send codes, AI app call log and activity log.</li>
 <li><b>Revoke:</b> remove HuhQueue's access in your Buffer account settings at any time, and revoke any agent token on the Agents screen.</li>
 <li><b>Stop agents:</b> one switch pauses every agent at once.</li>
 <li><b>Access or correct:</b> most data is visible in the app; for anything else, contact us below. If you are in the EU or UK you also have the rights given by the GDPR, including complaining to your data protection authority.</li></ul>"""),

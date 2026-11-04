@@ -124,7 +124,7 @@ def append_end_card(src: Path, dest: Path, text: str, seconds: float = 2.5) -> P
 
 def ensure_end_card(core, media, text: str) -> str:
     """Create (once) the end-carded copy of a video Media row; returns its stored file name."""
-    key = hashlib.sha1(text.encode()).hexdigest()[:8]
+    key = hashlib.sha1(text.encode(), usedforsecurity=False).hexdigest()[:8]
     name = f"{media.id}-endcard-{key}.mp4"
     path = core.settings.media_dir / name
     if not path.exists():
