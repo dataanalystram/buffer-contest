@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import base64
 import io
+import ipaddress
+import logging
+import re
 import secrets
 import threading
 import time
@@ -33,6 +36,7 @@ CODE_LEN = 8
 TTL = 30 * 60
 MAX_FILES = 10
 WRONG_MAX, WRONG_WINDOW = 10, 600
+WRONG_KEYS = 10_000
 RECENT_SOURCES = ("upload", "take", "link", "send")
 
 SCHEMA = """
@@ -92,17 +96,38 @@ def qr_data_uri(url: str) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def net_key(ip: str) -> str:
+    """The network a guess is counted against: the address for IPv4, its /64 for IPv6 (one home or phone gets a whole
+    /64, so counting single IPv6 addresses would give a guesser billions of fresh tries)."""
+    try:
+        addr = ipaddress.ip_address((ip or "").strip())
+    except ValueError:
+        return ip or "unknown"
+    if addr.version == 6:
+        if addr.ipv4_mapped:
+            return str(addr.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return str(addr)
+
+
 def _too_many_wrong(ip: str) -> bool:
-    now = time.time()
+    now, key = time.time(), net_key(ip)
     with _wrong_lock:
-        hits = [t for t in _wrong.get(ip, []) if now - t < WRONG_WINDOW]
-        _wrong[ip] = hits
+        hits = [t for t in _wrong.get(key, []) if now - t < WRONG_WINDOW]
+        if hits:
+            _wrong[key] = hits
+        else:
+            _wrong.pop(key, None)  # no entry kept for a network with nothing recent (the dict can't grow without bound)
         return len(hits) >= WRONG_MAX
 
 
 def _count_wrong(ip: str) -> None:
+    now = time.time()
     with _wrong_lock:
-        _wrong.setdefault(ip, []).append(time.time())
+        if len(_wrong) > WRONG_KEYS:  # many networks at once: drop the ones whose window has passed
+            for k in [k for k, v in _wrong.items() if not v or now - v[-1] >= WRONG_WINDOW]:
+                _wrong.pop(k, None)
+        _wrong.setdefault(net_key(ip), []).append(now)
 
 
 def _iso(ts: float) -> str:
@@ -121,11 +146,13 @@ class Send:
                 "link_import_max_mb": FILE_MAX // MB, "chunk_max_mb": CHUNK_MAX // MB, "send_code_files": MAX_FILES,
                 "send_code_minutes": TTL // 60}
 
-    def create(self, a: Actor) -> dict:
+    def create(self, a: Actor, replace: str = "") -> dict:
         if demo_guard.is_demo(a.uid):
             raise ActionError("The sample workspace's Library is read-only. Connect Buffer to send your own files.", 403)
         self.h.studio._guard_write(a, "library_upload")
         self.lib.check_room(a, None)
+        if replace:  # "New code" on the Send page: the code it showed before stops working now, not in 30 minutes
+            self.revoke(a, replace)
         self.store.x("DELETE FROM send_codes WHERE expires<?", (time.time() - 3600,))
         code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LEN))
         now = time.time()
@@ -140,6 +167,24 @@ class Send:
                 "say": f"Open {url} on any device (or go to {base}/send and type {pretty(code)}), then drag the photo or video in. "
                        f"Up to {MAX_FILES} files in 30 minutes, {lim['file_max_mb']} MB each.",
                 "next": "When the user says it's sent, call list_recent_uploads to get its media_token."}
+
+    def revoke(self, a: Actor, code: str = "") -> dict:
+        """Stop receiving: the caller's code (or, with no code, every code they made) stops working at once. A person can
+        end any of their codes; an AI app only the codes it made."""
+        sql, args = "DELETE FROM send_codes WHERE user_id=? AND expires>=?", [a.uid, time.time() - 3600]
+        if code:
+            c = norm(code)
+            if len(c) != CODE_LEN:
+                raise ActionError("That isn't a send code.", 400)
+            sql += " AND code_hash=?"
+            args.append(sha("send:" + c))
+        if a.kind == "agent":
+            sql += " AND agent=?"
+            args.append(_agent_of(a))
+        n = len(self.store.q(sql + " RETURNING id", tuple(args)))
+        if n:
+            self.store.audit(a.uid, a.label, "send_code_revoked", "read", {"codes": n})
+        return {"ok": True, "revoked": n}
 
     def _row(self, code: str, ip: str) -> dict:
         if _too_many_wrong(ip):
@@ -185,6 +230,11 @@ class Send:
         nm = (name or request.headers.get("x-file-name") or "sent-file")[:80]
         a = _actor(row)
         try:
+            self._still_allowed(row, a)
+        except BaseException:
+            self.store.x("UPDATE send_codes SET files=files-1 WHERE id=? AND files>0", (row["id"],))
+            raise
+        try:
             it = await self.lib.save_stream(a, nm, request.stream(), declared, "send")
         except BaseException:
             self.store.x("UPDATE send_codes SET files=files-1 WHERE id=? AND files>0", (row["id"],))  # a failed file doesn't count
@@ -195,6 +245,18 @@ class Send:
         self.store.audit(row["user_id"], a.label, "send_file", "read", {"kind": it.get("kind"), "bytes": it.get("size")})
         return {"ok": True, "name": it.get("name"), "kind": it.get("kind"), "bytes": it.get("size"),
                 "files_left": max(0, int(row["max_files"]) - int(claimed[0]["files"]))}
+
+    def _still_allowed(self, row: dict, a: Actor) -> None:
+        """A code an AI app made stops working when that app's token is revoked or expires, and while the kill switch is
+        on (SECURITY_RULES 4: the kill switch covers every agent action, including files that arrive later)."""
+        if a.kind != "agent":
+            return
+        aid = (a.agent or {}).get("id")
+        if not self.store.q("SELECT id FROM agent_tokens WHERE id=? AND user_id=? AND revoked=0 AND expires>?",
+                            (aid, row["user_id"], time.time())):
+            self.store.x("DELETE FROM send_codes WHERE id=?", (row["id"],))
+            raise ActionError("The AI app that made this code was disconnected, so the code stopped working. Make a new one in HuhQueue.", 410)
+        self.h.studio.kill_switch_check(a, "send_file")
 
     def recent(self, a: Actor, minutes=60, limit=10) -> dict:
         try:
@@ -221,12 +283,33 @@ def call_tool(studio, actor, name: str, args: dict):
         return NotImplemented
     sd = studio.house.send
     if name == "create_send_code":
-        return sd.create(actor)
+        return sd.create(actor, str((args or {}).get("replace") or ""))
     return sd.recent(actor, (args or {}).get("minutes", 60), (args or {}).get("limit", 10))
+
+
+SECRET_PATH = re.compile(r"^/(send|u|device)/(?!status\b)[^/?#]+")
+
+
+class RedactSecretPaths(logging.Filter):
+    """The access log never holds a credential that lives in a URL path: /send/<code>, /u/<one-time upload token>,
+    /device/<device link token> are logged as /send/***. (Render keeps logs, and log drains forward them.)"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            record.args = (*args[:2], SECRET_PATH.sub(r"/\1/***", args[2]), *args[3:])
+        return True
+
+
+def redact_access_log() -> None:
+    lg = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, RedactSecretPaths) for f in lg.filters):
+        lg.addFilter(RedactSecretPaths())
 
 
 def add_routes(app, house, actor) -> None:
     sd = house.send
+    redact_access_log()
 
     def _err(e: ActionError) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=e.status)
@@ -254,6 +337,11 @@ def add_routes(app, house, actor) -> None:
     @app.post("/api/send-codes")
     def send_code_create(request: Request, body: dict = Body(default={})):
         return call_tool(house.studio, actor(request, write=True), "create_send_code", body or {})
+
+    @app.delete("/api/send-codes")
+    def send_code_revoke(request: Request, code: str = ""):
+        """Stop receiving: ?code=ABCD-EFGH ends that code; no code ends every code the caller made."""
+        return sd.revoke(actor(request, write=True), code)
 
     @app.get("/api/uploads/recent")
     def uploads_recent(request: Request, minutes: int = 60, limit: int = 10):
