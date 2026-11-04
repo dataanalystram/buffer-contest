@@ -38,12 +38,22 @@ $("#tkFile").onchange = (e) => e.target.files[0] && tkPick(e.target.files[0]);
 // Uploads (4 Nov 2026): with a bucket on the server, the file goes straight to it in 16 MiB parts (resumable, up to
 // max_bytes); without one, as a raw body to the Library upload (100 MB). Never base64 through /api/media any more.
 let TK_UP = null;
-async function tkUpCfg() {
-  if (!TK_UP) { try { TK_UP = await api("/api/takes/uploads/config"); } catch (_) { TK_UP = { multipart: false, max_bytes: 100 * 1048576 }; } }
-  const mb = Math.round(TK_UP.max_bytes / 1048576), lim = mb >= 1024 ? `${(mb / 1024).toFixed(mb % 1024 ? 1 : 0)} GB` : `${mb} MB`;
-  if (!T.file) $("#tkDropTxt").textContent = `Drop an MP4 or MOV here, or choose a file (up to ${lim}${TK_UP.multipart ? ", resumes if the connection drops" : "; use a link for longer talks"})`;
-  return { ...TK_UP, lim };
+// The size limit as text, synchronously (form errors show at once, never after a round trip): the fallback's 100 MB
+// until the server's config has arrived.
+function tkLim(cfg) {
+  const mb = Math.round(((cfg && cfg.max_bytes) || 100 * 1048576) / 1048576);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(mb % 1024 ? 1 : 0)} GB` : `${mb} MB`;
 }
+async function tkUpCfg() {
+  let cfg = TK_UP;
+  if (!cfg) {  // a failed lookup (signed out yet, offline) is not cached: the next call asks again
+    try { cfg = TK_UP = await api("/api/takes/uploads/config"); } catch (_) { cfg = { multipart: false, max_bytes: 100 * 1048576 }; }
+  }
+  const lim = tkLim(cfg);
+  if (!T.file) $("#tkDropTxt").textContent = `Drop an MP4 or MOV here, or choose a file (up to ${lim}${cfg.multipart ? ", resumes if the connection drops" : "; use a link for longer talks"})`;
+  return { ...cfg, lim };
+}
+tkUpCfg().catch(() => {});  // prefetch, so the drop zone and the form errors name the real limit
 async function tkPick(f) {
   if (!/^video\//.test(f.type) && !/\.(mp4|mov|m4v|webm)$/i.test(f.name)) return toast("Choose a video file (MP4, MOV or WebM)");
   const c = await tkUpCfg();
@@ -111,7 +121,7 @@ $("#takeForm").addEventListener("submit", async (ev) => {
   say("");
   if (!$("#tkOwns").checked) return say("Tick “This is my video, or I have the rights to it” first. One take only clips videos you own.");
   if (!T.sel.size) return say("Pick at least one channel for the clips (below).");
-  if (T.src === "upload" && !T.file) return say(`Choose a video first (MP4, MOV or WebM up to ${(await tkUpCfg()).lim}), or try the sample take.`);
+  if (T.src === "upload" && !T.file) return say(`Choose a video first (MP4, MOV or WebM up to ${tkLim(TK_UP)}), or try the sample take.`);
   if (T.src === "link") {
     const u = $("#tkUrl").value.trim();
     if (!/^https:\/\/[^\s/]+\.[^\s/]+\/\S+/.test(u)) return say("Paste a direct https:// link to your video file, e.g. https://your-storage.example.com/talk.mp4.");
