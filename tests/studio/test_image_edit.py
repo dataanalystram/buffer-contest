@@ -184,7 +184,10 @@ def test_compose_product_card_places_the_whole_product(human, web):
     assert out["ok"] and (out["width"], out["height"]) == (1080, 1080)
     im = Image.open(io.BytesIO(human.app.state.house.get_media(out["media_token"])["data"])).convert("RGB")
     assert im.getpixel((5, 5)) == (16, 16, 18)                    # the brand ground
-    assert sum(im.getpixel((540, 540))) > 3 * 100                  # the product is there, centred
+    from PIL import ImageChops
+    box = ImageChops.difference(im, Image.new("RGB", im.size, (16, 16, 18))).convert("L").point(lambda v: 255 if v > 40 else 0).getbbox()
+    assert box and box[2] - box[0] > 600 and box[3] - box[1] > 600  # the whole product, centred, never zoomed in
+    assert abs((box[0] + box[2]) / 2 - 540) < 40 and box[0] > 60 and box[2] < 1020
 
 
 @pytest.mark.parametrize("ops,msg", [
