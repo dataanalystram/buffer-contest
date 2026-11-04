@@ -834,8 +834,13 @@ def parse_feed(xml_text: str) -> dict:
 
 def fetch_feed(core, url: str) -> dict:
     import httpx
+
+    from .. import netguard   # SECURITY_RULES 1: a feed URL is user-supplied
     try:
-        r = core.http.get(url, headers={"User-Agent": "HuhQueue RSS (+https://github.com/dataanalystram/bufferopensource)"})
+        r = netguard.request(core.http, "GET", url, policy=netguard.fetch_policy(core), limit=5_000_000,
+                             headers={"User-Agent": "HuhQueue RSS (+https://github.com/dataanalystram/bufferopensource)"})
+    except netguard.FetchError as e:
+        raise GrowthError(f"Could not fetch the feed: {e}") from e
     except httpx.HTTPError as e:
         raise GrowthError(f"Could not fetch the feed: {e}") from e
     if r.status_code >= 400:

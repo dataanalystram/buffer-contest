@@ -72,6 +72,7 @@ class Settings:
     ui_base_url: str = ""  # where the browser UI lives when it is not on localhost (hosted installs)
     admin_password: str = ""
     cookie_secure: bool = False
+    allow_private_urls: bool = False   # HUHQ_ALLOW_PRIVATE_URLS=1: links may point at the LAN (never at cloud metadata)
     extra: dict = field(default_factory=dict)
 
     @property
@@ -131,6 +132,7 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         ui_base_url=(e("HUHQ_UI_BASE_URL", "") or "").rstrip("/"),
         admin_password=e("HUHQ_ADMIN_PASSWORD", ""),
         cookie_secure=_bool(e("HUHQ_COOKIE_SECURE"), False),
+        allow_private_urls=_bool(e("HUHQ_ALLOW_PRIVATE_URLS"), False),
     )
     s.data_dir.mkdir(parents=True, exist_ok=True)
     s.media_dir.mkdir(parents=True, exist_ok=True)

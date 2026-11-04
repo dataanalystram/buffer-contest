@@ -71,6 +71,9 @@ def import_photo(core, photo_id: str, width: int = 2160) -> dict:
     p = _get(core, f"/photos/{photo_id}")
     info = _photo(p)
     loc = (p.get("links") or {}).get("download_location")
+    from urllib.parse import urlparse
+    if loc and (urlparse(loc).scheme != "https" or urlparse(loc).hostname != "api.unsplash.com"):
+        loc = None   # only ever ping Unsplash's own API with our key (the value comes from an API answer)
     if loc:   # required by the API guidelines: tells Unsplash the photo was used
         try:
             core.http.get(loc, headers={"Authorization": f"Client-ID {_key(core)}"}, timeout=20)

@@ -121,21 +121,19 @@ def download(core, url: str, filename: str | None = None) -> Media:
         raise MediaError("URL must start with http(s)://")
     name = filename or Path(url.split("?")[0]).name or "download"
     tmp = core.settings.media_dir / f".dl-{new_id('tmp')}"
+    from .. import netguard   # SECURITY_RULES 1: vetted + pinned host, every redirect hop re-checked, byte cap
     try:
-        with core.http.stream("GET", url) as r:
-            if r.status_code >= 400:
-                raise MediaError(f"Download failed: HTTP {r.status_code}")
-            ct = r.headers.get("content-type", "").split(";")[0]
-            if not Path(name).suffix and ct:
-                name += mimetypes.guess_extension(ct) or ""
-            total = 0
-            with open(tmp, "wb") as fh:
-                for chunk in r.iter_bytes():
-                    total += len(chunk)
-                    if total > MAX_BYTES:
-                        raise MediaError("File is larger than 1 GB")
-                    fh.write(chunk)
+        with open(tmp, "wb") as fh:
+            r = netguard.request(core.http, "GET", url, policy=netguard.fetch_policy(core), limit=MAX_BYTES,
+                                 stream_to=fh.write)
+        if r.status_code >= 400:
+            raise MediaError(f"Download failed: HTTP {r.status_code}")
+        ct = r.headers.get("content-type", "").split(";")[0]
+        if not Path(name).suffix and ct:
+            name += mimetypes.guess_extension(ct) or ""
         return save_file(core, tmp, name, ct)
+    except netguard.FetchError as e:
+        raise MediaError(f"Download refused: {e}") from e
     except httpx.HTTPError as e:
         raise MediaError(f"Download failed: {e}") from e
     finally:
