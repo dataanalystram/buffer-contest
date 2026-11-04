@@ -382,8 +382,8 @@ def test_alternating_pads_never_grow_past_the_cap():
 
 def test_card_radius_zero_is_square_and_null_values_take_defaults():
     import random
-    random.seed(3)
-    busy = Image.effect_noise((600, 600), 90).convert("RGB")  # no plain stage: the whole photo is placed as a card
+    rng = random.Random(3)  # Python noise, not Image.effect_noise: that one shares C rand() with test_hero_cutout's photo
+    busy = Image.frombytes("RGB", (600, 600), rng.randbytes(600 * 600 * 3))  # no plain stage: the whole photo is a card
     out, _ = image_ops.apply(busy, [{"op": "card", "ratio": "1:1", "radius": 0, "shadow": 0, "scale": 0.9}])
     # the photo's own top-left corner pixel is opaque photo, not the ground: square corners
     W = out.width
