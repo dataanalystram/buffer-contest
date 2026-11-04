@@ -199,3 +199,28 @@ def test_report_best_times_honour_a_multi_channel_filter(app, api, channel, worl
     c = TestClient(app, headers={"Authorization": f"Bearer {raw}"})
     assert c.get("/api/reports/summary").json()["best_times"]["heatmap"]["posts"] == 2
     assert api.get(f"/api/reports/summary?channel_id={channel['id']},{third['id']}").json()["best_times"]["heatmap"]["posts"] == 2
+
+
+def test_contact_detail_and_segments_only_use_visible_channels(app, api, channel, world, core):
+    """CodeRabbit on #102 (outside the diff): /api/contacts/{key} and /api/contact-segments read every channel's
+    comments. A commenter seen only on a hidden channel must 404 like a missing one; one seen on both shows only the
+    visible history; segment counts drop the hidden-only people."""
+    from huhqueue.models import Comment
+    now = utcnow()
+    with core.db.session() as s:
+        s.add_all([Comment(id="cm_bothzz1", channel_id=channel["id"], author="bothzz", text="mine?", at=now, external_id="xbz1", parent_external_id=""),
+                   Comment(id="cm_bothzz2", channel_id=world["id"], author="bothzz", text="SECRETZZ reply", at=now, external_id="xbz2", parent_external_id=""),
+                   Comment(id="cm_onlyzz", channel_id=world["id"], author="hiddenonlyzz", text="SECRETZZ only", at=now, external_id="xoz", parent_external_id="")])
+    assert api.get("/api/contacts/hiddenonlyzz").status_code == 200                       # the seed is real
+    assert len(api.get("/api/contacts/bothzz").json()["history"]) == 2
+    owner_total = sum(x["count"] for x in api.get("/api/contact-segments").json())
+    raw = _tok(api, allowed_channel_ids=[channel["id"]], scopes=["read", "comments"])["token"]
+    tok = TestClient(app, headers={"Authorization": f"Bearer {raw}"})
+    ed = member(app, api, "editor", access={world["id"]: "none"}, name="Eli")
+    for c in (tok, ed):
+        for key in ("hiddenonlyzz", "nobodyzz"):
+            r = c.get(f"/api/contacts/{key}")
+            assert r.status_code == 404 and "SECRETZZ" not in r.text, (key, r.status_code)
+        d = c.get("/api/contacts/bothzz")
+        assert d.status_code == 200 and "SECRETZZ" not in d.text and len(d.json()["history"]) == 1
+        assert sum(x["count"] for x in c.get("/api/contact-segments").json()) < owner_total

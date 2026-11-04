@@ -453,23 +453,25 @@ def add_content_routes(app: FastAPI, core) -> None:
         return rows
 
     @app.get("/api/contact-segments", tags=["contacts"])
-    def contact_segments():
+    def contact_segments(request: Request):
         with core.db.session() as s:
-            rows = contact_rows(s)
+            rows = contact_rows(s, "", visible(request))
         return [{"id": k, "label": v[0], "rule": v[1], "count": sum(1 for c in rows if v[2](c))} for k, v in SEGMENTS.items()]
 
     @app.get("/api/contacts/{key}", tags=["contacts"])
-    def contact_get(key: str):
+    def contact_get(key: str, request: Request):
+        vis = visible(request)          # someone seen only on a hidden channel answers 404, like a missing contact
         with core.db.session() as s:
             c = s.get(Contact, key)
             handle = c.handle if c else key
-            row = next((r for r in contact_rows(s) if r["handle"] == handle), None)
+            row = next((r for r in contact_rows(s, "", vis) if r["handle"] == handle), None)
             if not row:
                 raise HTTPException(404, "Contact not found")
             hist = [{"id": x.id, "text": x.text, "at": posts_svc.iso(x.at), "status": x.status, "channel_id": x.channel_id,
                      "provider": ch.provider, "media_caption": (x.media_caption or "")[:100], "media_permalink": x.media_permalink, "flagged": x.flagged}
-                    for x, ch in s.execute(select(Comment, Channel).join(Channel, Channel.id == Comment.channel_id)
-                                           .where(Comment.author == handle).order_by(Comment.at.desc()))]
+                    for x, ch in s.execute(only(select(Comment, Channel).join(Channel, Channel.id == Comment.channel_id)
+                                                .where(Comment.author == handle), Comment.channel_id, vis)
+                                           .order_by(Comment.at.desc()))]
             return {**row, "history": hist}
 
     @app.patch("/api/contacts/{key}", tags=["contacts"])
