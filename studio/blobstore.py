@@ -1,0 +1,191 @@
+"""Where media bytes live: a storage backend behind the ``media`` and ``library_chunks`` tables (docs/STORAGE.md).
+
+* ``db`` (the default, and the fallback whenever R2 isn't configured): the bytes stay in the row (``data`` BYTEA/BLOB),
+  as before.
+* ``r2``: the row keeps its metadata and an object key (``storage_key``, ``sha256``); the bytes go to the configured
+  S3-compatible bucket (studio/r2.py, the same ``R2_*`` settings as One take's uploads). Keys sit under a per-person prefix
+  (a hash of the account id, never the id itself) and end in a random part: ``media/<owner>/<random>``,
+  ``lib/<owner>/<random>``. The bucket stays private: every read goes through this server's own /m/, /ms/ and
+  /api/library routes, with their ownership checks unchanged.
+
+Why: the hosted database is Supabase's free Postgres (500 MB for everything) and media made up most of it; R2's free tier
+holds 10 GB and has no egress fees.
+
+Deleting a row never deletes an object inline. ``release()`` writes the row's key into ``blob_gc`` in the same statement
+batch (inside the caller's transaction when there is one) and then deletes the row; ``sweep()`` deletes the objects
+afterwards and keeps a key until the bucket confirms, so a rolled-back transaction can't lose bytes and a failed delete is
+retried rather than forgotten.
+
+``HQ_MEDIA_STORAGE=db`` keeps new media in the database even when R2 is configured (One take can use R2 on its own).
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import secrets
+import threading
+import time
+
+from . import r2
+
+KINDS = ("media", "lib")
+_HTTP = None            # tests put a stub S3 transport here (an httpx.Client)
+_SWEEP = threading.Lock()
+
+
+class StorageError(Exception):
+    pass
+
+
+def set_http(client) -> None:
+    global _HTTP
+    _HTTP = client
+
+
+def bucket() -> "r2.Bucket | None":
+    """The media bucket, or None for the db backend."""
+    if os.environ.get("HQ_MEDIA_STORAGE", "auto").strip().lower() == "db":
+        return None
+    cfg = r2.config()
+    return r2.Bucket(cfg, http=_HTTP) if cfg else None
+
+
+def backend_name() -> str:
+    return "r2" if bucket() else "db"
+
+
+def owner_prefix(uid: str) -> str:
+    """The per-person folder: a hash of the account id, so object keys never carry it."""
+    return hashlib.sha256(("hq-owner:" + str(uid or "")).encode()).hexdigest()[:20]
+
+
+def new_key(kind: str, uid: str) -> str:
+    assert kind in KINDS
+    return f"{kind}/{owner_prefix(uid)}/{secrets.token_urlsafe(24)}"
+
+
+def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream") -> tuple[bytes | None, str | None, str]:
+    """Store bytes: (what goes in the row's ``data``, its ``storage_key``, sha256). With R2 the row gets no bytes; when the
+    bucket refuses or is down the bytes stay in the row (the upload never fails because the bucket did) and it's logged."""
+    digest = hashlib.sha256(data).hexdigest()
+    b = bucket()
+    if not b:
+        return data, None, digest
+    key = new_key(kind, uid)
+    try:
+        b.put(key, data, mime)
+    except r2.R2Error as e:
+        print(f"storage: R2 put failed ({e}); kept this {kind} blob in the database", flush=True)
+        return data, None, digest
+    return None, key, digest
+
+
+def read(data, key: str | None, start: int | None = None, end: int | None = None) -> bytes:
+    """A row's bytes (all, or [start, end] inclusive) wherever they are."""
+    if data is not None or not key:
+        blob = bytes(data or b"")
+        if start is None and end is None:
+            return blob
+        return blob[int(start or 0):(int(end) + 1) if end is not None else None]
+    b = bucket()
+    if not b:
+        raise StorageError("This file is in object storage, which isn't configured on this server.")
+    try:
+        return b.get(key, start, end)
+    except r2.R2Error as e:
+        raise StorageError(f"Couldn't read this file from storage ({e}).") from None
+
+
+def rewrite(store, table: str, where: str, args: tuple, data: bytes) -> None:
+    """Replace one row's bytes in place (e.g. a video's GPS blanked): same key in the bucket, or the row's data."""
+    rows = store.q(f"SELECT storage_key FROM {table} WHERE {where}", args)
+    if not rows:
+        return
+    key = rows[0]["storage_key"]
+    digest = hashlib.sha256(data).hexdigest()
+    if key:
+        b = bucket()
+        if not b:
+            raise StorageError("This file is in object storage, which isn't configured on this server.")
+        try:
+            b.put(key, data)
+        except r2.R2Error as e:
+            raise StorageError(f"Couldn't update this file in storage ({e}).") from None
+        store.x(f"UPDATE {table} SET sha256=? WHERE {where}", (digest, *args))
+    else:
+        store.x(f"UPDATE {table} SET data=?, sha256=? WHERE {where}", (data, digest, *args))
+
+
+def release(store, table: str, where: str, args: tuple = ()) -> None:
+    """DELETE FROM table WHERE where, noting every object key those rows had in blob_gc first (one statement each)."""
+    assert table in ("media", "library_chunks")
+    store.x(f"INSERT INTO blob_gc(key, at, tries) SELECT storage_key, ?, 0 FROM {table} WHERE ({where}) AND storage_key IS NOT NULL "
+            "ON CONFLICT(key) DO NOTHING", (time.time(), *args))
+    store.x(f"DELETE FROM {table} WHERE {where}", args)
+
+
+def pending(store) -> int:
+    return int(store.q("SELECT COUNT(*) AS n FROM blob_gc")[0]["n"] or 0)
+
+
+def sweep(store, limit: int = 500) -> dict:
+    """Delete released objects from the bucket; a key leaves blob_gc only once the bucket confirms. Never inside a
+    transaction (it could still roll back), never two at once."""
+    if getattr(store, "_tx_depth", 0) or not _SWEEP.acquire(blocking=False):
+        return {"deleted": 0, "failed": 0, "skipped": True}
+    try:
+        rows = store.q("SELECT key FROM blob_gc WHERE key IS NOT NULL ORDER BY at LIMIT ?", (limit,))
+        if not rows:
+            return {"deleted": 0, "failed": 0}
+        cfg = r2.config()
+        if not cfg:  # keys stay noted until the bucket is configured again
+            return {"deleted": 0, "failed": len(rows), "why": "R2 not configured"}
+        b = r2.Bucket(cfg, http=_HTTP)
+        done = failed = 0
+        for r in rows:
+            try:
+                ok = b.delete(r["key"])
+            except r2.R2Error:
+                ok = False
+            if ok:
+                store.x("DELETE FROM blob_gc WHERE key=?", (r["key"],))
+                done += 1
+            else:
+                store.x("UPDATE blob_gc SET tries=tries+1 WHERE key=?", (r["key"],))
+                failed += 1
+        return {"deleted": done, "failed": failed}
+    finally:
+        _SWEEP.release()
+
+
+def sweep_soon(store) -> None:
+    """sweep() on a background thread when there is anything to delete (a purge never waits on the bucket)."""
+    try:
+        if not pending(store):
+            return
+    except Exception:  # noqa: BLE001  (no blob_gc yet)
+        return
+
+    def run():
+        try:
+            sweep(store)
+        except Exception as e:  # noqa: BLE001  the periodic sweep retries
+            print(f"storage: sweep failed ({e.__class__.__name__})", flush=True)
+    threading.Thread(target=run, name="hq-blob-sweep", daemon=True).start()
+
+
+def usage(store, uid: str | None = None) -> dict:
+    """Bytes per backend (media rows + Library chunks), for one person or everyone."""
+    w, a = ("WHERE user_id=?", (uid,)) if uid else ("", ())
+    m = store.q(f"SELECT COALESCE(SUM(CASE WHEN storage_key IS NULL THEN size ELSE 0 END),0) AS db, "
+                f"COALESCE(SUM(CASE WHEN storage_key IS NOT NULL THEN size ELSE 0 END),0) AS r2 FROM media {w}", a)[0]
+    out = {"db": int(m["db"] or 0), "r2": int(m["r2"] or 0)}
+    try:
+        cw = "WHERE c.item_id IN (SELECT id FROM library_items WHERE user_id=?)" if uid else ""
+        c = store.q("SELECT COALESCE(SUM(CASE WHEN c.storage_key IS NULL THEN LENGTH(c.data) ELSE 0 END),0) AS db, "
+                    "COUNT(CASE WHEN c.storage_key IS NOT NULL THEN 1 END) AS r2n FROM library_chunks c " + cw, a)[0]
+        out["db"] += int(c["db"] or 0)
+        out["r2_chunks"] = int(c["r2n"] or 0)
+    except Exception:  # noqa: BLE001  (no Library tables in this store)
+        pass
+    return out
