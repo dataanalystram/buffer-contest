@@ -612,8 +612,6 @@ def authorize(s, who: Who, method: str, path: str, query: dict, body, scope: str
     from . import safety
     if safety.TOO_MANY in chans:
         return _deny(f"At most {safety.MAX_SCOPE_IDS} ids per request", 400)
-    if who.restricted() and safety.UNRESOLVED in safety.scope_refs(s, method, path, query, body)[1]:
-        return _deny("Not found", 404)   # a missing post/target/comment answers like another channel's (no id probing)
     d = Decision()
     if who.restricted():
         d.visible = {c for (c,) in s.execute(select(Channel.id)) if who.channel_role(c) != "none"}
@@ -631,6 +629,10 @@ def authorize(s, who: Who, method: str, path: str, query: dict, body, scope: str
             return _deny(f"On this channel you are a {cr}" + (" (read only)" if cr == "viewer" else " - ask an editor"))
         if cr == "contributor":
             contributor_on = True
+    # after the per-channel checks, so a forbidden channel the request NAMES answers the same (403) whether the object
+    # exists or not; then a missing post/target/comment answers like another channel's (404, no id probing)
+    if who.restricted() and safety.UNRESOLVED in safety.scope_refs(s, method, path, query, body)[1]:
+        return _deny("Not found", 404)
     if contributor_on and not read and not NOTE_PATH.match(path):
         st = {x for x in statuses if x}
         action = body.get("action") if isinstance(body, dict) else None

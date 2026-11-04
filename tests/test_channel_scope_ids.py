@@ -195,3 +195,16 @@ def test_restricted_teammate_gets_404_for_a_missing_post_like_a_forbidden_one(ap
     assert a.status_code == b.status_code == 404 and a.json() == b.json()
     assert ed.get(f"/api/posts/{mine['id']}/notes").status_code == 200
     assert api.get("/api/posts/post_doesnotexist/notes").status_code == 200   # the owner: unchanged
+
+
+def test_named_forbidden_channel_answers_the_same_whether_the_object_exists(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): PATCH /api/comments/{id}?channel_id={forbidden} gave 404 for a missing comment but 403 for
+    one on that channel. The named channel is checked first, so both answer 403."""
+    from .test_teams import member
+    other = api.post("/api/connect/fake/token", {"access_token": "tok-2", "username": "other_brand"}).json()
+    with core.db.session() as s:
+        s.add(Comment(id="cm_other", channel_id=other["id"], external_id="x1", author="fan", text="hi", status="open"))
+    ed = member(app, api, "editor", access={other["id"]: "none"}, name="Bo")
+    a = ed.patch(f"/api/comments/cm_other?channel_id={other['id']}", {"flagged": True})
+    b = ed.patch(f"/api/comments/cm_nope?channel_id={other['id']}", {"flagged": True})
+    assert a.status_code == b.status_code == 403 and a.json() == b.json()
