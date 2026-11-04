@@ -226,3 +226,17 @@ def test_named_forbidden_channel_wins_over_the_objects_own_forbidden_channel(app
     _hidden(ed.patch("/api/comments/cm_on_a", {"flagged": True}))   # no channel named: still 404 like a missing one
     with core.db.session() as s:
         assert not s.get(Comment, "cm_on_a").flagged
+
+
+def test_token_naming_a_forbidden_channel_gets_403_whether_the_object_exists(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): the token path checked object ids first, so PATCH /api/comments/{id}?channel_id={forbidden}
+    answered 404 for an existing or missing comment and the named channel never decided. A named forbidden channel is now
+    403 first, the same for both; with no channel named, another channel's object still answers like a missing one."""
+    c, other, mine, theirs, both, note = _setup(app, api, core, channel)
+    a = c.patch(f"/api/comments/cm_other?channel_id={other['id']}", json={"flagged": True})
+    b = c.patch(f"/api/comments/cm_nope?channel_id={other['id']}", json={"flagged": True})
+    assert a.status_code == b.status_code == 403 and a.json() == b.json()
+    assert a.json().get("code") == "channel_scope" or "channel_scope" in a.text
+    _hidden(c.patch("/api/comments/cm_other", json={"flagged": True}))
+    with core.db.session() as s:
+        assert not s.get(Comment, "cm_other").flagged

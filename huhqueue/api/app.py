@@ -185,12 +185,12 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
             outside = named - allowed
             if safety.TOO_MANY in via_ids:
                 resp = _err(400, f"At most {safety.MAX_SCOPE_IDS} ids per request")
+            elif outside:   # a channel the request NAMES decides first: 403 whether the object exists or not
+                resp = _err(403, f"Token '{info.name}' is limited to {len(info.allowed_channel_ids)} channel(s); "
+                                 f"not allowed: {', '.join(sorted(outside))}", code="channel_scope")
             elif via_ids - allowed:
                 # a post / target / comment on another channel answers exactly like one that doesn't exist (no probing)
                 resp = _err(404, "Not found")
-            elif outside:
-                resp = _err(403, f"Token '{info.name}' is limited to {len(info.allowed_channel_ids)} channel(s); "
-                                 f"not allowed: {', '.join(sorted(outside))}", code="channel_scope")
         counted = method != "GET" and not path.startswith(safety.RUNNER_PREFIXES)
         if resp is None and counted and (info.max_actions_per_day or (risk == "public" and info.max_public_per_day)):
             used = safety.used_today(core, info.id)
