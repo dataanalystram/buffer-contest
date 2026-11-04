@@ -10,7 +10,8 @@ Cloudflare **R2's free tier holds 10 GB with no egress fees**, so files belong t
 - **`db`**: bytes stay in the row, as before. The default, and the automatic fallback whenever R2 isn't configured.
 - **`r2`**: on when all four `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` are set (`R2_ENDPOINT`
   for another S3-compatible store). The **same variables and the same bucket client as One take's uploads**
-  (`studio/r2.py`, docs/ONE_TAKE_UPLOADS.md). `HQ_MEDIA_STORAGE=db` keeps new media in the database even then.
+  (`studio/r2.py`, docs/ONE_TAKE_UPLOADS.md). `HQ_MEDIA_STORAGE=db` keeps *new* media in the database even then; files
+  already in R2 are still read from it while the `R2_*` variables are set (so never remove those while R2 holds files).
 
 With R2 on, a new media row or Library chunk keeps `data` NULL and gets `storage_key` (+ `sha256`):
 `media/<owner>/<random>` or `lib/<owner>/<random>`, where `<owner>` is a hash of the account id (never the id) and
@@ -34,10 +35,11 @@ python -m studio.migrate_media --to r2 --dry-run   # rows and bytes that would m
 python -m studio.migrate_media --to r2             # move everything (needs R2_* and the app's DATABASE_URL / SESSION_SECRET)
 python -m studio.migrate_media --to r2 --limit 200 # in steps
 ```
-For each row still holding bytes: sha256, PUT to a deterministic key, **GET it back and compare length and sha256**, and
-only then one guarded UPDATE that sets the key and nulls `data`. A copy that fails the check leaves the row as it was. Rows
-already moved are skipped, so it's idempotent and an interrupted run is finished by the next one. Exit code 1 if any row
-failed, 2 if R2 isn't configured.
+For each row still holding bytes: sha256, PUT to a fresh random key, **GET it back and compare length and sha256**, and
+only then one guarded UPDATE that sets the key and nulls `data`. A copy that fails the check leaves the row as it was (that
+attempt's object is queued for deletion; the next attempt uses a new key). Rows already moved are skipped, so it's
+idempotent and an interrupted run is finished by the next one. Chunks of an upload still arriving are skipped. Exit code 1
+if any row failed, 2 if R2 isn't configured. The sweep never deletes a key that any row still references.
 
 **Not run on production by the PR.** Ram runs it when ready (order: set the R2 env vars on Render and deploy, so new files
 already go to R2; dry run; run; then `VACUUM FULL media, library_chunks;` in the Supabase SQL editor at a quiet moment,

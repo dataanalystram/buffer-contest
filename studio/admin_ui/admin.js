@@ -33,14 +33,14 @@
   function row(u) {
     const self = u.id === me;
     const block = u.status === "blocked"
-      ? `<button type="button" data-act="unblock" data-id="${esc(u.id)}">Unblock</button>`
-      : `<button type="button" data-act="block" data-id="${esc(u.id)}"${self ? " disabled title=\"You can't block yourself\"" : ""}>Block</button>`;
+      ? `<button type="button" data-act="unblock" data-testid="admin-unblock" data-id="${esc(u.id)}">Unblock</button>`
+      : `<button type="button" data-act="block" data-testid="admin-block" data-id="${esc(u.id)}"${self ? " disabled title=\"You can't block yourself\"" : ""}>Block</button>`;
     return `<tr data-testid="admin-user"><td><b>${esc(u.name || "(no name)")}</b><small>${esc(u.email)}</small><small><code>${esc(u.id)}</code></small></td>
       <td>${esc(when(u.created))}</td>
       <td>${esc(when(u.last_signin))}<small>${esc(u.last_signin_ip)}${u.last_signin_ua ? " · " + esc(u.last_signin_ua) : ""}</small></td>
       <td>${esc(when(u.last_seen))}</td><td>${esc(u.runs)}</td><td>${esc(u.posts)}</td><td>${esc(size(u.storage_bytes))}</td>
       <td><span class="pill ${esc(u.status)}">${esc(u.status)}</span></td>
-      <td><div class="adm-actions">${block}<button type="button" class="danger" data-act="delete" data-id="${esc(u.id)}"${self ? " disabled" : ""}>Delete</button></div></td></tr>`;
+      <td><div class="adm-actions">${block}<button type="button" class="danger" data-act="delete" data-testid="admin-delete" data-id="${esc(u.id)}"${self ? " disabled" : ""}>Delete</button></div></td></tr>`;
   }
 
   async function load() {
@@ -61,11 +61,8 @@
 
   async function act(kind, id) {
     try {
-      if (kind === "block") {
-        const reason = window.prompt("Block this user? Their sessions end now and their agents stop. Reason (optional):", "");
-        if (reason === null) return;
-        await api(`/api/admin/users/${encodeURIComponent(id)}/block`, { method: "POST", body: JSON.stringify({ reason }) });
-        say("Blocked.");
+      if (kind === "block") {               // an in-app confirm dialog (CLAUDE.md: never window.confirm / prompt)
+        $("blkReason").value = ""; $("blk").dataset.id = id; $("blk").showModal(); return;
       } else if (kind === "unblock") {
         await api(`/api/admin/users/${encodeURIComponent(id)}/unblock`, { method: "POST", body: "{}" });
         say("Unblocked.");
@@ -80,6 +77,16 @@
   document.addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-act]");
     if (b && !b.disabled) act(b.dataset.act, b.dataset.id);
+  });
+  $("blkCancel").addEventListener("click", () => $("blk").close());
+  $("blkForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const id = $("blk").dataset.id;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(id)}/block`, { method: "POST", body: JSON.stringify({ reason: $("blkReason").value }) });
+      say("Blocked.");
+    } catch (e) { say(e.message); }
+    $("blk").close(); load();
   });
   $("delInput").addEventListener("input", () => { $("delOk").disabled = $("delInput").value !== $("del").dataset.id; });
   $("delCancel").addEventListener("click", () => $("del").close());

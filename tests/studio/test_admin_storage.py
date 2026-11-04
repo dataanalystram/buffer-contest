@@ -348,6 +348,8 @@ def test_migration_dry_run_moves_nothing_then_verifies_and_is_idempotent(app, hu
     assert st["moved"] == 0 and st["failed"] >= 2
     assert bytes(store.q("SELECT data FROM media WHERE token=?", (tok,))[0]["data"]) == data
 
+    blobstore.sweep(store)                                 # the failed attempt's objects go; the rows keep their bytes
+    assert bytes(store.q("SELECT data FROM media WHERE token=?", (tok,))[0]["data"]) == data
     s3.corrupt_get = False
     st = migrate_media.migrate(store, r2.Bucket(r2.config(), http=blobstore._client()))
     assert st["failed"] == 0 and st["moved"] == 1 + before["library_chunks"]["rows"]
@@ -355,6 +357,9 @@ def test_migration_dry_run_moves_nothing_then_verifies_and_is_idempotent(app, hu
     assert row["data"] is None and s3.objects[row["storage_key"]] == data and row["sha256"] == hashlib.sha256(data).hexdigest()
     assert TestClient(app, base_url="https://hq.test").get(f"/m/{tok}").content == data
     assert human.get(f"/api/library/{item['id']}/file").status_code == 200
+    store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO NOTHING", (row["storage_key"], time.time()))
+    blobstore.sweep(store)                                 # a queued delete of a key a row still uses never runs
+    assert s3.objects[row["storage_key"]] == data and blobstore.pending(store) == 0
     again = migrate_media.migrate(store, r2.Bucket(r2.config(), http=blobstore._client()))
     assert again["moved"] == 0 and again["failed"] == 0                     # idempotent
     after = migrate_media.plan(store)
@@ -367,3 +372,23 @@ def test_migration_cli_dry_run(app, monkeypatch, capsys, s3):
     assert migrate_media.main(["--to", "r2", "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert '"dry_run": true' in out and '"r2_configured": true' in out and not s3.calls
+
+
+def test_db_switch_only_affects_new_writes(app, human, monkeypatch, s3):
+    """HQ_MEDIA_STORAGE=db with R2 still configured: new files stay in the database, files already in R2 still serve."""
+    data = image_bytes(40, 40)
+    tok = app.state.house.put_media(Actor("acc_1"), data, "in-r2.png")
+    monkeypatch.setenv("HQ_MEDIA_STORAGE", "db")
+    assert TestClient(app, base_url="https://hq.test").get(f"/m/{tok}").content == data
+    tok2 = app.state.house.put_media(Actor("acc_1"), data, "in-db.png")
+    assert app.state.store.q("SELECT storage_key FROM media WHERE token=?", (tok2,))[0]["storage_key"] is None
+    assert blobstore.backend_name() == "db"
+
+
+def test_admin_page_has_no_browser_prompts_and_testids():
+    from pathlib import Path
+    root = Path(admin.__file__).parent / "admin_ui"
+    js, html = (root / "admin.js").read_text(), (root / "index.html").read_text()
+    assert "prompt(" not in js and "confirm(" not in js and "alert(" not in js
+    for ctl in re.findall(r"<(?:button|input)\b[^>]*>", html):
+        assert "data-testid" in ctl, ctl
