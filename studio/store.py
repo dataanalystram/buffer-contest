@@ -95,11 +95,21 @@ CREATE TABLE IF NOT EXISTS ai_settings (
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, actor TEXT, action TEXT, risk TEXT,
   detail TEXT, ok INTEGER, ts REAL);
+CREATE TABLE IF NOT EXISTS blob_gc (
+  key TEXT PRIMARY KEY, at REAL, tries INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, admin TEXT, action TEXT, subject_hash TEXT, detail TEXT, ok INTEGER);
+CREATE TABLE IF NOT EXISTS user_tombstones (
+  id_hash TEXT PRIMARY KEY, at REAL, via TEXT);
 """
 
 
 # Columns added after the first release: added in place on boot (SQLite and Postgres), never dropped.
 ADDED_COLUMNS = {
+    # admin panel (studio/admin.py, docs/ADMIN.md): a reversible block, and when the person was last active
+    "users": (("blocked", "INTEGER"), ("blocked_at", "REAL"), ("blocked_by", "TEXT"), ("block_reason", "TEXT"), ("last_seen", "REAL")),
+    # media storage backend (studio/blobstore.py, docs/STORAGE.md): the object key when the bytes are in R2, and their hash
+    "media": (("storage_key", "TEXT"), ("sha256", "TEXT")),
     "audit": (("category", "TEXT"), ("surface", "TEXT"), ("app", "TEXT"), ("client_id", "TEXT"), ("token_id", "INTEGER"),
               ("token_label", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"), ("tokens_in", "INTEGER"),
               ("tokens_out", "INTEGER"), ("cost_usd", "REAL"), ("ip", "TEXT"), ("ua", "TEXT")),
@@ -122,12 +132,12 @@ def sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs",
+ID_TABLES = ("admin_audit", "agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs",
              "template_slots", "source_runs", "library_items", "brand_kit_library",
              "style_edits", "style_suggestions", "review_links")  # Brand studio slots, Sources runs and brand kits (own schemas in brand_studio.py, sources_agent.py, brand_kits.py)
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
           "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
-          "ai_settings")
+          "ai_settings", "blob_gc", "admin_audit", "user_tombstones")
 
 
 # Per-person tables created by other modules (each on first use). Disconnect and delete removes them too (found in the
@@ -144,6 +154,7 @@ class Store:
     def __init__(self, path: str, secret: str, token_key: str = "", token_keys_previous: tuple[str, ...] | list[str] = ()):
         self.path = path
         self._lock = threading.RLock()
+        self._seen: dict[str, float] = {}  # touch(): when each person's last_seen was last written
         self.pg = path.startswith(("postgres://", "postgresql://"))
         if self.pg:
             import psycopg
@@ -321,12 +332,31 @@ class Store:
     def save_tokens(self, uid: str, tokens: dict | None) -> None:
         self.x("UPDATE users SET tokens=?, updated=? WHERE id=?", (self.seal(tokens) if tokens else None, time.time(), uid))
 
+    def blocked(self, uid: str) -> bool:
+        rows = self.q("SELECT blocked FROM users WHERE id=?", (uid,)) if uid else []
+        return bool(rows and rows[0]["blocked"])
+
+    def touch(self, uid: str, every: float = 300) -> None:
+        """users.last_seen, written at most once per ``every`` seconds per person (admin panel's "last active")."""
+        now = time.time()
+        if not uid or now - self._seen.get(uid, 0) < every:
+            return
+        self._seen[uid] = now
+        try:
+            self.x("UPDATE users SET last_seen=? WHERE id=?", (now, uid))
+        except Exception:  # noqa: BLE001  (never fails the request it rides on)
+            pass
+
     def set_kill(self, uid: str, on: bool) -> None:
         self.x("UPDATE users SET kill_switch=? WHERE id=?", (1 if on else 0, uid))
 
     def delete_user(self, uid: str) -> None:
+        """Every row the person has, here and in the tables other modules own. Media objects in R2 are released into
+        blob_gc with their rows (studio/blobstore.py) and deleted by the sweep that follows."""
+        from . import blobstore
+        blobstore.release(self, "media", "user_id=?", (uid,))
         for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
-                  "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs", "ai_settings"):
+                  "oauth_refresh", "brand_kits", "style_rules", "agent_runs", "render_jobs", "ai_settings"):
             self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
         for t in ("style_edits", "style_suggestions", "review_links"):  # Style Ledger v2 (studio/ledger.py)
             try:
@@ -334,7 +364,7 @@ class Store:
             except Exception:  # noqa: BLE001
                 pass
         try:  # the Library's own tables (studio/library.py), when this store has them
-            self.x("DELETE FROM library_chunks WHERE item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
+            blobstore.release(self, "library_chunks", "item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
             self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
             self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
         except Exception:  # noqa: BLE001
@@ -359,7 +389,9 @@ class Store:
     def session(self, sid: str | None) -> dict | None:
         if not sid:
             return None
-        rows = self.q("SELECT * FROM sessions WHERE id_hash=? AND expires>?", (sha(sid), time.time()))
+        # a blocked account's sessions are deleted when it is blocked; the join is the belt to those braces
+        rows = self.q("SELECT s.* FROM sessions s LEFT JOIN users u ON u.id=s.user_id WHERE s.id_hash=? AND s.expires>? "
+                      "AND COALESCE(u.blocked,0)=0", (sha(sid), time.time()))
         return dict(rows[0]) if rows else None
 
     def update_session(self, sid: str, **fields: Any) -> None:
