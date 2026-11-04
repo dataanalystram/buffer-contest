@@ -43,7 +43,9 @@ def _download(c: httpx.Client, url: str, dest: Path) -> None:
 
 def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
     from . import take
+    from .media import selfcheck
     spec, urls = j["spec"], j["urls"]
+    print("self-check:", selfcheck.check(spec["kind"]))  # fails loudly (a clear job error) before any work, never degrades silently
     tmp = Path(tempfile.mkdtemp(prefix="hq_worker_"))
     src = tmp / "source.mp4"
     try:
@@ -192,7 +194,7 @@ def friendly(e: BaseException, base: str = "") -> str:
     if isinstance(e, (SystemExit, KeyboardInterrupt)):
         return "The video worker was stopped before it finished."
     msg = str(e).strip()
-    if e.__class__.__name__ in ("TakeError", "RuntimeError", "MediaError", "MatteError") and msg:
+    if e.__class__.__name__ in ("TakeError", "RuntimeError", "CapabilityError", "MediaError", "MatteError") and msg:
         return msg[:300]
     return f"The video worker hit an error ({e.__class__.__name__}{': ' + msg if msg else ''})"[:300]
 

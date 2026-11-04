@@ -43,6 +43,10 @@ CLIP_W, CLIP_H = int(os.environ.get("HQ_CLIP_W", "720")), int(os.environ.get("HQ
 MIN_CLIP, MAX_CLIP, TARGET_CLIP = 20.0, 60.0, 38.0
 COVER_SECS = 0.2            # branded cover frame prepended to every clip; thumbnailOffset points into it (6 frames, never a held still)
 END_SECS = 2.0
+SMOOTH = 0.45              # crop_plan: EMA weight of a new face sample (lower = steadier pan)
+EASE_S = 0.6               # crop_plan: a pan eases over this long (was 0.4 s, read as a jerk on fast talkers)
+LOUDNESS = "loudnorm=I=-14:TP=-1.5:LRA=11"  # EBU R128, -14 LUFS (what Reels / Shorts / TikTok normalise to)
+FADE_IN, FADE_OUT = 0.08, 0.15              # short audio fades at the clip's cut points: no click at the edges
 SAFE_BOTTOM = 0.20          # bottom 20% stays clear of captions (Instagram/TikTok UI)
 FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
 FILLER = {"um", "uh", "erm", "uhm", "hmm", "like", "basically", "actually", "literally"}
@@ -285,13 +289,16 @@ def crop_plan(faces: list[dict], start: float, end: float, src_w: int, src_h: in
     cuts = [c - start for c in scenes or [] if start < c < end]
     keys: list[tuple[float, int]] = []
     cur = None
-    # median of a 1.5 s window to steady jitter
+    ema = None
+    # median of a 1.5 s window, then an exponential moving average (reset at scene cuts), to steady jitter (4 Nov 2026)
     for k in range(int((end - start) * 2) + 1):
         t = k / 2
         win = [f["cx"] for f in span if abs((f["t"] - start) - t) <= 0.75]
         if not win:
             continue
-        cx = sorted(win)[len(win) // 2] * src_w
+        raw = sorted(win)[len(win) // 2] * src_w
+        ema = raw if ema is None or any(abs(c - t) <= 0.5 for c in cuts) else ema + SMOOTH * (raw - ema)
+        cx = ema
         target = int(min(max_x, max(0, cx - cw / 2)))
         if cur is None:
             cur = target
@@ -306,7 +313,7 @@ def crop_plan(faces: list[dict], start: float, end: float, src_w: int, src_h: in
         elif not (0.35 <= face_in_window <= 0.65):
             keys.append((t, cur))
             cur = target
-            keys.append((t + 0.4, cur))
+            keys.append((t + EASE_S, cur))
     # drop no-op keys
     slim: list[tuple[float, int]] = []
     for t, x in keys:
@@ -523,7 +530,8 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
         import numpy as np
         from mediapipe.tasks.python import BaseOptions, vision
     except Exception:  # noqa: BLE001
-        return [], "none (MediaPipe not installed: centre/blur layout)"
+        print("face track: MediaPipe not installed, falling back to OpenCV's Haar cascade", flush=True)
+        return _face_track_cv2(path, fps, "MediaPipe not installed")
     model_path = model_path or os.environ.get("HQ_FACE_MODEL") or str(Path(tempfile.gettempdir()) / "blaze_face_short_range.tflite")
     if not Path(model_path).exists():
         import httpx
@@ -532,7 +540,8 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
         det = vision.FaceDetector.create_from_options(vision.FaceDetectorOptions(
             base_options=BaseOptions(model_asset_path=model_path), min_detection_confidence=0.6))
     except OSError as e:
-        return [], f"none (MediaPipe couldn't load: {str(e)[:80]})"
+        print(f"face track: MediaPipe couldn't load ({str(e)[:80]}), falling back to OpenCV's Haar cascade", flush=True)
+        return _face_track_cv2(path, fps, f"MediaPipe couldn't load: {str(e)[:60]}")
     w, h = 320, 180
     info = probe(path)
     if info["width"] and info["height"]:
@@ -562,6 +571,43 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
         except Exception:  # noqa: BLE001
             pass
     return out, "MediaPipe Face Detector (BlazeFace)"
+
+
+def _face_track_cv2(path: str, fps: float, why: str) -> tuple[list[dict], str]:
+    """The same samples with OpenCV's Haar cascade (frontal faces), when MediaPipe can't run here. Says so in the label;
+    with neither detector it returns none and the job reports 'no face found, centered crop used'."""
+    try:
+        import cv2  # opencv-python-headless (Apache-2.0)
+        import numpy as np
+        casc = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        if casc.empty():
+            raise RuntimeError("empty cascade")
+    except Exception as e:  # noqa: BLE001
+        print(f"face track: no face detector ({why}; OpenCV: {e.__class__.__name__}): centered crop", flush=True)
+        return [], f"none ({why}; OpenCV unavailable: centre/blur layout)"
+    w, h = 320, 180
+    info = probe(path)
+    if info["width"] and info["height"]:
+        h = int(round(w * info["height"] / info["width"] / 2)) * 2
+    from . import mediasafe
+    proc = mediasafe.popen(["ffmpeg", "-v", "error", "-i", path, "-vf", f"fps={fps},scale={w}:{h}", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                           stdout=subprocess.PIPE)
+    out, k = [], 0
+    try:
+        while True:
+            buf = proc.stdout.read(w * h)
+            if len(buf) < w * h:
+                break
+            g = np.frombuffer(buf, dtype=np.uint8).reshape(h, w)
+            found = casc.detectMultiScale(g, scaleFactor=1.1, minNeighbors=5, minSize=(18, 18))
+            if len(found):
+                x, y, fw, fh = max(found, key=lambda b: b[2] * b[3])
+                out.append({"t": round(k / fps, 2), "cx": round((x + fw / 2) / w, 4), "cy": round((y + fh / 2) / h, 4),
+                            "w": round(fw / w, 4), "score": 0.8})
+            k += 1
+    finally:
+        proc.kill()
+    return out, f"OpenCV Haar cascade ({why})"
 
 
 def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, transcript: dict | None = None) -> dict:
@@ -690,6 +736,12 @@ def cover_image(frame: bytes, plan: dict, src_w: int, hook: str, kit: dict, p: d
     return render._jpeg(canvas)
 
 
+def audio_chain(dur: float) -> str:
+    """The clip's audio: EBU R128 loudness, then a short fade in and out at the cut points."""
+    out_at = max(0.0, dur - FADE_OUT)
+    return f"{LOUDNESS},afade=t=in:st=0:d={FADE_IN},afade=t=out:st={out_at:.3f}:d={FADE_OUT},aresample=44100"
+
+
 def segments(start: float, end: float, scenes: list[float] | None, min_len: float = 1.2) -> list[tuple[float, float]]:
     """Split a clip at scene cuts so each shot gets its own layout (face-tracked or blurred-pad)."""
     cuts = [c for c in sorted(scenes or []) if start + min_len <= c <= end - min_len]
@@ -749,8 +801,12 @@ def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes
         assf = str(tmp / "cap.ass").replace("\\", "/").replace(":", "\\:")
         body = tmp / "body.mp4"
         vf = f"[0:v]ass=filename='{assf}':fontsdir='{fonts}'[cap];[cap][2:v]overlay=0:0,format=yuv420p[v]"
+        amap = ["-map", "1:a?"]
+        if src.get("audio", True):  # loudness to -14 LUFS (EBU R128) + short fades at the cuts (4 Nov 2026)
+            vf += f";[1:a]{audio_chain(dur)}[a]"
+            amap = ["-map", "[a]"]
         run(["ffmpeg", "-v", "error", "-y", "-i", str(framed), "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", path,
-             "-i", str(tmp / "logo.png"), "-filter_complex", vf, "-map", "[v]", "-map", "1:a?", "-t", f"{dur:.3f}", *venc, *aenc,
+             "-i", str(tmp / "logo.png"), "-filter_complex", vf, "-map", "[v]", *amap, "-t", f"{dur:.3f}", *venc, *aenc,
              "-movflags", "+faststart", str(body)])
         # 3) branded cover from the best frame, as the first half second
         main = max(plans, key=lambda x: (x["mode"] == "track", x["end"] - x["start"]))
@@ -798,7 +854,11 @@ def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes
                 "layout": "track" if set(modes) == {"track"} else ("mixed" if "track" in modes else modes[0]),
                 "shots": [{"start": x["start"], "end": x["end"], "mode": x["mode"]} for x in plans],
                 "face_coverage": round(cov_ratio, 3) if cov_ratio is not None else None,
-                "moment": {k: m.get(k) for k in ("start", "end")}, "caption_band": caption_box(ass, H), "probe": pf}
+                "moment": {k: m.get(k) for k in ("start", "end")}, "caption_band": caption_box(ass, H), "probe": pf,
+                "audio": {"loudnorm": LOUDNESS, "fade_in": FADE_IN, "fade_out": FADE_OUT} if src.get("audio", True) else None,
+                "face_fallback": None if "track" in modes or set(modes) <= {"fit"} else "no face found, centered crop used"}
+        if meta["face_fallback"]:
+            print(f"render: clip {m.get('id', '')} {meta['face_fallback']}", flush=True)
         return data, cover, meta
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

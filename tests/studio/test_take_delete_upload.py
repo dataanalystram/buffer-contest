@@ -288,3 +288,48 @@ def test_mcp_delete_take_and_bin_tools(human, app, monkeypatch):
     assert res["isError"] and "No such take" in msg
     doc = open("docs/MCP_TOOLS.md").read()
     assert all(f"`{n}`" in doc for n in ("delete_take", "list_take_bin", "restore_take", "purge_take_bin"))
+
+
+# ---------------------------------------------------------------- nothing fails silently
+def test_self_check_fails_loudly_when_a_capability_is_missing(monkeypatch):
+    from studio.media import selfcheck
+    monkeypatch.setattr(selfcheck, "face_detector", lambda: (False, "OpenCV CascadeClassifier unavailable (AttributeError)"))
+    with pytest.raises(selfcheck.CapabilityError) as e:
+        selfcheck.check("take_analyze")
+    assert "No face detector loads" in str(e.value) and "CascadeClassifier" in str(e.value)
+    monkeypatch.setattr(selfcheck, "_ff", lambda args: "")                       # an FFmpeg build without the filters
+    monkeypatch.setattr(selfcheck.shutil, "which", lambda b: "/usr/bin/ffmpeg")
+    with pytest.raises(selfcheck.CapabilityError) as e:
+        selfcheck.check("take_render")
+    assert "loudnorm" in str(e.value) and "libx264" in str(e.value)
+    from studio import render_worker
+    assert render_worker.friendly(selfcheck.CapabilityError("The video worker is missing loudnorm.")) == "The video worker is missing loudnorm."
+
+
+def test_no_face_found_is_reported_on_the_take(human, app, monkeypatch):
+    house, sent = app.state.house, []
+    monkeypatch.setattr(house, "_dispatch_github", lambda jid, workflow="", inputs=None, ttl=1800: (sent.append((jid, house.issue_job_token(jid, ttl))), (True, ""))[1])
+    monkeypatch.setattr(house.takes, "_mode", lambda: "github")
+    up = human.post("/api/media", json={"name": "talk.mp4", "data": base64.b64encode(MP4_HEAD + b"0" * 64).decode()}).json()
+    t = human.post("/api/takes", json={"media_token": up["token"], "owns": True}).json()
+    w = TestClient(app, base_url="https://hq.test")
+    w.post(f"/api/worker/jobs/{sent[0][0]}", headers={"x-job-token": sent[0][1]}, json={"analysis": ANALYSIS})
+    rjid, rjt = sent[1]
+    for cid in ("c1", "c2", "c3"):
+        w.post(f"/api/worker/jobs/{rjid}/clips/{cid}", headers={"x-job-token": rjt},
+               json={"data": base64.b64encode(MP4_HEAD).decode(), "cover": base64.b64encode(b"\xff\xd8").decode(),
+                     "meta": {**_fake_mp4_meta(), "layout": "pad", "face_coverage": None}})
+    w.post(f"/api/worker/jobs/{rjid}", headers={"x-job-token": rjt}, json={"meta": {"clips": 3}})
+    t = human.get(f"/api/takes/{t['id']}").json()
+    assert t["face_fallback"]["note"] == "no face found, centered crop used" and len(t["face_fallback"]["clips"]) == 3
+    assert "no face found, centered crop used" in next(s for s in t["steps"] if s["key"] == "reframe")["detail"]
+
+
+def test_crop_plan_smooths_jitter_and_audio_chain_normalises():
+    from studio import take
+    rng = [0.5 + (0.03 if i % 2 else -0.03) for i in range(60)]                  # a speaker swaying +-3% around the centre
+    faces = [{"t": i / 2, "cx": x, "cy": 0.4, "w": 0.1, "score": 0.9} for i, x in enumerate(rng)]
+    plan = take.crop_plan(faces, 0, 29.5, 1920, 1080)
+    assert plan["mode"] == "track" and len({x for _, x in plan["keys"]}) == 1      # no pan at all: no jitter
+    a = take.audio_chain(30.0)
+    assert "loudnorm=I=-14" in a and "afade=t=in" in a and "afade=t=out:st=29.850" in a

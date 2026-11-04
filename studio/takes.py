@@ -550,7 +550,11 @@ class Takes(TakeBin):
             return {"ok": False}
         layouts = [c["meta"].get("layout") for c in ok if c.get("meta")]
         cov = [c["meta"].get("face_coverage") for c in ok if c.get("meta", {}).get("layout") == "track"]
+        nofaces = [c["id"] for c in ok if (c.get("meta") or {}).get("layout") in ("pad", "center")]
+        if nofaces:  # said on the take, never a silent fallback (owner ask, 4 Nov 2026)
+            res["face_fallback"] = {"clips": nofaces, "note": "no face found, centered crop used"}
         self._step(steps, "reframe", "done", (f"Face-tracked on {layouts.count('track')} of {len(ok)} clips"
+                                              + (f"; no face found, centered crop used on {len(nofaces)}" if nofaces else "")
                                               + (f" (face kept in frame {min(cov) * 100:.0f}%+ of the time)" if cov else "")
                                               + (f"; blurred-pad layout on {layouts.count('pad')}" if layouts.count("pad") else "")))
         self._step(steps, "captions", "done", "Word-by-word captions in your brand font, clear of the bottom 20%")
@@ -648,7 +652,7 @@ class Takes(TakeBin):
                 "timings": res.get("timings") or {}, "picked_by": res.get("picked_by"), "moments": res.get("moments") or [],
                 "clips": clips, "created": run["created"], "updated": run["updated"],
                 "caption_limits": {ch["service"]: drafter.limit_for(ch["service"]) for ch in run["input"]["channels"]},
-                "can_rerender": self._can_rerender(a, res)}
+                "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback")}
 
     def _can_rerender(self, a: Actor, res: dict) -> bool:
         """Trims, transcript fixes and new hooks re-render on the video worker. The sample re-renders from its bundled
