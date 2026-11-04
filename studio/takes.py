@@ -161,7 +161,7 @@ class Takes(TakeBin):
         owns, rights = bool(body.get("owns")), bool(body.get("rights_confirmed"))
         token, url = str(body.get("media_token") or "").strip(), str(body.get("url") or body.get("media_url") or "").strip()
         is_link = bool(url) and not str(body.get("upload_id") or "").strip() and not url.startswith(self.s.public_url.rstrip("/") + "/m/")
-        if not (owns or rights or is_link):  # a link is covered by the rights attestation below (link_ingest.ATTESTATION)
+        if not (owns or rights or (is_link and a.kind == "agent")):  # an AI app's link: the person attests in the Inbox (below)
             raise ActionError("Confirm this is your own video (owns: true), or that you have the right to clip it "
                               "(rights_confirmed: true, with a credit line). One take only clips videos you own or have the rights to.")
         upload_id = str(body.get("upload_id") or "").strip()

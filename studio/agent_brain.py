@@ -293,6 +293,9 @@ class Brain:
                               "start (rights_confirmed: true).", 409)
         return self.h.takes.start(a, {"prompt": prompt, "count": sp["n"], "style": "opus", "owns": owns,
                                       "rights_confirmed": bool(body.get("rights_confirmed")), "credit": credit,
+                                      # the signed-in person confirmed in Make a post (an AI app's token asks in the Inbox)
+                                      "rights_attested": a.kind == "human" and (owns or bool(body.get("rights_confirmed"))),
+                                      "approval_id": body.get("approval_id"),
                                       "media_token": tok if own_file else "", "url": "" if own_file else url,
                                       "name": str(body.get("media_name") or "")[:80], "captions": body.get("captions") or "",
                                       "channel_ids": [c["id"] for c in chans]})
