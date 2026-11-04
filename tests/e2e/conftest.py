@@ -103,7 +103,9 @@ def poll(page, js, timeout=15):
     returned Promise itself as truthy and returns at once, so an `async () => ...` predicate never actually waits."""
     deadline = time.monotonic() + timeout
     while True:
-        if page.evaluate(js):
+        left_ms = max(1, int((deadline - time.monotonic()) * 1000))   # a hung fetch can't outlive the deadline
+        if page.evaluate("""([src, ms]) => Promise.race([(0, eval)('(' + src + ')')(),
+                               new Promise((ok) => setTimeout(() => ok(false), ms))])""", [js, left_ms]):
             return
         if time.monotonic() > deadline:
             raise AssertionError(f"timed out after {timeout}s waiting for: {js.strip()[:120]}")
