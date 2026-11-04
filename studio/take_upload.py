@@ -172,7 +172,7 @@ class TakeUploads:
         """Scope before existence: a missing id and someone else's id are the same 404."""
         if not isinstance(upload_id, str) or not re.fullmatch(r"tu_[A-Za-z0-9_-]{8,40}", upload_id):
             raise ActionError("No such upload.", 404)
-        rows = self.store.q("SELECT * FROM take_uploads WHERE id=? AND user_id=? AND status NOT LIKE 'del_%'", (upload_id, a.uid))
+        rows = self.store.q("SELECT * FROM take_uploads WHERE id=? AND user_id=? AND status NOT IN ('del_open', 'del_ready')", (upload_id, a.uid))
         if not rows:
             raise ActionError("No such upload.", 404)
         return dict(rows[0])
@@ -204,8 +204,12 @@ class TakeUploads:
         if not config():
             return 0
         cut = (now or time.time()) - TTL_OPEN
-        old = [dict(r) for r in self.store.q("SELECT * FROM take_uploads WHERE take_id IS NULL AND updated<?", (cut,))]
-        return sum(1 for d in old if self._drop(d))
+        n = 0
+        for r in self.store.q("SELECT id FROM take_uploads WHERE take_id IS NULL AND updated<?", (cut,)):
+            with _CLAIM:  # re-read under the claim lock: an upload a take claimed meanwhile is never deleted (Greptile)
+                rows = self.store.q("SELECT * FROM take_uploads WHERE id=? AND take_id IS NULL AND updated<?", (r["id"], cut))
+                n += bool(rows) and self._drop(dict(rows[0]))
+        return n
 
     def remove_for_user(self, uid: str) -> int:
         """Account deletion (/api/disconnect): every upload of this person leaves the store. Best effort: the records go

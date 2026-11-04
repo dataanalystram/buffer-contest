@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import difflib
+import contextlib
 import json
 import os
 import re
@@ -71,9 +72,14 @@ class Takes(TakeBin):
         self.h, self.studio, self.store, self.s = house, house.studio, house.store, house.s
         self._lock = threading.RLock()  # guards _locks only
         self._locks: dict[int, threading.RLock] = {}
+        self._held = threading.local()  # how many take locks this thread holds (House._sweep_quietly skips while > 0)
 
     # ------------------------------------------------------------------ helpers
-    def _take_lock(self, rid) -> threading.RLock:
+    def holds_take_lock(self) -> bool:
+        return getattr(self._held, "n", 0) > 0
+
+    @contextlib.contextmanager
+    def _take_lock(self, rid):
         """One lock per take: a worker callback's read-modify-write and the Bin's delete / restore / purge of that take never
         interleave, and one take's slow step never holds up anyone else's (Greptile / CodeRabbit, PR #107). Taken before any
         store transaction, never inside one."""
@@ -82,9 +88,17 @@ class Takes(TakeBin):
         except (TypeError, ValueError):
             rid = -1
         with self._lock:
-            return self._locks.setdefault(rid, threading.RLock())
+            lk = self._locks.setdefault(rid, threading.RLock())
+        with lk:
+            # The watchdog sweep (House.sweep_stale_jobs) runs other takes' callbacks, which take their locks: it never
+            # runs on a thread holding one, so take locks are only ever nested by a purge, in id order (no deadlock).
+            self._held.n = getattr(self._held, "n", 0) + 1
+            try:
+                yield lk
+            finally:
+                self._held.n -= 1
 
-    def _job_lock(self, jid: int) -> threading.RLock:
+    def _job_lock(self, jid: int):
         rows = self.store.q("SELECT run_id FROM render_jobs WHERE id=?", (jid,))
         return self._take_lock(rows[0]["run_id"] if rows else -1)
 
@@ -434,8 +448,7 @@ class Takes(TakeBin):
         # Each read-modify-write runs under the take's lock, the same one delete / restore / purge take (take_bin.py), so a
         # callback already past its cancelled check can't save an old result over the Bin's. Picking the moments (AI
         # engines, up to minutes) runs outside it; the take is read again, and checked again, before the result is saved.
-        lk = self._job_lock(jid)
-        with lk:
+        with self._job_lock(jid):  # a fresh context each time (the lock itself is per take)
             first = self._on_analysis(jid, analysis, error)
         if first.get("done") is not None:
             return first["done"]
@@ -444,10 +457,12 @@ class Takes(TakeBin):
             mined = self._mine(run, analysis, eng, chat)
         except take.TakeError as e:
             mined = e
-        with lk:
+        with self._job_lock(jid):
             if self.job_cancelled(jid):
                 return {"ok": False, "cancelled": True}
             fresh = self._run(a, rid)
+            if fresh["status"] != "running":  # deleted and restored meanwhile (restore says failed): its analysis is over
+                return {"ok": False, "cancelled": True}
             steps, res = fresh["steps"], fresh["result"]
             if isinstance(mined, take.TakeError):
                 self._step(steps, "moments", "failed", str(mined))
@@ -780,6 +795,10 @@ class Takes(TakeBin):
 
     # ------------------------------------------------------------------ edit one clip (trim / caption / hook)
     def adjust(self, a: Actor, rid: int, clip_id: str, body: dict) -> dict:
+        with self._take_lock(rid):  # an edit's read-and-save never overlaps a delete into the Bin (Greptile, PR #107)
+            return self._adjust(a, rid, clip_id, body)
+
+    def _adjust(self, a: Actor, rid: int, clip_id: str, body: dict) -> dict:
         """adjust_clip (Trim & caption): any of in/out (start_ms/end_ms in the source), transcript (fixes the burned-in
         captions), hook (the cover line, quoted from the clip), caption + service or captions {service: text} (post
         captions), music (an Instagram track for the Reel, or null). Timing, transcript and hook re-render the clip on the

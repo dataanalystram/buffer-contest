@@ -25,6 +25,7 @@ import re
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 
+import httpx
 from PIL import Image
 
 from . import netguard
@@ -51,7 +52,15 @@ def slug_of(name: str) -> str:
 
 
 def _get(url: str, http, limit: int = PAGE_MAX, timeout: float = 15):
-    return netguard.safe_get(url, http=http, limit=limit, timeout=timeout, headers=UA)
+    """netguard.safe_get, with the httpx errors a background research thread can hit turned into FetchError: a run
+    that outlives its client (shutdown, a test's closed client) raises RuntimeError("Cannot send a request, as the
+    client has been closed"), and every caller here already treats FetchError as "source unavailable"."""
+    try:
+        return netguard.safe_get(url, http=http, limit=limit, timeout=timeout, headers=UA)
+    except netguard.FetchError:
+        raise
+    except (RuntimeError, httpx.HTTPError) as e:
+        raise netguard.FetchError(f"request failed ({type(e).__name__})") from e
 
 
 def _text(html: str) -> str:
@@ -174,7 +183,7 @@ def fetch_image(url: str, http=None, min_side: int = 200) -> tuple[bytes, dict] 
     """An image through netguard, capped while streaming, decoded only after the cap, re-encoded (JPEG, or PNG when it
     has transparency). None when it isn't an image, is too small, or can't be decoded (e.g. AVIF on a Pillow without it)."""
     try:
-        r = netguard.safe_get(url, http=http, limit=IMAGE_MAX, timeout=15, headers=UA)
+        r = _get(url, http, limit=IMAGE_MAX, timeout=15)
     except netguard.FetchError:
         return None
     if r.status_code != 200 or not r.content:
