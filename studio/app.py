@@ -1011,6 +1011,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     send_mod.add_routes(app, house, actor)
     from . import share_import as share_mod  # import_from_link: cloud-drive share links (UI = REST = MCP)
     share_mod.add_routes(app, house, actor)
+    from . import run_discipline as run_rules_mod  # start_post + cleanup_agent_drafts (UI = REST = MCP, 4 Nov 2026)
+    run_rules_mod.add_routes(app, house, actor)
     from . import integrations as integrations_mod  # Settings -> Integrations: per-user keys + the Product Hunt callback
     integrations_mod.add_routes(app, house, actor, COOKIE, s.public_url, s.secure_cookies)
 

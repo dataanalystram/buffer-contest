@@ -469,3 +469,22 @@ def call_tool(studio, actor: Actor, name: str, args: dict):
     if name == "start_post":
         return start_post(studio, actor, args or {})
     return cleanup_agent_drafts(studio, actor, args or {})
+
+
+# ------------------------------------------------------------------------------------------------ REST (UI = REST = MCP)
+def add_routes(app, house, actor) -> None:
+    from fastapi import Body, Request
+
+    @app.post("/api/agent/start-post")
+    def rest_start_post(request: Request, body: dict = Body(default={})):
+        """start_post: open one post for a request ({title, brief, channel_ids, format}); returns run_id."""
+        a = actor(request, write=True)
+        b = dict(body or {})
+        args, early = before(house.studio, a, "start_post", b)
+        return after(house.studio, a, "start_post", args, early if early is not None else start_post(house.studio, a, strip_control(args)))
+
+    @app.post("/api/agent/cleanup")
+    def rest_cleanup(request: Request, body: dict = Body(default={})):
+        """cleanup_agent_drafts: {} lists what AI apps left (nothing changes, single-use confirm_token);
+        {"confirm_token": ...} archives those runs and moves those Library items to the Bin."""
+        return cleanup_agent_drafts(house.studio, actor(request, write=True), dict(body or {}))
