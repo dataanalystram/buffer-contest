@@ -273,10 +273,11 @@
     model.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>`;
     model.title = mcp ? br.hint : "The model that runs this agent. Change it in Settings > AI engine.";
     model.setAttribute("aria-label", label);
-    // the composer pill (sidebars layout): same name; an MCP run carries its hint, a switched engine says "next reply:"
-    cmodel.innerHTML = `${ic(I.chip)}<span>${esc(n)}</span>` + (nxt ? `<span class="hc-next"> · next reply: ${esc(nxt)}</span>` : "");
+    // the composer pill (sidebars layout) names the model that writes the NEXT reply, short so the pill never squeezes
+    // to "b…"; the run's own model and an MCP run's hint ride in its title and label
+    cmodel.innerHTML = `${ic(I.chip)}<span>${esc(nxt || n)}</span>`;
     cmodel.setAttribute("aria-label", label);
-    cmodel.title = mcp ? `${n} — ${br.hint}` : `Model: ${n}` + (nxt ? ` · next reply: ${nxt}` : "");
+    cmodel.title = mcp ? `${n} — ${br.hint}` : nxt ? `Next reply: ${nxt} (this post was made with ${n})` : `Model: ${n}`;
     if (mcp) cmodel.dataset.hint = br.hint || ""; else delete cmodel.dataset.hint;
   }
   window.hcDrawModel = () => { if (run()) drawModel(); };
