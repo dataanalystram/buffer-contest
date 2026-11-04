@@ -120,14 +120,13 @@ def report_data(core, days="30", start=None, end=None, channel_id=None, tag=None
         per_channel.append({**c, "metrics": metrics, "series": series(cr, lo)})
     prefs = core.prefs()
     brand = prefs.get("report_brand") or (prefs.get("cta_handle") or "").lstrip("@") or "HuhByte"
-    single = channel_id if channel_id and "," not in channel_id else None
     posts = sorted(cur, key=lambda r: (r["insights"] or {}).get("views") or (r["insights"] or {}).get("likes") or 0, reverse=True)
     return {**{k: base[k] for k in ("range", "previous_range", "kpis", "top_posts")}, "brand": brand,
             "days": n_days, "series": series(cur, lo), "previous_series": series(prev, plo), "channels": per_channel,
             "audience": an.audience(core, lo, hi, channel_id),
             "posts": [an._slim(r) for r in posts[:500]],
             "reels": an.reels(cur, prev), "types": an.types(cur),
-            "best_times": an.best_times(core, single, top=5),
+            "best_times": an.best_times(core, channel_id, top=5),   # the full filter: a multi-channel list too
             "hashtags": an.hashtags(core, cur), "campaigns": an.campaigns(cur),
             "filters": {"channel_id": channel_id or "", "tag": tag or "", "campaign": campaign or "", "format": fmt or ""},
             "sections": an.parse_sections(sections),

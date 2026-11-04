@@ -121,10 +121,10 @@ def campaign_stats(s, name: str, channels: set | None = None) -> dict:
                           PostTarget.channel_id, channels)).all()
     by_status: dict[str, int] = {}
     totals = {"views": 0, "likes": 0, "comments": 0, "shares": 0, "saved": 0}
-    channels = set()
+    seen_channels: set = set()          # kept apart from `channels`, the caller's filter (None = owner)
     for st, ins, cid, _pid in rows:
         by_status[st] = by_status.get(st, 0) + 1
-        channels.add(cid)
+        seen_channels.add(cid)
         if st == "sent":
             for k in totals:
                 totals[k] += int((ins or {}).get(k) or 0)
@@ -135,7 +135,7 @@ def campaign_stats(s, name: str, channels: set | None = None) -> dict:
         clicks = sum(int(ln.clicks or 0) for ln in _visible_links(s, select(Link).where(Link.campaign == name), channels))
         posts = len({r[3] for r in rows})
     return {"posts": posts, "targets": len(rows), "by_status": by_status, "sent": by_status.get("sent", 0),
-            "scheduled": by_status.get("scheduled", 0), "drafts": by_status.get("draft", 0), "channels": len(channels),
+            "scheduled": by_status.get("scheduled", 0), "drafts": by_status.get("draft", 0), "channels": len(seen_channels),
             "clicks": int(clicks), **totals,
             "engagements": totals["likes"] + totals["comments"] + totals["shares"] + totals["saved"]}
 
@@ -431,6 +431,9 @@ def _link_or_404(s, ln, channels: set | None):
     return ln
 
 
+LINKS_LIMIT = 1000
+
+
 def list_links(core, q: str = "", campaign: str = "", source: str = "", request=None, channels: set | None = None) -> list[dict]:
     with core.db.session() as s:
         qry = select(Link).order_by(Link.created_at.desc())
@@ -441,7 +444,18 @@ def list_links(core, q: str = "", campaign: str = "", source: str = "", request=
         if q:
             like = f"%{q}%"
             qry = qry.where(Link.url.ilike(like) | Link.code.ilike(like) | Link.title.ilike(like))
-        return [link_dict(core, ln, request) for ln in _visible_links(s, qry.limit(1000), channels)]
+        if channels is None:
+            return [link_dict(core, ln, request) for ln in s.scalars(qry.limit(LINKS_LIMIT))]
+        # filter before the cap, page by page, so another channel's newer links can't fill a restricted caller's window
+        out: list = []
+        offset = 0
+        while len(out) < LINKS_LIMIT:
+            page = list(s.scalars(qry.offset(offset).limit(LINKS_LIMIT)))
+            if not page:
+                break
+            out += _visible_links(s, page, channels)
+            offset += len(page)
+        return [link_dict(core, ln, request) for ln in out[:LINKS_LIMIT]]
 
 
 def get_link(core, lid: str, request=None, days: int = 30, channels: set | None = None) -> dict:

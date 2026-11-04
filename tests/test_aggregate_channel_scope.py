@@ -153,3 +153,49 @@ def test_campaigns_and_links_only_count_visible_channels(app, api, channel, worl
     assert ed.patch(f"/api/links/{hidden_link['id']}", {"title": "x"}).status_code == 404
     assert ed.delete(f"/api/links/{hidden_link['id']}").status_code == 404
     assert api.get(f"/api/links/{hidden_link['id']}").status_code == 200   # still there for the owner
+
+
+def test_owner_campaign_clicks_count_links_on_channels_without_a_target_in_it(api, channel, world, core):
+    """CodeRabbit/Greptile on #102: campaign_stats reused its `channels` argument for the channels it saw, so the owner
+    (channels=None) went down the restricted branch and lost clicks on links whose target isn't in this campaign."""
+    from huhqueue.models import Link
+    _campaign_world(api, core, channel, world)
+    third = api.post("/api/connect/fake/token", {"access_token": "tok-3", "username": "thirdzz"}).json()
+    r = api.post("/api/posts", {"caption": "ELSEWHERE", "channel_ids": [third["id"]], "when": "draft"})   # no campaign
+    tid = r.json()["targets"][0]["id"]
+    with core.db.session() as s:   # a link still labelled with the campaign after its post moved out of it
+        s.add(Link(code="movedzz", url="https://example.com/moved", campaign="Launchzz", source="utm", target_id=tid, clicks=40))
+    owner = next(c for c in api.get("/api/campaigns").json() if c["name"] == "Launchzz")
+    assert owner["stats"]["clicks"] == 544 and owner["stats"]["channels"] == 2, owner["stats"]
+
+
+def test_restricted_link_list_is_not_starved_by_newer_hidden_links(app, api, channel, world, core):
+    """Greptile on #102: the newest 1,000 links were taken before hiding other channels, so a restricted caller could
+    get an empty list while older links of its own existed. The filter now runs before the cap."""
+    from huhqueue.models import Link
+    from huhqueue.services import growth
+    tids = _campaign_world(api, core, channel, world)          # one link per channel + one manual link
+    later = utcnow() + timedelta(minutes=5)
+    with core.db.session() as s:   # a full window of newer links on the hidden channel's target
+        s.add_all([Link(code=f"hidzz{i}", url=f"https://example.com/SECRETZZ{i}", target_id=tids[world["id"]], created_at=later)
+                   for i in range(growth.LINKS_LIMIT)])
+    ed = member(app, api, "editor", access={world["id"]: "none"}, name="Eli")
+    r = ed.get("/api/links")
+    assert r.status_code == 200 and "SECRETZZ" not in r.text
+    assert len(r.json()) == 2 and "MINE_CAMPAIGN" in r.text, r.text[:300]
+    assert len(api.get("/api/links").json()) == growth.LINKS_LIMIT   # the owner's window is still capped
+
+
+def test_report_best_times_honour_a_multi_channel_filter(app, api, channel, world, core):
+    """Greptile on #102: a caller with two visible channels got best times across every channel (the comma list was
+    dropped to None). Three channels with one sent post each; a token on two sees two posts in the heatmap."""
+    third = api.post("/api/connect/fake/token", {"access_token": "tok-3", "username": "thirdzz"}).json()
+    r = api.post("/api/posts", {"caption": "THIRD", "channel_ids": [third["id"]], "when": "draft"})
+    with core.db.session() as s:
+        t = s.get(PostTarget, r.json()["targets"][0]["id"])
+        t.status, t.published_at, t.insights = "sent", utcnow() - timedelta(days=2), {"likes": 3}
+    assert api.get("/api/reports/summary").json()["best_times"]["heatmap"]["posts"] == 3   # the seed is real
+    raw = _tok(api, allowed_channel_ids=[channel["id"], third["id"]], scopes=["read"])["token"]
+    c = TestClient(app, headers={"Authorization": f"Bearer {raw}"})
+    assert c.get("/api/reports/summary").json()["best_times"]["heatmap"]["posts"] == 2
+    assert api.get(f"/api/reports/summary?channel_id={channel['id']},{third['id']}").json()["best_times"]["heatmap"]["posts"] == 2
