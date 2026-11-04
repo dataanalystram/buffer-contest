@@ -237,3 +237,21 @@ def test_contact_detail_and_segments_only_use_visible_channels(app, api, channel
     assert ed.patch("/api/contacts/hiddenonlyzz", json={"notes": "x"}).status_code == 404
     assert ed.patch("/api/contacts/bothzz", json={"notes": "ok"}).status_code == 200
     assert api.get("/api/contacts/hiddenonlyzz").json().get("notes", "") in ("", None)
+
+
+def test_contact_edit_needs_write_access_on_one_of_their_channels(app, api, channel, world, core):
+    """CodeRabbit on #102 (CWE-862): the guard can't map a contact to channels, so an editor who is only a viewer on
+    the one channel a person commented on could still PATCH them. Read stays allowed; the edit answers 403."""
+    from huhqueue.models import Comment
+    now = utcnow()
+    with core.db.session() as s:
+        s.add_all([Comment(id="cm_viewzz", channel_id=channel["id"], author="viewonlyzz", text="hi", at=now, external_id="xvz", parent_external_id=""),
+                   Comment(id="cm_mixzz1", channel_id=channel["id"], author="mixedzz", text="a", at=now, external_id="xmz1", parent_external_id=""),
+                   Comment(id="cm_mixzz2", channel_id=world["id"], author="mixedzz", text="b", at=now, external_id="xmz2", parent_external_id="")])
+    ed = member(app, api, "editor", access={channel["id"]: "viewer"}, name="Vee")
+    assert ed.get("/api/contacts/viewonlyzz").status_code == 200                 # reading is fine
+    r = ed.patch("/api/contacts/viewonlyzz", json={"notes": "nope"})
+    assert r.status_code == 403, r.text
+    assert api.get("/api/contacts/viewonlyzz").json().get("notes", "") in ("", None)   # nothing changed
+    assert ed.patch("/api/contacts/mixedzz", json={"notes": "ok"}).status_code == 200  # editor on the other channel
+    assert api.patch("/api/contacts/viewonlyzz", {"notes": "owner"}).status_code == 200

@@ -20,6 +20,7 @@ from ..models import Channel, Comment, Contact, Event, Idea, Media, Post, PostNo
 from ..services import posts as posts_svc
 from ..services import scheduling
 from ..services.events import record
+from .. import teams
 from ..teams import notify_mentions, notify_note
 
 # --------------------------------------------------------------------------------------------- best-time research
@@ -477,12 +478,21 @@ def add_content_routes(app: FastAPI, core) -> None:
     @app.patch("/api/contacts/{key}", tags=["contacts"])
     def contact_patch(key: str, request: Request, payload: dict = Body(...)):
         vis = visible(request)
+        who = getattr(request.state, "user", None)
+        limited = who is not None and not who.manager
         with core.db.session() as s:
-            if vis is not None:     # a channel-limited caller edits only people who commented on a channel it can see
+            if vis is not None or limited:
                 c0 = s.get(Contact, key)
                 handle = c0.handle if c0 else key
-                if not any(r["handle"] == handle for r in contact_rows(s, "", vis)):
+                row = next((r for r in contact_rows(s, "", vis) if r["handle"] == handle), None)
+                if not row:         # a channel-limited caller edits only people who commented on a channel it can see
                     raise HTTPException(404, "Contact not found")
+                # the guard can't map a contact to channels, so the per-channel role is checked here: a teammate who is
+                # only a viewer on every channel this person commented on can read the contact but not edit it
+                # (CodeRabbit on #102, CWE-862)
+                if limited and not any(teams.RANK.get(who.channel_role(c), 0) >= teams.RANK["contributor"]
+                                       for c in row["channel_ids"] if c):
+                    raise HTTPException(403, "On this contact's channels you have read-only access")
             c = s.get(Contact, key) or _ensure_contact(s, key)
             for k in ("notes", "name", "assignee"):
                 if k in payload:
