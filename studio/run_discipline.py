@@ -29,6 +29,8 @@ import threading
 import time
 from typing import Any
 
+from fastapi import Body, Request
+
 from .actions import ActionError, Actor
 
 ACTIVE_S = int(os.environ.get("HQ_MCP_ACTIVE_RUN_S", str(2 * 3600)))
@@ -473,8 +475,6 @@ def call_tool(studio, actor: Actor, name: str, args: dict):
 
 # ------------------------------------------------------------------------------------------------ REST (UI = REST = MCP)
 def add_routes(app, house, actor) -> None:
-    from fastapi import Body, Request
-
     @app.post("/api/agent/start-post")
     def rest_start_post(request: Request, body: dict = Body(default={})):
         """start_post: open one post for a request ({title, brief, channel_ids, format}); returns run_id."""
