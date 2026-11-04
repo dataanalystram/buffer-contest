@@ -963,7 +963,8 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
     @app.post("/api/queue/{cid}/order")
     def queue_order(cid: str, payload: dict = Body(...)):
         """Drag-and-drop reorder: the queued posts keep the channel's slot times, in the new order."""
-        ids = payload.get("ids") or []
+        from .channel_pages import id_list
+        ids = id_list(payload, what="queued post")
         with core.db.session() as s:
             ch = get_channel(s, cid)
             rows = {t.id: t for t in s.scalars(select(PostTarget).where(
