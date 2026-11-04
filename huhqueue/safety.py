@@ -137,8 +137,9 @@ def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], 
     Objects are posts, post targets and comments, named in the path (/api/posts/{id}/..., /api/targets/{id}...,
     /api/comments/{id}...) or the body (ids, post_id, target_id, comment_id). Each is resolved to its channel(s) here,
     before any route runs, so a channel-limited token can't reach another channel's object by id (CodeRabbit,
-    4 Nov 2026). A path object that doesn't resolve adds UNRESOLVED, so a scoped token gets the same 404 for a missing
-    id as for another channel's id (no existence probing); a body id that doesn't resolve adds nothing (the route 404s)."""
+    4 Nov 2026). A path object, a body comment_id, or a bulk id on /api/comments/bulk or /api/bulk that doesn't resolve adds
+    UNRESOLVED, so a scoped token or restricted teammate gets the same 404 for a missing id as for another channel's id (no
+    existence probing); other body ids that don't resolve add nothing (their routes validate them)."""
     from .services.posts import PostError, resolve_channels
     explicit: set[str] = set()
     objects: set[str] = set()
@@ -154,11 +155,17 @@ def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], 
         if len(raw_ids) > MAX_SCOPE_IDS:   # one lookup per id runs before any route: bound it (CodeRabbit 4 Nov 2026)
             objects.add(TOO_MANY)
             raw_ids = []
+        # a bulk id that doesn't resolve is UNRESOLVED on the routes that would answer 200 for it (comment bulk, /api/bulk),
+        # so a missing id answers like another channel's (404, no existence oracle) (CodeRabbit, 4 Nov 2026)
+        strict = on_comments or path == "/api/bulk"
         for oid in raw_ids:   # bulk: comment ids on /api/comments/*, post targets elsewhere
-            objects |= _comment_channels(s, oid) if on_comments else _target_channels(s, oid)
+            found = _comment_channels(s, oid) if on_comments else _target_channels(s, oid)
+            objects |= found or ({UNRESOLVED} if strict else set())
         objects |= _post_channels(s, body.get("post_id"))
         objects |= _target_channels(s, body.get("target_id"))
-        objects |= _comment_channels(s, body.get("comment_id"))
+        cid = body.get("comment_id")
+        if isinstance(cid, (str, int)) and not isinstance(cid, bool) and str(cid).strip():
+            objects |= _comment_channels(s, cid) or {UNRESOLVED}   # a missing scalar comment id: same 404 as a forbidden one
     for v in str(query.get("channel_id") or "").split(","):
         if v.strip():
             refs.append(v.strip())

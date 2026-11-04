@@ -240,3 +240,43 @@ def test_token_naming_a_forbidden_channel_gets_403_whether_the_object_exists(app
     _hidden(c.patch("/api/comments/cm_other", json={"flagged": True}))
     with core.db.session() as s:
         assert not s.get(Comment, "cm_other").flagged
+
+
+def test_teammate_token_answers_the_same_whether_the_object_exists(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): a teammate's token still listing a channel the teammate lost. PATCH
+    /api/comments/{missing}?channel_id=C answered 404 at the token check while an existing comment on C reached
+    teams.authorize and answered 403, so the comment's existence leaked. The token check now gives the teammate's own
+    denial first, so both answer 403; a teammate who still has the channel keeps the 404 for a missing comment."""
+    from .test_teams import invite, join
+    c_ch = api.post("/api/connect/fake/token", {"access_token": "tok-c", "username": "brand_c"}).json()
+    with core.db.session() as s:
+        s.add(Comment(id="cm_on_c", channel_id=c_ch["id"], external_id="xc", author="fan", text="hi", status="open"))
+    inv = invite(api, "admin", name="Dee")   # an admin mints the token, then is made a restricted editor
+    ed = join(app, inv)
+    r = ed.post("/api/tokens", {"name": "dee-bot", "scopes": ["read", "write", "comments"], "require_approval": False,
+                                "allowed_channel_ids": [c_ch["id"]]})
+    assert r.status_code == 200, r.text
+    tok = TestClient(app, headers={"Authorization": f"Bearer {r.json()['token']}"})
+    gone = tok.patch("/api/comments/cm_nope", json={"flagged": True})
+    assert gone.status_code == 404                                    # still has the channel: a missing id is 404
+    r = api.patch(f"/api/team/members/{inv['member']['id']}", {"role": "editor", "channel_access": {c_ch["id"]: "none"}})
+    assert r.status_code == 200, r.text
+    a = tok.patch(f"/api/comments/cm_on_c?channel_id={c_ch['id']}", json={"flagged": True})
+    b = tok.patch(f"/api/comments/cm_nope?channel_id={c_ch['id']}", json={"flagged": True})
+    assert a.status_code == b.status_code == 403 and a.json() == b.json()
+    with core.db.session() as s:
+        assert not s.get(Comment, "cm_on_c").flagged
+
+
+def test_missing_bulk_and_body_comment_ids_answer_like_forbidden_ones(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): /api/comments/bulk with a missing id answered 200 to a restricted caller while another
+    channel's id answered 404, and the same for a body comment_id, an existence oracle. Missing ids are now 404 too."""
+    c, other, mine, theirs, both, note = _setup(app, api, core, channel)
+    for body in ({"ids": ["cm_nope"], "action": "resolve"}, {"ids": ["cm_other"], "action": "resolve"}):
+        _hidden(c.post("/api/comments/bulk", json=body))
+    for cid in ("cm_nope", "cm_other"):
+        _hidden(c.post("/api/comments/suggest-reply", json={"comment_id": cid}))
+    _hidden(c.post("/api/bulk", json={"ids": ["tgt_nope"], "action": "draft"}))
+    assert c.post("/api/comments/bulk", json={"ids": ["cm_mine"], "action": "resolve"}).status_code == 200
+    with core.db.session() as s:
+        assert s.get(Comment, "cm_other").status == "open"
