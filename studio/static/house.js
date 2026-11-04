@@ -561,13 +561,16 @@ $("#replyForm").addEventListener("submit", async (ev) => {
   const t = $("#replyIn").value.trim(); if (!t || !H.run || $("#runView").classList.contains("hc-loading")) return;  // never to the previous thread
   const b = $("[data-testid=reply-go]"); b.disabled = true;
   const rid = H.run.id;  // the reply belongs to the thread it was written in, even if another one is picked while it sends
-  try { const r = await api(`/api/agent/runs/${rid}/messages`, { method: "POST", body: { text: t } }); if (onRun(rid)) { clearIfSame(t); showRun(r); watch(r.id); } else toast("Sent to the previous thread"); }
+  try { const r = await api(`/api/agent/runs/${rid}/messages`, { method: "POST", body: { text: t } }); if (onRun(rid)) { clearIfSame(t); showRun(r); watch(r.id); } else { missedReply(rid, t); toast("Sent to the thread it was written in"); } }
   catch (e) { toast(e.message, 5000); } finally { b.disabled = false; }
 });
 // still on this run, and no other thread loading over it: an answer for it may be drawn
 const onRun = (rid) => !!H.run && String(H.run.id) === String(rid) && !$("#runView").classList.contains("hc-loading");
 // the composer is cleared only if it still holds what was sent: words typed while it sent are kept
 const clearIfSame = (sent) => { const ri = $("#replyIn"); if (ri.value.trim() === sent) ri.value = ""; };
+// a reply answered while a thread loaded over its own: the words it sent leave the composer, and if that thread is still the
+// one held (a failed switch is restoring it) chat.js polls it once more so the reply shows up (H.missed)
+const missedReply = (rid, sent) => { if (sent) clearIfSame(sent); if (H.run && String(H.run.id) === String(rid)) H.missed = String(rid); };
 
 // Upload video in the composer, on every turn of the thread (and drop a file on the thread): it becomes this post's Reel
 const REPLY_MAX = () => (S.session?.demo ? 8 : 100) * 1048576;
@@ -584,7 +587,7 @@ async function replyUpload(f) {
   try {
     const tok = await uploadFile(f);
     const n = await api(`/api/agent/runs/${rid}/messages`, { method: "POST", body: { text: said || "Here's the video: " + f.name, media_token: tok } });
-    if (onRun(rid)) { clearIfSame(said); showRun(n); watch(n.id); } else toast("Video added to the previous thread");
+    if (onRun(rid)) { clearIfSame(said); showRun(n); watch(n.id); } else { missedReply(rid, said); toast("Video added to the thread it was dropped on"); }
   } catch (e) { toast(e.message, 6000); }
   finally { lab.classList.remove("busy"); sp.textContent = "Upload video"; $("#replyFile").value = ""; }
 }

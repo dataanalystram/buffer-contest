@@ -178,7 +178,7 @@
     clearTimeout(H.poll); H.watching = null;
     markThread(o.dataset.open);
     threadLoading(true);
-    try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; threadLoading(false); window.showRun(x); if (busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
+    try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; H.missed = null; threadLoading(false); window.showRun(x); if (busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
     catch (err) {
       if (HQLoad.aborted(err) || !tk.live()) return;
       toast(err.message, 5000);
@@ -187,11 +187,17 @@
       // edit can start on a card that is about to be redrawn); if that fetch fails too, the copy on screen comes back as it was
       const cur = H.run; if (!cur) { threadLoading(false); return; }
       markThread(cur.id);
-      try { const y = await api(`/api/agent/runs/${cur.id}`, { signal: tk.signal }); if (!tk.live()) return; threadLoading(false); window.showRun(y); if (busyRun(y)) window.watchRun(y.id); }
-      catch (e2) { if (HQLoad.aborted(e2) || !tk.live()) return; threadLoading(false); if (busyRun(cur)) window.watchRun(cur.id); }
+      // a reply answered while this loaded was not drawn (house.js sets H.missed): the thread is polled once more, so the
+      // reply shows up even if the copy fetched here, or the copy on screen, predates it
+      const missed = () => { const m = H.missed === String(cur.id); H.missed = null; return m; };
+      try { const y = await api(`/api/agent/runs/${cur.id}`, { signal: tk.signal }); if (!tk.live()) return; threadLoading(false); window.showRun(y); if (missed() || busyRun(y)) window.watchRun(y.id); }
+      catch (e2) { if (HQLoad.aborted(e2) || !tk.live()) return; threadLoading(false); if (missed() || busyRun(cur)) window.watchRun(cur.id); }
     }
     finally { if (tk.live()) tk.done(); }
   });
+  // leaving the thread view (New post, a recent post, a Discover story): the thread request in flight is aborted, so its
+  // answer (or its recovery fetch) never reopens a thread over the screen picked now, and the skeleton and inert dock go
+  window.hcCancelThread = () => { HQLoad.start("thread").done(); threadLoading(false); };
   function markThread(id) {
     document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = String(li.dataset.id) === String(id); li.classList.toggle("on", on); const b = li.querySelector(".hc-th"); if (!b) return; if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); });
   }
