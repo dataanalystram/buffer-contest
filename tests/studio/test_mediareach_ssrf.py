@@ -204,3 +204,19 @@ def test_studio_safe_get_caps_a_gzip_bomb_before_inflating(monkeypatch):
     with pytest.raises(netguard.FetchError):
         netguard.safe_get("https://pub.test/feed.xml", http=httpx.Client(transport=Recorder(routes)), limit=1_000_000)
     assert seen["ae"] == "gzip"
+
+
+def test_proxy_routed_probes_fail_closed(monkeypatch):
+    """CodeRabbit + Greptile (4 Nov 2026): with HTTP(S)_PROXY / proxy= the probes went unpinned through the proxy, which
+    resolves the host again (DNS rebinding). A checked request a proxy mount would carry is now refused before any send."""
+    _dns(monkeypatch, {"pub.test": ["93.184.216.34"]})
+    t, proxy = Recorder(), Recorder()
+    c = httpx.Client(transport=t, mounts={"all://": proxy})
+    with pytest.raises(netguard.FetchError, match="proxy"):
+        netguard.safe_once("https://pub.test/v.mp4", method="HEAD", http=c, https_only=True)
+    with pytest.raises(netguard.FetchError, match="proxy"):
+        netguard.safe_get("https://pub.test/v.mp4", http=c)
+    with pytest.raises(netguard.FetchError, match="proxy"):
+        netguard.safe_post("https://pub.test/api", http=c, json={})
+    msg = mediareach.check_one("https://pub.test/v.mp4", c)
+    assert msg and "proxy" in msg.lower() and t.seen == [] and proxy.seen == []

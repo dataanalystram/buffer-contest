@@ -16,8 +16,10 @@ Every outbound fetch of a user-influenced URL goes through ``safe_get`` / ``safe
   so a DNS answer that flips between the check and the connect can't steer the request inside.
 
 The per-hop host check calls ``drafter._public`` at call time, so tests that pin DNS by monkeypatching it still apply.
-Mock transports (tests) are not pinned: they never open a socket, so there is nothing to rebind. Neither is a request an
-operator routes through HTTP(S)_PROXY: the proxy makes the connection and the DNS lookup itself.
+Mock transports (tests) are not pinned: they never open a socket, so there is nothing to rebind. A checked request that
+an HTTP(S)_PROXY / ``proxy=`` mount would carry is refused instead (FetchError, fail closed): the proxy would resolve the
+host again itself, so the vetted address couldn't be pinned (CodeRabbit + Greptile, 4 Nov 2026). Exempt the host with
+NO_PROXY, or unset the proxy.
 """
 from __future__ import annotations
 
@@ -173,12 +175,30 @@ def _pinnable(c: httpx.Client, url: str) -> bool:
         return True
 
 
+def _proxied(c: httpx.Client, url: str) -> bool:
+    """Would httpx send ``url`` through a proxy mount (HTTP(S)_PROXY / ``proxy=``)? A NO_PROXY-excluded host maps to the
+    client's default transport (not proxied); a test's MockTransport is never a proxy."""
+    try:
+        t = c._transport_for_url(httpx.URL(url))
+    except Exception:  # noqa: BLE001 - an httpx without this helper has no mounts to worry about
+        return False
+    return t is not getattr(c, "_transport", None) and isinstance(t, httpx.HTTPTransport)
+
+
+def _refuse_proxied(c: httpx.Client, url: str) -> None:
+    if _proxied(c, url):   # fail closed: an unpinned proxied fetch could be DNS-rebound (CodeRabbit + Greptile, 4 Nov 2026)
+        raise FetchError("Links can't be read through an HTTP proxy (the vetted address can't be pinned). "
+                         "Exempt the host with NO_PROXY, or unset the proxy.")
+
+
 def pinned_request(c: httpx.Client, method: str, url: str, *, headers: dict | None = None, pin: bool = True,
                    ip: str | None = None, **kw) -> tuple[httpx.Request, bool]:
     """Build the request for ``url``. When ``pin`` and the client is a real network client, the URL's host is swapped for
     the vetted IP from ``resolve_public`` (or ``ip``, an address an earlier call already vetted for this host) and the
     original host travels in the Host header and as the TLS SNI (which is also the name the certificate is verified
     against). Returns (request, pinned)."""
+    if pin:
+        _refuse_proxied(c, url)
     if not (pin and _pinnable(c, url)):
         return c.build_request(method, url, headers=headers, **kw), False
     p = urlparse(url)
@@ -275,6 +295,8 @@ def safe_once(url: str, *, method: str = "GET", http: httpx.Client | None = None
     own = http is None
     c = http or client(timeout, headers)
     try:
+        if check_host:
+            _refuse_proxied(c, url)
         if check_host and _pinnable(c, url):
             ip = ip or resolve_public(urlparse(url).hostname or "")
         else:

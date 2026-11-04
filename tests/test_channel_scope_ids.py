@@ -304,3 +304,15 @@ def test_trailing_slash_paths_answer_missing_and_forbidden_ids_alike(app, api, c
         _hidden(c.post("/api/validate/", json={**base, **extra}, follow_redirects=False))
     for ids in (["tgt_nope"], [theirs["targets"][0]["id"]]):
         _hidden(c.post("/api/bulk/", json={"ids": ids, "action": "draft"}, follow_redirects=False))
+
+
+def test_bulk_approve_answers_a_missing_target_like_a_forbidden_one(app, api, core, channel):
+    """Greptile (4 Nov 2026): POST /api/bulk/approve with a missing target id answered 200 (a failed item) to a restricted
+    teammate while another channel's target answered 404, an existence oracle. Missing ids there are 404 too."""
+    from .test_teams import member
+    other = api.post("/api/connect/fake/token", {"access_token": "tok-2", "username": "other_brand"}).json()
+    theirs = api.post("/api/posts", {"caption": "secret caption", "channel_ids": [other["id"]], "when": "draft"}).json()
+    ed = member(app, api, "editor", access={other["id"]: "none"}, name="Cy")
+    a = ed.post("/api/bulk/approve", {"ids": [theirs["targets"][0]["id"]], "decision": "approve"})
+    b = ed.post("/api/bulk/approve", {"ids": ["tgt_nope"], "decision": "approve"})
+    assert a.status_code == b.status_code == 404 and a.json() == b.json()

@@ -137,9 +137,9 @@ def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], 
     Objects are posts, post targets and comments, named in the path (/api/posts/{id}/..., /api/targets/{id}...,
     /api/comments/{id}...) or the body (ids, post_id, target_id, comment_id). Each is resolved to its channel(s) here,
     before any route runs, so a channel-limited token can't reach another channel's object by id (CodeRabbit,
-    4 Nov 2026). A path object, a body comment_id, or a bulk id on /api/comments/bulk or /api/bulk that doesn't resolve adds
-    UNRESOLVED, so a scoped token or restricted teammate gets the same 404 for a missing id as for another channel's id (no
-    existence probing); other body ids that don't resolve add nothing (their routes validate them)."""
+    4 Nov 2026). A path object, a body comment_id, or a bulk id on /api/comments/bulk, /api/bulk or /api/bulk/approve that
+    doesn't resolve adds UNRESOLVED, so a scoped token or restricted teammate gets the same 404 for a missing id as for
+    another channel's id (no existence probing); other body ids that don't resolve add nothing (their routes validate them)."""
     from .services.posts import PostError, resolve_channels
     # "/api/validate/" or "/api/bulk/" would otherwise skip the exact-path checks and reach FastAPI's trailing-slash
     # 307 for a missing id while a forbidden one 404s here: judge the slash-less path (CodeRabbit, 4 Nov 2026)
@@ -158,9 +158,10 @@ def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], 
         if len(raw_ids) > MAX_SCOPE_IDS:   # one lookup per id runs before any route: bound it (CodeRabbit 4 Nov 2026)
             objects.add(TOO_MANY)
             raw_ids = []
-        # a bulk id that doesn't resolve is UNRESOLVED on the routes that would answer 200 for it (comment bulk, /api/bulk),
+        # a bulk id that doesn't resolve is UNRESOLVED on the routes that would answer 200 for it (comment bulk, /api/bulk,
+        # /api/bulk/approve),
         # so a missing id answers like another channel's (404, no existence oracle) (CodeRabbit, 4 Nov 2026)
-        strict = on_comments or path == "/api/bulk"
+        strict = on_comments or path in ("/api/bulk", "/api/bulk/approve")
         for oid in raw_ids:   # bulk: comment ids on /api/comments/*, post targets elsewhere
             found = _comment_channels(s, oid) if on_comments else _target_channels(s, oid)
             objects |= found or ({UNRESOLVED} if strict else set())
