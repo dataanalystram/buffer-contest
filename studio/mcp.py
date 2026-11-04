@@ -88,12 +88,20 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_calendar", "description": "Everything on the user's Planner: scheduled, sent and draft Buffer posts, agent posts waiting for approval, ready packages not yet sent, and each channel's Buffer posting slots.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "clips_from_video", "description": "One take -> a week. Turn one long video the user owns (a talk, podcast, tutorial) into 3-7 vertical clips of the best things they actually said: transcript with word timestamps, moments picked on sentence boundaries (hooks are exact quotes, never invented), 9:16 face-tracked reframe, burned-in captions in the brand font, a branded cover frame and end card, preflight per channel. Heavy work runs on the video worker; poll list_clips(take_id) until status is ready. Give url (a direct https link to the video file, not a social media page) or media_url (a HuhQueue upload), and owns: true. sample: true uses the bundled sample talk (sample workspace).",
+    {"name": "clips_from_video", "description": "One take -> a week. Turn one long video the user owns (a talk, podcast, tutorial) into 3-7 vertical clips of the best things they actually said: transcript with word timestamps, moments picked on sentence boundaries (hooks are exact quotes, never invented), 9:16 face-tracked reframe, burned-in captions in the brand font, a branded cover frame and end card, preflight per channel. Heavy work runs on the video worker; poll list_clips(take_id) until status is ready. Give url (a YouTube, Vimeo or X video post, or a direct https link to the file) or media_url (a HuhQueue upload). A url first answers needs_user_approval: the person confirms the rights in HuhQueue → Inbox → Approvals, then call again with the same url and approval_id (as ingest_video_link). Never ask the person to upload a video they gave you as a link, and never confirm the rights yourself. sample: true uses the bundled sample talk (sample workspace).",
      "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}, "media_url": {"type": "string"},
+         "approval_id": {"type": "integer", "description": "The id needs_user_approval returned, once the person approved the link"},
+         "credit": {"type": "string", "description": "Credit line for a video the user didn't make; filled from the platform when left out"},
          "owns": {"type": "boolean", "description": "Must be true: the user owns this video or has the rights to it"},
          "channel_ids": {"type": "array", "items": {"type": "string"}}, "count": {"type": "integer", "minimum": 1, "maximum": 7},
          "name": {"type": "string"}, "sample": {"type": "boolean"},
          "upload_id": {"type": "string", "description": "A finished multipart upload of a long video (POST /api/takes/uploads, up to 4 GB when the server has a bucket)"}}}},
+    {"name": "ingest_video_link", "description": "One take from a video LINK: a YouTube, Vimeo or X video post, or a direct https link to an MP4. Use this whenever the person gives you a video link (don't ask them to upload it). HuhQueue's video worker fetches it (the same path Make a post uses: yt-dlp, mp4 up to 1080p, no cookies or accounts; up to 4 GB and 3 h), transcribes it and cuts clips. Rights first: the first call answers needs_user_approval with an approval_id and the rights statement; the person approves it in HuhQueue → Inbox → Approvals (only they can, you can't confirm it for them). Then call again with the same url and approval_id: it returns the take (poll list_clips(take_id)). If the platform refuses (age-restricted, private, a bot check) the take fails with the exact reason; only then does the person need to download and upload the file. licence_hint shows a Creative Commons flag when the platform states one.",
+     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"},
+         "approval_id": {"type": "integer"}, "channel_ids": {"type": "array", "items": {"type": "string"}},
+         "count": {"type": "integer", "minimum": 1, "maximum": 7}, "name": {"type": "string"}, "prompt": {"type": "string"},
+         "owns": {"type": "boolean", "description": "true when it is the person's own video (no credit line needed)"},
+         "credit": {"type": "string"}}}},
     {"name": "list_clips", "description": "Without take_id: the user's takes. With take_id: the take's progress steps and its clips (video and cover URLs, start/end in the source, hook, transcript, layout, preflight per channel, the caption per network, and where each clip was placed).",
      "inputSchema": {"type": "object", "properties": {"take_id": {"type": "integer"}}}},
     {"name": "adjust_clip", "description": "Trim & caption one clip of a take (the same edits as the UI's Trim & caption window). Any of: in/out (start_ms/end_ms in the source video; the sample take only inside its moment), transcript (the clip's corrected words: fixes the burned-in captions, timings follow the voice), hook (the cover line: at least 3 words quoted from the clip), caption + service or captions {service: text} (post caption per network; only the take's channels, each within its network's limit), music (an Instagram track from search_instagram_audio for the Reel, with music_volume / original_volume 0-100; null removes it; Instagram picks which part of the track plays). Timing, transcript and hook re-render the clip on the video worker (poll list_clips until the clip is ready: it gets a new url); captions and music save at once. Returns the take with changed and rerendering.",
@@ -297,7 +305,13 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "clips_from_video":
         if args.get("sample"):
             return h.takes.start_sample(actor, {"channel_ids": args.get("channel_ids")})
-        return h.takes.start(actor, {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id")})
+        body = {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "approval_id", "credit")}
+        return h.takes.start(actor, {**body, "_tool": "clips_from_video"})
+    if name == "ingest_video_link":
+        if not isinstance(args.get("url"), str) or not args["url"].strip():
+            raise ActionError("Give the video link (url).")
+        body = {k: args.get(k) for k in ("url", "owns", "channel_ids", "count", "name", "approval_id", "credit", "prompt")}
+        return h.takes.start(actor, {**body, "_tool": "ingest_video_link"})
     if name == "list_clips":
         if args.get("take_id"):
             t = h.takes.get(actor, int(args["take_id"]))
@@ -384,7 +398,10 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
                    "capabilities": {"tools": {"listChanged": False}, "prompts": {"listChanged": False},
                                     "resources": {"subscribe": False, "listChanged": False}},
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
-                   "instructions": _cb.INSTRUCTIONS + " Also: one take -> a week: clips_from_video -> poll list_clips(take_id) -> "
+                   "instructions": _cb.INSTRUCTIONS + " Also: a video LINK the person gives you (YouTube, Vimeo, X, an MP4): "
+                   "call ingest_video_link, ask them to approve the rights in HuhQueue → Inbox → Approvals, wait (list_approvals), "
+                   "then call it again with approval_id; never ask them to upload a video they linked, and never confirm the "
+                   "rights yourself. One take -> a week: clips_from_video -> poll list_clips(take_id) -> "
                    "adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Brand "
                    "feedback the person gives ('logo smaller', 'no hype'): remember_rule saves it to the Style Ledger. Leftover "
                    "drafts from earlier sessions: cleanup_agent_drafts lists them first and changes nothing until the person "
