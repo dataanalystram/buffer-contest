@@ -289,7 +289,7 @@ def test_r2_backend_keeps_bytes_out_of_the_database_and_serves_them(app, human, 
 
     # purge from the Library: rows go in one transaction, the objects after it (blob_gc), retried until confirmed
     keys = {c["storage_key"] for c in ch}
-    human.delete(f"/api/library/{item['id']}?mode=delete&force=1")
+    human.delete(f"/api/library/{item['id']}?mode=permanent&force=1")
     assert not store.q("SELECT 1 AS x FROM library_chunks WHERE item_id=?", (item["id"],))
     blobstore.sweep(store)
     assert not keys & set(s3.objects)
