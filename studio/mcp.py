@@ -157,6 +157,10 @@ from . import take_bin as _take_bin  # noqa: E402  delete_take, list_take_bin, r
 
 TOOLS += _take_bin.TOOLS
 READ_ONLY |= _take_bin.READ_ONLY
+from . import thread_bin as _thread_bin  # noqa: E402  list_threads, get_thread, delete_thread, restore_thread, list/purge_thread_bin
+
+TOOLS += _thread_bin.TOOLS
+READ_ONLY |= _thread_bin.READ_ONLY
 from . import reel_audio as _reel_audio  # noqa: E402  search_instagram_audio, set_reel_audio
 
 TOOLS += _reel_audio.TOOLS
@@ -353,6 +357,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _take_bin.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _thread_bin.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     for _mod in (_send, _share, _ledger, _parity, _image, _rd):

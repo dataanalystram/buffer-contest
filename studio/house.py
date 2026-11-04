@@ -120,7 +120,7 @@ def start_media_check(house: "House", every: float | None = None, first_delay: f
             except Exception as e:  # noqa: BLE001
                 print(f"library trash: {e.__class__.__name__}: {e}", flush=True)
             try:  # One take's Bin (takes and clips) after TRASH_DAYS, and bucket uploads nobody finished or used
-                n = house.takes.purge_expired() + house.take_uploads.purge_stale()
+                n = house.threads.purge_expired() + house.takes.purge_expired() + house.take_uploads.purge_stale()
                 if n:
                     print(f"take bin: removed {n} item(s) for good", flush=True)
             except Exception as e:  # noqa: BLE001
@@ -169,6 +169,8 @@ class House:
         self.uploads = Uploads(self)
         from .take_upload import TakeUploads
         self.take_uploads = TakeUploads(self)  # One take's long videos: multipart straight to the bucket (R2), off unless configured  # create_upload / upload_media_chunk (any MCP client, no public host)
+        from .thread_bin import ThreadBin
+        self.threads = ThreadBin(self)  # thread ids, list/get threads, delete/restore One take threads (studio/thread_bin.py)
         from .ledger import Ledger
         self.ledger = Ledger(self)  # Style Ledger v2: groups, scope, learned suggestions, evidence, review links
         from .send import Send
@@ -725,6 +727,9 @@ class House:
             d["title"] = _title((res.get("story") or {}).get("headline") or "", _req(inp), "Your media" if d["kind"] == "media" else "Your post")
             d["legacy"] = d["kind"] in ("media", "news")
             if d["kind"] == "take":
+                from .thread_bin import hidden as _thread_hidden
+                if _thread_hidden(d["status"], res):  # deleted from the sidebar (thread Bin); the take may still be in One take
+                    continue
                 # (the take's clip cover used to be overwritten by the generic line below: the blank 5th Recent card)
                 d["title"] = "One take: " + (inp.get("name") or "your video")
                 d["cover"] = next((c.get("cover_url") for c in res.get("clips") or [] if c.get("cover_url")), "") or \
@@ -749,6 +754,13 @@ class House:
                           "scheduled" if any(x.get("mode") in ("queue", "schedule") for x in sent) else
                           "draft" if sent else "ready" if pk else d["status"])
             out.append(d)
+        try:  # the public thread id (thr_...) the sidebar's delete and MCP's get_thread use
+            from .thread_bin import public_ids
+            ids = public_ids(self.store, a.uid, [d["id"] for d in out])
+            for d in out:
+                d["thread_id"] = ids[d["id"]]
+        except Exception:  # noqa: BLE001 - never hide the threads over their ids
+            traceback.print_exc()
         return out
 
     def _save(self, rid: int, steps: list, result: dict, status: str | None = None) -> None:

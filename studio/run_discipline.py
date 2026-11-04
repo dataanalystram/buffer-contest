@@ -614,10 +614,11 @@ def cleanup_agent_drafts(studio, a: Actor, args: dict) -> dict:
 def call_tool(studio, actor: Actor, name: str, args: dict):
     if name not in NAMES:
         return NotImplemented
+    from .thread_bin import with_thread_id
     if name == "start_post":
-        return start_post(studio, actor, args or {})
+        return with_thread_id(studio.store, actor, start_post(studio, actor, args or {}))
     if name == "continue_run":
-        return continue_run(studio, actor, args or {})
+        return with_thread_id(studio.store, actor, continue_run(studio, actor, args or {}))
     return cleanup_agent_drafts(studio, actor, args or {})
 
 
@@ -629,7 +630,8 @@ def add_routes(app, house, actor) -> None:
         a = actor(request, write=True)
         b = dict(body or {})
         args, early = before(house.studio, a, "start_post", b)
-        return after(house.studio, a, "start_post", args, early if early is not None else start_post(house.studio, a, strip_control(args, "start_post")))
+        from .thread_bin import with_thread_id
+        return with_thread_id(house.store, a, after(house.studio, a, "start_post", args, early if early is not None else start_post(house.studio, a, strip_control(args, "start_post"))))
 
     @app.post("/api/agent/continue-run")
     def rest_continue_run(request: Request, body: dict = Body(default={})):
@@ -637,7 +639,8 @@ def add_routes(app, house, actor) -> None:
         a = actor(request, write=True)
         b = dict(body or {})
         args, early = before(house.studio, a, "continue_run", b)
-        return after(house.studio, a, "continue_run", args, early if early is not None else continue_run(house.studio, a, strip_control(args, "continue_run")))
+        from .thread_bin import with_thread_id
+        return with_thread_id(house.store, a, after(house.studio, a, "continue_run", args, early if early is not None else continue_run(house.studio, a, strip_control(args, "continue_run"))))
 
     @app.post("/api/agent/cleanup")
     def rest_cleanup(request: Request, body: dict = Body(default={})):

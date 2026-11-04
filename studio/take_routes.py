@@ -62,3 +62,39 @@ def add_upload_routes(app, house, actor) -> None:
     @app.delete("/api/takes/uploads/{upload_id}")
     def take_upload_abort(upload_id: str, request: Request):
         return up.abort(actor(request, write=True), upload_id)
+
+
+def add_thread_routes(app, house, actor) -> None:
+    """Threads (studio/thread_bin.py): read earlier ones, and delete / restore One take threads. Ids are public (thr_...)."""
+    tb = house.threads
+
+    @app.get("/api/threads/bin")
+    def thread_bin_list(request: Request):
+        """list_thread_bin: One take threads in the Bin with days left."""
+        return tb.list(actor(request))
+
+    @app.post("/api/threads/bin/purge")
+    def thread_bin_purge(request: Request, body: dict = Body(default={})):
+        """purge_thread_bin: remove threads in the Bin for good ({thread_ids} or {all: true})."""
+        b = body if isinstance(body, dict) else {}
+        return tb.purge(actor(request, write=True), b.get("thread_ids"), b.get("all") is True)
+
+    @app.get("/api/threads")
+    def thread_list(request: Request, query: str = "", limit: int = 20, cursor: str = ""):
+        """list_threads: earlier threads, newest first (id, title, updated_at, run_ids, summary), paginated."""
+        return tb.list_threads(actor(request), query or None, limit, cursor or None)
+
+    @app.get("/api/threads/{tid}")
+    def thread_get(tid: str, request: Request, cursor: str = ""):
+        """get_thread: one thread's messages (paginated) and the runs / takes inside with their outputs."""
+        return tb.get_thread(actor(request), tid, cursor or None)
+
+    @app.delete("/api/threads/{tid}")
+    def thread_delete(tid: str, request: Request, takes: str = "keep"):
+        """delete_thread: ?takes=keep (thread only) or ?takes=delete (thread and its take, into the take Bin)."""
+        return tb.delete(actor(request, write=True), tid, takes)
+
+    @app.post("/api/threads/{tid}/restore")
+    def thread_restore(tid: str, request: Request):
+        """restore_thread: the thread back in the sidebar, and its take if it was deleted with it."""
+        return tb.restore(actor(request, write=True), tid)

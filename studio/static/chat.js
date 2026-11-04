@@ -23,6 +23,7 @@
     fold: '<path d="M4 6h16M4 12h10M4 18h7"/>',
     panel: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/>', clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/>',
     up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   };
   // the threads column: inline (and hideable, kept in localStorage hq_threads) on a wide screen, an overlay below 1101 px
   const TKEY = "hq_threads", overlayMq = matchMedia("(max-width:1100px)"), docEl = document.documentElement;
@@ -163,7 +164,7 @@
         const on = String(x.id) === String(cur);
         html += `<li class="hc-li${on ? " on" : ""}" data-id="${esc(x.id)}"><button type="button" class="hc-th" data-open="${esc(x.id)}" data-kind="${esc(x.kind)}" data-testid="chat-thread"${on ? ' aria-current="true"' : ""}>
             <span class="hc-th-t" title="${esc(x.title || "Your post")}">${esc(x.title || "Your post")}</span><small class="hc-th-s st-${esc(x.state || x.status)}">${esc(STATE[x.state] || x.state || x.status || "")}${x.summarized ? " · summarized" : ""}</small></button>
-          ${x.kind === "take" ? "" : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}</li>`;
+          ${x.kind === "take" ? (x.thread_id ? `<button type="button" class="hc-th-r hc-th-del" data-del-thread="${esc(x.id)}" data-testid="chat-thread-delete" aria-label="Delete thread “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.trash)}</button>` : "") : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}</li>`;
       }
       html += "</ul>";
     }
@@ -178,6 +179,7 @@
   document.getElementById("hcQ").addEventListener("input", (e) => { HC.q = e.target.value; HC.shown = PAGE; drawList(true); });
   document.getElementById("hcList").addEventListener("click", async (e) => {
     const r = e.target.closest("[data-rename]"); if (r) return rename(r.dataset.rename);
+    const dt = e.target.closest("[data-del-thread]"); if (dt) return deleteThread(dt.dataset.delThread);
     const o = e.target.closest("[data-open]"); if (!o) return;
     sideDrawer(false);
     if (o.dataset.kind === "take") return window.openTake && window.openTake(o.dataset.open);
@@ -221,6 +223,22 @@
     // the composer and the Ready bar belong to the thread still on screen: inert until the picked one arrives, so nothing
     // typed or approved meanwhile goes to the previous thread
     const dk = document.getElementById("hcDock"); if (dk) { dk.inert = on; dk.classList.toggle("hc-dock-wait", on); }
+  }
+  // delete a One take thread (studio/thread_bin.py): the thread only, or the thread and its take (the take Bin). Both
+  // stay restorable for 7 days. The server takes the thread's public id (thr_...); a foreign or missing one is a 404.
+  async function deleteThread(id) {
+    const row = HC.rows.find((x) => String(x.id) === String(id)); if (!row || !row.thread_id) return;
+    const pick = await window.hqChoose(`Delete “${String(row.title || "this thread").slice(0, 80)}”?`, [
+      { value: "keep", label: "Delete thread only", hint: "The take and its clips stay in One take" },
+      { value: "delete", label: "Delete thread and its take", hint: "The take goes to the Bin; a render still running stops", danger: true },
+    ], { note: "Both move to the Bin for 7 days, then they're removed for good. Clips already in Buffer stay there.", label: "What to delete" });
+    if (!pick) return;
+    try {
+      await api(`/api/threads/${encodeURIComponent(row.thread_id)}?takes=${pick}`, { method: "DELETE" });
+      HC.rows = HC.rows.filter((x) => String(x.id) !== String(id)); drawList(true);
+      toast(pick === "delete" ? "Thread and its take moved to the Bin (7 days)." : "Thread moved to the Bin (7 days). The take stays in One take.", 5000);
+      if (pick === "delete" && window.loadTakes) window.loadTakes();
+    } catch (err) { toast(err.message, 5000); }
   }
   function rename(id) {
     const li = document.querySelector(`#hcList .hc-li[data-id="${sel(id)}"]`); if (!li) return;
