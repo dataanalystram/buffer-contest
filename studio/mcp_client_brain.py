@@ -727,7 +727,8 @@ def t_render_status(studio, a, args):
         out["download_url"] = h.media_url(r["media_token"])
         out["media_token"] = r["media_token"]
         m = h.media_meta(a, r["media_token"]) or {}
-        out["meta"] = {k: m.get(k) for k in ("width", "height", "duration", "ratio", "style", "captions", "clip", "captions_note")
+        out["meta"] = {k: m.get(k) for k in ("width", "height", "duration", "ratio", "style", "captions", "clip", "captions_note",
+                                             "engine", "model", "model_licence")
                        if m.get(k) not in (None, "")}
         if m.get("captions_note"):
             out["note"] = m["captions_note"]  # e.g. it already had captions, so none were added

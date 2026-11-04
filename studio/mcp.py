@@ -176,6 +176,10 @@ from . import mcp_parity as _parity  # noqa: E402  get_media_preview, replace_dr
 
 TOOLS += _parity.TOOLS
 READ_ONLY |= _parity.READ_ONLY
+from . import image_edit as _image  # noqa: E402  fetch_image, cutout_product, edit_image, compose_product_card (Phase 2)
+
+TOOLS += _image.TOOLS
+READ_ONLY |= _image.READ_ONLY
 
 
 
@@ -320,7 +324,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _uploads.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
-    for _mod in (_send, _share, _ledger, _parity):
+    for _mod in (_send, _share, _ledger, _parity, _image):
         extra = _mod.call_tool(studio, actor, name, args)
         if extra is not NotImplemented:
             return extra

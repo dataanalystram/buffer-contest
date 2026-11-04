@@ -1514,6 +1514,9 @@ class House:
                          ("done" if ok else "failed", (error or ("" if ok else f"missing {', '.join(sorted(want - set(files)))}"))[:500],
                           _now(), jid))
             return {"ok": ok}
+        if kind == "image_matte":  # the ML cut-out's PNG (studio/image_edit.py): run media, never a Library item
+            from . import image_edit
+            return image_edit.finish_matte(self, job, data, meta, error)
         if kind == "take_analyze":
             return self.takes.on_analysis(jid, (body or {}).get("analysis"), error)
         if kind == "take_render":

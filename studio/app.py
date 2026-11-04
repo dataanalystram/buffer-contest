@@ -773,6 +773,34 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         studio._guard_write(a, "replace_draft_media")
         return mcp_parity.replace_draft_media(studio, a, {**(body or {}), "post_id": post_id})
 
+    # image editing (docs/plans/AGENT_RUNS_EDITING_COMMERCE.md Phase 2): the same functions as the MCP tools
+    def _image_tool(name: str, request: Request, body: dict):
+        from . import image_edit
+        try:
+            return image_edit.FNS[name](studio, actor(request, write=True), body or {})
+        except image_edit.ImageFetchError as e:
+            return JSONResponse(e.payload(), status_code=e.status)
+
+    @app.post("/api/images/fetch")
+    def images_fetch(request: Request, body: dict = Body(...)):
+        """fetch_image: the server fetches a public https image (netguard) and keeps it as run media."""
+        return _image_tool("fetch_image", request, body)
+
+    @app.post("/api/images/cutout")
+    def images_cutout(request: Request, body: dict = Body(...)):
+        """cutout_product: engine fast | auto | ml (ISNet) | hq (BiRefNet-lite); ml/hq answer a job_id."""
+        return _image_tool("cutout_product", request, body)
+
+    @app.post("/api/images/edit")
+    def images_edit(request: Request, body: dict = Body(...)):
+        """edit_image: ordered ops (crop, fit, pad, cutout, card, round, grade, sharpen), max 12."""
+        return _image_tool("edit_image", request, body)
+
+    @app.post("/api/images/card")
+    def images_card(request: Request, body: dict = Body(...)):
+        """compose_product_card: the product on the brand ground with a soft shadow."""
+        return _image_tool("compose_product_card", request, body)
+
     @app.get("/api/agent/pages")
     def agent_pages(request: Request, page: str = ""):
         """get_page_context: what each page shows and which MCP tools do the same things there."""
