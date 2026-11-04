@@ -348,8 +348,9 @@ def cutout(im: Image.Image, pad: int = 8) -> Image.Image | None:
 
 def rounded(im: Image.Image, r: int) -> Image.Image:
     im = im.convert("RGBA")
-    m = Image.new("L", (im.width * 3, im.height * 3), 0)
-    ImageDraw.Draw(m).rounded_rectangle((0, 0, m.width - 1, m.height - 1), r * 3, fill=255)
+    s = 3 if max(im.size) <= 2048 else 1  # 3x supersampled edge; at 4096 px a 3x mask alone would be ~150 MB
+    m = Image.new("L", (im.width * s, im.height * s), 0)
+    ImageDraw.Draw(m).rounded_rectangle((0, 0, m.width - 1, m.height - 1), r * s, fill=255)
     m = m.resize(im.size, Image.LANCZOS)
     im.putalpha(ImageChops.multiply(im.getchannel("A"), m))
     return im

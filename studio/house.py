@@ -1863,7 +1863,7 @@ class House:
             return None, "too_large"
         return data, ""
 
-    def _fetch_bytes_why(self, url: str, limit: int) -> tuple[bytes | None, str]:
+    def _fetch_bytes_why(self, url: str, limit: int, https_only: bool = False) -> tuple[bytes | None, str]:
         """(bytes, "") or (None, why) for a public URL, every redirect hop checked. why: bad_url, not_found (HTTP 404/410),
         forbidden (401/403: private or signed-in only), http_<code>, too_large, private (netguard refused the host),
         unreachable (DNS/connect/timeout)."""
@@ -1874,7 +1874,7 @@ class House:
             return own
         host = urlparse(url).hostname or "?"
         try:
-            with netguard.safe_stream(url, http=self.http, headers=sources.UA) as r:
+            with netguard.safe_stream(url, http=self.http, headers=sources.UA, https_only=https_only) as r:
                 if r.status_code >= 400:
                     why = {404: "not_found", 410: "not_found", 401: "forbidden", 403: "forbidden"}.get(r.status_code, f"http_{r.status_code}")
                     print(f"fetch: {host} answered HTTP {r.status_code}", flush=True)  # host only: a path can carry a token
@@ -1887,6 +1887,8 @@ class House:
                 return bytes(buf), ""
         except netguard.FetchError as e:
             print(f"fetch: {host} refused: {e}", flush=True)
+            if "must start with" in str(e):  # https_only: a redirect hop to http:// (or a non-http scheme)
+                return None, "bad_url"
             return None, "private" if "private" in str(e) else "unreachable"
         except httpx.HTTPError as e:
             print(f"fetch: {host} failed: {e.__class__.__name__}", flush=True)

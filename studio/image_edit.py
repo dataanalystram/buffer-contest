@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import threading
 import time
 from typing import Any
@@ -92,9 +93,11 @@ def own_run(h, a: Actor, run_id: Any) -> int | None:
 
 
 # ------------------------------------------------------------------------------------------------ parsing
-def open_image(data: bytes) -> tuple[Any, str]:
+def open_image(data: bytes, work_side: int = 0) -> tuple[Any, str]:
     """(PIL image, ext) for bytes that really are an allowed image; ImageFetchError otherwise (format allow-list, pixel
-    cap / decompression-bomb guard, truncated files)."""
+    cap / decompression-bomb guard, truncated files). work_side > 0 (the edit tools' working copy on the 512 MB web
+    dyno): JPEG decodes straight at a reduced scale (draft, never the full 40 MP raster) and any other format is reduced
+    to work_side right after decoding, so one edit holds at most one full decode and then a bounded copy."""
     from PIL import Image
     if not data:
         raise ImageFetchError("not_an_image")
@@ -111,7 +114,13 @@ def open_image(data: bytes) -> tuple[Any, str]:
         if w * h > MAX_PIXELS:
             raise ImageFetchError("too_large", f"{w}x{h} pixels")
         im = Image.open(io.BytesIO(data))
+        if work_side and fmt in ("JPEG", "MPO") and max(w, h) > work_side:
+            im.draft("RGB", (work_side, work_side))  # DCT scaling at decode: 1/2, 1/4 or 1/8, never below work_side
         im.load()
+        if work_side and max(im.size) > work_side:
+            from PIL import ImageOps as _IO
+            im = _IO.exif_transpose(im)  # orientation before the copy that drops the EXIF block
+            im.thumbnail((work_side, work_side), Image.LANCZOS)
     except ImageFetchError:
         raise
     except Image.DecompressionBombError:
@@ -125,6 +134,8 @@ def strip_meta(data: bytes, ext: str, im) -> tuple[bytes, str]:
     """EXIF / GPS / XMP out before the file is stored and served at /m/: lossless for JPEG and PNG (studio/metastrip),
     a clean re-encode to PNG for WebP / AVIF (no metadata is carried over)."""
     from PIL import ImageOps
+    if ext == "png" and (im.getexif().get(0x0112) or 1) != 1:
+        ext = "png-rotate"  # a PNG eXIf Orientation: rotate the pixels (re-encode below); stripping alone would leave it sideways
     if ext in ("jpg", "png"):
         from . import metastrip
         return metastrip.strip_bytes(ext, data), ext
@@ -136,6 +147,12 @@ def strip_meta(data: bytes, ext: str, im) -> tuple[bytes, str]:
 
 
 # ------------------------------------------------------------------------------------------------ storage
+def _audit(h, a: Actor, action: str, detail: dict) -> None:
+    """One activity row per successful image call; the action names are in Studio.COUNTED, so an agent token's
+    daily cap counts them (REST and MCP alike)."""
+    h.store.audit(a.uid, a.label, action, "write", detail)
+
+
 def _store(h, a: Actor, im, name: str, kind: str, rid: int | None, meta: dict | None = None) -> dict:
     """An edited image as run media (never a Library item): PNG when it has transparency, else JPEG."""
     has_alpha = im.mode == "RGBA" and im.getchannel("A").getextrema()[0] < 255
@@ -181,7 +198,7 @@ def fetch_image(studio, a: Actor, args: dict) -> dict:
                 "already_yours": True, "run_id": rid, "spent_usd": 0}
     if not url.startswith("https://"):
         raise ImageFetchError("bad_url")
-    data, why = h._fetch_bytes_why(url, MAX_FETCH)
+    data, why = h._fetch_bytes_why(url, MAX_FETCH, https_only=True)  # every redirect hop stays https
     if data is None:
         code = {"forbidden": "blocked_by_site", "not_found": "not_found", "too_large": "too_large", "private": "private",
                 "bad_url": "bad_url"}.get(why)
@@ -227,9 +244,14 @@ def load_source(studio, a: Actor, args: dict, rid: int | None):
     m = h.get_media(tok)
     if not m:
         raise ActionError("No such media for this account.", 404)
-    im, _ = open_image(m["data"])
-    from PIL import ImageOps
-    return ImageOps.exif_transpose(im), tok, meta or {}
+    from PIL import Image, ImageOps
+    from . import image_ops
+    with Image.open(io.BytesIO(m["data"])) as probe:  # header only: the size crop pixels refer to (upright)
+        w, h = probe.size
+        src_size = (h, w) if (probe.getexif().get(0x0112) or 1) in (5, 6, 7, 8) else (w, h)
+    im, _ = open_image(m["data"], work_side=image_ops.MAX_SIDE)
+    im = ImageOps.exif_transpose(im)
+    return im, tok, {**(meta or {}), "src_size": src_size}
 
 
 def _brand(h, a: Actor) -> tuple[int, int, int]:
@@ -252,8 +274,10 @@ def queue_matte(studio, a: Actor, src: str, model: str, rid: int | None) -> dict
     if demo_guard.is_demo(a.uid):
         raise ActionError("The sample workspace doesn't run the ML cut-out. Connect Buffer to use it.", 403)
     spec = {"kind": "image_matte", "source": src, "model": model}
-    mode = h.video_mode()
-    if mode != "github":
+    from . import instabox_worker
+    # the cut-out never runs on the web dyno: it needs a remote worker (InstaBox or GitHub Actions), whatever video_mode
+    # says about where video renders (a server with local FFmpeg still sends cut-outs to the worker)
+    if not (instabox_worker.enabled() or os.environ.get("GH_DISPATCH_TOKEN")):
         raise ActionError("The ML cut-out runs on the free render worker, which isn't set up on this server "
                           "(use engine=fast, or the card op to place the whole photo).", 503)
     jid = h.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
@@ -304,9 +328,12 @@ def cutout_product(studio, a: Actor, args: dict) -> dict:
         raise ActionError("engine is auto, fast, ml or hq.")
     im, src, _ = load_source(studio, a, args, rid)
     if engine in ("hq", "ml"):
-        return queue_matte(studio, a, src, image_matte.model_for(engine), rid)
+        q = queue_matte(studio, a, src, image_matte.model_for(engine), rid)
+        _audit(h, a, "cutout_product", {"engine": engine, "job_id": q["job_id"], "run_id": rid})
+        return q
     cut = hero_edit.cutout_detailed(im)
     if cut["ok"]:
+        _audit(h, a, "cutout_product", {"engine": "fast", "run_id": rid})
         out = _store(h, a, cut["image"], "cutout.png", "edit", rid, {"prev": src, "op": "cutout", "engine": cut["engine"],
                                                                       "confidence": cut["confidence"]})
         return {**out, "ok": True, "engine": cut["engine"], "confidence": cut["confidence"], "pieces": cut["components"],
@@ -314,6 +341,7 @@ def cutout_product(studio, a: Actor, args: dict) -> dict:
     if engine == "auto":
         try:
             q = queue_matte(studio, a, src, image_matte.DEFAULT_MODEL, rid)
+            _audit(h, a, "cutout_product", {"engine": "auto", "job_id": q["job_id"], "run_id": rid})
             return {**q, "ok": True, "report": f"The fast cut-out wasn't confident ({cut['reason']}); the ML cut-out "
                     f"({image_matte.DEFAULT_MODEL}) is running on the worker."}
         except ActionError as e:
@@ -337,12 +365,13 @@ def edit_image(studio, a: Actor, args: dict) -> dict:
         ops = image_ops.validate(args.get("ops"))
     except image_ops.OpError as e:
         raise ActionError(str(e))
-    im, src, _ = load_source(studio, a, args, rid)
+    im, src, smeta = load_source(studio, a, args, rid)
     try:
-        out, report = image_ops.apply(im, ops, _brand(h, a))
+        out, report = image_ops.apply(im, ops, _brand(h, a), source_size=smeta.get("src_size"))
     except image_ops.OpError as e:
         raise ActionError(str(e))
     res = _store(h, a, out, "edit.png", "edit", rid, {"prev": src, "op": "edit", "ops": [o["op"] for o in ops]})
+    _audit(h, a, "edit_image", {"ops": [o["op"] for o in ops], "run_id": rid})
     return {**res, "ok": True, "report": report, "run_id": rid, "prev": src, "preview": _preview(out), "spent_usd": 0}
 
 

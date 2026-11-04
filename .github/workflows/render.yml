@@ -31,6 +31,9 @@ jobs:
       # image_matte: rembg (pinned) with a named model only (never rembg's BRIA default); weights cached between runs
       - if: ${{ github.event.inputs.kind == 'image_matte' }}
         run: pip install -q -r requirements-worker-core.txt -r requirements-matte.txt
+      # rembg 2.0.86 downloads into ~/.rembg unless U2NET_HOME is set: point it at the cached directory
+      - if: ${{ github.event.inputs.kind == 'image_matte' }}
+        run: echo "U2NET_HOME=$HOME/.u2net" >> "$GITHUB_ENV"
       - if: ${{ github.event.inputs.kind == 'image_matte' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: {path: ~/.u2net, key: matte-isnet-birefnet-lite-v1}
