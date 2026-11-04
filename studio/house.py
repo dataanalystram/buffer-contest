@@ -708,7 +708,7 @@ class House:
     def runs(self, a: Actor, limit: int = 20) -> list[dict]:
         from .chat_context import titles as _chat_titles  # names given in the Make a post sidebar win
         out, named = [], _chat_titles(self.store, a.uid)
-        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT ?",
+        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? ORDER BY created DESC, id DESC LIMIT ?",
                               (a.uid, limit)):
             d = dict(r)
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
