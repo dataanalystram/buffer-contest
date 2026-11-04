@@ -69,9 +69,25 @@ def sample_meta() -> dict | None:
 class Takes(TakeBin):
     def __init__(self, house):
         self.h, self.studio, self.store, self.s = house, house.studio, house.store, house.s
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()  # guards _locks only
+        self._locks: dict[int, threading.RLock] = {}
 
     # ------------------------------------------------------------------ helpers
+    def _take_lock(self, rid) -> threading.RLock:
+        """One lock per take: a worker callback's read-modify-write and the Bin's delete / restore / purge of that take never
+        interleave, and one take's slow step never holds up anyone else's (Greptile / CodeRabbit, PR #107). Taken before any
+        store transaction, never inside one."""
+        try:
+            rid = int(rid)
+        except (TypeError, ValueError):
+            rid = -1
+        with self._lock:
+            return self._locks.setdefault(rid, threading.RLock())
+
+    def _job_lock(self, jid: int) -> threading.RLock:
+        rows = self.store.q("SELECT run_id FROM render_jobs WHERE id=?", (jid,))
+        return self._take_lock(rows[0]["run_id"] if rows else -1)
+
     def _run(self, a: Actor, rid: int) -> dict:
         r = self.h.run(a, rid)
         if r["kind"] != "take" or r["status"] == "binned":  # a take in the Bin is gone until it is restored
@@ -387,14 +403,46 @@ class Takes(TakeBin):
 
     # ------------------------------------------------------------------ callbacks (worker or local)
     def on_analysis(self, jid: int, analysis: dict | None, error: str = "") -> dict:
-        # Each callback's read-modify-write runs under the same lock as delete / restore / purge (take_bin.py), so a
-        # callback already past its cancelled check can't save an old result over the Bin's (Greptile, PR #107).
-        with self._lock:
-            return self._on_analysis(jid, analysis, error)
+        # Each read-modify-write runs under the take's lock, the same one delete / restore / purge take (take_bin.py), so a
+        # callback already past its cancelled check can't save an old result over the Bin's. Picking the moments (AI
+        # engines, up to minutes) runs outside it; the take is read again, and checked again, before the result is saved.
+        lk = self._job_lock(jid)
+        with lk:
+            first = self._on_analysis(jid, analysis, error)
+        if first.get("done") is not None:
+            return first["done"]
+        a, rid, run, eng, chat, used = first["ctx"]
+        try:
+            mined = self._mine(run, analysis, eng, chat)
+        except take.TakeError as e:
+            mined = e
+        with lk:
+            if self.job_cancelled(jid):
+                return {"ok": False, "cancelled": True}
+            fresh = self._run(a, rid)
+            steps, res = fresh["steps"], fresh["result"]
+            if isinstance(mined, take.TakeError):
+                self._step(steps, "moments", "failed", str(mined))
+                self._save(rid, steps, res, "failed")
+                return {"ok": False}
+            return self._land_moments(a, rid, steps, res, mined, used)
+
+    def _mine(self, run: dict, analysis: dict, eng, chat) -> dict:
+        if run["input"].get("style") == "opus":
+            from .media import longform
+            lo, hi = (run["input"].get("range") or [longform.MIN_S, longform.MAX_S])[:2]
+            mined = longform.pick_moments(analysis.get("words") or [], (analysis.get("probe") or {}).get("duration"),
+                                          run["input"].get("count"), lo, hi, scenes=analysis.get("scenes"),
+                                          silences=analysis.get("silences"), engine=eng, chat_json=chat)
+            for m in mined["moments"]:
+                m["why"] = m["reason"]
+            return mined
+        return take.mine_moments(analysis, run["input"].get("count"), eng, chat)
 
     def _on_analysis(self, jid: int, analysis: dict | None, error: str = "") -> dict:
+        """The locked first half of on_analysis: {"done": answer} when it ends here, else {"ctx": ...} to pick moments."""
         if self.job_cancelled(jid):  # the take was deleted meanwhile: nothing lands on it
-            return {"ok": False, "cancelled": True}
+            return {"done": {"ok": False, "cancelled": True}}
         j = self._job(jid)
         a, rid = Actor(j["user_id"]), j["run_id"]
         run = self._run(a, rid)
@@ -403,7 +451,7 @@ class Takes(TakeBin):
             self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", ((error or "no analysis")[:500], _now(), jid))
             self._step(steps, "transcribe", "failed", (error or "The worker returned no transcript.")[:300])
             self._save(rid, steps, res, "failed")
-            return {"ok": False}
+            return {"done": {"ok": False}}
         self.store.x("UPDATE render_jobs SET status='done', updated=? WHERE id=?", (_now(), jid))
         res["analysis"] = analysis
         res["providers"], res["timings"] = analysis.get("providers", {}), analysis.get("timings", {})
@@ -416,21 +464,9 @@ class Takes(TakeBin):
         self._step(steps, "moments", "running", "Scoring every stretch of the talk")
         self._save(rid, steps, res)
         eng, chat, used = self._moment_chat(a)
-        try:
-            if run["input"].get("style") == "opus":
-                from .media import longform
-                lo, hi = (run["input"].get("range") or [longform.MIN_S, longform.MAX_S])[:2]
-                mined = longform.pick_moments(analysis.get("words") or [], (analysis.get("probe") or {}).get("duration"),
-                                              run["input"].get("count"), lo, hi, scenes=analysis.get("scenes"),
-                                              silences=analysis.get("silences"), engine=eng, chat_json=chat)
-                for m in mined["moments"]:
-                    m["why"] = m["reason"]
-            else:
-                mined = take.mine_moments(analysis, run["input"].get("count"), eng, chat)
-        except take.TakeError as e:
-            self._step(steps, "moments", "failed", str(e))
-            self._save(rid, steps, res, "failed")
-            return {"ok": False}
+        return {"ctx": (a, rid, run, eng, chat, used)}
+
+    def _land_moments(self, a: Actor, rid: int, steps: list, res: dict, mined: dict, used: dict) -> dict:
         if used.get("label") and mined["picked_by"].startswith(MOMENTS_AI):
             mined["picked_by"] = used["label"] + mined["picked_by"][len(MOMENTS_AI):]
         res["moments"], res["picked_by"] = mined["moments"], mined["picked_by"]
@@ -503,7 +539,7 @@ class Takes(TakeBin):
         self._queue(a, rid, spec, "reframe", "Re-rendering 1 clip on the video worker")
 
     def on_clip(self, jid: int, clip_id: str, data: bytes, cover: bytes, meta: dict) -> dict:
-        with self._lock:
+        with self._job_lock(jid):
             if self.job_cancelled(jid):
                 return {"ok": False, "cancelled": True}
             j = self._job(jid)
@@ -536,7 +572,7 @@ class Takes(TakeBin):
             return {"ok": True, "token": tok}
 
     def on_render_done(self, jid: int, error: str = "") -> dict:
-        with self._lock:
+        with self._job_lock(jid):
             return self._on_render_done(jid, error)
 
     def _on_render_done(self, jid: int, error: str = "") -> dict:

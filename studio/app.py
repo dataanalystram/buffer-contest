@@ -1013,7 +1013,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             error = "The video worker failed."
         try:
             data = base64.b64decode(body["data"]) if body.get("data") else None
-            return house.finish_video(jid, data, body.get("meta"), error, body=body)
+            # off the event loop: analysis picks moments with AI engines (up to minutes) and takes a per-take lock (PR #107)
+            return await run_in_threadpool(house.finish_video, jid, data, body.get("meta"), error, body=body)
         finally:
             house.burn_job_token(jid)
             if error and body.get("log_tail"):
@@ -1037,7 +1038,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 return house.on_recap_file(jid, clip_id, base64.b64decode(body["data"]), body.get("meta") or {})
             except ActionError as e:
                 return JSONResponse({"error": str(e)}, status_code=e.status)
-        return house.takes.on_clip(jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]), body.get("meta") or {})
+        return await run_in_threadpool(house.takes.on_clip, jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]),
+                                       body.get("meta") or {})
 
     # ------------------------------------------------------------ Brand studio + Sources agent (UI = REST = MCP)
     from . import brand_routes

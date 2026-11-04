@@ -15,6 +15,7 @@ another person's objects.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 
@@ -117,7 +118,7 @@ class TakeBin:
 
     # ------------------------------------------------------------------ delete
     def delete_take(self, a: Actor, rid, clip_id: str | None = None) -> dict:
-        with self._lock:  # the worker callbacks (takes.py) take the same lock: no lost update either way
+        with self._take_lock(rid):  # the take's lock (takes._take_lock), the one its worker callbacks take
             return self._delete_take(a, rid, clip_id)
 
     def _delete_take(self, a: Actor, rid, clip_id: str | None = None) -> dict:
@@ -192,7 +193,7 @@ class TakeBin:
         return {"takes": takes_, "clips": clips_, "days": TRASH_DAYS}
 
     def restore_take(self, a: Actor, rid, clip_id: str | None = None) -> dict:
-        with self._lock:  # the worker callbacks (takes.py) take the same lock: no lost update either way
+        with self._take_lock(rid):  # the take's lock (takes._take_lock), the one its worker callbacks take
             return self._restore_take(a, rid, clip_id)
 
     def _restore_take(self, a: Actor, rid, clip_id: str | None = None) -> dict:
@@ -229,8 +230,7 @@ class TakeBin:
         return out
 
     def purge_take_bin(self, a: Actor, take_ids=None, clips=None, everything: bool = False) -> dict:
-        with self._lock:  # the worker callbacks (takes.py) take the same lock: no lost update either way
-            return self._purge_take_bin(a, take_ids, clips, everything)
+        return self._purge_take_bin(a, take_ids, clips, everything)
 
     def _purge_take_bin(self, a: Actor, take_ids=None, clips=None, everything: bool = False) -> dict:
         self._guard(a, "purge_take_bin")
@@ -263,7 +263,10 @@ class TakeBin:
         """Remove binned takes and clips of this person for good: records and files in one transaction."""
         done_t, done_c, files = [], [], []
         st = self.store
-        with st.tx():
+        locks = contextlib.ExitStack()  # every take this touches, in id order (no lock-order deadlock), before the transaction
+        for rid in sorted({x for x in take_ids if isinstance(x, int)} | {t for t, _ in pairs if isinstance(t, int)}):
+            locks.enter_context(self._take_lock(rid))
+        with locks, st.tx():
             for rid in dict.fromkeys(take_ids):
                 rows = st.q("SELECT id, input, result FROM agent_runs WHERE id=? AND user_id=? AND kind='take' AND status='binned'", (rid, uid))
                 if not rows:
@@ -319,8 +322,7 @@ class TakeBin:
                  " ON CONFLICT(token) DO NOTHING", tuple(v for t in part for v in (t, uid, now)))
 
     def purge_expired(self, days: float | None = None) -> int:
-        with self._lock:  # the worker callbacks (takes.py) take the same lock: no lost update either way
-            return self._purge_expired(days)
+        return self._purge_expired(days)
 
     def _purge_expired(self, days: float | None = None) -> int:
         """Takes and clips in the Bin longer than TRASH_DAYS are removed for good (the media check loop, every 6 hours)."""
