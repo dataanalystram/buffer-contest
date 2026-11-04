@@ -385,7 +385,9 @@ def start_post(studio, a: Actor, args: dict) -> dict:
             out.update(format=fmt, format_was=was, next=f"Same post, now a {fmt}: render it with run_id {rid} (output 1 is "
                        "replaced in place) and call create_package(run_id) again.")
         return out
-    studio._guard_write(a, "start_post")
+    # opening a post spends nothing and reaches nobody: the kill switch answers, but not the token's daily action cap
+    # (no per-day limit on new runs, owner 4 Nov 2026 15:07; the burst guard in before() stops a runaway loop)
+    studio.kill_switch_check(a, "start_post")
     title = " ".join(str(args.get("title") or "").split())[:200]
     if not title:
         raise ActionError("Give the post a short title (from the person's request).")

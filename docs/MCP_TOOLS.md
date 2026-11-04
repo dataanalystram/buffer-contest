@@ -63,8 +63,9 @@ several Make a post threads and a Library item per render. The server now enforc
 5. **No hourly or daily limit on new runs** (owner, 4 Nov 2026 15:07: people open new chats in their AI app, and caps
    blocked them). Run IDs keep things together instead. The only guard is a lenient burst limit against a runaway loop:
    more than `HQ_MCP_NEW_RUNS_PER_MINUTE` (default 30) new runs in one minute from one agent token answers 429 "This app
-   started 30 posts in the last minute, which looks like a loop. Wait a minute and try again." A signed-in person in the
-   app is never limited.
+   started 30 posts in the last minute, which looks like a loop. Wait a minute and try again." The token's daily action
+   cap (writes to Buffer, uploads and the like) never blocks `start_post` either; the kill switch still does. A signed-in
+   person in the app is never limited.
 6. **Idempotency.** `idempotency_key` on any write (or `_meta["huhqueue/idempotency_key"]`): the same key and arguments
    within 24 h return the first result (`idempotent_replay: true`); the same key with other arguments is a 409. Without a
    key, an identical run/render call within 120 s (a retry) returns the first result too.
