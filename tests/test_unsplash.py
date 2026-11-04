@@ -2,8 +2,19 @@
 import io
 
 import httpx
+import pytest
 import respx
 from PIL import Image
+
+
+@pytest.fixture(autouse=True)
+def _unpinned_outbound(monkeypatch):
+    """These tests mock outbound calls by host name (respx). netguard pins each vetted request to its resolved IP, which
+    respx would see instead, so here DNS answers one public address and requests keep their host name; pinning itself is
+    covered in tests/test_outbound_ssrf.py."""
+    from huhqueue import netguard
+    monkeypatch.setattr(netguard, "_getaddrinfo", lambda h, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))])
+    monkeypatch.setattr(netguard, "_pinnable", lambda c, url: False)
 
 PHOTO = {"id": "abc123", "width": 4000, "height": 3000, "color": "#333", "alt_description": "a rack of servers",
          "urls": {"raw": "https://images.unsplash.com/photo-1?ixid=x", "small": "https://images.unsplash.com/photo-1?w=400"},

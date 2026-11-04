@@ -186,6 +186,16 @@ def _pinnable(c: httpx.Client, url: str) -> bool:
         return True
 
 
+def _proxied(c: httpx.Client, url: str) -> bool:
+    """Would httpx send ``url`` through a proxy mount (HTTP(S)_PROXY / ``proxy=``)? The proxy resolves the host itself,
+    so the vetted address can't be pinned there. A NO_PROXY-excluded host maps to the default transport (not proxied)."""
+    try:
+        t = c._transport_for_url(httpx.URL(url))
+    except Exception:  # noqa: BLE001 - an httpx without this helper has no mounts to worry about
+        return False
+    return t is not getattr(c, "_transport", None) and isinstance(t, httpx.HTTPTransport)
+
+
 def _build(c: httpx.Client, method: str, url: str, ip: str, headers: dict | None, **kw) -> tuple[httpx.Request, bool]:
     if not _pinnable(c, url):
         return c.build_request(method, url, headers=headers, **kw), False
@@ -206,6 +216,9 @@ def request(c: httpx.Client, method: str, url: str, *, policy: str = "public", h
     headers = _with_encoding(headers)   # gzip at most, inflated under the cap (capped_body)
     for _ in range(max_hops + 1):
         ip = check_url(url, policy)
+        if _proxied(c, url):   # fail closed: an unpinned proxied fetch could be DNS-rebound (CodeRabbit, 4 Nov 2026)
+            raise FetchError("Links can't be read through an HTTP proxy (the vetted address can't be pinned). "
+                             "Exempt the host with NO_PROXY, or unset the proxy.")
         req, pinned = _build(c, method, url, ip, headers, **kw)
         r = c.send(req, stream=True, follow_redirects=False)
         try:

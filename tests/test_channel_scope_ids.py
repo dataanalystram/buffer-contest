@@ -280,3 +280,15 @@ def test_missing_bulk_and_body_comment_ids_answer_like_forbidden_ones(app, api, 
     assert c.post("/api/comments/bulk", json={"ids": ["cm_mine"], "action": "resolve"}).status_code == 200
     with core.db.session() as s:
         assert s.get(Comment, "cm_other").status == "open"
+
+
+def test_validate_with_a_missing_post_or_target_id_answers_like_a_forbidden_one(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): POST /api/validate excluded post_id / target_id; a missing one answered 200 to a scoped
+    caller while another channel's answered 404. Missing ids there are 404 too; the token's own post still validates."""
+    c, other, mine, theirs, both, note = _setup(app, api, core, channel)
+    base = {"caption": "hi", "channel_ids": [channel["id"]]}
+    for extra in ({"post_id": theirs["id"]}, {"post_id": "post_nope"},
+                  {"target_id": theirs["targets"][0]["id"]}, {"target_id": "tgt_nope"}):
+        _hidden(c.post("/api/validate", json={**base, **extra}))
+    assert c.post("/api/validate", json={**base, "post_id": mine["id"]}).status_code == 200
+    assert api.post("/api/validate", json={**base, "post_id": "post_nope"}).status_code == 200   # the owner: unchanged

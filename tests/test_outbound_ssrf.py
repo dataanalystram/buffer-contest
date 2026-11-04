@@ -206,3 +206,22 @@ def test_urljoin_valueerror_on_a_redirect_is_a_fetch_error(monkeypatch):
 def test_malformed_port_is_a_fetch_error_before_anything_is_sent():
     with pytest.raises(netguard.FetchError):
         netguard.check_url("http://pub.test:notaport/x")
+
+
+def test_proxied_fetch_fails_closed_but_no_proxy_hosts_stay_pinned(monkeypatch):
+    """CodeRabbit (4 Nov 2026): through a proxy mount the request went out unpinned with the hostname, so the proxy's own
+    DNS lookup could be rebound to an internal address. A proxied fetch now fails closed before anything is sent; a host
+    excluded by NO_PROXY (a None mount) still goes direct and pinned."""
+    _dns(monkeypatch, {"pub.test": ["93.184.216.34"], "far.test": ["93.184.216.35"]})
+    t = Recorder()
+    proxy = httpx.HTTPTransport(proxy="http://proxy.test:3128")
+    assert netguard._proxied(httpx.Client(mounts={"all://": proxy, "all://pub.test": None}), "https://far.test/a")
+    assert not netguard._proxied(httpx.Client(mounts={"all://": proxy, "all://pub.test": None}), "https://pub.test/a")
+    c = httpx.Client(transport=t, mounts={"all://far.test": proxy})
+    with pytest.raises(netguard.FetchError):
+        netguard.request(c, "GET", "https://far.test/a")
+    assert t.seen == []
+    r = netguard.request(c, "GET", "https://pub.test/a")
+    assert r.status_code == 200 and t.seen and "93.184.216.34" in t.seen[0][1] and t.seen[0][2] == "pub.test"
+    with pytest.raises(netguard.FetchError):   # an explicit proxy= client too
+        netguard.request(httpx.Client(proxy="http://proxy.test:3128"), "GET", "https://far.test/a")

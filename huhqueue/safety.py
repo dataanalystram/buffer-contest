@@ -163,6 +163,12 @@ def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], 
             objects |= found or ({UNRESOLVED} if strict else set())
         objects |= _post_channels(s, body.get("post_id"))
         objects |= _target_channels(s, body.get("target_id"))
+        if path == "/api/validate":   # only an exclusion there: a missing id would answer 200 where a forbidden one 404s
+            from .models import Post
+            if body.get("post_id") and s.get(Post, str(body["post_id"])) is None:
+                objects.add(UNRESOLVED)
+            if body.get("target_id") and s.get(PostTarget, str(body["target_id"])) is None:
+                objects.add(UNRESOLVED)
         cid = body.get("comment_id")
         if isinstance(cid, (str, int)) and not isinstance(cid, bool) and str(cid).strip():
             objects |= _comment_channels(s, cid) or {UNRESOLVED}   # a missing scalar comment id: same 404 as a forbidden one
