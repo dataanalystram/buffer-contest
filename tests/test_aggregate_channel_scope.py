@@ -214,6 +214,12 @@ def test_contact_detail_and_segments_only_use_visible_channels(app, api, channel
     assert api.get("/api/contacts/hiddenonlyzz").status_code == 200                       # the seed is real
     assert len(api.get("/api/contacts/bothzz").json()["history"]) == 2
     owner_total = sum(x["count"] for x in api.get("/api/contact-segments").json())
+    # what a one-channel caller should see: the same segments computed from the visible comments only
+    from huhqueue.api.pro_content import SEGMENTS, contact_rows
+    with core.db.session() as s:
+        rows = contact_rows(s, "", {channel["id"]})
+    visible_segs = {k: sum(1 for x in rows if v[2](x)) for k, v in SEGMENTS.items()}
+    assert sum(visible_segs.values()) < owner_total
     raw = _tok(api, allowed_channel_ids=[channel["id"]], scopes=["read", "comments"])["token"]
     tok = TestClient(app, headers={"Authorization": f"Bearer {raw}"})
     ed = member(app, api, "editor", access={world["id"]: "none"}, name="Eli")
@@ -223,4 +229,11 @@ def test_contact_detail_and_segments_only_use_visible_channels(app, api, channel
             assert r.status_code == 404 and "SECRETZZ" not in r.text, (key, r.status_code)
         d = c.get("/api/contacts/bothzz")
         assert d.status_code == 200 and "SECRETZZ" not in d.text and len(d.json()["history"]) == 1
-        assert sum(x["count"] for x in c.get("/api/contact-segments").json()) < owner_total
+        assert d.json()["comments"] == 1, d.json()
+        segs = {x["id"]: x["count"] for x in c.get("/api/contact-segments").json()}
+        assert segs == visible_segs, (segs, visible_segs)
+    # and no edits through the back door: for the editor a hidden-only person is a 404 and nothing changes
+    assert ed.patch("/api/contacts/hiddenonlyzz", json={}).status_code == 404
+    assert ed.patch("/api/contacts/hiddenonlyzz", json={"notes": "x"}).status_code == 404
+    assert ed.patch("/api/contacts/bothzz", json={"notes": "ok"}).status_code == 200
+    assert api.get("/api/contacts/hiddenonlyzz").json().get("notes", "") in ("", None)

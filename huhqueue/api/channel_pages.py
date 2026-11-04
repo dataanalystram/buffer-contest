@@ -320,9 +320,11 @@ def id_list(payload: dict, key: str = "ids", what: str = "comment") -> list[str]
     """The ids a bulk route acts on, checked before use: a list of non-empty strings (or integers). Anything else, such as
     {"ids": 5} or {"ids": "abc"}, is a 400 with a clear message instead of a TypeError (a 500) or a string read as a list
     of characters (4 Nov 2026)."""
-    raw = payload.get(key) if isinstance(payload, dict) else None
-    if raw is None:
-        return []
+    if not isinstance(payload, dict) or key not in payload:
+        return []                                   # omitted: the route's other selector (e.g. "all") applies
+    raw = payload[key]
+    if raw is None:                                 # an explicit null is not "omitted": {"ids": null, "all": true} is a 400
+        raise HTTPException(400, f"'{key}' must be a list of {what} ids, like [\"id1\", \"id2\"]")
     if not isinstance(raw, list):
         raise HTTPException(400, f"'{key}' must be a list of {what} ids, like [\"id1\", \"id2\"]")
     out = []

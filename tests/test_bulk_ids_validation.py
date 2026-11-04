@@ -4,7 +4,7 @@ A number, a string, an object or a list holding a non-id is a 400 with a message
 /api/comments/bulk, /api/channels/{cid}/comments/bulk-resolve and /api/queue/{cid}/order."""
 import pytest
 
-BAD_IDS = [5, "abc", {"a": 1}, True, [None], [5.5], [["x"]], [""], [True]]
+BAD_IDS = [None, 5, "abc", {"a": 1}, True, [None], [5.5], [["x"]], [""], [True]]
 
 
 def _sync(api, cid):
