@@ -17,6 +17,7 @@ async function api(path, opts = {}) {
   const o = { method: opts.method || "GET", headers: { "Content-Type": "application/json" }, credentials: "same-origin", cache: "no-store" };
   if (o.method !== "GET") o.headers["X-HQ-CSRF"] = S.csrf;
   if (opts.body !== undefined) o.body = JSON.stringify(opts.body);
+  if (opts.signal) o.signal = opts.signal;  // HQLoad.start(): a view's newer request aborts this one (loading.js)
   const r = await fetch(path, o);
   let j = null; try { j = await r.json(); } catch (_) { j = {}; }
   if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; throw e; }
