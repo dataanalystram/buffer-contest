@@ -5,4 +5,4 @@ yt-dlp>=2026.10.26
 faster-whisper>=1.2.1
 numpy>=2.2.6
 imageio-ffmpeg>=0.7.0
-opencv-python-headless>=4.10  # cover faces (studio/media/covers.py), Apache-2.0
+opencv-python-headless>=4.10,<5  # cover faces (studio/media/covers.py), Apache-2.0. <5: OpenCV 5 moved CascadeClassifier to contrib, so faces() found none
