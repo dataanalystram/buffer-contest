@@ -476,10 +476,13 @@ def test_png_exif_orientation_is_applied_before_metadata_is_stripped():
 def test_image_calls_count_against_the_agent_tokens_daily_cap(human, web):
     up = human.post("/api/media", json={"name": "hp.png", "data": base64.b64encode(_png(headphones())).decode()}).json()
     tok = agent_token(human, cap=2)
-    for _ in range(2):
-        res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "1:1"}]})
+    for ratio in ("1:1", "4:5"):  # two different edits
+        res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": ratio}]})
         assert not res["isError"] and out["ok"], out
-    res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "1:1"}]})
+    # the app retrying the same call within 120 s gets the first answer back (run discipline DERIVED): not a new edit
+    res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "4:5"}]})
+    assert not res["isError"] and out["idempotent_replay"] is True, out
+    res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "16:9"}]})
     assert res["isError"] and "daily cap" in str(out)
 
 
