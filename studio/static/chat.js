@@ -181,10 +181,14 @@
     try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; threadLoading(false); window.showRun(x); if (busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
     catch (err) {
       if (HQLoad.aborted(err) || !tk.live()) return;
-      // the thread did not load: the list marks the thread still on screen again, and that thread's poll resumes if it was working
-      // fetched again, not redrawn from memory: a reply sent meanwhile, or progress made, shows up (watch polls on if it runs)
-      threadLoading(false); if (H.run) { markThread(H.run.id); window.watchRun(H.run.id); }
       toast(err.message, 5000);
+      // the thread did not load: the list marks the thread still on screen again, and that thread is fetched again while the
+      // skeleton and the inert dock stay up (a reply sent meanwhile or progress made shows up, and no caption or schedule
+      // edit can start on a card that is about to be redrawn); if that fetch fails too, the copy on screen comes back as it was
+      const cur = H.run; if (!cur) { threadLoading(false); return; }
+      markThread(cur.id);
+      try { const y = await api(`/api/agent/runs/${cur.id}`, { signal: tk.signal }); if (!tk.live()) return; threadLoading(false); window.showRun(y); if (busyRun(y)) window.watchRun(y.id); }
+      catch (e2) { if (HQLoad.aborted(e2) || !tk.live()) return; threadLoading(false); if (busyRun(cur)) window.watchRun(cur.id); }
     }
     finally { if (tk.live()) tk.done(); }
   });
