@@ -34,8 +34,6 @@ from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 
 import httpx
-from fastapi import Body, Request
-
 from .actions import ActionError, Actor
 
 MB = 1024 * 1024
@@ -318,33 +316,3 @@ class TakeUploads:
         for d in rows:
             self._drop(d)
         return len(rows)
-
-
-def add_routes(app, house, actor) -> None:
-    up = house.take_uploads
-
-    @app.get("/api/takes/uploads/config")
-    def take_upload_config(request: Request):
-        """How One take takes a file here: multipart (direct to the bucket, up to max_bytes) or the Library fallback."""
-        return up.info(actor(request))
-
-    @app.post("/api/takes/uploads")
-    def take_upload_create(request: Request, body: dict = Body(default={})):
-        """upload_take_source: open (or resume) a multipart upload of a long video, straight to the bucket."""
-        return up.create(actor(request, write=True), body or {})
-
-    @app.get("/api/takes/uploads/{upload_id}")
-    def take_upload_status(upload_id: str, request: Request):
-        return up.status(actor(request), upload_id)
-
-    @app.post("/api/takes/uploads/{upload_id}/parts")
-    def take_upload_parts(upload_id: str, request: Request, body: dict = Body(default={})):
-        return up.part_urls(actor(request, write=True), upload_id, (body or {}).get("parts"))
-
-    @app.post("/api/takes/uploads/{upload_id}/complete")
-    def take_upload_complete(upload_id: str, request: Request, body: dict = Body(default={})):
-        return up.complete(actor(request, write=True), upload_id, body or {})
-
-    @app.delete("/api/takes/uploads/{upload_id}")
-    def take_upload_abort(upload_id: str, request: Request):
-        return up.abort(actor(request, write=True), upload_id)

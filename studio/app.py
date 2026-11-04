@@ -923,9 +923,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return etagged(request, house.calendar(a))
 
     # ------------------------------------------------------------ One take -> a week (UI = REST = MCP)
-    from . import take_bin as take_bin_mod, take_upload as take_upload_mod  # before /api/takes/{rid}: /bin and /uploads first
-    take_upload_mod.add_routes(app, house, actor)
-    take_bin_mod.add_routes(app, house, actor)
+    from . import take_routes  # before /api/takes/{rid}: /bin and /uploads first
+    take_routes.add_upload_routes(app, house, actor)
+    take_routes.add_bin_routes(app, house, actor)
 
     @app.post("/api/takes")
     def take_start(request: Request, body: dict = Body(...)):

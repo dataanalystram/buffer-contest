@@ -169,6 +169,11 @@ def test_without_a_bucket_uploads_fall_back_to_the_library_limit(human, monkeypa
     assert r.status_code == 503 and "100 MB" in r.json()["error"]
 
 
+def test_bin_constants_match_the_library():
+    from studio import library, take_bin
+    assert (take_bin.TRASH_DAYS, take_bin.TRASH_TOKEN) == (library.TRASH_DAYS, library.TRASH_TOKEN)
+
+
 def test_presign_matches_aws_sigv4():
     """A known-answer vector, cross-checked with botocore's presigner when this was written (4 Nov 2026)."""
     from datetime import datetime, timezone

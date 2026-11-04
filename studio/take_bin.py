@@ -18,10 +18,12 @@ from __future__ import annotations
 import json
 import time
 
-from fastapi import Body, Request
-
 from .actions import ActionError, Actor
-from .library import TRASH_DAYS, TRASH_TOKEN
+
+# The Library's Bin (library.TRASH_DAYS / TRASH_TOKEN; test_take_delete_upload pins they match). Not imported: the video
+# worker imports takes.py, and library.py needs FastAPI, which the worker's venv doesn't have.
+TRASH_DAYS = 7
+TRASH_TOKEN = "trash~"
 
 TOOLS = [
     {"name": "delete_take", "description": "Delete a One take, or one clip of it (clip_id), into the Bin: it is restorable for 7 days "
@@ -334,32 +336,3 @@ def call_tool(studio, actor, name: str, args: dict):
     if name == "restore_take":
         return t.restore_take(actor, args.get("take_id"), args.get("clip_id") or None)
     return t.purge_take_bin(actor, args.get("take_ids"), args.get("clips"), bool(args.get("all")))
-
-
-def add_routes(app, house, actor) -> None:
-    t = house.takes
-
-    @app.get("/api/takes/bin")
-    def take_bin_list(request: Request):
-        return t.take_bin(actor(request))
-
-    @app.post("/api/takes/bin/purge")
-    def take_bin_purge(request: Request, body: dict = Body(default={})):
-        b = body or {}
-        return t.purge_take_bin(actor(request, write=True), b.get("take_ids"), b.get("clips"), bool(b.get("all")))
-
-    @app.delete("/api/takes/{rid}")
-    def take_delete(rid: str, request: Request):
-        return t.delete_take(actor(request, write=True), rid)
-
-    @app.delete("/api/takes/{rid}/clips/{clip_id}")
-    def take_clip_delete(rid: str, clip_id: str, request: Request):
-        return t.delete_take(actor(request, write=True), rid, clip_id)
-
-    @app.post("/api/takes/{rid}/restore")
-    def take_restore(rid: str, request: Request):
-        return t.restore_take(actor(request, write=True), rid)
-
-    @app.post("/api/takes/{rid}/clips/{clip_id}/restore")
-    def take_clip_restore(rid: str, clip_id: str, request: Request):
-        return t.restore_take(actor(request, write=True), rid, clip_id)
