@@ -313,7 +313,9 @@ def cutout_detailed(im: Image.Image, pad: int = 8) -> dict:
     lost = sum(1 for y in range(y0, y1) for i in range(y * sw + x0, y * sw + x1) if bg[i] and d[i] > tol_near + 2)
     lost_frac = lost / max(1, (x1 - x0) * (y1 - y0))
     if lost_frac > 0.03:
-        conf *= max(0.1, 1.0 - (lost_frac - 0.03) * 8)
+        # measured on the regression headphones over seeded sensor noise: every cut with this sign had a torn earcup
+        # (rim alpha 85-135 of 255) at confidence 0.51-0.65, so it is never confident enough to composite
+        conf = min(conf * max(0.1, 1.0 - (lost_frac - 0.03) * 8), MIN_CONFIDENCE * 0.9)
         reasons.append("parts close to the background colour may be missing")
     conf = round(max(0.0, min(1.0, conf)), 2)
     # full-resolution mask: the small mask scaled up, then the edge band re-decided per pixel from the colour distance
