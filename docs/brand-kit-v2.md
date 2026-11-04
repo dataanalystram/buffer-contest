@@ -57,4 +57,4 @@ one-time Supabase copy only runs into an empty store. The audit log shows nine `
 a signed-in human session on the owner's workspace (audit actor "you": the Library UI or a browser session signed in as the owner) between 20:50:54 and 20:51:37 GMT (five forced past the "used in a post that hasn't gone
 out" warning) and four more at 12:32 GMT. Each removed the media rows behind ready posts (runs 4, 5, 6, 9, 10 and 20;
 42 references). Those bytes are gone (hard delete, no backup on the free plan); from now on a delete is restorable for 7
-days. `/healthz` also reports `unique_missing_files` next to `missing_files` (which counts references).
+days. `/healthz` headlines `missing_files` as the count of distinct missing files (4 Nov 2026); `missing_refs` counts the package references to them, one per channel.

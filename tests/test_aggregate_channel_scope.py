@@ -255,3 +255,31 @@ def test_contact_edit_needs_write_access_on_one_of_their_channels(app, api, chan
     assert api.get("/api/contacts/viewonlyzz").json().get("notes", "") in ("", None)   # nothing changed
     assert ed.patch("/api/contacts/mixedzz", json={"notes": "ok"}).status_code == 200  # editor on the other channel
     assert api.patch("/api/contacts/viewonlyzz", {"notes": "owner"}).status_code == 200
+
+
+def test_restricted_link_list_is_one_indexed_sql_query(app, api, channel, world, core):
+    """Greptile perf on #102 (deferred): a restricted caller's list paged through every channel's history and filtered
+    in Python. The channel filter, ORDER BY and LIMIT are now one SQL query, on an index over links.created_at."""
+    from sqlalchemy import event, inspect
+    from huhqueue.models import Link
+    from huhqueue.services import growth
+    tids = _campaign_world(api, core, channel, world)
+    later = utcnow() + timedelta(minutes=5)
+    with core.db.session() as s:
+        s.add_all([Link(code=f"hidqq{i}", url=f"https://example.com/SECRETQQ{i}", target_id=tids[world["id"]], created_at=later)
+                   for i in range(30)])
+        mine_post, hid_post = s.get(PostTarget, tids[channel["id"]]).post_id, s.get(PostTarget, tids[world["id"]]).post_id
+        s.add_all([Link(code="postmineqq", url="https://example.com/POSTMINE", post_id=mine_post),   # post link, no target
+                   Link(code="posthidqq", url="https://example.com/SECRETQQ-post", post_id=hid_post)])
+    assert "ix_links_created_at" in {i["name"] for i in inspect(core.db.engine).get_indexes("links")}
+    seen = []
+    listener = lambda conn, cur, stmt, *a: seen.append(stmt)  # noqa: E731
+    event.listen(core.db.engine, "before_cursor_execute", listener)
+    try:
+        out = growth.list_links(core, channels={channel["id"]})
+    finally:
+        event.remove(core.db.engine, "before_cursor_execute", listener)
+    assert len(out) == 3 and not any("SECRETQQ" in ln["url"] for ln in out), [ln["url"] for ln in out]
+    assert {ln["url"].rsplit("/", 1)[1] for ln in out} == {"MINE_CAMPAIGN", "manual", "POSTMINE"}
+    link_selects = [q for q in seen if "FROM links" in q]
+    assert len(link_selects) == 1 and "LIMIT" in link_selects[0] and "post_targets" in link_selects[0], seen

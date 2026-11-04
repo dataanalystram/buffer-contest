@@ -150,7 +150,7 @@ def test_healthz_does_not_count_binned_or_owner_deleted_files_as_missing(owner):
     m = h.media_audit()
     assert m["files_missing"] == base and m["files_in_bin"] >= 1 and m["files_deleted_by_owner"] >= 1
     hz = owner.get("/healthz").json()["media"]
-    assert hz["missing_files"] == base and hz["files_in_bin"] >= 1
+    assert hz["missing_files"] == m["unique_files_missing"] and hz["missing_refs"] == base and hz["files_in_bin"] >= 1
 
 
 def test_view_run_link_only_for_items_a_run_made(owner):
