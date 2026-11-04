@@ -161,7 +161,7 @@ class Takes(TakeBin):
             meta = self.h.media_meta(a, token)
             if not meta or meta.get("type") != "video":
                 raise ActionError("Unknown video. Upload it first (POST /api/media).", 404)
-        else:
+        elif url:
             p = urlparse(url)
             if p.scheme != "https" or not p.hostname or not drafter._public(p.hostname):
                 raise ActionError("The link must be a public https:// address of a video.")
