@@ -410,7 +410,7 @@ class House:
             kind = "video" if item["kind"] == "video" else "photo"
             self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
             return {"token": item["media_token"], "url": self.media_url(item["media_token"]), "type": kind, "bytes": len(data),
-                    "library_id": item["id"]}
+                    "library_id": item["id"], **({"deduped": True} if item.get("deduped") else {})}
         tok = self.put_media(a, data, name, kind="upload", meta={"type": kind})
         self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
         return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
@@ -708,8 +708,9 @@ class House:
     def runs(self, a: Actor, limit: int = 20) -> list[dict]:
         from .chat_context import titles as _chat_titles  # names given in the Make a post sidebar win
         out, named = [], _chat_titles(self.store, a.uid)
-        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT ?",
-                              (a.uid, limit)):
+        # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads
+        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status<>'archived' "
+                              "ORDER BY id DESC LIMIT ?", (a.uid, limit)):
             d = dict(r)
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
             from .headline import title as _title  # never the raw request with its URL (owner P0)
