@@ -135,8 +135,7 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
 # purpose: the per-day usage counters (brain_tokens, classifier_usage) and demo_owners, which hold no content and keep
 # a reconnect from resetting an allowance.
 OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "source_runs", "source_settings",
-                   "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
-                   "take_uploads")
+                   "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem")
 
 class Store:
     """SQLite locally; Postgres when the path is a postgres:// URL (production: survives restarts,
@@ -339,6 +338,10 @@ class Store:
             self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
             self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
         except Exception:  # noqa: BLE001
+            pass
+        try:  # One take's multipart uploads (studio/take_upload.py); the bucket objects are removed by /api/disconnect first
+            self.x("DELETE FROM take_uploads WHERE user_id=?", (uid,))
+        except Exception:  # noqa: BLE001  (this store hasn't created the table)
             pass
         try:  # the purged-run token list (Bin purge never resurrects) goes with the account too
             self.x("DELETE FROM library_purged WHERE user_id=?", (uid,))

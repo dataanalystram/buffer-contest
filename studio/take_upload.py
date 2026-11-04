@@ -171,7 +171,7 @@ class TakeUploads:
         """Scope before existence: a missing id and someone else's id are the same 404."""
         if not isinstance(upload_id, str) or not re.fullmatch(r"tu_[A-Za-z0-9_-]{8,40}", upload_id):
             raise ActionError("No such upload.", 404)
-        rows = self.store.q("SELECT * FROM take_uploads WHERE id=? AND user_id=? AND status NOT LIKE 'del_%'", (upload_id, a.uid))
+        rows = self.store.q("SELECT * FROM take_uploads WHERE id=? AND user_id=? AND status NOT IN ('del_open', 'del_ready')", (upload_id, a.uid))
         if not rows:
             raise ActionError("No such upload.", 404)
         return dict(rows[0])
