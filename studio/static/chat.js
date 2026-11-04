@@ -178,7 +178,7 @@
     clearTimeout(H.poll); H.watching = null;
     markThread(o.dataset.open);
     threadLoading(true);
-    try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; H.missed = null; threadLoading(false); window.showRun(x); if (busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
+    try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; const mx = H.missed === String(x.id); H.missed = null; threadLoading(false); window.showRun(x); if (mx || busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
     catch (err) {
       if (HQLoad.aborted(err) || !tk.live()) return;
       toast(err.message, 5000);
@@ -197,7 +197,8 @@
   });
   // leaving the thread view (New post, a recent post, a Discover story): the thread request in flight is aborted, so its
   // answer (or its recovery fetch) never reopens a thread over the screen picked now, and the skeleton and inert dock go
-  window.hcCancelThread = () => { HQLoad.start("thread").done(); threadLoading(false); };
+  // (the open thread's poll stops too, so a late poll answer can't replace the screen picked now)
+  window.hcCancelThread = () => { HQLoad.start("thread").done(); const W = window.H_STATE; if (W) { clearTimeout(W.poll); W.watching = null; } threadLoading(false); };
   function markThread(id) {
     document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = String(li.dataset.id) === String(id); li.classList.toggle("on", on); const b = li.querySelector(".hc-th"); if (!b) return; if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); });
   }

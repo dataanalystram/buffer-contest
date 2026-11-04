@@ -156,7 +156,7 @@ def test_planner_nodate_panel(live, chromium, close_contexts, w):
 
 SLOW_RUN = """(() => { const f = window.fetch; window.fetch = (u, o) => { const p = f(u, o);
   if (window.__slowRun && /^\\/api\\/agent\\/runs\\/[^/?]+$/.test(String(u))) return new Promise((ok, no) => { const t = setTimeout(() => p.then(ok, no), window.__slowRun);
-    if (o && o.signal) o.signal.addEventListener('abort', () => { clearTimeout(t); no(new DOMException('Aborted', 'AbortError')); }); });
+    if (o && o.signal) o.signal.addEventListener('abort', () => { window.__slowRunAborted = true; clearTimeout(t); no(new DOMException('Aborted', 'AbortError')); }); });
   return p; }; })()"""
 
 
@@ -167,10 +167,11 @@ def test_new_post_during_thread_load_never_reopens_the_thread(live, chromium, cl
     ctx.add_init_script(SLOW_RUN)
     _open_run(page, live["base"], live["rid"], 1280)
     page.wait_for_function(f"() => !!document.querySelector('#hcList [data-open=\"{live['rid']}\"]')")
-    page.evaluate(f"""() => {{ window.__slowRun = 900; document.querySelector('#hcList [data-open="{live['rid']}"]').click(); }}""")
+    page.evaluate(f"""() => {{ window.__slowRun = 900; window.__slowRunAborted = false; document.querySelector('#hcList [data-open="{live['rid']}"]').click(); }}""")
     page.wait_for_function("() => document.getElementById('runView').classList.contains('hc-loading')")
     page.evaluate("() => document.getElementById('mpNew').click()")
-    page.wait_for_timeout(1300)                               # the held run answer would have landed by now
+    page.wait_for_function("() => window.__slowRunAborted === true", timeout=3000)   # New post aborted the thread request
+    page.wait_for_timeout(1100)                               # the held run answer would have landed by now
     st = page.evaluate("""() => ({ hidden: document.getElementById('runView').hidden, loading: document.getElementById('runView').classList.contains('hc-loading'),
       inert: !!(document.getElementById('hcDock') || {}).inert, run: !!(window.H_STATE && H_STATE.run) })""")
     assert st == {"hidden": True, "loading": False, "inert": False, "run": False}, st
