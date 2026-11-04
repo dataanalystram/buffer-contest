@@ -361,11 +361,11 @@ class ThreadBin:
             self.store.audit(a.uid, a.label, "purge_thread_bin", "safety", {"threads": len(done), "everything": bool(everything)})
         return {"purged_threads": done, "refused": refused}
 
-    def _purge_one(self, uid: str, rid: int) -> bool:
+    def _purge_one(self, uid: str, rid: int, cut: float | None = None) -> bool:
         with self.h.takes._take_lock(rid):  # take lock, then store (as delete); takes._purge below re-enters it (RLock)
-            return self._purge_one_locked(uid, rid)
+            return self._purge_one_locked(uid, rid, cut)
 
-    def _purge_one_locked(self, uid: str, rid: int) -> bool:
+    def _purge_one_locked(self, uid: str, rid: int, cut: float | None = None) -> bool:
         st = self.store
         with st.tx():
             rows = st.q("SELECT id,status,result FROM agent_runs WHERE id=? AND user_id=? AND kind='take'", (rid, uid))
@@ -374,6 +374,8 @@ class ThreadBin:
             res = json.loads(rows[0]["result"] or "{}") or {}
             tb = res.get("thread_bin")
             if not isinstance(tb, dict) or tb.get("purged") or not hidden(rows[0]["status"], res):
+                return False
+            if cut is not None and (tb.get("at") or 0) > cut:  # the 7-day sweep: restored and deleted again since it looked
                 return False
             self._drop_conversation(uid, rid)
             if not (tb.get("takes") == "delete" and rows[0]["status"] == "binned"):
@@ -407,7 +409,7 @@ class ThreadBin:
             res = json.loads(r["result"] or "{}") or {}
             tb = res.get("thread_bin")
             if isinstance(tb, dict) and not tb.get("purged") and hidden(r["status"], res) and (tb.get("at") or 0) <= cut:
-                n += self._purge_one(r["user_id"], r["id"])
+                n += self._purge_one(r["user_id"], r["id"], cut)  # the deletion time is checked again under the take's lock
         return n
 
 

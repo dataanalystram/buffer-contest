@@ -136,6 +136,7 @@ def claim(c: httpx.Client, base: str, jid: int) -> str:
 LOG_TAIL = 4000  # characters of the worker's own output sent back with a failure
 _JT = __import__("re").compile(r"jt_[A-Za-z0-9_\-]{8,}")
 _SIG = __import__("re").compile(r"(?i)(X-Amz-Signature=)[0-9A-Za-z%]+")  # a presigned URL's signature (log_tail redacts it)
+_MASK = __import__("re").compile(r"::add-mask::\S+")
 _SIGS = __import__("re").compile(r"(?i)X-Amz-Signature=([0-9A-Za-z%]+)")
 
 
@@ -169,6 +170,7 @@ def _install_tail() -> None:
 def log_tail() -> str:
     """The last lines this worker printed (stdout + stderr), job tokens redacted."""
     out = "".join(t.buf for t in _tails)[-LOG_TAIL:]
+    out = _MASK.sub("::add-mask::[redacted]", out)  # a mask command's own value (the runner hides it; this copy is ours)
     return _SIG.sub(r"\1[redacted]", _JT.sub("jt_[redacted]", out))
 
 

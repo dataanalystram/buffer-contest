@@ -239,7 +239,18 @@ def test_log_tail_redacts_presigned_signatures(monkeypatch):
     from studio import render_worker
 
     class T:
-        buf = "GET https://r2.test/u/v.mp4?X-Amz-Credential=AK%2F1&X-Amz-Signature=0123abcd4567ef&x=1 failed; jt_abcdefghijkl\n"
+        buf = ("::add-mask::0123abcd4567ef\n"
+               "GET https://r2.test/u/v.mp4?X-Amz-Credential=AK%2F1&X-Amz-Signature=0123abcd4567ef&x=1 failed; jt_abcdefghijkl\n")
     monkeypatch.setattr(render_worker, "_tails", [T()])
     out = render_worker.log_tail()
     assert "0123abcd4567ef" not in out and "X-Amz-Signature=[redacted]" in out and "jt_[redacted]" in out
+
+
+def test_the_sweep_rechecks_the_deletion_time_under_the_lock(human, app, monkeypatch):
+    # the 7-day sweep read an old deletion time, then the thread was restored and deleted again: it isn't purged (Greptile)
+    rid, _, _, _ = _rendered_take(human, app, monkeypatch)
+    house = app.state.house
+    human.delete(f"/api/threads/{_tid(human, rid)}?takes=keep")
+    assert house.threads._purge_one("acc_1", rid, cut=time.time() - 86400) is False           # deleted after the cutoff
+    assert len(human.get("/api/threads/bin").json()["threads"]) == 1
+    assert house.threads._purge_one("acc_1", rid, cut=time.time() + 1) is True
