@@ -139,6 +139,15 @@ def media_usage(s, mid: str) -> dict:
             "ideas": [{"id": i.id, "title": i.title} for i in ideas]}
 
 
+def filter_usage(usage: dict, visible: set | None, recount: bool = True) -> dict:
+    """A copy of ``usage`` listing only posts on ``visible`` channels (None = no channel limit). ``recount`` sets "uses"
+    to what is listed; without it the full count stays (media_delete blocks on the full usage, CodeRabbit 4 Nov 2026)."""
+    if visible is None:
+        return usage
+    posts = [p for p in usage["posts"] if p["channel_id"] in visible]
+    return {"uses": len(posts) + len(usage["ideas"]) if recount else usage["uses"], "posts": posts, "ideas": usage["ideas"]}
+
+
 # --------------------------------------------------------------------------------------------- contacts
 def contact_rows(s, q: str = "") -> list[dict]:
     rows = s.execute(select(Comment.author, func.count(), func.min(Comment.at), func.max(Comment.at),
@@ -352,11 +361,12 @@ def add_content_routes(app: FastAPI, core) -> None:
                 "tags": [{"name": k, "count": v} for k, v in sorted(tags.items())]}
 
     @app.get("/api/media/{mid}/usage", tags=["media"])
-    def media_usage_route(mid: str):
+    def media_usage_route(mid: str, request: Request):
         with core.db.session() as s:
             if not s.get(Media, mid):
                 raise HTTPException(404, "Media not found")
-            return media_usage(s, mid)
+            out = media_usage(s, mid)
+        return filter_usage(out, getattr(request.state, "visible_channels", None))   # channel-limited token / teammate
 
     @app.post("/api/media/{mid}/edit", tags=["media"])
     def media_edit(mid: str, payload: dict = Body(...)):

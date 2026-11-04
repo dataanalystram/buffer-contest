@@ -95,7 +95,7 @@ def test_channel_scope(app, api, channel):
     r = c.post("/api/posts", json={"caption": "all", "channel_ids": ["all"], "when": "draft"})
     assert r.status_code == 403
     theirs = api.post("/api/posts", {"caption": "human on other", "channel_ids": [other["id"]], "when": "draft"}).json()
-    assert c.patch(f"/api/targets/{theirs['targets'][0]['id']}", json={"caption": "hijack"}).status_code == 403
+    assert c.patch(f"/api/targets/{theirs['targets'][0]['id']}", json={"caption": "hijack"}).status_code == 404  # like a missing id
     assert c.get(f"/api/channels/{other['id']}").status_code == 403
     # editing the scope later works too
     tid = api.get("/api/tokens").json()["tokens"][0]["id"]

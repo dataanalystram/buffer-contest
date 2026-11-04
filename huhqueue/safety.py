@@ -105,43 +105,106 @@ def input_hash(body_raw: bytes | None, query: str = "") -> str:
 # --------------------------------------------------------------------------- channel scope
 _CH_PATH = re.compile(r"^/api/channels/([^/]+)")
 _TGT_PATH = re.compile(r"^/api/targets/([^/]+)")
+_POST_PATH = re.compile(r"^/api/posts/([^/]+)/")                      # /api/posts/{post_id}/notes|revisions/...
+_COMMENT_PATH = re.compile(r"^/api/comments/([^/]+)")
+_COMMENT_STATIC = {"bulk", "sync", "insights", "suggest-reply", "start-post"}
+_CHANNEL_IN_PATH = (re.compile(r"^/api/queue/([^/]+)"), re.compile(r"^/api/utm/defaults/([^/]+)"))
+MAX_SCOPE_IDS = 500            # >= every route's own ids cap (bulk 500, comments bulk 200): larger lists are refused
+TOO_MANY = "\x00too-many-ids"  # an ids list over MAX_SCOPE_IDS: never in any scope, nothing is looked up
+UNRESOLVED = "\x00unresolved"   # an object named in the PATH that doesn't exist (or has no channel): never in any scope
 
 
-def referenced_channels(s, method: str, path: str, query: dict, body) -> set[str]:
-    """Channel ids a request touches (by id, provider:username, or through a post id)."""
+def _post_channels(s, pid) -> set[str]:
+    from .models import Post
+    p = s.get(Post, str(pid)) if pid else None
+    return {t.channel_id for t in p.targets} if p else set()
+
+
+def _target_channels(s, tid) -> set[str]:
+    t = s.get(PostTarget, str(tid)) if tid else None
+    return {t.channel_id} if t else set()
+
+
+def _comment_channels(s, cid) -> set[str]:
+    from .models import Comment
+    c = s.get(Comment, str(cid)) if cid else None
+    return {c.channel_id} if c else set()
+
+
+def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], set[str]]:
+    """(channels the request names directly, channels of the OBJECTS it names by id).
+
+    Objects are posts, post targets and comments, named in the path (/api/posts/{id}/..., /api/targets/{id}...,
+    /api/comments/{id}...) or the body (ids, post_id, target_id, comment_id). Each is resolved to its channel(s) here,
+    before any route runs, so a channel-limited token can't reach another channel's object by id (CodeRabbit,
+    4 Nov 2026). A path object, a body comment_id, or a bulk id on /api/comments/bulk, /api/bulk or /api/bulk/approve that
+    doesn't resolve adds UNRESOLVED, so a scoped token or restricted teammate gets the same 404 for a missing id as for
+    another channel's id (no existence probing); other body ids that don't resolve add nothing (their routes validate them)."""
     from .services.posts import PostError, resolve_channels
-    out: set[str] = set()
+    # "/api/validate/" or "/api/bulk/" would otherwise skip the exact-path checks and reach FastAPI's trailing-slash
+    # 307 for a missing id while a forbidden one 404s here: judge the slash-less path (CodeRabbit, 4 Nov 2026)
+    path = path.rstrip("/") or "/"
+    explicit: set[str] = set()
+    objects: set[str] = set()
     refs: list = []
     if isinstance(body, dict):
         refs += list(body.get("channel_ids") or [])
         refs += [c.get("channel_id") for c in body.get("channels") or [] if isinstance(c, dict)]
-        if body.get("channel_id"):
-            refs.append(body["channel_id"])
-        for tid in body.get("ids") or []:          # bulk actions on posts
-            t = s.get(PostTarget, str(tid))
-            if t:
-                out.add(t.channel_id)
-    for k in ("channel_id",):
-        for v in str(query.get(k) or "").split(","):
-            if v.strip():
-                refs.append(v.strip())
+        for k in ("channel_id", "source_channel_id"):
+            if body.get(k):
+                refs.append(body[k])
+        on_comments = path.startswith("/api/comments")
+        raw_ids = body.get("ids") if isinstance(body.get("ids"), list) else []
+        if len(raw_ids) > MAX_SCOPE_IDS:   # one lookup per id runs before any route: bound it (CodeRabbit 4 Nov 2026)
+            objects.add(TOO_MANY)
+            raw_ids = []
+        # a bulk id that doesn't resolve is UNRESOLVED on the routes that would answer 200 for it (comment bulk, /api/bulk,
+        # /api/bulk/approve),
+        # so a missing id answers like another channel's (404, no existence oracle) (CodeRabbit, 4 Nov 2026)
+        strict = on_comments or path in ("/api/bulk", "/api/bulk/approve")
+        for oid in raw_ids:   # bulk: comment ids on /api/comments/*, post targets elsewhere
+            found = _comment_channels(s, oid) if on_comments else _target_channels(s, oid)
+            objects |= found or ({UNRESOLVED} if strict else set())
+        objects |= _post_channels(s, body.get("post_id"))
+        objects |= _target_channels(s, body.get("target_id"))
+        if path == "/api/validate":   # only an exclusion there: a missing id would answer 200 where a forbidden one 404s
+            from .models import Post
+            if body.get("post_id") and s.get(Post, str(body["post_id"])) is None:
+                objects.add(UNRESOLVED)
+            if body.get("target_id") and s.get(PostTarget, str(body["target_id"])) is None:
+                objects.add(UNRESOLVED)
+        cid = body.get("comment_id")
+        if isinstance(cid, (str, int)) and not isinstance(cid, bool) and str(cid).strip():
+            objects |= _comment_channels(s, cid) or {UNRESOLVED}   # a missing scalar comment id: same 404 as a forbidden one
+    for v in str(query.get("channel_id") or "").split(","):
+        if v.strip():
+            refs.append(v.strip())
     m = _CH_PATH.match(path)
     if m and m.group(1) not in ("order",):
         refs.append(m.group(1))
-    m = _TGT_PATH.match(path)
-    if m:
-        t = s.get(PostTarget, m.group(1))
-        if t:
-            out.add(t.channel_id)
-    refs = [r for r in refs if r and r != "all"]
+    for rx in _CHANNEL_IN_PATH:
+        m = rx.match(path)
+        if m:
+            refs.append(m.group(1))
+    for rx, resolve in ((_TGT_PATH, _target_channels), (_POST_PATH, _post_channels), (_COMMENT_PATH, _comment_channels)):
+        m = rx.match(path)
+        if m and not (rx is _COMMENT_PATH and m.group(1) in _COMMENT_STATIC):
+            objects |= resolve(s, m.group(1)) or {UNRESOLVED}
+    refs = [str(r) for r in refs if r and r != "all"]
     if refs:
         try:
-            out |= {c.id for c in resolve_channels(s, refs)}
+            explicit |= {c.id for c in resolve_channels(s, refs)}
         except PostError:
-            out |= {str(r) for r in refs}   # unknown refs count as "not allowed"
+            explicit |= set(refs)   # unknown refs count as "not allowed"
     if isinstance(body, dict) and body.get("channel_ids") == ["all"]:
-        out |= set(s.scalars(select(Channel.id).where(Channel.status != "disconnected")))
-    return out
+        explicit |= set(s.scalars(select(Channel.id).where(Channel.status != "disconnected")))
+    return explicit, objects
+
+
+def referenced_channels(s, method: str, path: str, query: dict, body) -> set[str]:
+    """Channel ids a request touches (by id, provider:username, or through a post / target / comment id)."""
+    explicit, objects = scope_refs(s, method, path, query, body)
+    return explicit | (objects - {UNRESOLVED})
 
 
 # --------------------------------------------------------------------------- daily caps

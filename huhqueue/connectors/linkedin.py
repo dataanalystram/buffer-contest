@@ -387,12 +387,28 @@ class LinkedInConnector(Connector):
     def video_status(self, tok: str, urn: str) -> str:
         return (self._json("GET", f"{REST}/videos/{quote(urn, safe='')}", tok).get("status") or "PROCESSING").upper()
 
+    def _fetch_policy(self) -> str:
+        return "lan" if getattr(self.settings, "allow_private_urls", False) else "public"
+
+    def _preview_image(self, url: str) -> httpx.Response | None:
+        """The og:image of a previewed page (named by that page, so untrusted): same guard, 10 MB cap."""
+        from .. import netguard
+        if not url:
+            return None
+        try:
+            r = netguard.request(self.http, "GET", url, policy=self._fetch_policy(), limit=10_000_000)
+        except (httpx.HTTPError, netguard.FetchError):
+            return None
+        return r if r.status_code < 400 and r.content else None
+
     def read_preview(self, url: str) -> dict:
         """og:title / og:description / og:image of a page (best effort)."""
+        from .. import netguard   # the link comes from the post: vetted + pinned, every redirect hop re-checked
         try:
-            r = self.http.get(url, headers={"User-Agent": "Mozilla/5.0 (HuhQueue link preview)"}, follow_redirects=True)
+            r = netguard.request(self.http, "GET", url, policy=self._fetch_policy(), limit=2_000_000,
+                                 headers={"User-Agent": "Mozilla/5.0 (HuhQueue link preview)"})
             page = r.text[:400_000] if r.status_code < 400 else ""
-        except httpx.HTTPError:
+        except (httpx.HTTPError, netguard.FetchError):
             page = ""
 
         def meta(*names):
@@ -446,8 +462,8 @@ class LinkedInConnector(Connector):
                 art["description"] = pv["description"]
             if pv["image"]:
                 try:
-                    r = self.http.get(pv["image"], follow_redirects=True)
-                    if r.status_code < 400 and r.content:
+                    r = self._preview_image(pv["image"])
+                    if r is not None:
                         art["thumbnail"] = self.upload_image(tok, author, r.content,
                                                              r.headers.get("content-type", "image/jpeg").split(";")[0])
                 except (httpx.HTTPError, RetryableError, PermanentError):
