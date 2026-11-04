@@ -139,11 +139,14 @@ def strip_meta(data: bytes, ext: str, im) -> tuple[bytes, str]:
     if ext in ("jpg", "png"):
         from . import metastrip
         return metastrip.strip_bytes(ext, data), ext
-    clean = ImageOps.exif_transpose(im)
-    clean = clean.convert("RGBA" if clean.mode in ("RGBA", "LA", "P") else "RGB")
+    from PIL import Image
+    from . import metastrip
+    up = ImageOps.exif_transpose(im)
+    up = up.convert("RGBA" if up.mode in ("RGBA", "LA", "P") else "RGB")
+    clean = Image.frombytes(up.mode, up.size, up.tobytes())  # pixels only: no info / EXIF / XMP / ICC carried over
     buf = io.BytesIO()
     clean.save(buf, "PNG", optimize=True)
-    return buf.getvalue(), "png"
+    return metastrip.strip_bytes("png", buf.getvalue()), "png"  # belt and braces: no eXIf / text chunk survives
 
 
 # ------------------------------------------------------------------------------------------------ storage
@@ -207,6 +210,8 @@ def fetch_image(studio, a: Actor, args: dict) -> dict:
         raise ImageFetchError(code or "unreachable", why if why.startswith("http_") else "")
     im, ext = open_image(data)
     clean, ext = strip_meta(data, ext, im)
+    from PIL import ImageOps
+    im = ImageOps.exif_transpose(im)  # the size and preview of what is stored (a rotated PNG is stored upright)
     from urllib.parse import urlparse
     tok = h.put_media(a, clean, f"source.{ext}", kind="source",
                       meta={"type": "photo", "width": im.width, "height": im.height, "run_id": rid,
@@ -246,10 +251,10 @@ def load_source(studio, a: Actor, args: dict, rid: int | None):
         raise ActionError("No such media for this account.", 404)
     from PIL import Image, ImageOps
     from . import image_ops
-    with Image.open(io.BytesIO(m["data"])) as probe:  # header only: the size crop pixels refer to (upright)
-        w, h = probe.size
-        src_size = (h, w) if (probe.getexif().get(0x0112) or 1) in (5, 6, 7, 8) else (w, h)
-    im, _ = open_image(m["data"], work_side=image_ops.MAX_SIDE)
+    im, _ = open_image(m["data"], work_side=image_ops.MAX_SIDE)  # guarded: non-images / bombs answer ImageFetchError
+    with Image.open(io.BytesIO(m["data"])) as probe:  # header only (already validated): the size crop pixels refer to
+        sw, sh = probe.size
+        src_size = (sh, sw) if (probe.getexif().get(0x0112) or 1) in (5, 6, 7, 8) else (sw, sh)
     im = ImageOps.exif_transpose(im)
     return im, tok, {**(meta or {}), "src_size": src_size}
 

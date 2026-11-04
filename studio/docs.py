@@ -388,7 +388,7 @@ _DESC = {
     "POST /api/media": "Upload an image or video (multipart; size checked before parsing)",
     "GET /api/media/health": "Ready posts whose files were deleted (the startup and periodic missing-media check)",
     "POST /api/images/fetch": "fetch_image: the server fetches a public https image (SSRF-guarded) and keeps it as run media",
-    "POST /api/images/cutout": "cutout_product: transparent PNG of the product; engine fast | auto | ml (ISNet) | hq (BiRefNet-lite), ml/hq answer a job_id",
+    "POST /api/images/cutout": "cutout_product: transparent PNG of the product; engine fast | auto | ml (ISNet) | hq (BiRefNet-lite); ml/hq, and auto when the fast cut-out is not confident, answer a job_id",
     "POST /api/images/edit": "edit_image: up to 12 ordered ops (crop, fit, pad, cutout, card, round, grade, sharpen) on your own image",
     "POST /api/images/card": "compose_product_card: the product on the brand ground with a soft shadow",
     "POST /api/posts/preview": "Validate a post for one channel and get a single-use confirm token",
