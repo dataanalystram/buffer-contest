@@ -326,3 +326,8 @@ Loading states (studio/static/loading.js, loading.css; 4 Nov 2026)
   Licence:  MIT. Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
             associated documentation files, to deal in the Software without restriction, subject to including the
             copyright notice and this permission notice in all copies or substantial portions of the Software.
+
+Lucide icons (https://lucide.dev), ISC License. Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as
+part of Feather (MIT); all other copyright (c) for Lucide are held by Lucide Contributors 2022. The chat's agent and user
+avatars, Stop, Jump to latest, and the model menu's check and key icons (studio/static/chat.js) are Lucide paths inlined
+as SVG (bot, user, square, arrow-down, check, key-round).
