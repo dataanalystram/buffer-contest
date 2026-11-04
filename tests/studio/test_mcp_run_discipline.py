@@ -513,10 +513,10 @@ def test_create_package_without_media_urls_restages_the_current_render_not_a_rep
     tok = agent_token(human, policy="trusted", cap=100)
     rid = _start(human, tok)["run_id"]
     _call(human, tok, "render_carousel", {"run_id": rid, "slides": _slides(2, "a")})
-    err, p1 = _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "Same caption"}})
+    err, p1 = _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "Same caption"}, "output": 1})
     assert not err, p1
     err, b = _call(human, tok, "render_carousel", {"run_id": rid, "slides": _slides(2, "b")})
-    err, p2 = _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "Same caption"}})
+    err, p2 = _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "Same caption"}, "output": 1})
     assert not err and not p2.get("idempotent_replay")
     run = human.get(f"/api/agent/runs/{rid}").json()
     assert run["result"]["packages"][0]["media_urls"] == b["media_urls"]
