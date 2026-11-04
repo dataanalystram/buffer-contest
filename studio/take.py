@@ -645,9 +645,17 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
     timings["faces"] = round(time.time() - t, 1)
     log(f"scenes: {len(scenes)} ({scene_how}); faces: {len(faces)} samples ({face_how})")
     t = time.time()
+    jev_frames = None
     try:
         from .media import jev_faces
-        faces, jev_rec = jev_faces.second_opinion(path, faces, scenes, info["duration"], jev, log=log)
+        if jev is True and not os.environ.get("TYPESAFE_API_KEY"):  # the key lives on the server: hand it the keyframes
+            jev_frames = jev_faces.keyframe_jpegs(path, faces, scenes, info["duration"], log=log)
+            jev_rec = {"enabled": True, "why": "pending: the server asks Jev for these keyframes (the key stays there)",
+                       "model": jev_faces.MODEL, "cap": jev_faces.cap_from_env(), "frames": [], "calls": 0, "used": 0,
+                       "errors": 0, "pending": len(jev_frames), "fallback": None}
+            log(f"jev: {len(jev_frames)} keyframes for the server")
+        else:
+            faces, jev_rec = jev_faces.second_opinion(path, faces, scenes, info["duration"], jev, log=log)
     except Exception as e:  # noqa: BLE001 - Jev is a second opinion: it never fails the take
         jev_rec = {"enabled": False, "why": f"error: {e.__class__.__name__}", "frames": [], "fallback": "local faces + centred crop"}
         log(f"jev: {jev_rec['why']}; local faces + centred crop")
@@ -661,7 +669,7 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
     return {"probe": {k: info[k] for k in ("duration", "width", "height", "audio", "codec")}, "words": words, "language": lang,
             "transcript_source": (transcript or {}).get("source") if transcript and transcript.get("words") else "whisper",
             "burned_subs": burned, "face_detector": not face_how.startswith("none") or bool(jev_rec.get("used")),
-            "silences": silences, "scenes": scenes, "faces": faces, "jev": jev_rec,
+            "silences": silences, "scenes": scenes, "faces": faces, "jev": jev_rec, **({"jev_frames": jev_frames} if jev_frames else {}),
             "providers": {"stt": provider, "scenes": scene_how, "faces": face_how + jev_note, "vad": "Silero VAD (inside faster-whisper)"
                           if "faster-whisper" in provider else "ffmpeg silencedetect"},
             "timings": {**timings, "total": round(time.time() - t0, 1)}}

@@ -1,4 +1,18 @@
-"""Jev (TypeSafe System One, ``jev-latest``) as a SECOND OPINION on faces in a take (owner ask, 4 Nov 2026).
+"""Jev (TypeSafe System One, ``jev-1.14.0``) as a SECOND OPINION on faces in a take (owner ask, 4 Nov 2026).
+
+**Model.** ``jev-1.14.0``, pinned: the newest release (14 Oct 2026, docs.typesafe.ai/models). ``jev-latest`` and
+``jev-preview`` both point to it today (no preview build), and Box questions need Jev 1.14+. Pinned, not the alias, because
+the YES / NO thresholds below were set against it (the docs' advice for tuned thresholds). HQ_JEV_MODEL may name an alias
+or another ``jev-1.14``+ version; anything older falls back to the pin.
+
+**Where it runs (production).** TYPESAFE_API_KEY lives on the HuhQueue server (Render), not on the video workers. A
+worker without the key picks the keyframes, re-encodes them (JPEG, no metadata) and returns them with the analysis
+(``analysis["jev_frames"]``); the server asks Jev for those frames (``studio_opinion``, studio/takes.py ``_studio_jev``),
+merges the boxes into the face track and drops the frames before anything is saved. The key never leaves the server and
+is never logged. A worker that does have the key (a repo secret on GitHub Actions) asks Jev itself, as below.
+
+**Free, capped.** At most ``cap`` keyframes per take (HQ_JEV_FACE_CAP, default 12) and HQ_JEV_DAILY_CAP keyframes per
+account per day on the server (default 60); past either, the take uses the local faces only.
 
 Local MediaPipe / OpenCV stays the primary detector on every sampled frame (studio/take.py face_track). Jev only looks
 at a few keyframes, at most ``cap`` per take (HQ_JEV_FACE_CAP, default 12):
@@ -29,14 +43,29 @@ Images: JPEG, 280-1568 px per side, re-encoded from raw pixels (no EXIF, upright
 from __future__ import annotations
 
 import io
+import base64
 import json
 import os
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
-MODEL = os.environ.get("HQ_JEV_MODEL", "jev-latest")
+PIN = "jev-1.14.0"            # Box needs Jev 1.14+; the thresholds were tuned on it
+
+
+def _model() -> str:
+    m = os.environ.get("HQ_JEV_MODEL", "").strip()
+    if m in ("jev-latest", "jev-preview"):
+        return m
+    v = re.fullmatch(r"jev-(\d+)\.(\d+)(?:\.\d+)?", m)
+    return m if v and (int(v[1]), int(v[2])) >= (1, 14) else PIN
+
+
+MODEL = _model()
+FRAME_MAX_BYTES = 400_000    # one keyframe a worker hands to the server (a 768 px JPEG is ~60 KB)
+WHYS = ("scene_start", "no_local_face", "low_confidence")
 DEFAULT_CAP = 12
 YES, NO = 0.7, 0.3          # Noul thresholds (docs: 0.7 / 0.3 starting points)
 HOLD_S = 1.0                # a Jev face also stands for local-empty samples this close to its keyframe
@@ -61,6 +90,14 @@ def cap_from_env() -> int:
         return max(0, min(40, int(os.environ.get("HQ_JEV_FACE_CAP", str(DEFAULT_CAP)))))
     except ValueError:
         return DEFAULT_CAP
+
+
+def daily_cap() -> int:
+    """Keyframes per account per day on the server's key (HQ_JEV_DAILY_CAP, default 60; 0 turns server-side Jev off)."""
+    try:
+        return max(0, min(1000, int(os.environ.get("HQ_JEV_DAILY_CAP", "60"))))
+    except ValueError:
+        return 60
 
 
 def enabled(spec_flag) -> tuple[bool, str]:
@@ -271,3 +308,89 @@ def merge(faces: list[dict], results: list[dict], fps: float = 2.0) -> list[dict
                 by_k[k] = {"t": round(k / fps, 2), **s}
                 r["used"] = True
     return [by_k[k] for k in sorted(by_k)]
+
+
+# ---------------------------------------------------------------------- worker without the key -> the server asks
+def keyframe_jpegs(path: str, faces: list[dict], scenes: list[float], duration: float, cap: int | None = None, fps: float = 2.0,
+                   grab=None, log=print) -> list[dict]:
+    """On a worker WITHOUT the key: the keyframes Jev should see, as [{t, why, jpeg (base64)}], at most ``cap``."""
+    cap = cap_from_env() if cap is None else max(0, int(cap))
+    grab, out = grab or frame_image, []
+    for k in pick_keyframes(faces, scenes, duration, fps, cap):
+        try:
+            jpeg, _ = prepare(grab(path, k["t"]))
+        except Exception as e:  # noqa: BLE001 - one missing frame is one fewer keyframe
+            log(f"jev: no keyframe at {k['t']}s ({e.__class__.__name__})")
+            continue
+        if len(jpeg) <= FRAME_MAX_BYTES:
+            out.append({"t": k["t"], "why": k["why"], "jpeg": base64.b64encode(jpeg).decode()})
+    return out
+
+
+def clean_frames(frames, cap: int) -> list[dict]:
+    """The server's check of what a worker sent: a list of at most ``cap`` {t, why, jpeg}; every image decoded and
+    re-encoded here (pixels only, 280-1568 px), anything odd dropped. Returns [{t, why, jpeg (bytes)}]."""
+    from PIL import Image
+    out: list[dict] = []
+    if not isinstance(frames, list):
+        return out
+    for f in frames[:max(0, cap)]:
+        try:
+            t, why, b = f["t"], f["why"], f["jpeg"]
+            if isinstance(t, bool) or not isinstance(t, (int, float)) or why not in WHYS or not isinstance(b, str):
+                continue
+            if len(b) > FRAME_MAX_BYTES * 4 // 3 + 4:
+                continue
+            raw = base64.b64decode(b, validate=True)
+            if not raw.startswith(b"\xff\xd8"):
+                continue
+            im = Image.open(io.BytesIO(raw))
+            if im.format != "JPEG" or max(im.size) > MAX_SIDE or min(im.size) < 16:
+                continue
+            jpeg, _ = prepare(im)
+            out.append({"t": round(float(t), 2), "why": why, "jpeg": jpeg})
+        except Exception:  # noqa: BLE001 - a bad frame is skipped, never an error on the take
+            continue
+    return out
+
+
+def studio_opinion(faces: list[dict], frames: list[dict], key: str, cap: int, fps: float = 2.0, http=None, log=print,
+                   timeout: float = TIMEOUT_S) -> tuple[list[dict], dict]:
+    """On the SERVER: Jev on the worker's keyframes (already ``clean_frames``). Same record as second_opinion. Never raises."""
+    t0 = time.time()
+    rec: dict = {"enabled": True, "why": "on (asked from the server; the key stays there)", "model": MODEL, "cap": cap,
+                 "frames": [], "calls": 0, "errors": 0, "used": 0, "input_tokens": 0, "fallback": None, "where": "server"}
+    frames = frames[:max(0, cap)]
+    if not frames:
+        rec["why"] = "on: no keyframes needed a second opinion"
+        return faces, rec
+
+    def one(k: dict) -> dict:
+        t1 = time.perf_counter()
+        out = {"t": k["t"], "why": k["why"]}
+        try:
+            data = ask(k["jpeg"], key, http=http, timeout=timeout)
+            out.update(decide(data))
+            out["input_tokens"] = int(((data.get("usage") or {}).get("input_tokens")) or 0)
+        except Exception as e:  # noqa: BLE001 - timeout, HTTP error, bad answer: local + centred crop there
+            msg = str(e).replace(key, "***") if key else str(e)
+            out.update({"verdict": "error", "error": f"{e.__class__.__name__}: {msg[:120]}"})
+        out["ms"] = round((time.perf_counter() - t1) * 1000)
+        return out
+    try:
+        with ThreadPoolExecutor(max_workers=min(CONCURRENCY, len(frames))) as ex:
+            results = list(ex.map(one, frames))
+    except Exception as e:  # noqa: BLE001
+        rec["fallback"] = e.__class__.__name__
+        return faces, rec
+    rec["calls"] = len(results)
+    rec["errors"] = sum(r["verdict"] == "error" for r in results)
+    rec["input_tokens"] = sum(r.get("input_tokens", 0) for r in results)
+    merged = merge(faces, results, fps)
+    rec["used"] = sum(r.get("used", False) for r in results)
+    rec["frames"] = results
+    if rec["errors"]:
+        rec["fallback"] = f"{rec['errors']} of {len(results)} Jev calls failed: local faces + centred crop there"
+    rec["secs"] = round(time.time() - t0, 2)
+    log(f"jev (server): {len(results)} keyframes, {rec['used']} faces added, {rec['errors']} errors, {rec['input_tokens']} input tokens")
+    return merged, rec

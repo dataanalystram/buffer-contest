@@ -136,7 +136,7 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
 # a reconnect from resetting an allowance.
 OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "source_runs", "source_settings",
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
-                   "thread_ids", "thread_deleted")
+                   "thread_ids", "thread_deleted", "jev_usage")
 
 class Store:
     """SQLite locally; Postgres when the path is a postgres:// URL (production: survives restarts,

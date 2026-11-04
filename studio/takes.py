@@ -447,6 +447,7 @@ class Takes(TakeBin):
         # Each read-modify-write runs under the take's lock, the same one delete / restore / purge take (take_bin.py), so a
         # callback already past its cancelled check can't save an old result over the Bin's. Picking the moments (AI
         # engines, up to minutes) runs outside it; the take is read again, and checked again, before the result is saved.
+        analysis = self._studio_jev(jid, analysis) if not error else analysis  # outside the lock: network calls
         with self._job_lock(jid):  # a fresh context each time (the lock itself is per take)
             first = self._on_analysis(jid, analysis, error)
         if first.get("done") is not None:
@@ -468,6 +469,62 @@ class Takes(TakeBin):
                 self._save(rid, steps, res, "failed")
                 return {"ok": False}
             return self._land_moments(a, rid, steps, res, mined, used)
+
+    def _jev_used(self, uid: str, add: int = 0) -> int:
+        """Jev keyframes this account used today on the server's key (the daily cap; everything stays free)."""
+        st = self.store
+        if not getattr(st, "_jev_usage_ok", False):
+            st.x("CREATE TABLE IF NOT EXISTS jev_usage (day TEXT, user_id TEXT, n INTEGER, PRIMARY KEY(day, user_id))")
+            if st.pg:
+                st.x("ALTER TABLE jev_usage ENABLE ROW LEVEL SECURITY")
+            st._jev_usage_ok = True
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        if add:
+            st.x("INSERT INTO jev_usage(day,user_id,n) VALUES(?,?,?) ON CONFLICT(day,user_id) DO UPDATE SET n=jev_usage.n+excluded.n",
+                 (day, uid, int(add)))
+        rows = st.q("SELECT n FROM jev_usage WHERE day=? AND user_id=?", (day, uid))
+        return int(rows[0]["n"]) if rows else 0
+
+    def _studio_jev(self, jid: int, analysis):
+        """A worker without TYPESAFE_API_KEY sends its keyframes (analysis["jev_frames"]); the server, which has the key, asks
+        Jev for them (studio/media/jev_faces.py studio_opinion) and merges the boxes into the face track. Only for a take whose
+        input says jev (a person in the app, or an approved MCP request), within the per-take and per-day caps. The frames
+        are never saved; the key never leaves the server and is never logged. Never fails the take."""
+        if not isinstance(analysis, dict) or "jev_frames" not in analysis:
+            return analysis
+        frames = analysis.pop("jev_frames")
+        try:
+            from .media import jev_faces
+            if self.job_cancelled(jid):
+                return analysis
+            j = self._job(jid)
+            run = self._run(Actor(j["user_id"]), j["run_id"])
+            base = {"enabled": False, "model": jev_faces.MODEL, "frames": [], "calls": 0, "used": 0, "errors": 0, "fallback": None}
+            key = os.environ.get("TYPESAFE_API_KEY", "")
+            if run["input"].get("jev") is not True:
+                analysis["jev"] = {**base, "why": "off for this take (not started by a person in the app, or not approved)"}
+                return analysis
+            if not key:
+                analysis["jev"] = {**base, "why": "off: TYPESAFE_API_KEY isn't set on the server"}
+                return analysis
+            cap = min(jev_faces.cap_from_env(), max(0, jev_faces.daily_cap() - self._jev_used(j["user_id"])))
+            if cap <= 0:
+                analysis["jev"] = {**base, "why": "off: today's free Jev allowance for this account is used up"}
+                return analysis
+            clean = jev_faces.clean_frames(frames, cap)
+            faces, rec = jev_faces.studio_opinion(analysis.get("faces") or [], clean, key, cap, http=getattr(self, "_jev_http", None),
+                                                  log=lambda m: print(m, flush=True))
+            if rec.get("calls"):
+                self._jev_used(j["user_id"], rec["calls"])
+            analysis["faces"], analysis["jev"] = faces, rec
+            if rec.get("used"):
+                analysis["face_detector"] = True
+                pv = analysis.get("providers") or {}
+                pv["faces"] = f"{pv.get('faces', '')} + Jev second opinion ({rec['used']} of {rec['calls']} keyframes used)".strip(" +")
+                analysis["providers"] = pv
+        except Exception as e:  # noqa: BLE001 - a second opinion never fails the take; local faces + centred crop
+            analysis["jev"] = {"enabled": False, "why": f"error: {e.__class__.__name__}", "frames": [], "fallback": "local faces + centred crop"}
+        return analysis
 
     def _mine(self, run: dict, analysis: dict, eng, chat) -> dict:
         if run["input"].get("style") == "opus":
