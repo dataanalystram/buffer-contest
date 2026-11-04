@@ -141,7 +141,6 @@ def check_caps(store, a: Actor) -> None:
     open_ = active_run(store, a)
     keep = f" or keep working on run {open_['id']} (pass run_id: {open_['id']})" if open_ else " or keep working on the post you already made (pass its run_id)"
     if hour >= PER_HOUR:
-        msg = f"You've started {hour} posts in the last hour from this app. Ask the person before starting another,{keep[3:] if keep.startswith(' or') else keep}."
         msg = f"You've started {hour} posts in the last hour from this app. Ask the person before starting another{keep}."
     else:
         msg = f"You've started {day} posts today from this app (the limit is {PER_DAY}). Ask the person before starting another{keep}."
