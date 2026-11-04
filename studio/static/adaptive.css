@@ -103,3 +103,4 @@
 .pl-grid-wrap{max-width:none}
 .pl-grid{grid-template-columns:repeat(auto-fill,minmax(clamp(150px,14vw,240px),1fr));gap:6px}
 .pl-skel-wrap{padding:4px 0}
+.ib-stats>.hq-skw,.lp-grid>.hq-skw{grid-column:1/-1}

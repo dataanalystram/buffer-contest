@@ -477,7 +477,13 @@ function ibTile(key, label, value, sub, tone = "", go = "") {
 }
 async function loadInbox() {
   const box = $("#inboxGroups"), demo = !!S.session?.demo;
-  const [d, sched, lim] = await Promise.all([api("/api/inbox").catch((e) => ({ error: e.message })), api("/api/queue?status=scheduled").catch(() => []), api("/api/limits").catch(() => null)]);
+  // a skeleton the first time, the busy bar on a refresh; a newer load aborts this one (loading.js)
+  const tk = HQLoad.start("inbox"), sig = { signal: tk.signal };
+  if (!loadInbox.drawn) { $("#ibStats").innerHTML = HQLoad.tiles(4, "Loading your inbox"); box.innerHTML = HQLoad.rows(3); box.setAttribute("aria-busy", "true"); }
+  else HQLoad.busy($("#tab-inbox"), true, "Refreshing");
+  const [d, sched, lim] = await Promise.all([api("/api/inbox", sig).catch((e) => ({ error: e.message, aborted: HQLoad.aborted(e) })), api("/api/queue?status=scheduled", sig).catch(() => []), api("/api/limits", sig).catch(() => null)]);
+  if (!tk.live() || d.aborted) return;
+  tk.done(); HQLoad.busy($("#tab-inbox"), false); loadInbox.drawn = true;
   box.removeAttribute("aria-busy");
   if (d.error) { box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(d.error)}</div>`; return; }
   ibBadge(d.waiting);
