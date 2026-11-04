@@ -63,11 +63,16 @@ def webhook(core, payload: dict) -> None:
     url = (core.prefs().get("notify_webhook_url") or "").strip()
     if not url:
         return
+    from .. import netguard   # owner-set URL: LAN allowed, link-local / metadata never, no redirects followed
     try:
         if "ntfy" in url:  # ntfy.sh style topics take plain text
-            core.http.post(url, content=payload["message"].encode(), headers={"Title": "HuhQueue", "Tags": payload["level"]},
-                           timeout=10)
+            netguard.request(core.http, "POST", url, policy="lan", follow=False, limit=200_000,
+                             content=payload["message"].encode(), headers={"Title": "HuhQueue", "Tags": payload["level"]},
+                             timeout=10)
         else:
-            core.http.post(url, json={"text": payload["message"], **payload}, timeout=10)
+            netguard.request(core.http, "POST", url, policy="lan", follow=False, limit=200_000,
+                             json={"text": payload["message"], **payload}, timeout=10)
+    except netguard.FetchError as e:
+        log.warning("notification webhook refused: %s", e)
     except httpx.HTTPError as e:
         log.warning("notification webhook failed: %s", e.__class__.__name__)

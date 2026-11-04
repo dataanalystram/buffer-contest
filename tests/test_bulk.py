@@ -181,8 +181,10 @@ def test_bulk_channel_settings(api, channel):
 
 
 @respx.mock
-def test_notification_switches_pause_and_test_button(api, core, channel):
-    hook = respx.post("https://hooks.example/push").respond(200)
+def test_notification_switches_pause_and_test_button(api, core, channel, monkeypatch):
+    from huhqueue import netguard   # the notify webhook host is resolved and vetted: fake DNS (respx may see the host or the pinned IP)
+    monkeypatch.setattr(netguard, "_getaddrinfo", lambda h, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))])
+    hook = respx.post(url__regex=r"^https://(hooks\.example|93\.184\.216\.34)/push$").respond(200)
     assert api.post("/api/notifications/test").status_code == 400          # no webhook yet
     api.put("/api/settings", {"notify_webhook_url": "https://hooks.example/push"})
     r = api.post("/api/notifications/test")
