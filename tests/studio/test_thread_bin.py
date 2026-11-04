@@ -116,16 +116,15 @@ def test_deleting_a_take_thread_never_deletes_media_then_restore_and_purge(human
     p = human.post("/api/threads/bin/purge", json={"thread_ids": [tid]}).json()
     assert p["purged_threads"] == [tid] and not p["refused"]
     assert rid not in _sidebar(human) and rid in _takes(human) and w.get(f"/m/{tok}").status_code == 200
-    for x in (tok, src):
-        assert st.q("SELECT COUNT(*) n FROM media WHERE token=?", (x,))[0]["n"] == 1      # every file is still there
+    assert st.q("SELECT COUNT(*) n FROM media WHERE token=?", (tok,))[0]["n"] == 1        # the clip file is still there
+    assert app.state.house.get_media(src) is not None                                     # and so is the upload
     assert st.q("SELECT COUNT(*) n FROM chat_titles WHERE run_id=?", (rid,))[0]["n"] == 0
     assert human.get("/api/threads/bin").json()["threads"] == []
     # the tombstone: the id stays a 404 for good, and the thread never comes back
     for r in (human.get(f"/api/threads/{tid}"), human.delete(f"/api/threads/{tid}"), human.post(f"/api/threads/{tid}/restore")):
         assert r.status_code == 404
     assert rid not in _sidebar(human)
-    hz = human.get("/healthz").json()
-    assert hz["ok"] is True and hz["media"]["missing_files"] == 0
+    assert app.state.house.media_audit()["unique_files_missing"] == 0
 
 
 def test_make_a_post_and_failed_threads_can_be_deleted_and_keep_their_media(human, app):
