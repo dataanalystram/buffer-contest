@@ -26,13 +26,13 @@ jobs:
       - if: ${{ github.event.inputs.kind != 'image_matte' }}
         run: pip install -q -r requirements-worker-core.txt -r requirements-media.txt
       - if: ${{ github.event.inputs.kind != 'image_matte' }}
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: {path: ~/.cache/huggingface, key: whisper-media-tiny-v1}
       # image_matte: rembg (pinned) with a named model only (never rembg's BRIA default); weights cached between runs
       - if: ${{ github.event.inputs.kind == 'image_matte' }}
         run: pip install -q -r requirements-worker-core.txt -r requirements-matte.txt
       - if: ${{ github.event.inputs.kind == 'image_matte' }}
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: {path: ~/.u2net, key: matte-isnet-birefnet-lite-v1}
       - name: Render job ${{ github.event.inputs.job_id }}
         env: {HQ_JOB_ID: "${{ github.event.inputs.job_id }}", HQ_APP: "${{ github.event.inputs.app }}"}
