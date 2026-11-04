@@ -104,3 +104,7 @@
 .pl-grid{grid-template-columns:repeat(auto-fill,minmax(clamp(150px,14vw,240px),1fr));gap:6px}
 .pl-skel-wrap{padding:4px 0}
 .ib-stats>.hq-skw,.lp-grid>.hq-skw{grid-column:1/-1}
+/* a text-only post has no picture to show: its card gives the room to the words */
+.pl-week .pl-chip-th:not(:has(img)),.pl-dayv .pl-chip-th:not(:has(img)){display:none}
+.pl-week .pl-chip .c,.pl-dayv .pl-chip .c{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.25}
+.pl-week .pl-chip-m,.pl-dayv .pl-chip-m{align-items:flex-start}

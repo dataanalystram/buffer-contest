@@ -141,6 +141,16 @@ def main(out, prefix="after", only=""):
                         print("thread open failed", w, str(e)[:120])
                     pg.wait_for_timeout(900)
                     save(pg, out, f"thread-{w}", w, prefix) or bad.append(f"thread-{w}")
+                    pg.evaluate("() => { const h = document.getElementById('pkgHead'); if (h) h.scrollIntoView({ block: 'start' }); }")
+                    pg.wait_for_timeout(500)
+                    save(pg, out, f"review-{w}", w, prefix) or bad.append(f"review-{w}")
+                    if w >= 1440:
+                        pg.get_by_test_id("chat-sidebar-open").click()
+                        pg.wait_for_timeout(600)
+                        pg.evaluate("() => { const h = document.getElementById('pkgHead'); if (h) h.scrollIntoView({ block: 'start' }); }")
+                        pg.wait_for_timeout(400)
+                        save(pg, out, f"review-threads-hidden-{w}", w, prefix) or bad.append(f"review-threads-hidden-{w}")
+                        pg.get_by_test_id("chat-sidebar-open").click()
                 for tab in ("inbox", "library", "brand", "apps", "activity", "settings"):
                     if not want(f"{tab}-{w}"):
                         continue
