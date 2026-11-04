@@ -103,8 +103,8 @@ def test_linkedin_preview_refuses_internal_page_and_image(monkeypatch):
     page = b'<meta property="og:title" content="T"><meta property="og:image" content="http://169.254.169.254/latest/x.png">'
     t = Recorder(lambda req: httpx.Response(200, content=page, headers={"content-type": "text/html"}, request=req))
     li = LinkedInConnector(type("S", (), {})(), http=httpx.Client(transport=t))
-    assert li.read_preview("http://127.0.0.1:8787/api/settings")["title"] == ""
-    assert t.seen == []
+    pv = li.read_preview("http://127.0.0.1:8787/api/settings")
+    assert pv["description"] == "" and pv["image"] == "" and t.seen == []   # title falls back to the link itself
     pv = li.read_preview("https://blog.test/post")
     assert pv["title"] == "T" and len(t.seen) == 1
     assert li._preview_image(pv["image"]) is None and len(t.seen) == 1     # the internal og:image is never fetched
