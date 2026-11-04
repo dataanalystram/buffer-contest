@@ -196,7 +196,7 @@ function showRun(r) {
     html += `<div class="strip" data-testid="media-strip">${media.map((m, i) => isVid(m.url) || m.type === "video"
       ? `<video src="${esc(m.url)}" controls playsinline preload="metadata" data-testid="media-video"></video>`
       : `<a href="${escUrl(m.url)}" target="_blank" rel="noopener"><img src="${esc(m.url)}" alt="Slide ${i + 1}" data-testid="media-img"></a>`).join("")}</div>`;
-  } else if (busy && !pk.length) html += `<div class="ph" aria-hidden="true"><span class="spin"></span></div>`;
+  } else if (busy && !pk.length) html += `<div class="sk-posts" aria-hidden="true" data-testid="posts-skeleton">${'<div class="sk-post"><span class="sk sk-head"></span><span class="sk sk-media"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span></div>'.repeat(2)}</div>`;
   $("#mediaBox").innerHTML = html;
   const redo = $("[data-testid=legacy-redo]");
   if (redo) redo.onclick = async () => { redo.disabled = true;
@@ -307,7 +307,13 @@ function drawReady(r, busy) {
   box.hidden = false;
   box.innerHTML = `<span class="mp-ready-h">Your posts</span>` + pk.map((p) => { const f = pkgFiles(p)[0];
     const th = f ? (f.type === "video" ? `<video src="${escUrl(f.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${escUrl(f.url)}" alt="">`) : `<span class="mp-ready-ph" aria-hidden="true"></span>`;
-    return `<button type="button" class="mp-ready-i st-${esc(p.sent ? "sent" : p.status)}" data-ch="${esc(p.channel_id)}" data-testid="mp-ready-item" aria-label="Go to the ${esc(netName(p.service))} post">${th}<span><b>${esc(netName(p.service))}</b><small>${esc(mediaLabel(p))} · ${word(p)}</small></span></button>`; }).join("");
+    return `<button type="button" class="mp-ready-i st-${esc(p.sent ? "sent" : p.status)}" data-ch="${esc(p.channel_id)}" data-testid="mp-ready-item" aria-label="Go to the ${esc(netName(p.service))} post">${th}<span><b>${esc(netName(p.service))}</b><small data-testid="mp-ready-meta">${esc(readyLabel(p))} · ${word(p)}</small></span></button>`; }).join("");
+  // a video's ratio and length come from the thumbnail's own metadata when the server didn't record them (never "… · …")
+  box.querySelectorAll("video").forEach((v) => { const set = () => { const sm = v.closest(".mp-ready-i")?.querySelector("small"); if (!sm || !v.videoWidth) return;
+      const parts = sm.textContent.split(" · "); if (parts[0] !== "Video" || /\d+:\d+/.test(parts[1] || "")) return;
+      const extra = [ratioOf(v.videoWidth, v.videoHeight), isFinite(v.duration) ? fmtDur(v.duration) : ""].filter(Boolean);
+      sm.textContent = [parts[0], ...extra, ...parts.slice(1)].join(" · "); };
+    v.addEventListener("loadedmetadata", set); if (v.readyState >= 1) set(); });
   box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => { const c = document.querySelector(`#packages .pkg[data-ch="${CSS.escape(b.dataset.ch)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "start" }); flash([c]); } }));
 }
 
@@ -397,6 +403,8 @@ function mediaLabel(p) {
   return parts.join(" · ");
 }
 window.HQ_MEDIA_LABEL = mediaLabel;
+// the short label for the ready summary: no "…" for a ratio or length that isn't known yet
+const readyLabel = (p) => mediaLabel(p).split(" · ").filter((x) => x !== "…").join(" · ");
 function pkgMedia(p) {
   const m = pkgFiles(p);
   if (!m.length && p.media_state === "missing") return `<div class="pkg-media empty" data-testid="pkg-media"><span class="muted sm" data-testid="pkg-media-gone">Media deleted</span></div>`;

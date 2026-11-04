@@ -4,6 +4,11 @@
 // Saved in localStorage (hq_mode) and, when signed in, in the account (PUT /api/prefs/appearance) so it follows you.
 "use strict";
 (() => {
+  // the sidebars as you left them (sidebars.js, chat.js), set before first paint so a reload never jumps; motion starts
+  // only after the first frame, so the restored state never animates in
+  try { if (localStorage.getItem("hq_rail") === "collapsed") document.documentElement.classList.add("rail-collapsed");
+    if (localStorage.getItem("hq_threads") === "hidden") document.documentElement.classList.add("threads-hidden"); } catch (_) { /* private mode */ }
+  addEventListener("load", () => requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.add("hq-anim"))));
   const KEY = "hq_mode", root = document.documentElement, mq = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
   const read = () => { try { return localStorage.getItem(KEY) || "system"; } catch (_) { return "system"; } };
   const effective = (m) => (m === "light" || m === "dark" ? m : mq && mq.matches ? "dark" : "light");
