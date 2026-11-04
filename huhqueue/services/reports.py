@@ -14,7 +14,7 @@ import os
 import re
 import smtplib
 import ssl
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -42,12 +42,17 @@ EMAIL = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 
 
 def _parse_iso(v: str | None) -> datetime | None:
-    return datetime.fromisoformat(v.rstrip("Z")) if v else None
+    """An iso() string (or any ISO time with an offset) -> naive UTC, the type published_at is stored as."""
+    if not v:
+        return None
+    dt = datetime.fromisoformat(str(v).strip().replace("Z", "+00:00"))
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
 
 
-def _rows(core, lo, hi, channel_id):
+def _rows(core, lo, hi, channel_id, end_inclusive: bool = True):
+    from ..api.pro_content import in_window
     with core.db.session() as s:
-        q = select(PostTarget).where(PostTarget.status == "sent", PostTarget.published_at >= lo, PostTarget.published_at < hi)
+        q = select(PostTarget).where(PostTarget.status == "sent", *in_window(PostTarget.published_at, lo, hi, end_inclusive=end_inclusive))
         if channel_id:
             q = q.where(PostTarget.channel_id.in_(channel_id.split(",")))
         return [posts_svc.serialize_target(core, t) for t in s.scalars(q)]
@@ -77,9 +82,8 @@ def report_data(core, days="30", start=None, end=None, channel_id=None, tag=None
     what the PDF/CSV include (the JSON always carries everything)."""
     from ..api.pro_content import build_report   # same numbers as the markdown report
     base = build_report(core, days, start, end, channel_id)
-    lo, hi = _parse_iso(base["range"][0]), _parse_iso(base["range"][1])
-    plo = _parse_iso(base["previous_range"][0])
-    cur, prev = _rows(core, lo, hi, channel_id), _rows(core, plo, lo, channel_id)
+    lo, hi, plo = base.pop("window")        # full precision: the iso() strings in base["range"] keep whole seconds only
+    cur, prev = _rows(core, lo, hi, channel_id), _rows(core, plo, lo, channel_id, end_inclusive=False)
     filtered = bool(tag or campaign or fmt)
     if filtered:
         cur, prev = an.filter_rows(cur, tag, campaign, fmt), an.filter_rows(prev, tag, campaign, fmt)
