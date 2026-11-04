@@ -208,3 +208,21 @@ def test_named_forbidden_channel_answers_the_same_whether_the_object_exists(app,
     a = ed.patch(f"/api/comments/cm_other?channel_id={other['id']}", {"flagged": True})
     b = ed.patch(f"/api/comments/cm_nope?channel_id={other['id']}", {"flagged": True})
     assert a.status_code == b.status_code == 403 and a.json() == b.json()
+
+
+def test_named_forbidden_channel_wins_over_the_objects_own_forbidden_channel(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): with no access to channels A and B, PATCH /api/comments/{id on A}?channel_id=B answered 404
+    (A was checked first, object-only) while a missing comment answered 403. A forbidden channel the request names is now
+    checked before any reached only through the object, so both answer 403."""
+    from .test_teams import member
+    a_ch = api.post("/api/connect/fake/token", {"access_token": "tok-a", "username": "brand_a"}).json()
+    b_ch = api.post("/api/connect/fake/token", {"access_token": "tok-b", "username": "brand_b"}).json()
+    with core.db.session() as s:
+        s.add(Comment(id="cm_on_a", channel_id=a_ch["id"], external_id="xa", author="fan", text="hi", status="open"))
+    ed = member(app, api, "editor", access={a_ch["id"]: "none", b_ch["id"]: "none"}, name="Cy")
+    a = ed.patch(f"/api/comments/cm_on_a?channel_id={b_ch['id']}", {"flagged": True})
+    b = ed.patch(f"/api/comments/cm_nope?channel_id={b_ch['id']}", {"flagged": True})
+    assert a.status_code == b.status_code == 403 and a.json() == b.json()
+    _hidden(ed.patch("/api/comments/cm_on_a", {"flagged": True}))   # no channel named: still 404 like a missing one
+    with core.db.session() as s:
+        assert not s.get(Comment, "cm_on_a").flagged

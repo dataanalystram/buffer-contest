@@ -164,7 +164,11 @@ def resolve(host: str, policy: str = "public") -> str:
 
 def check_url(url: str, policy: str = "public") -> str:
     """Scheme + credentials + host check (resolves the host). Returns the vetted IP."""
-    p = urlparse(url or "")
+    try:
+        p = urlparse(url or "")
+        p.port   # noqa: B018 - a malformed port raises here, not later while the request is built
+    except ValueError as e:
+        raise FetchError("That link isn't a valid address.") from e
     if p.scheme not in ("http", "https") or not p.hostname:
         raise FetchError("The link must start with http:// or https://")
     if p.username or p.password:
@@ -206,7 +210,10 @@ def request(c: httpx.Client, method: str, url: str, *, policy: str = "public", h
         r = c.send(req, stream=True, follow_redirects=False)
         try:
             if r.status_code in REDIRECTS and r.headers.get("location") and follow and method in ("GET", "HEAD"):
-                url = urljoin(url, r.headers["location"])
+                try:
+                    url = urljoin(url, r.headers["location"])
+                except ValueError as e:   # a malformed Location (CodeRabbit, 4 Nov 2026)
+                    raise FetchError("That link redirects to an invalid address.") from e
                 continue
             buf = bytearray()
             for chunk in capped_body(r, limit):   # the cap bounds memory before decoding (CodeRabbit, 4 Nov 2026)

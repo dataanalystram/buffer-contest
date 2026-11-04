@@ -177,3 +177,32 @@ def test_raw_bytes_are_capped_even_when_they_inflate_to_nothing():
     with pytest.raises(netguard.FetchError):
         for _ in netguard.capped_body(r, 10_000):
             pass
+
+
+@pytest.mark.parametrize("loc", ["http://[::1", "http://pub.test:notaport/x"])
+def test_malformed_redirect_location_never_escapes_as_a_plain_valueerror(monkeypatch, loc):
+    """CodeRabbit (4 Nov 2026): a malformed Location must not escape download / fetch_feed / read_preview as a plain
+    ValueError. httpx refuses most of them itself (RemoteProtocolError, which callers handle as httpx.HTTPError); whatever
+    gets past it to urljoin or the next hop's URL check is a FetchError."""
+    _dns(monkeypatch, {"pub.test": ["93.184.216.34"]})
+    t = Recorder(lambda req: httpx.Response(302, headers={"location": loc}, request=req))
+    with pytest.raises((netguard.FetchError, httpx.HTTPError)):
+        netguard.request(httpx.Client(transport=t), "GET", "https://pub.test/a")
+    assert len(t.seen) == 1
+
+
+def test_urljoin_valueerror_on_a_redirect_is_a_fetch_error(monkeypatch):
+    _dns(monkeypatch, {"pub.test": ["93.184.216.34"]})
+    t = Recorder(lambda req: httpx.Response(302, headers={"location": "/next"}, request=req))
+
+    def bad(*a, **k):
+        raise ValueError("Invalid IPv6 URL")
+    monkeypatch.setattr(netguard, "urljoin", bad)
+    with pytest.raises(netguard.FetchError) as e:
+        netguard.request(httpx.Client(transport=t), "GET", "https://pub.test/a")
+    assert isinstance(e.value.__cause__, ValueError) and len(t.seen) == 1
+
+
+def test_malformed_port_is_a_fetch_error_before_anything_is_sent():
+    with pytest.raises(netguard.FetchError):
+        netguard.check_url("http://pub.test:notaport/x")

@@ -616,15 +616,16 @@ def authorize(s, who: Who, method: str, path: str, query: dict, body, scope: str
     if who.restricted():
         d.visible = {c for (c,) in s.execute(select(Channel.id)) if who.channel_role(c) != "none"}
     contributor_on = role == "contributor"
-    via_object = None
+    forbidden = [c for c in chans if who.channel_role(c) == "none"]
+    if forbidden:
+        # a forbidden channel the request NAMES is checked before any reached only through an object id, so the answer
+        # never depends on which channel the object sits on, or whether it exists (CodeRabbit, 4 Nov 2026)
+        via_object = object_only_channels(s, path, query, body)
+        if not read and any(c not in via_object for c in forbidden):
+            return _deny("You don't have access to this channel", 403)
+        return _deny("Not found", 404)   # another channel's post/comment answers like a missing one (no id probing)
     for cid in chans:
         cr = who.channel_role(cid)
-        if cr == "none":
-            if via_object is None:
-                via_object = object_only_channels(s, path, query, body)
-            if read or cid in via_object:   # another channel's post/comment answers like a missing one (no id probing)
-                return _deny("Not found", 404)
-            return _deny("You don't have access to this channel", 403)
         if need and RANK[cr] < RANK[need]:
             return _deny(f"On this channel you are a {cr}" + (" (read only)" if cr == "viewer" else " - ask an editor"))
         if cr == "contributor":
