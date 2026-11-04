@@ -26,6 +26,24 @@ jobs:
       - name: Studio tests on Postgres (production store)
         env: {STUDIO_TEST_PG: "postgresql://postgres:test@localhost:5432/studio"}
         run: python -m pytest tests/studio -q --ignore-glob="tests/studio/test_media_*"   # media tests use no store; run once above
+  core-tests:
+    # The root tests/ suite (HuhQueue core: API, connectors, scheduling, scope, MCP/CLI parity, and the Playwright UI
+    # tests in tests/e2e). tests/studio runs in the job above. Added 4 Nov 2026: nothing in CI ran these before.
+    # tests/e2e/test_deployed.py skips itself unless HUHQ_E2E_URL/HUHQ_E2E_PASSWORD point at a hosted instance.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0"
+      - name: Core tests (tests/ without tests/studio and the browser tests)
+        run: python -m pytest tests --ignore=tests/studio --ignore=tests/e2e -q -rs
+      - run: python -m playwright install --with-deps chromium >/dev/null
+      - name: Core browser tests (tests/e2e)
+        if: always()
+        run: python -m pytest tests/e2e -q -rs
   worker-imports:
     # The video worker runs in its own venv (take.yml / render.yml), not the web app's: import every module it can reach
     # with only the worker requirements installed (2 Nov 2026: a missing `cryptography` crashed every link -> split).
