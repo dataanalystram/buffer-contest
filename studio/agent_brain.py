@@ -33,6 +33,8 @@ _running: set[int] = set()
 KEYFRAMES_MAX = 4
 KEYFRAME_B64_MAX = 400_000  # one 768 px JPEG frame as a data URL is ~60-150 KB
 _rlock = threading.Lock()
+_stop_req: set[int] = set()  # runs the person asked to stop: the next step boundary stops them (Brain.stop)
+STOPPED = "Stopped, as you asked. What's made so far is kept. Press Resume to carry on."
 BOOT = uuid.uuid4().hex[:12]  # this process: a run stamped with another process's id whose heartbeat stopped was cut off
 HEARTBEAT_S = int(os.environ.get("HQ_PROC_HEARTBEAT", "20"))
 ORPHAN_S = int(os.environ.get("HQ_PROC_ORPHAN", "90"))  # no heartbeat this long -> that process is gone (a deploy, a crash)
@@ -102,6 +104,10 @@ using ONLY the tools. Rules:
 - Pass the person's tone words to write_captions (e.g. tone "short punchy explainer"); the tone shapes the hook and rhythm.
 - Captions in tool results and the state are the full saved text unless marked "…[preview]". Never tell the person a caption
   is cut off unless write_captions reports complete=false for that channel."""
+
+
+class StopRun(Exception):
+    """The person pressed Stop: raised at the next step boundary, never caught as a tool error (it is not an ActionError)."""
 
 
 def oops(ref: str) -> str:
@@ -208,6 +214,20 @@ class Brain:
         else:
             self._spawn(self._go, a, rid, None)
         return self.h.run(a, rid)
+
+    def stop(self, a: Actor, rid: int) -> dict:
+        """The working indicator's Stop: the run stops at its next step (a step in flight finishes first)."""
+        self.h.studio._guard_write(a, "agent_reply")
+        run = self.h.run(a, rid)  # scoped to the caller: someone else's run is a 404
+        with _rlock:
+            working = rid in _running
+            if working:
+                _stop_req.add(rid)
+        if not working and run["status"] in ("running", "rendering"):  # nothing works on it here (a cut-off run)
+            res = run["result"]
+            res.setdefault("thread", []).append({"role": "agent", "text": STOPPED, "at": _now()})
+            self.h._save(rid, run["steps"], res, "interrupted")
+        return {**self.h.run(a, rid), "stopping": working}
 
     def _resume_tail(self, a, rid, tools) -> None:
         self._ensure_tail(a, rid, tools)
@@ -1055,6 +1075,8 @@ class Brain:
 
     def _spawn(self, fn, *args):
         rid = args[1] if len(args) >= 2 and isinstance(args[1], int) else None
+        with _rlock:
+            _stop_req.discard(rid)  # a new job on the run starts clean
         if rid is not None:  # which process works on it (interrupt_orphans)
             try:
                 r = self.store.q("SELECT steps, result FROM agent_runs WHERE id=?", (rid,))
@@ -1174,6 +1196,8 @@ class Brain:
     def _crash(self, a, rid, e: BaseException, retry_text: str | None = None) -> None:
         """An unexpected error: the traceback goes to the log with a short reference, the person gets a plain sentence
         and a Retry button (never a bare exception class such as "Unexpected error: AttributeError")."""
+        if isinstance(e, StopRun):
+            return self._fail(a, rid, STOPPED)
         ref = uuid.uuid4().hex[:8]
         print(f"agent error ref={ref} run={rid}: {e.__class__.__name__}: {str(e)[:300]}", flush=True)
         traceback.print_exc()
@@ -1197,6 +1221,11 @@ class Brain:
         self.h._save(rid, run["steps"], run["result"], "failed")
 
     def _step(self, a, rid, tool, args, label=None):
+        with _rlock:
+            stop = rid in _stop_req
+            _stop_req.discard(rid)
+        if stop:
+            raise StopRun(STOPPED)
         run = self.h.run(a, rid)
         n = len(run["steps"]) + 1
         run["steps"].append({"key": f"s{n}", "tool": tool, "label": label or LABELS.get(tool, tool), "status": "running",

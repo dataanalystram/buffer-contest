@@ -85,3 +85,33 @@ def test_a_crash_shows_a_plain_message_with_a_reference_and_retry(owner, monkeyp
     owner.post(f"/api/agent/runs/{rid}/messages", json={"text": err["retry_text"]})
     got = _run(owner, rid)
     assert got["status"] == "ready" and "error" not in got["result"]
+
+
+def test_stop_stops_at_the_next_step_and_resume_carries_on(owner, monkeypatch):  # noqa: F811
+    from studio import agent_brain
+    _fake_reels(monkeypatch, owner)
+    rid, a = _seed(owner)
+    h = owner.app.state.house
+    real, seen = agent_brain.Brain._step, {"n": 0}
+
+    def step(self, a_, rid_, tool, args, label=None):
+        seen["n"] += 1
+        if seen["n"] == 2:  # Stop pressed while the first step of the follow-up works
+            with agent_brain._rlock:
+                agent_brain._stop_req.add(rid_)
+        return real(self, a_, rid_, tool, args, label)
+    monkeypatch.setattr(agent_brain.Brain, "_step", step)
+    owner.post(f"/api/agent/runs/{rid}/messages", json={"text": "Make the hook stronger and redo the captions"})
+    got = _run(owner, rid)
+    assert seen["n"] >= 2
+    assert got["status"] == "failed" and got["result"]["thread"][-1]["text"] == agent_brain.STOPPED
+    assert "error" not in got["result"]
+    monkeypatch.setattr(agent_brain.Brain, "_step", real)
+    assert owner.post(f"/api/agent/runs/{rid}/resume", json={}).status_code == 200
+    assert _run(owner, rid)["status"] == "ready"
+    # Stop on a run nothing works on is a no-op that says so; an unknown run is a 404
+    out = owner.post(f"/api/agent/runs/{rid}/stop", json={})
+    assert out.status_code == 200 and out.json()["stopping"] is False
+    assert owner.post("/api/agent/runs/999999/stop", json={}).status_code == 404
+    assert not agent_brain._stop_req
+    assert h.run(a, rid)

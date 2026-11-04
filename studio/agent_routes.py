@@ -148,6 +148,11 @@ def add_routes(app: FastAPI, house, actor) -> None:
         """Resume a run the server cut off (a deploy, a crash) from its last finished step."""
         return house.brain.resume(actor(request, write=True), rid)
 
+    @app.post("/api/agent/runs/{rid}/stop")
+    def run_stop(rid: int, request: Request):
+        """Stop the agent working on this run after the step it is on; what it made is kept, Resume carries on."""
+        return house.brain.stop(actor(request, write=True), rid)
+
     @app.get("/api/themes")
     def themes_list(request: Request):
         """Every video look (the four edit styles + the themes) with its gallery still and loop, for the theme picker."""
