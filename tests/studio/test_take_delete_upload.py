@@ -242,7 +242,7 @@ def test_someone_elses_take_and_a_missing_one_are_the_same_404(human, app, monke
     st = app.state.store
     theirs = st.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
                   ("acc_other", "take", json.dumps({"name": "theirs", "channels": []}), "ready", "[]",
-                   json.dumps({"clips": [{"id": "c1", "status": "ready", "token": "tok_theirs.mp4"}]}), time.time(), time.time()))
+                   json.dumps({"clips": [{"id": "c1", "status": "ready", "url": "https://hq.test/m/theirclip.mp4"}]}), time.time(), time.time()))
     for rid in (theirs, 999999, "abc"):
         for r in (human.delete(f"/api/takes/{rid}"), human.delete(f"/api/takes/{rid}/clips/c1"),
                   human.post(f"/api/takes/{rid}/restore"), human.post(f"/api/takes/{rid}/clips/c1/restore")):
