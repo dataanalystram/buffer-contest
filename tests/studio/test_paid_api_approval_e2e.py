@@ -114,11 +114,11 @@ def test_apps_with_access_rows_keep_the_actions_compact(live, chromium, width):
             acts = row.get_by_test_id("token-actions")
             for tid in ("token-paid", "revoke-token", "token-cap-edit"):
                 assert acts.get_by_test_id(tid).count() == 1, tid  # inside the actions group, not a grid cell of its own
-            m = row.get_by_test_id("token-paid").evaluate(
-                "b => { const s = getComputedStyle(b), r = b.getBoundingClientRect();"
-                " const lh = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.3;"
-                " return {h: r.height - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom), lh, w: r.width, ws: s.whiteSpace} }")
-            assert m["h"] < m["lh"] * 1.5 and m["w"] > 80 and m["ws"] == "nowrap", m  # one line, not one word per line
+            m = row.get_by_test_id("token-paid").evaluate(  # text lines, not the box (phones give buttons a 44 px min-height)
+                "b => { const r = document.createRange(); r.selectNodeContents(b);"
+                " const tops = new Set([...r.getClientRects()].filter(x => x.width > 0).map(x => Math.round(x.top)));"
+                " return {lines: tops.size, w: b.getBoundingClientRect().width, ws: getComputedStyle(b).whiteSpace} }")
+            assert m["lines"] == 1 and m["w"] > 80 and m["ws"] == "nowrap", m  # one line, not one word per line
             box = row.bounding_box()
             assert box["x"] >= 0 and box["x"] + box["width"] <= width + 1  # no sideways overflow at 390 px
             rv, pd, nm = (row.get_by_test_id(t).bounding_box() for t in ("revoke-token", "token-paid", "token-actions"))
