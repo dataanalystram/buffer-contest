@@ -774,6 +774,9 @@ class Studio:
         rows = self.store.q("SELECT * FROM approvals WHERE id=? AND user_id=?", (approval_id, a.uid))
         if not rows or rows[0]["status"] != "pending":
             raise ActionError("No pending approval with that id.", 404)
+        from . import consent
+        if consent.is_paid_row(rows[0]):
+            raise ActionError("That approval is a request to use a paid API, not a post: it has no time.", 409)
         clean = json.loads(rows[0]["payload"])
         clean.update(due_at=self._due(due_at), mode="schedule")
         self.store.x("UPDATE approvals SET payload=? WHERE id=?", (json.dumps(clean), approval_id))
@@ -781,12 +784,17 @@ class Studio:
         return {"status": "pending_approval", "approval_id": approval_id, "due_at": clean["due_at"]}
 
     # ------------------------------------------------------------ approvals (human only)
-    def approvals(self, a: Actor, status: str = "pending") -> list[dict]:
+    def approvals(self, a: Actor, status: str = "pending", kind: str = "all") -> list[dict]:
+        """Approval items: agent posts (kind post) and, since 4 Nov 2026, requests to use a paid API (kind paid_api,
+        studio/consent.py). Internal readers that expect a post payload pass kind='post'."""
         out = []
         for r in self.store.q("SELECT * FROM approvals WHERE user_id=? AND status=? ORDER BY id DESC LIMIT 50", (a.uid, status)):
             d = dict(r)
             d["payload"] = json.loads(d["payload"])
             d["result"] = json.loads(d["result"]) if d["result"] else None
+            d["kind"] = "paid_api" if isinstance(d["payload"], dict) and d["payload"].get("kind") == "paid_api" else "post"
+            if kind in ("post", "paid_api") and d["kind"] != kind:
+                continue
             out.append(d)
         return out
 
@@ -796,6 +804,9 @@ class Studio:
         rows = self.store.q("SELECT * FROM approvals WHERE id=? AND user_id=?", (approval_id, a.uid))
         if not rows or rows[0]["status"] != "pending":
             raise ActionError("No pending approval with that id.", 404)
+        from . import consent
+        if consent.is_paid_row(rows[0]):  # an AI app asking to spend money or credits: approving lets that one call run
+            return consent.decide(self.store, a, dict(rows[0]), approve)
         clean = json.loads(rows[0]["payload"])
         if not approve:
             self.store.x("UPDATE approvals SET status='rejected', decided=? WHERE id=?", (time.time(), approval_id))
@@ -850,9 +861,26 @@ class Studio:
         return out
 
     def agent_tokens(self, a: Actor) -> list[dict]:
-        rows = self.store.q("SELECT id,name,policy,daily_cap,channels,created,expires,revoked,last_used FROM agent_tokens "
+        rows = self.store.q("SELECT id,name,policy,daily_cap,channels,created,expires,revoked,last_used,allow_paid_apis FROM agent_tokens "
                             "WHERE user_id=? ORDER BY id DESC", (a.uid,))
-        return [dict(r) | {"channels": json.loads(r["channels"]) if r["channels"] else None} for r in rows]
+        return [dict(r) | {"channels": json.loads(r["channels"]) if r["channels"] else None, "allow_paid_apis": bool(r["allow_paid_apis"])}
+                for r in rows]
+
+    def set_agent_paid(self, a: Actor, token_id: int, on: bool) -> dict:
+        """The person's "Allow paid APIs" switch for one app (studio/consent.py). Off by default; humans only, so an agent
+        can never let itself spend money or credits (SECURITY_RULES 4). The sample workspace keeps it off."""
+        if a.kind != "human":
+            raise ActionError("Only a human can let an app use paid APIs.", 403)
+        if not isinstance(on, bool):
+            raise ActionError("allow_paid_apis is true or false.")
+        if on and demo.is_demo(a.uid):
+            raise ActionError("The sample workspace never uses paid APIs.", 403)
+        rows = self.store.q("SELECT id,allow_paid_apis FROM agent_tokens WHERE id=? AND user_id=? AND revoked=0", (token_id, a.uid))
+        if not rows:
+            raise ActionError("No such token.", 404)
+        self.store.x("UPDATE agent_tokens SET allow_paid_apis=? WHERE id=? AND user_id=?", (1 if on else 0, token_id, a.uid))
+        self.store.audit(a.uid, a.label, "set_agent_paid_apis", "safety", {"id": token_id, "from": bool(rows[0]["allow_paid_apis"]), "to": on})
+        return {"id": token_id, "allow_paid_apis": on}
 
     def set_agent_cap(self, a: Actor, token_id: int, daily_cap: int) -> dict:
         """Change a token's daily cap (1-100 actions a day) without minting a new one. Humans only: an agent can never raise

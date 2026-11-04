@@ -1781,7 +1781,7 @@ class House:
                               "channel_id": p.get("channelId", ""), "id": p.get("id"), "thumb": thumb,
                               "type": self._post_type(assets), "draggable": status != "sent",
                               "link": p.get("externalLink") or ""})
-        for ap in self.studio.approvals(a, "pending") if a.kind == "human" else []:
+        for ap in self.studio.approvals(a, "pending", "post") if a.kind == "human" else []:
             pl = ap["payload"]
             ch = chans.get(pl.get("channel_id"), {})
             media = [m for m in ([pl.get("media_url")] + (pl.get("media_urls") or [])) if m]

@@ -677,7 +677,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.patch("/api/agent-tokens/{token_id}")
     def token_cap(token_id: int, request: Request, body: dict = Body(...)):
-        return studio.set_agent_cap(actor(request, write=True), token_id, body.get("daily_cap"))
+        """{"daily_cap": 1-100} and/or {"allow_paid_apis": true|false} (humans only)."""
+        a = actor(request, write=True)
+        out: dict = {"id": token_id}
+        if "allow_paid_apis" in body:
+            out.update(studio.set_agent_paid(a, token_id, body.get("allow_paid_apis")))
+        if "daily_cap" in body or "allow_paid_apis" not in body:
+            out.update(studio.set_agent_cap(a, token_id, body.get("daily_cap")))
+        return out
 
     @app.delete("/api/agent-tokens/{token_id}")
     def revoke(token_id: int, request: Request):

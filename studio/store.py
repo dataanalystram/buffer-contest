@@ -103,13 +103,17 @@ ADDED_COLUMNS = {
     "audit": (("category", "TEXT"), ("surface", "TEXT"), ("app", "TEXT"), ("client_id", "TEXT"), ("token_id", "INTEGER"),
               ("token_label", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"), ("tokens_in", "INTEGER"),
               ("tokens_out", "INTEGER"), ("cost_usd", "REAL"), ("ip", "TEXT"), ("ua", "TEXT")),
-    "agent_tokens": (("client_id", "TEXT"), ("client_info", "TEXT"), ("app", "TEXT")),
+    "agent_tokens": (("client_id", "TEXT"), ("client_info", "TEXT"), ("app", "TEXT"),
+                     ("allow_paid_apis", "INTEGER")),  # the person's "Allow paid APIs" switch for this app (studio/consent.py), off by default
+    # which agent token made the run (studio/run_discipline.py: one request = one run, run caps, cleanup)
+    "agent_runs": (("agent_id", "INTEGER"),),
     "render_jobs": (("result", "TEXT"),),
     # Style Ledger v2 (studio/ledger.py): per-channel scope, where a rule came from, its before -> after examples and the
     # edit ids a learned rule came from
     "style_rules": (("scope", "TEXT"), ("origin", "TEXT"), ("examples", "TEXT"), ("evidence", "TEXT"), ("updated", "REAL")),  # a transcribe job's transcript (studio.media transcribe on the worker)
 }
 INDEXES = ("CREATE INDEX IF NOT EXISTS audit_user_id ON audit(user_id, id)",
+           "CREATE INDEX IF NOT EXISTS agent_runs_agent ON agent_runs(user_id, agent_id, updated)",
            "CREATE INDEX IF NOT EXISTS audit_user_cat ON audit(user_id, category, id)",
            "CREATE INDEX IF NOT EXISTS audit_ts ON audit(ts)")
 
@@ -131,7 +135,7 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
 # purpose: the per-day usage counters (brain_tokens, classifier_usage) and demo_owners, which hold no content and keep
 # a reconnect from resetting an allowance.
 OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "source_runs", "source_settings",
-                   "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls")
+                   "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem")
 
 class Store:
     """SQLite locally; Postgres when the path is a postgres:// URL (production: survives restarts,
