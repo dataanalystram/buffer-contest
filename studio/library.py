@@ -105,6 +105,19 @@ def ensure(store) -> None:
             store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
 
 
+def record_owner_deletes(store, pairs) -> None:
+    """Note (token, user_id) pairs as deleted by their owner in library_purged: /healthz then counts a post that used one
+    as "deleted by owner", not as a lost file. Call it inside the same store.tx() as the DELETE it explains, so the
+    record and the delete commit together or not at all. Every permanent media / Library delete goes through here
+    (tests/studio/test_owner_delete_record.py lists them)."""
+    pairs = list(pairs)
+    now = _now()
+    for i in range(0, len(pairs), 300):
+        part = pairs[i:i + 300]
+        store.x("INSERT INTO library_purged(token,user_id,at) VALUES " + ",".join(["(?,?,?)"] * len(part)) +
+                " ON CONFLICT(token) DO NOTHING", tuple(v for tok, uid in part for v in (tok, uid, now)))
+
+
 def _now() -> float:
     return time.time()
 
@@ -835,18 +848,14 @@ class Library:
             if d.get("run_id"):
                 runs.add((f"run:{d['run_id']}", d["user_id"]))
             ids.append(int(d["id"]))
-        now, st = _now(), self.store
+        st = self.store
         with st.tx():
             for uid in {u for u, _ in media}:
                 ts = [x for u, x in media if u == uid]
                 for i in range(0, len(ts), 400):
                     part = ts[i:i + 400]
                     blobstore.release(st, "media", f"user_id=? AND token IN ({','.join('?' * len(part))})", (uid, *part))
-            rec = purged + sorted(runs)
-            for i in range(0, len(rec), 300):
-                part = rec[i:i + 300]
-                st.x("INSERT INTO library_purged(token,user_id,at) VALUES " + ",".join(["(?,?,?)"] * len(part)) +
-                     " ON CONFLICT(token) DO NOTHING", tuple(v for tok, uid in part for v in (tok, uid, now)))
+            record_owner_deletes(st, purged + sorted(runs))
             for i in range(0, len(ids), 400):
                 part = ids[i:i + 400]
                 marks = ",".join("?" * len(part))

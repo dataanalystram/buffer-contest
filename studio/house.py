@@ -265,8 +265,12 @@ class House:
                                   credit="example.com")
         b2, _ = render.end_card(kit, p, logo=logo, ratio="4:5")
         from . import blobstore
-        blobstore.release(self.store, "media", "user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
-        blobstore.sweep_soon(self.store)
+        from .library import record_owner_deletes
+        with self.store.tx():  # the old previews go for good; noted as the owner's own delete in the same transaction
+            old = [r["token"] for r in self.store.q("SELECT token FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))]
+            blobstore.release(self.store, "media", "user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
+            record_owner_deletes(self.store, [(t, a.uid) for t in old])
+        blobstore.sweep_soon(self.store)  # their R2 objects, after the commit (studio/blobstore.py)
         t1 = self.put_media(a, b1, "preview.jpg", kind="preview", meta=m1)
         t2 = self.put_media(a, b2, "preview_end.jpg", kind="preview", meta={"type": "photo"})
         return {"cover": self.media_url(t1), "end": self.media_url(t2), "check": brand.brand_check("", m1, rules, kit)}
@@ -449,15 +453,6 @@ class House:
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             ext = "mp4" if data[4:8] == b"ftyp" else ("png" if data[:4] == b"\x89PNG" else "jpg")
         return self.upload(a, "import." + ext, base64.b64encode(data).decode())
-
-    def purge_media(self, days: int = 21) -> int:
-        cutoff = _now() - days * 86400
-        keep = "token NOT IN (SELECT token FROM library_media)"  # Library items are kept until the person deletes them
-        n = self.store.q(f"SELECT COUNT(*) AS n FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))[0]["n"]
-        from . import blobstore
-        blobstore.release(self.store, "media", f"created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))
-        blobstore.sweep_soon(self.store)
-        return n
 
     # ================================================================ missing media
     # Owner bug, 2 Nov 2026: run 20's ready Instagram carousel showed a broken thumbnail (/m/<token>.jpg answered 404)
