@@ -108,3 +108,6 @@
 .pl-week .pl-chip-th:not(:has(img)),.pl-dayv .pl-chip-th:not(:has(img)){display:none}
 .pl-week .pl-chip .c,.pl-dayv .pl-chip .c{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.25}
 .pl-week .pl-chip-m,.pl-dayv .pl-chip-m{align-items:flex-start}
+
+/* every page on a very wide monitor: the content grows with the screen instead of a 1680 px column beside empty space */
+@media (min-width:1800px){.tab,.tab.planner{max-width:2240px}}
