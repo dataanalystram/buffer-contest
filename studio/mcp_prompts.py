@@ -39,8 +39,20 @@ PROMPTS: list[dict[str, Any]] = [
      "arguments": [{"name": "purpose", "description": "What the template is for, e.g. 'funding announcement'", "required": True}]},
 ]
 
-_RULES = ("Rules: drafts only (schedule_package mode='draft'); never publish or schedule. Use only facts from the source page. "
-          "The brand's Follow end card is always added last. Show the user the frames and caption before saving the draft.")
+_RULES = ("Rules: ONE post for this request: keep the run_id from start_post and pass it to every render and create_package call "
+          "(changes update the same post, even 'make it a reel instead': start_post(run_id, format='reel'); several outputs "
+          "like '3 reels' are ONE post with output: 1, 2, 3; never start another one, a template or a brand kit unless the user "
+          "asks). A new request with new content is a new post (start_post(new_request: true)); if unsure whether it is "
+          "the same content, ask the user and use continue_run(run_id) to keep going. Drafts only "
+          "(schedule_package mode='draft'); never publish or schedule. Do your own research with your own tools; use only facts "
+          "from the source. The brand's Follow end card is always added last. Show the user the frames and caption before "
+          "saving the draft.")
+
+
+def _start(title: str) -> str:
+    return (f"0. start_post(title='<{title}: a few words naming this content>', new_request=true, reason='<the request in a "
+            "few words>') -> keep run_id. new_request makes a separate post for each distinct request, so two different "
+            f"{title.lower()}s never share one.\n")
 
 
 def _text(name: str, args: dict) -> str:
@@ -49,42 +61,47 @@ def _text(name: str, args: dict) -> str:
         secs = a.get("seconds") or "40"
         end = min(45, int(secs)) if secs.isdigit() else 40
         return (f"Make a {secs}-second Instagram Reel from the launch video at {a.get('link', '<link>')} in my active brand kit.\n"
+                + _start("Launch Reel") +
                 "1. find_video(url) -> pick the official launch/demo video (note its source and credit).\n"
-                f"2. edit_video(url or media_token, rights='news_credit', credit='<the credit find_video gave>', ratio='9:16', "
+                f"2. edit_video(run_id, url or media_token, rights='news_credit', credit='<the credit find_video gave>', ratio='9:16', "
                 f"start_s=0, end_s<={end}, captions=true, hook='<max 10 words, facts only>', cover={{'title': '<the hook>'}}).\n"
                 "3. render_status(job_id) every 15 s until done; look at the frames and the cover variants.\n"
-                f"4. create_package(captions={{'{a.get('channel') or 'instagram'}': '<caption you wrote>'}}, media_urls=[download_url], "
+                f"4. create_package(run_id, captions={{'{a.get('channel') or 'instagram'}': '<caption you wrote>'}}, media_urls=[download_url], "
                 "format='reel', rights='news_credit', credit=..., source_url=..., cover=<render_status cover>).\n"
                 f"5. schedule_package(run_id, channel_id, mode='draft') after the user says yes.\n{_RULES}")
     if name == "product_hunt_to_reel_draft":
         return (f"Turn the Product Hunt launch {a.get('product_hunt_url', '<url>')} into an Instagram Reel draft.\n"
+                + _start("Product Hunt Reel") +
                 "1. research_link(url) for the product name, tagline and maker; find_video(url) for its launch video.\n"
-                "2. edit_video(..., rights='news_credit', credit='Video: <maker> on Product Hunt', ratio='9:16', end_s<=45, captions=true, "
-                "cover={'title': '<hook>'}).\n"
-                "3. render_status until done -> create_package(captions={'instagram': ...}, media_urls=[...], format='reel', cover=...).\n"
-                f"4. schedule_package(mode='draft').\n{_RULES}")
+                "2. edit_video(run_id, ..., rights='news_credit', credit='Video: <maker> on Product Hunt', ratio='9:16', end_s<=45, "
+                "captions=true, cover={'title': '<hook>'}).\n"
+                "3. render_status until done -> create_package(run_id, captions={'instagram': ...}, media_urls=[...], format='reel', cover=...).\n"
+                f"4. schedule_package(run_id, mode='draft').\n{_RULES}")
     if name == "carousel_from_link":
         n = a.get("slides") or "4"
         return (f"Make a carousel from {a.get('link', '<link>')}.\n"
+                + _start("Carousel") +
                 "1. research_link(url): title, facts, figures, official images.\n"
-                "2. hero_edit(image_url=<the best official image>) for the cover.\n"
-                f"3. render_carousel(slides=[cover + {n} fact slides you write from the page; plain words, one figure per slide]).\n"
-                "4. create_package(captions per channel, media_urls=render_carousel's media_urls, format='carousel').\n"
-                f"5. schedule_package(mode='draft').\n{_RULES}")
+                "2. hero_edit(run_id, image_url=<the best official image's URL>) for the cover (give the URL; don't upload copies).\n"
+                f"3. render_carousel(run_id, slides=[cover + {n} fact slides you write from the page; plain words, one figure per slide]). "
+                "Fit problems: shorten and render again with the same run_id (it replaces the slides).\n"
+                "4. create_package(run_id, captions per channel, media_urls=render_carousel's media_urls, format='carousel').\n"
+                f"5. schedule_package(run_id, mode='draft').\n{_RULES}")
     if name == "one_take_clips":
         return (f"Turn {a.get('video_url', '<video>')} (the user owns it) into {a.get('clips') or '5'} clips.\n"
-                "1. clips_from_video(url, owns=true, count=N) -> poll list_clips(take_id) until ready.\n"
+                "1. clips_from_video(url, owns=true, count=N) -> poll list_clips(take_id) until ready (one take, one request).\n"
                 "2. Show each clip's hook and transcript; adjust_clip if the user asks.\n"
                 "3. place_clips_in_week(take_id) dry run -> show the plan -> place_clips_in_week(take_id, confirm_token).\n"
                 "Hooks are exact quotes from the video, never invented. Drafts only.")
     if name == "new_template":
-        return (f"Build a reusable post template for: {a.get('purpose', '<purpose>')}.\n"
-                "1. list_templates and read the resource huhqueue://brand-kit/active so it fits the brand.\n"
-                "2. create_template(name, about, layout='kit' (or bold_news | editorial | minimal | playful), fields=[{key, label, "
-                "sample}], slides=[front {kicker,title,sub}, then story / stat / bullets / quote slides with {field} placeholders]). "
-                "The end card is added automatically.\n"
+        return (f"Build a reusable post template for: {a.get('purpose', '<purpose>')} (the user asked for a new template).\n"
+                "1. list_templates and read the resource huhqueue://brand-kit/active so it fits the brand. If a template already "
+                "fits, ask the user before making another.\n"
+                "2. create_template(user_asked=true, reason='<what they asked for>', name, about, layout='kit' (or bold_news | "
+                "editorial | minimal | playful), fields=[{key, label, sample}], slides=[front {kicker,title,sub}, then story / stat / "
+                "bullets / quote slides with {field} placeholders]). The end card is added automatically.\n"
                 "3. render_template(template='custom:<slug>', data={...}) and show the user the slides.\n"
-                "4. update_template to fix anything they ask for.")
+                "4. update_template to fix anything they ask for (never a second create_template).")
     raise KeyError(name)
 
 

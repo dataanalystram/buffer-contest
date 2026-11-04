@@ -85,7 +85,13 @@ def ensure(store) -> None:
             stmt = (stmt.replace(" REAL", " DOUBLE PRECISION").replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
                     .replace(" BLOB", " BYTEA"))
         store.x(stmt)
+    # which AI app (agent token) made the item: cleanup_agent_drafts tidies only what apps left (studio/run_discipline.py)
+    if store.pg:
+        store.x("ALTER TABLE library_items ADD COLUMN IF NOT EXISTS agent_id INTEGER")
+    elif "agent_id" not in {r["name"] for r in store.q("PRAGMA table_info(library_items)")}:
+        store.x("ALTER TABLE library_items ADD COLUMN agent_id INTEGER")
     store.x("CREATE INDEX IF NOT EXISTS library_items_user ON library_items(user_id, id)")
+    store.x("CREATE INDEX IF NOT EXISTS library_items_run ON library_items(user_id, run_id)")
     store.x("CREATE INDEX IF NOT EXISTS library_items_token ON library_items(token)")
     if store.pg:  # closed to the hosted database's public data API, like every other table
         for t in TABLES:
@@ -94,6 +100,10 @@ def ensure(store) -> None:
 
 def _now() -> float:
     return time.time()
+
+
+def _agent_id(a: Actor) -> int | None:
+    return a.agent["id"] if getattr(a, "kind", "") == "agent" and a.agent else None
 
 
 def _sample_items() -> list[dict]:
@@ -285,8 +295,9 @@ class Library:
     # ---------------------------------------------------------------- uploads (chunked bytes)
     def _new_item(self, a: Actor, source: str, name: str) -> tuple[int, str]:
         tok = secrets.token_urlsafe(18)
-        iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created)"
-                           " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (a.uid, tok, name[:80], "", "", source, 0, "", "pending", "{}", None, _now()))
+        iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created,agent_id)"
+                           " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (a.uid, tok, name[:80], "", "", source, 0, "", "pending", "{}", None, _now(),
+                                                                _agent_id(a)))
         return iid, tok
 
     def _drop(self, iid: int) -> None:
@@ -338,9 +349,10 @@ class Library:
             self._drop(iid)
             raise ActionError("That file is empty.")
         same = self.store.q("SELECT id FROM library_items WHERE user_id=? AND sha256=? AND storage='chunks' AND id<>?", (a.uid, digest, iid))
-        if same:  # the same file again: keep the one already there
+        if same:  # the same file again (same bytes, SHA-256): keep the one already there and say so
             self._drop(iid)
-            return self.item(a, same[0]["id"])
+            self.store.audit(a.uid, a.label, "library_upload", "read", {"kind": k, "bytes": size, "source": source, "deduped": True})
+            return {**self.item(a, same[0]["id"]), "deduped": True}
         if self.used(a.uid) + size > QUOTA:  # uploads that ran at the same time each saw room for themselves: recount now
             self._drop(iid)
             raise ActionError(f"Your Library is full ({QUOTA // MB} MB). Delete files you no longer need in Library.", 413)
@@ -415,13 +427,80 @@ class Library:
         info["tokens"] = [t for t in toks if t in by]
         info["format"] = fmt
         name = {"video": "Reel.mp4", "carousel": f"Carousel ({len(info['tokens'])} slides)", "image": "Image.jpg"}[kind]
-        iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created)"
-                           " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        agent = _agent_id(a)
+        if agent is None and run_id:  # a render finished by the worker callback (a human Actor) for an app's run: the app made it
+            got = self.store.q("SELECT agent_id FROM agent_runs WHERE id=? AND user_id=?", (int(run_id), a.uid))
+            agent = got[0]["agent_id"] if got and got[0]["agent_id"] is not None else None
+        iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created,agent_id)"
+                           " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (a.uid, info["tokens"][0], name, first["mime"], kind, "generated", sum(int(by[t]["size"] or 0) for t in info["tokens"]),
-                            "", "media", json.dumps(info), run_id, created or _now()))
+                            "", "media", json.dumps(info), run_id, created or _now(), agent))
         for t in info["tokens"]:
             self.store.x("INSERT INTO library_media(token,item_id,user_id) VALUES(?,?,?) ON CONFLICT(token) DO NOTHING", (t, iid, a.uid))
         return iid
+
+    def register_run(self, a: Actor, media: list[dict], fmt: str, run_id: int, output: int = 1) -> int | None:
+        """ONE Library item per run output (owner, 4 Nov 2026): a run's latest render of an output replaces its earlier one
+        in place (same item id, new files), so fixing a slide, re-rendering or switching carousel -> reel never adds another
+        item. A request for several outputs ("make 3 reels") keeps one item per output (meta.output 2, 3, ...; output 1 has
+        none), all on the same run. The earlier files stay with the run (its Undo); the item only points at the newest."""
+        if demo_guard.is_demo(a.uid) or not run_id:
+            return None
+        output = int(output or 1)
+        rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND run_id=? AND source='generated' AND storage='media' "
+                            "ORDER BY id", (a.uid, int(run_id)))
+        rows = [r for r in rows if int((json.loads(r["meta"] or "{}") or {}).get("output") or 1) == output]
+        if not rows:
+            iid = self.register_generated(a, media, fmt, int(run_id))
+            if iid and output != 1:
+                got = self.store.q("SELECT meta FROM library_items WHERE id=? AND user_id=?", (iid, a.uid))
+                info = {**json.loads((got[0]["meta"] if got else "") or "{}"), "output": output}
+                self.store.x("UPDATE library_items SET meta=? WHERE id=? AND user_id=?", (json.dumps(info), iid, a.uid))
+            return iid
+        d = dict(rows[0])
+        items = [m for m in media if m.get("token") and m.get("role") not in ("slide",)]
+        video = next((m for m in items if m.get("type") == "video"), None)
+        if video:
+            items, kind = [video], "video"
+        elif fmt == "carousel" and len(items) > 1:
+            kind = "carousel"
+        else:
+            items, kind = items[:1], "image"
+        toks = [m["token"] for m in items]
+        if not toks:
+            return d["id"]
+        got = self.store.q(f"SELECT token, mime, size, meta FROM media WHERE user_id=? AND token IN ({','.join('?' * len(toks))})",
+                           (a.uid, *toks))
+        by = {r["token"]: r for r in got}
+        toks = [t for t in toks if t in by]
+        if not toks:
+            return d["id"]
+        old = json.loads(d["meta"] or "{}")
+        if old.get("tokens") == toks:
+            return d["id"]
+        meta = json.loads(by[toks[0]]["meta"] or "{}")
+        info = {k: meta[k] for k in ("width", "height", "duration") if meta.get(k)}
+        info.update(tokens=toks, format=fmt, versions=int(old.get("versions") or 1) + 1)
+        if output != 1:
+            info["output"] = output
+        name = {"video": "Reel.mp4", "carousel": f"Carousel ({len(toks)} slides)", "image": "Image.jpg"}[kind]
+        with self.store.tx():
+            self.store.x("UPDATE library_items SET token=?, name=?, mime=?, kind=?, size=?, meta=? WHERE id=? AND user_id=?",
+                         (toks[0], name, by[toks[0]]["mime"], kind, sum(int(by[t]["size"] or 0) for t in toks), json.dumps(info), d["id"], a.uid))
+            for t in old.get("tokens") or []:  # the replaced files stay run media (the run's Undo still finds them)
+                if t not in toks:
+                    self.store.x("DELETE FROM library_media WHERE token=? AND item_id=? AND user_id=?", (t, d["id"], a.uid))
+            for t in toks:
+                self.store.x("INSERT INTO library_media(token,item_id,user_id) VALUES(?,?,?) ON CONFLICT(token) DO NOTHING", (t, d["id"], a.uid))
+        return d["id"]
+
+    def attach_run(self, a: Actor, iid, run_id: int) -> None:
+        """An upload made for a post (run_id) belongs to that post: cleanup and "View run" know it. Never moves an item that
+        already belongs to another run, never touches another person's item."""
+        try:
+            self.store.x("UPDATE library_items SET run_id=? WHERE id=? AND user_id=? AND run_id IS NULL", (int(run_id), int(iid), a.uid))
+        except (TypeError, ValueError):
+            pass
 
     # ---------------------------------------------------------------- reading
     def _row(self, a: Actor, iid) -> dict:

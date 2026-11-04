@@ -410,7 +410,7 @@ class House:
             kind = "video" if item["kind"] == "video" else "photo"
             self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
             return {"token": item["media_token"], "url": self.media_url(item["media_token"]), "type": kind, "bytes": len(data),
-                    "library_id": item["id"]}
+                    "library_id": item["id"], **({"deduped": True} if item.get("deduped") else {})}
         tok = self.put_media(a, data, name, kind="upload", meta={"type": kind})
         self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
         return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
@@ -708,8 +708,9 @@ class House:
     def runs(self, a: Actor, limit: int = 20) -> list[dict]:
         from .chat_context import titles as _chat_titles  # names given in the Make a post sidebar win
         out, named = [], _chat_titles(self.store, a.uid)
-        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT ?",
-                              (a.uid, limit)):
+        # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads
+        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status<>'archived' "
+                              "ORDER BY id DESC LIMIT ?", (a.uid, limit)):
             d = dict(r)
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
             from .headline import title as _title  # never the raw request with its URL (owner P0)
@@ -1537,6 +1538,14 @@ class House:
             meta.setdefault("source_token", src_tok)
         tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta)
         self.store.x("UPDATE render_jobs SET status='done', media_token=?, updated=? WHERE id=?", (tok, _now(), jid))
+        jspec = json.loads(job["spec"])
+        if jspec.get("for_run"):  # an AI app's render for its post: it becomes that run's output (one run, one thread)
+            try:
+                from . import mcp_client_brain
+                mcp_client_brain.record_output(self, a, int(jspec["for_run"]), int(jspec.get("for_output") or 1), "reel",
+                                               [{"token": tok, "type": "video", "url": self.media_url(tok)}], job_id=jid)
+            except Exception:  # noqa: BLE001 - bookkeeping never fails the render
+                pass
         if run_inline and job["run_id"] and self._run_kind(job["run_id"]) != "agent":  # the agent brain waits on its own job
             self._spawn_run(job["run_id"], self._resume_after_video, a, job["run_id"], jid)
         return {"ok": True, "token": tok}
@@ -1781,7 +1790,7 @@ class House:
                               "channel_id": p.get("channelId", ""), "id": p.get("id"), "thumb": thumb,
                               "type": self._post_type(assets), "draggable": status != "sent",
                               "link": p.get("externalLink") or ""})
-        for ap in self.studio.approvals(a, "pending") if a.kind == "human" else []:
+        for ap in self.studio.approvals(a, "pending", "post") if a.kind == "human" else []:
             pl = ap["payload"]
             ch = chans.get(pl.get("channel_id"), {})
             media = [m for m in ([pl.get("media_url")] + (pl.get("media_urls") or [])) if m]
