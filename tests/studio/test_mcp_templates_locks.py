@@ -37,7 +37,7 @@ def test_tool_names_are_unique():
 
 def test_update_brand_kit_without_kit_id_changes_the_active_kit(human):
     tok = agent_token(human, policy="trusted", cap=50)
-    _, made = mcp_call(human, tok, "create_brand_kit", {"name": "Beta", "colors": {"background": "#FFFFFF", "primary": "#2563EB"},
+    _, made = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "name": "Beta", "colors": {"background": "#FFFFFF", "primary": "#2563EB"},
                                                         "activate": True})
     res, up = mcp_call(human, tok, "update_brand_kit", {"colors": {"primary": "#FF5A1F"}, "end_card": {"cta": "Follow Beta"}})
     assert not res["isError"], up
@@ -72,7 +72,7 @@ def test_prompts_and_resources(human):
 
 def test_custom_template_create_render_ledger_and_delete(human):
     tok = agent_token(human, policy="trusted", cap=50)
-    res, t = mcp_call(human, tok, "create_template", FUNDING)
+    res, t = mcp_call(human, tok, "create_template", {**FUNDING, "user_asked": True})
     assert not res["isError"], t
     assert t["id"] == "custom:funding-announcement" and t["custom"]
     lst = human.get("/api/templates").json()["templates"]
@@ -95,26 +95,26 @@ def test_custom_template_create_render_ledger_and_delete(human):
 
 def test_custom_template_is_sanitised_and_capped(human, monkeypatch):
     tok = agent_token(human, policy="trusted", cap=100)
-    res, t = mcp_call(human, tok, "create_template", {"name": "<script>Job</script> opening\x00", "slides": [
+    res, t = mcp_call(human, tok, "create_template", {"user_asked": True, "name": "<script>Job</script> opening\x00", "slides": [
         {"type": "front", "title": "{role} at {company}", "evil": "x"}, {"type": "exec", "title": "no"}]})
     assert not res["isError"], t
     assert "<" not in t["name"] and "\x00" not in t["name"]
     assert len(t["slides"]) == 1 and "evil" not in t["slides"][0]
     assert {f["key"] for f in t["fields"]} == {"role", "company"}  # placeholders get declared, never printed bare
-    res, msg = mcp_call(human, tok, "create_template", {"name": "x", "slides": [{"type": "nope"}]})
+    res, msg = mcp_call(human, tok, "create_template", {"user_asked": True, "name": "x", "slides": [{"type": "nope"}]})
     assert res["isError"] and "slide" in msg
-    res, msg = mcp_call(human, tok, "create_template", {"name": "x", "layout": "brutalist", "slides": [{"type": "front"}]})
+    res, msg = mcp_call(human, tok, "create_template", {"user_asked": True, "name": "x", "layout": "brutalist", "slides": [{"type": "front"}]})
     assert res["isError"] and "layout" in msg
     monkeypatch.setattr(custom_templates, "MAX_CUSTOM", 2)
-    mcp_call(human, tok, "create_template", {"name": "two", "slides": [{"type": "front", "title": "a"}]})
-    res, msg = mcp_call(human, tok, "create_template", {"name": "three", "slides": [{"type": "front", "title": "a"}]})
+    mcp_call(human, tok, "create_template", {"user_asked": True, "name": "two", "slides": [{"type": "front", "title": "a"}]})
+    res, msg = mcp_call(human, tok, "create_template", {"user_asked": True, "name": "three", "slides": [{"type": "front", "title": "a"}]})
     assert res["isError"] and "Up to 2" in msg
 
 
 def test_render_in_another_kit_does_not_switch_the_active_one(human):
     tok = agent_token(human, policy="trusted", cap=50)
-    _, a = mcp_call(human, tok, "create_brand_kit", {"name": "Alpha", "colors": {"background": "#000000", "primary": "#FF0000"}, "activate": True})
-    _, b = mcp_call(human, tok, "create_brand_kit", {"name": "Bravo", "colors": {"background": "#FFFFFF", "primary": "#0000FF"}})
+    _, a = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "name": "Alpha", "colors": {"background": "#000000", "primary": "#FF0000"}, "activate": True})
+    _, b = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "name": "Bravo", "colors": {"background": "#FFFFFF", "primary": "#0000FF"}})
     _, r = mcp_call(human, tok, "render_template", {"template": "breaking", "services": ["instagram"], "kit_id": b["id"]})
     assert r["kit"]["id"] == b["id"] and r["kit"]["name"] == "Bravo"
     assert human.get("/api/brand-kits").json()["active_id"] == a["id"]
@@ -124,16 +124,16 @@ def test_parallel_kit_writes_lose_nothing_and_seed_once(human, app):
     """Three sessions at once: switching kits, saving brand fields and listing kits (which seeds HuhByte) never lose a write
     and never make a second HuhByte kit."""
     tok = agent_token(human, policy="trusted", cap=500)
-    _, k1 = mcp_call(human, tok, "create_brand_kit", {"name": "K1"})
-    _, k2 = mcp_call(human, tok, "create_brand_kit", {"name": "K2"})
+    _, k1 = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "name": "K1"})
+    _, k2 = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "name": "K2"})
     errors = []
 
     def worker(i):
         try:
             for j in range(4):
-                mcp_call(human, tok, "set_active_brand_kit", {"kit_id": (k1, k2)[(i + j) % 2]["id"]}, mid=i * 100 + j)
+                mcp_call(human, tok, "set_active_brand_kit", {"user_asked": True, "kit_id": (k1, k2)[(i + j) % 2]["id"]}, mid=i * 100 + j)
                 mcp_call(human, tok, "list_brand_kits", mid=i * 100 + j + 50)
-                mcp_call(human, tok, "create_template", {"name": f"T{i}-{j}", "slides": [{"type": "front", "title": "x"}]}, mid=i * 100 + j + 70)
+                mcp_call(human, tok, "create_template", {"user_asked": True, "name": f"T{i}-{j}", "slides": [{"type": "front", "title": "x"}]}, mid=i * 100 + j + 70)
         except Exception as e:  # noqa: BLE001
             errors.append(repr(e))
     th = [threading.Thread(target=worker, args=(i,)) for i in range(3)]
@@ -154,8 +154,8 @@ def test_bs_save_extra_lands_in_one_write(human):
     """activate() used to write the extras twice; now active_kit, example and caption style land with the kit fields."""
     house = human.app.state.house if hasattr(human.app.state, "house") else None
     tok = agent_token(human, policy="trusted", cap=50)
-    _, k = mcp_call(human, tok, "create_brand_kit", {"name": "Solo", "caption_style": "news"})
-    _, act = mcp_call(human, tok, "set_active_brand_kit", {"kit_id": k["id"]})
+    _, k = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "name": "Solo", "caption_style": "news"})
+    _, act = mcp_call(human, tok, "set_active_brand_kit", {"user_asked": True, "kit_id": k["id"]})
     assert act["applied"]
     assert human.get("/api/brand-kits").json()["active_id"] == k["id"]
     del house
@@ -181,7 +181,7 @@ def test_kit_cap_holds_under_parallel_creates(human, monkeypatch):
     mcp_call(human, tok, "list_brand_kits")  # seeds HuhByte AI (1 of 4)
 
     def make(i):
-        mcp_call(human, tok, "create_brand_kit", {"name": f"P{i}"}, mid=900 + i)
+        mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "name": f"P{i}"}, mid=900 + i)
     th = [threading.Thread(target=make, args=(i,)) for i in range(8)]
     for t in th:
         t.start()

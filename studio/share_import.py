@@ -255,7 +255,8 @@ TOOLS = [
      "library_id and media_token.",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {
          "url": {"type": "string", "description": "The share link, e.g. https://drive.google.com/file/d/<id>/view?usp=sharing"},
-         "name": {"type": "string", "description": "File name to keep, e.g. launch.mp4 (optional)"}}}},
+         "name": {"type": "string", "description": "File name to keep, e.g. launch.mp4 (optional)"},
+         "run_id": {"type": "integer", "description": "The post this file is for (start_post): the import is kept with it"}}}},
 ]
 NAMES = {t["name"] for t in TOOLS}
 
@@ -265,7 +266,13 @@ def call_tool(studio, actor, name: str, args: dict):
         return NotImplemented
     url = str((args or {}).get("url") or "")
     it = studio.house.share_import.import_link(actor, url, str((args or {}).get("name") or ""))
-    return item_out(studio.house, it, provider(url))
+    rid = (args or {}).get("run_id")
+    if isinstance(rid, int) and rid > 0 and it.get("id"):
+        from . import run_discipline
+        run_discipline.own_run(studio.store, actor, rid)  # 404 for someone else's run
+        studio.house.library.attach_run(actor, it["id"], rid)
+    out = item_out(studio.house, it, provider(url))
+    return {**out, "deduped": True} if it.get("deduped") else out
 
 
 def add_routes(app, house, actor) -> None:

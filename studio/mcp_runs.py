@@ -31,7 +31,8 @@ MAX_STEPS = 60                   # newest steps shown per run (a long session st
 KEEP_UNCLAIMED = 24 * 3600       # unattached rows older than this are swept
 APPS = {"claude": "Claude", "claude-code": "Claude Code", "chatgpt": "ChatGPT", "codex": "Codex", "cursor": "Cursor", "grok": "Grok"}
 # tools that make (or return) a post run: the call that creates one claims the token's earlier unattached calls
-CREATORS = {"create_package", "make_post", "draft_from_library", "use_library_item", "run_agent", "edit_media", "replace_draft_media"}
+CREATORS = {"create_package", "make_post", "draft_from_library", "use_library_item", "run_agent", "edit_media", "replace_draft_media",
+            "start_post"}
 # polling and lookups are not "what the agent did"; everything else is shown
 QUIET = {"get_run", "render_status", "list_clips", "whoami", "list_channels", "get_limits", "get_activity", "list_queue", "list_rules",
          "list_approvals", "list_calendar", "get_inbox", "get_brand", "get_brain", "get_ai_engine", "get_ai_logs", "list_ai_keys",
@@ -143,9 +144,17 @@ def record(store, actor, tool: str, args: dict, result: Any, ok: bool, ms: int, 
     try:
         ensure(store)
         ag = actor.agent
-        rid = _rid(args, result)
+        rid = _rid(args, result)  # 1) the run the call names (or made)
         if rid is not None and not store.q("SELECT id FROM agent_runs WHERE id=? AND user_id=?", (rid, actor.uid)):
             rid = None  # never attach to another person's run
+        if rid is None and ok:  # 2) this app's open run (one request = one thread, studio/run_discipline.py)
+            try:
+                from . import run_discipline
+                open_ = run_discipline.active_run(store, actor)
+                rid = open_["id"] if open_ else None
+            except Exception:  # noqa: BLE001
+                rid = None
+        # 3) otherwise the call waits unattached and the next run this token creates claims it (CREATORS, CLAIM_WINDOW)
         label, detail = summary(tool, args, result, ok, error)
         name, ver = _client(ag)
         now = time.time()

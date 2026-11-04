@@ -180,6 +180,25 @@ from . import image_edit as _image  # noqa: E402  fetch_image, cutout_product, e
 
 TOOLS += _image.TOOLS
 READ_ONLY |= _image.READ_ONLY
+from . import run_discipline as _rd  # noqa: E402  start_post, cleanup_agent_drafts: one request = one run (4 Nov 2026)
+
+TOOLS += _rd.TOOLS
+from . import consent as _consent  # noqa: E402  approval gate for paid / external APIs (4 Nov 2026)
+
+
+def _add_consent_fields(tools: list[dict]) -> None:
+    """New templates and brand kits only when the person asked: those tools take user_asked (+ reason)."""
+    for t in tools:
+        if t["name"] in _rd.NEEDS_USER_ASKED:
+            props = t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})
+            props.setdefault("user_asked", {"type": "boolean", "description": "Must be true: the person asked for this "
+                                            "(an AI app never makes a template or brand kit, or switches kits, on its own)"})
+            props.setdefault("reason", {"type": "string", "description": "One line: what the person asked for"})
+            if "user_asked" not in t["description"]:
+                t["description"] = t["description"].rstrip() + " Only when the person asked for it: pass user_asked: true."
+
+
+_add_consent_fields(TOOLS)
 
 
 
@@ -198,7 +217,10 @@ def _mark_server_ai(tools: list[dict]) -> None:
             t["description"] = t["description"].rstrip() + _cb.SERVER_AI_NOTE
             props = t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})
             props["server_ai"] = {"type": "boolean", "description": "true = use HuhQueue's server AI (the user's HuhQueue AI "
-                                  "allowance). Leave out to do it yourself with the client-brain tools."}
+                                  "allowance). Leave out to do it yourself with the client-brain tools. It needs the "
+                                  "person's approval first (needs_user_approval)."}
+            props["approval_id"] = {"type": "integer", "description": "The approval_id needs_user_approval returned, once the "
+                                    "person approved it in HuhQueue"}
 
 
 _mark_server_ai(TOOLS)
@@ -324,7 +346,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _uploads.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
-    for _mod in (_send, _share, _ledger, _parity, _image):
+    for _mod in (_send, _share, _ledger, _parity, _image, _rd):
         extra = _mod.call_tool(studio, actor, name, args)
         if extra is not NotImplemented:
             return extra
@@ -354,7 +376,11 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
                    "capabilities": {"tools": {"listChanged": False}, "prompts": {"listChanged": False},
                                     "resources": {"subscribe": False, "listChanged": False}},
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
-                   "instructions": _cb.INSTRUCTIONS + " Also: HuhQueue edits posts to the user's brand. One take -> a week: clips_from_video -> poll list_clips(take_id) -> adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Typical post loop: run_agent (topic or link) or edit_media (their photo/video) -> poll get_run until ready -> show the media and captions -> turn any feedback into revise(run_id, correction), which saves a Style Ledger rule -> schedule_package. Posts wait for human approval unless the token policy says otherwise." + UNTRUSTED_NOTE})
+                   "instructions": _cb.INSTRUCTIONS + " Also: one take -> a week: clips_from_video -> poll list_clips(take_id) -> "
+                   "adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Brand "
+                   "feedback the person gives ('logo smaller', 'no hype'): remember_rule saves it to the Style Ledger. Leftover "
+                   "drafts from earlier sessions: cleanup_agent_drafts lists them first and changes nothing until the person "
+                   "confirms." + UNTRUSTED_NOTE})
     if method == "ping":
         return ok({})
     if method == "tools/list":
@@ -386,23 +412,44 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
             from . import activity
             activity.note(model_hint=str(meta.get("model") or meta.get("huhqueue/model"))[:80])
         name, args = p.get("name", ""), p.get("arguments") or {}
+        if not isinstance(args, dict):
+            args = {}
         # make_post with brain="external" only creates the run and the client drives the post_* tools: no HuhQueue model
         # call, so it needs no server_ai (it still runs under the client-brain lock below, so the operator key stays blocked)
-        external = name == "make_post" and isinstance(args, dict) and args.get("brain") == "external"
-        if name in _cb.SERVER_AI_TOOLS and not external and not (isinstance(args, dict) and args.get("server_ai") is True):
+        external = name == "make_post" and args.get("brain") == "external"
+        if name in _cb.SERVER_AI_TOOLS and not external and args.get("server_ai") is not True:
             try:  # the kill switch answers first, for every tool that would act (SECURITY_RULES 4)
                 studio.kill_switch_check(actor, name)
             except (ActionError, BufferError) as e:
                 return ok({"content": [{"type": "text", "text": str(e)}], "isError": True})
             hint = _cb.server_ai_hint(name)  # no model call: the client is the brain unless the person chose server AI
             return ok({"content": [{"type": "text", "text": json.dumps(hint, indent=1)}], "structuredContent": hint, "isError": False})
+        if not external and _consent.gated(name, args, _cb.SERVER_AI_TOOLS):
+            # paid or credit-spending (server AI, later Channel3): only after the person approves it in HuhQueue (owner, 4 Nov 2026)
+            try:
+                studio.kill_switch_check(actor, name)
+                wait = _consent.gate(studio, actor, name, args)
+            except (ActionError, BufferError) as e:
+                return ok({"content": [{"type": "text", "text": str(e)}], "isError": True})
+            if wait is not None:
+                return ok({"content": [{"type": "text", "text": json.dumps(wait, indent=1)}], "structuredContent": wait, "isError": False})
         from . import brain_llm, mcp_runs
-        tok = brain_llm.client_brain(not (isinstance(args, dict) and args.get("server_ai") is True))
+        tok = brain_llm.client_brain(args.get("server_ai") is not True)
         hint = str(meta.get("model") or meta.get("huhqueue/model") or "")[:80] if isinstance(meta, dict) else ""
         t0 = time.monotonic()
-        clean = {k: v for k, v in args.items() if k != "server_ai"} if isinstance(args, dict) else {}
+        clean = {k: v for k, v in args.items() if k != "server_ai"}
         try:
-            result = call_tool(studio, actor, name, clean)
+            # one request = one run, caps, consent for new templates/kits, idempotency (studio/run_discipline.py)
+            key = _rd.idem_key(name, clean, meta) if name not in READ_ONLY else None
+            replayed = _rd.replay(studio.store, actor, name, clean, key) if key else None
+            if replayed is not None:
+                result = replayed
+            else:
+                clean, early = _rd.before(studio, actor, name, clean)
+                result = early if early is not None else call_tool(studio, actor, name, _rd.strip_control(clean, name))
+                result = _rd.after(studio, actor, name, clean, result)
+                if key:
+                    _rd.remember(studio.store, actor, name, clean, key, result)
             # the run's thread shows what the external agent did: one visible step per tool call (studio/mcp_runs.py)
             mcp_runs.record(studio.store, actor, name, clean, result, True, int((time.monotonic() - t0) * 1000), model_hint=hint)
             images = result.pop("_mcp_images", None) if isinstance(result, dict) else None  # get_media_preview's stills

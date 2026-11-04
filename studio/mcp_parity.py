@@ -228,7 +228,7 @@ def replace_draft_media(studio, a, args: dict) -> dict:
 # ------------------------------------------------------------------------------------------------ per-page agent context
 PAGES: dict[str, dict] = {
     "make_post": {"title": "Make a post", "shows": "The chat thread of one post run: the request, the agent's steps, one post card per channel.",
-                  "tools": ["make_post", "get_run", "reply_post", "create_package", "replace_channel_media", "set_template", "get_post_templates",
+                  "tools": ["start_post", "continue_run", "make_post", "get_run", "reply_post", "create_package", "replace_channel_media", "set_template", "get_post_templates",
                             "set_theme", "set_cover", "list_music", "set_post_music", "use_brand_kit", "update_package_draft",
                             "undo_package_media", "schedule_package", "get_post_context", "rename_post_thread", "get_media_preview",
                             "get_ai_engine", "set_ai_engine"]},
@@ -238,6 +238,7 @@ PAGES: dict[str, dict] = {
               "tools": ["get_inbox", "list_approvals", "update_post", "reschedule_post"]},
     "library": {"title": "Library", "shows": "Every upload and every rendered image, carousel and Reel; the Bin.",
                 "tools": ["list_library", "delete_library_item", "bulk_delete_library", "list_library_bin", "restore_library_items",
+                          "cleanup_agent_drafts",
                           "purge_library_bin", "draft_from_library", "use_library_item", "get_media_preview", "create_upload",
                           "create_send_code", "import_from_link", "list_recent_uploads"]},
     "templates": {"title": "Templates (Brand studio)", "shows": "Built-in and custom templates; custom ones are the person's (\"Yours\").",
