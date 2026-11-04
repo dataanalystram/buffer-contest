@@ -57,11 +57,17 @@ def check_url(url: str) -> str:
     parts = urlsplit(url)
     if parts.scheme not in ("https", "http") or not parts.hostname:
         raise WebhookError("Use a full http(s):// URL, e.g. https://hooks.zapier.com/hooks/catch/...")
-    try:   # local n8n on a LAN address is fine; link-local (cloud metadata endpoints) never is
-        ip = ipaddress.ip_address(parts.hostname)
+    if parts.username or parts.password:
+        raise WebhookError("Put credentials in a header on the receiving side, not in the URL")
+    from .. import netguard   # local n8n on a LAN address is fine; link-local / cloud metadata never is
+    host = parts.hostname.strip("[]").rstrip(".").lower()
+    if netguard._name_blocked(host, "lan"):
+        raise WebhookError("Link-local addresses (cloud metadata) are not allowed")
+    try:
+        ip = ipaddress.ip_address(host)
     except ValueError:
-        ip = None
-    if ip is not None and ip.is_link_local:
+        ip = None   # a host name is resolved and vetted again on every delivery (it may change)
+    if ip is not None and netguard.ip_blocked(ip, "lan"):
         raise WebhookError("Link-local addresses (cloud metadata) are not allowed")
     return url[:2000]
 
@@ -154,8 +160,12 @@ def _send(core, w: Webhook, d: WebhookDelivery) -> tuple[bool, int, str]:
     headers = {"Content-Type": "application/json", "User-Agent": "HuhQueue-Webhooks/1", "X-HuhQueue-Event": d.event,
                "X-HuhQueue-Delivery": d.id, "X-HuhQueue-Timestamp": str(ts),
                "X-HuhQueue-Signature": sign(core.cipher.decrypt(w.secret_enc) or "", ts, body)}
+    from .. import netguard   # resolved + vetted + pinned on THIS send (lan policy: never link-local/metadata), no redirects
     try:
-        r = core.http.post(w.url, content=body, headers=headers, timeout=10, follow_redirects=False)
+        r = netguard.request(core.http, "POST", w.url, policy="lan", follow=False, limit=1_000_000, content=body,
+                             headers=headers, timeout=10)
+    except netguard.FetchError as e:
+        return False, 0, str(e)[:200]
     except httpx.HTTPError as e:
         return False, 0, e.__class__.__name__
     return 200 <= r.status_code < 300, r.status_code, (r.text or "")[:200]

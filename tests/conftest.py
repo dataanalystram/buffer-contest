@@ -19,6 +19,9 @@ def settings(tmp_path, monkeypatch):
     for k in list(os.environ):
         if k.startswith(("HUHQ_", "INSTAGRAM_", "TIKTOK_", "YOUTUBE_", "X_", "LINKEDIN_")):
             monkeypatch.delenv(k, raising=False)
+        # outbound fetches fail closed through a proxy (netguard): a developer's HTTP(S)_PROXY must not change results
+        if k.lower() in ("http_proxy", "https_proxy", "all_proxy"):
+            monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("HUHQ_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("HUHQ_ENABLE_FAKE", "1")
     monkeypatch.chdir(tmp_path)

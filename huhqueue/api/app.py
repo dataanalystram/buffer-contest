@@ -180,11 +180,21 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
             resp = _err(429, f"Rate limit: {info.rate_per_min} requests/minute for this token")
         if resp is None and info.allowed_channel_ids and not path.startswith(safety.RUNNER_PREFIXES):
             with core.db.session() as s:
-                touched = safety.referenced_channels(s, method, path, dict(request.query_params), body)
-            outside = touched - set(info.allowed_channel_ids)
-            if outside:
-                resp = _err(403, f"Token '{info.name}' is limited to {len(info.allowed_channel_ids)} channel(s); "
-                                 f"not allowed: {', '.join(sorted(outside))}", code="channel_scope")
+                query = dict(request.query_params)
+                named, via_ids = safety.scope_refs(s, method, path, query, body)
+                allowed = set(info.allowed_channel_ids)
+                outside = named - allowed
+                if safety.TOO_MANY in via_ids:
+                    resp = _err(400, f"At most {safety.MAX_SCOPE_IDS} ids per request")
+                elif outside:   # a channel the request NAMES decides first: 403 whether the object exists or not
+                    resp = _err(403, f"Token '{info.name}' is limited to {len(info.allowed_channel_ids)} channel(s); "
+                                     f"not allowed: {', '.join(sorted(outside))}", code="channel_scope")
+                elif via_ids - allowed:
+                    # a post / target / comment on another channel answers exactly like one that doesn't exist (no
+                    # probing). A teammate's token first gets the teammate's own denial, the one an existing object
+                    # would get after this check, so the answer never says whether the object exists (CodeRabbit, 4 Nov 2026)
+                    d = teams.authorize(s, info.user, method, path, query, body, scope) if info.user is not None else None
+                    resp = _err(d.status, d.message) if d is not None and not d.ok else _err(404, "Not found")
         counted = method != "GET" and not path.startswith(safety.RUNNER_PREFIXES)
         if resp is None and counted and (info.max_actions_per_day or (risk == "public" and info.max_public_per_day)):
             used = safety.used_today(core, info.id)
@@ -696,14 +706,15 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
             return app.state.media_dict(m)
 
     @app.delete("/api/media/{mid}")
-    def media_delete(mid: str, force: bool = False):
-        from .pro_content import media_usage
+    def media_delete(mid: str, request: Request, force: bool = False):
+        from .pro_content import filter_usage, media_usage
         with core.db.session() as s:
             m = s.get(Media, mid)
             if m:
                 use = media_usage(s, mid)
-                if use["uses"] and not force:
-                    return _err(409, f"This file is used in {use['uses']} post(s) or idea(s) - delete with force=true", usage=use)
+                if use["uses"] and not force:   # block on the FULL usage; list only the caller's visible channels' posts
+                    shown = filter_usage(use, getattr(request.state, "visible_channels", None), recount=False)
+                    return _err(409, f"This file is used in {use['uses']} post(s) or idea(s) - delete with force=true", usage=shown)
                 media_svc.delete(core, m)
                 s.delete(m)
         return {"ok": True}
