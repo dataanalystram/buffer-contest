@@ -171,7 +171,10 @@ def pending(store) -> int:
 def sweep(store, limit: int = 500) -> dict:
     """Delete released objects from the bucket; a key leaves blob_gc only once the bucket confirms. Never inside a
     transaction (it could still roll back), never two at once."""
-    if getattr(store, "_tx_depth", 0) or not _SWEEP.acquire(blocking=False):
+    # inside a transaction on THIS thread: skip (it could still roll back). Another thread's open transaction holds the
+    # store's lock, so a background sweep's first query simply waits for it to commit (CodeRabbit, PR #110).
+    in_tx = getattr(store, "_tx_depth", 0) and getattr(store._lock, "_is_owned", lambda: True)()
+    if in_tx or not _SWEEP.acquire(blocking=False):
         return {"deleted": 0, "failed": 0, "skipped": True}
     try:
         rows = store.q("SELECT key FROM blob_gc WHERE key IS NOT NULL ORDER BY at LIMIT ?", (limit,))

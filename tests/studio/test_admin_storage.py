@@ -392,3 +392,20 @@ def test_admin_page_has_no_browser_prompts_and_testids():
     assert "prompt(" not in js and "confirm(" not in js and "alert(" not in js
     for ctl in re.findall(r"<(?:button|input)\b[^>]*>", html):
         assert "data-testid" in ctl, ctl
+
+
+def test_background_sweep_waits_for_an_outer_transaction(app, s3):
+    """sweep_soon() called inside a transaction: the thread's sweep runs once it commits, it isn't skipped."""
+    import threading
+    store = app.state.store
+    s3.objects["media/a/b"] = b"1"
+    done = threading.Event()
+    with store.tx():
+        store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0)", ("media/a/b", time.time()))
+        assert blobstore.sweep(store).get("skipped")          # this thread, inside the tx: skipped
+        t = threading.Thread(target=lambda: (blobstore.sweep(store), done.set()))
+        t.start()
+        time.sleep(0.2)
+        assert not done.is_set()                               # waiting on the store's lock
+    t.join(5)
+    assert done.is_set() and "media/a/b" not in s3.objects
