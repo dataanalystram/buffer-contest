@@ -56,16 +56,18 @@ def _client():
     return _SHARED
 
 
-def bucket() -> "r2.Bucket | None":
-    """The media bucket, or None for the db backend."""
-    if os.environ.get("HQ_MEDIA_STORAGE", "auto").strip().lower() == "db":
+def bucket(write: bool = False) -> "r2.Bucket | None":
+    """The bucket, or None. ``write``: where NEW bytes go, which HQ_MEDIA_STORAGE=db turns off; reads, rewrites and
+    deletes of objects already in R2 always use the bucket while it is configured (Greptile, PR #110)."""
+    if write and os.environ.get("HQ_MEDIA_STORAGE", "auto").strip().lower() == "db":
         return None
     cfg = r2.config()
     return r2.Bucket(cfg, http=_client()) if cfg else None
 
 
 def backend_name() -> str:
-    return "r2" if bucket() else "db"
+    """Where new media goes."""
+    return "r2" if bucket(write=True) else "db"
 
 
 def owner_prefix(uid: str) -> str:
@@ -82,7 +84,7 @@ def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream"
     """Store bytes: (what goes in the row's ``data``, its ``storage_key``, sha256). With R2 the row gets no bytes; when the
     bucket refuses or is down the bytes stay in the row (the upload never fails because the bucket did) and it's logged."""
     digest = hashlib.sha256(data).hexdigest()
-    b = bucket()
+    b = bucket(write=True)
     if not b:
         return data, None, digest
     key = new_key(kind, uid)
@@ -130,12 +132,36 @@ def rewrite(store, table: str, where: str, args: tuple, data: bytes) -> None:
         store.x(f"UPDATE {table} SET data=?, sha256=? WHERE {where}", (data, digest, *args))
 
 
+def discard(key: str | None) -> None:
+    """An object no row ever pointed at (its row's INSERT failed): delete it now, best effort."""
+    if not key:
+        return
+    b = bucket()
+    try:
+        if b:
+            b.delete(key)
+    except r2.R2Error:
+        print("storage: couldn't delete an unreferenced object; it stays in the bucket", flush=True)
+
+
 def release(store, table: str, where: str, args: tuple = ()) -> None:
-    """DELETE FROM table WHERE where, noting every object key those rows had in blob_gc first (one statement each)."""
+    """DELETE FROM table WHERE where, noting every object key those rows had in blob_gc first, in one transaction
+    (joins the caller's when there is one)."""
     assert table in ("media", "library_chunks")
-    store.x(f"INSERT INTO blob_gc(key, at, tries) SELECT storage_key, ?, 0 FROM {table} WHERE ({where}) AND storage_key IS NOT NULL "
-            "ON CONFLICT(key) DO NOTHING", (time.time(), *args))
-    store.x(f"DELETE FROM {table} WHERE {where}", args)
+    with store.tx():
+        store.x(f"INSERT INTO blob_gc(key, at, tries) SELECT storage_key, ?, 0 FROM {table} WHERE ({where}) AND storage_key IS NOT NULL "
+                "ON CONFLICT(key) DO NOTHING", (time.time(), *args))
+        store.x(f"DELETE FROM {table} WHERE {where}", args)
+
+
+def referenced(store, key: str) -> bool:
+    """A row still points at this object (never delete it, whatever blob_gc says)."""
+    if store.q("SELECT 1 AS x FROM media WHERE storage_key=? LIMIT 1", (key,)):
+        return True
+    try:
+        return bool(store.q("SELECT 1 AS x FROM library_chunks WHERE storage_key=? LIMIT 1", (key,)))
+    except Exception:  # noqa: BLE001  (no Library tables)
+        return False
 
 
 def pending(store) -> int:
@@ -157,6 +183,9 @@ def sweep(store, limit: int = 500) -> dict:
         b = r2.Bucket(cfg, http=_client())
         done = failed = 0
         for r in rows:
+            if referenced(store, r["key"]):  # belt and braces: a key some row still uses leaves the queue, undeleted
+                store.x("DELETE FROM blob_gc WHERE key=?", (r["key"],))
+                continue
             try:
                 ok = b.delete(r["key"])
             except r2.R2Error:
@@ -196,9 +225,11 @@ def usage(store, uid: str | None = None) -> dict:
     out = {"db": int(m["db"] or 0), "r2": int(m["r2"] or 0)}
     try:
         cw = "WHERE c.item_id IN (SELECT id FROM library_items WHERE user_id=?)" if uid else ""
-        c = store.q("SELECT COALESCE(SUM(CASE WHEN c.storage_key IS NULL THEN LENGTH(c.data) ELSE 0 END),0) AS db, "
+        c = store.q("SELECT COALESCE(SUM(CASE WHEN c.storage_key IS NULL THEN COALESCE(c.nbytes, LENGTH(c.data)) ELSE 0 END),0) AS db, "
+                    "COALESCE(SUM(CASE WHEN c.storage_key IS NOT NULL THEN COALESCE(c.nbytes,0) ELSE 0 END),0) AS r2, "
                     "COUNT(CASE WHEN c.storage_key IS NOT NULL THEN 1 END) AS r2n FROM library_chunks c " + cw, a)[0]
         out["db"] += int(c["db"] or 0)
+        out["r2"] += int(c["r2"] or 0)
         out["r2_chunks"] = int(c["r2n"] or 0)
     except Exception:  # noqa: BLE001  (no Library tables in this store)
         pass

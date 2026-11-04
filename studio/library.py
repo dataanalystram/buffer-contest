@@ -92,11 +92,12 @@ def ensure(store) -> None:
         store.x("ALTER TABLE library_items ADD COLUMN agent_id INTEGER")
     # a chunk's object key when its bytes are in R2, and their hash (studio/blobstore.py, docs/STORAGE.md)
     have = set() if store.pg else {r["name"] for r in store.q("PRAGMA table_info(library_chunks)")}
-    for col in ("storage_key", "sha256"):
+    for col, typ in (("storage_key", "TEXT"), ("sha256", "TEXT"), ("nbytes", "INTEGER")):
         if store.pg:
-            store.x(f"ALTER TABLE library_chunks ADD COLUMN IF NOT EXISTS {col} TEXT")
+            store.x(f"ALTER TABLE library_chunks ADD COLUMN IF NOT EXISTS {col} {typ}")
         elif col not in have:
-            store.x(f"ALTER TABLE library_chunks ADD COLUMN {col} TEXT")
+            store.x(f"ALTER TABLE library_chunks ADD COLUMN {col} {typ}")
+    store.x("CREATE INDEX IF NOT EXISTS library_chunks_storage_key ON library_chunks(storage_key)")
     store.x("CREATE INDEX IF NOT EXISTS library_items_user ON library_items(user_id, id)")
     store.x("CREATE INDEX IF NOT EXISTS library_items_run ON library_items(user_id, run_id)")
     store.x("CREATE INDEX IF NOT EXISTS library_items_token ON library_items(token)")
@@ -323,7 +324,12 @@ class Library:
     def _put_chunk(self, uid: str, iid: int, n: int, data: bytes) -> None:
         """One 1 MB chunk: its bytes in the row (db backend) or in R2 under the owner's prefix (studio/blobstore.py)."""
         inline, key, digest = blobstore.put("lib", uid, data)
-        self.store.x("INSERT INTO library_chunks(item_id,n,data,storage_key,sha256) VALUES(?,?,?,?,?)", (iid, n, inline, key, digest))
+        try:
+            self.store.x("INSERT INTO library_chunks(item_id,n,data,storage_key,sha256,nbytes) VALUES(?,?,?,?,?,?)",
+                         (iid, n, inline, key, digest, len(data)))
+        except BaseException:
+            blobstore.discard(key)  # no row points at it
+            raise
 
     @staticmethod
     def _chunk(r) -> bytes:

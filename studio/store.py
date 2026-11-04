@@ -122,7 +122,8 @@ ADDED_COLUMNS = {
     # edit ids a learned rule came from
     "style_rules": (("scope", "TEXT"), ("origin", "TEXT"), ("examples", "TEXT"), ("evidence", "TEXT"), ("updated", "REAL")),  # a transcribe job's transcript (studio.media transcribe on the worker)
 }
-INDEXES = ("CREATE INDEX IF NOT EXISTS audit_user_id ON audit(user_id, id)",
+INDEXES = ("CREATE INDEX IF NOT EXISTS media_storage_key ON media(storage_key)",  # blobstore.sweep's "still referenced?" check
+           "CREATE INDEX IF NOT EXISTS audit_user_id ON audit(user_id, id)",
            "CREATE INDEX IF NOT EXISTS agent_runs_agent ON agent_runs(user_id, agent_id, updated)",
            "CREATE INDEX IF NOT EXISTS audit_user_cat ON audit(user_id, category, id)",
            "CREATE INDEX IF NOT EXISTS audit_ts ON audit(ts)")

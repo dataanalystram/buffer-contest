@@ -361,8 +361,12 @@ class House:
         tok = secrets.token_urlsafe(18) + "." + ext
         from . import blobstore  # the bytes go to R2 when it is configured, else stay in the row (docs/STORAGE.md)
         inline, key, digest = blobstore.put("media", a.uid, data, mime)
-        self.store.x("INSERT INTO media(token,user_id,name,mime,data,size,meta,created,storage_key,sha256) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                     (tok, a.uid, name[:80], mime, inline, len(data), json.dumps({"kind": kind, **(meta or {})}), _now(), key, digest))
+        try:
+            self.store.x("INSERT INTO media(token,user_id,name,mime,data,size,meta,created,storage_key,sha256) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                         (tok, a.uid, name[:80], mime, inline, len(data), json.dumps({"kind": kind, **(meta or {})}), _now(), key, digest))
+        except BaseException:
+            blobstore.discard(key)  # no row points at it
+            raise
         return tok
 
     def get_media(self, token: str) -> dict | None:

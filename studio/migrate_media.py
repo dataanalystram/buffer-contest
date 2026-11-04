@@ -7,13 +7,14 @@
 For every ``media`` row and every Library chunk (``library_chunks``) whose bytes are still in the row:
 
 1. sha256 of the bytes;
-2. PUT to ``media/<owner>/m-<hash of the token>`` or ``lib/<owner>/c<item>-<n>-<hash>`` (deterministic, so a rerun after a
-   crash overwrites its own object instead of leaving an orphan);
+2. PUT to a fresh random key under the owner's prefix (``media/<owner>/…`` or ``lib/<owner>/…``); a new key every attempt,
+   so a failed attempt's queued delete can never hit the copy a later attempt verified (Greptile, PR #110);
 3. GET it back and compare length and sha256;
 4. only then one UPDATE, guarded on the row not having moved meanwhile: ``storage_key`` and ``sha256`` set, ``data`` NULL.
 
-A row whose copy fails the check keeps its bytes (the object goes to blob_gc). Rows already moved are skipped, so running
-it again is safe and finishes what an interrupted run left. Nothing is deleted before it is verified.
+A row whose copy fails the check keeps its bytes (that attempt's object goes to blob_gc). Rows already moved are skipped,
+so running it again is safe and finishes what an interrupted run left. Nothing is deleted before it is verified. Chunks of
+an upload still arriving (``library_items.storage='pending'``) are skipped: its GPS scrub may still rewrite them.
 
 Postgres keeps the freed space for reuse; to give it back to the 500 MB quota run ``VACUUM FULL media, library_chunks;``
 afterwards (it locks those tables while it runs: pick a quiet moment). Ram approves running this on production.
@@ -27,18 +28,6 @@ import sys
 import time
 
 from . import blobstore, r2
-
-TRASH = "trash~"
-
-
-def _media_key(uid: str, token: str) -> str:
-    stable = token.removeprefix(TRASH)  # a binned file keeps its key when it is restored (the token gets its prefix back)
-    return f"media/{blobstore.owner_prefix(uid)}/m-{hashlib.sha256(('hq-mig:' + stable).encode()).hexdigest()[:32]}"
-
-
-def _chunk_key(uid: str, item_id: int, n: int, digest: str) -> str:
-    return f"lib/{blobstore.owner_prefix(uid)}/c{int(item_id)}-{int(n)}-{digest[:16]}"
-
 
 def plan(store) -> dict:
     """What a run would move: rows and bytes per table, and how many rows are already in R2."""
@@ -70,7 +59,7 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
     def gc(key: str) -> None:
         store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO NOTHING", (key, time.time()))
 
-    def one(table: str, where: str, args: tuple, key: str, mime: str) -> None:
+    def one(table: str, where: str, args: tuple, kind: str, uid: str, mime: str) -> None:
         nonlocal left
         got = store.q(f"SELECT data FROM {table} WHERE {where} AND storage_key IS NULL", args)
         if not got or got[0]["data"] is None:
@@ -78,7 +67,7 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
             return
         data = bytes(got[0]["data"])
         digest = hashlib.sha256(data).hexdigest()
-        key = key.replace("{digest}", digest[:16])
+        key = blobstore.new_key(kind, uid)
         try:
             ok = _verify_put(bucket, key, data, mime)
         except r2.R2Error as e:
@@ -89,7 +78,9 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
             gc(key)
             return
         # the bytes leave the row only once their copy is verified, and only if the row hasn't moved meanwhile
-        store.x(f"UPDATE {table} SET storage_key=?, sha256=?, data=NULL WHERE {where} AND storage_key IS NULL", (key, digest, *args))
+        extra = ", nbytes=?" if table == "library_chunks" else ""
+        store.x(f"UPDATE {table} SET storage_key=?, sha256=?{extra}, data=NULL WHERE {where} AND storage_key IS NULL",
+                (key, digest, *((len(data),) if extra else ()), *args))
         now = store.q(f"SELECT storage_key FROM {table} WHERE {where}", args)
         if not now or now[0]["storage_key"] != key:  # renamed or deleted meanwhile: the row didn't take the key
             gc(key)
@@ -105,17 +96,17 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
     for token, uid, mime in todo:
         if left <= 0:
             break
-        one("media", "token=?", (token,), _media_key(uid or "", token), mime)
+        one("media", "token=?", (token,), "media", uid or "", mime)
     try:
         todo_c = [(r["item_id"], r["n"], r["user_id"]) for r in store.q(
             "SELECT c.item_id, c.n, i.user_id FROM library_chunks c JOIN library_items i ON i.id=c.item_id "
-            "WHERE c.data IS NOT NULL AND c.storage_key IS NULL ORDER BY c.item_id, c.n")]
+            "WHERE c.data IS NOT NULL AND c.storage_key IS NULL AND i.storage<>'pending' ORDER BY c.item_id, c.n")]
     except Exception:  # noqa: BLE001  (no Library tables)
         todo_c = []
     for item_id, n, uid in todo_c:
         if left <= 0:
             break
-        one("library_chunks", "item_id=? AND n=?", (item_id, n), _chunk_key(uid or "", item_id, n, "{digest}"), "application/octet-stream")
+        one("library_chunks", "item_id=? AND n=?", (item_id, n), "lib", uid or "", "application/octet-stream")
     return stats
 
 
