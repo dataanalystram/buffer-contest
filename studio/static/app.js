@@ -794,7 +794,11 @@ function paidApproval(r) {
       $("[data-testid=approval-status]", el).innerHTML = `<div class="st ok">Approved. ${esc(r.agent_name)} can run it once.</div>`; el.classList.add("sent"); setTimeout(loadInbox, 1400); }
     catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; b.disabled = false; }
   };
-  $("[data-testid=reject]", el).onclick = async () => { await api(`/api/approvals/${r.id}/reject`, { method: "POST" }); toast("Rejected. Nothing ran."); loadInbox(); };
+  $("[data-testid=reject]", el).onclick = async () => {
+    const b = $("[data-testid=reject]", el); b.disabled = true;
+    try { await api(`/api/approvals/${r.id}/reject`, { method: "POST" }); toast("Rejected. Nothing ran."); loadInbox(); }
+    catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; b.disabled = false; }
+  };
   return el;
 }
 

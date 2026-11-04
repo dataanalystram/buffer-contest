@@ -506,3 +506,46 @@ def test_a_render_finished_by_the_worker_callback_keeps_the_apps_agent_id(human,
     assert iid
     agent = store.q("SELECT agent_id FROM agent_runs WHERE id=?", (rid,))[0]["agent_id"]
     assert agent is not None and store.q("SELECT agent_id FROM library_items WHERE id=?", (iid,))[0]["agent_id"] == agent
+
+
+# ------------------------------------------------------------------------------------------------ PR #104 review round 2
+def test_create_package_without_media_urls_restages_the_current_render_not_a_replay(human, page):  # noqa: F811
+    tok = agent_token(human, policy="trusted", cap=100)
+    rid = _start(human, tok)["run_id"]
+    _call(human, tok, "render_carousel", {"run_id": rid, "slides": _slides(2, "a")})
+    err, p1 = _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "Same caption"}})
+    assert not err, p1
+    err, b = _call(human, tok, "render_carousel", {"run_id": rid, "slides": _slides(2, "b")})
+    err, p2 = _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "Same caption"}})
+    assert not err and not p2.get("idempotent_replay")
+    run = human.get(f"/api/agent/runs/{rid}").json()
+    assert run["result"]["packages"][0]["media_urls"] == b["media_urls"]
+
+
+def test_format_switches_inside_the_replay_window_are_never_replayed(human, page):  # noqa: F811
+    tok = agent_token(human, policy="trusted", cap=100)
+    rid = _start(human, tok)["run_id"]
+    seen = []
+    for fmt in ("reel", "carousel", "reel"):
+        err, out = _call(human, tok, "start_post", {"run_id": rid, "format": fmt, "reason": "switch"})
+        assert not err, out
+        seen.append(bool(out.get("idempotent_replay")))
+    assert seen == [False, False, False]
+
+
+def test_undo_is_refused_on_a_post_already_sent_or_waiting_in_approvals(human, page):  # noqa: F811
+    tok = agent_token(human, policy="trusted", cap=100)
+    store = human.app.state.store
+    rid = _start(human, tok)["run_id"]
+    err, car = _call(human, tok, "render_carousel", {"run_id": rid, "slides": _slides(2, "a")})
+    _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "A"}, "media_urls": car["media_urls"]})
+    err, car2 = _call(human, tok, "render_carousel", {"run_id": rid, "slides": _slides(2, "b")})
+    _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "B"}, "media_urls": car2["media_urls"]})
+    row = store.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]
+    res = json.loads(row["result"])
+    res["packages"][0]["status"] = "sent_to_buffer"  # what schedule_package leaves behind
+    store.x("UPDATE agent_runs SET result=? WHERE id=?", (json.dumps(res), rid))
+    err, msg = _call(human, tok, "undo_package_media", {"run_id": rid})
+    assert err and ("already sent" in msg or "404" in msg or "not found" in msg.lower())
+    after = json.loads(store.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]["result"])
+    assert after["packages"][0]["text"] == "B" and after["packages"][0]["status"] == "sent_to_buffer"

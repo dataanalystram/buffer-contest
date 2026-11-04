@@ -50,7 +50,9 @@ _RULES = ("Rules: ONE post for this request: keep the run_id from start_post and
 
 
 def _start(title: str) -> str:
-    return f"0. start_post(title='{title}', user_asked=true, reason='<the request in a few words>') -> keep run_id.\n"
+    return (f"0. start_post(title='<{title}: a few words naming this content>', new_request=true, reason='<the request in a "
+            "few words>') -> keep run_id. new_request makes a separate post for each distinct request, so two different "
+            f"{title.lower()}s never share one.\n")
 
 
 def _text(name: str, args: dict) -> str:

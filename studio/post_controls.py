@@ -214,6 +214,10 @@ def _undo_client_package(house, a: Actor, rid: int, run: dict, channel: str = ""
     in result.package_versions): back to the previous version, for one channel or the whole post."""
     from . import mcp_client_brain
     res = run["result"]
+    from .run_discipline import closed
+    if closed(res):  # sent to Buffer or waiting in Approvals: an undo must never make it ready (and sendable) again
+        raise ActionError("This post was already sent to Buffer or is waiting in Approvals, so it can't be undone here. "
+                          "Start a new post for changes.", 409)
     vs = res.get("package_versions") or []
     if not vs:
         raise ActionError("There's no earlier version of this post to go back to.", 409)
