@@ -244,6 +244,24 @@ drafts, trusted tokens may move scheduled posts too. Cover/thumbnail: `set_cover
 `search_instagram_audio`, `set_reel_audio`. Library: `list_library_bin`, `restore_library_items`, `purge_library_bin`,
 `bulk_delete_library`, `draft_from_library`.
 
+## Image editing on HuhQueue's side (4 Nov 2026)
+
+The server fetches and edits pictures, so the AI app never downloads or pastes image bytes. Every tool takes `run_id`
+(the post this belongs to) and stores what it makes as **run media** of that post: no Library item is added per edit
+(the Library gets one item per finished post). Each edit is a new version; `prev` names the one it was made from.
+No HuhQueue AI is used ($0).
+
+| Tool | What it does |
+|---|---|
+| `fetch_image` | `url` (public https) -> `media_token`. Every redirect hop vetted (netguard), up to 15 MB, JPG/PNG/WebP/AVIF only, ~40 MP cap, location/camera metadata removed. `ok: false` with `reason`: `blocked_by_site` (401/403: the site blocks servers; `ask` has the words to ask the person to upload the file, then `create_send_code` / `create_upload`), `not_found`, `too_large`, `private`, `not_an_image`, `unreachable`, `bad_url`. |
+| `cutout_product` | `image` (media_token or https URL), `engine`: `fast` (Pillow on the server, instant), `auto` (default: fast, then the ML cut-out on the worker when unsure), `ml` (ISNet `isnet-general-use`, Apache-2.0), `hq` (BiRefNet `birefnet-general-lite`, MIT). ml/hq answer `job_id`: poll `render_status(job_id)` for the PNG. A torn cut-out is never returned. |
+| `edit_image` | `image`, `ops` (max 12, in order): `crop {box}`, `fit {ratio, mode: cover|contain, focus}`, `pad {ratio, colour}`, `cutout {}`, `card {ratio, ground, scale, shadow, radius, name, price}`, `round {radius}`, `grade {preset, exposure, contrast, saturation}`, `sharpen {amount}`. |
+| `compose_product_card` | `image`, `ratio`, `name`, `price`, `ground`: the product on the brand ground with a soft shadow (cut out when it stands on a plain background, otherwise the whole photo as a rounded card, never zoomed in). |
+
+REST: `POST /api/images/fetch`, `/api/images/cutout`, `/api/images/edit`, `/api/images/card` (same arguments).
+The ML cut-out runs only on the render worker (InstaBox when `HQ_RENDER_BACKEND=instabox`, with GitHub Actions
+`render.yml` as fallback), never on the web instance. rembg's own default model (BRIA RMBG) is never used.
+
 ## Music, Undo, Update draft and brand kits (3 Nov 2026)
 
 - **No music by default.** Renders never add a score: `music: auto` and `none` are both silence for a silent video, and a video's own sound is kept. A score (`cinematic` / `pulse`) is only baked in when it is asked for.

@@ -1,0 +1,368 @@
+"""Phase 2 image editing (docs/plans/AGENT_RUNS_EDITING_COMMERCE.md 2.3-2.8): fetch_image through netguard, the edit
+tools over MCP and REST (run media, never extra Library items), the image_matte worker job, its models and licences."""
+import base64
+import io
+import json
+import socket
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+from PIL import Image, ImageDraw
+
+from studio import image_edit, image_matte, image_ops, instabox_worker, netguard
+from studio import house as house_mod
+
+from .conftest import agent_token, mcp_call
+from .test_hero_cutout import headphones
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _png(im) -> bytes:
+    b = io.BytesIO()
+    im.save(b, "PNG")
+    return b.getvalue()
+
+
+def _jpeg_with_gps() -> bytes:
+    im = Image.new("RGB", (640, 480), (200, 60, 40))
+    exif = Image.Exif()
+    exif[0x010F] = "PhoneMaker"                   # Make
+    exif[0x8825] = {1: "N", 2: (53.0, 20.0, 0.0)}  # GPSInfo
+    b = io.BytesIO()
+    im.save(b, "JPEG", exif=exif)
+    return b.getvalue()
+
+
+class Web(httpx.BaseTransport):
+    """The internet as the server sees it: answers by Host header (netguard pins the IP and keeps the Host)."""
+
+    def __init__(self, pages):
+        self.pages, self.seen = pages, []
+
+    def handle_request(self, request):
+        host = request.headers.get("host")
+        self.seen.append((host, request.url.path))
+        status, headers, body = self.pages.get((host, request.url.path), (404, {}, b"no"))
+        return httpx.Response(status, headers=headers, content=body, request=request)
+
+
+@pytest.fixture
+def web(human, monkeypatch):
+    table = {"img.test": "93.184.216.34", "shop.test": "93.184.216.35", "evil.test": "127.0.0.1", "meta.test": "169.254.169.254"}
+
+    def fake_dns(host, *a, **k):
+        ip = table.get(host)
+        if ip is None:
+            raise socket.gaierror("no such host")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0))]
+    monkeypatch.setattr(netguard, "_getaddrinfo", fake_dns)
+    monkeypatch.setattr(socket, "getaddrinfo", fake_dns)
+    w = Web({
+        ("img.test", "/hp.png"): (200, {"content-type": "image/png"}, _png(headphones())),
+        ("img.test", "/gps.jpg"): (200, {"content-type": "image/jpeg"}, _jpeg_with_gps()),
+        ("img.test", "/page.html"): (200, {"content-type": "text/html"}, b"<html><body>sign in</body></html>"),
+        ("img.test", "/bomb.png"): (200, {"content-type": "image/png"}, _png(Image.new("1", (12000, 12000)))),
+        ("img.test", "/to-private"): (302, {"location": "https://evil.test/x.png"}, b""),
+        ("img.test", "/to-meta"): (302, {"location": "http://meta.test/latest/meta-data"}, b""),
+        ("shop.test", "/p.jpg"): (403, {}, b"Forbidden"),
+    })
+    monkeypatch.setattr(human.app.state.house, "http", httpx.Client(transport=w, follow_redirects=False))
+    return w
+
+
+def _counts(store):
+    return (store.q("SELECT COUNT(*) n FROM library_items")[0]["n"], store.q("SELECT COUNT(*) n FROM media")[0]["n"])
+
+
+def _run(store, uid=None):
+    uid = uid or store.q("SELECT id FROM users")[0]["id"]
+    return store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
+                   (uid, "client", "{}", "draft", "[]", "{}", time.time(), time.time()))
+
+
+# ------------------------------------------------------------------------------------------------ fetch_image
+def test_fetch_image_stores_run_media_not_a_library_item(human, web):
+    tok = agent_token(human, cap=50)
+    st = human.app.state.store
+    rid = _run(st)
+    lib0, _ = _counts(st)
+    res, out = mcp_call(human, tok, "fetch_image", {"url": "https://img.test/hp.png", "run_id": rid})
+    assert not res["isError"] and out["ok"] and out["width"] == 1000 and out["run_id"] == rid, out
+    assert out["preview"].startswith("data:image/jpeg;base64,")
+    meta = json.loads(st.q("SELECT meta FROM media WHERE token=?", (out["media_token"],))[0]["meta"])
+    assert meta["kind"] == "source" and meta["run_id"] == rid and meta["source_host"] == "img.test"
+    assert _counts(st)[0] == lib0  # no Library item
+
+
+def test_fetch_image_strips_exif_and_gps(human, web):
+    tok = agent_token(human, cap=50)
+    _, out = mcp_call(human, tok, "fetch_image", {"url": "https://img.test/gps.jpg"})
+    data = human.app.state.house.get_media(out["media_token"])["data"]
+    assert b"PhoneMaker" not in data and b"Exif\x00\x00" not in data
+    assert not Image.open(io.BytesIO(data)).getexif().get(0x8825)
+
+
+@pytest.mark.parametrize("url,reason", [
+    ("https://shop.test/p.jpg", "blocked_by_site"),       # 403: the Galaxus case
+    ("https://img.test/missing.png", "not_found"),
+    ("https://img.test/page.html", "not_an_image"),
+    ("https://img.test/bomb.png", "too_large"),           # 144 MP in a few KB: the pixel cap refuses it
+    ("https://evil.test/x.png", "private"),
+    ("https://img.test/to-private", "private"),          # a redirect to a private address
+    ("https://img.test/to-meta", "private"),             # a redirect to the cloud metadata address
+    ("http://img.test/hp.png", "bad_url"),               # https only
+    ("file:///etc/passwd", "bad_url"),
+])
+def test_fetch_image_failures_say_what_to_do(human, web, url, reason):
+    tok = agent_token(human, cap=50)
+    res, out = mcp_call(human, tok, "fetch_image", {"url": url})
+    assert not res["isError"] and out["ok"] is False and out["reason"] == reason, out
+    if reason == "blocked_by_site":
+        assert "upload" in out["ask"] and "create_send_code" in out["ask"] and out["next"]
+    assert not any(h == "evil.test" for h, _ in web.seen)  # nothing ever connected to the private host
+
+
+def test_fetch_image_rest_answers_403_with_the_ask(human, web):
+    r = human.post("/api/images/fetch", json={"url": "https://shop.test/p.jpg"})
+    assert r.status_code == 403 and r.json()["reason"] == "blocked_by_site" and "upload" in r.json()["ask"]
+
+
+def test_another_accounts_run_is_not_found(human, web):
+    st = human.app.state.store
+    other = _run(st, uid="someone_else")
+    tok = agent_token(human, cap=50)
+    res, out = mcp_call(human, tok, "fetch_image", {"url": "https://img.test/hp.png", "run_id": other})
+    assert res["isError"] and "No such post run" in out
+
+
+# ------------------------------------------------------------------------------------------------ cut-out + edits
+def test_cutout_fast_keeps_the_earcups_and_adds_no_library_item(human, web):
+    tok = agent_token(human, cap=50)
+    st = human.app.state.store
+    rid = _run(st)
+    lib0, _ = _counts(st)
+    _, out = mcp_call(human, tok, "cutout_product", {"image": "https://img.test/hp.png", "engine": "fast", "run_id": rid})
+    assert out["ok"] and out["engine"] == "fast" and out["transparent"] and out["confidence"] >= 0.9, out
+    im = Image.open(io.BytesIO(human.app.state.house.get_media(out["media_token"])["data"]))
+    assert im.mode == "RGBA" and im.width > 700 and im.height > 800
+    meta = json.loads(st.q("SELECT meta FROM media WHERE token=?", (out["media_token"],))[0]["meta"])
+    assert meta["kind"] == "edit" and meta["run_id"] == rid and meta["prev"]
+    assert _counts(st)[0] == lib0
+
+
+def test_cutout_never_returns_a_torn_cut(human, web, monkeypatch):
+    import random
+    random.seed(5)
+    busy = Image.effect_noise((500, 400), 90).convert("RGB")
+    up = human.post("/api/media", json={"name": "busy.png", "data": base64.b64encode(_png(busy)).decode()}).json()
+    tok = agent_token(human, cap=50)
+    _, out = mcp_call(human, tok, "cutout_product", {"image": up["token"], "engine": "fast"})
+    assert out["ok"] is False and "media_token" not in out and "torn" in out["message"]
+
+
+def test_edit_image_crop_fit_card_over_mcp_and_rest(human, web):
+    tok = agent_token(human, cap=50)
+    st = human.app.state.store
+    rid = _run(st)
+    lib0, media0 = _counts(st)
+    _, out = mcp_call(human, tok, "edit_image", {"image": "https://img.test/hp.png", "run_id": rid, "ops": [
+        {"op": "crop", "box": [0.05, 0.0, 0.95, 1.0]}, {"op": "card", "ratio": "4:5", "name": "Buds Pro", "price": "$79"}]})
+    assert out["ok"] and (out["width"], out["height"]) == (1080, 1350), out
+    assert out["report"][0].startswith("cropped") and "card" in out["report"][1]
+    r = human.post("/api/images/edit", json={"image": out["media_token"], "run_id": rid, "ops": [{"op": "fit", "ratio": "1:1"}]})
+    assert r.status_code == 200 and (r.json()["width"], r.json()["height"]) == (1080, 1080) and r.json()["prev"] == out["media_token"]
+    lib1, media1 = _counts(st)
+    assert lib1 == lib0 and media1 == media0 + 3  # source + 2 versions, all run media
+
+
+def test_compose_product_card_places_the_whole_product(human, web):
+    tok = agent_token(human, cap=50)
+    _, out = mcp_call(human, tok, "compose_product_card", {"image": "https://img.test/hp.png", "ratio": "1:1", "ground": "#101012"})
+    assert out["ok"] and (out["width"], out["height"]) == (1080, 1080)
+    im = Image.open(io.BytesIO(human.app.state.house.get_media(out["media_token"])["data"])).convert("RGB")
+    assert im.getpixel((5, 5)) == (16, 16, 18)                    # the brand ground
+    assert sum(im.getpixel((540, 540))) > 3 * 100                  # the product is there, centred
+
+
+@pytest.mark.parametrize("ops,msg", [
+    ([], "list of edits"),
+    ([{"op": "blur"}], "unknown op"),
+    ([{"op": "sharpen"}] * 13, "Up to 12 ops"),
+    ([{"op": "fit", "ratio": "7:3"}], "fit.ratio"),
+    ([{"op": "crop", "box": [10, 10, 5, 50]}], "x1 > x0"),
+    ([{"op": "grade", "exposure": 3}], "between -1 and 1"),
+    ([{"op": "card", "scale": 2}], "card.scale"),
+    ([{"op": "pad", "ratio": "1:1", "colour": "red"}], None),
+    ([{"op": "round", "radius": True}], "must be a number"),
+])
+def test_edit_ops_are_validated(ops, msg):
+    if msg is None:  # validate passes, apply refuses the colour
+        image_ops.validate(ops)
+        with pytest.raises(image_ops.OpError, match="colour"):
+            image_ops.apply(Image.new("RGB", (100, 100)), ops)
+        return
+    with pytest.raises(image_ops.OpError, match=msg):
+        image_ops.validate(ops)
+
+
+def test_edit_image_bad_ops_are_a_plain_error(human, web):
+    tok = agent_token(human, cap=50)
+    res, out = mcp_call(human, tok, "edit_image", {"image": "https://img.test/hp.png", "ops": [{"op": "explode"}]})
+    assert res["isError"] and "unknown op" in out
+
+
+# ------------------------------------------------------------------------------------------------ the ML cut-out job
+def _matte_ready(human, monkeypatch):
+    h = human.app.state.house
+    sent = []
+    monkeypatch.setattr(h, "worker_mode", "github")
+    monkeypatch.setattr(house_mod.House, "_dispatch_github", lambda self, jid, workflow="render.yml", inputs=None, ttl=1800:
+                        (sent.append((jid, inputs)) or True, "GitHub answered 204"))
+    return h, sent
+
+
+def test_cutout_hq_queues_birefnet_lite_on_the_worker_and_stores_its_png(human, web, monkeypatch):
+    h, sent = _matte_ready(human, monkeypatch)
+    st = h.store
+    rid = _run(st)
+    tok = agent_token(human, cap=50)
+    lib0, _ = _counts(st)
+    _, out = mcp_call(human, tok, "cutout_product", {"image": "https://img.test/hp.png", "engine": "hq", "run_id": rid})
+    assert out["status"] == "queued" and out["model"] == "birefnet-general-lite" and out["model_licence"] == "MIT", out
+    jid = out["job_id"]
+    assert sent == [(jid, {"kind": "image_matte"})]
+    job = st.q("SELECT run_id, spec FROM render_jobs WHERE id=?", (jid,))[0]
+    spec = json.loads(job["spec"])
+    assert job["run_id"] == rid and spec["kind"] == "image_matte" and spec["model"] == "birefnet-general-lite"
+    assert not spec["source"].startswith("http")  # the worker gets a media token, never the user's URL
+    # the worker reads the job (a /m/ URL on the app) and posts one PNG back
+    jt = h.issue_job_token(jid)
+    j = human.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt}).json()
+    assert j["urls"]["source"] == "https://hq.test/m/" + spec["source"]
+    cut = Image.new("RGBA", (300, 200), (0, 0, 0, 0))
+    ImageDraw.Draw(cut).ellipse((20, 20, 280, 180), fill=(236, 234, 230, 255))
+    r = human.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt},
+                   json={"data": base64.b64encode(_png(cut)).decode(), "meta": {"engine": "hq", "model": "birefnet-general-lite",
+                                                                                  "model_licence": "MIT", "evil": "x"}})
+    assert r.status_code == 200 and r.json()["ok"]
+    _, stat = mcp_call(human, tok, "render_status", {"job_id": jid})
+    assert stat["status"] == "done" and stat["download_url"].endswith(".png") and stat["meta"]["model"] == "birefnet-general-lite"
+    meta = json.loads(st.q("SELECT meta FROM media WHERE token=?", (stat["media_token"],))[0]["meta"])
+    assert meta["kind"] == "edit" and meta["run_id"] == rid and "evil" not in meta
+    assert _counts(st)[0] == lib0
+
+
+def test_matte_job_refuses_a_non_png_result(human, monkeypatch):
+    h, _ = _matte_ready(human, monkeypatch)
+    up = human.post("/api/media", json={"name": "hp.png", "data": base64.b64encode(_png(headphones())).decode()}).json()
+    out = image_edit.queue_matte(human.app.state.studio, h.store and __import__("studio.actions", fromlist=["Actor"]).Actor(
+        h.store.q("SELECT id FROM users")[0]["id"]), up["token"], "isnet-general-use", None)
+    jid = out["job_id"]
+    jt = h.issue_job_token(jid)
+    r = human.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt},
+                   json={"data": base64.b64encode(b"<html>not a png</html>").decode(), "meta": {}})
+    assert r.status_code == 415
+    assert h.store.q("SELECT status FROM render_jobs WHERE id=?", (jid,))[0]["status"] == "failed"
+
+
+def test_auto_without_a_worker_says_so_instead_of_a_torn_cut(human, web, monkeypatch):
+    import random
+    random.seed(6)
+    busy = Image.effect_noise((500, 400), 90).convert("RGB")
+    up = human.post("/api/media", json={"name": "busy.png", "data": base64.b64encode(_png(busy)).decode()}).json()
+    monkeypatch.setattr(human.app.state.house, "worker_mode", "")
+    monkeypatch.setattr(house_mod.House, "local_video_ok", staticmethod(lambda: False))
+    monkeypatch.delenv("GH_DISPATCH_TOKEN", raising=False)
+    tok = agent_token(human, cap=50)
+    _, out = mcp_call(human, tok, "cutout_product", {"image": up["token"]})
+    assert out["ok"] is False and "worker" in out["message"] and "compose_product_card" in out["message"]
+
+
+# ------------------------------------------------------------------------------------------------ image_matte (worker side)
+def test_models_are_always_named_and_bria_is_refused():
+    assert image_matte.model_for("hq") == "birefnet-general-lite" and image_matte.model_for(None) == "isnet-general-use"
+    assert image_matte.MODELS["isnet-general-use"]["licence"] == "Apache-2.0"
+    assert image_matte.MODELS["birefnet-general-lite"]["licence"] == "MIT"
+    for bad in ("bria-rmbg", "BRIA-RMBG-2.0", "rmbg-1.4", "u2net-something"):
+        with pytest.raises(image_matte.MatteError):
+            image_matte.check_model(bad)
+    src = (ROOT / "studio" / "image_matte.py").read_text()
+    assert "new_session(model)" in src and "new_session()" not in src  # never rembg's default (bria-rmbg)
+
+
+def test_matte_with_a_fake_session_crops_and_names_the_model():
+    seen = []
+
+    def fake_remove(img):
+        seen.append(img.size)
+        out = img.convert("RGBA")
+        a = Image.new("L", img.size, 0)
+        ImageDraw.Draw(a).rectangle((100, 50, 899, 909), fill=255)
+        out.putalpha(a)
+        return out
+    png, meta = image_matte.matte(_png(headphones()), "isnet-general-use", remove_fn=fake_remove)
+    im = Image.open(io.BytesIO(png))
+    assert seen == [(1000, 1000)] and im.mode == "RGBA" and im.size == (816, 876)
+    assert meta["model"] == "isnet-general-use" and meta["model_licence"] == "Apache-2.0" and meta["engine"] == "ml"
+
+
+def test_matte_worker_job_reads_the_token_url_through_get():
+    got = []
+
+    def get(u):
+        got.append(u)
+        return _png(headphones())
+    import studio.image_matte as im_mod
+    orig = im_mod.matte
+    im_mod.matte = lambda data, model: (b"\x89PNG\r\n\x1a\nfake", {"model": model, "width": 1, "height": 1})
+    try:
+        png, meta = image_matte.worker_job({"kind": "image_matte", "source": "tok.png", "model": "birefnet-general-lite"},
+                                           {"source": "https://hq.test/m/tok.png"}, get)
+    finally:
+        im_mod.matte = orig
+    assert got == ["https://hq.test/m/tok.png"] and meta["model"] == "birefnet-general-lite"
+    with pytest.raises(image_matte.MatteError):
+        image_matte.worker_job({"kind": "image_matte", "model": "bria-rmbg"}, {"source": "https://hq.test/m/t"}, get)
+
+
+def test_matte_load_refuses_bombs_and_non_images():
+    with pytest.raises(image_matte.MatteError):
+        image_matte.load(b"<html></html>")
+    with pytest.raises(image_matte.MatteError):
+        image_matte.load(_png(Image.new("1", (12000, 12000))))
+
+
+# ------------------------------------------------------------------------------------------------ worker plumbing
+def test_instabox_matte_runs_in_its_own_venv_with_no_token_in_the_command():
+    cmd = instabox_worker.command(77, "https://hq.example", "image_matte", "main")
+    assert "jt_" not in cmd and "read -r JOB_TOKEN" in cmd and "--job 77" in cmd
+    assert "/data/venv-matte/bin/python" in cmd and "requirements-matte.txt" in cmd and "U2NET_HOME=/data/u2net" in cmd
+    assert "flock /data/pip-matte.lock" in cmd and "HQ_LOCK=/data/hq.lock" in cmd
+    assert "/data/venv/bin/python" not in cmd  # the video venv (MediaPipe) is never upgraded by rembg's numpy
+    assert "venv-matte" not in instabox_worker.command(78, "https://hq.example", "take_render", "main")
+
+
+def test_render_workflow_installs_the_matte_runner_only_for_matte_jobs():
+    wf = (ROOT / ".github" / "workflows" / "render.yml").read_text()
+    assert "kind: {description:" in wf and "-r requirements-matte.txt" in wf and "path: ~/.u2net" in wf
+    assert "inputs.kind == 'image_matte'" in wf and "inputs.kind != 'image_matte'" in wf
+    reqs = (ROOT / "requirements-matte.txt").read_text()
+    assert "rembg[cpu]==2.0.86" in reqs
+    web = (ROOT / "requirements-studio.txt").read_text()
+    assert "rembg" not in web and "onnxruntime" not in web  # never on the web dyno
+
+
+def test_notice_credits_the_models_and_runner():
+    notice = (ROOT / "NOTICE").read_text()
+    for s in ("danielgatis/rembg", "xuebinqin/DIS", "ZhengPeng7/BiRefNet", "isnet-general-use", "birefnet-general-lite",
+              "Apache License 2.0", "BRIA"):
+        assert s in notice, s
+
+
+def test_docs_list_the_image_tools():
+    doc = (ROOT / "docs" / "MCP_TOOLS.md").read_text()
+    for n in ("fetch_image", "cutout_product", "edit_image", "compose_product_card"):
+        assert f"`{n}`" in doc, n
