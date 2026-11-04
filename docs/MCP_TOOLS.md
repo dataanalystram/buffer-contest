@@ -20,8 +20,8 @@ Rules (owner decision, 1 Nov 2026):
    `server_ai: true` (`studio/brain_llm.py`: `client_brain_active()` blocks the operator key for the whole call).
 2. **Five tools are server AI**: `run_agent`, `make_post`, `reply_post`, `revise`, `edit_media`. Without `server_ai: true`
    they make no model call and answer with `server_ai_required: true` plus the client-brain sequence to do the same thing
-   yourself. With `server_ai: true` they run HuhQueue's agent and spend the user's allowance (the kill switch and daily caps
-   still answer first).
+   yourself. With `server_ai: true` they still don't run until the person approves (see "Paid and external APIs" below);
+   then they run HuhQueue's agent and spend the user's allowance (the kill switch and daily caps still answer first).
 3. Tools marked **client brain \*** below can write text (a draft caption, a recommendation). Over MCP they use the user's
    own model key or the free starter model if one is set, else the rule-based writer. Never HuhQueue's Claude.
 4. Every client-brain call is written to the budget ledger as `source=mcp_client_brain` at **$0**, so Activity shows it.
@@ -31,6 +31,57 @@ Rules (owner decision, 1 Nov 2026):
 Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video) return an id at once; poll
 `render_status` every 10 to 20 seconds until `status` is `done` and read the download URL.
 
+## One request = one run (owner decisions, 4 Nov 2026)
+
+One prompt in Claude ("find the best headphones under EUR 150, make a carousel, edit the images nicely") used to leave
+several Make a post threads and a Library item per render. The server now enforces (`studio/run_discipline.py`):
+
+1. **Start once.** `start_post(title, brief, user_asked: true, reason)` opens ONE post (a run in status `draft`) for the
+   person's request and returns `run_id`.
+2. **Pass `run_id` everywhere.** `render_carousel`, `hero_edit`, `edit_video`, `render_reel`, `split_video`,
+   `library_upload_url`, `create_upload`, `import_from_link` and `create_package` take it. Follow-ups update the same run:
+   `create_package(run_id)` replaces the post's packages **in place** and keeps the previous version
+   (`packages[].undo`, `undo_package_media` goes back, 6 versions). A `run_id` of another account, or an archived one,
+   answers 404.
+3. **The open run is reused.** A creator called without `run_id` while this token has an open run (the newest run it made,
+   `draft`/`ready`, nothing sent to Buffer or waiting in Approvals, touched in the last `HQ_MCP_ACTIVE_RUN_S` = 2 h) works on
+   that run and answers `reused: true`. Another app's token never lands in it.
+4. **A new run, template or brand kit only when the person asked.** `new_post: true` needs `user_asked: true`;
+   `start_post`, `create_template`, `create_brand_kit` and `set_active_brand_kit` need `user_asked: true` (plus a one-line
+   `reason`).
+5. **Caps per agent token**: at most `HQ_MCP_NEW_RUNS_PER_HOUR` = 3 new runs an hour and `HQ_MCP_NEW_RUNS_PER_DAY` = 20 a
+   day. Over a cap the answer says "You've started 3 posts in the last hour from this app. Ask the person before starting
+   another, or keep working on run 812 (pass run_id: 812)." A signed-in person in the app is never capped.
+6. **Idempotency.** `idempotency_key` on any write (or `_meta["huhqueue/idempotency_key"]`): the same key and arguments
+   within 24 h return the first result (`idempotent_replay: true`); the same key with other arguments is a 409. Without a
+   key, an identical run/render call within 120 s (a retry) returns the first result too.
+7. **One Library item per run.** `render_carousel(run_id)` and `create_package(run_id)` keep the post's ONE Library item and
+   replace its files when the post changes; a render without `run_id` adds nothing to the Library. Uploads and imports are
+   deduplicated by content (SHA-256): the same file twice returns the existing item with `deduped: true`.
+8. **One thread.** Every call is a step on the run it names; a call without `run_id` lands on the token's open run, and
+   calls made before any run are claimed by the next run the token makes.
+9. **Tidy up.** `cleanup_agent_drafts` lists what apps left (runs never sent or approved, Library items no post uses) and
+   changes nothing; with the single-use `confirm_token` the person OK'd, runs are archived (hidden from Make a post) and
+   Library items go to the Bin (restorable for 7 days). Buffer is never touched.
+10. **Your own research.** The agent searches and browses the web with its own tools; HuhQueue's tools read the links it is
+    given.
+
+## Paid and external APIs need the person's approval
+
+An MCP agent never spends money or credits on its own (owner, 4 Nov 2026; `studio/consent.py`). A gated call (server AI with
+`server_ai: true` today; Channel3 and any credit-spending external API from Phase 4) answers:
+
+```json
+{"needs_user_approval": true, "approval_id": 41, "tool": "run_agent", "spent_usd": 0,
+ "estimate": {"provider": "HuhQueue server AI", "usd_max": 0.15, "counts_against": "the person's HuhQueue AI allowance"}}
+```
+
+Nothing ran. The request waits in the person's **Inbox → Approvals** (the same queue as agent posts, `kind: paid_api`).
+Only a signed-in person can approve it (an agent token, whatever its policy or channels, gets 403). After approval the same
+call (same tool, same arguments, same token) runs **once**; a different call asks again. Or the person turns on **Allow paid
+APIs** for one app in AI apps (`PATCH /api/agent-tokens/{id} {"allow_paid_apis": true}`, humans only, off by default); then
+that app's paid calls run without asking and each one is written to Activity.
+
 ## Every tool
 
 
@@ -38,6 +89,8 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 
 | Tool | Brain | What it does |
 |---|---|---|
+| `start_post` | no model | Open ONE post for the person's request (`user_asked: true`) and get its `run_id`; the open post is returned with `reused: true`. `new_post: true` + `user_asked: true` only when the person asks for another post. |
+| `cleanup_agent_drafts` | no model | List the runs and Library items AI apps left (dry run, changes nothing, single-use `confirm_token`); with the token the person OK'd: runs archived, items to the Library Bin (7 days). |
 | `research_link` | client brain | Read an article, launch page or post URL: title, site, description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos. |
 | `read_x_post` | client brain | The free X reader: an X/Twitter post's author, handle, text, date and its photos/videos (direct MP4 when the post has one), without an X API key. |
 | `find_media` | client brain | Find the REAL launch/demo video or official images for a story or link on X, YouTube, Vimeo, Loom, YC launch pages, HN, GitHub and company pages (og:video). |

@@ -312,7 +312,7 @@ def test_paid_api_is_refused_until_the_person_approves_and_runs_once(human, fake
     # an agent can never approve it: not over REST with its token, and there is no MCP tool for it
     r = human.post(f"/api/approvals/{wait['approval_id']}/approve", headers={"Authorization": f"Bearer {tok}", "X-HQ-CSRF": ""},
                    cookies={}, json={})
-    assert r.status_code in (200, 403)  # the TestClient keeps the person's cookie: checked again below with a bare client
+    assert r.status_code == 403  # (a bare bearer client is checked in the next test)
     names = {t["name"] for t in mcp.TOOLS}
     assert not any("approve" in n for n in names)
     # the person approves in HuhQueue
