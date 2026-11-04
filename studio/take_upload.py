@@ -203,8 +203,12 @@ class TakeUploads:
         if not config():
             return 0
         cut = (now or time.time()) - TTL_OPEN
-        old = [dict(r) for r in self.store.q("SELECT * FROM take_uploads WHERE take_id IS NULL AND updated<?", (cut,))]
-        return sum(1 for d in old if self._drop(d))
+        n = 0
+        for r in self.store.q("SELECT id FROM take_uploads WHERE take_id IS NULL AND updated<?", (cut,)):
+            with _CLAIM:  # re-read under the claim lock: an upload a take claimed meanwhile is never deleted (Greptile)
+                rows = self.store.q("SELECT * FROM take_uploads WHERE id=? AND take_id IS NULL AND updated<?", (r["id"], cut))
+                n += bool(rows) and self._drop(dict(rows[0]))
+        return n
 
     def remove_for_user(self, uid: str) -> int:
         """Account deletion (/api/disconnect): every upload of this person leaves the store. Best effort: the records go

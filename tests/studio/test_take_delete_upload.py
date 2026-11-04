@@ -539,3 +539,36 @@ def test_the_7_day_sweep_spares_a_take_restored_and_deleted_again(human, app, mo
     uid = st.q("SELECT user_id FROM agent_runs WHERE id=?", (rid,))[0]["user_id"]
     assert tk._purge(uid, [rid], [], binned_before=time.time() - 7 * 86400)[0] == []
     assert st.q("SELECT status FROM agent_runs WHERE id=?", (rid,))[0]["status"] == "binned"
+
+
+def test_the_watchdog_sweep_never_runs_inside_a_take_lock(app):
+    """CodeRabbit, PR #107: a callback holding take B's lock swept a stale job of take A (A's lock) while a purge held A
+    and waited for B: a deadlock. The sweep is skipped on a thread that holds a take lock."""
+    house, ran = app.state.house, []
+    house.sweep_stale_jobs = lambda *a, **k: ran.append(1) or []
+    with house.takes._take_lock(1):
+        house._sweep_quietly()
+    assert ran == []
+    house._sweep_quietly()
+    assert ran == [1]
+
+
+def test_cleanup_never_deletes_an_upload_a_take_just_claimed(human, app, s3):
+    data = MP4_HEAD + b"v" * 1024
+    up, etags = _upload(human, s3, data)
+    human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={"parts": etags})
+    st, tu = app.state.store, app.state.house.take_uploads
+    st.x("UPDATE take_uploads SET updated=0 WHERE id=?", (up["upload_id"],))
+    real_q = st.q
+
+    def q(sql, args=()):
+        out = real_q(sql, args)
+        if sql.startswith("SELECT id FROM take_uploads WHERE take_id IS NULL"):  # claimed right after the sweep listed it
+            st.x("UPDATE take_uploads SET take_id=7 WHERE id=?", (up["upload_id"],))
+        return out
+    st.q = q
+    try:
+        assert tu.purge_stale() == 0
+    finally:
+        st.q = real_q
+    assert s3.objects and st.q("SELECT take_id FROM take_uploads WHERE id=?", (up["upload_id"],))[0]["take_id"] == 7

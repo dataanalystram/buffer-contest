@@ -701,6 +701,9 @@ class House:
         return mcp_runs.merge(self.store, d)
 
     def _sweep_quietly(self) -> None:
+        takes_ = getattr(self, "takes", None)
+        if takes_ is not None and takes_.holds_take_lock():  # never nested in a take's lock (it takes other takes' locks)
+            return
         try:
             self.sweep_stale_jobs()
         except Exception:  # noqa: BLE001  the watchdog never breaks a page
