@@ -4,6 +4,7 @@
 // Same actions as REST and MCP: clips_from_video, list_clips, adjust_clip, place_clips_in_week.
 "use strict";
 const T = { src: "upload", file: null, take: null, poll: null, sel: new Set(), plan: null, edit: null, sort: "score" };
+const TK_ATTEST_V = "2026-11-04.1"; // link_ingest.ATTESTATION_VERSION: a newer statement on the server answers 409 (reload)
 const T_VIDEO = new Set(["instagram", "tiktok", "youtube", "twitter", "linkedin", "threads", "facebook", "bluesky"]);
 const reducedMotion = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const secs = (s) => { s = Math.max(0, +s || 0); const m = Math.floor(s / 60); return `${m}:${String((s % 60).toFixed(1)).padStart(4, "0")}`; };
@@ -125,12 +126,12 @@ $("#takeForm").addEventListener("submit", async (ev) => {
   // errors stay on the page under the button (a toast alone was easy to miss: live test 2 Nov 2026)
   const say = (m) => { $("#tkErr").textContent = m; if (m) toast(m, 6000); };
   say("");
-  if (!$("#tkOwns").checked) return say("Tick “This is my video, or I have the rights to it” first. One take only clips videos you own.");
+  if (!$("#tkOwns").checked) return say("Tick “I own this video or have permission to use it” first. One take only clips videos you have the rights to.");
   if (!T.sel.size) return say("Pick at least one channel for the clips (below).");
   if (T.src === "upload" && !T.file) return say(`Choose a video first (MP4, MOV or WebM up to ${tkLim(TK_UP)}), or try the sample take.`);
   if (T.src === "link") {
     const u = $("#tkUrl").value.trim();
-    if (!/^https:\/\/[^\s/]+\.[^\s/]+\/\S+/.test(u)) return say("Paste a direct https:// link to your video file, e.g. https://your-storage.example.com/talk.mp4.");
+    if (!/^https:\/\/[^\s/]+\.[^\s/]+\/\S+/.test(u)) return say("Paste an https:// link to the video: a YouTube, Vimeo or X post, or the video file.");
   }
   const body = { owns: true, channel_ids: [...T.sel] };
   const n = $("#tkCount").value; if (n) body.count = +n;
@@ -146,7 +147,9 @@ $("#takeForm").addEventListener("submit", async (ev) => {
       tkProg(null);
     } else {
       body.url = $("#tkUrl").value.trim();
-      if (!body.url) throw new Error("Paste a direct link to your video file");
+      if (!body.url) throw new Error("Paste a link to the video");
+      // the rights statement the person ticked (studio/link_ingest.py); the server keeps a consent record before any fetch
+      body.rights_attested = true; body.attestation_version = TK_ATTEST_V;
     }
     const t = await api("/api/takes", { method: "POST", body });
     showTake(t); watchTake(t.id);
