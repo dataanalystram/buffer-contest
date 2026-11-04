@@ -118,7 +118,8 @@ def test_bin_restore_selected_purge_selected_and_empty(owner):
     owner.post("/api/library/bulk-delete", json={"ids": ids, "mode": "bin"})
     pg = owner.get("/api/library/bin?per=2").json()
     assert pg["total"] == 4 and len(pg["items"]) == 2
-    assert owner.post("/api/library/bin/restore", json={"ids": [ids[0], 99999]}).json() == {"restored": [ids[0]], "missing": [99999]}
+    rr = owner.post("/api/library/bin/restore", json={"ids": [ids[0], 99999]}).json()
+    assert (rr["restored"], rr["missing"]) == ([ids[0]], [99999]) and rr["used"] > 0  # the meter rides along
     assert owner.post("/api/library/bin/purge", json={"ids": [ids[1]]}).json()["purged"] == [ids[1]]
     p = owner.post("/api/library/bin/purge", json={"all": True}).json()
     assert sorted(p["purged"]) == sorted(ids[2:]) and owner.get("/api/library/bin").json()["items"] == []

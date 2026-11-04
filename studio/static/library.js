@@ -120,12 +120,34 @@ async function loadLibrary() {
     libDraw(d);
   } catch (e) { if (seq === LIB.seq) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; grid.setAttribute("aria-busy", "false"); } }
 }
+// the storage meter, from any answer that carries the count (list, Bin, upload, delete, restore, purge): the server counts
+// it from the rows right now, so the meter moves the moment a file is added or removed (owner bug, 3 Nov 2026)
+function libMeter(d) {
+  const u = d && (typeof d.used === "number" ? d : d.usage); if (!u || typeof u.used !== "number") return;
+  const { fmtSize } = window.HQ_FMT, el = $("#libUsage");
+  if (d.read_only) { el.textContent = "Sample items · read-only"; return; }
+  el.textContent = `${fmtSize(u.used)} of ${fmtSize(u.quota)} used · files up to ${fmtSize(u.file_max)}`;
+  el.dataset.used = String(u.used);
+}
+// the Bin without the items just deleted for good, drawn at once (and kept as LIB.binData, so a boot-end redraw can't
+// bring them back) while the purge runs; the server's answer redraws it after
+function binDrop(ids) {
+  const gone = new Set(ids.map(String)), d = LIB.binData; if (!d) return;
+  const items = d.items.filter((x) => !gone.has(String(x.id)));
+  LIB.bin = items; LIB.binData = { ...d, items, total: items.length }; binDraw(LIB.binData);
+}
+async function libPurge(body, ids) {
+  binDrop(ids);
+  const b = $("#libEmptyBin"); b.disabled = true;
+  try { const r = await api("/api/library/bin/purge", { method: "POST", body }); libMeter(r); return r; }
+  finally { b.disabled = false; loadBin(); }
+}
 // draws the Library from an /api/library answer: loadLibrary after it fetches, and the boot-end redraw from LIB.data
 function libDraw(d) {
   const grid = $("#libGrid"), { fmtSize } = window.HQ_FMT;
   grid.setAttribute("aria-busy", "false");
   grid.classList.toggle("lp-list", LIB.layout === "list");
-  $("#libUsage").textContent = d.read_only ? "Sample items · read-only" : `${fmtSize(d.used)} of ${fmtSize(d.quota)} used · files up to ${fmtSize(d.file_max)}`;
+  libMeter(d);
   $("#libIns").hidden = !!d.read_only;
   $("#libLinkMax").textContent = fmtSize(d.file_max);
   libBinCount(d.bin_count || 0);
@@ -341,24 +363,24 @@ $("#libBulkUse").onclick = () => { const [it] = selItems(); if (it && it.media_t
 $("#libBulkDraft").onclick = () => { const [it] = selItems(); if (it && it.media_token) openDraft(it); };
 $("#libBulkBin").onclick = async () => {
   const r = await libDeleteDialog(selItems(), "bin"); if (!r) return;
-  libSelClear(); loadLibrary(); toast(`${plural(r.deleted.length, "item")} moved to the Bin` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
+  libMeter(r); libSelClear(); loadLibrary(); toast(`${plural(r.deleted.length, "item")} moved to the Bin` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
 };
 async function libBulkPermanent() {
   closeMenus();
   const items = selItems();
   if (LIB.view === "bin") {
     if (!(await hqConfirm(`Delete ${plural(items.length, "item")} permanently? The files are removed now. This can't be undone.`, { ok: "Delete permanently", danger: true }))) return;
-    try { const r = await api("/api/library/bin/purge", { method: "POST", body: { ids: items.map((x) => +x.id) } }); libSelClear(); loadBin(); toast(`${plural(r.purged.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000); }
+    try { const ids = items.map((x) => +x.id); libSelClear(); const r = await libPurge({ ids }, ids); toast(`${plural(r.purged.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000); }
     catch (e) { toast(e.message, 6000); }
     return;
   }
   const r = await libDeleteDialog(items, "permanent"); if (!r) return;
-  libSelClear(); loadLibrary(); toast(`${plural(r.deleted.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
+  libMeter(r); libSelClear(); loadLibrary(); toast(`${plural(r.deleted.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
 }
 $("#libBulkPerm").onclick = libBulkPermanent;
 $("#libBulkPermMenu").onclick = libBulkPermanent;
 $("#libBulkRestore").onclick = async () => {
-  try { const r = await api("/api/library/bin/restore", { method: "POST", body: { ids: selItems().map((x) => +x.id) } }); libSelClear(); loadBin(); toast(`${plural(r.restored.length, "item")} restored`); }
+  try { const r = await api("/api/library/bin/restore", { method: "POST", body: { ids: selItems().map((x) => +x.id) } }); libMeter(r); libSelClear(); loadBin(); toast(`${plural(r.restored.length, "item")} restored`); }
   catch (e) { toast(e.message, 6000); }
 };
 
@@ -437,7 +459,7 @@ async function loadBin() {
 function binDraw(d) {
   const grid = $("#libGrid");
   grid.setAttribute("aria-busy", "false"); grid.classList.toggle("lp-list", LIB.layout === "list");
-  libBinCount(d.total);
+  libBinCount(d.total); libMeter(d);
   const per = LIB.per, pages = Math.max(1, Math.ceil(d.items.length / per));
   LIB.binPage = Math.min(LIB.binPage || 1, pages);
   const page = d.items.slice((LIB.binPage - 1) * per, LIB.binPage * per);
@@ -447,10 +469,10 @@ function binDraw(d) {
     : `<div class="lp-empty" data-testid="bin-empty"><span class="lp-empty-ic" aria-hidden="true">${IC.bin}</span><b>The Bin is empty</b><span>Items you move to the Bin stay here for ${d.days} days, then they're removed for good.</span></div>`;
   grid.querySelectorAll(".lp-bin").forEach((el) => {
     const it = d.items.find((x) => String(x.id) === el.dataset.id); wireSel(el);
-    el.querySelector("[data-act=restore]").onclick = async () => { try { await api(`/api/library/${it.id}/restore`, { method: "POST", body: {} }); LIB.sel.delete(String(it.id)); toast("Restored to your Library"); loadBin(); } catch (e) { toast(e.message, 5000); } };
+    el.querySelector("[data-act=restore]").onclick = async () => { try { const r = await api(`/api/library/${it.id}/restore`, { method: "POST", body: {} }); libMeter(r); LIB.sel.delete(String(it.id)); toast("Restored to your Library"); loadBin(); } catch (e) { toast(e.message, 5000); } };
     el.querySelector("[data-act=purge]").onclick = async () => {
       if (!(await hqConfirm(`Delete “${it.name}” permanently? The file is removed now. This can't be undone.`, { ok: "Delete permanently", danger: true }))) return;
-      try { const r = await api("/api/library/bin/purge", { method: "POST", body: { ids: [it.id] } }); LIB.sel.delete(String(it.id)); if (r.refused.length) toast(r.refused[0].error, 7000); else toast("Deleted permanently"); loadBin(); } catch (e) { toast(e.message, 5000); }
+      try { LIB.sel.delete(String(it.id)); const r = await libPurge({ ids: [it.id] }, [it.id]); if (r.refused.length) toast(r.refused[0].error, 7000); else toast("Deleted permanently"); } catch (e) { toast(e.message, 5000); }
     };
   });
   libSelPaint();
@@ -458,7 +480,7 @@ function binDraw(d) {
 }
 $("#libEmptyBin").onclick = async () => {
   if (!(await hqConfirm("Empty the Bin? Every item in it is deleted permanently now. This can't be undone.", { ok: "Empty bin", danger: true }))) return;
-  try { const r = await api("/api/library/bin/purge", { method: "POST", body: { all: true } }); libSelClear(); loadBin(); toast(`${plural(r.purged.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000); }
+  try { libSelClear(); const r = await libPurge({ all: true }, (LIB.bin || []).map((x) => x.id)); toast(`${plural(r.purged.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000); }
   catch (e) { toast(e.message, 6000); }
 };
 
@@ -505,7 +527,7 @@ $("#libFile").onchange = async (e) => {
   const max = (LIB.data && LIB.data.file_max) || 100 * 1048576;
   if (f.size > max) { e.target.value = ""; return toast(`Files up to ${Math.round(max / 1048576)} MB`); }
   $("#libUsage").innerHTML = `<span class="spin" aria-hidden="true"></span>Uploading ${esc(f.name)}…`;
-  try { await window.hqUploadFile(f); toast("Saved to your Library"); } catch (err) { toast(err.message, 6000); }
+  try { libMeter(await window.hqUploadFile(f)); toast("Saved to your Library"); } catch (err) { toast(err.message, 6000); }
   e.target.value = ""; loadLibrary();
 };
 
