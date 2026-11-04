@@ -124,6 +124,27 @@ def png_head(buf: bytes):
         pos += 12 + ln
 
 
+def png_all(buf: bytes) -> bytes:
+    """The whole PNG with every metadata chunk dropped, through IEND (a valid PNG may put tEXt / iTXt XMP with GPS, or
+    eXIf, AFTER the image data, which png_head passes through untouched). Anything after IEND goes too. UNPARSED for a
+    file that isn't a complete, well-formed chunk list (the caller falls back to png_head)."""
+    if buf[:8] != _PNG_SIG:
+        return UNPARSED
+    out, pos, n = [_PNG_SIG], 8, len(buf)
+    while pos + 12 <= n:
+        (ln,) = struct.unpack(">I", buf[pos:pos + 4])
+        typ = bytes(buf[pos + 4:pos + 8])
+        end = pos + 12 + ln
+        if end > n:
+            return UNPARSED
+        if typ not in _PNG_DROP:
+            out.append(bytes(buf[pos:end]))
+        if typ == b"IEND":
+            return b"".join(out)
+        pos = end
+    return UNPARSED
+
+
 def head(ext: str, buf: bytes):
     """The cleaned start of a file of type ext ('jpg', 'png'); INCOMPLETE until the header is all there; UNPARSED for
     any other type or a layout we don't recognise."""
@@ -135,8 +156,9 @@ def head(ext: str, buf: bytes):
 
 
 def strip_bytes(ext: str, data: bytes) -> bytes:
-    """The whole-file version (for uploads that arrive as one bytes object)."""
-    r = head(ext, data)
+    """The whole-file version (for uploads that arrive as one bytes object): a PNG is cleaned through IEND."""
+    r = png_all(data) if ext == "png" else UNPARSED
+    r = r or head(ext, data)
     return r if r else data
 
 

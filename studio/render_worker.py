@@ -1,5 +1,5 @@
-"""Free video render worker. Runs on GitHub Actions (`.github/workflows/render.yml` for Reels and the weekly recap
-(job kind media_recap), `take.yml` for One take),
+"""Free video render worker. Runs on GitHub Actions (`.github/workflows/render.yml` for Reels, the weekly recap
+(job kind media_recap) and the ML product cut-out (job kind image_matte), `take.yml` for One take),
 dispatched by the app per job:
 
     python -m studio.render_worker --job 12 --app https://huhqueue-studio.onrender.com
@@ -190,7 +190,7 @@ def friendly(e: BaseException, base: str = "") -> str:
     if isinstance(e, (SystemExit, KeyboardInterrupt)):
         return "The video worker was stopped before it finished."
     msg = str(e).strip()
-    if e.__class__.__name__ in ("TakeError", "RuntimeError", "MediaError") and msg:
+    if e.__class__.__name__ in ("TakeError", "RuntimeError", "MediaError", "MatteError") and msg:
         return msg[:300]
     return f"The video worker hit an error ({e.__class__.__name__}{': ' + msg if msg else ''})"[:300]
 
@@ -330,6 +330,12 @@ def _run(c: httpx.Client, base: str, h: dict, args) -> int:
         return 0 if r.status_code == 200 else 1
     if spec["kind"] == "media_recap":  # the weekly recap: carousel slides + one Reel, several files
         return recap_job(c, base, h, args.job, j, get)
+    if spec["kind"] == "image_matte":  # the ML product cut-out (studio/image_matte.py): one PNG back, no logo, no FFmpeg
+        from .image_matte import worker_job as matte_job
+        data, meta = matte_job(spec, urls, get)
+        r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h, json={"data": base64.b64encode(data).decode(), "meta": meta})
+        print("cut-out posted", len(data), "bytes:", r.status_code, r.text[:200])
+        return 0 if r.status_code == 200 else 1
     logo = get(urls.get("logo"), optional=True)
     if spec["kind"] == "cover_swap":  # another cover variant as the Reel's opening frames (studio.media.worker.cover_swap)
         from .media.worker import cover_swap

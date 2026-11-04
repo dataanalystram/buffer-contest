@@ -7,13 +7,13 @@ runs inside the 512 MB web worker:
 1. crop      pick the crop by saliency (edge + colour-contrast energy, never the empty sky) or a face box when given
 2. grade     colour-match the scene to the brand background (pull toward the brand ground, lower saturation, darken)
 3. fade      a soft vignette and a gradient fade into the brand ground where the words sit
-4. product   for a product / card shot: cut it out of its plain stage (border-colour key, feathered), round its corners,
+4. product   for a product / card shot: cut it out of its plain stage (border flood, every piece kept), round its corners,
              tilt it a few degrees and drop a soft shadow under it
 5. founders  circular founder photos with a white ring, overlapping the product's lower-left corner (or in a row)
 
 Every function takes and returns PIL images; ``premium_hero`` runs the whole recipe and ``before_after`` makes the
-side-by-side the contact sheets show. Optional: when ``rembg`` (MIT) is installed the cut-out uses it; it isn't by default
-(its model is ~170 MB, more than the free worker can hold), and the border-colour key covers product shots on a stage.
+side-by-side the contact sheets show. The cut-out here is the fast one (no model). The ML cut-out (rembg with ISNet
+isnet-general-use, Apache-2.0, or BiRefNet-lite, MIT; never BRIA RMBG) is studio/image_matte.py on the render worker.
 """
 from __future__ import annotations
 
@@ -113,98 +113,260 @@ def vignette(im: Image.Image, ground=BLACK, edge: float = 0.55, fade_from: float
 
 
 # ---------------------------------------------------------------------------------------------------- 4. product
-def cutout(im: Image.Image, tol: int = 38, pad: int = 8) -> Image.Image | None:
-    """A product shot on a plain stage -> the product as RGBA (border-colour key, feathered). rembg when installed.
-    None when the border isn't one colour (a busy photo has no stage to cut)."""
-    try:  # optional, MIT; not installed on the free worker
-        from rembg import remove  # type: ignore
-        out = remove(im.convert("RGBA"))
-        box = out.getchannel("A").point(lambda v: 255 if v > 24 else 0).getbbox()
-        return out.crop(box) if box else None
-    except Exception:  # noqa: BLE001
-        pass
+# The fast cut-out (no model, web-safe: Pillow + plain Python on a small working copy). Rewritten 4 Nov 2026
+# (docs/plans/AGENT_RUNS_EDITING_COMMERCE.md 2.1-2.2): the old near-white key (inner threshold 70) erased off-white
+# earcups, kept one blob and zoomed into it. Now the background is only what is connected to the border AND looks like
+# the stage (close in Lab, or a little further but flat), so a light part of the product survives when its outline
+# stops the flood; every significant piece is kept; holes inside the object are filled; low confidence says so instead
+# of handing back a torn cut-out. The ML cut-out (studio/image_matte.py, ISNet / BiRefNet-lite) runs on the worker.
+WORK = 400            # working size (longest side) for the flood and the components
+MAX_IN = 2048         # bigger inputs are scaled down first (a 1080 render never needs more)
+MIN_PART = 0.003      # a piece of the object smaller than this share of the image is a speck
+MIN_CONFIDENCE = 0.5  # below this cutout() answers None and callers frame the whole photo instead
+_LAB = None
+
+
+def _to_lab(rgb: Image.Image) -> Image.Image:
+    global _LAB
+    from PIL import ImageCms
+    if _LAB is None:
+        _LAB = ImageCms.buildTransformFromOpenProfiles(ImageCms.createProfile("sRGB"), ImageCms.createProfile("LAB"), "RGB", "LAB")
+    return ImageCms.applyTransform(rgb, _LAB)
+
+
+def _delta(lab: Image.Image, ref: tuple[int, int, int]) -> Image.Image:
+    """|dL| + |da| + |db| against one Lab colour (8-bit Lab units, clipped at 255): a cheap Delta E."""
+    out = None
+    for band, v in zip(lab.split(), ref):
+        d = ImageChops.difference(band, Image.new("L", lab.size, int(v)))
+        out = d if out is None else ImageChops.add(out, d)
+    return out
+
+
+def _grad(lab: Image.Image) -> Image.Image:
+    """Morphological gradient (3x3 max - min) summed over the Lab bands: high on any edge, ~0 on a flat stage."""
+    out = None
+    for band in lab.split():
+        g = ImageChops.subtract(band.filter(ImageFilter.MaxFilter(3)), band.filter(ImageFilter.MinFilter(3)))
+        out = g if out is None else ImageChops.add(out, g)
+    return out
+
+
+def _pct(vals: list[int], q: float) -> int:
+    v = sorted(vals)
+    return v[min(len(v) - 1, int(q * (len(v) - 1)))] if v else 0
+
+
+def _border_idx(w: int, h: int) -> list[int]:
+    idx = list(range(w)) + [(h - 1) * w + x for x in range(w)]
+    idx += [y * w for y in range(1, h - 1)] + [y * w + w - 1 for y in range(1, h - 1)]
+    return idx
+
+
+def _flood(cand: bytearray, w: int, h: int, seeds: list[int]) -> bytearray:
+    """4-connected flood over cand (1 = may be background) from seeds; returns 1 where reached."""
+    seen = bytearray(w * h)
+    stack = [i for i in seeds if cand[i]]
+    for i in stack:
+        seen[i] = 1
+    while stack:
+        i = stack.pop()
+        x = i % w
+        for j in (i - w, i + w, i - 1 if x else -1, i + 1 if x < w - 1 else -1):
+            if 0 <= j < w * h and cand[j] and not seen[j]:
+                seen[j] = 1
+                stack.append(j)
+    return seen
+
+
+def _components(mask: bytearray, w: int, h: int) -> list[dict]:
+    """4-connected components of mask (1 = set): [{n, box (x0,y0,x1,y1), px}] biggest first."""
+    seen = bytearray(w * h)
+    comps = []
+    for s0 in range(w * h):
+        if not mask[s0] or seen[s0]:
+            continue
+        seen[s0] = 1
+        stack, px = [s0], []
+        x0 = x1 = s0 % w
+        y0 = y1 = s0 // w
+        while stack:
+            i = stack.pop()
+            px.append(i)
+            x, y = i % w, i // w
+            x0, x1, y0, y1 = min(x0, x), max(x1, x), min(y0, y), max(y1, y)
+            for j in (i - w, i + w, i - 1 if x else -1, i + 1 if x < w - 1 else -1):
+                if 0 <= j < w * h and mask[j] and not seen[j]:
+                    seen[j] = 1
+                    stack.append(j)
+        comps.append({"n": len(px), "box": (x0, y0, x1 + 1, y1 + 1), "px": px})
+    comps.sort(key=lambda c: -c["n"])
+    return comps
+
+
+def _alpha_cut(im: Image.Image) -> dict | None:
+    """An image that already has a transparent background (a PNG cut-out): use its own alpha."""
+    if im.mode not in ("RGBA", "LA") and not (im.mode == "P" and "transparency" in im.info):
+        return None
+    rgba = im.convert("RGBA")
+    a = rgba.getchannel("A")
+    if a.getextrema()[0] > 16:  # nothing transparent: an ordinary photo saved with an alpha channel
+        return None
+    box = a.point(lambda v: 255 if v > 24 else 0).getbbox()
+    if not box:
+        return None
+    return {"image": rgba.crop(box), "ok": True, "confidence": 1.0, "reason": "the image already had a transparent background",
+            "components": 1, "box": box, "engine": "alpha"}
+
+
+def cutout_detailed(im: Image.Image, pad: int = 8) -> dict:
+    """The fast cut-out with its evidence: {image (RGBA, cropped to the object, or None), ok, confidence 0-1, reason,
+    components, box (x0,y0,x1,y1 in the (capped) input's pixels), engine: fast | alpha}. ok False means: don't composite
+    it; frame the whole photo (premium_hero's clean card) or queue the ML cut-out (image_matte on the worker)."""
+    own = _alpha_cut(im)
+    if own:
+        return own
     rgb = im.convert("RGB")
+    if max(rgb.size) > MAX_IN:
+        rgb = ImageOps.contain(rgb, (MAX_IN, MAX_IN), Image.LANCZOS)
     W, H = rgb.size
-    border = [rgb.getpixel((x, y)) for x in range(0, W, max(1, W // 40)) for y in (0, H - 1)] + \
-             [rgb.getpixel((x, y)) for y in range(0, H, max(1, H // 40)) for x in (0, W - 1)]
-    mean = tuple(sum(c[i] for c in border) // len(border) for i in range(3))
-    spread = max(max(abs(c[i] - mean[i]) for i in range(3)) for c in border)
-    if spread > 90:
-        return None
-    diff = ImageChops.difference(rgb, Image.new("RGB", rgb.size, mean)).convert("L")
-    mask = diff.point(lambda v: 255 if v > tol else 0).filter(ImageFilter.MedianFilter(5))
-    box = _main_object(mask)
-    if not box or (box[2] - box[0]) * (box[3] - box[1]) < 0.04 * W * H:
-        return None
-    box = (max(0, box[0] - pad), max(0, box[1] - pad), min(W, box[2] + pad), min(H, box[3] + pad))
-    # the object's own rectangle: keep everything inside the box solid, feather only the stage around it
-    obj = rgb.crop(box).convert("RGBA")
-    # a tighter key inside the box (the soft glow around a product on a white stage is not the product), holes filled
-    # (a chip or a white logo on the product is the stage colour but inside the object), then a 1 px choke + feather
-    m = diff.crop(box).point(lambda v: 255 if v > max(tol, 70) else 0).filter(ImageFilter.MedianFilter(5))
-    m = _fill_holes(m).filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(1.2))
-    tight = m.point(lambda v: 255 if v > 128 else 0).getbbox()
-    obj.putalpha(m)
-    return obj.crop(tight) if tight else obj
-
-
-def _fill_holes(m: Image.Image) -> Image.Image:
-    """Everything not reachable from the border through background becomes object."""
-    pad = Image.new("L", (m.width + 2, m.height + 2), 0)
-    pad.paste(m, (1, 1))
-    ImageDraw.floodfill(pad, (0, 0), 128)
-    return pad.crop((1, 1, m.width + 1, m.height + 1)).point(lambda v: 0 if v == 128 else 255)
-
-
-def _main_object(mask: Image.Image, size: int = 240) -> tuple[int, int, int, int] | None:
-    """The bounding box of the biggest solid blob in a stage mask: a product, not the lines of text printed next to it
-    (text lines are many thin, wide blobs). Connected components on a small copy, pure Python."""
-    W, H = mask.size
-    sw = size
-    sh = max(1, int(H * size / W))
-    sm = mask.resize((sw, sh), Image.BILINEAR).point(lambda v: 255 if v > 100 else 0).filter(ImageFilter.MinFilter(3))
-    px = sm.load()
-    seen = bytearray(sw * sh)
-    best, bbox = 0.0, None
-    for y0 in range(sh):
-        for x0 in range(sw):
-            if not px[x0, y0] or seen[y0 * sw + x0]:
-                continue
-            stack, n = [(x0, y0)], 0
-            seen[y0 * sw + x0] = 1
-            a0, b0, a1, b1 = x0, y0, x0, y0
-            while stack:
-                x, y = stack.pop()
-                n += 1
-                a0, b0, a1, b1 = min(a0, x), min(b0, y), max(a1, x), max(b1, y)
-                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-                    if 0 <= nx < sw and 0 <= ny < sh and px[nx, ny] and not seen[ny * sw + nx]:
-                        seen[ny * sw + nx] = 1
-                        stack.append((nx, ny))
-            bw, bh = a1 - a0 + 1, b1 - b0 + 1
-            fill = n / (bw * bh)
-            score = n * fill * (0.3 if bw / bh > 4 else 1.0)  # a solid object beats a long thin line of text
-            if score > best:
-                best, bbox = score, (a0, b0, a1 + 1, b1 + 1)
-    if not bbox:
-        return None
+    fail = {"image": None, "ok": False, "confidence": 0.0, "components": 0, "box": None, "engine": "fast"}
+    if W < 16 or H < 16:
+        return {**fail, "reason": "image too small to cut"}
+    s = min(1.0, WORK / max(W, H))
+    sw, sh = max(8, round(W * s)), max(8, round(H * s))
+    small = rgb.resize((sw, sh), Image.BOX) if s < 1 else rgb
+    lab = _to_lab(small.filter(ImageFilter.GaussianBlur(0.8)))  # sensor / JPEG noise off, edges stay
+    border = _border_idx(sw, sh)
+    lab_px = [lab.getpixel((i % sw, i // sw)) for i in border]
+    stage = tuple(_pct([p[k] for p in lab_px], 0.5) for k in range(3))
+    dist = _delta(lab, stage)
+    grad = _grad(lab)
+    d = dist.tobytes()
+    g = grad.tobytes()
+    bd = [d[i] for i in border]
+    spread = _pct(bd, 0.75)
+    if spread > 40:  # the border is not one colour: a busy photo has no stage to cut
+        return {**fail, "reason": "the photo has no plain background around the product"}
+    # noise = how much the stage itself varies pixel to pixel; a gentle light fall-off across the stage is not noise
+    # (it is what the "flat" rule below lets the flood follow)
+    noise = _pct([g[i] for i in border], 0.9)
+    tol_near = max(5, min(16, 3 + noise))
+    tol_far = max(30, min(60, 3 * tol_near + 12))
+    g_thr = max(4, min(24, noise + 2))
+    n = sw * sh
+    # walls: every edge, thickened to 5 px so noise can't open a gap in a faint outline (an off-white earcup on white)
+    wall = grad.point(lambda v: 255 if v > g_thr else 0).filter(ImageFilter.MaxFilter(5)).tobytes()
+    cand = bytearray(1 if (not wall[i] and d[i] <= tol_far) or d[i] <= 2 else 0 for i in range(n))
+    bg = _flood(cand, sw, sh, border)
+    # enclosed stage-like regions: a big flat hole that matches the stage (a mug handle, the gap in a ring) is background;
+    # anything else enclosed (a white logo, a light earcup inside its outline) is the object
+    holes = bytearray(1 if cand[i] and not bg[i] else 0 for i in range(n))
+    for c in _components(holes, sw, sh):
+        if c["n"] < 0.01 * n:
+            break
+        if sum(d[i] for i in c["px"]) / c["n"] <= tol_near:
+            for i in c["px"]:
+                bg[i] = 1
+    obj = bytearray(0 if bg[i] else 1 for i in range(n))
+    comps = _components(obj, sw, sh)
+    keep, dropped = [], 0
+    big = comps[0] if comps else None
+    near = 0.05 * (sw * sw + sh * sh) ** 0.5
+    for c in comps:
+        bw, bh = c["box"][2] - c["box"][0], c["box"][3] - c["box"][1]
+        thin = bw / max(1, bh) > 5 and c["n"] < 0.25 * big["n"]  # a line of text beside the product
+        # every significant piece is kept: a big one anywhere, a smaller one only next to the main piece (a second
+        # earbud, a cable plug), so the lines of a spec sheet printed beside the product stay out
+        gap = max(big["box"][0] - c["box"][2], c["box"][0] - big["box"][2], big["box"][1] - c["box"][3], c["box"][1] - big["box"][3], 0)
+        significant = c["n"] >= 0.15 * big["n"] or gap <= near
+        if c["n"] >= MIN_PART * n and not thin and significant:
+            keep.append(c)
+        else:
+            dropped += 1
+            for i in c["px"]:
+                obj[i] = 0
+    if not keep:
+        return {**fail, "reason": "no product found on the background"}
+    x0 = min(c["box"][0] for c in keep)
+    y0 = min(c["box"][1] for c in keep)
+    x1 = max(c["box"][2] for c in keep)
+    y1 = max(c["box"][3] for c in keep)
+    area = sum(c["n"] for c in keep)
+    frac, solid = area / n, area / max(1, (x1 - x0) * (y1 - y0))
+    conf = 1.0
+    reasons = []
+    if frac < 0.02:
+        conf *= frac / 0.02
+        reasons.append("the product is tiny in the frame")
+    if frac > 0.85:
+        conf *= max(0.0, (1.0 - frac) / 0.15)
+        reasons.append("almost nothing around the product is background")
+    if len(keep) > 3:
+        conf *= 0.8 if len(keep) <= 6 else 0.4
+        reasons.append(f"the product came out in {len(keep)} pieces")
+    if solid < 0.25:
+        conf *= max(0.2, solid / 0.25)
+        reasons.append("the cut-out is mostly empty inside its box")
+    conf *= max(0.3, 1.0 - max(0, spread - 12) / 40)
+    # off-stage colour the flood still took as background, inside the product's own box: a light part may have been lost
+    lost = sum(1 for y in range(y0, y1) for i in range(y * sw + x0, y * sw + x1) if bg[i] and d[i] > tol_near + 2)
+    lost_frac = lost / max(1, (x1 - x0) * (y1 - y0))
+    if lost_frac > 0.03:
+        # measured on the regression headphones over seeded sensor noise: every cut with this sign had a torn earcup
+        # (rim alpha 85-135 of 255) at confidence 0.51-0.65, so it is never confident enough to composite
+        conf = min(conf * max(0.1, 1.0 - (lost_frac - 0.03) * 8), MIN_CONFIDENCE * 0.9)
+        reasons.append("parts close to the background colour may be missing")
+    conf = round(max(0.0, min(1.0, conf)), 2)
+    # full-resolution mask: the small mask scaled up, then the edge band re-decided per pixel from the colour distance
+    m_small = Image.frombytes("L", (sw, sh), bytes(255 if v else 0 for v in obj))
+    m = m_small.resize((W, H), Image.BILINEAR).point(lambda v: 255 if v >= 128 else 0)
+    if s < 1:
+        k = max(3, int(6 / s) | 1)  # the band covers the 5 px wall the flood stopped at
+        band = ImageChops.subtract(m.filter(ImageFilter.MaxFilter(k)), m.filter(ImageFilter.MinFilter(k)))
+        dfull = _delta(_to_lab(rgb.filter(ImageFilter.GaussianBlur(1.2))), stage)
+        ramp = max(4, tol_near)
+        soft = dfull.point(lambda v: max(0, min(255, (v - tol_near) * 255 // ramp)))
+        m = Image.composite(soft, m, band)
+    m = m.filter(ImageFilter.GaussianBlur(0.8))  # 1 px feather only: no choke, thin headbands and cables stay
     fx, fy = W / sw, H / sh
-    return int(bbox[0] * fx), int(bbox[1] * fy), int(bbox[2] * fx), int(bbox[3] * fy)
+    box = (max(0, int(x0 * fx) - pad), max(0, int(y0 * fy) - pad),
+           min(W, int(x1 * fx + 0.999) + pad), min(H, int(y1 * fy + 0.999) + pad))
+    out = rgb.convert("RGBA")
+    out.putalpha(m)
+    out = out.crop(box)
+    why = "; ".join(reasons) if reasons else "clean background, product outline found"
+    return {"image": out, "ok": conf >= MIN_CONFIDENCE, "confidence": conf, "reason": why, "components": len(keep),
+            "dropped": dropped, "box": box, "engine": "fast", "lost": round(lost_frac, 3)}
+
+
+def cutout(im: Image.Image, pad: int = 8) -> Image.Image | None:
+    """A product shot on a plain stage -> the product as RGBA, cropped to it (the fast cut-out above). None when the
+    photo has no plain stage or the cut isn't confident: never a torn cut-out. No model is loaded here (rembg's default
+    model is BRIA RMBG, non-commercial; the worker's studio/image_matte.py always names ISNet or BiRefNet-lite)."""
+    r = cutout_detailed(im, pad)
+    return r["image"] if r["ok"] else None
 
 
 def rounded(im: Image.Image, r: int) -> Image.Image:
     im = im.convert("RGBA")
-    m = Image.new("L", (im.width * 3, im.height * 3), 0)
-    ImageDraw.Draw(m).rounded_rectangle((0, 0, m.width - 1, m.height - 1), r * 3, fill=255)
+    s = 3 if max(im.size) <= 2048 else 1  # 3x supersampled edge; at 4096 px a 3x mask alone would be ~150 MB
+    m = Image.new("L", (im.width * s, im.height * s), 0)
+    ImageDraw.Draw(m).rounded_rectangle((0, 0, m.width - 1, m.height - 1), r * s, fill=255)
     m = m.resize(im.size, Image.LANCZOS)
     im.putalpha(ImageChops.multiply(im.getchannel("A"), m))
     return im
 
 
-def product_shot(obj: Image.Image, width: int, tilt: float = -6.0, radius: int = 0) -> tuple[Image.Image, Image.Image]:
-    """(product, shadow) as RGBA: scaled to width, corners rounded, tilted; the shadow is a blurred offset of its alpha."""
+def product_shot(obj: Image.Image, width: int, tilt: float = -6.0, radius: int = 0,
+                 max_h: int | None = None) -> tuple[Image.Image, Image.Image]:
+    """(product, shadow) as RGBA: fitted inside width x max_h (never width-only: a tall product would overflow the
+    canvas), corners rounded, tilted; the shadow is a blurred offset of its alpha."""
     obj = obj.convert("RGBA")
-    obj = obj.resize((width, max(1, int(obj.height * width / obj.width))), Image.LANCZOS)
+    k = width / obj.width
+    if max_h:
+        k = min(k, max_h / obj.height)
+    obj = obj.resize((max(1, int(obj.width * k)), max(1, int(obj.height * k))), Image.LANCZOS)
     if radius:
         obj = rounded(obj, radius)
     obj = obj.filter(ImageFilter.UnsharpMask(2, 50, 2))
@@ -256,10 +418,20 @@ def premium_hero(w: int, h: int, *, scene: Image.Image | None = None, product: I
     product's own picture, blurred and graded, is the scene."""
     steps: list[str] = []
     obj = None
+    cut: dict = {}
+    card = False
     if product is not None and kind in ("auto", "product", "card"):
-        obj = cutout(product)
-        steps.append("cut the product out of its stage" if obj is not None else "product photo has no plain stage: used whole")
-    base = scene if scene is not None else (product if obj is None else None)
+        cut = cutout_detailed(product)
+        if cut["ok"]:
+            obj = cut["image"]
+            steps.append(f"cut the product out of its stage (fast cut-out, confidence {cut['confidence']:.2f}, "
+                         f"{cut['components']} piece{'s' if cut['components'] != 1 else ''})")
+        else:
+            # never a torn cut-out, never a zoomed crop of the product: the whole photo on a clean card (plan 2.2)
+            obj, card = rounded(ImageOps.contain(product.convert("RGB"), (1600, 1600), Image.LANCZOS), 28), True
+            steps.append(f"cut-out not confident ({cut['reason']}): the whole product photo framed on a clean card; "
+                         "the high-quality cut-out (cutout_product engine=hq) runs on the worker")
+    base = scene
     if base is None and product is not None:  # only a product: its own photo, blurred, is the stage
         base = product.convert("RGB").filter(ImageFilter.GaussianBlur(30))
         steps.append("no scene art: the product photo, blurred, is the backdrop")
@@ -274,8 +446,8 @@ def premium_hero(w: int, h: int, *, scene: Image.Image | None = None, product: I
     pbox = None
     if obj is not None:
         pw = int(w * product_scale)
-        r = int(pw * 0.06) if kind in ("auto", "card") and 1.4 < obj.width / max(1, obj.height) < 1.9 else 0
-        p, sh = product_shot(obj, pw, tilt=tilt, radius=r)
+        r = int(pw * 0.06) if not card and kind in ("auto", "card") and 1.4 < obj.width / max(1, obj.height) < 1.9 else 0
+        p, sh = product_shot(obj, pw, tilt=0.0 if card else tilt, radius=r, max_h=int(h * 0.5))
         x = (w - p.width) // 2 + int(w * 0.03)
         y = int(h * product_y)
         canvas.alpha_composite(Image.new("RGBA", sh.size, (0, 0, 0, 0)), (0, 0))
@@ -284,7 +456,8 @@ def premium_hero(w: int, h: int, *, scene: Image.Image | None = None, product: I
         canvas.alpha_composite(shadow, (x - 60 + 12, y - 60 + 28))
         canvas.alpha_composite(p, (x, y))
         pbox = (x, y, x + p.width, y + p.height)
-        steps.append(f"product shot: rounded, tilted {tilt:g} deg, soft drop shadow")
+        steps.append("product photo on a clean card, soft drop shadow" if card else
+                     f"product shot: rounded, tilted {tilt:g} deg, soft drop shadow")
     out = vignette(canvas.convert("RGB"), ground, edge=0.5, fade_from=fade_from)
     steps.append("soft vignette + fade into the ground")
     if founders:
@@ -297,7 +470,8 @@ def premium_hero(w: int, h: int, *, scene: Image.Image | None = None, product: I
             o.alpha_composite(row, (x, min(max(0, y), h - row.height)))
             out = o.convert("RGB")
             steps.append(f"{len(founders)} founder avatar(s) with a white ring")
-    return out, {"steps": steps, "product_box": pbox, "cutout": obj is not None}
+    return out, {"steps": steps, "product_box": pbox, "cutout": obj is not None and not card, "clean_card": card,
+                 "cutout_confidence": cut.get("confidence"), "cutout_engine": cut.get("engine")}
 
 
 def before_after(before: Image.Image, after: Image.Image, h: int = 540) -> Image.Image:

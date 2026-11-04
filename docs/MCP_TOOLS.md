@@ -46,11 +46,12 @@ several Make a post threads and a Library item per render. The server now enforc
    `continue_run(run_id, reason)` or `start_post(new_request: true)`. `continue_run` joins an existing run (the person's
    words go in its thread; `format` switches it, as `start_post(run_id, format)` does); a run already sent to Buffer or
    waiting in Approvals answers 409. Every answer from a tool that makes or changes a run (start_post, continue_run, the renders, uploads, create_package,
-   render_status) carries `run_id` and `thread_url`
+   the image tools, render_status) carries `run_id` and `thread_url`
    (`<app>/?tab=library&run=<id>`, which opens the thread in Make a post). The same request repeated within 10 minutes (same title, e.g. the app retried)
    returns the run it already opened with `deduped: true` (`new_post: true` forces a separate one).
 2. **Pass `run_id` everywhere.** `render_carousel`, `hero_edit`, `edit_video`, `render_reel`, `split_video`,
-   `library_upload_url`, `create_upload`, `import_from_link` and `create_package` take it. Follow-ups update the same run:
+   `library_upload_url`, `create_upload`, `import_from_link`, `create_package` and the image tools (`fetch_image`,
+   `cutout_product`, `edit_image`, `compose_product_card`) take it. Follow-ups update the same run:
    `create_package(run_id)` replaces the post's packages **in place** and keeps the previous version
    (`packages[].undo`, `undo_package_media` goes back, 6 versions). A `run_id` of another account, or an archived one,
    answers 404.
@@ -321,6 +322,25 @@ drafts, trusted tokens may move scheduled posts too. Cover/thumbnail: `set_cover
 `thumbnail_offset_ms` in `replace_draft_media` / `create_package` `cover.frame_s`. Music: `list_music`, `set_post_music`,
 `search_instagram_audio`, `set_reel_audio`. Library: `list_library_bin`, `restore_library_items`, `purge_library_bin`,
 `bulk_delete_library`, `draft_from_library`.
+
+## Image editing on HuhQueue's side (4 Nov 2026)
+
+The server fetches and edits pictures, so the AI app never downloads or pastes image bytes. Every tool takes `run_id`
+(the post this belongs to) and stores what it makes as **run media** of that post: no Library item is added per edit
+(the Library gets one item per finished post). Each edit is a new version; `prev` names the one it was made from.
+No HuhQueue AI is used ($0). With a `run_id` the answer also carries `thread_url`; the identical call repeated within
+120 s (a retry) answers the first result instead of fetching, cutting out or storing the picture again.
+
+| Tool | What it does |
+|---|---|
+| `fetch_image` | `url` (public https) -> `media_token`. Every redirect hop vetted (netguard), up to 15 MB, JPG/PNG/WebP/AVIF only, ~40 MP cap, location/camera metadata removed. `ok: false` with `reason`: `blocked_by_site` (401/403: the site blocks servers; `ask` has the words to ask the person to upload the file, then `create_send_code` / `create_upload`), `not_found`, `too_large`, `private`, `not_an_image`, `unreachable`, `bad_url`. |
+| `cutout_product` | `image` (media_token or https URL), `engine`: `fast` (Pillow on the server, instant), `auto` (default: fast, then the ML cut-out on the worker when unsure), `ml` (ISNet `isnet-general-use`, Apache-2.0), `hq` (BiRefNet `birefnet-general-lite`, MIT). ml/hq answer `job_id`: poll `render_status(job_id)` for the PNG. A torn cut-out is never returned. |
+| `edit_image` | `image`, `ops` (max 12, in order): `crop {box}`, `fit {ratio, mode: cover\|contain, focus}`, `pad {ratio, colour}`, `cutout {}`, `card {ratio, ground, scale, shadow, radius, name, price}`, `round {radius}`, `grade {preset, exposure, contrast, saturation}`, `sharpen {amount}`. |
+| `compose_product_card` | `image`, `ratio`, `name`, `price`, `ground`: the product on the brand ground with a soft shadow (cut out when it stands on a plain background, otherwise the whole photo as a rounded card, never zoomed in). |
+
+REST: `POST /api/images/fetch`, `/api/images/cutout`, `/api/images/edit`, `/api/images/card` (same arguments).
+The ML cut-out runs only on the render worker (InstaBox when `HQ_RENDER_BACKEND=instabox`, with GitHub Actions
+`render.yml` as fallback), never on the web instance. rembg's own default model (BRIA RMBG) is never used.
 
 ## Music, Undo, Update draft and brand kits (3 Nov 2026)
 

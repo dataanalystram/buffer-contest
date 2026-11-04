@@ -77,13 +77,21 @@ def command(jid: int, app_url: str, kind: str = "", ref: str = "main") -> str:
     env = f"HQ_JOB_ID={int(jid)} HQ_APP={shlex.quote(app_url)} HQ_LOCK=/data/hq.lock"
     if kind:
         env += f" HQ_KIND={shlex.quote(kind)}"
-    return (
-        "set -e; IFS= read -r JOB_TOKEN; export JOB_TOKEN; cd /data/hq; "
-        f"git fetch -q --depth 1 origin {shlex.quote(ref)} && git checkout -q -f FETCH_HEAD; "
-        "mkdir -p /data/logs; "
-        f"(nohup env {env} /data/venv/bin/python -m studio.render_worker "
-        f"--job {int(jid)} --app {shlex.quote(app_url)} > /data/logs/job-{int(jid)}.log 2>&1 &); echo started"
-    )
+    head = ("set -e; IFS= read -r JOB_TOKEN; export JOB_TOKEN; cd /data/hq; "
+            f"git fetch -q --depth 1 origin {shlex.quote(ref)} && git checkout -q -f FETCH_HEAD; "
+            "mkdir -p /data/logs; ")
+    log = f"/data/logs/job-{int(jid)}.log"
+    worker = f"-m studio.render_worker --job {int(jid)} --app {shlex.quote(app_url)}"
+    if kind == "image_matte":
+        # the ML cut-out runs in its own venv (rembg needs numpy>=2.3; the video venv's MediaPipe must not be upgraded),
+        # created and kept in step with requirements-matte.txt in the background (pip is a no-op once installed), under
+        # a lock so two cut-outs never install at once; model weights live on the box's disk (U2NET_HOME)
+        inner = ("[ -x /data/venv-matte/bin/python ] || python3 -m venv /data/venv-matte; "
+                 "flock /data/pip-matte.lock /data/venv-matte/bin/pip install -q -r requirements-worker-core.txt "
+                 "-r requirements-matte.txt && "
+                 f"exec env {env} U2NET_HOME=/data/u2net /data/venv-matte/bin/python {worker}")
+        return head + f"(nohup sh -c {shlex.quote(inner)} > {log} 2>&1 &); echo started"
+    return head + f"(nohup env {env} /data/venv/bin/python {worker} > {log} 2>&1 &); echo started"
 
 
 def dispatch(house, jid: int, workflow: str = "render.yml", inputs: dict | None = None, ttl: int = 1800) -> tuple[bool, str]:

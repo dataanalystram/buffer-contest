@@ -19,8 +19,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENTRIES = ["studio.render_worker"]  # the GitHub Actions take / render / recap worker
 STDLIB = set(sys.stdlib_module_names)
-# Reachable but not needed by the worker: the Postgres store only opens for a postgres DATABASE_URL (web dyno); rembg is
-# an optional cut-out that falls back to the plain photo; requests is only patched by the demo's no-outbound guard
+# Reachable but not needed by the video worker: the Postgres store only opens for a postgres DATABASE_URL (web dyno); rembg is
+# the ML cut-out's runner, installed only in the image_matte venv (requirements-matte.txt, studio/image_matte.py); requests is only patched by the demo's no-outbound guard
 # (studio/demo_view.py, guarded) for the Oracle SDK, which only the web dyno loads.
 WEB_ONLY = {"psycopg", "rembg", "requests"}
 # import name -> requirements-worker.txt name. Guarded (try/except ImportError) imports count too: the worker needs
