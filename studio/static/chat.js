@@ -547,8 +547,8 @@
     else if (!panel.hidden) { e.preventDefault(); closePanel(); }
     else if (rv.classList.contains("hc-side-open")) { e.preventDefault(); sideDrawer(false); }
   });
-  // a click outside the threads drawer (phone) closes it
-  document.addEventListener("click", (e) => { if (rv.classList.contains("hc-side-open") && !side.contains(e.target) && !menuB.contains(e.target)) sideDrawer(false); });
+  // a click outside the threads drawer (phone) closes it; a dialog opened from the drawer (Delete thread's choice) is not outside
+  document.addEventListener("click", (e) => { if (rv.classList.contains("hc-side-open") && !side.contains(e.target) && !menuB.contains(e.target) && !(e.target.closest && e.target.closest("dialog"))) sideDrawer(false); });
   // leaving the thread (New post, Discover) closes its panels
   mpNew.addEventListener("click", () => { closePanel(); closeCtx(); if (rv.classList.contains("hc-side-open")) sideDrawer(false); scrimSync(); });
 
