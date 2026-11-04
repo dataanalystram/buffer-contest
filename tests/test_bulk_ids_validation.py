@@ -38,3 +38,12 @@ def test_bulk_resolve_rejects_non_list_ids(api, channel, ids):
 def test_queue_order_rejects_non_list_ids(api, channel, ids):
     r = api.post(f"/api/queue/{channel['id']}/order", {"ids": ids})
     assert r.status_code == 400, r.text
+
+
+def test_comments_bulk_rejects_padded_ids(api, channel):
+    """Greptile on #102: the team guard resolves the id as sent; stripping it afterwards let a padded id reach a
+    comment on a channel the guard never checked. A padded id is now a 400 and nothing changes."""
+    ids = [c["id"] for c in _sync(api, channel["id"])]
+    r = api.post("/api/comments/bulk", {"ids": [f" {ids[0]} "], "action": "resolve"})
+    assert r.status_code == 400 and "spaces" in r.json()["detail"], r.text
+    assert next(c for c in api.get(f"/api/comments?channel_id={channel['id']}").json() if c["id"] == ids[0])["status"] == "open"

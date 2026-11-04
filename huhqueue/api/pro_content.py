@@ -529,18 +529,13 @@ def report_window(core, days="30", start=None, end=None, now: datetime | None = 
 
     Callers must compare against these values, never a re-parse of the iso() strings in the response: iso() keeps whole
     seconds, so a re-parsed hi lands up to 999 ms before now and drops a post published in that same second (the flaky
-    tests/e2e/test_ui_reports.py::test_01_views, 4 Nov 2026). A date-only `end` (the Custom range's date picker) means
-    the whole of that day in the account's timezone, so the end day's own posts are included."""
+    tests/e2e/test_ui_reports.py::test_01_views, 4 Nov 2026). A date-only `end` (the Custom range's date picker) keeps
+    its existing meaning (midnight at the start of that day), the same bound /api/insights uses."""
     now = now or utcnow()
     tzname = core.prefs()["timezone"]
     if start:
         lo = posts_svc.parse_when(start, tzname)
-        if not end:
-            hi = now
-        elif len(str(end).strip()) == 10:          # YYYY-MM-DD: through the end of that local day
-            hi = posts_svc.parse_when(f"{str(end).strip()}T23:59:59.999999", tzname)
-        else:
-            hi = posts_svc.parse_when(end, tzname)
+        hi = posts_svc.parse_when(end, tzname) if end else now
     elif days == "mtd":
         lo, hi = datetime(now.year, now.month, 1), now
     else:

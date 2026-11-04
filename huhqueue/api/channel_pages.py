@@ -331,7 +331,9 @@ def id_list(payload: dict, key: str = "ids", what: str = "comment") -> list[str]
     for x in raw:
         if isinstance(x, bool) or not isinstance(x, (str, int)) or not str(x).strip():
             raise HTTPException(400, f"Every entry in '{key}' must be a {what} id (a non-empty string)")
-        out.append(str(x).strip())
+        if str(x) != str(x).strip():                # never normalise after the guard: it checked the id as sent (Greptile on #102)
+            raise HTTPException(400, f"Entries in '{key}' must not have spaces around them")
+        out.append(str(x))
     return out
 
 

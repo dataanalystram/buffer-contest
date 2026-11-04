@@ -60,15 +60,6 @@ def test_window_bounds_are_inclusive_at_now_and_split_cleanly_at_lo(core, channe
     assert k["posts"]["current"] == 2 and k["posts"]["previous"] == 1                # the lo post is counted once
 
 
-def test_custom_end_date_includes_that_whole_local_day(core, channel, pinned):
-    tz = core.prefs()["timezone"]
-    from huhqueue.services import posts as posts_svc
-    end_of_day = posts_svc.parse_when("2026-11-03T23:30", tz)
-    _seed(core, channel["id"], [end_of_day, posts_svc.parse_when("2026-11-04T00:30", tz)])
-    d = reports.report_data(core, start="2026-11-01", end="2026-11-03", channel_id=channel["id"])
-    assert _captions(d) == ["post 0"]
-
-
 def test_end_before_start_is_a_400(api, pinned):
     assert api.get("/api/reports/summary?start=2026-11-03&end=2026-11-01").status_code == 400
     assert api.get("/api/reports/report.md?start=2026-11-03&end=2026-11-01").status_code == 400
