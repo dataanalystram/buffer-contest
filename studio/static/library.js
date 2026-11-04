@@ -91,12 +91,20 @@ function libCard(it) {
     </div>
   </article>`;
 }
-const skeleton = (n = 8) => Array.from({ length: n }, () => `<div class="lp-card lp-skel" aria-hidden="true"><div class="lp-thw"></div><i></i><i></i></div>`).join("");
+const skeleton = (n = 8) => `<span class="hq-vh" role="status">Loading</span>` + Array.from({ length: n }, () => `<div class="lp-card lp-skel" data-testid="loading-skeleton" aria-hidden="true"><div class="lp-thw"></div><i></i><i></i></div>`).join("");
+// a skeleton at once on every load (tab, filter, search, page, Library | Bin): the old view's cards never stay up while the
+// next answer is on its way. A reload after an edit on the same view (delete, restore) passes keep and shows the busy bar.
+function libLoading(n, keep) {
+  const grid = $("#libGrid");
+  if (keep && grid.querySelector(".lp-card:not(.lp-skel)")) { HQLoad.busy(grid.parentElement, true); return; }
+  grid.classList.toggle("lp-list", LIB.layout === "list");
+  grid.innerHTML = skeleton(n); grid.setAttribute("aria-busy", "true");
+}
 const libFiltered = () => !!($("#libQ").value.trim() || Object.values(LIB.f).some(Boolean));
 
 // ---------------------------------------------------------------- load: one /api/library answer per page (filters on the server)
-async function loadLibrary() {
-  if (LIB.view === "bin") return loadBin();
+async function loadLibrary(opts = {}) {
+  if (LIB.view === "bin") return loadBin(opts);
   const grid = $("#libGrid");
   if (LIB.deepRun) { const rid = LIB.deepRun; LIB.deepRun = null; openRunById(rid); return; }
   if (window.LIB_PRESET) {  // Make a post's "View all →" carries its filter (Reels -> Videos, Drafts -> Drafts ...)
@@ -108,17 +116,19 @@ async function loadLibrary() {
     else if (k === "generated") LIB.f.created_by = "agent";
     libPaintControls();
   }
-  if (!LIB.data) { grid.innerHTML = skeleton(); grid.setAttribute("aria-busy", "true"); }
-  const seq = ++LIB.seq;
+  // one live request for the grid, shared with the Bin: a newer tab / filter / page / view aborts this one (loading.js)
+  const tk = HQLoad.start("library"); ++LIB.seq;
+  libLoading(Math.min(LIB.per, 8), opts.keep);
   try {
     const q = new URLSearchParams({ q: $("#libQ").value.trim(), per: LIB.per, offset: (Math.max(1, LIB.page) - 1) * LIB.per });
     Object.entries(LIB.f).forEach(([k, v]) => v && q.set(k, v));
-    const d = await api("/api/library?" + q);
-    if (seq !== LIB.seq) return;  // a newer filter / page answered already
-    if (!d.items.length && d.total && LIB.page > 1) { LIB.page = Math.ceil(d.total / LIB.per); return loadLibrary(); }
+    const d = await api("/api/library?" + q, { signal: tk.signal });
+    if (!tk.live() || LIB.view !== "items") return;  // a newer filter / page / the Bin owns the grid now
+    if (!d.items.length && d.total && LIB.page > 1) { LIB.page = Math.ceil(d.total / LIB.per); return loadLibrary(opts); }
     LIB.data = d; LIB.items = d.items;
     libDraw(d);
-  } catch (e) { if (seq === LIB.seq) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; grid.setAttribute("aria-busy", "false"); } }
+  } catch (e) { if (!HQLoad.aborted(e) && tk.live()) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; grid.setAttribute("aria-busy", "false"); } }
+  finally { if (tk.live()) { HQLoad.busy(grid.parentElement, false); tk.done(); } }
 }
 // the storage meter, from any answer that carries the count (list, Bin, upload, delete, restore, purge): the server counts
 // it from the rows right now, so the meter moves the moment a file is added or removed (owner bug, 3 Nov 2026)
@@ -134,13 +144,13 @@ function libMeter(d) {
 function binDrop(ids) {
   const gone = new Set(ids.map(String)), d = LIB.binData; if (!d) return;
   const items = d.items.filter((x) => !gone.has(String(x.id)));
-  LIB.bin = items; LIB.binData = { ...d, items, total: items.length }; binDraw(LIB.binData);
+  LIB.bin = items; LIB.binData = { ...d, items, total: items.length }; if (LIB.view === "bin") binDraw(LIB.binData);
 }
 async function libPurge(body, ids) {
   binDrop(ids);
   const b = $("#libEmptyBin"); b.disabled = true;
   try { const r = await api("/api/library/bin/purge", { method: "POST", body }); libMeter(r); return r; }
-  finally { b.disabled = false; loadBin(); }
+  finally { b.disabled = false; loadLibrary({ keep: true }); }  // the current view: a purge that ends after a switch to Library must not leave it loading
 }
 // draws the Library from an /api/library answer: loadLibrary after it fetches, and the boot-end redraw from LIB.data
 function libDraw(d) {
@@ -207,7 +217,7 @@ function wireLibCard(el) {
   if (del) del.onclick = async () => {
     closeMenus();
     const r = await libDeleteDialog([it]); if (!r) return;
-    LIB.sel.delete(String(it.id)); loadLibrary(); if (r.mode === "bin") undoToast(it, r); else toast("Deleted permanently");
+    LIB.sel.delete(String(it.id)); loadLibrary({ keep: true }); if (r.mode === "bin") undoToast(it, r); else toast("Deleted permanently");
   };
   // hover preview: a muted, looping copy of the video, only while the pointer is on it (fetched on hover, never before)
   if (it.kind === "video" && matchMedia("(hover:hover) and (pointer:fine)").matches) {
@@ -232,7 +242,7 @@ function undoToast(item, r) {
   t.innerHTML = `Moved to the Bin for ${(r && r.in_trash_days) || 7} days. <button type="button" class="linkish" data-testid="lib-undo">Undo</button>`;
   t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 8000);
   const b = t.querySelector("[data-testid=lib-undo]");
-  if (b) b.onclick = async () => { try { await api(`/api/library/${item.id}/restore`, { method: "POST", body: {} }); toast("Restored"); loadLibrary(); } catch (e) { toast(e.message, 5000); } };
+  if (b) b.onclick = async () => { try { await api(`/api/library/${item.id}/restore`, { method: "POST", body: {} }); toast("Restored"); loadLibrary({ keep: true }); } catch (e) { toast(e.message, 5000); } };
 }
 function libMediaList(it) {
   if (it.kind === "carousel") return (it.slides || [it.url]).map((u) => ({ url: u, type: "photo" }));
@@ -363,7 +373,7 @@ $("#libBulkUse").onclick = () => { const [it] = selItems(); if (it && it.media_t
 $("#libBulkDraft").onclick = () => { const [it] = selItems(); if (it && it.media_token) openDraft(it); };
 $("#libBulkBin").onclick = async () => {
   const r = await libDeleteDialog(selItems(), "bin"); if (!r) return;
-  libMeter(r); libSelClear(); loadLibrary(); toast(`${plural(r.deleted.length, "item")} moved to the Bin` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
+  libMeter(r); libSelClear(); loadLibrary({ keep: true }); toast(`${plural(r.deleted.length, "item")} moved to the Bin` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
 };
 async function libBulkPermanent() {
   closeMenus();
@@ -375,12 +385,12 @@ async function libBulkPermanent() {
     return;
   }
   const r = await libDeleteDialog(items, "permanent"); if (!r) return;
-  libMeter(r); libSelClear(); loadLibrary(); toast(`${plural(r.deleted.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
+  libMeter(r); libSelClear(); loadLibrary({ keep: true }); toast(`${plural(r.deleted.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
 }
 $("#libBulkPerm").onclick = libBulkPermanent;
 $("#libBulkPermMenu").onclick = libBulkPermanent;
 $("#libBulkRestore").onclick = async () => {
-  try { const r = await api("/api/library/bin/restore", { method: "POST", body: { ids: selItems().map((x) => +x.id) } }); libMeter(r); libSelClear(); loadBin(); toast(`${plural(r.restored.length, "item")} restored`); }
+  try { const r = await api("/api/library/bin/restore", { method: "POST", body: { ids: selItems().map((x) => +x.id) } }); libMeter(r); libSelClear(); loadLibrary({ keep: true }); toast(`${plural(r.restored.length, "item")} restored`); }
   catch (e) { toast(e.message, 6000); }
 };
 
@@ -447,13 +457,17 @@ function binCard(it) {
       <div class="lp-binacts"><button type="button" class="lp-act" data-act="restore" data-testid="bin-restore">Restore</button><button type="button" class="lp-act danger" data-act="purge" data-testid="bin-delete-permanently">Delete permanently</button></div></div>
   </article>`;
 }
-async function loadBin() {
+async function loadBin(opts = {}) {
   const grid = $("#libGrid");
-  if (!LIB.bin) { grid.innerHTML = skeleton(4); grid.setAttribute("aria-busy", "true"); }
+  const tk = HQLoad.start("library"); ++LIB.seq;  // aborts a Library request still in flight: its cards never land here
+  libLoading(4, opts.keep);
   try {
-    const d = await api("/api/library/bin"); LIB.bin = d.items; LIB.binData = d;
+    const d = await api("/api/library/bin", { signal: tk.signal });
+    if (!tk.live() || LIB.view !== "bin") return;
+    LIB.bin = d.items; LIB.binData = d;
     binDraw(d);
-  } catch (e) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; }
+  } catch (e) { if (!HQLoad.aborted(e) && tk.live()) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; grid.setAttribute("aria-busy", "false"); } }
+  finally { if (tk.live()) { HQLoad.busy(grid.parentElement, false); tk.done(); } }
 }
 // draws the Bin from an /api/library/bin answer: loadBin after it fetches, and the boot-end redraw from LIB.binData
 function binDraw(d) {
@@ -469,7 +483,7 @@ function binDraw(d) {
     : `<div class="lp-empty" data-testid="bin-empty"><span class="lp-empty-ic" aria-hidden="true">${IC.bin}</span><b>The Bin is empty</b><span>Items you move to the Bin stay here for ${d.days} days, then they're removed for good.</span></div>`;
   grid.querySelectorAll(".lp-bin").forEach((el) => {
     const it = d.items.find((x) => String(x.id) === el.dataset.id); wireSel(el);
-    el.querySelector("[data-act=restore]").onclick = async () => { try { const r = await api(`/api/library/${it.id}/restore`, { method: "POST", body: {} }); libMeter(r); LIB.sel.delete(String(it.id)); toast("Restored to your Library"); loadBin(); } catch (e) { toast(e.message, 5000); } };
+    el.querySelector("[data-act=restore]").onclick = async () => { try { const r = await api(`/api/library/${it.id}/restore`, { method: "POST", body: {} }); libMeter(r); LIB.sel.delete(String(it.id)); toast("Restored to your Library"); loadLibrary({ keep: true }); } catch (e) { toast(e.message, 5000); } };
     el.querySelector("[data-act=purge]").onclick = async () => {
       if (!(await hqConfirm(`Delete “${it.name}” permanently? The file is removed now. This can't be undone.`, { ok: "Delete permanently", danger: true }))) return;
       try { LIB.sel.delete(String(it.id)); const r = await libPurge({ ids: [it.id] }, [it.id]); if (r.refused.length) toast(r.refused[0].error, 7000); else toast("Deleted permanently"); } catch (e) { toast(e.message, 5000); }
@@ -517,7 +531,9 @@ async function openDraft(it) {
   };
 }
 
-$("#libQ").addEventListener("input", () => { clearTimeout(LIB.t); LIB.t = setTimeout(() => { LIB.page = 1; LIB.sel.clear(); loadLibrary(); }, 250); });
+// typing invalidates at once: the request for the old query is aborted and the skeleton replaces the old cards; the API
+// call itself stays debounced (250 ms)
+$("#libQ").addEventListener("input", () => { HQLoad.start("library"); ++LIB.seq; libLoading(Math.min(LIB.per, 8)); clearTimeout(LIB.t); LIB.t = setTimeout(() => { LIB.page = 1; LIB.sel.clear(); loadLibrary(); }, 250); });
 $("#libQ").addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#libQ").value) { e.stopPropagation(); $("#libQ").value = ""; LIB.page = 1; loadLibrary(); } });
 $("#libAddBtn").onclick = (e) => { e.stopPropagation(); toggleMenu($("#libAddBtn"), $("#libAddMenu")); };
 $("#libUpBtn").onclick = () => { closeMenus(); $("#libFile").click(); };
@@ -600,5 +616,6 @@ window.HS_TABS = Object.assign(window.HS_TABS || {}, { library: loadLibrary });
 // boot-end redraw of a Library opened while boot loaded (app.js reloadOpenScreen): redraw the open view (Library or Bin)
 // from the answer it already has, never a second /api/library or /api/library/bin; a fetch still in flight draws itself.
 window.HS_REDRAW = Object.assign(window.HS_REDRAW || {}, { library: () => {
+  if ($("#libGrid").getAttribute("aria-busy") === "true") return;  // a fetch in flight draws itself
   if (LIB.view === "bin") { if (LIB.binData) binDraw(LIB.binData); } else if (LIB.data) libDraw(LIB.data);
 } });

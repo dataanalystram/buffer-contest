@@ -1,6 +1,6 @@
 /* Make a post as a chat (owner, 3 Nov 2026) and the Settings sidebar. Our design system: black ink, lavender #C9ACFA as
    the chat accent (black text on it: 10:1), the existing Atkinson Hyperlegible fonts, hairlines, 44 px targets. */
-:root{--hc-lav:#C9ACFA;--hc-lav-soft:#f3edfe;--hc-lav-ink:#4b2a8f;--hc-black:#0b0b0c;--hc-top:64px}
+:root{--hc-lav:#C9ACFA;--hc-lav-soft:#f3edfe;--hc-lav-ink:#4b2a8f;--hc-on-lav:#16101f;--hc-black:#0b0b0c;--hc-top:64px}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--hc-lav-soft:#261d3a;--hc-lav-ink:#d9c6fc}}
 :root[data-theme=dark]{--hc-lav-soft:#261d3a;--hc-lav-ink:#d9c6fc}
 
