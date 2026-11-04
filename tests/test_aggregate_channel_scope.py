@@ -106,3 +106,50 @@ def test_report_archive_is_hidden_from_a_channel_limited_caller(app, api, channe
     ed = member(app, api, "editor", access={world["id"]: "none"}, name="Eli")
     assert ed.get("/api/reports/archive").json() == {"reports": []}
     assert ed.get(f"/api/reports/archive/{name}").status_code == 404
+
+
+def _campaign_world(api, core, channel, other):
+    """One campaign with a sent post on each channel, plus a UTM link made for each target and one manual link."""
+    from huhqueue.models import Link
+    api.post("/api/campaigns", {"name": "Launchzz"})
+    tids = {}
+    for ch, cap in ((channel, "MINE_CAMPAIGN"), (other, "SECRETZZ_CAMPAIGN")):
+        r = api.post("/api/posts", {"caption": cap, "channel_ids": [ch["id"]], "when": "draft", "campaign": "Launchzz"})
+        tid = r.json()["targets"][0]["id"]
+        tids[ch["id"]] = tid
+        with core.db.session() as s:
+            t = s.get(PostTarget, tid)
+            t.status, t.published_at = "sent", utcnow() - timedelta(days=1)
+            t.insights = {"views": 1000 if ch is other else 10, "likes": 1}
+            s.add(Link(code=f"c{tid[-6:]}", url=f"https://example.com/{cap}", campaign="Launchzz", source="utm",
+                       target_id=tid, clicks=500 if ch is other else 3))
+    with core.db.session() as s:
+        s.add(Link(code="manualzz", url="https://example.com/manual", campaign="Launchzz", clicks=1))
+    return tids
+
+
+def test_campaigns_and_links_only_count_visible_channels(app, api, channel, world, core):
+    tids = _campaign_world(api, core, channel, world)
+    owner = next(c for c in api.get("/api/campaigns").json() if c["name"] == "Launchzz")
+    assert owner["stats"]["views"] == 1010 and owner["stats"]["clicks"] == 504 and owner["posts"] == 2   # seed is real
+    raw = _tok(api, allowed_channel_ids=[channel["id"]], scopes=["read", "write"])["token"]
+    tok = TestClient(app, headers={"Authorization": f"Bearer {raw}"})
+    ed = member(app, api, "editor", access={world["id"]: "none"}, name="Eli")
+    hidden_link = next(ln for ln in api.get("/api/links").json() if ln.get("target_id") == tids[world["id"]])
+    for c in (tok, ed):
+        row = next(x for x in c.get("/api/campaigns").json() if x["name"] == "Launchzz")
+        assert row["stats"]["views"] == 10 and row["stats"]["clicks"] == 4 and row["posts"] == 1, row["stats"]
+        assert row["stats"]["channels"] == 1
+        d = c.get(f"/api/campaigns/{row['id']}")
+        assert d.status_code == 200 and not _leaks(d.text, world["id"]), _leaks(d.text, world["id"])
+        assert "MINE_CAMPAIGN" in d.text
+        links = c.get("/api/links")
+        assert links.status_code == 200 and "SECRETZZ" not in links.text and "MINE_CAMPAIGN" in links.text
+        # another channel's link answers exactly like a missing one
+        for method, path in (("get", f"/api/links/{hidden_link['id']}"), ("get", "/api/links/ln_missingzz")):
+            r = c.get(path)
+            assert r.status_code == 404 and "SECRETZZ" not in r.text, (path, r.status_code)
+    # a channel-limited editor can't edit or delete another channel's link either: the same 404 as a missing one
+    assert ed.patch(f"/api/links/{hidden_link['id']}", {"title": "x"}).status_code == 404
+    assert ed.delete(f"/api/links/{hidden_link['id']}").status_code == 404
+    assert api.get(f"/api/links/{hidden_link['id']}").status_code == 200   # still there for the owner

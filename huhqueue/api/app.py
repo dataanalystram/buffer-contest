@@ -813,9 +813,9 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
         return out
 
     @app.get("/api/campaigns")
-    def campaigns():
+    def campaigns(request: Request):
         from ..services import growth as growth_svc
-        return growth_svc.list_campaigns(core)   # [{id, name, color, dates, posts, stats}]
+        return growth_svc.list_campaigns(core, visible(request))   # [{id, name, color, dates, posts, stats}], caller's channels
 
     @app.get("/api/views")
     def views_get():

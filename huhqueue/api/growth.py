@@ -42,8 +42,9 @@ def add_growth_routes(app: FastAPI, core) -> None:
         return g.save_campaign(core, payload)
 
     @app.get("/api/campaigns/{cid}", tags=["campaigns"])
-    def campaign_get(cid: str):
-        return g.get_campaign(core, cid)
+    def campaign_get(cid: str, request: Request):
+        from ..scope_filter import visible
+        return g.get_campaign(core, cid, request, channels=visible(request))   # only the caller's channels (4 Nov 2026)
 
     @app.patch("/api/campaigns/{cid}", tags=["campaigns"])
     def campaign_update(cid: str, payload: dict = Body(...)):
@@ -69,7 +70,8 @@ def add_growth_routes(app: FastAPI, core) -> None:
     # ---------------------------------------------------------------- short links
     @app.get("/api/links", tags=["links"])
     def links_list(request: Request, q: str = "", campaign: str = "", source: str = ""):
-        return g.list_links(core, q, campaign, source, request)
+        from ..scope_filter import visible
+        return g.list_links(core, q, campaign, source, request, channels=visible(request))
 
     @app.post("/api/links", tags=["links"])
     def link_create(request: Request, payload: dict = Body(...)):
@@ -77,15 +79,18 @@ def add_growth_routes(app: FastAPI, core) -> None:
 
     @app.get("/api/links/{lid}", tags=["links"])
     def link_get(lid: str, request: Request, days: int = 30):
-        return g.get_link(core, lid, request, max(1, min(days, 365)))
+        from ..scope_filter import visible
+        return g.get_link(core, lid, request, max(1, min(days, 365)), channels=visible(request))
 
     @app.patch("/api/links/{lid}", tags=["links"])
     def link_update(lid: str, request: Request, payload: dict = Body(...)):
-        return g.update_link(core, lid, payload, request)
+        from ..scope_filter import visible
+        return g.update_link(core, lid, payload, request, channels=visible(request))
 
     @app.delete("/api/links/{lid}", tags=["links"])
-    def link_delete(lid: str):
-        return g.delete_link(core, lid)
+    def link_delete(lid: str, request: Request):
+        from ..scope_filter import visible
+        return g.delete_link(core, lid, channels=visible(request))
 
     # ---------------------------------------------------------------- link in bio (api/bio_api.py)
     add_bio_routes(app, core)
