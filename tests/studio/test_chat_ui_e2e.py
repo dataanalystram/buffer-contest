@@ -78,6 +78,24 @@ def _no_overflow(page, w):
     assert sw <= w + 1, f"horizontal overflow at {w}px: {sw}"
 
 
+def _settled(page):
+    """Wait until the run has finished and its post cards stopped redrawing. The poll redraws #packages while the run
+    works, and a card scrolled to or clicked mid-redraw was "not attached to the DOM" (flaky at 390 px)."""
+    page.wait_for_function("() => !document.getElementById('runView').classList.contains('hc-busy')", timeout=90000)
+    page.evaluate("""() => new Promise((ok) => { const box = document.getElementById('packages'); let t = setTimeout(done, 400);
+        const mo = new MutationObserver(() => { clearTimeout(t); t = setTimeout(done, 400); }); mo.observe(box, {childList: true, subtree: true});
+        function done() { mo.disconnect(); ok(); } setTimeout(done, 5000); })""")
+
+
+def _scroll_to(loc, tries=3):
+    for i in range(tries):
+        try:
+            return loc.scroll_into_view_if_needed(timeout=5000)
+        except Exception:  # redrawn under us: find it again
+            if i == tries - 1:
+                raise
+
+
 def _long_thread(app, rid):
     """A thread that ran long: 16 turns, the rights decided early on, compacted server-side."""
     st = app.state.store
@@ -107,6 +125,7 @@ def test_chat_thread_and_settings_1280(live, chromium, close_contexts):
     assert ARTICLE["url"] in q.input_value()
     q.press("End"); q.press("Enter")
     page.get_by_test_id("package").first.wait_for(timeout=90000)
+    _settled(page)
     page.wait_for_function("() => document.getElementById('tab-agent').classList.contains('mp-in-thread')")
     assert page.get_by_test_id("chat-sidebar").is_visible()
     pw.expect(page.get_by_test_id("chat-thread")).to_have_count(1)
@@ -212,6 +231,7 @@ def test_chat_thread_and_settings_390(live, chromium, close_contexts):
     page.get_by_test_id("agent-query").fill("Post this on all my channels: " + ARTICLE["url"])
     page.get_by_test_id("agent-query").press("Enter")
     page.get_by_test_id("package").first.wait_for(timeout=90000)
+    _settled(page)
     assert page.get_by_test_id("chat-sidebar").is_hidden()  # a drawer on a phone
     assert page.get_by_test_id("reply-go").is_visible() and page.get_by_test_id("reply-upload").is_visible()
     page.evaluate("window.scrollTo(0, 0)")
@@ -222,7 +242,7 @@ def test_chat_thread_and_settings_390(live, chromium, close_contexts):
     _shot(page, "10-sidebar-390")
     page.keyboard.press("Escape")
     pw.expect(page.get_by_test_id("chat-sidebar")).to_be_hidden()
-    page.get_by_test_id("package").first.scroll_into_view_if_needed()
+    _scroll_to(page.get_by_test_id("package").first)
     _shot(page, "11-card-390")
     page.get_by_test_id("pkg-preview").first.click()
     pw.expect(page.get_by_test_id("chat-preview-panel")).to_be_visible()
