@@ -13,7 +13,7 @@ from __future__ import annotations
 EDGE_MIN = 0.08
 STATIC_MAX = 2.0
 FLAT_MIN = 0.40
-COL_MIN = 0.03  # a column counts as content when this share of its pixels are edges
+COL_MIN = 0.05  # a column counts as content when this share of its pixels are edges
 
 
 def _mask_faces(edges, faces: list[dict]):

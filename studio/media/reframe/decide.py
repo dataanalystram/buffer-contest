@@ -12,8 +12,8 @@ Rules, per shot, first match wins (a pinned layout from the person or their agen
   R7  two faces apart, one talking >= 80%           -> track on the one talking
   R8  three or more faces, or low confidence        -> fit
 
-Screen content means at least 2 of the 3 screen signals AND content spanning at least half the frame WIDTH, with no
-large face in the shot. "Talking" is mouth motion measured only inside the word timestamps.
+Screen content means at least 2 of the 3 screen signals AND edge-dense content spanning at least half the frame
+WIDTH, with no large face in the shot. "Talking" is mouth motion measured only inside the word timestamps.
 
 Stability: a 1-second majority vote inside each shot (one bad sample never flips it), layouts change only at cuts,
 every layout holds at least 2.0 s (shorter shots take a neighbour's layout), and a clip of 60 s or less changes layout
@@ -35,6 +35,7 @@ FACE_MIN_H = 0.10      # R3 / R4
 WEBCAM_MAX_H = 0.18
 BIG_FACE_H = 0.25      # a face this large means a person on camera, not a screen
 CONTENT_MIN = 0.5      # screen content spans at least half the width
+EDGE_SCREEN = 0.04     # and is text/UI dense (edge density outside faces)
 UPSCALE_MAX = 2.5
 TALK_MIN = 0.20        # R6
 TALK_SOLO = 0.80       # R7
@@ -73,11 +74,12 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
     prefs = prefs or {}
     sw, sh = src
     faces = [t for t in sig["faces"] if t["presence"] >= PRESENT]
-    webcams = [t for t in faces if is_webcam(t)]
-    people = [t for t in faces if not is_webcam(t)]
     bg = prefs.get("bg") if prefs.get("bg") in ("blur", "brand") else "blur"
     big_face = any(t["h"] >= BIG_FACE_H for t in faces)
-    screen = bool(sig.get("screen")) and float(sig.get("content_width") or 0) >= CONTENT_MIN and not big_face
+    screen = (bool(sig.get("screen")) and float(sig.get("edge") or 0) >= EDGE_SCREEN
+              and float(sig.get("content_width") or 0) >= CONTENT_MIN and not big_face)
+    webcams = [t for t in faces if is_webcam(t)] if screen else []   # a corner face is a webcam only over a screen
+    people = [t for t in faces if t not in webcams]
     if screen and webcams and not people:
         cam = max(webcams, key=lambda t: t["h"])
         tall_px = cam["h"] * sh * 1.6  # the webcam box is ~1.6x the face height

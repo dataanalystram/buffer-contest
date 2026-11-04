@@ -54,8 +54,8 @@ def screenshot(out: Path) -> Path:
 def talk(out: Path, dur: float = DUR) -> Path:
     _ff(["-f", "lavfi", "-i", f"color=c=0x404850:s={W}x{H}:r=30:d={dur}", "-loop", "1", "-i", str(MONA),
          "-f", "lavfi", "-i", f"sine=frequency=220:duration={dur}",
-         "-filter_complex", "[0:v]noise=alls=18:allf=t[bg];[1:v]scale=300:-2[f];"
-         "[bg][f]overlay=x='470+120*sin(t/1.5)':y=110:shortest=1,format=yuv420p[v]",
+         "-filter_complex", "[0:v]noise=alls=18:allf=t[bg];[1:v]scale=440:-2[f];"
+         "[bg][f]overlay=x='420+110*sin(t/1.5)':y=30:shortest=1,format=yuv420p[v]",
          "-map", "[v]", "-map", "2:a", "-t", f"{dur}", *_enc(out)])
     return out
 
@@ -72,9 +72,9 @@ def duo(out: Path, dur: float = DUR) -> Path:
     # both mouths "move": a skin-toned box flickers over each mouth (YuNet still sees the faces)
     _ff(["-f", "lavfi", "-i", f"color=c=0x30343a:s={W}x{H}:r=30:d={dur}", "-loop", "1", "-i", str(MONA), "-loop", "1", "-i", str(PEARL),
          "-f", "lavfi", "-i", f"sine=frequency=260:duration={dur}",
-         "-filter_complex", "[0:v]noise=alls=12:allf=t[bg];[1:v]scale=260:-2,"
-         "drawbox=x=100:y=196:w=60:h=16:color=0x2a1a10:t=fill:enable='lt(mod(n,6),3)'[a];"
-         "[2:v]scale=300:-2,drawbox=x=150:y=245:w=60:h=16:color=0x3a2010:t=fill:enable='gte(mod(n,6),3)'[b];"
+         "-filter_complex", "[0:v]noise=alls=22:allf=t[bg];[1:v]scale=300:-2,"
+         "drawbox=x=118:y=130:w=36:h=12:color=0x1a0c08:t=fill:enable='lt(mod(n,4),2)'[a];"
+         "[2:v]scale=320:-2,drawbox=x=116:y=188:w=32:h=12:color=0x1a0c08:t=fill:enable='gte(mod(n,4),2)'[b];"
          "[bg][a]overlay=x=40:y=150:shortest=1[t];[t][b]overlay=x=940:y=170,format=yuv420p[v]",
          "-map", "[v]", "-map", "3:a", "-t", f"{dur}", *_enc(out)])
     return out
