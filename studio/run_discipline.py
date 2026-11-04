@@ -48,8 +48,7 @@ RUN_MEDIA = {"render_carousel", "hero_edit", "edit_video", "render_reel", "split
 NEEDS_USER_ASKED = {"create_template", "create_brand_kit", "set_active_brand_kit"}
 # tools whose identical repeat within DERIVED_TTL is the same call (a retry), never a second render or run
 DERIVED = {"start_post", "create_package", "render_carousel", "hero_edit", "edit_video", "render_reel", "split_video",
-           "library_upload_url", "import_from_link", "schedule_package", "make_post", "draft_from_library", "clips_from_video",
-           "create_template", "create_brand_kit"}
+           "library_upload_url", "import_from_link", "schedule_package", "make_post", "draft_from_library", "clips_from_video"}
 # never stored: answers that carry a single-use secret (a confirm token, an upload URL, a send code) or are part of a
 # chunked upload
 NO_IDEM = {"create_send_code", "create_upload", "upload_media_chunk", "finish_upload", "place_clips_in_week", "cleanup_agent_drafts",
