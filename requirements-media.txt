@@ -3,6 +3,6 @@
 # imageio-ffmpeg BSD-2 (its bundled ffmpeg binary is GPLv3, used as a separate program).
 yt-dlp>=2026.10.26
 faster-whisper>=1.2.1
-numpy>=2.0
+numpy>=2.2.6
 imageio-ffmpeg>=0.7.0
 opencv-python-headless>=4.10  # cover faces (studio/media/covers.py), Apache-2.0
