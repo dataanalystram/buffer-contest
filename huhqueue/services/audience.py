@@ -199,7 +199,10 @@ def stories(core, channel_id: str | None = None, days: int = 30, now: datetime |
     now = now or utcnow()
     lo = now - timedelta(days=max(1, min(int(days or 30), 3650)))
     with core.db.session() as s:
-        chans = {c.id: c for c in s.scalars(select(Channel))}
+        cq = select(Channel)
+        if channel_id:   # the channel list follows the filter too (a scoped caller never sees other channels, 4 Nov 2026)
+            cq = cq.where(Channel.id.in_(channel_id.split(",")))
+        chans = {c.id: c for c in s.scalars(cq)}
         q = select(StorySnapshot).where(StorySnapshot.posted_at >= lo)
         if channel_id:
             q = q.where(StorySnapshot.channel_id.in_(channel_id.split(",")))
@@ -238,27 +241,30 @@ def save_feedback(core, key: str, helpful: bool | None) -> dict:
     return {"key": key, "helpful": helpful}
 
 
-def takeaways(core, rng: str = "30d", now: datetime | None = None) -> dict:
-    """Takeaways across every channel for the last period vs the one before (7d / 30d / 90d / mtd)."""
+def takeaways(core, rng: str = "30d", now: datetime | None = None, channel_ids: list[str] | None = None) -> dict:
+    """Takeaways across every channel (or only `channel_ids`) for the last period vs the one before (7d / 30d / 90d / mtd)."""
     from ..api import channel_pages as cp
+    from ..scope_filter import only
+    vis = None if channel_ids is None else set(channel_ids)
     now = now or utcnow()
     per = []
     with core.db.session() as s:
-        chans = list(s.scalars(select(Channel).where(Channel.status == "active").order_by(Channel.created_at)))
+        chans = list(s.scalars(only(select(Channel).where(Channel.status == "active"), Channel.id, vis).order_by(Channel.created_at)))
         for ch in chans:
             d = cp.build_insights(core, s, ch, rng, None, None)
             weeks = max(1.0, _weeks(rng))
             per.append({"ch": ch, "cur": d["totals"], "prev": d["previous_totals"], "goal": d["goal"], "weeks": weeks,
                         "posts": d["posts"]["this"], "period": d["period"], "previous_period": d["previous_period"]})
-        open_comments = s.scalar(select(func.count()).select_from(Comment).where(Comment.status == "open",
-                                                                                  Comment.is_own.is_(False))) or 0
+        open_comments = s.scalar(only(select(func.count()).select_from(Comment).where(Comment.status == "open",
+                                                                                       Comment.is_own.is_(False)),
+                                      Comment.channel_id, vis)) or 0
         lo = now - timedelta(days=_days(rng))
         snaps: dict[str, list] = {}
-        for r in s.scalars(select(FollowerSnapshot).where(FollowerSnapshot.day >= (lo - timedelta(days=1)).date().isoformat())
-                           .order_by(FollowerSnapshot.day)):
+        for r in s.scalars(only(select(FollowerSnapshot).where(FollowerSnapshot.day >= (lo - timedelta(days=1)).date().isoformat()),
+                                FollowerSnapshot.channel_id, vis).order_by(FollowerSnapshot.day)):
             if r.followers is not None:
                 snaps.setdefault(r.channel_id, []).append(r.followers)
-        story_rows = list(s.scalars(select(StorySnapshot).where(StorySnapshot.posted_at >= lo)))
+        story_rows = list(s.scalars(only(select(StorySnapshot).where(StorySnapshot.posted_at >= lo), StorySnapshot.channel_id, vis)))
     fb = _feedback(core)
     out: list[dict] = []
 

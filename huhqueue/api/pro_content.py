@@ -12,6 +12,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, or_, select
 
+from ..scope_filter import NO_CHANNEL, narrow, only, visible
 from .. import actions as reg
 from ..actions import B, I, S, SA, WHEN, Action
 from ..core import utcnow
@@ -19,6 +20,7 @@ from ..models import Channel, Comment, Contact, Event, Idea, Media, Post, PostNo
 from ..services import posts as posts_svc
 from ..services import scheduling
 from ..services.events import record
+from .. import teams
 from ..teams import notify_mentions, notify_note
 
 # --------------------------------------------------------------------------------------------- best-time research
@@ -49,7 +51,7 @@ def own_heatmap(s, channel_id: str | None, days: int = 180) -> dict:
     """Median engagement by weekday x hour (channel local time) from this channel's own sent posts."""
     qry = select(PostTarget).where(PostTarget.status == "sent", PostTarget.published_at >= utcnow() - timedelta(days=days))
     if channel_id:
-        qry = qry.where(PostTarget.channel_id == channel_id)
+        qry = qry.where(PostTarget.channel_id.in_(str(channel_id).split(",")))
     cells: dict[tuple[int, int], list[float]] = {}
     for t in s.scalars(qry):
         ins = t.insights or {}
@@ -149,11 +151,13 @@ def filter_usage(usage: dict, visible: set | None, recount: bool = True) -> dict
 
 
 # --------------------------------------------------------------------------------------------- contacts
-def contact_rows(s, q: str = "") -> list[dict]:
-    rows = s.execute(select(Comment.author, func.count(), func.min(Comment.at), func.max(Comment.at),
-                            func.sum(func.iif(Comment.status == "open", 1, 0)), func.sum(func.iif(Comment.flagged, 1, 0)),
-                            func.sum(func.iif(Comment.text.like("%?%"), 1, 0)), func.group_concat(Comment.channel_id.distinct()))
-                     .where(Comment.is_own.is_(False), Comment.author != "").group_by(Comment.author)).all()
+def contact_rows(s, q: str = "", channels: set | None = None) -> list[dict]:
+    """People who commented, counted from their comments on `channels` only (None = every channel)."""
+    rows = s.execute(only(select(Comment.author, func.count(), func.min(Comment.at), func.max(Comment.at),
+                                 func.sum(func.iif(Comment.status == "open", 1, 0)), func.sum(func.iif(Comment.flagged, 1, 0)),
+                                 func.sum(func.iif(Comment.text.like("%?%"), 1, 0)), func.group_concat(Comment.channel_id.distinct()))
+                          .where(Comment.is_own.is_(False), Comment.author != ""), Comment.channel_id, channels)
+                     .group_by(Comment.author)).all()
     extra = {c.handle: c for c in s.scalars(select(Contact))}
     out = []
     for author, n, first, last, open_, flagged, questions, chans in rows:
@@ -256,9 +260,13 @@ def add_content_routes(app: FastAPI, core) -> None:
                 raise HTTPException(502, f"Could not load playlists: {getattr(e, 'message', e)}") from e
 
     @app.get("/api/insights/best-times", tags=["insights"])
-    def best_times(channel_id: str | None = None, days: int = 180):
+    def best_times(request: Request, channel_id: str | None = None, days: int = 180):
+        channel_id = narrow(request, channel_id)   # a scoped token / restricted teammate: only its channels (4 Nov 2026)
         with core.db.session() as s:
-            chans = [channel(s, channel_id)] if channel_id else list(s.scalars(select(Channel)))
+            if channel_id == NO_CHANNEL:
+                chans = []
+            else:
+                chans = [channel(s, c) for c in channel_id.split(",")] if channel_id else list(s.scalars(select(Channel)))
             heat = own_heatmap(s, channel_id, days)
             return {"heatmap": heat, "channels": [{"id": c.id, "provider": c.provider, "username": c.username,
                                                     **recommend(s, c, max(3, len(c.slots) or 3))} for c in chans],
@@ -366,7 +374,7 @@ def add_content_routes(app: FastAPI, core) -> None:
             if not s.get(Media, mid):
                 raise HTTPException(404, "Media not found")
             out = media_usage(s, mid)
-        return filter_usage(out, getattr(request.state, "visible_channels", None))   # channel-limited token / teammate
+        return filter_usage(out, visible(request))   # channel-limited token / teammate
 
     @app.post("/api/media/{mid}/edit", tags=["media"])
     def media_edit(mid: str, payload: dict = Body(...)):
@@ -434,9 +442,9 @@ def add_content_routes(app: FastAPI, core) -> None:
 
     # ---- contacts
     @app.get("/api/contacts", tags=["contacts"])
-    def contacts(q: str = "", segment: str = "", tag: str = "", assignee: str | None = None):
+    def contacts(request: Request, q: str = "", segment: str = "", tag: str = "", assignee: str | None = None):
         with core.db.session() as s:
-            rows = contact_rows(s, q)
+            rows = contact_rows(s, q, visible(request))
         if segment in SEGMENTS:
             rows = [c for c in rows if SEGMENTS[segment][2](c)]
         if tag:
@@ -446,28 +454,45 @@ def add_content_routes(app: FastAPI, core) -> None:
         return rows
 
     @app.get("/api/contact-segments", tags=["contacts"])
-    def contact_segments():
+    def contact_segments(request: Request):
         with core.db.session() as s:
-            rows = contact_rows(s)
+            rows = contact_rows(s, "", visible(request))
         return [{"id": k, "label": v[0], "rule": v[1], "count": sum(1 for c in rows if v[2](c))} for k, v in SEGMENTS.items()]
 
     @app.get("/api/contacts/{key}", tags=["contacts"])
-    def contact_get(key: str):
+    def contact_get(key: str, request: Request):
+        vis = visible(request)          # someone seen only on a hidden channel answers 404, like a missing contact
         with core.db.session() as s:
             c = s.get(Contact, key)
             handle = c.handle if c else key
-            row = next((r for r in contact_rows(s) if r["handle"] == handle), None)
+            row = next((r for r in contact_rows(s, "", vis) if r["handle"] == handle), None)
             if not row:
                 raise HTTPException(404, "Contact not found")
             hist = [{"id": x.id, "text": x.text, "at": posts_svc.iso(x.at), "status": x.status, "channel_id": x.channel_id,
                      "provider": ch.provider, "media_caption": (x.media_caption or "")[:100], "media_permalink": x.media_permalink, "flagged": x.flagged}
-                    for x, ch in s.execute(select(Comment, Channel).join(Channel, Channel.id == Comment.channel_id)
-                                           .where(Comment.author == handle).order_by(Comment.at.desc()))]
+                    for x, ch in s.execute(only(select(Comment, Channel).join(Channel, Channel.id == Comment.channel_id)
+                                                .where(Comment.author == handle), Comment.channel_id, vis)
+                                           .order_by(Comment.at.desc()))]
             return {**row, "history": hist}
 
     @app.patch("/api/contacts/{key}", tags=["contacts"])
-    def contact_patch(key: str, payload: dict = Body(...)):
+    def contact_patch(key: str, request: Request, payload: dict = Body(...)):
+        vis = visible(request)
+        who = getattr(request.state, "user", None)
+        limited = who is not None and not who.manager
         with core.db.session() as s:
+            if vis is not None or limited:
+                c0 = s.get(Contact, key)
+                handle = c0.handle if c0 else key
+                row = next((r for r in contact_rows(s, "", vis) if r["handle"] == handle), None)
+                if not row:         # a channel-limited caller edits only people who commented on a channel it can see
+                    raise HTTPException(404, "Contact not found")
+                # the guard can't map a contact to channels, so the per-channel role is checked here: a teammate who is
+                # only a viewer on every channel this person commented on can read the contact but not edit it
+                # (CodeRabbit on #102, CWE-862)
+                if limited and not any(teams.RANK.get(who.channel_role(c), 0) >= teams.RANK["contributor"]
+                                       for c in row["channel_ids"] if c):
+                    raise HTTPException(403, "On this contact's channels you have read-only access")
             c = s.get(Contact, key) or _ensure_contact(s, key)
             for k in ("notes", "name", "assignee"):
                 if k in payload:
@@ -479,8 +504,13 @@ def add_content_routes(app: FastAPI, core) -> None:
 
     # ---- markdown report with period comparison
     @app.get("/api/reports/report.md", tags=["reports"], response_class=PlainTextResponse)
-    def report_md(days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None):
-        return PlainTextResponse(build_report(core, days, start, end, channel_id)["markdown"], media_type="text/markdown; charset=utf-8")
+    def report_md(request: Request, days: str | None = "30", start: str | None = None, end: str | None = None,
+                  channel_id: str | None = None):
+        try:
+            md = build_report(core, days, start, end, narrow(request, channel_id))["markdown"]
+        except ValueError as e:              # days=abc, or an end before the start: the caller's mistake, not a 500
+            raise HTTPException(400, str(e)) from e
+        return PlainTextResponse(md, media_type="text/markdown; charset=utf-8")
 
     app.state.build_report = lambda *a: build_report(core, *a)
 
@@ -488,9 +518,36 @@ def add_content_routes(app: FastAPI, core) -> None:
 METRICS = ("posts", "views", "reach", "likes", "comments", "shares", "saved")
 
 
-def _period(core, lo, hi, channel_id):
+def in_window(column, lo, hi, *, end_inclusive: bool):
+    """lo <= column <= hi for the current period (a post published at exactly "now" counts); lo <= column < hi for the
+    previous period, so a post on the boundary between the two periods is counted once, in the current one."""
+    return (column >= lo, column <= hi) if end_inclusive else (column >= lo, column < hi)
+
+
+def report_window(core, days="30", start=None, end=None, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """The report's (lo, hi) as naive UTC datetimes at full precision, the same type published_at is stored as.
+
+    Callers must compare against these values, never a re-parse of the iso() strings in the response: iso() keeps whole
+    seconds, so a re-parsed hi lands up to 999 ms before now and drops a post published in that same second (the flaky
+    tests/e2e/test_ui_reports.py::test_01_views, 4 Nov 2026). A date-only `end` (the Custom range's date picker) keeps
+    its existing meaning (midnight at the start of that day), the same bound /api/insights uses."""
+    now = now or utcnow()
+    tzname = core.prefs()["timezone"]
+    if start:
+        lo = posts_svc.parse_when(start, tzname)
+        hi = posts_svc.parse_when(end, tzname) if end else now
+    elif days == "mtd":
+        lo, hi = datetime(now.year, now.month, 1), now
+    else:
+        lo, hi = now - timedelta(days=int(days or 30)), now
+    if hi < lo:
+        raise ValueError("The report's end is before its start")
+    return lo, hi
+
+
+def _period(core, lo, hi, channel_id, end_inclusive: bool = True):
     with core.db.session() as s:
-        qry = select(PostTarget).where(PostTarget.status == "sent", PostTarget.published_at >= lo, PostTarget.published_at < hi)
+        qry = select(PostTarget).where(PostTarget.status == "sent", *in_window(PostTarget.published_at, lo, hi, end_inclusive=end_inclusive))
         if channel_id:
             qry = qry.where(PostTarget.channel_id.in_(channel_id.split(",")))
         rows = [posts_svc.serialize_target(core, t) for t in s.scalars(qry)]
@@ -502,16 +559,12 @@ def _period(core, lo, hi, channel_id):
     return k, rows
 
 
-def build_report(core, days="30", start=None, end=None, channel_id=None) -> dict:
-    now = utcnow()
-    tzname = core.prefs()["timezone"]
-    if start:
-        lo, hi = posts_svc.parse_when(start, tzname), posts_svc.parse_when(end, tzname) if end else now
-    else:
-        lo, hi = (datetime(now.year, now.month, 1), now) if days == "mtd" else (now - timedelta(days=int(days or 30)), now)
+def build_report(core, days="30", start=None, end=None, channel_id=None, now: datetime | None = None) -> dict:
+    now = now or utcnow()
+    lo, hi = report_window(core, days, start, end, now)
     span = hi - lo
     cur, rows = _period(core, lo, hi, channel_id)
-    prev, _ = _period(core, lo - span, lo, channel_id)
+    prev, _ = _period(core, lo - span, lo, channel_id, end_inclusive=False)
 
     def delta(a, b):
         if a is None or b in (None, 0):
@@ -533,7 +586,8 @@ def build_report(core, days="30", start=None, end=None, channel_id=None) -> dict
         md.append(f"| {(r['published_at'] or '')[:10]} | {r['channel']['provider']} @{r['channel']['username']} | {cap} | {i.get('views') or 0} | {i.get('likes') or 0} |")
     md += ["", f"_Generated by HuhQueue on {now:%d %b %Y %H:%M} UTC._"]
     return {"range": [posts_svc.iso(lo), posts_svc.iso(hi)], "previous_range": [posts_svc.iso(lo - span), posts_svc.iso(lo)], "kpis": kpis,
-            "top_posts": top, "markdown": "\n".join(md), "brand": brand}
+            "top_posts": top, "markdown": "\n".join(md), "brand": brand,
+            "window": (lo, hi, lo - span)}   # full-precision bounds for report_data; not JSON, never returned as-is
 
 
 # --------------------------------------------------------------------------------------------- registry entries

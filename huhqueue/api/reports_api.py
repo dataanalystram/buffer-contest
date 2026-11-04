@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, Response
 
 from .. import actions as reg
 from ..actions import I, S, SA, Action
+from ..scope_filter import narrow, visible
 from ..services import analytics, reports
 
 
@@ -28,34 +29,34 @@ def add_report_routes(app: FastAPI, core) -> None:
             raise HTTPException(400, str(e)) from e
 
     @app.get("/api/reports/summary", tags=["reports"])
-    def report_summary(days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None,
+    def report_summary(request: Request, days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None,
                        tag: str | None = None, campaign: str | None = None, format: str | None = None, sections: str | None = None):
         """KPIs vs the previous period of the same length, daily series for both periods, per-channel breakdown, top posts,
         audience growth, Reels, post types, best times, hashtags and campaigns."""
-        return build(days, start, end, channel_id, tag, campaign, format, sections)
+        return build(days, start, end, narrow(request, channel_id), tag, campaign, format, sections)
 
     @app.get("/api/reports/report.pdf", tags=["reports"])
-    async def report_pdf(days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None,
+    async def report_pdf(request: Request, days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None,
                          tag: str | None = None, campaign: str | None = None, format: str | None = None, sections: str | None = None,
                          download: bool = True):
-        data = await anyio.to_thread.run_sync(lambda: build(days, start, end, channel_id, tag, campaign, format, sections))
+        data = await anyio.to_thread.run_sync(lambda: build(days, start, end, narrow(request, channel_id), tag, campaign, format, sections))
         pdf = await anyio.to_thread.run_sync(lambda: reports.render_pdf(data))
         disp = "attachment" if download else "inline"
         return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'{disp}; filename="{reports.filename(data)}"'})
 
     @app.get("/api/reports/report.csv", tags=["reports"])
-    def report_csv(days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None,
+    def report_csv(request: Request, days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None,
                    tag: str | None = None, campaign: str | None = None, format: str | None = None, sections: str | None = None):
         """The custom report as CSV: one block per chosen section."""
-        data = build(days, start, end, channel_id, tag, campaign, format, sections)
+        data = build(days, start, end, narrow(request, channel_id), tag, campaign, format, sections)
         name = reports.filename(data).replace(".pdf", ".csv")
         return Response(analytics.to_csv(data, data["sections"]), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.get("/api/reports/audience", tags=["reports"])
-    def report_audience(days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None):
+    def report_audience(request: Request, days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None):
         """Followers over time (daily snapshots) and net growth vs the previous period."""
-        d = build(days, start, end, channel_id, None, None, None, None)
+        d = build(days, start, end, narrow(request, channel_id), None, None, None, None)
         return {"range": d["range"], "previous_range": d["previous_range"], **d["audience"]}
 
     @app.post("/api/reports/audience/snapshot", tags=["reports"])
@@ -91,7 +92,7 @@ def add_report_routes(app: FastAPI, core) -> None:
             raise HTTPException(400, str(e)) from e
 
     @app.post("/api/reports/send", tags=["reports"])
-    async def report_send(payload: dict = Body(default={})):
+    async def report_send(request: Request, payload: dict = Body(default={})):
         """Generate a PDF now, keep it in the archive and email it to `email_to` (when SMTP is set up)."""
         to = payload.get("email_to") or []
         if isinstance(to, str):
@@ -101,25 +102,27 @@ def add_report_routes(app: FastAPI, core) -> None:
             raise HTTPException(400, f"Not an email address: {', '.join(bad)}")
         try:
             return await anyio.to_thread.run_sync(lambda: reports.generate(
-                core, str(payload.get("days") or "7"), payload.get("start"), payload.get("end"), payload.get("channel_id"), to,
+                core, str(payload.get("days") or "7"), payload.get("start"), payload.get("end"), narrow(request, payload.get("channel_id")), to,
                 tag=payload.get("tag"), campaign=payload.get("campaign"), fmt=payload.get("format"), sections=payload.get("sections")))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
     @app.get("/api/reports/archive", tags=["reports"])
-    def report_archive():
+    def report_archive(request: Request):
+        if visible(request) is not None:   # archived reports cover every channel: none for a channel-limited caller (4 Nov 2026)
+            return {"reports": []}
         return {"reports": reports.list_archive(core)}
 
     @app.get("/api/reports/archive/{name}", tags=["reports"])
-    def report_archive_file(name: str):
-        p = reports.archive_path(core, name)
+    def report_archive_file(name: str, request: Request):
+        p = reports.archive_path(core, name) if visible(request) is None else None
         if not p:
             raise HTTPException(404, "Report not found")
         return FileResponse(p, media_type="application/pdf", filename=name)
 
     @app.delete("/api/reports/archive/{name}", tags=["reports"])
-    def report_archive_delete(name: str):
-        p = reports.archive_path(core, name)
+    def report_archive_delete(name: str, request: Request):
+        p = reports.archive_path(core, name) if visible(request) is None else None
         if not p:
             raise HTTPException(404, "Report not found")
         p.unlink()

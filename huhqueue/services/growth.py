@@ -88,29 +88,61 @@ def sync_campaigns(s) -> None:
     s.flush()
 
 
-def campaign_stats(s, name: str) -> dict:
-    rows = s.execute(select(PostTarget.status, PostTarget.insights, PostTarget.channel_id)
-                     .join(Post, Post.id == PostTarget.post_id).where(Post.campaign == name)).all()
+def _visible_links(s, qry, channels: set | None):
+    """Links the caller may see: every link for an unrestricted caller (channels None). A channel-limited caller sees a
+    link made for a post target / post only when that target / post is on one of its channels, plus links tied to no
+    post (manual links), so another channel's UTM links and clicks don't leak into campaign totals (4 Nov 2026)."""
+    links = list(qry) if isinstance(qry, list) else list(s.scalars(qry))
+    if channels is None:
+        return links
+    tids = {x for ln in links for x in [ln.target_id] if x}
+    pids = {x for ln in links for x in [ln.post_id] if x}
+    t_ch = dict(s.execute(select(PostTarget.id, PostTarget.channel_id).where(PostTarget.id.in_(tids))).all()) if tids else {}
+    p_ok = set(s.scalars(select(PostTarget.post_id).where(PostTarget.post_id.in_(pids),
+                                                          PostTarget.channel_id.in_(sorted(channels))))) if pids else set()
+    keep = []
+    for ln in links:
+        if ln.target_id:
+            ok = t_ch.get(ln.target_id) in channels
+        elif ln.post_id:
+            ok = ln.post_id in p_ok
+        else:
+            ok = True
+        if ok:
+            keep.append(ln)
+    return keep
+
+
+def campaign_stats(s, name: str, channels: set | None = None) -> dict:
+    """Totals for one campaign, counting only targets on ``channels`` (None = every channel)."""
+    from ..scope_filter import only
+    rows = s.execute(only(select(PostTarget.status, PostTarget.insights, PostTarget.channel_id, PostTarget.post_id)
+                          .join(Post, Post.id == PostTarget.post_id).where(Post.campaign == name),
+                          PostTarget.channel_id, channels)).all()
     by_status: dict[str, int] = {}
     totals = {"views": 0, "likes": 0, "comments": 0, "shares": 0, "saved": 0}
-    channels = set()
-    for st, ins, cid in rows:
+    seen_channels: set = set()          # kept apart from `channels`, the caller's filter (None = owner)
+    for st, ins, cid, _pid in rows:
         by_status[st] = by_status.get(st, 0) + 1
-        channels.add(cid)
+        seen_channels.add(cid)
         if st == "sent":
             for k in totals:
                 totals[k] += int((ins or {}).get(k) or 0)
-    clicks = s.scalar(select(func.coalesce(func.sum(Link.clicks), 0)).where(Link.campaign == name)) or 0
-    posts = s.scalar(select(func.count(Post.id)).where(Post.campaign == name)) or 0
+    if channels is None:
+        clicks = s.scalar(select(func.coalesce(func.sum(Link.clicks), 0)).where(Link.campaign == name)) or 0
+        posts = s.scalar(select(func.count(Post.id)).where(Post.campaign == name)) or 0
+    else:   # a channel-limited caller: posts with a target it can see, clicks on links it can see
+        clicks = sum(int(ln.clicks or 0) for ln in _visible_links(s, select(Link).where(Link.campaign == name), channels))
+        posts = len({r[3] for r in rows})
     return {"posts": posts, "targets": len(rows), "by_status": by_status, "sent": by_status.get("sent", 0),
-            "scheduled": by_status.get("scheduled", 0), "drafts": by_status.get("draft", 0), "channels": len(channels),
+            "scheduled": by_status.get("scheduled", 0), "drafts": by_status.get("draft", 0), "channels": len(seen_channels),
             "clicks": int(clicks), **totals,
             "engagements": totals["likes"] + totals["comments"] + totals["shares"] + totals["saved"]}
 
 
-def campaign_dict(s, c: Campaign) -> dict:
+def campaign_dict(s, c: Campaign, channels: set | None = None) -> dict:
     d = {"id": c.id, "name": c.name, "color": c.color, "description": c.description, "start_date": c.start_date,
-         "end_date": c.end_date, "created_at": iso(c.created_at), "stats": campaign_stats(s, c.name)}
+         "end_date": c.end_date, "created_at": iso(c.created_at), "stats": campaign_stats(s, c.name, channels)}
     d["posts"] = d["stats"]["posts"]          # back-compat with the old /api/campaigns shape [{name, posts}]
     today = date.today().isoformat()
     d["state"] = ("upcoming" if c.start_date and today < c.start_date else
@@ -118,10 +150,11 @@ def campaign_dict(s, c: Campaign) -> dict:
     return d
 
 
-def list_campaigns(core) -> list[dict]:
+def list_campaigns(core, channels: set | None = None) -> list[dict]:
+    """Every campaign, its stats counting only ``channels`` (None = every channel)."""
     with core.db.session() as s:
         sync_campaigns(s)
-        return [campaign_dict(s, c) for c in s.scalars(select(Campaign).order_by(Campaign.name))]
+        return [campaign_dict(s, c, channels) for c in s.scalars(select(Campaign).order_by(Campaign.name))]
 
 
 def _campaign(s, key: str) -> Campaign:
@@ -168,12 +201,15 @@ def save_campaign(core, payload: dict, cid: str | None = None) -> dict:
         return campaign_dict(s, c)
 
 
-def get_campaign(core, cid: str, request=None) -> dict:
+def get_campaign(core, cid: str, request=None, channels: set | None = None) -> dict:
+    """One campaign with its posts, per-channel rows and links, limited to ``channels`` (None = every channel)."""
+    from ..scope_filter import only
     with core.db.session() as s:
         sync_campaigns(s)
         c = _campaign(s, cid)
-        out = campaign_dict(s, c)
-        qry = (select(PostTarget).join(Post, Post.id == PostTarget.post_id).where(Post.campaign == c.name)
+        out = campaign_dict(s, c, channels)
+        qry = (only(select(PostTarget).join(Post, Post.id == PostTarget.post_id).where(Post.campaign == c.name),
+                    PostTarget.channel_id, channels)
                .order_by(func.coalesce(PostTarget.published_at, PostTarget.scheduled_at, PostTarget.created_at)))
         out["targets"] = [posts_svc.serialize_target(core, t) for t in s.scalars(qry)]
         by_ch: dict[str, dict] = {}
@@ -186,7 +222,7 @@ def get_campaign(core, cid: str, request=None) -> dict:
                 row["likes"] += int(t["insights"].get("likes") or 0)
         out["channels"] = list(by_ch.values())
         out["links"] = [link_dict(core, ln, request) for ln in
-                        s.scalars(select(Link).where(Link.campaign == c.name).order_by(Link.created_at.desc()))]
+                        _visible_links(s, select(Link).where(Link.campaign == c.name).order_by(Link.created_at.desc()), channels)]
         return out
 
 
@@ -388,7 +424,17 @@ def create_link(core, payload: dict, request=None) -> dict:
         return link_dict(core, ln, request)
 
 
-def list_links(core, q: str = "", campaign: str = "", source: str = "", request=None) -> list[dict]:
+def _link_or_404(s, ln, channels: set | None):
+    """The link, or 404 when it doesn't exist OR sits on a channel the caller can't see (same answer: no id probing)."""
+    if not ln or (channels is not None and not _visible_links(s, [ln], channels)):
+        raise GrowthError("Link not found", 404)
+    return ln
+
+
+LINKS_LIMIT = 1000
+
+
+def list_links(core, q: str = "", campaign: str = "", source: str = "", request=None, channels: set | None = None) -> list[dict]:
     with core.db.session() as s:
         qry = select(Link).order_by(Link.created_at.desc())
         if campaign:
@@ -398,14 +444,23 @@ def list_links(core, q: str = "", campaign: str = "", source: str = "", request=
         if q:
             like = f"%{q}%"
             qry = qry.where(Link.url.ilike(like) | Link.code.ilike(like) | Link.title.ilike(like))
-        return [link_dict(core, ln, request) for ln in s.scalars(qry.limit(1000))]
+        if channels is None:
+            return [link_dict(core, ln, request) for ln in s.scalars(qry.limit(LINKS_LIMIT))]
+        # filter before the cap, page by page, so another channel's newer links can't fill a restricted caller's window
+        out: list = []
+        offset = 0
+        while len(out) < LINKS_LIMIT:
+            page = list(s.scalars(qry.offset(offset).limit(LINKS_LIMIT)))
+            if not page:
+                break
+            out += _visible_links(s, page, channels)
+            offset += len(page)
+        return [link_dict(core, ln, request) for ln in out[:LINKS_LIMIT]]
 
 
-def get_link(core, lid: str, request=None, days: int = 30) -> dict:
+def get_link(core, lid: str, request=None, days: int = 30, channels: set | None = None) -> dict:
     with core.db.session() as s:
-        ln = s.get(Link, lid) or s.scalar(select(Link).where(Link.code == lid))
-        if not ln:
-            raise GrowthError("Link not found", 404)
+        ln = _link_or_404(s, s.get(Link, lid) or s.scalar(select(Link).where(Link.code == lid)), channels)
         out = link_dict(core, ln, request)
         since = utcnow() - timedelta(days=days)
         daily: dict[str, int] = {}
@@ -421,11 +476,9 @@ def get_link(core, lid: str, request=None, days: int = 30) -> dict:
         return out
 
 
-def update_link(core, lid: str, payload: dict, request=None) -> dict:
+def update_link(core, lid: str, payload: dict, request=None, channels: set | None = None) -> dict:
     with core.db.session() as s:
-        ln = s.get(Link, lid)
-        if not ln:
-            raise GrowthError("Link not found", 404)
+        ln = _link_or_404(s, s.get(Link, lid), channels)
         if "url" in payload:
             url = (payload.get("url") or "").strip()
             if not FULL_URL.match(url):
@@ -440,11 +493,9 @@ def update_link(core, lid: str, payload: dict, request=None) -> dict:
         return link_dict(core, ln, request)
 
 
-def delete_link(core, lid: str) -> dict:
+def delete_link(core, lid: str, channels: set | None = None) -> dict:
     with core.db.session() as s:
-        ln = s.get(Link, lid)
-        if not ln:
-            raise GrowthError("Link not found", 404)
+        ln = _link_or_404(s, s.get(Link, lid), channels)
         s.delete(ln)
         s.query(LinkClick).filter(LinkClick.link_id == lid).delete()
         return {"deleted": lid}
@@ -1046,14 +1097,16 @@ def _store_groups(s, items: list[dict]) -> None:
     s.merge(row)
 
 
-def hashtag_stats(core, days: int = 90, s=None) -> list[dict]:
-    """Every hashtag used in the last `days`: how often, on which networks, and how the sent posts did."""
+def hashtag_stats(core, days: int = 90, s=None, channels: set | None = None) -> list[dict]:
+    """Every hashtag used in the last `days` on `channels` (None = all): how often, on which networks, how the sent posts did."""
+    from ..scope_filter import only
     def run(s):
         since = utcnow() - timedelta(days=days)
-        rows = s.execute(select(func.coalesce(PostTarget.caption_override, Post.caption), PostTarget.options, PostTarget.status, PostTarget.insights, PostTarget.published_at,
+        rows = s.execute(only(select(func.coalesce(PostTarget.caption_override, Post.caption), PostTarget.options, PostTarget.status, PostTarget.insights, PostTarget.published_at,
                                 PostTarget.scheduled_at, PostTarget.created_at, Channel.provider)
                          .join(Channel, Channel.id == PostTarget.channel_id).join(Post, Post.id == PostTarget.post_id)
-                         .where(func.coalesce(PostTarget.published_at, PostTarget.scheduled_at, PostTarget.created_at) >= since))
+                         .where(func.coalesce(PostTarget.published_at, PostTarget.scheduled_at, PostTarget.created_at) >= since),
+                              PostTarget.channel_id, channels))
         stats: dict[str, dict] = {}
         for cap, opts, st, ins, pub, sch, cr, prov in rows:
             tags = parse_hashtags((cap or "") + "\n" + ((opts or {}).get("first_comment") or ""))
@@ -1142,11 +1195,11 @@ def delete_hashtag_group(core, gid: str) -> dict:
     return {"deleted": gid}
 
 
-def suggest_hashtags(core, caption: str = "", limit: int = 10) -> dict:
+def suggest_hashtags(core, caption: str = "", limit: int = 10, channels: set | None = None) -> dict:
     """Best-performing hashtags you have used that are not in the caption yet, plus groups that share its tags."""
     have = {t.lower() for t in parse_hashtags(caption)}
     words = {w.lower() for w in re.findall(r"[A-Za-z0-9]{3,}", caption or "")}
-    stats = [r for r in hashtag_stats(core, 180) if r["tag"].lower() not in have]
+    stats = [r for r in hashtag_stats(core, 180, channels=channels) if r["tag"].lower() not in have]
     def rank(r):
         rel = 1 if any(w in r["tag"].lower() for w in words) else 0
         return (-rel, -(r["avg_score"] or 0), -r["uses"])

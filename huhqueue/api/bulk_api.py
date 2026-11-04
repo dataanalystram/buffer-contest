@@ -28,6 +28,7 @@ from .. import actions as reg
 from ..actions import B, I, O, S, SA, Action
 from ..core import utcnow
 from ..models import PostTarget
+from ..scope_filter import visible
 from ..services import posts as posts_svc
 from ..services.events import NOTIFY_KINDS, webhook
 from .actions_api import dispatch
@@ -238,7 +239,7 @@ def add_bulk_routes(app: FastAPI, core, approval_actor, post_list, auth_ok_human
         else:
             rows = post_list(status=status, channel_id=channel_id, provider=provider, tag=tag, q=q, start=start, end=end,
                              post_type=post_type, campaign=campaign, limit=max(1, min(limit, 5000)))
-        vis = getattr(request.state, "visible_channels", None)
+        vis = visible(request)
         if vis is not None:                      # a teammate limited to some channels exports only those
             rows = [t for t in rows if t.get("channel_id") in vis]
         buf = io.StringIO()

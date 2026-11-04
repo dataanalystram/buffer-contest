@@ -316,6 +316,27 @@ def share_caption(ch: Channel, d: dict) -> str:
     return "\n".join(lines)
 
 
+def id_list(payload: dict, key: str = "ids", what: str = "comment") -> list[str]:
+    """The ids a bulk route acts on, checked before use: a list of non-empty strings (or integers). Anything else, such as
+    {"ids": 5} or {"ids": "abc"}, is a 400 with a clear message instead of a TypeError (a 500) or a string read as a list
+    of characters (4 Nov 2026)."""
+    if not isinstance(payload, dict) or key not in payload:
+        return []                                   # omitted: the route's other selector (e.g. "all") applies
+    raw = payload[key]
+    if raw is None:                                 # an explicit null is not "omitted": {"ids": null, "all": true} is a 400
+        raise HTTPException(400, f"'{key}' must be a list of {what} ids, like [\"id1\", \"id2\"]")
+    if not isinstance(raw, list):
+        raise HTTPException(400, f"'{key}' must be a list of {what} ids, like [\"id1\", \"id2\"]")
+    out = []
+    for x in raw:
+        if isinstance(x, bool) or not isinstance(x, (str, int)) or not str(x).strip():
+            raise HTTPException(400, f"Every entry in '{key}' must be a {what} id (a non-empty string)")
+        if str(x) != str(x).strip():                # never normalise after the guard: it checked the id as sent (Greptile on #102)
+            raise HTTPException(400, f"Entries in '{key}' must not have spaces around them")
+        out.append(str(x))
+    return out
+
+
 # ------------------------------------------------------------------------------------------------ routes
 def add_channel_page_routes(app: FastAPI, core) -> None:
     def channel(s, cid) -> Channel:
@@ -497,8 +518,9 @@ def add_channel_page_routes(app: FastAPI, core) -> None:
         with core.db.session() as s:
             channel(s, cid)
             qry = select(Comment).where(Comment.channel_id == cid, Comment.is_own.is_(False), Comment.status != "resolved")
-            if payload.get("ids"):
-                qry = qry.where(Comment.id.in_(list(payload["ids"])))
+            ids = id_list(payload)
+            if ids:
+                qry = qry.where(Comment.id.in_(ids))
             elif payload.get("media_external_id"):
                 qry = qry.where(Comment.media_external_id == payload["media_external_id"])
             elif not payload.get("all"):
@@ -547,8 +569,12 @@ def add_channel_page_routes(app: FastAPI, core) -> None:
     @app.post("/api/comments/bulk", tags=["community"])
     def comments_bulk(payload: dict = Body(...)):
         from ..services import community as community_svc
+        ids = id_list(payload)
+        for k in ("action", "text", "saved_reply_id"):
+            if payload.get(k) is not None and not isinstance(payload[k], str):
+                raise HTTPException(400, f"'{k}' must be a string")
         try:
-            return community_svc.bulk(core, list(payload.get("ids") or []), payload.get("action") or "",
+            return community_svc.bulk(core, ids, payload.get("action") or "",
                                       payload.get("text") or "", payload.get("saved_reply_id") or "")
         except ValueError as e:
             bad(e)

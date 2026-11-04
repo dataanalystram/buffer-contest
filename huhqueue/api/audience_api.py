@@ -2,32 +2,33 @@
 channels. Each route has a registry action below, so it also works from MCP, the CLI and the ⌘K bar."""
 from __future__ import annotations
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 
 from .. import actions as reg
 from ..actions import B, S, Action
+from ..scope_filter import ids, narrow
 from ..services import audience
 
 
 def add_audience_routes(app: FastAPI, core) -> None:
     @app.get("/api/insights/demographics", tags=["insights"])
-    def demographics(channel_id: str = "", refresh: bool = False, timeframe: str = "this_month"):
+    def demographics(request: Request, channel_id: str = "", refresh: bool = False, timeframe: str = "this_month"):
         """Age, gender, country and city of followers and of engaged accounts (Instagram; 100+ followers)."""
-        return audience.demographics(core, channel_id or None, refresh=refresh, timeframe=timeframe)
+        return audience.demographics(core, narrow(request, channel_id or None), refresh=refresh, timeframe=timeframe)
 
     @app.get("/api/insights/stories", tags=["insights"])
-    def stories(channel_id: str = "", days: int = 30):
+    def stories(request: Request, channel_id: str = "", days: int = 30):
         """Stories with the metrics saved while they were live (Instagram drops them after 24 h)."""
-        return audience.stories(core, channel_id or None, days)
+        return audience.stories(core, narrow(request, channel_id or None), days)
 
     @app.post("/api/insights/stories/sync", tags=["insights"])
     def stories_sync(payload: dict = Body(default={})):
         return audience.sync_stories(core, channel_id=(payload or {}).get("channel_id") or None)
 
     @app.get("/api/insights/takeaways", tags=["insights"])
-    def takeaways(range: str = "30d"):  # noqa: A002 - query name matches the channel insights route
+    def takeaways(request: Request, range: str = "30d"):  # noqa: A002 - query name matches the channel insights route
         try:
-            return audience.takeaways(core, range)
+            return audience.takeaways(core, range, channel_ids=ids(narrow(request, None)))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 

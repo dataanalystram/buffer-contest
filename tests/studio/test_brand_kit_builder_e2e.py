@@ -59,7 +59,8 @@ def test_demo_opens_on_the_builder_filled_with_the_nothing_sample(demo_live, chr
     assert buffer_calls == []
 
 
-def test_switch_kits_restyles_the_gallery_start_your_own_and_save(demo_live, chromium):
+def test_switch_kits_restyles_the_gallery_start_your_own_and_save(demo_live, chromium, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # real writes on the sample workspace: the capped demo (the default view-only demo refuses them, 2 Nov 2026)
     base, buffer_calls = demo_live
     ctx, page, errors = _open(chromium, base, 1440, "light")
     try:

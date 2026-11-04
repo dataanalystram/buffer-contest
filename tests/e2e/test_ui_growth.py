@@ -6,7 +6,7 @@ Run:  CHROMIUM_PATH=/usr/bin/chromium pytest tests/e2e/test_ui_growth.py -q
 import re
 from urllib.parse import urlsplit
 
-from .conftest import PASSWORD, T, api, goto, toast
+from .conftest import PASSWORD, T, api, goto, poll, toast
 
 
 def test_00_login_and_channel(page, server):
@@ -38,7 +38,8 @@ def test_01_bio_page_click_counted(page, server):
         T(page, "bio-block-url").first.fill(url)
     T(page, "bio-title").fill("HuhByte AI")
     page.frame_locator("[data-testid=bio-preview]").get_by_text("Read the news").wait_for()
-    page.wait_for_function("""async () => { const r = await fetch('/api/bio'); const p = (await r.json())[0];
+    # wait for the debounced autosave to reach the server (poll, since wait_for_function doesn't await async predicates)
+    poll(page, """async () => { const r = await fetch('/api/bio'); const p = (await r.json())[0];
         return p.title === 'HuhByte AI' && p.blocks.filter(b => b.type === 'link' && b.url).length === 3 }""")
 
     # the public page, as a visitor sees it (no login cookie needed for /bio)
