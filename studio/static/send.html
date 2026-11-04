@@ -38,7 +38,8 @@
       <p class="muted">Scan the QR code, or go to <b id="sdPage">huhqueue-studio.onrender.com/send</b> and type the code.</p>
       <p class="sd-bigcode" data-testid="send-code" id="sdCode" aria-live="polite">····-····</p>
       <p class="sd-meta"><span id="sdExpires">Valid 30 minutes</span> · <span id="sdFiles">up to 10 files</span></p>
-      <div class="sd-acts"><button type="button" class="btn2" id="sdCopy" data-testid="send-copy">Copy link</button><button type="button" class="btn3" id="sdNew" data-testid="send-new">New code</button></div>
+      <div class="sd-acts"><button type="button" class="btn2" id="sdCopy" data-testid="send-copy">Copy link</button><button type="button" class="btn3" id="sdNew" data-testid="send-new">New code</button><button type="button" class="btn3" id="sdStop" data-testid="send-stop">Stop receiving</button></div>
+      <p class="sd-meta" id="sdStopped" data-testid="send-stopped" role="status" hidden>Stopped. That code no longer works on any device.</p>
     </div>
     <figure class="sd-qr"><img id="sdQr" data-testid="send-qr" alt="QR code that opens the Send a file link on your phone" hidden><figcaption>Point your phone's camera here</figcaption></figure>
   </section>

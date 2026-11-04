@@ -138,7 +138,7 @@ def engines(store, uid: str, settings, http=None, demo: bool = False) -> list[di
         pref = ai_engines.get_pref(store, uid)
     except Exception:  # the preference table is optional: never let it stop the agent
         pref = "auto"
-    return [avail[e] for e in ai_engines.order(pref) if e in avail]
+    return [{**avail[e], "id": e} for e in ai_engines.order(pref) if e in avail]  # id: which pick this is (Make a post's switch)
 
 
 def label(engine: dict) -> str:

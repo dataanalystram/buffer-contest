@@ -1091,6 +1091,7 @@ class Brain:
             engs = brain_llm.engines(self.store, a.uid, self.h.s, self.h.http, demo=tools.demo)
             done = False
             tool_engs = [e for e in engs if e.get("tools")]
+            tool_engs = self._honour_pick(a, rid, engs, tool_engs)
             # the person's chosen engine first; one that is out of credit or erroring hands over to the next (never a crash)
             for i, eng in enumerate(tool_engs):
                 nxt = brain_llm.label(tool_engs[i + 1]) if i + 1 < len(tool_engs) else "the standard plan"
@@ -1123,6 +1124,27 @@ class Brain:
             activity.end(tok)
             with _rlock:
                 _running.discard(rid)
+
+    def _honour_pick(self, a, rid, engs: list[dict], tool_engs: list[dict]) -> list[dict]:
+        """The engine the person picked in Make a post's Model switch runs, or the run says why not (owner, 3 Nov 2026:
+        "changing the model still shows NVIDIA"). A pick without tool use (the free starter, a key whose provider has no
+        tool calls) used to be skipped for the first tool engine, so NVIDIA wrote the post: now it writes the standard plan.
+        A pick that can't run right now (no key, out of credit, marked down) is said once in the thread."""
+        from . import ai_engines
+        try:
+            pref = ai_engines.get_pref(self.store, a.uid)
+        except Exception:  # noqa: BLE001  the preference table is optional
+            return tool_engs
+        if pref == "auto":
+            return tool_engs
+        first = engs[0] if engs else None
+        if first and first.get("id") == pref:
+            return tool_engs if first.get("tools") else []
+        used = brain_llm.label(tool_engs[0]) if tool_engs else "the standard plan"
+        line = f"{ai_engines.SHORT.get(pref, pref)} isn't available right now, so I used {used}. Settings > AI engine says why."
+        if line not in (self.h.run(a, rid)["result"].get("notes") or []):
+            self._note(a, rid, line)
+        return tool_engs
 
     @staticmethod
     def _video_first(run) -> bool:

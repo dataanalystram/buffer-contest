@@ -249,9 +249,10 @@ def test_brand_pass_brands_the_whole_video_and_opens_on_the_cover(tmp_path):
     m = compose.render_style(src, "minimal", out=str(tmp_path / "o.mp4"), hook="Screen Studio makes demos", brand=brand,
                              credit="Video: Screen Studio", brand_pass=True, cover_png=str(cover), music_mood="none", workdir=str(tmp_path / "w"))
     assert m["brand_pass"] == ["bug"]  # minimal already keeps its hook and credit chip on screen: only the logo bug is added
-    assert m["thumbnail_offset_ms"] == 300 and m["cover_frame_secs"] == 0.6
-    assert abs(m["duration"] - (0.6 + 6 + 3.5 * 0 + compose.CARD_SECS)) < 0.6
-    first = compose.frame_at(m["path"], 0.2, str(tmp_path / "f0.png"))
+    assert m["thumbnail_offset_ms"] == 100 and m["cover_frame_secs"] == compose.COVER_FRAME_SECS == 0.2
+    assert m["cover_secs"] == 0  # the cover frame is the only opening still: no theme title card after it (owner, 3 Nov 2026)
+    assert abs(m["duration"] - (0.2 + 6 + 3.5 * 0 + compose.CARD_SECS)) < 0.6
+    first = compose.frame_at(m["path"], 0.1, str(tmp_path / "f0.png"))
     px = Image.open(first).convert("RGB").getpixel((540, 960))
     assert abs(px[0] - 201) < 12 and abs(px[2] - 250) < 12  # the chosen cover is the opening frame
     m2 = compose.render_style(src, "cinematic", out=str(tmp_path / "c.mp4"), hook="Screen Studio makes demos", brand=brand,
@@ -277,14 +278,14 @@ def test_cover_swap_keeps_the_sound_and_length(tmp_path):
     src = _clip(tmp_path, secs=3, size="1080x1920")
     buf = tmp_path / "c.jpg"
     Image.new("RGB", (1080, 1920), (10, 200, 30)).save(buf, "JPEG")
-    data, meta = cover_swap(open(src, "rb").read(), buf.read_bytes(), 0.6, 0.6)
+    data, meta = cover_swap(open(src, "rb").read(), buf.read_bytes(), 0.2, 0.2)
     out = tmp_path / "s.mp4"
     out.write_bytes(data)
     pr = ff.probe(str(out))
-    assert abs(pr["duration"] - 3.0) < 0.2 and pr["has_audio"] and meta["thumbnail_offset_ms"] == 300
-    data2, _ = cover_swap(open(src, "rb").read(), buf.read_bytes(), 0.6, 0)  # prepend (a "No style" video)
+    assert abs(pr["duration"] - 3.0) < 0.2 and pr["has_audio"] and meta["thumbnail_offset_ms"] == 100
+    data2, _ = cover_swap(open(src, "rb").read(), buf.read_bytes(), None, 0)  # prepend (a "No style" video)
     (tmp_path / "p.mp4").write_bytes(data2)
-    assert abs(ff.probe(str(tmp_path / "p.mp4"))["duration"] - 3.6) < 0.25
+    assert abs(ff.probe(str(tmp_path / "p.mp4"))["duration"] - 3.2) < 0.25
 
 
 # ------------------------------------------------------------------------------------------------ the agent, end to end
@@ -346,7 +347,7 @@ def test_screen_studio_prompt_makes_a_branded_reel_from_the_real_launch_video(ow
     assert fetched == ["https://screen.example/videos/hero-demo.mp4"]
     job = json.loads(owner.app.state.store.q("SELECT spec FROM render_jobs WHERE spec LIKE '%media_render%' ORDER BY id DESC LIMIT 1")[0]["spec"])
     assert job["credit"] == "Video: Screen Studio" and job["brand_pass"] is True and job["official"] and "Screen Studio" in job["names"]
-    assert len(pk["instagram"]["covers"]) == 3 and pk["instagram"]["options"]["thumbnail_offset_ms"] == 300
+    assert len(pk["instagram"]["covers"]) == 3 and pk["instagram"]["options"]["thumbnail_offset_ms"] == 100
     assert pk["youtube"]["thumbnail"].endswith(".jpg") and set(pk["youtube"]["covers"][0]["urls"]) == {"9:16", "4:5", "16:9"}
     # swap the cover: the opening frame changes, the package follows
     old = pk["instagram"]["media_urls"][0]

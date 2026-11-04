@@ -129,7 +129,7 @@ def test_build_post_input_carries_the_fixed_fields():
     from studio.actions import build_post_input
     yt = build_post_input({"id": "y", "service": "youtube"}, "Title\nbody", "https://c/v.mp4", "now", None,
                           options={"category_id": "22", "title": "Better title"})
-    assert yt["metadata"]["youtube"] == {"title": "Better title", "categoryId": "22"}
+    assert yt["metadata"]["youtube"] == {"title": "Better title", "categoryId": "22", "madeForKids": False}
     pin = build_post_input({"id": "p", "service": "pinterest"}, "Pin", "https://c/i.jpg", "queue", None, options={"board_id": "b1"})
     assert pin["metadata"]["pinterest"]["boardServiceId"] == "b1"
 
