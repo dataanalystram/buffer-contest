@@ -397,3 +397,112 @@ def test_every_tool_is_documented_and_the_new_ones_are_listed(human):
         t = next(x for x in mcp.TOOLS if x["name"] == n)
         assert "run_id" in t["inputSchema"]["properties"], n
     assert "store them in the Library" not in json.dumps(mcp.TOOLS)
+
+
+# ------------------------------------------------------------------------------------------------ PR #104 review (CodeRabbit, 4 Nov 2026)
+def _agent_actor(human, tok):
+    store = human.app.state.store
+    row = dict(store.q("SELECT * FROM agent_tokens ORDER BY id DESC LIMIT 1")[0])
+    return Actor(_uid(human), "agent", row)
+
+
+def test_parallel_identical_paid_asks_make_one_approval_item(human, monkeypatch):
+    import threading
+    tok = agent_token(human, policy="trusted", cap=100)
+    a = _agent_actor(human, tok)
+    studio = human.app.state.studio
+    real = consent._rows
+
+    def slow_rows(store, actor):  # widen the check-then-insert window
+        out = real(store, actor)
+        time.sleep(0.05)
+        return out
+    monkeypatch.setattr(consent, "_rows", slow_rows)
+    got, gate = [], threading.Barrier(4)
+
+    def ask():
+        gate.wait()
+        got.append(consent.gate(studio, a, "run_agent", {"query": "same thing", "server_ai": True})["approval_id"])
+    ts = [threading.Thread(target=ask) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(got) == 4 and len(set(got)) == 1
+    assert human.app.state.store.q("SELECT COUNT(*) AS n FROM approvals")[0]["n"] == 1
+
+
+def test_a_token_cannot_flood_the_approvals_queue_and_post_approvals_stay_visible(human, fake_server_run):
+    tok = agent_token(human, policy="trusted", cap=100)
+    store, studio = human.app.state.store, human.app.state.studio
+    uid = _uid(human)
+    post_id = store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
+                      (uid, None, "Claude", json.dumps({"text": "a real post", "channel_ids": ["ch_ig"]}), "pending", time.time()))
+    for i in range(consent.MAX_PENDING):
+        err, w = _call(human, tok, "run_agent", {"query": f"q{i}", "server_ai": True})
+        assert not err and w["needs_user_approval"] is True
+    err, msg = _call(human, tok, "run_agent", {"query": "one too many", "server_ai": True})
+    assert err and "too many requests waiting" in msg
+    err, again = _call(human, tok, "run_agent", {"query": "q0", "server_ai": True})  # an existing ask still answers its item
+    assert not err and again["needs_user_approval"] is True
+    for i in range(60):  # paid rows from other apps never push a post approval out of the post list
+        store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
+                (uid, 999, "Other", json.dumps({"kind": "paid_api", "tool": "run_agent", "args_hash": str(i)}), "pending", time.time()))
+    posts = studio.approvals(Actor(uid), "pending", "post")
+    assert [p["id"] for p in posts] == [post_id]
+    assert all(p["kind"] == "paid_api" for p in studio.approvals(Actor(uid), "pending", "paid_api"))
+
+
+def test_a_stale_second_approve_cannot_reset_a_used_approval(human, fake_server_run, no_anthropic):  # noqa: F811
+    from studio.actions import ActionError
+    tok = agent_token(human, policy="trusted", cap=100)
+    store = human.app.state.store
+    args = {"query": "approve twice", "server_ai": True}
+    err, wait = _call(human, tok, "run_agent", args)
+    stale = dict(store.q("SELECT * FROM approvals WHERE id=?", (wait["approval_id"],))[0])  # read while pending (a double submit)
+    assert human.post(f"/api/approvals/{wait['approval_id']}/approve", json={}).json()["status"] == "approved"
+    err, ran = _call(human, tok, "run_agent", args)
+    assert not err and len(fake_server_run) == 1  # the approval is used up now
+    with pytest.raises(ActionError) as e:
+        consent.decide(store, Actor(_uid(human)), stale, True)
+    assert e.value.status == 404
+    assert store.q("SELECT result FROM approvals WHERE id=?", (wait["approval_id"],))[0]["result"]  # still used
+    err, once = _call(human, tok, "run_agent", args)
+    assert once["needs_user_approval"] is True and len(fake_server_run) == 1
+
+
+def test_new_request_is_never_answered_by_an_earlier_replay(human, page):  # noqa: F811
+    tok = agent_token(human, policy="trusted", cap=100)
+    first = _start(human, tok, title="Same words")
+    err, second = _call(human, tok, "start_post", {"title": "Same words", "new_request": True, "reason": "a new one"})
+    assert not err and second["run_id"] != first["run_id"] and not second.get("idempotent_replay")
+    err, third = _call(human, tok, "start_post", {"title": "Same words", "new_post": True, "user_asked": True, "reason": "again"})
+    assert not err and third["run_id"] not in (first["run_id"], second["run_id"])
+
+
+def test_undo_keeps_the_library_item_on_the_packages_output_slot(human, page):  # noqa: F811
+    tok = agent_token(human, policy="trusted", cap=100)
+    store = human.app.state.store
+    rid = _start(human, tok)["run_id"]
+    err, a = _call(human, tok, "render_carousel", {"run_id": rid, "slides": _slides(2, "a"), "output": 2})
+    assert not err, a
+    _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "A"}, "media_urls": a["media_urls"], "output": 2})
+    err, b = _call(human, tok, "render_carousel", {"run_id": rid, "slides": _slides(2, "b"), "output": 2})
+    _call(human, tok, "create_package", {"run_id": rid, "captions": {"instagram": "B"}, "media_urls": b["media_urls"], "output": 2})
+    err, back = _call(human, tok, "undo_package_media", {"run_id": rid})
+    assert not err, back
+    lib = store.q("SELECT meta FROM library_items WHERE run_id=? AND storage='media'", (rid,))
+    metas = [json.loads(r["meta"]) for r in lib]
+    assert [int(m.get("output") or 1) for m in metas] == [2]  # no stray output-1 item
+    assert metas[0]["tokens"] == [u.rsplit("/m/", 1)[-1] for u in a["media_urls"]]
+
+
+def test_a_render_finished_by_the_worker_callback_keeps_the_apps_agent_id(human, page):  # noqa: F811
+    tok = agent_token(human, policy="trusted", cap=100)
+    store, house = human.app.state.store, human.app.state.studio.house
+    rid = _start(human, tok)["run_id"]
+    err, car = _call(human, tok, "render_carousel", {"slides": _slides(2, "w")})  # no run_id: not in the Library yet
+    assert not err, car
+    token = car["media_urls"][0].rsplit("/m/", 1)[-1]
+    iid = house.library.register_run(Actor(_uid(human)), [{"token": token, "type": "photo"}], "image", rid, output=3)
+    assert iid
+    agent = store.q("SELECT agent_id FROM agent_runs WHERE id=?", (rid,))[0]["agent_id"]
+    assert agent is not None and store.q("SELECT agent_id FROM library_items WHERE id=?", (iid,))[0]["agent_id"] == agent

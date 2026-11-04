@@ -788,7 +788,10 @@ class Studio:
         """Approval items: agent posts (kind post) and, since 4 Nov 2026, requests to use a paid API (kind paid_api,
         studio/consent.py). Internal readers that expect a post payload pass kind='post'."""
         out = []
-        for r in self.store.q("SELECT * FROM approvals WHERE user_id=? AND status=? ORDER BY id DESC LIMIT 50", (a.uid, status)):
+        like = '%"kind": "paid_api"%'  # consent.py writes payload with json.dumps defaults; the Python check below confirms
+        cond = {"post": " AND payload NOT LIKE ?", "paid_api": " AND payload LIKE ?"}.get(kind, "")
+        for r in self.store.q(f"SELECT * FROM approvals WHERE user_id=? AND status=?{cond} ORDER BY id DESC LIMIT 50",
+                              (a.uid, status, *((like,) if cond else ()))):
             d = dict(r)
             d["payload"] = json.loads(d["payload"])
             d["result"] = json.loads(d["result"]) if d["result"] else None

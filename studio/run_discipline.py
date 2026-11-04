@@ -304,6 +304,8 @@ def idem_key(name: str, args: dict, meta: dict | None) -> tuple[str, bool] | Non
         if k:
             return "k:" + k, True
     if name in DERIVED:
+        if args.get("new_request") is True or args.get("new_post") is True:
+            return None  # a deliberate new post is never answered from an earlier call's replay (an explicit key still is)
         return "d:" + name + ":" + _canon(args), False
     return None
 

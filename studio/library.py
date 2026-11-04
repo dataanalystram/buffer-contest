@@ -427,10 +427,14 @@ class Library:
         info["tokens"] = [t for t in toks if t in by]
         info["format"] = fmt
         name = {"video": "Reel.mp4", "carousel": f"Carousel ({len(info['tokens'])} slides)", "image": "Image.jpg"}[kind]
+        agent = _agent_id(a)
+        if agent is None and run_id:  # a render finished by the worker callback (a human Actor) for an app's run: the app made it
+            got = self.store.q("SELECT agent_id FROM agent_runs WHERE id=? AND user_id=?", (int(run_id), a.uid))
+            agent = got[0]["agent_id"] if got and got[0]["agent_id"] is not None else None
         iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created,agent_id)"
                            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (a.uid, info["tokens"][0], name, first["mime"], kind, "generated", sum(int(by[t]["size"] or 0) for t in info["tokens"]),
-                            "", "media", json.dumps(info), run_id, created or _now(), _agent_id(a)))
+                            "", "media", json.dumps(info), run_id, created or _now(), agent))
         for t in info["tokens"]:
             self.store.x("INSERT INTO library_media(token,item_id,user_id) VALUES(?,?,?) ON CONFLICT(token) DO NOTHING", (t, iid, a.uid))
         return iid

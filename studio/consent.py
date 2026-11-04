@@ -31,6 +31,7 @@ from typing import Any, Callable
 from .actions import ActionError, Actor
 
 APPROVAL_TTL = 24 * 3600
+MAX_PENDING = 10  # paid-API asks one token may have waiting at once (they never crowd out post approvals)
 SERVER_AI_EST_USD = float(os.environ.get("HQ_SERVER_AI_EST_USD", "0.15"))  # worst case for one server-AI run
 KIND = "paid_api"
 
@@ -139,15 +140,22 @@ def gate(studio, a: Actor, name: str, args: dict) -> dict | None:
                 if again and again[0]["result"] == used:
                     store.audit(a.uid, a.label, "paid_api", "spend", {"tool": name, "approval_id": r["id"], "provider": est.get("provider")})
                     return None
-    pending = next((r for r in mine if r["status"] == "pending"), None)
-    if pending:
-        aid = pending["id"]
-    else:
-        payload = {"kind": KIND, "tool": name, "args_hash": h, "summary": summary(name, args), "estimate": est,
-                   "app": (a.agent or {}).get("name") or ""}
-        aid = store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
-                      (a.uid, a.agent["id"], a.agent["name"], json.dumps(payload), "pending", time.time()))
-        store.audit(a.uid, a.label, "paid_api", "held", {"tool": name, "approval_id": aid, "provider": est.get("provider")})
+    from .userlocks import held
+    with held(a.uid, "paid_api"):  # check-then-insert under the workspace lock: two parallel asks make ONE approval item
+        rows = _rows(store, a)
+        pending = next((r for r in rows if r["status"] == "pending" and r["payload"].get("tool") == name
+                        and r["payload"].get("args_hash") == h), None)
+        if pending:
+            aid = pending["id"]
+        else:
+            if sum(1 for r in rows if r["status"] == "pending") >= MAX_PENDING:
+                raise ActionError("This app already has too many requests waiting for the person's approval. Ask them to "
+                                  "review those in HuhQueue → Inbox → Approvals first.", 429)
+            payload = {"kind": KIND, "tool": name, "args_hash": h, "summary": summary(name, args), "estimate": est,
+                       "app": (a.agent or {}).get("name") or ""}
+            aid = store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
+                          (a.uid, a.agent["id"], a.agent["name"], json.dumps(payload), "pending", time.time()))
+            store.audit(a.uid, a.label, "paid_api", "held", {"tool": name, "approval_id": aid, "provider": est.get("provider")})
     return {"needs_user_approval": True, "approval_id": aid, "tool": name, "estimate": est, "spent_usd": 0,
             "message": (f"{name} spends money or credits ({est.get('provider')}), so it waits for the person. Ask them to approve "
                         "it in HuhQueue → Inbox → Approvals (or to turn on 'Allow paid APIs' for this app in AI apps). Then call "
@@ -161,11 +169,16 @@ def decide(store, a: Actor, row: dict, approve: bool) -> dict:
     and pending). Approving lets the same call run once; nothing runs here."""
     aid = row["id"]
     tool = (json.loads(row["payload"] or "{}") or {}).get("tool", "")
+    stamp = time.time()
+    with store.tx():  # status='pending' in the UPDATE: a double submit can't re-approve (and un-use) an approval
+        store.x("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",
+                ("approved" if approve else "rejected", stamp, aid, a.uid))
+        now = store.q("SELECT status, decided FROM approvals WHERE id=? AND user_id=?", (aid, a.uid))
+    if not now or now[0]["status"] != ("approved" if approve else "rejected") or now[0]["decided"] != stamp:
+        raise ActionError("No pending approval with that id.", 404)  # someone else decided it first: this call changed nothing
     if not approve:
-        store.x("UPDATE approvals SET status='rejected', decided=? WHERE id=? AND user_id=?", (time.time(), aid, a.uid))
         store.audit(a.uid, a.label, "reject_paid_api", "safety", {"approval_id": aid, "tool": tool})
         return {"status": "rejected", "approval_id": aid, "kind": KIND}
-    store.x("UPDATE approvals SET status='approved', result=NULL, decided=? WHERE id=? AND user_id=?", (time.time(), aid, a.uid))
     store.audit(a.uid, a.label, "approve_paid_api", "safety", {"approval_id": aid, "tool": tool})
     return {"status": "approved", "approval_id": aid, "kind": KIND, "tool": tool,
             "message": f"Approved: the app can run {tool} once for this request."}

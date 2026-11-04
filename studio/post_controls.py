@@ -241,8 +241,19 @@ def _undo_client_package(house, a: Actor, rid: int, run: dict, channel: str = ""
     res.setdefault("thread", []).append({"role": "agent", "at": time.time(),
                                          "text": "Done: back to the previous version. The newer one is off this post."})
     house._save(rid, run["steps"], res, "ready" if res.get("packages") else run["status"])
-    mcp_client_brain._library_for_run(house, a, rid, res.get("packages") or [])
+    mcp_client_brain._library_for_run(house, a, rid, res.get("packages") or [], _package_slot(res.get("packages") or []))
     return house.run(a, rid)
+
+
+def _package_slot(packages: list[dict]) -> int:
+    """The run output the restored packages belong to (create_package(output: n) stamps it); 1 when none says."""
+    for p in packages:
+        v = p.get("output") if isinstance(p, dict) else None
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 1:
+            return v
+        if isinstance(v, str) and v.isdigit() and int(v) >= 1:
+            return int(v)
+    return 1
 
 
 # ---------------------------------------------------------------- brand kits
