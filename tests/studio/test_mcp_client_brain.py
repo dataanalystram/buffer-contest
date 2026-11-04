@@ -70,8 +70,12 @@ def test_initialize_tells_the_client_it_is_the_brain(human):
     r = human.post("/mcp", headers={"Authorization": f"Bearer {tok}"}, json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
                    "params": {"protocolVersion": "2025-06-18", "capabilities": {"sampling": {}}, "clientInfo": {"name": "claude-ai"}}})
     ins = r.json()["result"]["instructions"]
-    assert ins.startswith("You are the brain: read with research tools, write slides and captions yourself, then call render tools.")
+    assert ins.startswith("You are the brain; HuhQueue is the hands.")
     assert "You CAN edit videos with HuhQueue" in ins
+    # one request = one run (4 Nov 2026): start_post, run_id everywhere, ask before new posts, paid tools wait for approval
+    for want in ("ONE post per request", "start_post", "Pass run_id", "unless the person asked", "needs_user_approval",
+                 "your own web research"):
+        assert want in ins, want
 
 
 def test_server_ai_tool_without_flag_returns_the_sequence_and_spends_nothing(human, no_anthropic):
