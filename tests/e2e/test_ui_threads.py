@@ -21,11 +21,13 @@ def test_01_split_edit_and_save_a_thread(page, server):
     T(page, "composer-caption").fill(long)
     T(page, "thread-hint").wait_for()
     T(page, "thread-numbering").click()
+    # the split reads `numbering` from the render after the click: wait for it, or a fast click splits unnumbered
+    page.locator('[data-testid=thread-numbering][aria-checked=true]').wait_for()
     T(page, "thread-split").click()
     toast(page, "Split into")
     n = T(page, "thread-part").count()
     assert n >= 3
-    assert T(page, "composer-caption").input_value().endswith(f"1/{n + 1}")
+    page.wait_for_function("n => document.querySelector('[data-testid=composer-caption]').value.endsWith(`1/${n}`)", arg=n + 1)
     assert T(page, "thread-count").inner_text() == f"{n + 1} posts"
     T(page, "thread-add").click()
     T(page, "thread-part-text").nth(n).fill("Follow for more")
