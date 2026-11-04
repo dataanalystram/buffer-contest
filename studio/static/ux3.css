@@ -151,7 +151,7 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
 .ax-acts .link{font-size:13px;padding:4px 6px}
 .ax-acts [data-testid=token-paid][aria-pressed=true]{color:var(--accent)}
 .ax-row:first-child{border-top:0}
-.ax-name{display:flex;flex-direction:column;min-width:0}.ax-name small{color:var(--muted);font-size:12px}
+.ax-name{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ax-name small{color:var(--muted);font-size:12px}
 .ax-used{font-size:13px;color:var(--muted);white-space:nowrap}.ax-used.on{color:var(--ok)}
 .ax-usage{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 .ax-u{display:flex;flex-direction:column;gap:6px;text-align:left;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-tile,12px);background:var(--raised);font:inherit;color:var(--ink);cursor:pointer;min-width:0}
