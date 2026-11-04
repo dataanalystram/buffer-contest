@@ -182,7 +182,8 @@
     catch (err) {
       if (HQLoad.aborted(err) || !tk.live()) return;
       // the thread did not load: the list marks the thread still on screen again, and that thread's poll resumes if it was working
-      threadLoading(false); if (H.run) { markThread(H.run.id); if (busyRun(H.run)) window.watchRun(H.run.id); }
+      // fetched again, not redrawn from memory: a reply sent meanwhile, or progress made, shows up (watch polls on if it runs)
+      threadLoading(false); if (H.run) { markThread(H.run.id); window.watchRun(H.run.id); }
       toast(err.message, 5000);
     }
     finally { if (tk.live()) tk.done(); }
