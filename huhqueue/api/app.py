@@ -25,6 +25,7 @@ from .. import safety
 from ..security import (CSRF_COOKIE, SCOPES, clean_tools, SESSION_COOKIE, Auth, RateLimiter, install_log_redaction, apply_limits,
                         redact, required_scope)
 from .. import teams
+from ..scope_filter import narrow, only, visible
 from ..services import community, meta_compliance, oauth, scheduling
 from ..services import media as media_svc
 from ..services import posts as posts_svc
@@ -713,7 +714,7 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
             if m:
                 use = media_usage(s, mid)
                 if use["uses"] and not force:   # block on the FULL usage; list only the caller's visible channels' posts
-                    shown = filter_usage(use, getattr(request.state, "visible_channels", None), recount=False)
+                    shown = filter_usage(use, visible(request), recount=False)
                     return _err(409, f"This file is used in {use['uses']} post(s) or idea(s) - delete with force=true", usage=shown)
                 media_svc.delete(core, m)
                 s.delete(m)
@@ -812,9 +813,9 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
         return out
 
     @app.get("/api/campaigns")
-    def campaigns():
+    def campaigns(request: Request):
         from ..services import growth as growth_svc
-        return growth_svc.list_campaigns(core)   # [{id, name, color, dates, posts, stats}]
+        return growth_svc.list_campaigns(core, visible(request))   # [{id, name, color, dates, posts, stats}], caller's channels
 
     @app.get("/api/views")
     def views_get():
@@ -974,7 +975,8 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
     @app.post("/api/queue/{cid}/order")
     def queue_order(cid: str, payload: dict = Body(...)):
         """Drag-and-drop reorder: the queued posts keep the channel's slot times, in the new order."""
-        ids = payload.get("ids") or []
+        from .channel_pages import id_list
+        ids = id_list(payload, what="queued post")
         with core.db.session() as s:
             ch = get_channel(s, cid)
             rows = {t.id: t for t in s.scalars(select(PostTarget).where(
@@ -1129,14 +1131,18 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
         return now - timedelta(days=int(days or 30)), now
 
     @app.get("/api/insights")
-    def insights(days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None):
+    def insights(request: Request, days: str | None = "30", start: str | None = None, end: str | None = None,
+                 channel_id: str | None = None):
         lo, hi = _range(days, start, end)
+        channel_id = narrow(request, channel_id)   # a scoped token / restricted teammate: only its channels (4 Nov 2026)
         with core.db.session() as s:
             qry = select(PostTarget).where(PostTarget.status == "sent", PostTarget.published_at >= lo, PostTarget.published_at <= hi)
+            cq = select(Channel)
             if channel_id:
                 qry = qry.where(PostTarget.channel_id.in_(channel_id.split(",")))
+                cq = cq.where(Channel.id.in_(channel_id.split(",")))   # followers and the channel list follow the filter too
             rows = [posts_svc.serialize_target(core, t) for t in s.scalars(qry)]
-            chans = [channel_dict(c) for c in s.scalars(select(Channel))]
+            chans = [channel_dict(c) for c in s.scalars(cq)]
         k = {"posts": len(rows)}
         for m in ("views", "reach", "likes", "comments", "shares", "saved"):
             k[m] = sum(int((r["insights"] or {}).get(m) or 0) for r in rows)
@@ -1153,9 +1159,11 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
                               "followers_count": c["followers_count"], "media_count": c["media_count"]} for c in chans]}
 
     @app.get("/api/insights/export.csv")
-    def insights_csv(days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None):
+    def insights_csv(request: Request, days: str | None = "30", start: str | None = None, end: str | None = None,
+                     channel_id: str | None = None):
         """Every sent post in the range (not just the top 20), honouring start/end and channel_id."""
         lo, hi = _range(days, start, end)
+        channel_id = narrow(request, channel_id)
         with core.db.session() as s:
             qry = select(PostTarget).where(PostTarget.status == "sent", PostTarget.published_at >= lo, PostTarget.published_at <= hi)
             if channel_id:
@@ -1175,25 +1183,32 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
 
     # ------------------------------------------------------------------ home / notifications / settings
     @app.get("/api/home")
-    def home():
+    def home(request: Request):
         now = utcnow()
+        vis = visible(request)   # every count and list below covers only the channels this caller may see (4 Nov 2026)
+
+        def tq(q):
+            return only(q, PostTarget.channel_id, vis)
+
+        def cq(q):
+            return only(q, Comment.channel_id, vis)
         with core.db.session() as s:
             upcoming = [posts_svc.serialize_target(core, t) for t in s.scalars(
-                select(PostTarget).where(PostTarget.status == "scheduled", PostTarget.scheduled_at.is_not(None))
+                tq(select(PostTarget).where(PostTarget.status == "scheduled", PostTarget.scheduled_at.is_not(None)))
                 .order_by(PostTarget.scheduled_at).limit(5))]
             week = now - timedelta(days=7)
-            sent_week = s.scalar(select(func.count()).select_from(PostTarget).where(
-                PostTarget.status == "sent", PostTarget.published_at >= week)) or 0
-            counts = dict(s.execute(select(PostTarget.status, func.count()).group_by(PostTarget.status)).all())
-            unanswered = s.scalar(select(func.count()).select_from(Comment).where(
-                Comment.status == "open", Comment.is_own.is_(False))) or 0
-            chans = [channel_dict(c) for c in s.scalars(select(Channel))]
+            sent_week = s.scalar(tq(select(func.count()).select_from(PostTarget).where(
+                PostTarget.status == "sent", PostTarget.published_at >= week))) or 0
+            counts = dict(s.execute(tq(select(PostTarget.status, func.count())).group_by(PostTarget.status)).all())
+            unanswered = s.scalar(cq(select(func.count()).select_from(Comment).where(
+                Comment.status == "open", Comment.is_own.is_(False)))) or 0
+            chans = [channel_dict(c) for c in s.scalars(only(select(Channel), Channel.id, vis))]
             failed = [posts_svc.serialize_target(core, t) for t in s.scalars(
-                select(PostTarget).where(PostTarget.status.in_(("failed", "needs_action"))).limit(5))]
+                tq(select(PostTarget).where(PostTarget.status.in_(("failed", "needs_action")))).limit(5))]
             # scorecard: posts per calendar week (Mon-Sun, UTC) for the last 8 weeks -> week streak
             monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-            sent_times = s.scalars(select(PostTarget.published_at).where(
-                PostTarget.status == "sent", PostTarget.published_at >= monday - timedelta(weeks=52))).all()
+            sent_times = s.scalars(tq(select(PostTarget.published_at).where(
+                PostTarget.status == "sent", PostTarget.published_at >= monday - timedelta(weeks=52)))).all()
             weeks = [0] * 52
             for ts in sent_times:
                 if ts:
@@ -1204,13 +1219,13 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
             while i < 52 and weeks[i]:
                 streak, i = streak + 1, i + 1
             month = now - timedelta(days=30)
-            c_rows = dict(s.execute(select(Comment.status, func.count()).where(
-                Comment.is_own.is_(False), Comment.at >= month).group_by(Comment.status)).all())
+            c_rows = dict(s.execute(cq(select(Comment.status, func.count()).where(
+                Comment.is_own.is_(False), Comment.at >= month)).group_by(Comment.status)).all())
             total_c = sum(c_rows.values())
             comment_score = round(100 * (c_rows.get("replied", 0) + c_rows.get("resolved", 0)) / total_c) if total_c else None
             recent_comments = [{"id": c.id, "author": c.author, "text": c.text, "at": posts_svc.iso(c.at), "channel_id": c.channel_id,
                                 "media_caption": (c.media_caption or "")[:80]}
-                               for c in s.scalars(select(Comment).where(Comment.status == "open", Comment.is_own.is_(False))
+                               for c in s.scalars(cq(select(Comment).where(Comment.status == "open", Comment.is_own.is_(False)))
                                                   .order_by(Comment.at.desc()).limit(4))]
         goal = sum((c["daily_limit"] or 0) for c in chans) * 7
         return {"upcoming": upcoming, "sent_this_week": sent_week, "weekly_goal": goal, "counts": counts,

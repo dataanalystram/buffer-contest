@@ -83,7 +83,7 @@ def comment_insights(core, days: int = 30, channel_id: str | None = None, transp
     with core.db.session() as s:
         q = select(Comment).where(Comment.is_own.is_(False), Comment.at >= since)
         if channel_id:
-            q = q.where(Comment.channel_id == channel_id)
+            q = q.where(Comment.channel_id.in_(str(channel_id).split(",")))
         rows = [(c.text or "", c.status) for c in s.scalars(q.order_by(Comment.at.desc()).limit(400))]
     texts = [t for t, _ in rows if t.strip()]
     questions = [t for t in texts if "?" in t]

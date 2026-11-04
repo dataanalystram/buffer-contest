@@ -710,7 +710,7 @@ class House:
         out, named = [], _chat_titles(self.store, a.uid)
         # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads
         for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status<>'archived' "
-                              "ORDER BY id DESC LIMIT ?", (a.uid, limit)):
+                              "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, limit)):
             d = dict(r)
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
             from .headline import title as _title  # never the raw request with its URL (owner P0)

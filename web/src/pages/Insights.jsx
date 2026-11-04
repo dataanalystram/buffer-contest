@@ -99,8 +99,9 @@ export default function Insights() {
     if (query.tag) p.set('tag', query.tag)
     return p
   }, [params, query.format, query.campaign, query.tag])
-  useEffect(() => { get('/api/insights?' + params).then(setD).catch(() => setD({})) }, [params])
-  useEffect(() => { get('/api/reports/summary?' + fparams).then(setS).catch(() => setS(null)) }, [fparams, tick])
+  // A filter change starts a new load; a slower, older response must not land on top of it (stale rows / KPIs).
+  useEffect(() => { let live = true; get('/api/insights?' + params).then((v) => live && setD(v)).catch(() => live && setD({})); return () => { live = false } }, [params])
+  useEffect(() => { let live = true; get('/api/reports/summary?' + fparams).then((v) => live && setS(v)).catch(() => live && setS(null)); return () => { live = false } }, [fparams, tick])
 
   const k = d?.kpis || {}
   const cmp = Object.fromEntries((s?.kpis || []).map((x) => [x.metric, x]))

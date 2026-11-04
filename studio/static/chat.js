@@ -129,13 +129,21 @@
   }
 
   // ------------------------------------------------------------ the thread sidebar (past runs = conversations)
-  const day = 86400000;
-  function group(ts) {
-    const d = new Date(ts * 1000), now = new Date(), start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    if (d.getTime() >= start) return "Today";
-    if (d.getTime() >= start - day) return "Yesterday";
-    if (d.getTime() >= start - 7 * day) return "Previous 7 days";
-    return "Older";
+  // One heading per day bucket, newest first, whatever order the rows arrive in (4 Nov 2026: "Today" showed twice when a
+  // backdated run sat between two of today's; the old loop opened a new heading on every change). Day edges are local
+  // calendar midnights from new Date(y, m, d - n), never "midnight - 86400000": a daylight-saving day is 23 or 25 hours.
+  const GROUPS = ["Today", "Yesterday", "Previous 7 days", "Older"];
+  const byNewest = (a, b) => (Number(b.created) || 0) - (Number(a.created) || 0) || (Number(b.id) || 0) - (Number(a.id) || 0);
+  function groupThreads(rows, now) {
+    const n = new Date(now == null ? Date.now() : now), y = n.getFullYear(), m = n.getMonth(), d = n.getDate();
+    const edges = [new Date(y, m, d).getTime(), new Date(y, m, d - 1).getTime(), new Date(y, m, d - 7).getTime()];
+    const out = GROUPS.map((g) => [g, []]);
+    for (const x of rows) {
+      const t = (Number(x.created) || 0) * 1000, i = edges.findIndex((e) => t >= e);
+      out[i < 0 ? 3 : i][1].push(x);
+    }
+    out.forEach(([, list]) => list.sort(byNewest));
+    return out.filter(([, list]) => list.length);
   }
   const STATE = { ready: "Ready", draft: "In Buffer", scheduled: "Scheduled", running: "Working", failed: "Stopped", interrupted: "Interrupted" };
   // lazy: nothing is drawn until the sidebar can be seen (a thread is open, or the phone drawer), then a page at a time
@@ -144,20 +152,22 @@
     if (!force && !sideVisible()) { HC.dirty = true; return; }
     HC.dirty = false;
     const box = document.getElementById("hcList"), q = HC.q.trim().toLowerCase(), cur = run() && run().id;
-    const all = HC.rows.filter((x) => !q || String(x.title || "").toLowerCase().includes(q));
+    const all = HC.rows.filter((x) => !q || String(x.title || "").toLowerCase().includes(q)).sort(byNewest);
     const rows = all.slice(0, HC.shown);
     if (!HC.loaded) { box.innerHTML = `<div class="hc-sk" data-testid="chat-thread-skeleton" aria-busy="true" aria-label="Loading threads">${'<span class="sk sk-row"></span>'.repeat(5)}</div>`; return; }
     if (!rows.length) { box.innerHTML = `<p class="muted sm hc-empty">${HC.rows.length ? "No thread matches." : "Your posts show up here as threads."}</p>`; return; }
-    let html = "", g = "";
-    for (const x of rows) {
-      const gg = group(x.created || 0);
-      if (gg !== g) { if (g) html += "</ul>"; g = gg; html += `<h3 class="hc-grp">${esc(g)}</h3><ul class="hc-ul">`; }
-      const on = String(x.id) === String(cur);
-      html += `<li class="hc-li${on ? " on" : ""}" data-id="${esc(x.id)}"><button type="button" class="hc-th" data-open="${esc(x.id)}" data-kind="${esc(x.kind)}" data-testid="chat-thread"${on ? ' aria-current="true"' : ""}>
-          <span class="hc-th-t" title="${esc(x.title || "Your post")}">${esc(x.title || "Your post")}</span><small class="hc-th-s st-${esc(x.state || x.status)}">${esc(STATE[x.state] || x.state || x.status || "")}${x.summarized ? " · summarized" : ""}</small></button>
-        ${x.kind === "take" ? "" : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}</li>`;
+    let html = "";
+    for (const [g, list] of groupThreads(rows)) {
+      html += `<h3 class="hc-grp" data-testid="chat-thread-group">${esc(g)}</h3><ul class="hc-ul">`;
+      for (const x of list) {
+        const on = String(x.id) === String(cur);
+        html += `<li class="hc-li${on ? " on" : ""}" data-id="${esc(x.id)}"><button type="button" class="hc-th" data-open="${esc(x.id)}" data-kind="${esc(x.kind)}" data-testid="chat-thread"${on ? ' aria-current="true"' : ""}>
+            <span class="hc-th-t" title="${esc(x.title || "Your post")}">${esc(x.title || "Your post")}</span><small class="hc-th-s st-${esc(x.state || x.status)}">${esc(STATE[x.state] || x.state || x.status || "")}${x.summarized ? " · summarized" : ""}</small></button>
+          ${x.kind === "take" ? "" : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}</li>`;
+      }
+      html += "</ul>";
     }
-    box.innerHTML = html + "</ul>" + (all.length > rows.length
+    box.innerHTML = html + (all.length > rows.length
       ? `<button type="button" class="link sm hc-more" data-testid="chat-thread-more">Show ${Math.min(PAGE, all.length - rows.length)} more</button>` : "");
     const more = box.querySelector(".hc-more");
     if (more) {

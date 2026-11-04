@@ -36,7 +36,8 @@ def _shot(page, name):
         page.screenshot(path=os.path.join(SHOTS, name), full_page=False)
 
 
-def test_brand_studio_first_run_preview_examples_and_slot(demo_live, chromium):
+def test_brand_studio_first_run_preview_examples_and_slot(demo_live, chromium, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # real writes on the sample workspace: the capped demo (the default view-only demo refuses them, 2 Nov 2026)
     base, buffer_calls = demo_live
     ctx, page = _page(chromium, base)
     try:
@@ -71,7 +72,8 @@ def test_brand_studio_first_run_preview_examples_and_slot(demo_live, chromium):
         ctx.close()
 
 
-def test_sources_agent_scan_to_buffer_drafts(demo_live, chromium):
+def test_sources_agent_scan_to_buffer_drafts(demo_live, chromium, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # real writes on the sample workspace: the capped demo (the default view-only demo refuses them, 2 Nov 2026)
     base, buffer_calls = demo_live
     ctx, page = _page(chromium, base)
     try:

@@ -32,7 +32,8 @@ def _until(fn, timeout=15.0):
     raise AssertionError("condition not met in time")
 
 
-def test_settings_integrations_cards_save_test_remove(demo_live, chromium):
+def test_settings_integrations_cards_save_test_remove(demo_live, chromium, monkeypatch):
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # real writes on the sample workspace: the capped demo (the default view-only demo refuses them, 2 Nov 2026)
     base, buffer_calls = demo_live
     ctx, page = _page(chromium, base)
     try:
