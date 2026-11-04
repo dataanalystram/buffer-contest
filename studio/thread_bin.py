@@ -268,7 +268,8 @@ class ThreadBin:
         takes = "keep" if takes in (None, "") else takes
         if takes not in TAKES_CHOICES:
             raise ActionError("takes is 'keep' (delete the thread only) or 'delete' (the thread and its take).")
-        with self.store.tx():
+        # the take's lock first, then the store's (the order worker callbacks and the take Bin use: no lock-order deadlock)
+        with self.h.takes._take_lock(resolve(self.store, a.uid, tid)), self.store.tx():
             run = self._row(a, tid)
             if hidden(run["status"], run["result"]):
                 raise ActionError("No such thread.", 404)
@@ -286,7 +287,7 @@ class ThreadBin:
 
     def restore(self, a: Actor, tid) -> dict:
         self._guard(a, "restore_thread")
-        with self.store.tx():
+        with self.h.takes._take_lock(resolve(self.store, a.uid, tid)), self.store.tx():  # take lock, then store (as delete)
             run = self._row(a, tid)
             tb = run["result"].get("thread_bin")
             if not isinstance(tb, dict) or tb.get("purged") or not hidden(run["status"], run["result"]):
@@ -352,6 +353,10 @@ class ThreadBin:
         return {"purged_threads": done, "refused": refused}
 
     def _purge_one(self, uid: str, rid: int) -> bool:
+        with self.h.takes._take_lock(rid):  # take lock, then store (as delete); takes._purge below re-enters it (RLock)
+            return self._purge_one_locked(uid, rid)
+
+    def _purge_one_locked(self, uid: str, rid: int) -> bool:
         st = self.store
         with st.tx():
             rows = st.q("SELECT id,status,result FROM agent_runs WHERE id=? AND user_id=? AND kind='take'", (rid, uid))
