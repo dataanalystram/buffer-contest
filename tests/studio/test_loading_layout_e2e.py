@@ -124,6 +124,7 @@ def test_multichannel_tabs_and_threads_toggle(live, chromium, close_contexts, w)
 
 @pytest.mark.parametrize("w", [1920, 390])
 def test_planner_nodate_panel(live, chromium, close_contexts, w):
+    live["fake"].posts.append({"id": "ig1", "text": "Reel on the feed", "status": "scheduled", "dueAt": "2026-11-20T10:00:00Z", "channelId": "ch_ig"})
     ctx, page, errors = _ctx(chromium, live["base"], w)
     ctx.add_init_script("localStorage.setItem('hq_planner', JSON.stringify({ view: 'week', nodate: '1' }))")
     page.goto(live["base"] + "/?tab=planner", wait_until="domcontentloaded")
