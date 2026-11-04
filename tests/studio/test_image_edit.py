@@ -166,6 +166,35 @@ def test_image_tools_follow_run_discipline_thread_url_and_retry_replay(human, we
     assert res["isError"] and "run_id is the number" in out  # a bool is never run 1
 
 
+def _chunk(typ: bytes, data: bytes) -> bytes:
+    import struct
+    import zlib
+    return struct.pack(">I", len(data)) + typ + data + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
+
+
+def test_png_metadata_after_the_image_data_is_dropped_too():
+    """Greptile P1 (4 Nov 2026): tEXt / iTXt (XMP GPS) / eXIf chunks after IDAT used to pass through png_head."""
+    from studio import metastrip
+    raw = _png(Image.new("RGB", (16, 16), (10, 120, 200)))
+    ex = Image.Exif()
+    ex[0x010F] = "GPSDATA-Maker"
+    ex[0x8825] = {1: "N", 2: (53.0, 20.0, 59.0)}
+    iend = raw.rindex(b"IEND") - 4
+    xmp = b"XML:com.adobe.xmp\x00\x00\x00\x00\x00<x:xmpmeta><exif:GPSLatitude>53,20.9N</exif:GPSLatitude></x:xmpmeta>"
+    late = _chunk(b"iTXt", xmp) + _chunk(b"tEXt", b"GPS\x0053.3498,-6.2603") + _chunk(b"eXIf", ex.tobytes()[6:])
+    dirty = raw[:iend] + late + raw[iend:] + b"trailing-53.3498"
+    Image.open(io.BytesIO(dirty)).load()  # still a valid PNG
+    out = metastrip.strip_bytes("png", dirty)
+    for leak in (b"53.3498", b"GPSLatitude", b"GPSDATA", b"iTXt", b"tEXt", b"eXIf"):
+        assert leak not in out, leak
+    assert out.endswith(b"IEND\xaeB`\x82")
+    assert Image.open(io.BytesIO(out)).size == (16, 16)
+    im, ext = image_edit.open_image(dirty)
+    stored, ext2 = image_edit.strip_meta(dirty, ext, im)  # the fetch_image path
+    assert ext2 == "png" and b"53.3498" not in stored and b"GPSLatitude" not in stored
+    assert metastrip.strip_bytes("png", raw[:-20]) == metastrip.png_head(raw[:-20])  # truncated: the header-only clean
+
+
 # ------------------------------------------------------------------------------------------------ cut-out + edits
 def test_cutout_fast_keeps_the_earcups_and_adds_no_library_item(human, web):
     tok = agent_token(human, cap=50)
