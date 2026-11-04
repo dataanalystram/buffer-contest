@@ -102,7 +102,7 @@ def test_bulk_select_bin_restore_and_permanent_delete(live, chromium, close_cont
     if w == 390:
         _no_overflow(page)
     page.get_by_test_id("library-bulk-cancel").click()
-    assert page.get_by_test_id("library-bulk-bar").is_hidden()
+    assert page.get_by_test_id("library-bulk-count").inner_text() == "0 selected"  # the selection bar stays, empty
     page.get_by_test_id("library-select-all").check()
     assert page.get_by_test_id("library-bulk-count").inner_text() == "6 selected"
     page.get_by_test_id("library-bulk-cancel").click()
@@ -140,6 +140,7 @@ def test_single_delete_permanently_needs_its_confirm(live, chromium, close_conte
     ctx, page, errors = _ctx(chromium, base, w)
     _library(page, base)
     card = page.locator(f"[data-testid=library-item][data-id='{live['ups'][0]}']")
+    card.get_by_test_id("library-more").click()  # Move to bin… sits in the card's ⋯ menu (Library premium)
     card.get_by_test_id("library-delete").click()
     page.get_by_test_id("library-delete-permanent").check()
     assert page.get_by_test_id("library-delete-go").inner_text() == "Delete permanently"
@@ -147,6 +148,7 @@ def test_single_delete_permanently_needs_its_confirm(live, chromium, close_conte
     _shot(page, f"delete-permanent-{w}.png")
     page.get_by_test_id("library-delete-cancel").click()
     assert app.state.store.q("SELECT COUNT(*) n FROM library_items WHERE id=?", (live["ups"][0],))[0]["n"] == 1  # Cancel: nothing happened
+    card.get_by_test_id("library-more").click()
     card.get_by_test_id("library-delete").click()
     page.get_by_test_id("library-delete-permanent").check()
     page.get_by_test_id("library-delete-go").click()
@@ -165,6 +167,7 @@ def test_create_draft_prefill_and_view_run(live, chromium, close_contexts, w):
     assert up.get_by_test_id("library-view-run").count() == 0  # an upload no run made: no View run
     gen = page.locator(f"[data-testid=library-item][data-id='{live['gen']}']")
     assert gen.get_by_test_id("library-view-run").get_attribute("href") == f"/?tab=library&run={live['rid']}"
+    gen.get_by_test_id("library-more").click()  # Create draft and View run sit in the card's ⋯ menu
     gen.get_by_test_id("library-create-draft").click()
     page.get_by_test_id("library-draft-channel").first.wait_for()
     li = page.locator("[data-testid=library-draft-channel][data-channel=ch_li]")
@@ -184,6 +187,7 @@ def test_create_draft_prefill_and_view_run(live, chromium, close_contexts, w):
     assert fake.created[-1]["channelId"] == "ch_li" and fake.created[-1]["text"] == CAPTIONS["ch_li"]
     assert fake.created[-1].get("saveToDraft") is True
     # View run: the run opens
+    gen.get_by_test_id("library-more").click()
     gen.get_by_test_id("library-view-run").click()
     page.wait_for_function("() => document.getElementById('runView') && !document.getElementById('runView').hidden")
     _shot(page, f"view-run-{w}.png")

@@ -86,7 +86,7 @@ def test_page_contract_view_all_link_mode_and_theme():
     assert 'data-testid="agent-mode-link"' in html and 'role="tab" data-mode="link"' in html
     assert 'data-testid="mp-link-url"' in html and 'data-testid="mp-link-preview"' in html
     assert "/api/link/preview" in mp and "LIB_PRESET" in mp and "LIB_PRESET" in lib
-    assert '<option value="draft">Drafts</option>' in html and "per = 12" in lib
+    assert '["draft", "Drafts"]' in lib and "per: 12" in lib  # Library premium: Drafts is a Used in filter, 12 a page
     assert 'data-testid="theme-toggle"' in html and 'data-testid="settings-theme"' in html
     assert html.index("/static/appearance.js") < html.index("/static/style.css")  # no flash of the other theme
     for css in ("style.css", "premium.css", "makepost.css"):
@@ -144,7 +144,7 @@ def test_e2e_view_all_opens_a_full_library_on_the_same_filter(live, chromium, cl
     page.get_by_test_id("mp-filter").nth(1).click()  # Reels
     page.get_by_test_id("mp-view-all").click()
     page.get_by_test_id("library-item").first.wait_for()
-    assert page.get_by_test_id("library-kind").input_value() == "video"
+    assert page.locator("[data-testid=library-tab][aria-selected=true]").get_attribute("data-type") == "video"
     assert page.get_by_test_id("library-item").count() == 2
     assert not page.get_by_test_id("library-empty").is_visible()
 
