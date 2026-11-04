@@ -1,0 +1,7 @@
+# The ML product cut-out worker (job kind image_matte, studio/image_matte.py): render.yml with kind=image_matte, or the
+# InstaBox box's own /data/venv-matte (studio/instabox_worker.py). Installed WITH requirements-worker-core.txt, in its
+# own venv: rembg needs numpy>=2.3, which the take worker's MediaPipe venv must not be upgraded to. Never on the web dyno.
+# Licences: rembg MIT (code). Models, always named in code (rembg's default bria-rmbg is non-commercial and refused):
+# isnet-general-use Apache-2.0 (xuebinqin/DIS), birefnet-general-lite MIT (ZhengPeng7/BiRefNet). See NOTICE.
+rembg[cpu]==2.0.86
+onnxruntime>=1.23.2,<2
