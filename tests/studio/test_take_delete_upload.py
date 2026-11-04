@@ -506,3 +506,36 @@ def test_picking_moments_holds_no_lock_and_a_take_deleted_meanwhile_gets_nothing
     assert seen["deleted"] is True and r.get("cancelled")
     row = app.state.store.q("SELECT status, result FROM agent_runs WHERE id=?", (t["id"],))[0]
     assert row["status"] == "binned" and not json.loads(row["result"]).get("clips") and len(sent) == 1   # no render queued
+
+
+def test_a_take_deleted_and_restored_while_moments_are_picked_doesnt_start_rendering(human, app, monkeypatch):
+    house, sent = app.state.house, []
+    monkeypatch.setattr(house, "_dispatch_github", lambda jid, workflow="", inputs=None, ttl=1800: (sent.append((jid, house.issue_job_token(jid, ttl))), (True, ""))[1])
+    monkeypatch.setattr(house.takes, "_mode", lambda: "github")
+    up = human.post("/api/media", json={"name": "talk.mp4", "data": base64.b64encode(MP4_HEAD + b"0" * 64).decode()}).json()
+    t = human.post("/api/takes", json={"media_token": up["token"], "owns": True}).json()
+    real = house.takes._mine
+
+    def mine_then_bin_and_back(run, analysis, eng, chat):
+        from studio.actions import Actor
+        uid = app.state.store.q("SELECT user_id FROM agent_runs WHERE id=?", (t["id"],))[0]["user_id"]
+        house.takes.delete_take(Actor(uid), t["id"])
+        house.takes.restore_take(Actor(uid), t["id"])
+        return real(run, analysis, eng, chat)
+    monkeypatch.setattr(house.takes, "_mine", mine_then_bin_and_back)
+    w = TestClient(app, base_url="https://hq.test")
+    r = w.post(f"/api/worker/jobs/{sent[0][0]}", headers={"x-job-token": sent[0][1]}, json={"analysis": ANALYSIS}).json()
+    assert r.get("cancelled") and len(sent) == 1                                 # no render queued
+    assert human.get(f"/api/takes/{t['id']}").json()["status"] == "failed"
+
+
+def test_the_7_day_sweep_spares_a_take_restored_and_deleted_again(human, app, monkeypatch):
+    rid, _, _, _ = _rendered_take(human, app, monkeypatch)
+    st, tk = app.state.store, app.state.house.takes
+    human.delete(f"/api/takes/{rid}")
+    res = json.loads(st.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]["result"])
+    res["bin"]["at"] = time.time()                                               # deleted again just now
+    st.x("UPDATE agent_runs SET result=? WHERE id=?", (json.dumps(res), rid))
+    uid = st.q("SELECT user_id FROM agent_runs WHERE id=?", (rid,))[0]["user_id"]
+    assert tk._purge(uid, [rid], [], binned_before=time.time() - 7 * 86400)[0] == []
+    assert st.q("SELECT status FROM agent_runs WHERE id=?", (rid,))[0]["status"] == "binned"

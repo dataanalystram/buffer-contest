@@ -420,6 +420,8 @@ class Takes(TakeBin):
             if self.job_cancelled(jid):
                 return {"ok": False, "cancelled": True}
             fresh = self._run(a, rid)
+            if fresh["status"] != "running":  # deleted and restored meanwhile (restore says failed): its analysis is over
+                return {"ok": False, "cancelled": True}
             steps, res = fresh["steps"], fresh["result"]
             if isinstance(mined, take.TakeError):
                 self._step(steps, "moments", "failed", str(mined))
