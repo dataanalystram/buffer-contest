@@ -108,10 +108,15 @@ def build(studio, a, now: datetime | None = None) -> dict:
     appr = studio.approvals(a, "pending") if a.kind == "human" else []
     groups.append({
         "key": "approvals", "urgency": "now", "title": "Approvals waiting", "count": len(appr),
-        "summary": (f"{_plural(len(appr), 'post' if all(x.get('kind') != 'paid_api' for x in appr) else 'item')} from "
+        "summary": (f"{_plural(len(appr), 'post' if all(x.get('kind') == 'post' for x in appr) else 'item')} from "
                     f"{' and '.join(sorted({x['agent_name'] for x in appr}))} waiting for you. Nothing reaches Buffer (and "
                     "nothing paid runs) until you approve it.") if appr else "No agent posts are waiting.",
-        "items": [({"id": x["id"], "ref": f"approval:{x['id']}", "kind": "paid_api", "tool": x["payload"].get("tool", ""),
+        "items": [({"id": x["id"], "ref": f"approval:{x['id']}", "kind": "link_rights", "tool": x["payload"].get("tool", ""),
+                    "text": _excerpt(f"Fetch a video link ({x['payload'].get('host') or 'a link'}): confirm you own it or have "
+                                     "permission to use it"),
+                    "agent": x["agent_name"], "when": "",
+                    "actions": [{"id": "open", "label": "Review", "go": "approvals"}]} if x.get("kind") == "link_rights" else
+                   {"id": x["id"], "ref": f"approval:{x['id']}", "kind": "paid_api", "tool": x["payload"].get("tool", ""),
                     "text": _excerpt(f"Use {(x['payload'].get('estimate') or {}).get('provider') or 'a paid API'}: "
                                      f"{x['payload'].get('summary') or x['payload'].get('tool', '')}"),
                     "agent": x["agent_name"], "when": "",
