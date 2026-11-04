@@ -117,6 +117,10 @@ class TakeBin:
 
     # ------------------------------------------------------------------ delete
     def delete_take(self, a: Actor, rid, clip_id: str | None = None) -> dict:
+        with self._lock:  # the worker callbacks (takes.py) take the same lock: no lost update either way
+            return self._delete_take(a, rid, clip_id)
+
+    def _delete_take(self, a: Actor, rid, clip_id: str | None = None) -> dict:
         self._guard(a, "delete_take")
         if clip_id:
             return self._delete_clip(a, rid, str(clip_id))
@@ -188,6 +192,10 @@ class TakeBin:
         return {"takes": takes_, "clips": clips_, "days": TRASH_DAYS}
 
     def restore_take(self, a: Actor, rid, clip_id: str | None = None) -> dict:
+        with self._lock:  # the worker callbacks (takes.py) take the same lock: no lost update either way
+            return self._restore_take(a, rid, clip_id)
+
+    def _restore_take(self, a: Actor, rid, clip_id: str | None = None) -> dict:
         self._guard(a, "restore_take")
         with self.store.tx():
             if clip_id:
@@ -221,6 +229,10 @@ class TakeBin:
         return out
 
     def purge_take_bin(self, a: Actor, take_ids=None, clips=None, everything: bool = False) -> dict:
+        with self._lock:  # the worker callbacks (takes.py) take the same lock: no lost update either way
+            return self._purge_take_bin(a, take_ids, clips, everything)
+
+    def _purge_take_bin(self, a: Actor, take_ids=None, clips=None, everything: bool = False) -> dict:
         self._guard(a, "purge_take_bin")
         if not everything:
             if take_ids is not None and not isinstance(take_ids, list):
@@ -307,6 +319,10 @@ class TakeBin:
                  " ON CONFLICT(token) DO NOTHING", tuple(v for t in part for v in (t, uid, now)))
 
     def purge_expired(self, days: float | None = None) -> int:
+        with self._lock:  # the worker callbacks (takes.py) take the same lock: no lost update either way
+            return self._purge_expired(days)
+
+    def _purge_expired(self, days: float | None = None) -> int:
         """Takes and clips in the Bin longer than TRASH_DAYS are removed for good (the media check loop, every 6 hours)."""
         cut = _now() - (TRASH_DAYS if days is None else days) * 86400
         n = 0

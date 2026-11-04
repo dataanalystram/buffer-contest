@@ -306,6 +306,14 @@ def crop_plan(faces: list[dict], start: float, end: float, src_w: int, src_h: in
             continue
         jumped = any(abs(c - t) <= 0.5 for c in cuts)
         face_in_window = (cx - cur) / cw
+        retarget = jumped and abs(target - cur) > cw * 0.08 or not (0.35 <= face_in_window <= 0.65)
+        if retarget and len(keys) >= 2 and keys[-1][0] > t - (0.001 if jumped else 0):
+            # a pan still easing (EASE_S > the 0.5 s sample step): retarget it from where it is now, so key times stay in
+            # order and the next move starts from the frame on screen (Greptile / CodeRabbit, PR #107)
+            (t0, x0), (t1, x1) = keys[-2], keys[-1]
+            at = max(t0, t - (0.001 if jumped else 0))
+            keys[-1] = (at, int(round(x0 + (x1 - x0) * (at - t0) / (t1 - t0)))) if t1 > t0 else (at, x1)
+            cur = keys[-1][1]
         if jumped and abs(target - cur) > cw * 0.08:
             keys.append((max(0.0, t - 0.001), cur))
             cur = target
@@ -317,6 +325,8 @@ def crop_plan(faces: list[dict], start: float, end: float, src_w: int, src_h: in
     # drop no-op keys
     slim: list[tuple[float, int]] = []
     for t, x in keys:
+        if slim and slim[-1] == (round(t, 3), x):  # a retargeted pan can repeat a key
+            continue
         if slim and slim[-1][1] == x and len(slim) > 1 and slim[-2][1] == x:
             slim[-1] = (t, x)
         else:

@@ -6,7 +6,9 @@ missing, instead of degrading:
 
 * take_analyze: a face detector loads (OpenCV's Haar CascadeClassifier, non-empty, or MediaPipe's Face Detector API) and
   faster-whisper imports (``--load-model`` also loads a model; CI keeps it import-only);
-* every One take job: FFmpeg has the filters and encoders the render uses (loudnorm, ass / subtitles, afade, libx264, aac).
+* every One take job: FFmpeg and ffprobe are installed (take.probe reads every source with ffprobe);
+* take_render (every kind but take_analyze): FFmpeg has the filters and encoders the render uses (loudnorm, ass /
+  subtitles, afade, libx264, aac). Analysis renders nothing, so an analysis-only worker isn't held to them.
 
     python -m studio.media.selfcheck --kind take_analyze    # exit 1 with the reasons when something is missing
 """
@@ -56,9 +58,11 @@ def face_detector() -> tuple[bool, str]:
 def check(kind: str = "take_render", load_model: bool = False) -> dict:
     """What this worker can do for ``kind``; raises CapabilityError naming everything missing."""
     missing, have = [], {}
+    if not shutil.which("ffprobe"):
+        missing.append("ffprobe isn't installed")
     if not shutil.which("ffmpeg"):
         missing.append("FFmpeg isn't installed")
-    else:
+    elif kind != "take_analyze":
         flt, enc = _ff(["-filters"]), _ff(["-encoders"])
         names = {ln.split()[1] for ln in flt.splitlines() if len(ln.split()) > 2 and len(ln.split()[0]) <= 4}
         encs = {ln.split()[1] for ln in enc.splitlines() if len(ln.split()) > 1 and len(ln.split()[0]) == 6}

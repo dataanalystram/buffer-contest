@@ -207,7 +207,11 @@ class Takes(TakeBin):
         self.store.audit(a.uid, a.label, "clips_from_video", "read",
                          {"take": rid, "source": "upload" if token or upload_id else ("platform" if platform_url else "link"), "style": style})
         if upload_id:
-            self.h.take_uploads.claim_for_take(a, upload_id, rid)
+            try:
+                self.h.take_uploads.claim_for_take(a, upload_id, rid)
+            except ActionError:  # another take claimed it first: this run never starts
+                self.store.x("DELETE FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
+                raise
         run = self._run(a, rid)
         self._step(run["steps"], "upload", "done", "Your upload" if token or upload_id else f"Your link ({urlparse(url or platform_url).hostname})"
                    + (f" · {credit}" if credit and not owns else ""), {"source": self.media_url(token) if token else ("upload" if upload_id else (url or platform_url))})
@@ -383,6 +387,12 @@ class Takes(TakeBin):
 
     # ------------------------------------------------------------------ callbacks (worker or local)
     def on_analysis(self, jid: int, analysis: dict | None, error: str = "") -> dict:
+        # Each callback's read-modify-write runs under the same lock as delete / restore / purge (take_bin.py), so a
+        # callback already past its cancelled check can't save an old result over the Bin's (Greptile, PR #107).
+        with self._lock:
+            return self._on_analysis(jid, analysis, error)
+
+    def _on_analysis(self, jid: int, analysis: dict | None, error: str = "") -> dict:
         if self.job_cancelled(jid):  # the take was deleted meanwhile: nothing lands on it
             return {"ok": False, "cancelled": True}
         j = self._job(jid)
@@ -526,6 +536,10 @@ class Takes(TakeBin):
             return {"ok": True, "token": tok}
 
     def on_render_done(self, jid: int, error: str = "") -> dict:
+        with self._lock:
+            return self._on_render_done(jid, error)
+
+    def _on_render_done(self, jid: int, error: str = "") -> dict:
         if self.job_cancelled(jid):
             return {"ok": False, "cancelled": True}
         j = self._job(jid)
@@ -542,7 +556,7 @@ class Takes(TakeBin):
                 c["status"], c["rerender_error"] = "rendered", why
             else:
                 c["status"], c["error"] = "failed", why
-        ok = [c for c in res.get("clips", []) if c.get("url")]
+        ok = [c for c in res.get("clips", []) if c.get("url") and c.get("status") != "binned"]
         if not ok:
             for k in ("reframe", "captions", "covers"):
                 self._step(steps, k, "failed", (error or "No clip rendered.")[:300])
@@ -553,6 +567,8 @@ class Takes(TakeBin):
         nofaces = [c["id"] for c in ok if (c.get("meta") or {}).get("layout") in ("pad", "center")]
         if nofaces:  # said on the take, never a silent fallback (owner ask, 4 Nov 2026)
             res["face_fallback"] = {"clips": nofaces, "note": "no face found, centered crop used"}
+        else:  # a later render that found faces clears an earlier render's note
+            res.pop("face_fallback", None)
         self._step(steps, "reframe", "done", (f"Face-tracked on {layouts.count('track')} of {len(ok)} clips"
                                               + (f"; no face found, centered crop used on {len(nofaces)}" if nofaces else "")
                                               + (f" (face kept in frame {min(cov) * 100:.0f}%+ of the time)" if cov else "")
@@ -598,7 +614,7 @@ class Takes(TakeBin):
         kit, rules = self.h.kit(a), self.h.rules(a)
         worst = {"ok": 0, "warning": 0, "error": 0}
         for clip in res.get("clips", []):
-            if not clip.get("url"):
+            if not clip.get("url") or clip.get("status") == "binned":  # a clip in the Bin stays there (never back to ready)
                 continue
             clip["preflight"] = {}
             for ch in run["input"]["channels"]:
@@ -610,7 +626,7 @@ class Takes(TakeBin):
                 clip["preflight"][c["id"]] = {k: pf[k] for k in ("status", "chip", "findings", "service", "network")}
                 worst[pf["status"]] += 1
             clip["status"] = "ready"
-        n = len([c for c in res.get("clips", []) if c.get("url")])
+        n = len([c for c in res.get("clips", []) if c.get("url") and c.get("status") != "binned"])
         msg = f"{n} clips × {len(run['input']['channels'])} channel(s): {worst['ok']} pass" + \
               (f", {worst['warning']} warning(s)" if worst["warning"] else "") + (f", {worst['error']} need a fix" if worst["error"] else "")
         self._step(steps, "preflight", "warn" if worst["error"] else "done", msg)
@@ -697,7 +713,7 @@ class Takes(TakeBin):
         if run["status"] in ("running", "rendering"):
             raise ActionError("This take is still being worked on. Try again when it's ready.", 409)
         res = run["result"]
-        clip = next((c for c in res.get("clips", []) if c["id"] == clip_id), None)
+        clip = next((c for c in res.get("clips", []) if c["id"] == clip_id and c.get("status") != "binned"), None)
         if not clip:
             raise ActionError("No such clip in this take.", 404)
         services = {ch["service"] for ch in run["input"]["channels"]}
@@ -805,7 +821,7 @@ class Takes(TakeBin):
         Returns the suggestion only (nothing is saved until adjust_clip). Runs in the person's engine order."""
         self.h.studio._guard_write(a, "adjust_clip")
         run = self._run(a, rid)
-        clip = next((c for c in (run["result"] or {}).get("clips", []) if c["id"] == clip_id), None)
+        clip = next((c for c in (run["result"] or {}).get("clips", []) if c["id"] == clip_id and c.get("status") != "binned"), None)
         if not clip:
             raise ActionError("No such clip in this take.", 404)
         if service not in {ch["service"] for ch in run["input"]["channels"]}:

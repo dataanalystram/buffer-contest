@@ -77,7 +77,7 @@ function tkXhr(method, url, body, headers, onProg) {
   });
 }
 async function tkUploadMultipart(f) {
-  const up = await api("/api/takes/uploads", { method: "POST", body: { name: f.name, size: f.size, content_type: f.type || "video/mp4" } });
+  const up = await api("/api/takes/uploads", { method: "POST", body: { name: f.name, size: f.size, content_type: f.type || "video/mp4", fingerprint: `${f.name}|${f.size}|${f.lastModified || 0}` } });
   const done = new Map((up.received || []).map((p) => [p.part_number, { part_number: p.part_number, etag: p.etag, size: p.size }]));
   const ps = up.part_size, todo = [];
   for (let n = 1; n <= up.parts; n++) if (!done.has(n)) todo.push(n);
@@ -86,7 +86,8 @@ async function tkUploadMultipart(f) {
   show();
   for (let i = 0; i < todo.length; i += 20) {
     const { urls } = await api(`/api/takes/uploads/${up.upload_id}/parts`, { method: "POST", body: { parts: todo.slice(i, i + 20) } });
-    for (const u of urls) {
+    for (const u0 of urls) {
+      let u = u0, fresh = false;
       const blob = f.slice((u.part_number - 1) * ps, (u.part_number - 1) * ps + u.size);
       for (let tries = 1; ; tries++) {
         try {
@@ -95,6 +96,11 @@ async function tkUploadMultipart(f) {
           if (!etag) throw new Error("The storage bucket doesn't expose the ETag header (its CORS rules need ExposeHeaders: ETag).");
           done.set(u.part_number, { part_number: u.part_number, etag, size: u.size }); sent += u.size; show(); break;
         } catch (e) {
+          if (e.status === 403 && !fresh) {  // the signed URL ran out (an hour): ask for a new one and try again
+            fresh = true; tries--;
+            u = (await api(`/api/takes/uploads/${up.upload_id}/parts`, { method: "POST", body: { parts: [u.part_number] } })).urls[0];
+            continue;
+          }
           if (tries >= 6 || (!e.net && e.status && e.status < 500 && e.status !== 408)) throw new Error(`Part ${u.part_number} didn't upload: ${e.message} Press Make clips again to resume.`);
           tkProg((sent / f.size) * 100, navigator.onLine === false ? "Offline. Waiting for the connection, then resuming…" : `Connection dropped. Retrying part ${u.part_number}…`);
           await tkOnline(); await tkSleep(Math.min(16000, 1000 * 2 ** tries));
@@ -276,7 +282,7 @@ async function deleteTake(id) {
   try {
     await api(`/api/takes/${id}`, { method: "DELETE" });
     toast("Take moved to the Bin (7 days).");
-    if (T.take && String(T.take.id) === String(id)) { clearInterval(T.poll); T.take = null; $("#takeOut") && ($("#takeOut").hidden = true); }
+    if (T.take && String(T.take.id) === String(id)) { clearInterval(T.poll); T.take = null; T.plan = null; $("#takeView").hidden = true; }
     loadTakes();
   } catch (e) { toast(e.message, 6000); }
 }

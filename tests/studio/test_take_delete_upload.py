@@ -97,8 +97,8 @@ def _put_parts(stub, urls, data, part, skip=()):
     return out
 
 
-def _upload(human, stub, data, name="talk.mp4", drop=()):
-    up = human.post("/api/takes/uploads", json={"name": name, "size": len(data), "content_type": "video/mp4"}).json()
+def _upload(human, stub, data, name="talk.mp4", drop=(), fp="talk.mp4|1|1730750000000"):
+    up = human.post("/api/takes/uploads", json={"name": name, "size": len(data), "content_type": "video/mp4", "fingerprint": fp}).json()
     urls = human.post(f"/api/takes/uploads/{up['upload_id']}/parts", json={"parts": list(range(1, up["parts"] + 1))}).json()["urls"]
     return up, _put_parts(stub, urls, data, up["part_size"], drop)
 
@@ -110,7 +110,8 @@ def test_multipart_upload_resume_verify_and_the_worker_gets_a_presigned_get(huma
     assert up["parts"] == 3 and not up["resumed"]
     r = human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={"parts": etags})
     assert r.status_code == 409 and "Part 2" in r.json()["error"]
-    again = human.post("/api/takes/uploads", json={"name": "talk.mp4", "size": len(data), "content_type": "video/mp4"}).json()
+    again = human.post("/api/takes/uploads", json={"name": "talk.mp4", "size": len(data), "content_type": "video/mp4",
+                                                   "fingerprint": "talk.mp4|1|1730750000000"}).json()
     assert again["resumed"] and again["upload_id"] == up["upload_id"] and [p["part_number"] for p in again["received"]] == [1, 3]
     urls = human.post(f"/api/takes/uploads/{up['upload_id']}/parts", json={"parts": [2]}).json()["urls"]
     etags += _put_parts(s3, urls, data, up["part_size"])
@@ -338,3 +339,127 @@ def test_crop_plan_smooths_jitter_and_audio_chain_normalises():
     assert plan["mode"] == "track" and len({x for _, x in plan["keys"]}) == 1      # no pan at all: no jitter
     a = take.audio_chain(30.0)
     assert "loudnorm=I=-14" in a and "afade=t=in" in a and "afade=t=out:st=29.850" in a
+
+
+# ---------------------------------------------------------------- review fixes (PR #107: Greptile / CodeRabbit)
+def test_resume_needs_the_same_file_not_just_the_same_name_and_size(human, s3):
+    data = MP4_HEAD + b"v" * (6 * 1024 * 1024)
+    up, _ = _upload(human, s3, data, drop=(2,), fp="talk.mp4|6291468|111")
+    other = human.post("/api/takes/uploads", json={"name": "talk.mp4", "size": len(data), "fingerprint": "talk.mp4|6291468|222"}).json()
+    assert not other["resumed"] and other["upload_id"] != up["upload_id"]     # another video, same name and size: a new upload
+    bare = human.post("/api/takes/uploads", json={"name": "talk.mp4", "size": len(data)}).json()
+    assert not bare["resumed"]                                                  # no fingerprint: never resumed
+
+
+def test_part_urls_sign_the_content_length(human, s3):
+    up = human.post("/api/takes/uploads", json={"name": "a.mp4", "size": 7 * 1024 * 1024}).json()
+    urls = human.post(f"/api/takes/uploads/{up['upload_id']}/parts", json={"parts": [1, 2]}).json()["urls"]
+    for u in urls:
+        q = parse_qs(urlparse(u["url"]).query)
+        assert q["X-Amz-SignedHeaders"] == ["content-length;host"]
+    assert [u["size"] for u in urls] == [5 * 1024 * 1024, 2 * 1024 * 1024]
+    from datetime import datetime, timezone
+    cfg = {"endpoint": "https://acct.r2.cloudflarestorage.com", "key": "AKID", "secret": "SECRET", "bucket": "bkt", "region": "auto"}
+    at = datetime(2026, 11, 4, 21, 0, 0, tzinfo=timezone.utc)
+    a = take_upload.presign(cfg, "PUT", "k", {"partNumber": "1", "uploadId": "U"}, 3600, at, length=10)
+    b = take_upload.presign(cfg, "PUT", "k", {"partNumber": "1", "uploadId": "U"}, 3600, at, length=11)
+    assert a.rsplit("=", 1)[1] != b.rsplit("=", 1)[1]                           # a different length is a different signature
+
+
+def test_a_timeout_after_the_join_recovers_on_finish_again(human, app, s3):
+    data = MP4_HEAD + b"v" * (6 * 1024 * 1024)
+    up, etags = _upload(human, s3, data)
+    real, heads = s3.__call__, []
+
+    def flaky(req):
+        if req.method == "HEAD" and not heads:
+            heads.append(1)
+            raise httpx.ReadTimeout("slow", request=req)
+        return real(req)
+    app.state.house.take_uploads.http = httpx.Client(transport=httpx.MockTransport(flaky))
+    r = human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={"parts": etags})
+    assert r.status_code == 502
+    assert app.state.store.q("SELECT status FROM take_uploads WHERE id=?", (up["upload_id"],))[0]["status"] == "joined"
+    done = human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={"parts": etags}).json()
+    assert done["status"] == "ready"
+
+
+def test_a_failed_store_delete_keeps_the_record_for_the_sweep(human, app, s3):
+    up = human.post("/api/takes/uploads", json={"name": "a.mp4", "size": 100}).json()
+    st, tu = app.state.store, app.state.house.take_uploads
+    tu.http = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(503) if req.method == "DELETE" else s3(req)))
+    human.delete(f"/api/takes/uploads/{up['upload_id']}")
+    row = st.q("SELECT status, updated FROM take_uploads WHERE id=?", (up["upload_id"],))
+    assert row and row[0]["status"] == "del_open"                               # not forgotten
+    assert human.get(f"/api/takes/uploads/{up['upload_id']}").status_code == 404  # but out of every listing
+    tu.http = httpx.Client(transport=httpx.MockTransport(s3))
+    assert tu.purge_stale() == 1 and not s3.uploads
+    assert not st.q("SELECT 1 FROM take_uploads WHERE id=?", (up["upload_id"],))
+
+
+def test_two_takes_cant_claim_one_upload(human, app, s3, monkeypatch):
+    data = MP4_HEAD + b"v" * 1024
+    up, etags = _upload(human, s3, data)
+    human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={"parts": etags})
+    tu, st = app.state.house.take_uploads, app.state.store
+    from studio.actions import ActionError, Actor
+    uid = st.q("SELECT user_id FROM take_uploads WHERE id=?", (up["upload_id"],))[0]["user_id"]
+    tu.claim_for_take(Actor(uid), up["upload_id"], 101)
+    st.x("UPDATE take_uploads SET take_id=NULL WHERE id=?", (up["upload_id"],))   # as if a second start passed the check first
+    st.x("UPDATE take_uploads SET take_id=? WHERE id=?", (102, up["upload_id"]))
+    with pytest.raises(ActionError) as e:
+        tu.claim_for_take(Actor(uid), up["upload_id"], 103)
+    assert e.value.status == 409
+
+
+def test_csp_allows_only_the_configured_bucket_origin(human, s3, monkeypatch):
+    csp = human.get("/api/session").headers["content-security-policy"]
+    assert "connect-src 'self' https://acct.r2.cloudflarestorage.com;" in csp
+    for k in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+        monkeypatch.delenv(k, raising=False)
+    assert "connect-src 'self';" in human.get("/api/session").headers["content-security-policy"]
+
+
+def test_deleting_the_account_removes_its_uploads_from_the_bucket(human, app, s3):
+    data = MP4_HEAD + b"v" * 1024
+    up, etags = _upload(human, s3, data)
+    human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={"parts": etags})
+    assert s3.objects
+    assert human.post("/api/disconnect").json()["deleted"]
+    assert not s3.objects
+    assert not app.state.store.q("SELECT 1 FROM take_uploads WHERE id=?", (up["upload_id"],))
+
+
+def test_a_deleted_clip_stays_in_the_bin_when_another_clip_finishes(human, app, monkeypatch):
+    rid, w, (rjid, rjt), _ = _rendered_take(human, app, monkeypatch)
+    assert human.delete(f"/api/takes/{rid}/clips/c1").json()["deleted"]
+    w.post(f"/api/worker/jobs/{rjid}/clips/c3", headers={"x-job-token": rjt},
+           json={"data": base64.b64encode(MP4_HEAD + b"c3").decode(), "cover": base64.b64encode(b"\xff\xd8\xffcov").decode(),
+                 "meta": _fake_mp4_meta()})
+    w.post(f"/api/worker/jobs/{rjid}", headers={"x-job-token": rjt}, json={"meta": {"clips": 3}})  # render done -> preflight all
+    assert "c1" not in [c["id"] for c in human.get(f"/api/takes/{rid}").json()["clips"]]
+    assert [(c["take_id"], c["clip_id"]) for c in human.get("/api/takes/bin").json()["clips"]] == [(rid, "c1")]
+
+
+def test_analysis_workers_arent_held_to_render_filters(monkeypatch):
+    from studio.media import selfcheck
+    monkeypatch.setattr(selfcheck, "face_detector", lambda: (True, "test"))
+    monkeypatch.setattr(selfcheck, "_ff", lambda args: "")
+    monkeypatch.setattr(selfcheck.shutil, "which", lambda b: "/usr/bin/" + b)
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.ModuleType("faster_whisper"))
+    assert selfcheck.check("take_analyze")                                      # no ass / libx264 needed to analyse
+    monkeypatch.setattr(selfcheck.shutil, "which", lambda b: None if b == "ffprobe" else "/usr/bin/" + b)
+    with pytest.raises(selfcheck.CapabilityError) as e:
+        selfcheck.check("take_analyze")
+    assert "ffprobe" in str(e.value)
+
+
+def test_crop_pans_keep_their_keys_in_order():
+    from studio import take
+    xs = [0.2] * 8 + [0.8] * 4 + [0.3] * 28                                    # the speaker moves twice in quick succession
+    faces = [{"t": i / 4, "cx": x, "cy": 0.5, "w": 0.1, "score": 0.9} for i, x in enumerate(xs)]
+    keys = take.crop_plan(faces, 0, 10, 1920, 1080, [])["keys"]
+    ts = [t for t, _ in keys]
+    assert ts == sorted(ts) and len(set(keys)) == len(keys)
