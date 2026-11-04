@@ -36,27 +36,41 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 One prompt in Claude ("find the best headphones under EUR 150, make a carousel, edit the images nicely") used to leave
 several Make a post threads and a Library item per render. The server now enforces (`studio/run_discipline.py`):
 
-1. **Start once.** `start_post(title, brief, user_asked: true, reason)` opens ONE post (a run in status `draft`) for the
-   person's request and returns `run_id`.
+1. **Start once per request.** `start_post(title, brief, user_asked: true, reason)` opens ONE post (a run in status
+   `draft`) for the person's request and returns `run_id`. A new request from the person, or a new chat in their AI app,
+   is a new `start_post` and a new run. The same request repeated within 10 minutes (same title, e.g. the app retried)
+   returns the run it already opened with `deduped: true` (`new_post: true` forces a separate one).
 2. **Pass `run_id` everywhere.** `render_carousel`, `hero_edit`, `edit_video`, `render_reel`, `split_video`,
    `library_upload_url`, `create_upload`, `import_from_link` and `create_package` take it. Follow-ups update the same run:
    `create_package(run_id)` replaces the post's packages **in place** and keeps the previous version
    (`packages[].undo`, `undo_package_media` goes back, 6 versions). A `run_id` of another account, or an archived one,
    answers 404.
-3. **The open run is reused.** A creator called without `run_id` while this token has an open run (the newest run it made,
+   - **A change of format is the same run.** "I don't want a carousel, make it a reel": `start_post(run_id, format:
+     'reel', reason)` switches the run's format (the person's words go in its thread), then `render_reel(run_id)` replaces
+     output 1 and `create_package(run_id)` updates the post in place. Same run, same thread, same Library item.
+   - **Several outputs for one request are one run.** "Make 3 reels": one `start_post`, then `render_reel(run_id,
+     output: 1)`, `output: 2`, `output: 3`. The run lists them in `result.outputs` (`output`, `format`, `media_urls`,
+     `library_id`, `versions`), its thread says "Reel 2 ready", and each output keeps ONE Library item.
+     `create_package(run_id, output: n)` without `media_urls` stages that output's media. A video render becomes its
+     output when it finishes (and `render_status` reports `run_id` and `output`).
+3. **The open run is reused by follow-ups that forgot `run_id`.** A creator (`create_package`, external-brain
+   `make_post`; not `start_post`) called without `run_id` while this token has an open run (the newest run it made,
    `draft`/`ready`, nothing sent to Buffer or waiting in Approvals, touched in the last `HQ_MCP_ACTIVE_RUN_S` = 2 h) works on
    that run and answers `reused: true`. Another app's token never lands in it.
 4. **A new run, template or brand kit only when the person asked.** `new_post: true` needs `user_asked: true`;
    `start_post`, `create_template`, `create_brand_kit` and `set_active_brand_kit` need `user_asked: true` (plus a one-line
    `reason`).
-5. **Caps per agent token**: at most `HQ_MCP_NEW_RUNS_PER_HOUR` = 3 new runs an hour and `HQ_MCP_NEW_RUNS_PER_DAY` = 20 a
-   day. Over a cap the answer says "You've started 3 posts in the last hour from this app. Ask the person before starting
-   another, or keep working on run 812 (pass run_id: 812)." A signed-in person in the app is never capped.
+5. **No hourly or daily limit on new runs** (owner, 4 Nov 2026 15:07: people open new chats in their AI app, and caps
+   blocked them). Run IDs keep things together instead. The only guard is a lenient burst limit against a runaway loop:
+   more than `HQ_MCP_NEW_RUNS_PER_MINUTE` (default 30) new runs in one minute from one agent token answers 429 "This app
+   started 30 posts in the last minute, which looks like a loop. Wait a minute and try again." A signed-in person in the
+   app is never limited.
 6. **Idempotency.** `idempotency_key` on any write (or `_meta["huhqueue/idempotency_key"]`): the same key and arguments
    within 24 h return the first result (`idempotent_replay: true`); the same key with other arguments is a 409. Without a
    key, an identical run/render call within 120 s (a retry) returns the first result too.
-7. **One Library item per run.** `render_carousel(run_id)` and `create_package(run_id)` keep the post's ONE Library item and
-   replace its files when the post changes; a render without `run_id` adds nothing to the Library. Uploads and imports are
+7. **One Library item per run output.** `render_carousel(run_id)`, `render_reel` / `edit_video(run_id)` and
+   `create_package(run_id)` keep the output's ONE Library item and replace its files when the post changes (a carousel
+   switched to a reel replaces it too); a render without `run_id` adds nothing to the Library. Uploads and imports are
    deduplicated by content (SHA-256): the same file twice returns the existing item with `deduped: true`.
 8. **One thread.** Every call is a step on the run it names; a call without `run_id` lands on the token's open run, and
    calls made before any run are claimed by the next run the token makes.
@@ -89,7 +103,7 @@ that app's paid calls run without asking and each one is written to Activity.
 
 | Tool | Brain | What it does |
 |---|---|---|
-| `start_post` | no model | Open ONE post for the person's request (`user_asked: true`) and get its `run_id`; the open post is returned with `reused: true`. `new_post: true` + `user_asked: true` only when the person asks for another post. |
+| `start_post` | no model | Open ONE post for the person's request (`user_asked: true`) and get its `run_id`. A new request or a new chat is a new run, never limited by count; the same request within 10 minutes returns it (`deduped: true`). With `run_id` (and `format`) it continues that post, e.g. switching a carousel to a reel. |
 | `cleanup_agent_drafts` | no model | List the runs and Library items AI apps left (dry run, changes nothing, single-use `confirm_token`); with the token the person OK'd: runs archived, items to the Library Bin (7 days). |
 | `research_link` | client brain | Read an article, launch page or post URL: title, site, description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos. |
 | `read_x_post` | client brain | The free X reader: an X/Twitter post's author, handle, text, date and its photos/videos (direct MP4 when the post has one), without an X API key. |

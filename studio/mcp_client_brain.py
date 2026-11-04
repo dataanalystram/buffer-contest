@@ -36,6 +36,10 @@ INSTRUCTIONS = (
     "caption') update the same run: render again with run_id, then create_package(run_id, ...), which replaces the post in "
     "place and keeps the previous version for undo_package_media. Never start another post, thread, template or brand kit "
     "unless the person asked; then pass new_post: true (or the tool's user_asked: true) with a one-line reason. "
+    "A change of format ('not a carousel, make it a reel') is the SAME run: start_post(run_id, format='reel'), then render "
+    "with that run_id. Several outputs for one request ('make 3 reels') are ONE run: pass output: 1, 2, 3 to each render "
+    "and create_package. A new request from the person, or a new chat, is a new start_post: it is never refused for how "
+    "many posts you made, and the same request repeated within 10 minutes returns the post already open. "
     "3) Images: give HuhQueue the image URL (hero_edit(image_url), render_carousel slides[].image, library_upload_url). It "
     "downloads and edits on its side; don't paste images or upload throwaway copies. If a site blocks the download, ask the "
     "person for the file with create_send_code. "
@@ -100,6 +104,9 @@ VIDEO_SRC = {"media_token": {"type": "string", "description": "A HuhQueue media 
 RUN_ID = {"type": "integer", "description": "The post this belongs to (start_post / create_package returned it). Pass it on "
           "every call for the same request: the result is kept with that post instead of starting another."}
 IDEM = {"type": "string", "description": "Optional: the same key with the same arguments returns the first result (safe retry)"}
+OUTPUT = {"type": "integer", "minimum": 1, "maximum": 10, "description": "Which output of this run (default 1). One request "
+          "for several things ('make 3 reels') is ONE run: render each with output 1, 2, 3. Rendering an output again replaces "
+          "it in place (same Library item)."}
 COVER = {"type": ["boolean", "object"], "description": "Branded cover (thumbnail): true, or {title (cover hook, max ~10 words), "
          "image_url (an official image for the cover), index (0-2, which of the 3 variants opens the Reel), opening_frame "
          "(default true: the cover is the Reel's first frames, so Instagram and TikTok show it as the thumbnail)}. render_status "
@@ -142,7 +149,7 @@ TOOLS: list[dict[str, Any]] = [
          "template": {"type": "string", "enum": ["editorial", "editorial_story", "text_slides"]},
          "ratio": {"type": "string", "enum": ["4:5", "1:1", "9:16"]}, "follow_line": S,
          "keep_case": {"type": "array", "items": S, "description": "Brand names to keep exactly as written in Title Case "
-                       "headlines, e.g. ['ernd', 'iPhone']"}, "run_id": RUN_ID, "idempotency_key": IDEM}}},
+                       "headlines, e.g. ['ernd', 'iPhone']"}, "run_id": RUN_ID, "output": OUTPUT, "idempotency_key": IDEM}}},
     {"name": "hero_edit", "description": "The premium cover edit of an official image (no HuhQueue AI): saliency crop to the frame, "
      "colour match to the brand ground, vignette and fade; optional product cut-out tilted with a shadow. Returns the edited "
      "image URL to use as slides[0].image in render_carousel. Give the image's URL (HuhQueue downloads it); pass run_id so the "
@@ -172,14 +179,14 @@ TOOLS: list[dict[str, Any]] = [
          "credit": {"type": "string", "description": "Credit line for a video the user didn't make"},
          "rights": RIGHTS, "cover": COVER,
          "rights_confirmed": {"type": "boolean", "description": "Older form of rights=own/permission"},
-         "run_id": RUN_ID, "idempotency_key": IDEM}}},
+         "run_id": RUN_ID, "output": OUTPUT, "idempotency_key": IDEM}}},
     {"name": "render_reel", "description": "Make a branded 9:16 Reel (no HuhQueue AI): from a video (same options as edit_video) or "
      "from slides (image URLs, e.g. render_carousel's media_urls) as a slideshow with the end card. Returns a job id; poll "
-     "render_status(job_id).",
+     "render_status(job_id). With run_id it becomes that post's output (output: 1..10 for several reels in one request).",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC, "images": {"type": "array", "items": S, "maxItems": 10},
          "hook": S, "theme": S, "captions": {"type": ["boolean", "string"], "enum": [True, False, "auto", "replace", "on", "off"]}, "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
          "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}, "rights": RIGHTS, "rights_confirmed": {"type": "boolean"}, "credit": S,
-         "run_id": RUN_ID, "idempotency_key": IDEM}}},
+         "run_id": RUN_ID, "output": OUTPUT, "idempotency_key": IDEM}}},
     {"name": "split_video", "description": "Split a long video into 3-7 short vertical clips on the video worker (no HuhQueue AI: "
      "Whisper transcript, built-in moment scorer, face-tracked reframe, captions, cover and end card). Give media_token / "
      "library_id / url (a file or a YouTube/Vimeo/X post) and owns: true (or rights_confirmed + credit). Returns take_id; poll "
@@ -207,7 +214,9 @@ TOOLS: list[dict[str, Any]] = [
                    "the Planner and in previews), frame_s (thumbnail frame in seconds; default 0 = the opening frame, which is "
                    "the branded cover when edit_video made one)}. Instagram, TikTok and Pinterest get it as Buffer's thumbnailOffset.",
                    "properties": {"url": S, "frame_s": {"type": "number", "minimum": 0}}},
-         "run_id": RUN_ID, "new_post": {"type": "boolean", "description": "true: a separate new post (needs user_asked: true)"},
+         "run_id": RUN_ID, "output": {**OUTPUT, "description": "Which output of the run this post uses (default 1); without "
+                                      "media_urls, that output's media is staged"},
+         "new_post": {"type": "boolean", "description": "true: a separate new post (needs user_asked: true)"},
          "user_asked": {"type": "boolean"}, "reason": S, "idempotency_key": IDEM}}},
     {"name": "library_upload_url", "description": "Only for a photo or video that is ALREADY at a public https URL (up to 40 MB; "
      "a Google Drive, Dropbox, OneDrive or iCloud share link goes through import_from_link, up to the Library's per-file "
@@ -338,6 +347,67 @@ def _run_arg(args: dict) -> int | None:
     except (TypeError, ValueError):
         return None
     return v if v > 0 else None
+
+
+MAX_OUTPUTS = 10
+
+
+def _slot(args: dict) -> int:
+    """output: 1..10, the output of the run a render or package is for (one request, several outputs = one run)."""
+    v = args.get("output")
+    if v in (None, ""):
+        return 1
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        n = 0
+    if not 1 <= n <= MAX_OUTPUTS or (isinstance(v, float) and v != n):
+        raise ActionError(f"output is a whole number from 1 to {MAX_OUTPUTS}: one per thing the person asked for.")
+    return n
+
+
+def record_output(h, a: Actor, rid: int, slot: int, fmt: str, media: list[dict], job_id: int | None = None) -> dict | None:
+    """Put a finished render on its run as output `slot` (owner, 4 Nov 2026: one request = one run, its outputs grouped in it
+    and in one thread). The same output rendered again replaces it in place (and its ONE Library item); the same files
+    twice change nothing. Only the person's own app-made (client) run that has not gone to Buffer or Approvals."""
+    from . import run_discipline
+    try:
+        row = run_discipline.own_run(h.store, a, int(rid))
+    except (ActionError, TypeError, ValueError):
+        return None
+    if row["kind"] != "client":
+        return None
+    res = json.loads(row["result"] or "{}") or {}
+    if run_discipline.closed(res):
+        return None
+    media = [m for m in media if m.get("token")]
+    toks = [m["token"] for m in media]
+    if not toks:
+        return None
+    outs = res.setdefault("outputs", [])
+    cur = next((o for o in outs if o.get("output") == slot), None)
+    if cur and cur.get("media_tokens") == toks:
+        return cur
+    lib = None
+    try:
+        lib = h.library.register_run(a, media, fmt, int(rid), output=slot)
+    except Exception:  # noqa: BLE001 - the Library never breaks a render
+        pass
+    entry = {"output": slot, "format": fmt, "media_tokens": toks, "media_urls": [m.get("url") or h.media_url(m["token"]) for m in media],
+             "library_id": lib if lib is not None else (cur or {}).get("library_id"),
+             "versions": int((cur or {}).get("versions") or 0) + 1, "at": time.time(), **({"job_id": job_id} if job_id else {})}
+    label = {"reel": "Reel", "carousel": "Carousel", "photo": "Image", "text": "Post"}.get(fmt, fmt.capitalize() or "Output")
+    if cur:
+        outs[outs.index(cur)] = entry
+        said = f"{label} {slot} updated" + (f" (was a {cur.get('format')})" if cur.get("format") not in (None, "", fmt) else "")
+    else:
+        outs.append(entry)
+        outs.sort(key=lambda o: int(o.get("output") or 0))
+        said = f"{label} {slot} ready"
+    res.setdefault("thread", []).append({"role": "agent", "text": said, "at": time.time()})
+    h.store.x("UPDATE agent_runs SET result=?, updated=? WHERE id=? AND user_id=?",
+              (json.dumps(res, default=str), time.time(), int(rid), a.uid))
+    return entry
 
 
 def _queue_video(h, a: Actor, spec: dict) -> dict:
@@ -547,6 +617,7 @@ def _carousel_text(h, a, slides, ratio):
 def t_render_carousel(studio, a, args):
     h = studio.house
     studio._guard_write(a, "render_carousel")
+    slot = _slot(args)
     slides = [s for s in args.get("slides") or [] if isinstance(s, dict) and (s.get("headline") or s.get("body"))]
     if len(slides) < 2:
         raise ActionError("Give at least a cover and one content slide (slides[0] is the cover).")
@@ -565,14 +636,13 @@ def t_render_carousel(studio, a, args):
     extra = {"template": used, "ratio": ratio, **({"run_id": rid} if rid else {})}
     media = [_keep_image(h, a, im, f"slide{i + 1}.jpg", extra) for i, im in enumerate(ims)]
     lib = None
-    if rid:  # one Library item per post: this render replaces the post's earlier one (owner, 4 Nov 2026)
-        try:
-            lib = h.library.register_run(a, media, "carousel", rid)
-        except Exception:  # noqa: BLE001 - the Library never breaks a render
-            pass
+    if rid:  # one Library item per post output: this render replaces the output's earlier one (owner, 4 Nov 2026)
+        got = record_output(h, a, rid, slot, "carousel", media)
+        lib = (got or {}).get("library_id")
     # without run_id the slides stay run media until create_package stages them (no "Carousel (N slides)" per retry)
     return {"template": used, "ratio": ratio, "slides": len(media), "media_urls": [m["url"] for m in media],
-            "media_tokens": [m["token"] for m in media], "library_id": lib, "run_id": rid, "fit_problems": problems, "spent_usd": 0,
+            "media_tokens": [m["token"] for m in media], "library_id": lib, "run_id": rid, **({"output": slot} if rid else {}),
+            "fit_problems": problems, "spent_usd": 0,
             "next": ("Fix any fit_problems by writing shorter text and render again with the same run_id (it replaces these "
                      "slides); then brand_check your caption and create_package(run_id, captions, media_urls)."
                      if rid else "Start the post with start_post and pass its run_id next time. Fix any fit_problems by writing "
@@ -702,9 +772,10 @@ def t_edit_video(studio, a, args):
     tok, meta = _unfinished(h, a, *_video_source(h, a, args), args)
     if meta.get("type") not in (None, "video"):
         raise ActionError("That media is not a video.")
+    slot = _slot(args)
     spec = _video_spec(h, a, args, tok, meta)
     if _run_arg(args):
-        spec["for_run"] = _run_arg(args)
+        spec["for_run"], spec["for_output"] = _run_arg(args), slot
     out = _queue_video(h, a, spec)
     if meta.get("_from_finished"):
         out = {**out, "note": "That video was already a finished reel, so this edit starts again from its original upload "
@@ -718,6 +789,7 @@ def t_render_reel(studio, a, args):
     studio._guard_write(a, "render_reel")
     if args.get("images"):
         from . import brand
+        slot = _slot(args)
         toks = []
         base = h.s.public_url.rstrip("/") + "/m/"
         for u in list(args["images"])[:10]:
@@ -728,7 +800,7 @@ def t_render_reel(studio, a, args):
         spec = {"kind": "slideshow", "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": brand.visual_params(kit, h.rules(a)),
                 "slides": toks, "logo": kit.get("logo") or "", "ratio": args.get("ratio") or "9:16", "via": SOURCE}
         if _run_arg(args):
-            spec["for_run"] = _run_arg(args)
+            spec["for_run"], spec["for_output"] = _run_arg(args), slot
         return _queue_video(h, a, spec)
     return t_edit_video(studio, a, args)
 
@@ -776,6 +848,16 @@ def t_render_status(studio, a, args):
     if st == "done" and r["media_token"]:
         out["download_url"] = h.media_url(r["media_token"])
         out["media_token"] = r["media_token"]
+        try:
+            jspec = json.loads(r["spec"] or "{}")
+        except ValueError:
+            jspec = {}
+        if jspec.get("for_run"):  # the render is an output of its post (also done in finish_video; same files = no change)
+            got = record_output(h, a, int(jspec["for_run"]), int(jspec.get("for_output") or 1), "reel",
+                                [{"token": r["media_token"], "type": "video", "url": out["download_url"]}], job_id=jid)
+            out.update(run_id=int(jspec["for_run"]), output=int(jspec.get("for_output") or 1))
+            if got and got.get("library_id"):
+                out["library_id"] = got["library_id"]
         m = h.media_meta(a, r["media_token"]) or {}
         out["meta"] = {k: m.get(k) for k in ("width", "height", "duration", "ratio", "style", "captions", "clip", "captions_note")
                        if m.get(k) not in (None, "")}
@@ -806,7 +888,17 @@ def t_create_package(studio, a, args):
     if not caps:
         raise ActionError("captions is {channel_id or service: text} with the caption you wrote for each channel.")
     chans = [c for c in studio.channels(a) if not c.get("isDisconnected")]
+    slot = _slot(args)
     media_urls = [str(u) for u in args.get("media_urls") or []][:10]
+    if not media_urls and args.get("output") not in (None, "") and _run_arg(args):  # stage that output's media
+        from . import run_discipline
+        row = run_discipline.own_run(h.store, a, _run_arg(args))
+        hit = next((o for o in (json.loads(row["result"] or "{}") or {}).get("outputs") or [] if o.get("output") == slot), None)
+        if not hit:
+            raise ActionError(f"Run {_run_arg(args)} has no output {slot} yet: render it first (output: {slot}).", 404)
+        media_urls = [str(u) for u in hit.get("media_urls") or []][:10]
+        if not args.get("format") and hit.get("format") in ("carousel", "reel", "photo", "text"):
+            args = {**args, "format": hit["format"]}
     credit = ""
     if args.get("rights"):
         rg = _rights(args, str(args.get("source_url") or ""))
@@ -837,6 +929,8 @@ def t_create_package(studio, a, args):
                        "text": str(text)[:5000], "media_urls": media_urls, "format": fmt, "status": "ready",
                        "media": [{"url": u, "type": "video" if u.lower().split("?")[0].endswith((".mp4", ".mov")) else "photo"}
                                  for u in media_urls], "check": h.check(a, str(text))})
+            if args.get("output") not in (None, ""):
+                pk[-1]["output"] = slot
             if cover_url:
                 pk[-1]["cover_url"] = cover_url
             if thumb_ms is not None and fmt == "reel" and c.get("service") in ("instagram", "tiktok", "pinterest"):
@@ -855,8 +949,8 @@ def t_create_package(studio, a, args):
         rid = h.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated,agent_id) VALUES(?,?,?,?,?,?,?,?,?)",
                         (a.uid, "client", json.dumps(inp), "ready", json.dumps([]), json.dumps(res), time.time(), time.time(),
                          a.agent["id"] if a.kind == "agent" and a.agent else None))
-    _library_for_run(h, a, rid, pk)
-    return {"run_id": rid, "updated": updated, "versions_kept": versions,
+    _library_for_run(h, a, rid, pk, slot)
+    return {"run_id": rid, "updated": updated, "versions_kept": versions, **({"output": slot} if args.get("output") not in (None, "") else {}),
             "packages": [{k: p[k] for k in ("channel_id", "service", "format", "status")} | {"brand_check": p["check"]} for p in pk],
             "unknown_channels": unknown, "spent_usd": 0,
             "next": "Show the person. Changes: render again with this run_id and call create_package(run_id) again (it replaces "
@@ -898,8 +992,8 @@ def _update_package_run(h, a: Actor, rid: int, args: dict, pk: list[dict], chans
     return rid, len(vs)
 
 
-def _library_for_run(h, a: Actor, rid: int, pk: list[dict]) -> None:
-    """The staged post's media is the run's ONE Library item (replaced in place when the post changes)."""
+def _library_for_run(h, a: Actor, rid: int, pk: list[dict], slot: int = 1) -> None:
+    """The staged post's media is the run's output (its ONE Library item, replaced in place when the post changes)."""
     media = []
     for m in (pk[0].get("media") or []) if pk else []:
         tok = h.media_token_of(m.get("url") or "")
@@ -907,10 +1001,11 @@ def _library_for_run(h, a: Actor, rid: int, pk: list[dict]) -> None:
             media.append({"token": tok, "type": m.get("type") or "photo", "url": m.get("url")})
     if not media:
         return
-    try:
-        h.library.register_run(a, media, pk[0].get("format") or "", rid)
-    except Exception:  # noqa: BLE001 - the Library never breaks staging
-        pass
+    if record_output(h, a, rid, slot, pk[0].get("format") or "", media) is None:
+        try:  # not an app-made run (or already sent): the Library still keeps one item for it
+            h.library.register_run(a, media, pk[0].get("format") or "", rid, output=slot)
+        except Exception:  # noqa: BLE001 - the Library never breaks staging
+            pass
 
 
 # update_brand_kit is ONE tool, in studio/brand_kits.py (B1, 2 Nov 2026: two tools had the name; kit_id omitted = the

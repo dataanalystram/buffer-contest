@@ -1538,6 +1538,14 @@ class House:
             meta.setdefault("source_token", src_tok)
         tok = self.put_media(a, data, "reel.mp4", kind="render", meta=meta)
         self.store.x("UPDATE render_jobs SET status='done', media_token=?, updated=? WHERE id=?", (tok, _now(), jid))
+        jspec = json.loads(job["spec"])
+        if jspec.get("for_run"):  # an AI app's render for its post: it becomes that run's output (one run, one thread)
+            try:
+                from . import mcp_client_brain
+                mcp_client_brain.record_output(self, a, int(jspec["for_run"]), int(jspec.get("for_output") or 1), "reel",
+                                               [{"token": tok, "type": "video", "url": self.media_url(tok)}], job_id=jid)
+            except Exception:  # noqa: BLE001 - bookkeeping never fails the render
+                pass
         if run_inline and job["run_id"] and self._run_kind(job["run_id"]) != "agent":  # the agent brain waits on its own job
             self._spawn_run(job["run_id"], self._resume_after_video, a, job["run_id"], jid)
         return {"ok": True, "token": tok}

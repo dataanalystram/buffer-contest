@@ -435,16 +435,24 @@ class Library:
             self.store.x("INSERT INTO library_media(token,item_id,user_id) VALUES(?,?,?) ON CONFLICT(token) DO NOTHING", (t, iid, a.uid))
         return iid
 
-    def register_run(self, a: Actor, media: list[dict], fmt: str, run_id: int) -> int | None:
-        """ONE Library item per run (owner, 4 Nov 2026): a run's latest render replaces its earlier one in place (same item
-        id, new files), so fixing a slide or re-rendering never adds "Carousel (N slides)" again. The earlier files stay
-        with the run (its Undo); the item only points at the newest."""
+    def register_run(self, a: Actor, media: list[dict], fmt: str, run_id: int, output: int = 1) -> int | None:
+        """ONE Library item per run output (owner, 4 Nov 2026): a run's latest render of an output replaces its earlier one
+        in place (same item id, new files), so fixing a slide, re-rendering or switching carousel -> reel never adds another
+        item. A request for several outputs ("make 3 reels") keeps one item per output (meta.output 2, 3, ...; output 1 has
+        none), all on the same run. The earlier files stay with the run (its Undo); the item only points at the newest."""
         if demo_guard.is_demo(a.uid) or not run_id:
             return None
+        output = int(output or 1)
         rows = self.store.q("SELECT * FROM library_items WHERE user_id=? AND run_id=? AND source='generated' AND storage='media' "
-                            "ORDER BY id LIMIT 1", (a.uid, int(run_id)))
+                            "ORDER BY id", (a.uid, int(run_id)))
+        rows = [r for r in rows if int((json.loads(r["meta"] or "{}") or {}).get("output") or 1) == output]
         if not rows:
-            return self.register_generated(a, media, fmt, int(run_id))
+            iid = self.register_generated(a, media, fmt, int(run_id))
+            if iid and output != 1:
+                got = self.store.q("SELECT meta FROM library_items WHERE id=? AND user_id=?", (iid, a.uid))
+                info = {**json.loads((got[0]["meta"] if got else "") or "{}"), "output": output}
+                self.store.x("UPDATE library_items SET meta=? WHERE id=? AND user_id=?", (json.dumps(info), iid, a.uid))
+            return iid
         d = dict(rows[0])
         items = [m for m in media if m.get("token") and m.get("role") not in ("slide",)]
         video = next((m for m in items if m.get("type") == "video"), None)
@@ -469,6 +477,8 @@ class Library:
         meta = json.loads(by[toks[0]]["meta"] or "{}")
         info = {k: meta[k] for k in ("width", "height", "duration") if meta.get(k)}
         info.update(tokens=toks, format=fmt, versions=int(old.get("versions") or 1) + 1)
+        if output != 1:
+            info["output"] = output
         name = {"video": "Reel.mp4", "carousel": f"Carousel ({len(toks)} slides)", "image": "Image.jpg"}[kind]
         with self.store.tx():
             self.store.x("UPDATE library_items SET token=?, name=?, mime=?, kind=?, size=?, meta=? WHERE id=? AND user_id=?",

@@ -442,7 +442,7 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
                 result = replayed
             else:
                 clean, early = _rd.before(studio, actor, name, clean)
-                result = early if early is not None else call_tool(studio, actor, name, _rd.strip_control(clean))
+                result = early if early is not None else call_tool(studio, actor, name, _rd.strip_control(clean, name))
                 result = _rd.after(studio, actor, name, clean, result)
                 if key:
                     _rd.remember(studio.store, actor, name, clean, key, result)

@@ -8,16 +8,22 @@ a Library item and nothing told the app to reuse what it had. The rules now, enf
   upload and ``create_package`` takes that ``run_id``. A creator called WITHOUT ``run_id`` while this token has an open
   run (``active_run``: newest run the token made, still ``draft``/``ready``, nothing sent to Buffer or waiting for
   approval, touched in the last ``HQ_MCP_ACTIVE_RUN_S``, default 2 h) works on that run and answers ``reused: true``.
-* **A new run only when the person asked.** ``new_post: true`` must come with ``user_asked: true``; ``start_post`` always
-  needs ``user_asked: true``. Over the caps (``HQ_MCP_NEW_RUNS_PER_HOUR`` = 3, ``HQ_MCP_NEW_RUNS_PER_DAY`` = 20 per agent
-  token) a new run is refused with a plain error that names the open run to keep working on.
+* **A new run only for a new request (or a new chat).** ``start_post`` (always with ``user_asked: true``) and no ``run_id``
+  is the person's new request: it opens a new run and is never refused for how many runs an app made (owner, 4 Nov 2026
+  15:07: people open new chats in their AI app, and per-hour / per-day caps blocked them). The same request again within
+  ``DEDUPE_S`` (10 min, same title) answers the run it already opened (``deduped: true``). On a creator, ``new_post: true``
+  must come with ``user_asked: true``. The only guard is a lenient burst limit against a runaway loop
+  (``HQ_MCP_NEW_RUNS_PER_MINUTE``, default 30 new runs a minute per agent token); there is no hourly or daily limit.
+* **One run, many outputs.** Follow-ups stay in the run, even a change of format ("not a carousel, make it a reel":
+  ``start_post(run_id, format='reel')`` then render with the same ``run_id``). Several outputs for one request ("make 3
+  reels") are ONE run: each render takes ``output: 1..10`` and the run lists them in ``result.outputs`` (studio/mcp_client_brain.py).
 * **Same call twice = same result.** ``idempotency_key`` (argument or ``_meta["huhqueue/idempotency_key"]``): the same key
   and arguments within 24 h replay the stored result, the same key with other arguments is an error. Without a key,
   the run/render tools in ``DERIVED`` get a key derived from (token, tool, canonical arguments) for 120 s, which catches
   the usual double call on a retry.
 * **Run lookups are per person.** A ``run_id`` of another account, or one that was tidied away, answers 404.
 
-Only agent tokens are disciplined: a signed-in person in the app (and REST for a human) is never capped here.
+Only agent tokens are disciplined: a signed-in person in the app (and REST for a human) is never limited here.
 Rows are per person and token; ``delete_user`` removes them (``store.OWNED_ELSEWHERE``).
 """
 from __future__ import annotations
@@ -34,14 +40,15 @@ from fastapi import Body, Request
 from .actions import ActionError, Actor
 
 ACTIVE_S = int(os.environ.get("HQ_MCP_ACTIVE_RUN_S", str(2 * 3600)))
-PER_HOUR = int(os.environ.get("HQ_MCP_NEW_RUNS_PER_HOUR", "3"))
-PER_DAY = int(os.environ.get("HQ_MCP_NEW_RUNS_PER_DAY", "20"))
+# burst guard only (a runaway loop), never an hourly or daily limit on new runs (owner, 4 Nov 2026 15:07)
+PER_MINUTE = int(os.environ.get("HQ_MCP_NEW_RUNS_PER_MINUTE", "30"))
+DEDUPE_S = 10 * 60
 IDEM_TTL = 24 * 3600
 DERIVED_TTL = 120
 
 # tools that open (or reuse) a post run when called without run_id
 REUSERS = {"start_post", "create_package", "make_post"}
-# tools that always make a new run / take of their own (capped; a run_id they get is checked for ownership)
+# tools that always make a new run / take of their own (burst guard only; a run_id they get is checked for ownership)
 ALWAYS_NEW = {"draft_from_library", "run_agent", "edit_media", "clips_from_video", "split_video"}
 # tools that take an optional run_id for media they render or store (checked for ownership)
 RUN_MEDIA = {"render_carousel", "hero_edit", "edit_video", "render_reel", "split_video", "library_upload_url", "create_upload",
@@ -125,35 +132,48 @@ def active_run(store, a: Actor) -> dict | None:
     return None
 
 
-def counts(store, a: Actor) -> tuple[int, int]:
-    now = time.time()
-    rows = store.q("SELECT SUM(CASE WHEN created>? THEN 1 ELSE 0 END) AS h, COUNT(*) AS d FROM agent_runs WHERE user_id=? AND agent_id=? "
-                   "AND created>?", (now - 3600, a.uid, a.agent["id"], now - 86400))
-    return int(rows[0]["h"] or 0), int(rows[0]["d"] or 0)
-
-
-def check_caps(store, a: Actor) -> None:
-    """Before a new run: at most PER_HOUR an hour and PER_DAY a day per agent token. The error tells the app what to do."""
-    if not is_agent(a):
+def burst_guard(store, a: Actor) -> None:
+    """Before a new run: only a runaway loop is stopped (more than PER_MINUTE new runs in 60 s from one agent token).
+    There is no hourly or daily limit: a person opening new chats in their AI app is never blocked (owner, 4 Nov 2026)."""
+    if not is_agent(a) or PER_MINUTE <= 0:
         return
-    hour, day = counts(store, a)
-    if hour < PER_HOUR and day < PER_DAY:
+    n = int(store.q("SELECT COUNT(*) AS n FROM agent_runs WHERE user_id=? AND agent_id=? AND created>?",
+                    (a.uid, a.agent["id"], time.time() - 60))[0]["n"] or 0)
+    if n < PER_MINUTE:
         return
     open_ = active_run(store, a)
-    keep = f" or keep working on run {open_['id']} (pass run_id: {open_['id']})" if open_ else " or keep working on the post you already made (pass its run_id)"
-    if hour >= PER_HOUR:
-        msg = f"You've started {hour} posts in the last hour from this app. Ask the person before starting another{keep}."
-    else:
-        msg = f"You've started {day} posts today from this app (the limit is {PER_DAY}). Ask the person before starting another{keep}."
+    keep = f" To keep working on run {open_['id']}, pass run_id: {open_['id']}." if open_ else ""
     try:
-        store.audit(a.uid, a.label, "new_run", "blocked", {"reason": "run cap", "hour": hour, "day": day}, ok=False)
+        store.audit(a.uid, a.label, "new_run", "blocked", {"reason": "burst", "minute": n}, ok=False)
     except Exception:  # noqa: BLE001
         pass
-    raise ActionError(msg, 429)
+    raise ActionError(f"This app started {n} posts in the last minute, which looks like a loop. Wait a minute and try "
+                      f"again.{keep}", 429)
+
+
+def _norm(t: Any) -> str:
+    return " ".join(str(t or "").lower().split())[:200]
+
+
+def same_request(store, a: Actor, title: str) -> dict | None:
+    """The run this token opened for the SAME request (same title) in the last DEDUPE_S: a start_post retried or repeated
+    by the app answers it instead of a second run. A different title is a new request and gets its own run."""
+    if not is_agent(a) or not _norm(title):
+        return None
+    rows = store.q("SELECT id, input, result FROM agent_runs WHERE user_id=? AND agent_id=? AND status IN ('draft','ready') "
+                   "AND created>? ORDER BY id DESC LIMIT 10", (a.uid, a.agent["id"], time.time() - DEDUPE_S))
+    for r in rows:
+        try:
+            inp, res = json.loads(r["input"] or "{}"), json.loads(r["result"] or "{}")
+        except ValueError:
+            continue
+        if inp.get("started_by") == "start_post" and _norm(inp.get("prompt")) == _norm(title) and not closed(res):
+            return dict(r)
+    return None
 
 
 def mark_agent(store, a: Actor, rid: int) -> None:
-    """Which agent token made the run (caps, reuse, cleanup). Only ever on the person's own run, only once."""
+    """Which agent token made the run (reuse, burst guard, cleanup). Only ever on the person's own run, only once."""
     if is_agent(a) and rid:
         store.x("UPDATE agent_runs SET agent_id=? WHERE id=? AND user_id=? AND agent_id IS NULL", (a.agent["id"], int(rid), a.uid))
 
@@ -162,7 +182,9 @@ def touch(store, a: Actor, rid: int) -> None:
     store.x("UPDATE agent_runs SET updated=? WHERE id=? AND user_id=?", (time.time(), int(rid), a.uid))
 
 
-REUSED_NOTE = "Updated your open post (run {rid}). Pass new_post: true with user_asked: true only when the person asks for another post."
+REUSED_NOTE = ("Updated your open post (run {rid}). Keep passing run_id: {rid}. For the person's NEW request (or a new chat), "
+               "call start_post with user_asked: true instead.")
+DEDUPED_NOTE = "Same request as run {rid} a moment ago: continuing that post (no second run). Keep passing run_id: {rid}."
 
 
 def before(studio, a: Actor, name: str, args: dict) -> tuple[dict, dict | None]:
@@ -181,7 +203,7 @@ def before(studio, a: Actor, name: str, args: dict) -> tuple[dict, dict | None]:
     if name not in REUSERS and name not in ALWAYS_NEW:
         return args, None
     if name == "make_post" and args.get("brain") != "external":
-        return args, None  # server AI make_post: its own path (consent gate) plus the cap below
+        return args, None  # server AI make_post: its own path (the paid-API consent gate)
     new_post = args.get("new_post") is True
     if new_post and args.get("user_asked") is not True:
         raise ActionError("Starting another post needs the person's say-so: ask them, then call again with new_post: true and "
@@ -189,6 +211,14 @@ def before(studio, a: Actor, name: str, args: dict) -> tuple[dict, dict | None]:
     if name == "start_post" and not rid and not new_post and args.get("user_asked") is not True:
         raise ActionError("start_post opens a post for the person's request: call it once per request with user_asked: true "
                           "and a one-line reason (the request in their words).", 403)
+    if name == "start_post" and not rid:
+        # the person's request: a NEW run (a new chat, a new ask), never the previous chat's run. Only the same request
+        # repeated within DEDUPE_S answers the run it already opened.
+        dup = None if new_post else same_request(store, a, args.get("title"))
+        if dup:
+            return {**args, "run_id": dup["id"], "_deduped": True}, None
+        burst_guard(store, a)
+        return args, None
     if name in REUSERS and not rid and not new_post:
         open_ = active_run(store, a)
         if open_:
@@ -202,7 +232,7 @@ def before(studio, a: Actor, name: str, args: dict) -> tuple[dict, dict | None]:
         return args, None
     if name in ALWAYS_NEW and rid:
         return args, None
-    check_caps(store, a)
+    burst_guard(store, a)
     return args, None
 
 
@@ -217,7 +247,9 @@ def after(studio, a: Actor, name: str, args: dict, result: Any) -> Any:
                 mark_agent(studio.store, a, int(rid))
         except (TypeError, ValueError):
             pass
-    if args.get("_reused") and rid:
+    if args.get("_deduped") and rid:
+        result = {**result, "reused": True, "deduped": True, "note": DEDUPED_NOTE.format(rid=rid)}
+    elif args.get("_reused") and rid:
         result = {**result, "reused": True, "note": REUSED_NOTE.format(rid=rid)}
     return result
 
@@ -282,9 +314,12 @@ def remember(store, a: Actor, name: str, args: dict, key: tuple[str, bool], resu
         pass
 
 
-def strip_control(args: dict) -> dict:
-    """The arguments a tool sees: run_id stays, the layer's own fields go."""
-    return {k: v for k, v in (args or {}).items() if k not in CONTROL or k == "run_id"}
+KEEP_REASON = {"start_post"}  # start_post keeps the person's words (reason): its thread and audit line quote them
+
+
+def strip_control(args: dict, name: str = "") -> dict:
+    """The arguments a tool sees: run_id stays (and reason for start_post), the layer's own fields go."""
+    return {k: v for k, v in (args or {}).items() if k not in CONTROL or k == "run_id" or (k == "reason" and name in KEEP_REASON)}
 
 
 # ------------------------------------------------------------------------------------------------ tools
@@ -294,19 +329,21 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "start_post", "description": "Open ONE post for the person's request and get its run_id (no HuhQueue AI, nothing is "
      "rendered or posted). Call it once per request, with user_asked: true and the request as reason, then pass run_id to every "
      "render_carousel, hero_edit, edit_video, render_reel, split_video, upload and create_package call: follow-ups ('brighter', "
-     "'swap slide 3', 'shorter caption') update this same post and its thread. If this app already has an open post (made in the "
-     "last 2 hours, not sent to Buffer), that post is returned with reused: true: keep working on it. To start a different "
-     "post only when the person asks for one, pass new_post: true with user_asked: true. At most 3 new posts an hour and 20 a "
-     "day per app.",
+     "'swap slide 3', 'shorter caption') update this same post and its thread. A change of format ('not a carousel, make it a "
+     "reel') is the SAME post: call start_post(run_id, format='reel') and render with the same run_id. Several outputs for one "
+     "request ('make 3 reels') are ONE post: render each with output: 1, 2, 3. A new request from the person, or a new chat, "
+     "is a new start_post (never limited by how many posts the app made); the same request again within 10 minutes returns "
+     "the post it opened (deduped: true).",
      "inputSchema": {"type": "object", "required": ["title", "user_asked"], "properties": {
          "title": {"type": "string", "description": "Short title of the post, from the person's request"},
          "brief": {"type": "string", "description": "One line: what the person asked for"},
          "channel_ids": {"type": "array", "items": S, "description": "Channels the person named (optional)"},
-         "format": {"type": "string", "enum": ["carousel", "reel", "photo", "text"]},
+         "format": {"type": "string", "enum": ["carousel", "reel", "photo", "text"],
+                    "description": "With run_id: the person changed the format; the same post and thread switch to it"},
          "user_asked": {"type": "boolean", "description": "true: the person asked for this post"},
          "reason": {"type": "string", "description": "The request in a few words"},
-         "new_post": {"type": "boolean", "description": "true starts another post next to the open one (needs user_asked: true)"},
-         "run_id": {"type": "integer", "description": "Continue this post instead"},
+         "new_post": {"type": "boolean", "description": "true: a separate post even if the title matches one opened a moment ago"},
+         "run_id": {"type": "integer", "description": "Continue this post instead (a follow-up or a change of format)"},
          "idempotency_key": S}}},
     {"name": "cleanup_agent_drafts", "description": "Tidy up what AI apps left behind: post runs an app made that never went to "
      "Buffer or Approvals, and Library items an app uploaded or rendered that no post uses. Step 1 (default dry_run: true) "
@@ -327,14 +364,27 @@ def start_post(studio, a: Actor, args: dict) -> dict:
     if rid:
         run = own_run(store, a, rid)
         touch(store, a, rid)
-        title = ""
         try:
-            title = ((json.loads(run["result"] or "{}").get("story") or {}).get("headline") or
-                     json.loads(run["input"] or "{}").get("prompt") or "")
-        except (ValueError, AttributeError):
-            pass
-        return {"run_id": rid, "status": run["status"], "title": str(title)[:120], "reused": True, "spent_usd": 0,
-                "next": "Pass this run_id to every render, upload and create_package call for this request."}
+            res = json.loads(run["result"] or "{}") or {}
+            inp = json.loads(run["input"] or "{}") or {}
+        except ValueError:
+            res, inp = {}, {}
+        title = (res.get("story") or {}).get("headline") or inp.get("prompt") or ""
+        fmt = args.get("format") if args.get("format") in ("carousel", "reel", "photo", "text") else ""
+        out = {"run_id": rid, "status": run["status"], "title": str(title)[:120], "reused": True, "spent_usd": 0,
+               "format": inp.get("format") or "", "outputs": len(res.get("outputs") or []),
+               "next": "Pass this run_id to every render, upload and create_package call for this request."}
+        if fmt and fmt != inp.get("format") and is_agent(a) and run["kind"] == "client" and not closed(res):
+            # "I don't want a carousel, make it a reel": the same run and thread switch format (owner, 4 Nov 2026)
+            was = inp.get("format") or ""
+            inp["format"], res["format"] = fmt, fmt
+            said = " ".join(str(args.get("reason") or "").split())[:300] or f"Make it a {fmt} instead"
+            res.setdefault("thread", []).append({"role": "user", "text": said, "at": time.time()})
+            store.x("UPDATE agent_runs SET input=?, result=?, updated=? WHERE id=? AND user_id=?",
+                    (json.dumps(inp), json.dumps(res, default=str), time.time(), rid, a.uid))
+            out.update(format=fmt, format_was=was, next=f"Same post, now a {fmt}: render it with run_id {rid} (output 1 is "
+                       "replaced in place) and call create_package(run_id) again.")
+        return out
     studio._guard_write(a, "start_post")
     title = " ".join(str(args.get("title") or "").split())[:200]
     if not title:
@@ -342,15 +392,18 @@ def start_post(studio, a: Actor, args: dict) -> dict:
     chans = [str(c) for c in args.get("channel_ids") or [] if c][:20]
     inp = {"prompt": title, "brief": str(args.get("brief") or "")[:500], "via": ROLE_SOURCE, "started_by": "start_post",
            "channel_ids": chans, "format": args.get("format") if args.get("format") in ("carousel", "reel", "photo", "text") else ""}
-    res = {"packages": [], "media": [], "story": {"headline": title[:120]}, "brain": "client"}
     now = time.time()
+    said = " ".join(str(args.get("brief") or args.get("reason") or "").split())[:500] or title
+    res = {"packages": [], "media": [], "story": {"headline": title[:120]}, "brain": "client", "outputs": [],
+           "format": inp["format"], "thread": [{"role": "user", "text": said, "at": now}]}
     rid = store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated,agent_id) VALUES(?,?,?,?,?,?,?,?,?)",
                   (a.uid, "client", json.dumps(inp), "draft", json.dumps([]), json.dumps(res), now, now,
                    a.agent["id"] if is_agent(a) else None))
     store.audit(a.uid, a.label, "start_post", "read", {"run": rid, "reason": str(args.get("reason") or "")[:120]})
     return {"run_id": rid, "status": "draft", "title": title[:120], "reused": False, "spent_usd": 0,
-            "next": "Keep this run_id. Pass it to render_carousel / hero_edit / edit_video / uploads and to create_package; "
-                    "follow-ups update this same post."}
+            "next": "Keep this run_id for this request. Pass it to render_carousel / hero_edit / edit_video / render_reel / "
+                    "uploads and to create_package; follow-ups (and a change of format) update this same post. Several "
+                    "outputs: pass output: 1, 2, 3 to each render."}
 
 
 def _app_of(store, uid: str) -> dict[int, str]:
@@ -481,7 +534,7 @@ def add_routes(app, house, actor) -> None:
         a = actor(request, write=True)
         b = dict(body or {})
         args, early = before(house.studio, a, "start_post", b)
-        return after(house.studio, a, "start_post", args, early if early is not None else start_post(house.studio, a, strip_control(args)))
+        return after(house.studio, a, "start_post", args, early if early is not None else start_post(house.studio, a, strip_control(args, "start_post")))
 
     @app.post("/api/agent/cleanup")
     def rest_cleanup(request: Request, body: dict = Body(default={})):

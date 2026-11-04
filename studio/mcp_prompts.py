@@ -40,7 +40,9 @@ PROMPTS: list[dict[str, Any]] = [
 ]
 
 _RULES = ("Rules: ONE post for this request: keep the run_id from start_post and pass it to every render and create_package call "
-          "(changes update the same post; never start another one, a template or a brand kit unless the user asks). Drafts only "
+          "(changes update the same post, even 'make it a reel instead': start_post(run_id, format='reel'); several outputs "
+          "like '3 reels' are ONE post with output: 1, 2, 3; never start another one, a template or a brand kit unless the user "
+          "asks). Drafts only "
           "(schedule_package mode='draft'); never publish or schedule. Do your own research with your own tools; use only facts "
           "from the source. The brand's Follow end card is always added last. Show the user the frames and caption before "
           "saving the draft.")

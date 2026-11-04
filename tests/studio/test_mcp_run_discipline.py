@@ -2,7 +2,7 @@
 
 One prompt in Claude ("find the best headphones under EUR 150, make a carousel with images, edit the images nicely") left
 several Make a post threads and many Library items. These tests replay that flow and every rule that stops it: run reuse,
-caps, idempotency, Library dedupe, consent for new runs / templates / kits, the paid-API approval gate and the cleanup tool.
+the burst guard (no hourly or daily caps), idempotency, Library dedupe, consent for new runs / templates / kits, the paid-API approval gate and the cleanup tool.
 """
 import json
 import time
@@ -90,16 +90,21 @@ def test_a_creator_without_run_id_reuses_the_open_run(human, page):  # noqa: F81
     rid = _start(human, tok)["run_id"]
     err, pk = _call(human, tok, "create_package", {"captions": {"instagram": "Hello"}})
     assert not err, pk
-    assert pk["run_id"] == rid and pk["reused"] is True and "new_post" in pk["note"]
-    again = _start(human, tok, title="Something else")
-    assert again["run_id"] == rid and again["reused"] is True
+    assert pk["run_id"] == rid and pk["reused"] is True and "start_post" in pk["note"] and f"run_id: {rid}" in pk["note"]
+    # the same request again (a retried start_post) is the same run; a NEW request is a new run (owner, 4 Nov 2026 15:07)
+    retry = _start(human, tok)  # an identical retry within 120 s replays the first answer
+    assert retry["run_id"] == rid and retry["idempotent_replay"] is True
+    dup = _start(human, tok, brief="same ask, worded again")  # the same request again: deduped onto the open run
+    assert dup["run_id"] == rid and dup["reused"] is True and dup["deduped"] is True
+    other_req = _start(human, tok, title="Something else")
+    assert other_req["run_id"] != rid and other_req["reused"] is False
     # another app never lands in this app's open run
     other = agent_token(human, policy="trusted", cap=100)
     err, pk2 = _call(human, other, "create_package", {"captions": {"instagram": "Mine"}})
-    assert not err and pk2["run_id"] != rid and not pk2.get("reused")
+    assert not err and pk2["run_id"] not in (rid, other_req["run_id"]) and not pk2.get("reused")
 
 
-def test_new_post_needs_user_asked_then_the_caps_answer(human, page, monkeypatch):  # noqa: F811
+def test_new_post_needs_user_asked_and_there_is_no_hourly_or_daily_cap(human, page, monkeypatch):  # noqa: F811
     tok = agent_token(human, policy="trusted", cap=100)
     err, msg = _call(human, tok, "start_post", {"title": "No consent"})
     assert err and "user_asked" in msg
@@ -108,18 +113,19 @@ def test_new_post_needs_user_asked_then_the_caps_answer(human, page, monkeypatch
     assert err and "user_asked" in msg and "ask them" in msg
     err, pk = _call(human, tok, "create_package", {"captions": {"instagram": "x"}, "new_post": True, "user_asked": True, "reason": "asked"})
     assert not err and pk["run_id"] != r1
-    r3 = _start(human, tok, title="Third", new_post=True)["run_id"]
-    assert r3 not in (r1, pk["run_id"])
-    err, msg = _call(human, tok, "start_post", {"title": "Fourth", "user_asked": True, "new_post": True})
-    assert err and "3 posts in the last hour" in msg and f"run {r3}" in msg and "Ask the person" in msg
+    # 25 new requests (25 new chats) from one app: none refused - the per-hour (3) and per-day (20) caps are gone
+    ids = {_start(human, tok, title=f"Request {i}")["run_id"] for i in range(25)}
+    assert len(ids) == 25
     store = human.app.state.store
-    assert store.q("SELECT COUNT(*) AS n FROM agent_runs")[0]["n"] == 3
-    # the day cap
-    monkeypatch.setattr(run_discipline, "PER_HOUR", 100)
-    monkeypatch.setattr(run_discipline, "PER_DAY", 3)
-    err, msg = _call(human, tok, "start_post", {"title": "Fourth", "user_asked": True, "new_post": True})
-    assert err and "today" in msg
-    # a signed-in person is never capped (the UI / REST path)
+    assert store.q("SELECT COUNT(*) AS n FROM agent_runs")[0]["n"] == 27
+    assert not hasattr(run_discipline, "PER_HOUR") and not hasattr(run_discipline, "PER_DAY")
+    # only a runaway loop is stopped (burst guard, per minute), and the answer names the open run
+    monkeypatch.setattr(run_discipline, "PER_MINUTE", 27)
+    err, msg = _call(human, tok, "start_post", {"title": "One too many", "user_asked": True})
+    assert err and "last minute" in msg and "loop" in msg and "run_id" in msg
+    store.x("UPDATE agent_runs SET created=created-120")  # a minute later it works again
+    assert _start(human, tok, title="One too many")["reused"] is False
+    # a signed-in person is never limited (the UI / REST path)
     for _ in range(4):
         assert human.post("/api/agent/runs", json={"prompt": "make a post from https://news.example.com/agents"}).status_code == 200
 
