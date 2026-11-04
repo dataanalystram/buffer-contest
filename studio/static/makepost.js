@@ -217,6 +217,7 @@
     wirePics(box);
     box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => {
       if (b.dataset.kind === "take") return window.openTake(b.dataset.id);
+      if (window.hcCancelThread) window.hcCancelThread();  // a thread still loading never lands over this post
       const r = await api(`/api/agent/runs/${b.dataset.id}`); showRun(r); if (["running", "rendering"].includes(r.status)) watchRun(r.id); window.scrollTo({ top: 0, behavior: "smooth" });
     }));
     window.hqPager($("#mpRecentPager"), { total: rows.length, page: MP.page, per, label: "Recent content pages", onPage: (n) => { MP.page = n; drawRecent(); } });
@@ -230,7 +231,7 @@
   // ------------------------------------------------------------ the chat thread
   function leaveThread() {
     root.classList.remove("mp-in-thread"); $("#runView").hidden = true;
-    clearTimeout(H_STATE.poll); H_STATE.run = null; setStep("create");
+    clearTimeout(H_STATE.poll); H_STATE.watching = null; H_STATE.run = null; if (window.hcCancelThread) window.hcCancelThread(); setStep("create");
   }
   $("#mpNew").onclick = () => { leaveThread(); q().focus(); };
   const hostIcon = (u) => { const h = hostOf(u); return h ? `<a class="mp-src" href="${escUrl(u)}" target="_blank" rel="noopener" data-testid="mp-source">${fav(h)}<span>${esc(h)}</span></a>` : ""; };

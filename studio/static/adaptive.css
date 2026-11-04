@@ -1,0 +1,115 @@
+/* Adaptive wide-screen layout (owner ask, 4 Nov 2026): "the threads list floats in the middle with big empty margins, the
+   review only uses a narrow column". Loaded last; our tokens only (dark neutrals, hairlines, lavender --hc-lav for the
+   selected state), no gradients, no new fonts. */
+
+/* ---------------------------------------------------------------- Make a post: the thread fills the width */
+.hc-main,:root.threads-hidden .hc-main{max-width:none;margin:0}
+@media (min-width:1101px){#runView.hc{grid-template-columns:var(--hc-side-w) minmax(0,1fr);column-gap:24px}}
+@media (min-width:1700px){:root{--hc-side-w:288px}}
+
+/* the threads toggle: a labelled button, always visible ("Hide threads" / "Show threads"; aria-expanded is its state) */
+.hc-menu{width:auto!important;padding:0 12px!important;display:inline-flex!important;gap:8px;align-items:center;font-size:14px;font-weight:600}
+.hc-menu .hc-menu-l{white-space:nowrap}
+@media (max-width:600px){.hc-menu{padding:0 10px!important}.hc-menu .hc-menu-l{display:none}}
+
+/* ---------------------------------------------------------------- the review: per-channel tabs + one wide card */
+#packages{container-type:inline-size}
+#packages.multi{display:block}
+#packages.multi>.pkg+.pkg{margin-top:0}
+#packages.multi>.pkg-all{margin-top:12px}
+.pkg-tabs-wrap{position:relative;margin:0 0 12px}
+.pkg-tabs{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;padding:2px;overscroll-behavior-x:contain}
+.pkg-tabs::-webkit-scrollbar{display:none}
+.pkg-tab{flex:0 0 auto;scroll-snap-align:start;display:inline-flex;align-items:center;gap:10px;min-height:52px;padding:8px 14px 8px 10px;border:1px solid var(--line);
+  border-radius:12px;background:var(--raised);color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.pkg-tab span{display:grid;line-height:1.25}.pkg-tab b{font-size:14px}.pkg-tab small{font-size:12px;color:var(--muted)}
+.pkg-tab:hover{border-color:var(--line-strong)}
+.pkg-tab.on{border-color:var(--hc-lav);box-shadow:inset 0 0 0 1px var(--hc-lav)}
+.pkg-tab:focus-visible{outline:2px solid var(--hc-lav);outline-offset:2px}
+/* overflow cue on a narrow strip: solid edge shadows (no gradient), only while there is more to scroll */
+@media (max-width:760px){
+  .pkg-tabs-wrap::before,.pkg-tabs-wrap::after{content:"";position:absolute;top:2px;bottom:2px;width:1px;pointer-events:none;box-shadow:0 0 14px 10px var(--paper);opacity:.9}
+  .pkg-tabs-wrap::before{left:-1px}.pkg-tabs-wrap::after{right:-1px}
+}
+/* one card: media on the left, caption / music / cover / checks / send on the right when there is room; stacked when not */
+.pkg-side{display:flex;flex-direction:column;gap:10px;min-width:0}
+@container (min-width:720px){
+  .pkg{display:grid;grid-template-columns:minmax(260px,5fr) minmax(0,7fr);column-gap:24px;row-gap:12px;align-items:start}
+  .pkg>header{grid-column:1/-1}
+  .pkg>.pkg-media{grid-column:1;position:sticky;top:calc(var(--hc-top,64px) + 72px)}
+  .pkg>.pkg-side{grid-column:2}
+  .pkg .pkg-media video,.pkg .pkg-media .pm-img{max-height:min(72vh,720px);width:auto;max-width:100%;margin:0 auto;display:block}
+  .pkg .pkg-media .pm-img img{max-height:min(72vh,720px);object-fit:contain}
+  .pkg textarea{min-height:140px}
+}
+/* without per-channel tabs (one channel, or a narrow column) the cards keep the auto-fill grid; a single card spans it */
+#packages:not(.multi)>.pkg:only-of-type{grid-column:1/-1}
+
+/* switching threads: a skeleton stands in for the conversation until the run arrives */
+#runView.hc-loading .hc-main>:not(.mp-thread-bar):not(#hcLoading):not(.hc-dock){visibility:hidden;height:0;overflow:hidden;margin:0;padding:0}
+.hc-loading-sk{padding:8px 0 24px}
+.hc-loading-sk[hidden]{display:none}
+.hc-dock.hc-dock-wait{opacity:.55;pointer-events:none}
+
+/* ---------------------------------------------------------------- Planner */
+/* the No date panel: a proper panel (header + count, All / Drafts / Ready chips, compact rows) */
+.pl-body.with-side{grid-template-columns:minmax(0,1fr) clamp(300px,24vw,380px)}
+.pl-side{gap:10px;padding:14px}
+.pl-side-head{display:grid;gap:2px;justify-content:stretch}
+.pl-side-t{display:flex;align-items:center;gap:8px;font-size:15px}
+.pl-side-n{min-width:24px;height:22px;padding:0 7px;border-radius:999px;display:inline-grid;place-items:center;font-size:12px;font-weight:700;background:color-mix(in oklab,var(--hc-lav) 22%,transparent);color:var(--ink);font-variant-numeric:tabular-nums}
+.pl-ndf{display:flex;gap:6px;flex-wrap:wrap}
+.pl-ndf-b{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.pl-ndf-b span{font-size:11px;font-variant-numeric:tabular-nums;opacity:.85}
+.pl-ndf-b:hover{color:var(--ink);border-color:var(--line-strong)}
+.pl-ndf-b.on{background:var(--hc-lav);border-color:var(--hc-lav);color:var(--hc-on-lav)}
+.pl-ndl{display:flex;flex-direction:column;gap:6px}
+.pl-row{position:relative;display:grid;grid-template-columns:16px 52px minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 6px 8px 4px;border:1px solid var(--line);border-radius:12px;background:var(--paper);cursor:pointer}
+.pl-row:hover{border-color:var(--line-strong)}
+.pl-row:focus-visible{outline:2px solid var(--hc-lav);outline-offset:1px}
+.pl-row[draggable=true]{cursor:grab}.pl-row.dragging{opacity:.4}
+.pl-grip{display:grid;place-items:center;color:var(--subtle)}.pl-grip .ic{width:16px;height:16px;fill:currentColor;stroke:none}
+.pl-row .pl-thumb{width:52px;height:52px;border-radius:9px;overflow:hidden;display:grid;place-items:center;background:var(--sunken);flex:none}
+.pl-row .pl-thumb img{width:100%;height:100%;object-fit:cover}
+.pl-row-b{display:grid;gap:6px;min-width:0}
+.pl-row-t{font-size:13px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-row-m{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pl-row-m .chmark{width:16px;height:16px}
+.pl-pill{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--line);color:var(--muted)}
+.pl-pill.pl-err{display:inline-block;line-height:18px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-pill.s-draft{color:var(--ink)}
+.pl-pill.s-ready,.pl-pill.s-approval{border-color:color-mix(in oklab,var(--hc-lav) 60%,transparent);color:var(--ink)}
+.pl-pill.warn{border-color:color-mix(in oklab,var(--warn) 60%,transparent);color:var(--warn)}
+.pl-rmenu{position:relative}
+.pl-rmenu summary{list-style:none;width:32px;height:32px;display:grid;place-items:center;border-radius:8px;color:var(--muted);cursor:pointer}
+.pl-rmenu summary::-webkit-details-marker{display:none}
+.pl-rmenu summary:hover,.pl-rmenu[open] summary{background:var(--sunken);color:var(--ink)}
+.pl-rmenu summary .ic{fill:currentColor;stroke:none}
+.pl-rmenu-l{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:160px;display:grid;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--raised);box-shadow:var(--float)}
+.pl-rmenu-l button{height:36px;padding:0 10px;border:0;border-radius:7px;background:none;color:var(--ink);font:inherit;font-size:14px;text-align:left;cursor:pointer}
+.pl-rmenu-l button:hover{background:var(--sunken)}.pl-rmenu-l button.danger{color:var(--bad)}
+@media (max-width:1100px){.pl-body.with-side{grid-template-columns:minmax(0,1fr)}}
+
+/* week grid: readable event cards (thumbnail, time, channel) instead of tiny chips */
+.pl-week .pl-chip,.pl-dayv .pl-chip{align-items:center;gap:8px;padding:4px 6px 4px 4px;border-radius:9px;min-height:44px}
+.pl-chip-th{display:none}
+.pl-week .pl-chip-th,.pl-dayv .pl-chip-th{display:grid;place-items:center;width:36px;height:36px;flex:none;border-radius:7px;overflow:hidden;background:var(--sunken)}
+.pl-chip-th img{width:100%;height:100%;object-fit:cover}.pl-chip-th .ic{width:16px;height:16px}
+.pl-chip-b{display:grid;gap:2px;min-width:0;flex:1}
+.pl-chip-m{display:flex;align-items:center;gap:5px;min-width:0}
+.pl-week .pl-chip .t,.pl-dayv .pl-chip .t{font-weight:700;color:var(--ink);font-size:12px}
+.pl-chip.s-draft{border-style:solid}
+@media (min-width:1600px){.pl-week:not(.pl-dayv){grid-template-columns:60px repeat(7,minmax(120px,1fr))}}
+
+/* Grid (feed preview): fills the width at every size, square-ish 4:5 tiles; the No date panel lines up beside it */
+.pl-grid-wrap{max-width:none}
+.pl-grid{grid-template-columns:repeat(auto-fill,minmax(clamp(140px,11vw,220px),1fr));gap:6px}
+.pl-skel-wrap{padding:4px 0}
+.ib-stats>.hq-skw,.lp-grid>.hq-skw{grid-column:1/-1}
+/* a text-only post has no picture to show: its card gives the room to the words */
+.pl-week .pl-chip-th:not(:has(img)),.pl-dayv .pl-chip-th:not(:has(img)){display:none}
+.pl-week .pl-chip .c,.pl-dayv .pl-chip .c{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.25}
+.pl-week .pl-chip-m,.pl-dayv .pl-chip-m{align-items:flex-start}
+
+/* every page on a very wide monitor: the content grows with the screen instead of a 1680 px column beside empty space */
+@media (min-width:1800px){.tab,.tab.planner{max-width:2240px}}

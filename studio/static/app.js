@@ -17,6 +17,7 @@ async function api(path, opts = {}) {
   const o = { method: opts.method || "GET", headers: { "Content-Type": "application/json" }, credentials: "same-origin", cache: "no-store" };
   if (o.method !== "GET") o.headers["X-HQ-CSRF"] = S.csrf;
   if (opts.body !== undefined) o.body = JSON.stringify(opts.body);
+  if (opts.signal) o.signal = opts.signal;  // HQLoad.start(): a view's newer request aborts this one (loading.js)
   const r = await fetch(path, o);
   let j = null; try { j = await r.json(); } catch (_) { j = {}; }
   if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; throw e; }
@@ -476,9 +477,19 @@ function ibTile(key, label, value, sub, tone = "", go = "") {
 }
 async function loadInbox() {
   const box = $("#inboxGroups"), demo = !!S.session?.demo;
-  const [d, sched, lim] = await Promise.all([api("/api/inbox").catch((e) => ({ error: e.message })), api("/api/queue?status=scheduled").catch(() => []), api("/api/limits").catch(() => null)]);
+  // a skeleton the first time, the busy bar on a refresh; a newer load aborts this one (loading.js)
+  const tk = HQLoad.start("inbox"), sig = { signal: tk.signal };
+  if (!loadInbox.drawn) { $("#ibStats").innerHTML = HQLoad.tiles(4, "Loading your inbox"); box.innerHTML = HQLoad.rows(3); box.setAttribute("aria-busy", "true"); }
+  else HQLoad.busy($("#tab-inbox"), true, "Refreshing");
+  const [d, sched, lim] = await Promise.all([api("/api/inbox", sig).catch((e) => ({ error: e.message, aborted: HQLoad.aborted(e) })), api("/api/queue?status=scheduled", sig).catch(() => []), api("/api/limits", sig).catch(() => null)]);
+  if (!tk.live() || d.aborted) return;
+  tk.done(); HQLoad.busy($("#tab-inbox"), false);
   box.removeAttribute("aria-busy");
-  if (d.error) { box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(d.error)}</div>`; return; }
+  if (d.error) {  // a failed first load: the stats skeleton goes too, so nothing keeps announcing "Loading your inbox"
+    const st = $("#ibStats"); if (st.querySelector("[data-testid=loading-skeleton]")) st.innerHTML = "";
+    box.innerHTML = `<div class="st err" data-testid="inbox-error">${esc(d.error)}</div>`; return;
+  }
+  loadInbox.drawn = true;
   ibBadge(d.waiting);
   const G = Object.fromEntries(d.groups.map((g) => [g.key, g]));
   // the dashboard shows approvals as cards above, and the Buffer plan only where it is real (never in the sample)
