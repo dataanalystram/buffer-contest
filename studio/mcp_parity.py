@@ -228,7 +228,7 @@ def replace_draft_media(studio, a, args: dict) -> dict:
 # ------------------------------------------------------------------------------------------------ per-page agent context
 PAGES: dict[str, dict] = {
     "make_post": {"title": "Make a post", "shows": "The chat thread of one post run: the request, the agent's steps, one post card per channel.",
-                  "tools": ["start_post", "make_post", "get_run", "reply_post", "create_package", "replace_channel_media", "set_template", "get_post_templates",
+                  "tools": ["start_post", "continue_run", "make_post", "get_run", "reply_post", "create_package", "replace_channel_media", "set_template", "get_post_templates",
                             "set_theme", "set_cover", "list_music", "set_post_music", "use_brand_kit", "update_package_draft",
                             "undo_package_media", "schedule_package", "get_post_context", "rename_post_thread", "get_media_preview",
                             "get_ai_engine", "set_ai_engine"]},

@@ -8,6 +8,10 @@ a Library item and nothing told the app to reuse what it had. The rules now, enf
   upload and ``create_package`` takes that ``run_id``. A creator called WITHOUT ``run_id`` while this token has an open
   run (``active_run``: newest run the token made, still ``draft``/``ready``, nothing sent to Buffer or waiting for
   approval, touched in the last ``HQ_MCP_ACTIVE_RUN_S``, default 2 h) works on that run and answers ``reused: true``.
+* **One request = one run = one thread (owner, 4 Nov 2026 16:14).** Follow-ups about the SAME content (switch carousel to
+  reel, edit slide 3, two more reels of the same story) stay in that run. A NEW request with new content, even in the same
+  chat, is a new run and thread (``start_post(new_request: true)``), not one giant thread. When it is unclear, the app asks
+  the person; ``continue_run(run_id)`` joins an existing run. Every answer that names a run carries ``thread_url``.
 * **A new run only for a new request (or a new chat).** ``start_post`` (always with ``user_asked: true``) and no ``run_id``
   is the person's new request: it opens a new run and is never refused for how many runs an app made (owner, 4 Nov 2026
   15:07: people open new chats in their AI app, and per-hour / per-day caps blocked them). The same request again within
@@ -52,18 +56,18 @@ REUSERS = {"start_post", "create_package", "make_post"}
 ALWAYS_NEW = {"draft_from_library", "run_agent", "edit_media", "clips_from_video", "split_video"}
 # tools that take an optional run_id for media they render or store (checked for ownership)
 RUN_MEDIA = {"render_carousel", "hero_edit", "edit_video", "render_reel", "split_video", "library_upload_url", "create_upload",
-             "import_from_link", "create_package", "start_post"}
+             "import_from_link", "create_package", "start_post", "continue_run"}
 # a new template or brand kit, or switching the active kit, only when the person asked (user_asked: true)
 NEEDS_USER_ASKED = {"create_template", "create_brand_kit", "set_active_brand_kit"}
 # tools whose identical repeat within DERIVED_TTL is the same call (a retry), never a second render or run
-DERIVED = {"start_post", "create_package", "render_carousel", "hero_edit", "edit_video", "render_reel", "split_video",
+DERIVED = {"start_post", "continue_run", "create_package", "render_carousel", "hero_edit", "edit_video", "render_reel", "split_video",
            "library_upload_url", "import_from_link", "schedule_package", "make_post", "draft_from_library", "clips_from_video"}
 # never stored: answers that carry a single-use secret (a confirm token, an upload URL, a send code) or are part of a
 # chunked upload
 NO_IDEM = {"create_send_code", "create_upload", "upload_media_chunk", "finish_upload", "place_clips_in_week", "cleanup_agent_drafts",
            "submit_post", "preview_post"}
 # arguments that steer this layer and never reach a tool's own logic or its idempotency hash
-CONTROL = ("idempotency_key", "user_asked", "new_post", "reason", "approval_id")
+CONTROL = ("idempotency_key", "user_asked", "new_post", "new_request", "reason", "approval_id")
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS mcp_idem (user_id TEXT, agent_id INTEGER, ikey TEXT, tool TEXT, args_hash TEXT, result TEXT, "
           "at REAL, PRIMARY KEY (user_id, agent_id, ikey))")
@@ -204,6 +208,13 @@ def before(studio, a: Actor, name: str, args: dict) -> tuple[dict, dict | None]:
         return args, None
     if name == "make_post" and args.get("brain") != "external":
         return args, None  # server AI make_post: its own path (the paid-API consent gate)
+    if name == "continue_run":
+        if not rid:
+            raise ActionError("continue_run needs the run_id of the post to continue (start_post returned it).")
+        return args, None
+    if name == "start_post" and args.get("new_request") is True and not rid:
+        # "a new request with new content": the person asked for it, so it is a new run even if the title matches
+        args = {**args, "new_post": True, "user_asked": True}
     new_post = args.get("new_post") is True
     if new_post and args.get("user_asked") is not True:
         raise ActionError("Starting another post needs the person's say-so: ask them, then call again with new_post: true and "
@@ -251,7 +262,24 @@ def after(studio, a: Actor, name: str, args: dict, result: Any) -> Any:
         result = {**result, "reused": True, "deduped": True, "note": DEDUPED_NOTE.format(rid=rid)}
     elif args.get("_reused") and rid:
         result = {**result, "reused": True, "note": REUSED_NOTE.format(rid=rid)}
+    if name in THREAD_LINKED and result.get("run_id") and "thread_url" not in result:
+        url = thread_url(studio, result["run_id"])
+        if url:
+            result = {**result, "thread_url": url}
     return result
+
+
+# tools that make or change a run (or report a render that lands on one): their answers carry the thread link
+THREAD_LINKED = REUSERS | RUN_MEDIA | ALWAYS_NEW | {"continue_run", "render_status"}
+
+
+def thread_url(studio, rid: Any) -> str:
+    """The run's thread in HuhQueue (the Library's "View run" deep link opens it in Make a post)."""
+    try:
+        base = str(getattr(getattr(studio, "s", None), "public_url", "") or "").rstrip("/")
+        return f"{base}/?tab=library&run={int(rid)}" if base else ""
+    except (TypeError, ValueError):
+        return ""
 
 
 # ------------------------------------------------------------------------------------------------ idempotency
@@ -314,7 +342,7 @@ def remember(store, a: Actor, name: str, args: dict, key: tuple[str, bool], resu
         pass
 
 
-KEEP_REASON = {"start_post"}  # start_post keeps the person's words (reason): its thread and audit line quote them
+KEEP_REASON = {"start_post", "continue_run"}  # start_post keeps the person's words (reason): its thread and audit line quote them
 
 
 def strip_control(args: dict, name: str = "") -> dict:
@@ -332,8 +360,11 @@ TOOLS: list[dict[str, Any]] = [
      "'swap slide 3', 'shorter caption') update this same post and its thread. A change of format ('not a carousel, make it a "
      "reel') is the SAME post: call start_post(run_id, format='reel') and render with the same run_id. Several outputs for one "
      "request ('make 3 reels') are ONE post: render each with output: 1, 2, 3. A new request from the person, or a new chat, "
-     "is a new start_post (never limited by how many posts the app made); the same request again within 10 minutes returns "
-     "the post it opened (deduped: true).",
+     "is a new start_post (never limited by how many posts the app made): one request = one run = one thread, so a NEW "
+     "request with new content in the same chat is a new start_post(new_request: true), not more of the old thread. When "
+     "you can't tell whether it's about the same content, ask the person ('continue in the current post or start a new "
+     "one?') and use continue_run(run_id) or start_post(new_request: true). The same request again within 10 minutes "
+     "returns the post it opened (deduped: true). Every answer carries run_id and thread_url.",
      "inputSchema": {"type": "object", "required": ["title", "user_asked"], "properties": {
          "title": {"type": "string", "description": "Short title of the post, from the person's request"},
          "brief": {"type": "string", "description": "One line: what the person asked for"},
@@ -343,7 +374,20 @@ TOOLS: list[dict[str, Any]] = [
          "user_asked": {"type": "boolean", "description": "true: the person asked for this post"},
          "reason": {"type": "string", "description": "The request in a few words"},
          "new_post": {"type": "boolean", "description": "true: a separate post even if the title matches one opened a moment ago"},
+         "new_request": {"type": "boolean", "description": "true: the person made a NEW request with new content (a new run and "
+                         "thread even in the same chat, even if the title matches)"},
          "run_id": {"type": "integer", "description": "Continue this post instead (a follow-up or a change of format)"},
+         "idempotency_key": S}}},
+    {"name": "continue_run", "description": "Join an existing post (run) for a follow-up about the SAME content: the person's "
+     "words go in its thread and you get its run_id and thread_url back; then pass run_id to every render and create_package "
+     "call. Use it when the person says to keep working on an earlier post, or answered 'continue' when you asked whether a "
+     "request belongs to the current post. format switches the post (e.g. carousel to reel), as start_post(run_id, format) "
+     "does. A post already sent to Buffer or waiting in Approvals can't be continued: start a new one.",
+     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {
+         "run_id": {"type": "integer", "description": "The post to continue (start_post returned it)"},
+         "reason": {"type": "string", "description": "The person's follow-up in a few words (added to the thread)"},
+         "format": {"type": "string", "enum": ["carousel", "reel", "photo", "text"],
+                    "description": "Optional: the person changed the format"},
          "idempotency_key": S}}},
     {"name": "cleanup_agent_drafts", "description": "Tidy up what AI apps left behind: post runs an app made that never went to "
      "Buffer or Approvals, and Library items an app uploaded or rendered that no post uses. Step 1 (default dry_run: true) "
@@ -391,6 +435,8 @@ def start_post(studio, a: Actor, args: dict) -> dict:
     title = " ".join(str(args.get("title") or "").split())[:200]
     if not title:
         raise ActionError("Give the post a short title (from the person's request).")
+    prev_run = active_run(store, a) if is_agent(a) else None
+    prev = prev_run["id"] if prev_run else None
     chans = [str(c) for c in args.get("channel_ids") or [] if c][:20]
     inp = {"prompt": title, "brief": str(args.get("brief") or "")[:500], "via": ROLE_SOURCE, "started_by": "start_post",
            "channel_ids": chans, "format": args.get("format") if args.get("format") in ("carousel", "reel", "photo", "text") else ""}
@@ -402,10 +448,41 @@ def start_post(studio, a: Actor, args: dict) -> dict:
                   (a.uid, "client", json.dumps(inp), "draft", json.dumps([]), json.dumps(res), now, now,
                    a.agent["id"] if is_agent(a) else None))
     store.audit(a.uid, a.label, "start_post", "read", {"run": rid, "reason": str(args.get("reason") or "")[:120]})
-    return {"run_id": rid, "status": "draft", "title": title[:120], "reused": False, "spent_usd": 0,
-            "next": "Keep this run_id for this request. Pass it to render_carousel / hero_edit / edit_video / render_reel / "
-                    "uploads and to create_package; follow-ups (and a change of format) update this same post. Several "
-                    "outputs: pass output: 1, 2, 3 to each render."}
+    out = {"run_id": rid, "status": "draft", "title": title[:120], "reused": False, "spent_usd": 0,
+           "next": "Keep this run_id for this request. Pass it to render_carousel / hero_edit / edit_video / render_reel / "
+                   "uploads and to create_package; follow-ups (and a change of format) update this same post. Several "
+                   "outputs: pass output: 1, 2, 3 to each render."}
+    if prev:
+        out.update(previous_run_id=prev, note=f"New post (run {rid}) for a new request. If the person meant to change run "
+                   f"{prev} instead, ask them and use continue_run(run_id={prev}).")
+    return out
+
+
+def continue_run(studio, a: Actor, args: dict) -> dict:
+    """Join an existing run for a follow-up about the same content (the person said so, or answered 'continue')."""
+    store = studio.store
+    rid = _rid(args.get("run_id"))
+    if not rid:
+        raise ActionError("continue_run needs the run_id of the post to continue (start_post returned it).")
+    studio.kill_switch_check(a, "continue_run")
+    run = own_run(store, a, rid)
+    try:
+        res = json.loads(run["result"] or "{}") or {}
+    except ValueError:
+        res = {}
+    if closed(res):
+        raise ActionError(f"Run {rid} already went to Buffer or waits in Approvals, so it can't take more changes. Start a new "
+                          "post with start_post(new_request: true).", 409)
+    said = " ".join(str(args.get("reason") or "").split())[:300]
+    fmt = args.get("format") if args.get("format") in ("carousel", "reel", "photo", "text") else ""
+    if said and not fmt:  # with a format switch, start_post(run_id, format) writes the person's words into the thread
+        res.setdefault("thread", []).append({"role": "user", "text": said, "at": time.time()})
+        store.x("UPDATE agent_runs SET result=?, updated=? WHERE id=? AND user_id=?",
+                (json.dumps(res, default=str), time.time(), rid, a.uid))
+    out = start_post(studio, a, {"run_id": rid, "format": fmt, "reason": said})
+    store.audit(a.uid, a.label, "continue_run", "read", {"run": rid, "reason": said[:120]})
+    return {**out, "joined": True, "next": f"Continuing run {rid}: pass run_id: {rid} to every render and create_package "
+            "call. " + str(out.get("next") or "")}
 
 
 def _app_of(store, uid: str) -> dict[int, str]:
@@ -525,6 +602,8 @@ def call_tool(studio, actor: Actor, name: str, args: dict):
         return NotImplemented
     if name == "start_post":
         return start_post(studio, actor, args or {})
+    if name == "continue_run":
+        return continue_run(studio, actor, args or {})
     return cleanup_agent_drafts(studio, actor, args or {})
 
 
@@ -537,6 +616,14 @@ def add_routes(app, house, actor) -> None:
         b = dict(body or {})
         args, early = before(house.studio, a, "start_post", b)
         return after(house.studio, a, "start_post", args, early if early is not None else start_post(house.studio, a, strip_control(args, "start_post")))
+
+    @app.post("/api/agent/continue-run")
+    def rest_continue_run(request: Request, body: dict = Body(default={})):
+        """continue_run: join an existing run for a follow-up about the same content ({run_id, reason, format})."""
+        a = actor(request, write=True)
+        b = dict(body or {})
+        args, early = before(house.studio, a, "continue_run", b)
+        return after(house.studio, a, "continue_run", args, early if early is not None else continue_run(house.studio, a, strip_control(args, "continue_run")))
 
     @app.post("/api/agent/cleanup")
     def rest_cleanup(request: Request, body: dict = Body(default={})):

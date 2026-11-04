@@ -7,6 +7,8 @@ everything that belongs to one request is ONE run and ONE thread, and a new requ
 (d) a new chat / new request with user_asked: a new run, never blocked
 (e) the paid-API approval gate
 (f) cleanup lists first, then moves to the Bins
+(g) a NEW unrelated request in the same chat: a new run and thread (refined model, 16:14)
+(h) an ambiguous request: the instructions say ask the person; continue_run joins the old run
 """
 import json
 import time
@@ -233,3 +235,67 @@ def test_f_cleanup_lists_first_then_moves_to_the_bins(human, page):  # noqa: F81
     assert store.q("SELECT storage FROM library_items WHERE id=?", (car["library_id"],))[0]["storage"] == "trash"
     assert rid not in [r["id"] for r in human.get("/api/agent/runs").json()]
     assert Actor  # (import kept for parity with the other run tests)
+
+
+# ------------------------------------------------------------------------------------------------ (g)
+def test_g_a_new_unrelated_request_in_the_same_chat_is_a_new_run_and_thread(human, page):  # noqa: F811
+    """Refined model (owner, 4 Nov 2026 16:14): one request = one run = one thread, not one giant thread per chat."""
+    tok = _chat(human)
+    first = _call(human, tok, "start_post", {"title": "Best headphones under EUR 150", "format": "carousel", "user_asked": True,
+                                             "reason": "make a carousel of the best headphones"})
+    rid1 = first["run_id"]
+    assert first["thread_url"].endswith(f"/?tab=library&run={rid1}")
+    _call(human, tok, "render_carousel", {"run_id": rid1, "slides": _slides()})
+    # same chat, new content: "now make a reel about the OpenAI device launch"
+    second = _call(human, tok, "start_post", {"title": "OpenAI device launch reel", "format": "reel", "new_request": True,
+                                              "reason": "now make a reel about the OpenAI device launch"})
+    rid2 = second["run_id"]
+    assert rid2 != rid1 and second["reused"] is False and second["previous_run_id"] == rid1
+    assert "continue_run" in second["note"] and second["thread_url"].endswith(f"run={rid2}")
+    # new_request wins over the same-title dedupe too: the person asked again for a new one
+    third = _call(human, tok, "start_post", {"title": "OpenAI device launch reel", "new_request": True, "reason": "another one"})
+    assert third["run_id"] not in (rid1, rid2)
+    assert _runs(human) == 3
+    runs = {r["id"]: r for r in human.get("/api/agent/runs").json()}
+    assert {rid1, rid2, third["run_id"]} <= set(runs)
+    t1 = _run(human, rid1)["result"]["thread"]
+    t2 = _run(human, rid2)["result"]["thread"]
+    assert any("headphones" in m["text"] for m in t1) and not any("OpenAI" in m["text"] for m in t1)
+    assert any("OpenAI" in m["text"] for m in t2) and not any("headphones" in m["text"] for m in t2)
+    # the follow-up render with run_id lands on its own run only
+    car = _call(human, tok, "render_carousel", {"run_id": rid2, "slides": _slides("openai")})
+    assert car["run_id"] == rid2 and car["thread_url"].endswith(f"run={rid2}")
+
+
+# ------------------------------------------------------------------------------------------------ (h)
+def test_h_ambiguous_request_instructions_say_ask_and_continue_run_joins_the_old_run(human, page, fake_video):  # noqa: F811
+    tok = _chat(human)
+    init = rpc(human, tok, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "c", "version": "1"}})
+    text = init["result"]["instructions"]
+    assert "Continue in the current post or start a new one?" in text and "continue_run(run_id)" in text
+    assert "new_request: true" in text
+    tools = {t["name"]: t for t in rpc(human, tok, "tools/list")["result"]["tools"]}
+    assert "continue_run" in tools and tools["continue_run"]["inputSchema"]["required"] == ["run_id"]
+    assert "new_request" in tools["start_post"]["inputSchema"]["properties"]
+    rid1 = _call(human, tok, "start_post", {"title": "AI card launch", "format": "carousel", "user_asked": True,
+                                            "reason": "a carousel on the AI card launch"})["run_id"]
+    car = _call(human, tok, "render_carousel", {"run_id": rid1, "slides": _slides()})
+    rid2 = _call(human, tok, "start_post", {"title": "Headphones roundup", "new_request": True, "reason": "headphones"})["run_id"]
+    # "add 2 more reels" - of which? The app asked; the person said "the card one": continue_run joins run 1
+    j = _call(human, tok, "continue_run", {"run_id": rid1, "reason": "add 2 more reels of the card story"})
+    assert j["run_id"] == rid1 and j["joined"] is True and j["reused"] is True and j["thread_url"].endswith(f"run={rid1}")
+    for n in (2, 3):
+        r = _wait(human, tok, _call(human, tok, "render_reel", {"run_id": rid1, "images": car["media_urls"], "output": n}))
+        assert r["run_id"] == rid1
+    assert _runs(human) == 2
+    res1 = _run(human, rid1)["result"]
+    assert any(m["text"] == "add 2 more reels of the card story" for m in res1["thread"] if m["role"] == "user")
+    assert sorted(o["output"] for o in res1["outputs"]) == [1, 2, 3]
+    assert not _run(human, rid2)["result"].get("outputs")
+    # a format switch through continue_run is the same run too
+    sw = _call(human, tok, "continue_run", {"run_id": rid1, "format": "reel", "reason": "make the first one a reel"})
+    assert sw["run_id"] == rid1 and sw["format"] == "reel" and _runs(human) == 2
+    # continue_run needs a run_id, and never reaches another person's run or makes a run
+    assert "run_id" in _err(human, tok, "continue_run", {"reason": "x"})
+    assert "No such post run" in _err(human, tok, "continue_run", {"run_id": 999999})
+    assert _runs(human) == 2

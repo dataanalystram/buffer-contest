@@ -457,6 +457,7 @@ _DESC = {
     "POST /api/agent-tokens": "Create an agent token (shown once)", "DELETE /api/agent-tokens/{token_id}": "Revoke an agent token",
     "PATCH /api/agent-tokens/{token_id}": "Change a token's daily limit (1-100) or its Allow paid APIs switch (humans only)",
     "POST /api/agent/start-post": "start_post: open one post for a request and get its run_id (every follow-up updates it)",
+    "POST /api/agent/continue-run": "continue_run: join an existing run for a follow-up about the same content (run_id, thread_url)",
     "POST /api/agent/cleanup": "cleanup_agent_drafts: list what AI apps left (dry run), then archive those runs and move those Library items to the Bin",
     "GET /api/safety": "Kill switch and daily caps", "POST /api/safety/kill": "Pause or resume every agent (people only)",
     "GET /api/limits": "Your Buffer API budget right now", "GET /api/plan": "Your Buffer plan's limits",

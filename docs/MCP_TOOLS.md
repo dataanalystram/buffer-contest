@@ -36,9 +36,18 @@ Heavy jobs (`edit_video`, `render_reel`, `split_video`, `render_template` video)
 One prompt in Claude ("find the best headphones under EUR 150, make a carousel, edit the images nicely") used to leave
 several Make a post threads and a Library item per render. The server now enforces (`studio/run_discipline.py`):
 
-1. **Start once per request.** `start_post(title, brief, user_asked: true, reason)` opens ONE post (a run in status
-   `draft`) for the person's request and returns `run_id`. A new request from the person, or a new chat in their AI app,
-   is a new `start_post` and a new run. The same request repeated within 10 minutes (same title, e.g. the app retried)
+1. **One request = one run = one thread** (owner, 4 Nov 2026 16:14). `start_post(title, brief, user_asked: true, reason)`
+   opens ONE post (a run in status `draft`) for the person's request and returns `run_id`. Follow-ups about the SAME
+   content (switch carousel to reel, edit slide 3, two more reels of the same story) stay in that run and its thread. A
+   NEW request with new content, even in the same chat, is a new run and thread: `start_post(new_request: true)` (it also
+   skips the same-title dedupe), never one giant thread to scroll. The answer names the run the app was on
+   (`previous_run_id`) in case the person meant that one. **When it's unclear** whether a request is about the same
+   content, the app asks the person ("Continue in the current post or start a new one?") and then calls
+   `continue_run(run_id, reason)` or `start_post(new_request: true)`. `continue_run` joins an existing run (the person's
+   words go in its thread; `format` switches it, as `start_post(run_id, format)` does); a run already sent to Buffer or
+   waiting in Approvals answers 409. Every answer from a tool that makes or changes a run (start_post, continue_run, the renders, uploads, create_package,
+   render_status) carries `run_id` and `thread_url`
+   (`<app>/?tab=library&run=<id>`, which opens the thread in Make a post). The same request repeated within 10 minutes (same title, e.g. the app retried)
    returns the run it already opened with `deduped: true` (`new_post: true` forces a separate one).
 2. **Pass `run_id` everywhere.** `render_carousel`, `hero_edit`, `edit_video`, `render_reel`, `split_video`,
    `library_upload_url`, `create_upload`, `import_from_link` and `create_package` take it. Follow-ups update the same run:
@@ -105,6 +114,7 @@ that app's paid calls run without asking and each one is written to Activity.
 | Tool | Brain | What it does |
 |---|---|---|
 | `start_post` | no model | Open ONE post for the person's request (`user_asked: true`) and get its `run_id`. A new request or a new chat is a new run, never limited by count; the same request within 10 minutes returns it (`deduped: true`). With `run_id` (and `format`) it continues that post, e.g. switching a carousel to a reel. |
+| `continue_run` | no model | Join an existing post (run) for a follow-up about the same content: the person's words go in its thread, and `run_id` + `thread_url` come back. Use it after asking the person when a request might belong to the current post; `format` switches the post. A post sent to Buffer or waiting in Approvals answers 409. |
 | `cleanup_agent_drafts` | no model | List the runs and Library items AI apps left (dry run, changes nothing, single-use `confirm_token`); with the token the person OK'd: runs archived, items to the Library Bin (7 days). |
 | `research_link` | client brain | Read an article, launch page or post URL: title, site, description, the article paragraphs, figures found in the text (each with the source URL), the page's images and videos. |
 | `read_x_post` | client brain | The free X reader: an X/Twitter post's author, handle, text, date and its photos/videos (direct MP4 when the post has one), without an X API key. |
