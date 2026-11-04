@@ -141,6 +141,9 @@ def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], 
     UNRESOLVED, so a scoped token or restricted teammate gets the same 404 for a missing id as for another channel's id (no
     existence probing); other body ids that don't resolve add nothing (their routes validate them)."""
     from .services.posts import PostError, resolve_channels
+    # "/api/validate/" or "/api/bulk/" would otherwise skip the exact-path checks and reach FastAPI's trailing-slash
+    # 307 for a missing id while a forbidden one 404s here: judge the slash-less path (CodeRabbit, 4 Nov 2026)
+    path = path.rstrip("/") or "/"
     explicit: set[str] = set()
     objects: set[str] = set()
     refs: list = []

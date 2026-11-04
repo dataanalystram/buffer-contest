@@ -292,3 +292,15 @@ def test_validate_with_a_missing_post_or_target_id_answers_like_a_forbidden_one(
         _hidden(c.post("/api/validate", json={**base, **extra}))
     assert c.post("/api/validate", json={**base, "post_id": mine["id"]}).status_code == 200
     assert api.post("/api/validate", json={**base, "post_id": "post_nope"}).status_code == 200   # the owner: unchanged
+
+
+def test_trailing_slash_paths_answer_missing_and_forbidden_ids_alike(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): POST /api/validate/ (trailing slash) skipped the exact-path check, so a missing id got
+    FastAPI's 307 redirect while another channel's got 404. The first response (redirects off) is now 404 for both."""
+    c, other, mine, theirs, both, note = _setup(app, api, core, channel)
+    base = {"caption": "hi", "channel_ids": [channel["id"]]}
+    for extra in ({"post_id": theirs["id"]}, {"post_id": "post_nope"},
+                  {"target_id": theirs["targets"][0]["id"]}, {"target_id": "tgt_nope"}):
+        _hidden(c.post("/api/validate/", json={**base, **extra}, follow_redirects=False))
+    for ids in (["tgt_nope"], [theirs["targets"][0]["id"]]):
+        _hidden(c.post("/api/bulk/", json={"ids": ids, "action": "draft"}, follow_redirects=False))
