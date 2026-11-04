@@ -22,3 +22,16 @@ def test_delete_user_clears_tables_other_modules_own(app):
     for t in seeded:
         assert st.q(f"SELECT COUNT(*) AS n FROM {t} WHERE user_id=?", (uid,))[0]["n"] == 0, t
     assert st.user(uid) is None
+
+
+def test_delete_user_clears_library_purged_tokens(app):
+    """The Bin purge's token list (library_purged) is per-person data too, so Disconnect and delete clears it (4 Nov 2026)."""
+    st = app.state.store
+    uid = "acc_del_2"
+    st.upsert_user(uid, "b@example.com", "B", "org", "Org", {"access_token": "x", "refresh_token": "y", "expires_at": 0})
+    _ = app.state.house.library  # the Library creates its tables on first use
+    st.x("INSERT INTO library_purged(token,user_id,at) VALUES(?,?,?)", ("run:1", uid, 0.0))
+    st.x("INSERT INTO library_purged(token,user_id,at) VALUES(?,?,?)", ("tok_keep", "someone_else", 0.0))
+    st.delete_user(uid)
+    assert st.q("SELECT COUNT(*) AS n FROM library_purged WHERE user_id=?", (uid,))[0]["n"] == 0
+    assert st.q("SELECT COUNT(*) AS n FROM library_purged WHERE user_id=?", ("someone_else",))[0]["n"] == 1

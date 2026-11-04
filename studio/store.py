@@ -335,6 +335,10 @@ class Store:
             self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
         except Exception:  # noqa: BLE001
             pass
+        try:  # the purged-run token list (Bin purge never resurrects) goes with the account too
+            self.x("DELETE FROM library_purged WHERE user_id=?", (uid,))
+        except Exception:  # noqa: BLE001  (this store hasn't created the Library tables)
+            pass
         for t in OWNED_ELSEWHERE:  # tables other modules create on first use (privacy page: "Disconnect and delete")
             try:
                 self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
