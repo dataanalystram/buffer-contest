@@ -182,7 +182,8 @@ def test_people_in_the_app_get_jev_and_mcp_apps_wait_for_approval(human, app, mo
     url = house.media_url(up["token"])
     n = st.q("SELECT COUNT(*) n FROM agent_runs WHERE kind='take'")[0]["n"]
     _, out = mcp_call(human, tok, "clips_from_video", {"media_url": url, "owns": True, "jev": True})
-    assert out["needs_user_approval"] is True and out["tool"] == "clips_from_video_jev" and out["spent_usd"] == 0
+    assert out["needs_user_approval"] is True and out["tool"] == "clips_from_video" and out["spent_usd"] == 0
+    assert "clips_from_video (with jev: true)" in out["message"] and "clips_from_video_jev" not in out["message"]  # a callable tool
     assert st.q("SELECT COUNT(*) n FROM agent_runs WHERE kind='take'")[0]["n"] == n            # nothing was created
     _, out = mcp_call(human, tok, "clips_from_video", {"media_url": url, "owns": True})
     assert out.get("id") and spec()["jev"] is False                                              # apps: off unless approved

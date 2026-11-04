@@ -133,7 +133,16 @@ def hidden(status: str, res: dict) -> bool:
         return False
     if tb.get("purged"):
         return True
+    if tb.get("takes") == "delete" and status == "binned" and ((res.get("bin") or {}).get("at") or 0) > (tb.get("at") or 0):
+        return False  # the take was restored from the take Bin and deleted again on its own: this marker is stale, and the
+        # take's own Bin clock (take_bin.py) decides when it goes, never the older thread deletion time
     return not (tb.get("takes") == "delete" and status != "binned")
+
+
+def _has_table(store, name: str) -> bool:
+    if store.pg:
+        return bool(store.q("SELECT 1 FROM information_schema.tables WHERE table_name=? AND table_schema = current_schema()", (name,)))
+    return bool(store.q("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)))
 
 
 def _cursor_in(cursor) -> int:
@@ -220,8 +229,8 @@ class ThreadBin:
         rid = resolve(self.store, a.uid, tid)
         run = self.h.run(a, rid)  # merges the MCP steps; 404 for anyone else's
         res, inp = run.get("result") or {}, run.get("input") or {}
-        if run["kind"] == "take" and hidden(run["status"], res):
-            raise ActionError("No such thread.", 404)
+        if run["status"] in ("archived", "binned") or (run["kind"] == "take" and hidden(run["status"], res)):
+            raise ActionError("No such thread.", 404)  # what list_threads hides, get_thread hides (tidied or in a Bin)
         off = _cursor_in(cursor)
         msgs = [m for m in res.get("thread") or [] if isinstance(m, dict)]
         page = [{"role": m.get("role"), "text": _clip(m.get("text")), "at": m.get("at")} for m in msgs[off:off + PAGE_MSGS]]
@@ -384,11 +393,11 @@ class ThreadBin:
         return bool(done_t)
 
     def _drop_conversation(self, uid: str, rid: int) -> None:
-        for sql in ("DELETE FROM chat_titles WHERE user_id=? AND run_id=?", "DELETE FROM mcp_calls WHERE user_id=? AND run_id=?"):
-            try:
-                self.store.x(sql, (uid, rid))
-            except Exception:  # noqa: BLE001 - the table is made on first use (chat_titles on the first rename)
-                pass
+        # the tables are made on first use (chat_titles on the first rename): look before deleting, never catch a failed
+        # statement inside the transaction (on Postgres that aborts it, and the save after it would fail too)
+        for table in ("chat_titles", "mcp_calls"):
+            if _has_table(self.store, table):
+                self.store.x(f"DELETE FROM {table} WHERE user_id=? AND run_id=?", (uid, rid))  # nosec B608 - fixed names
 
     def purge_expired(self, days: float | None = None) -> int:
         """Threads in the Bin longer than TRASH_DAYS are removed for good (the media check loop, every 6 hours)."""

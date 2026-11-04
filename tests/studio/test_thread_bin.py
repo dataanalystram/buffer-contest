@@ -199,3 +199,47 @@ def test_mcp_thread_tools_start_post_thread_id_instructions_and_docs(human, app,
     from studio import mcp_parity
     assert {"list_threads", "get_thread", "delete_thread", "restore_thread"} <= set(mcp_parity.PAGES["make_post"]["tools"])
     assert tools <= set(mcp_parity.PAGES["one_take"]["tools"])
+
+
+def test_a_stale_thread_marker_never_purges_a_take_deleted_again_on_its_own(human, app, monkeypatch):
+    # delete the thread with its take, restore the take from the take Bin, delete the take again from One take: the old
+    # thread deletion time must not purge it early; the take Bin's own clock decides (Greptile, PR #108)
+    rid, _, _, _ = _rendered_take(human, app, monkeypatch)
+    st, house = app.state.store, app.state.house
+    human.delete(f"/api/threads/{_tid(human, rid)}?takes=delete")
+    res = json.loads(st.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]["result"])
+    res["thread_bin"]["at"] = time.time() - 8 * 86400                                      # the thread was deleted 8 days ago
+    st.x("UPDATE agent_runs SET result=? WHERE id=?", (json.dumps(res), rid))
+    assert human.post(f"/api/takes/{rid}/restore").json()["restored"]
+    assert human.delete(f"/api/takes/{rid}").status_code == 200                              # deleted again, today
+    assert house.threads.purge_expired() == 0 and human.get("/api/threads/bin").json()["threads"] == []
+    assert st.q("SELECT status FROM agent_runs WHERE id=?", (rid,))[0]["status"] == "binned"   # still in the take Bin
+    assert [x["take_id"] for x in human.get("/api/takes/bin").json()["takes"]] == [rid]
+
+
+def test_get_thread_hides_what_list_threads_hides(human, app, monkeypatch):
+    st = app.state.store
+    tidied = _run(st, status="archived")
+    rid, _, _, _ = _rendered_take(human, app, monkeypatch)
+    tid = {x["id"]: x["thread_id"] for x in _rows(human)}[rid]
+    tidied_tid = thread_bin.public_id(st, "acc_1", tidied)
+    assert human.delete(f"/api/takes/{rid}").status_code == 200                              # the take Bin, not the thread Bin
+    assert human.get(f"/api/threads/{tid}").status_code == 404
+    assert human.get(f"/api/threads/{tidied_tid}").status_code == 404
+    listed = json.dumps(human.get("/api/threads").json())
+    assert tid not in listed and tidied_tid not in listed
+
+
+def test_purge_looks_for_optional_tables_instead_of_catching_a_failed_delete(app):
+    st = app.state.store
+    assert thread_bin._has_table(st, "agent_runs") and not thread_bin._has_table(st, "no_such_table_here")
+
+
+def test_log_tail_redacts_presigned_signatures(monkeypatch):
+    from studio import render_worker
+
+    class T:
+        buf = "GET https://r2.test/u/v.mp4?X-Amz-Credential=AK%2F1&X-Amz-Signature=0123abcd4567ef&x=1 failed; jt_abcdefghijkl\n"
+    monkeypatch.setattr(render_worker, "_tails", [T()])
+    out = render_worker.log_tail()
+    assert "0123abcd4567ef" not in out and "X-Amz-Signature=[redacted]" in out and "jt_[redacted]" in out

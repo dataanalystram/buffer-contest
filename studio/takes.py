@@ -273,7 +273,10 @@ class Takes(TakeBin):
                              "Jev checks up to a dozen keyframes of the video for the speaker's face",
                              lambda args: {"calls_max": jev_faces.cap_from_env()})
         held = consent.gate(self.h.studio, a, "clips_from_video_jev", body)
-        return held if held else True
+        if held:  # the approval is filed as clips_from_video_jev; the tool the app calls again is clips_from_video (jev: true)
+            return {**held, "tool": "clips_from_video",
+                    "message": held["message"].replace("clips_from_video_jev", "clips_from_video (with jev: true)")}
+        return True
 
     def start_sample(self, a: Actor, body: dict | None = None) -> dict:
         """The sample take: Buffer's 89-minute Buffer Commit kickoff Q&A (credited), split into 5 clips ahead of time by the same
@@ -401,7 +404,7 @@ class Takes(TakeBin):
                 self._download(spec["source_url"], src)
             if spec["kind"] == "take_analyze":
                 analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=MAX_TAKE_SECS,
-                                        transcript=reuse_captions(str(src), spec))
+                                        transcript=reuse_captions(str(src), spec), jev=spec.get("jev") is True)
                 self.on_analysis(jid, analysis, "")
             else:
                 logo = self.h.get_media(spec["logo"])["data"] if spec.get("logo") and self.h.get_media(spec["logo"]) else None
