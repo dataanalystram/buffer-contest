@@ -1,7 +1,7 @@
 """Routes for AI ideas, image alt text, comment insights and channel groups, with their registry actions."""
 from __future__ import annotations
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 from sqlalchemy import select
 
 from .. import actions as reg
@@ -44,8 +44,9 @@ def add_ai_tools_routes(app: FastAPI, core) -> None:
         return {"id": mid, "alt_text": text}
 
     @app.get("/api/comments/insights", tags=["community"])
-    def comments_insights(days: int = 30, channel_id: str | None = None):
-        return ai_tools.comment_insights(core, days, channel_id)
+    def comments_insights(request: Request, days: int = 30, channel_id: str | None = None):
+        from ..scope_filter import narrow
+        return ai_tools.comment_insights(core, days, narrow(request, channel_id))
 
     @app.get("/api/channel-groups", tags=["channels"])
     def groups_list():

@@ -1041,14 +1041,16 @@ def _store_groups(s, items: list[dict]) -> None:
     s.merge(row)
 
 
-def hashtag_stats(core, days: int = 90, s=None) -> list[dict]:
-    """Every hashtag used in the last `days`: how often, on which networks, and how the sent posts did."""
+def hashtag_stats(core, days: int = 90, s=None, channels: set | None = None) -> list[dict]:
+    """Every hashtag used in the last `days` on `channels` (None = all): how often, on which networks, how the sent posts did."""
+    from ..scope_filter import only
     def run(s):
         since = utcnow() - timedelta(days=days)
-        rows = s.execute(select(func.coalesce(PostTarget.caption_override, Post.caption), PostTarget.options, PostTarget.status, PostTarget.insights, PostTarget.published_at,
+        rows = s.execute(only(select(func.coalesce(PostTarget.caption_override, Post.caption), PostTarget.options, PostTarget.status, PostTarget.insights, PostTarget.published_at,
                                 PostTarget.scheduled_at, PostTarget.created_at, Channel.provider)
                          .join(Channel, Channel.id == PostTarget.channel_id).join(Post, Post.id == PostTarget.post_id)
-                         .where(func.coalesce(PostTarget.published_at, PostTarget.scheduled_at, PostTarget.created_at) >= since))
+                         .where(func.coalesce(PostTarget.published_at, PostTarget.scheduled_at, PostTarget.created_at) >= since),
+                              PostTarget.channel_id, channels))
         stats: dict[str, dict] = {}
         for cap, opts, st, ins, pub, sch, cr, prov in rows:
             tags = parse_hashtags((cap or "") + "\n" + ((opts or {}).get("first_comment") or ""))
@@ -1137,11 +1139,11 @@ def delete_hashtag_group(core, gid: str) -> dict:
     return {"deleted": gid}
 
 
-def suggest_hashtags(core, caption: str = "", limit: int = 10) -> dict:
+def suggest_hashtags(core, caption: str = "", limit: int = 10, channels: set | None = None) -> dict:
     """Best-performing hashtags you have used that are not in the caption yet, plus groups that share its tags."""
     have = {t.lower() for t in parse_hashtags(caption)}
     words = {w.lower() for w in re.findall(r"[A-Za-z0-9]{3,}", caption or "")}
-    stats = [r for r in hashtag_stats(core, 180) if r["tag"].lower() not in have]
+    stats = [r for r in hashtag_stats(core, 180, channels=channels) if r["tag"].lower() not in have]
     def rank(r):
         rel = 1 if any(w in r["tag"].lower() for w in words) else 0
         return (-rel, -(r["avg_score"] or 0), -r["uses"])

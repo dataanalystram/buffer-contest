@@ -133,12 +133,14 @@ def add_growth_routes(app: FastAPI, core) -> None:
 
     # ---------------------------------------------------------------- hashtags
     @app.get("/api/hashtags/stats", tags=["hashtags"])
-    def hashtags_stats(days: int = 90):
-        return g.hashtag_stats(core, max(1, min(days, 730)))
+    def hashtags_stats(request: Request, days: int = 90):
+        from ..scope_filter import visible
+        return g.hashtag_stats(core, max(1, min(days, 730)), channels=visible(request))
 
     @app.get("/api/hashtags/suggest", tags=["hashtags"])
-    def hashtags_suggest(caption: str = "", limit: int = 10):
-        return g.suggest_hashtags(core, caption, max(1, min(limit, 30)))
+    def hashtags_suggest(request: Request, caption: str = "", limit: int = 10):
+        from ..scope_filter import visible
+        return g.suggest_hashtags(core, caption, max(1, min(limit, 30)), channels=visible(request))
 
     @app.get("/api/hashtags/groups", tags=["hashtags"])
     def hashtag_groups_list():

@@ -19,6 +19,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
+from ..scope_filter import only
 from .. import actions as reg
 from .. import safety
 
@@ -91,12 +92,12 @@ def catalog() -> dict:
                        "query": v.get("query", {})} for k, v in PAGES.items()]}
 
 
-def _ids(core, key: str, parts: list[str], query: dict) -> dict:
+def _ids(core, key: str, parts: list[str], query: dict, vis: set | None = None) -> dict:
     from ..models import Channel, Comment, Idea, Media, PostTarget
     from ..services.posts import iso
     out: dict = {}
     with core.db.session() as s:
-        chans = s.scalars(select(Channel).order_by(Channel.created_at)).all()
+        chans = s.scalars(only(select(Channel), Channel.id, vis).order_by(Channel.created_at)).all()
         out["channels"] = [{"id": c.id, "provider": c.provider, "username": c.username, "status": c.status,
                             "paused": c.paused} for c in chans]
 
@@ -106,12 +107,12 @@ def _ids(core, key: str, parts: list[str], query: dict) -> dict:
                     for t in s.scalars(q.limit(limit))]
         tabs = {"drafts": ("draft",), "approvals": ("pending_approval",), "sent": ("sent",)}
         statuses = tabs.get(query.get("tab") or query.get("ptab") or "", ("scheduled", "sending", "processing", "needs_action"))
-        base = select(PostTarget).where(PostTarget.status.in_(statuses)).order_by(PostTarget.scheduled_at)
+        base = only(select(PostTarget).where(PostTarget.status.in_(statuses)), PostTarget.channel_id, vis).order_by(PostTarget.scheduled_at)
         if key in ("home", "queue", "calendar"):
             out["post_targets"] = targets(base)
         elif key == "channel" and len(parts) > 1:
             ch = s.get(Channel, parts[1])
-            if ch:
+            if ch and (vis is None or ch.id in vis):   # another channel answers like a missing one
                 out["channel"] = {"id": ch.id, "provider": ch.provider, "username": ch.username, "status": ch.status,
                                   "timezone": ch.timezone, "daily_limit": ch.daily_limit,
                                   "token_expires_at": iso(ch.token_expires_at)}
@@ -127,18 +128,18 @@ def _ids(core, key: str, parts: list[str], query: dict) -> dict:
         elif key == "community":
             out["comments"] = [{"id": c.id, "channel_id": c.channel_id, "author": c.author, "text": (c.text or "")[:80],
                                 "status": c.status, "kind": c.kind}
-                               for c in s.scalars(select(Comment).order_by(Comment.at.desc()).limit(50))]
+                               for c in s.scalars(only(select(Comment), Comment.channel_id, vis).order_by(Comment.at.desc()).limit(50))]
     return out
 
 
-def context(core, page: str) -> dict:
+def context(core, page: str, vis: set | None = None) -> dict:
     key, parts, query = parse_route(page)
     if key not in PAGES:
         return {"page": page, "known": False, "error": f"unknown page '{key}'", "pages": catalog()["pages"]}
     p = PAGES[key]
     return {"kind": "agent-context", "version": 1, "page": page or "/home", "route": key, "title": p["title"],
             "shows": p["shows"], "query": query, "query_params": p.get("query", {}), "known": True,
-            "ids": _ids(core, key, parts, query), "actions": page_actions(key),
+            "ids": _ids(core, key, parts, query, vis), "actions": page_actions(key),
             "agents": {k: v for k, v in safety.state(core).items() if k in ("paused", "paused_at", "paused_by", "reason")},
             "docs": catalog()["docs"]}
 
@@ -152,8 +153,9 @@ def embed(html: str) -> str:
 
 def add_context_routes(app: FastAPI, core) -> None:
     @app.get("/api/context", tags=["agents"])
-    def page_context(page: str = Query("/home", description="hash route, e.g. /queue?tab=drafts or /channel/ch_123")):
-        return context(core, page)
+    def page_context(request: Request, page: str = Query("/home", description="hash route, e.g. /queue?tab=drafts or /channel/ch_123")):
+        from ..scope_filter import visible
+        return context(core, page, visible(request))   # only the channels this caller may see (4 Nov 2026)
 
     @app.get("/openapi.json", include_in_schema=False)
     def root_openapi(request: Request):

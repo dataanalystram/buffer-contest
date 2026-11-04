@@ -12,6 +12,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, or_, select
 
+from ..scope_filter import NO_CHANNEL, narrow, only, visible
 from .. import actions as reg
 from ..actions import B, I, S, SA, WHEN, Action
 from ..core import utcnow
@@ -49,7 +50,7 @@ def own_heatmap(s, channel_id: str | None, days: int = 180) -> dict:
     """Median engagement by weekday x hour (channel local time) from this channel's own sent posts."""
     qry = select(PostTarget).where(PostTarget.status == "sent", PostTarget.published_at >= utcnow() - timedelta(days=days))
     if channel_id:
-        qry = qry.where(PostTarget.channel_id == channel_id)
+        qry = qry.where(PostTarget.channel_id.in_(str(channel_id).split(",")))
     cells: dict[tuple[int, int], list[float]] = {}
     for t in s.scalars(qry):
         ins = t.insights or {}
@@ -140,11 +141,13 @@ def media_usage(s, mid: str) -> dict:
 
 
 # --------------------------------------------------------------------------------------------- contacts
-def contact_rows(s, q: str = "") -> list[dict]:
-    rows = s.execute(select(Comment.author, func.count(), func.min(Comment.at), func.max(Comment.at),
-                            func.sum(func.iif(Comment.status == "open", 1, 0)), func.sum(func.iif(Comment.flagged, 1, 0)),
-                            func.sum(func.iif(Comment.text.like("%?%"), 1, 0)), func.group_concat(Comment.channel_id.distinct()))
-                     .where(Comment.is_own.is_(False), Comment.author != "").group_by(Comment.author)).all()
+def contact_rows(s, q: str = "", channels: set | None = None) -> list[dict]:
+    """People who commented, counted from their comments on `channels` only (None = every channel)."""
+    rows = s.execute(only(select(Comment.author, func.count(), func.min(Comment.at), func.max(Comment.at),
+                                 func.sum(func.iif(Comment.status == "open", 1, 0)), func.sum(func.iif(Comment.flagged, 1, 0)),
+                                 func.sum(func.iif(Comment.text.like("%?%"), 1, 0)), func.group_concat(Comment.channel_id.distinct()))
+                          .where(Comment.is_own.is_(False), Comment.author != ""), Comment.channel_id, channels)
+                     .group_by(Comment.author)).all()
     extra = {c.handle: c for c in s.scalars(select(Contact))}
     out = []
     for author, n, first, last, open_, flagged, questions, chans in rows:
@@ -247,9 +250,13 @@ def add_content_routes(app: FastAPI, core) -> None:
                 raise HTTPException(502, f"Could not load playlists: {getattr(e, 'message', e)}") from e
 
     @app.get("/api/insights/best-times", tags=["insights"])
-    def best_times(channel_id: str | None = None, days: int = 180):
+    def best_times(request: Request, channel_id: str | None = None, days: int = 180):
+        channel_id = narrow(request, channel_id)   # a scoped token / restricted teammate: only its channels (4 Nov 2026)
         with core.db.session() as s:
-            chans = [channel(s, channel_id)] if channel_id else list(s.scalars(select(Channel)))
+            if channel_id == NO_CHANNEL:
+                chans = []
+            else:
+                chans = [channel(s, c) for c in channel_id.split(",")] if channel_id else list(s.scalars(select(Channel)))
             heat = own_heatmap(s, channel_id, days)
             return {"heatmap": heat, "channels": [{"id": c.id, "provider": c.provider, "username": c.username,
                                                     **recommend(s, c, max(3, len(c.slots) or 3))} for c in chans],
@@ -424,9 +431,9 @@ def add_content_routes(app: FastAPI, core) -> None:
 
     # ---- contacts
     @app.get("/api/contacts", tags=["contacts"])
-    def contacts(q: str = "", segment: str = "", tag: str = "", assignee: str | None = None):
+    def contacts(request: Request, q: str = "", segment: str = "", tag: str = "", assignee: str | None = None):
         with core.db.session() as s:
-            rows = contact_rows(s, q)
+            rows = contact_rows(s, q, visible(request))
         if segment in SEGMENTS:
             rows = [c for c in rows if SEGMENTS[segment][2](c)]
         if tag:
@@ -469,8 +476,9 @@ def add_content_routes(app: FastAPI, core) -> None:
 
     # ---- markdown report with period comparison
     @app.get("/api/reports/report.md", tags=["reports"], response_class=PlainTextResponse)
-    def report_md(days: str | None = "30", start: str | None = None, end: str | None = None, channel_id: str | None = None):
-        return PlainTextResponse(build_report(core, days, start, end, channel_id)["markdown"], media_type="text/markdown; charset=utf-8")
+    def report_md(request: Request, days: str | None = "30", start: str | None = None, end: str | None = None,
+                  channel_id: str | None = None):
+        return PlainTextResponse(build_report(core, days, start, end, narrow(request, channel_id))["markdown"], media_type="text/markdown; charset=utf-8")
 
     app.state.build_report = lambda *a: build_report(core, *a)
 
