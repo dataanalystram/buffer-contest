@@ -3,7 +3,7 @@
 # cryptography: studio.takes -> studio.demo -> studio.store imports Fernet at module load (2 Nov 2026 crash fix).
 httpx>=0.27
 pillow>=11.3.0
-fonttools>=4.60.2
+fonttools>=4.65.0
 cryptography>=44.0.1
-numpy>=1.26
+numpy>=2.2.6
 yt-dlp>=2026.10.26

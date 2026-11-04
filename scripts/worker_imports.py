@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -95,6 +96,22 @@ def scan(entries=ENTRIES):
     return sorted(seen), {k: sorted(v) for k, v in sorted(third.items())}, hard
 
 
+def cv2_cascade_problem() -> str | None:
+    """None when cv2 has CascadeClassifier and loads the bundled frontal-face cascade (studio/media/covers.faces()).
+
+    OpenCV 5 moved CascadeClassifier to contrib: with opencv-python-headless 5 alone, faces() silently returned [] in the
+    media_render worker (4 Nov 2026), so requirements pin opencv-python-headless<5 and this check guards it.
+    """
+    import cv2
+
+    if not hasattr(cv2, "CascadeClassifier"):
+        return f"cv2 {cv2.__version__} has no CascadeClassifier"
+    path = getattr(getattr(cv2, "data", None), "haarcascades", "") + "haarcascade_frontalface_default.xml"
+    if cv2.CascadeClassifier(path).empty():
+        return f"cv2 {cv2.__version__} could not load the bundled cascade {path}"
+    return None
+
+
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     mods, third, hard = scan()
@@ -111,6 +128,13 @@ def main(argv=None) -> int:
             importlib.import_module(name)
         except Exception as e:  # noqa: BLE001
             bad.append(f"{name}: {e.__class__.__name__}: {e}")
+    # cv2 is a guarded import (covers.py degrades without it), so --hard-only skips it: check it whenever it is installed.
+    if importlib.util.find_spec("cv2") is not None and not any(b.startswith("cv2:") for b in bad):
+        problem = cv2_cascade_problem()
+        if problem:
+            bad.append(f"cv2: {problem} (cover faces would silently find none)")
+        else:
+            print("cv2: CascadeClassifier loads the bundled haarcascade")
     for b in bad:
         print("MISSING", b)
     print(f"worker imports: {len(names)} packages, {len(mods)} studio modules, {len(bad)} failed")

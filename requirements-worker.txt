@@ -6,12 +6,14 @@
 # YouTube link -> split before download (Actions run 41363638009, 1 Nov 2026).
 httpx>=0.27
 pillow>=11.3.0
-fonttools>=4.60.2
+fonttools>=4.65.0
 cryptography>=44.0.1
-numpy>=1.26
+numpy>=2.2.6
 faster-whisper>=1.1
-scenedetect>=0.6.4
-mediapipe>=0.10.14
+scenedetect>=0.7.2
+mediapipe>=1.2.0
 yt-dlp>=2026.10.26
 imageio-ffmpeg>=0.7.0
-opencv-python-headless>=4.10  # cover faces (studio/media/covers.py), Apache-2.0
+opencv-python-headless>=4.10,<5  # cover faces (studio/media/covers.py), Apache-2.0. <5: OpenCV 5 moved CascadeClassifier to contrib, so faces() found none
+opencv-python>=4.10,<5  # pulled in by scenedetect; all three opencv dists write the same cv2 package, so keep each on 4.x
+opencv-contrib-python>=4.10,<5  # pulled in by mediapipe; same cv2 package, same 4.x line
