@@ -277,7 +277,7 @@ def queue_matte(studio, a: Actor, src: str, model: str, rid: int | None) -> dict
     from . import instabox_worker
     # the cut-out never runs on the web dyno: it needs a remote worker (InstaBox or GitHub Actions), whatever video_mode
     # says about where video renders (a server with local FFmpeg still sends cut-outs to the worker)
-    if not (instabox_worker.enabled() or os.environ.get("GH_DISPATCH_TOKEN")):
+    if not (instabox_worker.enabled() or os.environ.get("GH_DISPATCH_TOKEN") or getattr(h, "worker_mode", "") == "github"):
         raise ActionError("The ML cut-out runs on the free render worker, which isn't set up on this server "
                           "(use engine=fast, or the card op to place the whole photo).", 503)
     jid = h.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",

@@ -66,7 +66,8 @@ def web(human, monkeypatch):
         ("img.test", "/page.html"): (200, {"content-type": "text/html"}, b"<html><body>sign in</body></html>"),
         ("img.test", "/bomb.png"): (200, {"content-type": "image/png"}, _png(Image.new("1", (12000, 12000)))),
         ("img.test", "/to-private"): (302, {"location": "https://evil.test/x.png"}, b""),
-        ("img.test", "/to-meta"): (302, {"location": "http://meta.test/latest/meta-data"}, b""),
+        ("img.test", "/to-meta"): (302, {"location": "https://meta.test/latest/meta-data"}, b""),
+        ("img.test", "/to-http"): (302, {"location": "http://img.test/hp.png"}, b""),
         ("shop.test", "/p.jpg"): (403, {}, b"Forbidden"),
     })
     monkeypatch.setattr(human.app.state.house, "http", httpx.Client(transport=w, follow_redirects=False))
@@ -114,6 +115,7 @@ def test_fetch_image_strips_exif_and_gps(human, web):
     ("https://img.test/to-private", "private"),          # a redirect to a private address
     ("https://img.test/to-meta", "private"),             # a redirect to the cloud metadata address
     ("http://img.test/hp.png", "bad_url"),               # https only
+    ("https://img.test/to-http", "bad_url"),             # https on every redirect hop, not only the first URL
     ("file:///etc/passwd", "bad_url"),
 ])
 def test_fetch_image_failures_say_what_to_do(human, web, url, reason):
@@ -369,3 +371,58 @@ def test_docs_list_the_image_tools():
     doc = (ROOT / "docs" / "MCP_TOOLS.md").read_text()
     for n in ("fetch_image", "cutout_product", "edit_image", "compose_product_card"):
         assert f"`{n}`" in doc, n
+
+
+# ------------------------------------------------------------------------------------------------ review fixes (PR #103)
+def test_alternating_pads_never_grow_past_the_cap():
+    ops = [{"op": "pad", "ratio": r} for r in ("16:9", "9:16") * 6]  # 12 pads: unbounded this would be gigapixels
+    out, _ = image_ops.apply(Image.new("RGB", (3000, 3000), (200, 30, 30)), ops)
+    assert max(out.size) <= image_ops.MAX_SIDE
+
+
+def test_card_radius_zero_is_square_and_null_values_take_defaults():
+    import random
+    random.seed(3)
+    busy = Image.effect_noise((600, 600), 90).convert("RGB")  # no plain stage: the whole photo is placed as a card
+    out, _ = image_ops.apply(busy, [{"op": "card", "ratio": "1:1", "radius": 0, "shadow": 0, "scale": 0.9}])
+    # the photo's own top-left corner pixel is opaque photo, not the ground: square corners
+    W = out.width
+    box_side = int(W * 0.9)
+    corner = out.getpixel(((W - box_side) // 2 + 1, (W - box_side) // 2 + 1))
+    assert corner[:3] != (0, 0, 0)
+    ops = image_ops.validate([{"op": "round", "radius": None}, {"op": "sharpen", "amount": None}])
+    assert ops[0]["radius"] == 40 and ops[1]["amount"] == 1
+    image_ops.apply(Image.new("RGB", (64, 64), (90, 90, 90)), ops)  # no TypeError
+
+
+def test_pixel_crop_refers_to_the_source_when_the_working_copy_is_smaller():
+    src = Image.new("RGB", (6000, 4000), (0, 0, 255))
+    src.paste((255, 0, 0), (4000, 2000, 6000, 4000))  # red bottom-right block in source pixels
+    work = src.copy()
+    work.thumbnail((image_ops.MAX_SIDE, image_ops.MAX_SIDE))
+    out, _ = image_ops.apply(work, [{"op": "crop", "box": [4100, 2100, 5900, 3900]}], source_size=src.size)
+    assert out.convert("RGB").getpixel((out.width // 2, out.height // 2)) == (255, 0, 0)
+    assert abs(out.width - 1800 * work.width / 6000) <= 2
+
+
+def test_png_exif_orientation_is_applied_before_metadata_is_stripped():
+    im = Image.new("RGB", (200, 100), (10, 200, 10))
+    ex = Image.Exif()
+    ex[0x0112] = 6  # rotate 90 CW on display
+    buf = io.BytesIO()
+    im.save(buf, "PNG", exif=ex.tobytes())
+    data = buf.getvalue()
+    opened, ext = image_edit.open_image(data)
+    clean, ext = image_edit.strip_meta(data, ext, opened)
+    back = Image.open(io.BytesIO(clean))
+    assert ext == "png" and back.size == (100, 200) and not back.getexif().get(0x0112)
+
+
+def test_image_calls_count_against_the_agent_tokens_daily_cap(human, web):
+    up = human.post("/api/media", json={"name": "hp.png", "data": base64.b64encode(_png(headphones())).decode()}).json()
+    tok = agent_token(human, cap=2)
+    for _ in range(2):
+        res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "1:1"}]})
+        assert not res["isError"] and out["ok"], out
+    res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "1:1"}]})
+    assert res["isError"] and "daily cap" in str(out)
