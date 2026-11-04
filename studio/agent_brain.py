@@ -220,15 +220,21 @@ class Brain:
         """The working indicator's Stop: the run stops at its next step (a step in flight finishes first)."""
         self.h.studio._guard_write(a, "agent_reply")
         run = self.h.run(a, rid)  # scoped to the caller: someone else's run is a 404
+        if run["kind"] != "agent":
+            raise ActionError("Only posts made by the agent can be stopped.", 409)
+        busy = run["status"] in ("running", "rendering")
         with _rlock:
-            working = rid in _running
-            if working:
+            if busy:  # the worker (running now, or still queued in this process) stops at its next step boundary
                 _stop_req.add(rid)
-        if not working and run["status"] in ("running", "rendering"):  # nothing works on it here (a cut-off run)
-            res = run["result"]
-            res.setdefault("thread", []).append({"role": "agent", "text": STOPPED, "at": _now()})
-            self.h._save(rid, run["steps"], res, "interrupted")
-        return {**self.h.run(a, rid), "stopping": working}
+        return {**self.h.run(a, rid), "stopping": busy}
+
+    @staticmethod
+    def _stop_pending(rid) -> None:
+        """Stop pressed during the last step: no later step boundary would see it, so the final save checks too."""
+        with _rlock:
+            if rid in _stop_req:
+                _stop_req.discard(rid)
+                raise StopRun(STOPPED)
 
     def _resume_tail(self, a, rid, tools) -> None:
         self._ensure_tail(a, rid, tools)
@@ -715,6 +721,7 @@ class Brain:
         tools = Tools(self.h, a, rid)
         try:
             body(a, rid, tools)
+            self._stop_pending(rid)
             run = self.h.run(a, rid)
             self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
         except ActionError as e:
@@ -1142,15 +1149,12 @@ class Brain:
             status = "ready" if res.get("packages") else "failed"
             if res.get("conflicts"):
                 status = "ready"  # packages are on hold; the question is in the thread
-            with _rlock:  # Stop pressed during the last step: no later step boundary would see it
-                if rid in _stop_req:
-                    _stop_req.discard(rid)
-                    raise StopRun(STOPPED)
+            self._stop_pending(rid)
             self.h._save(rid, run["steps"], res, status)
         except ActionError as e:
             self._fail(a, rid, str(e))
         except Exception as e:  # never leave a run spinning (the bug the owner hit)
-            self._crash(a, rid, e)
+            self._crash(a, rid, e, retry_text=message or "")  # a follow-up repeats its words; a first run resumes
         finally:
             activity.end(tok)
             with _rlock:
@@ -1215,9 +1219,6 @@ class Brain:
         traceback.print_exc()
         try:
             run = self.h.run(a, rid)
-            if retry_text is None:
-                last = next((m for m in reversed(run["result"].get("thread") or []) if m.get("role") == "user"), None)
-                retry_text = (last or {}).get("text") if len(run["result"].get("thread") or []) > 1 else ""
             run["result"]["error"] = {"ref": ref, "at": _now(), "retry_text": (retry_text or "")[:intake.MAX_PROMPT]}
             self.h._save(rid, run["steps"], run["result"])
         except Exception:  # noqa: BLE001  the plain message below still lands

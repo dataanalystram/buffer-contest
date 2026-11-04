@@ -423,6 +423,8 @@ window.addEventListener("popstate", (e) => {
   if (!S.session || !S.session.connected) return;
   const st = e.state && e.state.hq ? e.state : (() => { const p = new URLSearchParams(location.search); return { hq: p.get("tab") || "inbox", sub: p.get("sub") || "" }; })();
   NAV.popping = true;
+  // the Planner entry carries its own filters in the URL: read them back before it draws (it would keep the newer ones)
+  if (st.hq === "planner" && typeof plLoadState === "function") { try { plLoadState(); } catch (_) { /* its defaults */ } }
   try { showTab(st.hq, st.sub || ""); } finally { NAV.popping = false; }
 });
 window.HQ_NAV_STATE = NAV;

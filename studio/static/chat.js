@@ -554,7 +554,7 @@
   const mm = el("div", "hc-mm", { id: "hcModelMenu", role: "menu", "aria-label": "Choose the model", "data-testid": "chat-model-menu", tabindex: "-1" });
   mm.hidden = true;
   document.body.appendChild(mm);
-  const MM = { from: null, busy: false };
+  const MM = { from: null, busy: false, seq: 0 };
   const KEYED = { own: true, "gemini-studio": true, nvidia: true, hf: true, claude: true };  // a saved key of yours unlocks these
   function mmItems() { return [...mm.querySelectorAll("[role=menuitemradio]")]; }
   function mmNav() { return [...mm.querySelectorAll("[role=menuitemradio],.hc-mm-key")]; }  // arrows also reach "Add a key"
@@ -589,7 +589,8 @@
     if (HC.eng) mmDraw(HC.eng); else mm.innerHTML = `<div class="hc-mm-h"><b>Model</b><small>Loading the models…</small></div>`;
     mmPlace();
     (mm.querySelector("[aria-checked=true]") || mm).focus();
-    try { HC.eng = await api("/api/ai/engine"); if (mm.hidden || MM.from !== from) return; mmDraw(HC.eng); mmPlace(); (mm.querySelector("[aria-checked=true]") || mmItems()[0] || mm).focus(); }
+    const seq = ++MM.seq;  // a pick (PUT) or another open makes this answer stale: never let it overwrite HC.eng
+    try { const st = await api("/api/ai/engine"); if (seq !== MM.seq) return; HC.eng = st; if (mm.hidden || MM.from !== from) return; mmDraw(HC.eng); mmPlace(); (mm.querySelector("[aria-checked=true]") || mmItems()[0] || mm).focus(); }
     catch (e) { if (!mm.hidden) mm.innerHTML = `<div class="hc-mm-h"><b>Model</b><small>${esc(e.message || "The models didn't load.")}</small></div>`; }
     finally { mm.removeAttribute("aria-busy"); }
   }
@@ -602,7 +603,7 @@
     if (b.getAttribute("aria-disabled") === "true" || MM.busy) return;
     const id = b.dataset.eng;
     if (HC.eng && (HC.eng.selected || "auto") === id) return mmClose();
-    MM.busy = true; b.setAttribute("aria-busy", "true");
+    MM.busy = true; MM.seq++; b.setAttribute("aria-busy", "true");
     try {
       HC.eng = await api("/api/ai/engine", { method: "PUT", body: { engine: id } });
       try { const br = await api("/api/agent/brain"); if (window.H_STATE) window.H_STATE.brain = br.brain; } catch (_) { /* the pill still redraws */ }
