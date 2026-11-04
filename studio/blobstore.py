@@ -76,7 +76,8 @@ def owner_prefix(uid: str) -> str:
 
 
 def new_key(kind: str, uid: str) -> str:
-    assert kind in KINDS
+    if kind not in KINDS:
+        raise ValueError(f"unknown blob kind {kind!r}")
     return f"{kind}/{owner_prefix(uid)}/{secrets.token_urlsafe(24)}"
 
 
@@ -132,25 +133,31 @@ def rewrite(store, table: str, where: str, args: tuple, data: bytes) -> None:
         store.x(f"UPDATE {table} SET data=?, sha256=? WHERE {where}", (data, digest, *args))
 
 
-def discard(key: str | None) -> None:
-    """An object no row ever pointed at (its row's INSERT failed): delete it now, best effort."""
+def discard(store, key: str | None) -> None:
+    """An object no row ever pointed at (its row's INSERT failed): delete it now; when the bucket doesn't confirm,
+    queue it in blob_gc so the sweep retries (CodeRabbit, PR #110)."""
     if not key:
         return
     b = bucket()
     try:
-        if b:
-            b.delete(key)
+        ok = bool(b and b.delete(key))
     except r2.R2Error:
-        print("storage: couldn't delete an unreferenced object; it stays in the bucket", flush=True)
+        ok = False
+    if not ok:
+        try:
+            store.x("INSERT INTO blob_gc(key, at, tries) VALUES(?,?,0) ON CONFLICT(key) DO UPDATE SET at=excluded.at", (key, time.time()))
+        except Exception:  # noqa: BLE001  (the store itself is failing: that's what is being raised already)
+            print("storage: couldn't queue an unreferenced object for deletion", flush=True)
 
 
 def release(store, table: str, where: str, args: tuple = ()) -> None:
     """DELETE FROM table WHERE where, noting every object key those rows had in blob_gc first, in one transaction
     (joins the caller's when there is one)."""
-    assert table in ("media", "library_chunks")
-    with store.tx():
+    if table not in ("media", "library_chunks"):
+        raise ValueError(f"not a blob table: {table!r}")
+    with store.tx():  # a key already noted (an in-flight migration's note) becomes due now
         store.x(f"INSERT INTO blob_gc(key, at, tries) SELECT storage_key, ?, 0 FROM {table} WHERE ({where}) AND storage_key IS NOT NULL "
-                "ON CONFLICT(key) DO NOTHING", (time.time(), *args))
+                "ON CONFLICT(key) DO UPDATE SET at=excluded.at", (time.time(), *args))
         store.x(f"DELETE FROM {table} WHERE {where}", args)
 
 
@@ -160,8 +167,11 @@ def referenced(store, key: str) -> bool:
         return True
     try:
         return bool(store.q("SELECT 1 AS x FROM library_chunks WHERE storage_key=? LIMIT 1", (key,)))
-    except Exception:  # noqa: BLE001  (no Library tables)
-        return False
+    except Exception as e:  # only a store without the Library's tables counts as "no chunk uses it"; anything else raises
+        msg = str(e).lower()
+        if "no such table" in msg or ("library_chunks" in msg and "does not exist" in msg):
+            return False
+        raise
 
 
 def pending(store) -> int:
@@ -187,7 +197,12 @@ def sweep(store, limit: int = 500) -> dict:
         b = r2.Bucket(cfg, http=_client())
         done = failed = 0
         for r in rows:
-            if referenced(store, r["key"]):  # belt and braces: a key some row still uses leaves the queue, undeleted
+            try:
+                used = referenced(store, r["key"])
+            except Exception:  # noqa: BLE001  can't tell: keep the key queued and try again later
+                failed += 1
+                continue
+            if used:  # belt and braces: a key some row still uses leaves the queue, undeleted
                 store.x("DELETE FROM blob_gc WHERE key=?", (r["key"],))
                 continue
             try:

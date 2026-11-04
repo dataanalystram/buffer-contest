@@ -328,7 +328,7 @@ class Library:
             self.store.x("INSERT INTO library_chunks(item_id,n,data,storage_key,sha256,nbytes) VALUES(?,?,?,?,?,?)",
                          (iid, n, inline, key, digest, len(data)))
         except BaseException:
-            blobstore.discard(key)  # no row points at it
+            blobstore.discard(self.store, key)  # no row points at it
             raise
 
     @staticmethod

@@ -3,7 +3,7 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const PER = 50;
-  let csrf = "", offset = 0, total = 0, ctl = null, me = "";
+  let csrf = "", offset = 0, total = 0, ctl = null, me = "", rows = [], busy = false;
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const when = (t) => (t ? new Date(t * 1000).toLocaleString() : "—");
@@ -49,7 +49,7 @@
     const q = new URLSearchParams({ q: $("q").value.trim(), limit: PER, offset, demo: $("demo").checked ? "1" : "0" });
     try {
       const d = await api(`/api/admin/users?${q}`, { signal: ctl.signal });
-      total = d.total; overview(d.overview);
+      total = d.total; rows = d.users; overview(d.overview);
       $("rows").innerHTML = d.users.map(row).join("") || `<tr><td colspan="9">No users.</td></tr>`;
       $("page").textContent = total ? `${offset + 1}–${Math.min(offset + PER, total)} of ${total}` : "";
       $("prev").disabled = offset === 0; $("next").disabled = offset + PER >= total;
@@ -62,7 +62,10 @@
   async function act(kind, id) {
     try {
       if (kind === "block") {               // an in-app confirm dialog (CLAUDE.md: never window.confirm / prompt)
-        $("blkReason").value = ""; $("blk").dataset.id = id; $("blk").showModal(); return;
+        if (busy) return;
+        const u = rows.find((x) => x.id === id) || { id };
+        $("blkWho").textContent = `${u.name || "(no name)"}${u.email ? " · " + u.email : ""} · ${u.id}`;
+        $("blkReason").value = ""; $("blk").dataset.id = id; $("blkOk").disabled = false; $("blk").showModal(); return;
       } else if (kind === "unblock") {
         await api(`/api/admin/users/${encodeURIComponent(id)}/unblock`, { method: "POST", body: "{}" });
         say("Unblocked.");
@@ -78,14 +81,18 @@
     const b = ev.target.closest("button[data-act]");
     if (b && !b.disabled) act(b.dataset.act, b.dataset.id);
   });
-  $("blkCancel").addEventListener("click", () => $("blk").close());
+  $("blkCancel").addEventListener("click", () => { if (!busy) $("blk").close(); });
+  $("blk").addEventListener("cancel", (ev) => { if (busy) ev.preventDefault(); });   // no Esc while the request runs
   $("blkForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    if (busy) return;                     // one request per dialog: no double submit, no duplicate audit rows
+    busy = true; $("blkOk").disabled = true; $("blkCancel").disabled = true;
     const id = $("blk").dataset.id;
     try {
       await api(`/api/admin/users/${encodeURIComponent(id)}/block`, { method: "POST", body: JSON.stringify({ reason: $("blkReason").value }) });
       say("Blocked.");
     } catch (e) { say(e.message); }
+    busy = false; $("blkCancel").disabled = false;
     $("blk").close(); load();
   });
   $("delInput").addEventListener("input", () => { $("delOk").disabled = $("delInput").value !== $("del").dataset.id; });

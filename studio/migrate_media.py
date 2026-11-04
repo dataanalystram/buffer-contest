@@ -61,7 +61,9 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
 
     def noted(key: str) -> None:
         """Before the PUT: the key is in blob_gc, due in a day. If this run dies before the row takes the key, the
-        sweep deletes the object then; once a row references it, the sweep drops the note instead (Greptile, PR #110)."""
+        sweep deletes the object then; once a row references it, the sweep drops the note instead. The note is never
+        cleared here: a purge racing this run may delete the row after it took the key, and the note is then what
+        deletes the object (Greptile, PR #110)."""
         store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO NOTHING", (key, time.time() + 86400))
 
     def one(table: str, where: str, args: tuple, kind: str, uid: str, mime: str) -> None:
@@ -92,7 +94,6 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
             gc(key)
             stats["skipped"] += 1
             return
-        store.x("DELETE FROM blob_gc WHERE key=?", (key,))  # claimed by its row
         stats["moved"] += 1
         stats["bytes"] += len(data)
         left -= 1

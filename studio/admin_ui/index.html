@@ -29,6 +29,7 @@
     <button value="ok" class="danger" id="delOk" data-testid="admin-delete-ok" type="submit" disabled>Delete user</button></div></form></dialog>
 <dialog id="blk" aria-labelledby="blkH" data-testid="admin-block-dialog"><form method="dialog" id="blkForm">
   <h2 id="blkH">Block this user?</h2>
+  <p><b id="blkWho" data-testid="admin-block-who"></b></p>
   <p>Their sessions end now, their agents and MCP apps stop, and they can't sign in until you unblock them. Nothing is deleted.</p>
   <label>Reason (optional, for the admin log) <input id="blkReason" data-testid="admin-block-reason" maxlength="200" autocomplete="off"></label>
   <div class="adm-actions"><button type="button" id="blkCancel" data-testid="admin-block-cancel">Cancel</button>
