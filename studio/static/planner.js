@@ -192,10 +192,10 @@ function plDraw() {
     const f = PL.ndf || "all", nd = undated.filter((i) => i.kind !== "ghost");
     const n = { all: nd.length, draft: nd.filter((i) => i.state === "draft").length, ready: nd.filter((i) => i.state === "ready" || i.state === "approval").length };
     const shown = nd.filter((i) => f === "all" || (f === "draft" ? i.state === "draft" : i.state === "ready" || i.state === "approval"));
-    side.innerHTML = `<div class="pl-side-head"><div class="pl-side-t"><b>No date</b><span class="pl-side-n" data-testid="planner-nodate-count">${undated.length}</span></div>
+    side.innerHTML = `<div class="pl-side-head"><div class="pl-side-t"><b>No date</b><span class="pl-side-n" data-testid="planner-nodate-count">${nd.length}</span></div>
       <p class="muted xs">Drag a post onto the calendar to schedule it.</p></div>
       <div class="pl-ndf" role="group" aria-label="Show">${[["all", "All"], ["draft", "Drafts"], ["ready", "Ready"]].map(([k, l]) => `<button type="button" class="pl-ndf-b${f === k ? " on" : ""}" data-ndf="${k}" aria-pressed="${f === k}" data-testid="planner-nodate-filter">${l}<span>${n[k]}</span></button>`).join("")}</div>
-      <div class="pl-ndl" role="list">${shown.length ? shown.map(plRow).join("") : `<p class="pl-side-empty" data-testid="planner-nodate-empty">${undated.length ? "Nothing here with this filter." : "Nothing without a date. Drafts you save without a time land here."}</p>`}</div>`;
+      <div class="pl-ndl" role="list">${shown.length ? shown.map(plRow).join("") : `<p class="pl-side-empty" data-testid="planner-nodate-empty">${nd.length ? "Nothing here with this filter." : "Nothing without a date. Drafts you save without a time land here."}</p>`}</div>`;
     side.querySelectorAll("[data-ndf]").forEach((b) => (b.onclick = () => {
       const refocus = document.activeElement === b; PL.ndf = b.dataset.ndf; plDraw();
       if (refocus) { const nb = $(`#plNoDate [data-ndf="${PL.ndf}"]`); if (nb) nb.focus(); }  // the redraw replaced the focused button
