@@ -123,14 +123,15 @@ def _pinnable(c: httpx.Client, url: str) -> bool:
 
 
 def pinned_request(c: httpx.Client, method: str, url: str, *, headers: dict | None = None, pin: bool = True,
-                   **kw) -> tuple[httpx.Request, bool]:
+                   ip: str | None = None, **kw) -> tuple[httpx.Request, bool]:
     """Build the request for ``url``. When ``pin`` and the client is a real network client, the URL's host is swapped for
-    the vetted IP from ``resolve_public`` and the original host travels in the Host header and as the TLS SNI (which is
-    also the name the certificate is verified against). Returns (request, pinned)."""
+    the vetted IP from ``resolve_public`` (or ``ip``, an address an earlier call already vetted for this host) and the
+    original host travels in the Host header and as the TLS SNI (which is also the name the certificate is verified
+    against). Returns (request, pinned)."""
     if not (pin and _pinnable(c, url)):
         return c.build_request(method, url, headers=headers, **kw), False
     p = urlparse(url)
-    ip = resolve_public(p.hostname or "")
+    ip = ip or resolve_public(p.hostname or "")
     netloc = (f"[{ip}]" if ":" in ip else ip) + (f":{p.port}" if p.port else "")
     host_hdr = (f"[{p.hostname}]" if ":" in (p.hostname or "") else (p.hostname or "")) + (f":{p.port}" if p.port else "")
     hdrs = {**(headers or {}), "Host": host_hdr}
@@ -208,6 +209,48 @@ def safe_get(url: str, *, limit: int = 5_000_000, http: httpx.Client | None = No
                 raise FetchError("That page is too large to read.")
         hdrs = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
         return httpx.Response(r.status_code, headers=hdrs, content=bytes(buf), request=r.request)  # body already decoded
+
+
+def safe_once(url: str, *, method: str = "GET", http: httpx.Client | None = None, headers: dict | None = None,
+              timeout: float = 12, limit: int = 5_000_000, truncate: bool = False, https_only: bool = False,
+              check_host: bool = True, ip: str | None = None) -> tuple[httpx.Response, str | None]:
+    """ONE request (HEAD or GET) to ``url``: the URL and host are checked, the connection is pinned to a vetted IP, a
+    redirect is returned as is (never followed; a caller that wants to follow it must check the Location through this
+    module first), and at most ``limit`` body bytes are read (FetchError past it, or a silent stop with ``truncate``).
+    Pass the ``ip`` a previous call returned to make a second probe of the same URL connect to the same vetted address
+    (no second DNS answer to rebind). Returns (read response, the IP it connected to or None)."""
+    if ip is not None and ip_blocked(ipaddress.ip_address(ip)):
+        raise FetchError("That link points to a private address, so it can't be read.")
+    check_url(url, check_host=check_host and ip is None, https_only=https_only)  # a vetted ip: the connection goes there
+    own = http is None
+    c = http or client(timeout, headers)
+    try:
+        if check_host and _pinnable(c, url):
+            ip = ip or resolve_public(urlparse(url).hostname or "")
+        else:
+            ip = None
+        req, pinned = pinned_request(c, method, url, headers=headers, pin=ip is not None, ip=ip, timeout=timeout)
+        r = c.send(req, stream=True, follow_redirects=False)
+        try:
+            if pinned:
+                _logical(c, r, method, url, headers)
+            buf = bytearray()
+            if method.upper() != "HEAD":
+                for chunk in r.iter_bytes():
+                    buf += chunk
+                    if len(buf) > limit:
+                        if truncate:
+                            del buf[limit:]
+                            break
+                        raise FetchError("That page is too large to read.")
+            hdrs = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-encoding", "transfer-encoding")
+                    and not (k.lower() == "content-length" and method.upper() != "HEAD")]
+            return httpx.Response(r.status_code, headers=hdrs, content=bytes(buf), request=r.request), ip
+        finally:
+            r.close()
+    finally:
+        if own:
+            c.close()
 
 
 def safe_post(url: str, *, http: httpx.Client | None = None, json=None, headers: dict | None = None, timeout: float = 60,

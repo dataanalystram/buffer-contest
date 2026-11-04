@@ -54,7 +54,8 @@ def _transport(routes):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_reach_check_reads_links_like_buffer():
+def test_reach_check_reads_links_like_buffer(monkeypatch):
+    monkeypatch.setattr("studio.drafter._public", lambda h: True)  # hermetic: no DNS for the .example hosts
     mediareach.reset()
 
     def good(req):
@@ -80,7 +81,8 @@ def test_reach_check_reads_links_like_buffer():
     assert "https" in mediareach.check_one("http://f.example/v.mp4", _transport(good))
 
 
-def test_send_stops_with_a_clear_message_before_buffer_when_a_link_cant_be_read(human, fake):
+def test_send_stops_with_a_clear_message_before_buffer_when_a_link_cant_be_read(human, fake, monkeypatch):
+    monkeypatch.setattr("studio.drafter._public", lambda h: True)  # hermetic: no DNS for cdn.example.com
     st = human.app.state.studio
     st.media_reach = lambda urls: [mediareach.check_one(u, _transport(lambda req: httpx.Response(405))) for u in urls]
     mediareach.reset()
