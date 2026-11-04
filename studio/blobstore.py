@@ -42,12 +42,26 @@ def set_http(client) -> None:
     _HTTP = client
 
 
+_SHARED = None
+
+
+def _client():
+    """One pooled client for every bucket call (tests swap in a stub with set_http)."""
+    global _SHARED
+    if _HTTP is not None:
+        return _HTTP
+    if _SHARED is None:
+        import httpx
+        _SHARED = httpx.Client(timeout=60, trust_env=False)
+    return _SHARED
+
+
 def bucket() -> "r2.Bucket | None":
     """The media bucket, or None for the db backend."""
     if os.environ.get("HQ_MEDIA_STORAGE", "auto").strip().lower() == "db":
         return None
     cfg = r2.config()
-    return r2.Bucket(cfg, http=_HTTP) if cfg else None
+    return r2.Bucket(cfg, http=_client()) if cfg else None
 
 
 def backend_name() -> str:
@@ -140,7 +154,7 @@ def sweep(store, limit: int = 500) -> dict:
         cfg = r2.config()
         if not cfg:  # keys stay noted until the bucket is configured again
             return {"deleted": 0, "failed": len(rows), "why": "R2 not configured"}
-        b = r2.Bucket(cfg, http=_HTTP)
+        b = r2.Bucket(cfg, http=_client())
         done = failed = 0
         for r in rows:
             try:
