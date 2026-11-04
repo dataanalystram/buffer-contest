@@ -7,6 +7,8 @@ import time
 
 import pytest
 
+from studio.actions import Actor
+
 from .test_chat_ui_e2e import ARTICLE, _no_overflow, _page, _settled, live  # noqa: F401  (live is a fixture)
 
 pw = pytest.importorskip("playwright.sync_api")
@@ -67,7 +69,7 @@ def _flow(page, app, keep_id, del_id, phone):
     pw.expect(page.get_by_test_id("chat-thread")).to_have_count(1)
     pw.expect(page.locator("#toast")).to_contain_text("Thread and its take moved to the Bin")
     assert st.q("SELECT status FROM agent_runs WHERE id=?", (del_id,))[0]["status"] == "binned"
-    bin_ = {t["takes"] for t in app.state.house.threads.list(__import__("studio.actions", fromlist=["Actor"]).Actor("acc_1"))["threads"]}
+    bin_ = {t["takes"] for t in app.state.house.threads.list(Actor("acc_1"))["threads"]}
     assert bin_ == {"keep", "delete"}
     if phone:
         _no_overflow(page, 390)
