@@ -284,3 +284,189 @@ def remember(store, a: Actor, name: str, args: dict, key: tuple[str, bool], resu
 def strip_control(args: dict) -> dict:
     """The arguments a tool sees: run_id stays, the layer's own fields go."""
     return {k: v for k, v in (args or {}).items() if k not in CONTROL or k == "run_id"}
+
+
+# ------------------------------------------------------------------------------------------------ tools
+CLEANUP_TTL = 10 * 60
+S = {"type": "string"}
+TOOLS: list[dict[str, Any]] = [
+    {"name": "start_post", "description": "Open ONE post for the person's request and get its run_id (no HuhQueue AI, nothing is "
+     "rendered or posted). Call it once per request, with user_asked: true and the request as reason, then pass run_id to every "
+     "render_carousel, hero_edit, edit_video, render_reel, split_video, upload and create_package call: follow-ups ('brighter', "
+     "'swap slide 3', 'shorter caption') update this same post and its thread. If this app already has an open post (made in the "
+     "last 2 hours, not sent to Buffer), that post is returned with reused: true: keep working on it. To start a different "
+     "post only when the person asks for one, pass new_post: true with user_asked: true. At most 3 new posts an hour and 20 a "
+     "day per app.",
+     "inputSchema": {"type": "object", "required": ["title", "user_asked"], "properties": {
+         "title": {"type": "string", "description": "Short title of the post, from the person's request"},
+         "brief": {"type": "string", "description": "One line: what the person asked for"},
+         "channel_ids": {"type": "array", "items": S, "description": "Channels the person named (optional)"},
+         "format": {"type": "string", "enum": ["carousel", "reel", "photo", "text"]},
+         "user_asked": {"type": "boolean", "description": "true: the person asked for this post"},
+         "reason": {"type": "string", "description": "The request in a few words"},
+         "new_post": {"type": "boolean", "description": "true starts another post next to the open one (needs user_asked: true)"},
+         "run_id": {"type": "integer", "description": "Continue this post instead"},
+         "idempotency_key": S}}},
+    {"name": "cleanup_agent_drafts", "description": "Tidy up what AI apps left behind: post runs an app made that never went to "
+     "Buffer or Approvals, and Library items an app uploaded or rendered that no post uses. Step 1 (default dry_run: true) "
+     "LISTS them (title, when, app) with a single-use confirm_token and changes nothing: show the list to the person. Step 2, "
+     "only after they say yes: call again with confirm_token. Runs are archived (hidden from Make a post) and Library items go "
+     "to the Library Bin (restorable for 7 days); nothing is deleted for good and nothing in Buffer is touched. "
+     "older_than_h (default 1) skips anything newer; app limits it to one app's name.",
+     "inputSchema": {"type": "object", "properties": {"dry_run": {"type": "boolean", "default": True}, "confirm_token": S,
+                                                      "older_than_h": {"type": "number", "minimum": 0, "maximum": 720}, "app": S}}},
+]
+NAMES = {t["name"] for t in TOOLS}
+ROLE_SOURCE = "mcp_client_brain"
+
+
+def start_post(studio, a: Actor, args: dict) -> dict:
+    store = studio.store
+    rid = _rid(args.get("run_id"))
+    if rid:
+        run = own_run(store, a, rid)
+        touch(store, a, rid)
+        title = ""
+        try:
+            title = ((json.loads(run["result"] or "{}").get("story") or {}).get("headline") or
+                     json.loads(run["input"] or "{}").get("prompt") or "")
+        except (ValueError, AttributeError):
+            pass
+        return {"run_id": rid, "status": run["status"], "title": str(title)[:120], "reused": True, "spent_usd": 0,
+                "next": "Pass this run_id to every render, upload and create_package call for this request."}
+    studio._guard_write(a, "start_post")
+    title = " ".join(str(args.get("title") or "").split())[:200]
+    if not title:
+        raise ActionError("Give the post a short title (from the person's request).")
+    chans = [str(c) for c in args.get("channel_ids") or [] if c][:20]
+    inp = {"prompt": title, "brief": str(args.get("brief") or "")[:500], "via": ROLE_SOURCE, "started_by": "start_post",
+           "channel_ids": chans, "format": args.get("format") if args.get("format") in ("carousel", "reel", "photo", "text") else ""}
+    res = {"packages": [], "media": [], "story": {"headline": title[:120]}, "brain": "client"}
+    now = time.time()
+    rid = store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated,agent_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                  (a.uid, "client", json.dumps(inp), "draft", json.dumps([]), json.dumps(res), now, now,
+                   a.agent["id"] if is_agent(a) else None))
+    store.audit(a.uid, a.label, "start_post", "read", {"run": rid, "reason": str(args.get("reason") or "")[:120]})
+    return {"run_id": rid, "status": "draft", "title": title[:120], "reused": False, "spent_usd": 0,
+            "next": "Keep this run_id. Pass it to render_carousel / hero_edit / edit_video / uploads and to create_package; "
+                    "follow-ups update this same post."}
+
+
+def _app_of(store, uid: str) -> dict[int, str]:
+    from . import mcp_runs
+    out = {}
+    for r in store.q("SELECT id, name, client_info, app FROM agent_tokens WHERE user_id=?", (uid,)):
+        out[r["id"]] = mcp_runs.app_name(dict(r))
+    return out
+
+
+def _leftovers(studio, a: Actor, older_than_h: float, app: str) -> tuple[list[dict], list[dict]]:
+    """(runs, library items) an AI app left that no post needs. Only this person's rows."""
+    store, lib = studio.store, studio.house.library
+    cutoff = time.time() - max(0.0, float(older_than_h)) * 3600
+    apps = _app_of(store, a.uid)
+    want = (app or "").strip().casefold()
+    runs = []
+    for r in store.q("SELECT id, kind, input, result, status, created, updated, agent_id FROM agent_runs WHERE user_id=? AND agent_id IS NOT NULL "
+                     "AND status IN ('draft','ready','failed') AND updated<? ORDER BY id DESC LIMIT 200", (a.uid, cutoff)):
+        try:
+            res, inp = json.loads(r["result"] or "{}"), json.loads(r["input"] or "{}")
+        except ValueError:
+            continue
+        if not isinstance(res, dict) or closed(res):
+            continue
+        name = apps.get(r["agent_id"], "Your AI app")
+        if want and want not in name.casefold():
+            continue
+        title = (res.get("story") or {}).get("headline") or inp.get("prompt") or "A post"
+        thumb = next((m.get("url") for p in res.get("packages") or [] for m in p.get("media") or [] if m.get("url")), "")
+        runs.append({"run_id": r["id"], "title": str(title)[:90], "created": r["created"], "app": name, "status": r["status"],
+                     "thumb": thumb})
+    run_ids = {r["run_id"] for r in runs}
+    from .library import ensure as lib_ensure
+    lib_ensure(store)
+    rows = store.q("SELECT * FROM library_items WHERE user_id=? AND agent_id IS NOT NULL AND storage NOT IN ('pending','trash') "
+                   "AND created<? ORDER BY id DESC LIMIT 400", (a.uid, cutoff))
+    all_runs = [r for r in lib._runs(a) if r["run_id"] not in run_ids and r["status"] != "archived"]  # posts that stay
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["meta"] = json.loads(d["meta"] or "{}")
+        if d.get("run_id") and d["run_id"] not in run_ids and any(x["run_id"] == d["run_id"] for x in all_runs):
+            continue  # it belongs to a post that stays
+        used, _live, _sched = lib._uses(d, all_runs)
+        if used:
+            continue
+        name = apps.get(d.get("agent_id"), "Your AI app")
+        if want and want not in name.casefold():
+            continue
+        items.append({"library_id": d["id"], "name": d["name"], "kind": d["kind"], "created": d["created"], "app": name,
+                      "run_id": d.get("run_id"), "thumb": f"/api/library/{d['id']}/file" if d["kind"] != "video" else ""})
+    return runs, items
+
+
+def cleanup_agent_drafts(studio, a: Actor, args: dict) -> dict:
+    """Dry run lists and mints a single-use confirm_token; the confirm archives runs and moves Library items to the Bin."""
+    from .store import sha
+    store = studio.store
+    older = args.get("older_than_h") if args.get("older_than_h") is not None else 1
+    try:
+        older = max(0.0, min(720.0, float(older)))
+    except (TypeError, ValueError):
+        raise ActionError("older_than_h is a number of hours.")
+    if args.get("confirm_token"):
+        studio._guard_write(a, "cleanup_agent_drafts")
+        tok = str(args["confirm_token"])
+        rows = store.q("SELECT * FROM confirms WHERE token_hash=? AND user_id=?", (sha(tok), a.uid))
+        if not rows:
+            raise ActionError("Unknown confirm_token. Run cleanup_agent_drafts with dry_run first.", 404)
+        row = rows[0]
+        if row["used"] or row["expires"] < time.time():
+            raise ActionError("This confirm_token is used or expired. Run the dry run again.", 410)
+        if (row["agent_id"] or None) != (a.agent["id"] if is_agent(a) else None):
+            raise ActionError("This confirm_token belongs to a different caller.", 403)
+        plan = json.loads(row["payload"] or "{}")
+        if plan.get("kind") != "cleanup":
+            raise ActionError("That confirm_token is for something else.", 409)
+        store.x("UPDATE confirms SET used=1 WHERE token_hash=?", (row["token_hash"],))
+        runs_now, _ = _leftovers(studio, a, plan.get("older_than_h", 1), plan.get("app", ""))
+        listed_runs = set(plan.get("runs") or [])
+        archived = []
+        for r in runs_now:  # only what the person saw in the list AND is still a leftover right now
+            if r["run_id"] not in listed_runs:
+                continue
+            store.x("UPDATE agent_runs SET status='archived', updated=? WHERE id=? AND user_id=? AND status IN ('draft','ready','failed')",
+                    (time.time(), r["run_id"], a.uid))
+            store.audit(a.uid, a.label, "archive_run", "safety", {"run": r["run_id"], "by": "cleanup_agent_drafts"})
+            archived.append(r["run_id"])
+        _, items_now = _leftovers(studio, a, plan.get("older_than_h", 1), plan.get("app", ""))
+        listed_items = set(plan.get("items") or [])
+        ids = [i["library_id"] for i in items_now if i["library_id"] in listed_items]
+        binned, refused = [], []
+        if ids:
+            out = studio.house.library.bulk_delete(a, ids, mode="bin")
+            binned, refused = out["deleted"], out["refused"]
+        return {"archived_runs": archived, "binned_items": binned, "refused": refused, "bin_days": 7, "spent_usd": 0,
+                "note": "Archived runs are hidden from Make a post; Library items are in the Library Bin (restore_library_items)."}
+    runs, items = _leftovers(studio, a, older, str(args.get("app") or ""))
+    out = {"dry_run": True, "runs": runs, "library_items": items, "count": len(runs) + len(items), "spent_usd": 0}
+    if runs or items:
+        import secrets
+        token = "cf_" + secrets.token_urlsafe(24)
+        payload = {"kind": "cleanup", "runs": [r["run_id"] for r in runs], "items": [i["library_id"] for i in items],
+                   "older_than_h": older, "app": str(args.get("app") or "")[:60]}
+        store.x("INSERT INTO confirms(token_hash,user_id,agent_id,payload,expires) VALUES(?,?,?,?,?)",
+                (sha(token), a.uid, a.agent["id"] if is_agent(a) else None, json.dumps(payload), time.time() + CLEANUP_TTL))
+        out.update(confirm_token=token, expires_in=CLEANUP_TTL,
+                   next="Show this list to the person. Only if they say yes: cleanup_agent_drafts(confirm_token=...).")
+    else:
+        out["next"] = "Nothing to tidy up."
+    return out
+
+
+def call_tool(studio, actor: Actor, name: str, args: dict):
+    if name not in NAMES:
+        return NotImplemented
+    if name == "start_post":
+        return start_post(studio, actor, args or {})
+    return cleanup_agent_drafts(studio, actor, args or {})
