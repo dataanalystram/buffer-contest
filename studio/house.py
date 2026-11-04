@@ -119,6 +119,12 @@ def start_media_check(house: "House", every: float | None = None, first_delay: f
                     print(f"library trash: removed {n} item(s) for good", flush=True)
             except Exception as e:  # noqa: BLE001
                 print(f"library trash: {e.__class__.__name__}: {e}", flush=True)
+            try:  # One take's Bin (takes and clips) after TRASH_DAYS, and bucket uploads nobody finished or used
+                n = house.takes.purge_expired() + house.take_uploads.purge_stale()
+                if n:
+                    print(f"take bin: removed {n} item(s) for good", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"take bin: {e.__class__.__name__}: {e}", flush=True)
             time.sleep(every)
     t = threading.Thread(target=loop, daemon=True, name="media-check")
     t.start()
@@ -160,7 +166,9 @@ class House:
         from .library import Library
         self.library = Library(self)
         from .uploads import Uploads
-        self.uploads = Uploads(self)  # create_upload / upload_media_chunk (any MCP client, no public host)
+        self.uploads = Uploads(self)
+        from .take_upload import TakeUploads
+        self.take_uploads = TakeUploads(self)  # One take's long videos: multipart straight to the bucket (R2), off unless configured  # create_upload / upload_media_chunk (any MCP client, no public host)
         from .ledger import Ledger
         self.ledger = Ledger(self)  # Style Ledger v2: groups, scope, learned suggestions, evidence, review links
         from .send import Send
@@ -709,7 +717,7 @@ class House:
         from .chat_context import titles as _chat_titles  # names given in the Make a post sidebar win
         out, named = [], _chat_titles(self.store, a.uid)
         # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads
-        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status<>'archived' "
+        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
                               "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, limit)):
             d = dict(r)
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")

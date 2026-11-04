@@ -923,6 +923,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return etagged(request, house.calendar(a))
 
     # ------------------------------------------------------------ One take -> a week (UI = REST = MCP)
+    from . import take_bin as take_bin_mod, take_upload as take_upload_mod  # before /api/takes/{rid}: /bin and /uploads first
+    take_upload_mod.add_routes(app, house, actor)
+    take_bin_mod.add_routes(app, house, actor)
+
     @app.post("/api/takes")
     def take_start(request: Request, body: dict = Body(...)):
         """clips_from_video: a long video you own (upload media_token, or a direct https url) -> 3-7 captioned 9:16 clips."""

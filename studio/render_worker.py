@@ -23,7 +23,9 @@ import httpx
 
 from . import render
 
-MAX_SOURCE = int(os.environ.get("HQ_MAX_TAKE_BYTES", str(1500 * 1024 * 1024)))
+# The same cap as a multipart One take upload (take_upload.max_bytes, 4096 MB by default; was 1500 MB). A GitHub runner has
+# ~14 GB free disk, so a 4 GB source, its 16 kHz WAV for Whisper and the rendered clips fit.
+MAX_SOURCE = int(os.environ.get("HQ_MAX_TAKE_BYTES") or int(os.environ.get("HQ_TAKE_UPLOAD_MAX_MB", "4096")) * 1024 * 1024)
 
 
 def _download(c: httpx.Client, url: str, dest: Path) -> None:
