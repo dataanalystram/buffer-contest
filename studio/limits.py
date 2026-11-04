@@ -24,6 +24,7 @@ FORM_MAX = 64 * 1024                 # OAuth forms
 
 
 LIBRARY_MAX = 101 * MB               # /api/library/upload, /u/<token> and /send/<code>/file: one raw file (100 MB cap, checked again with the quota)
+TAKE_CHUNK_MAX = 8 * MB + 64 * 1024  # PUT /api/takes/uploads/{id}/chunks/{n}: one raw 8 MiB chunk of a long One take video
 MCP_MAX = 4 * MB                     # /mcp: an upload_media_chunk call carries up to 2 MB as base64 (~2.7 MB) plus JSON
 
 
@@ -36,6 +37,8 @@ def cap_for(path: str) -> int:
         return MCP_MAX
     if path.startswith("/api/worker/"):
         return WORKER_MAX
+    if path.startswith("/api/takes/uploads/") and "/chunks/" in path:
+        return TAKE_CHUNK_MAX
     if path.startswith("/oauth/"):
         return FORM_MAX
     return DEFAULT_MAX

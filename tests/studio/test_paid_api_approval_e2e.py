@@ -88,3 +88,48 @@ def test_a_paid_api_request_is_approved_in_the_inbox_and_runs_once(live, chromiu
         assert errors == [], errors
     finally:
         ctx.close()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_apps_with_access_rows_keep_the_actions_compact(live, chromium, width):
+    """4 Nov 2026 screenshot: six children in a four-column grid put "Paid APIs: ask me" in the 32 px icon column (one word
+    per line) and Revoke on a line of its own. Each label is one line now and Revoke sits in the row's actions group."""
+    base, app = live["base"], live["app"]
+    studio = app.state.studio
+    for name in ("Claude via claude.ai (connected)", "Smoke test agent"):
+        studio.create_agent_token(house.Actor("acc_1"), name, policy="review", daily_cap=10)
+    ctx = chromium.new_context(viewport={"width": width, "height": 900})
+    try:
+        ctx.add_init_script(NO_TOUR)
+        ctx.add_cookies([{"name": "hq_sid", "value": "sid-paid", "url": base}])
+        ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
+        page = ctx.new_page()
+        page.set_default_timeout(20000)
+        page.goto(base + "/?tab=apps")
+        rows = page.get_by_test_id("token-row")
+        rows.first.wait_for()
+        assert rows.count() == 2
+        for i in range(2):
+            row = rows.nth(i)
+            acts = row.get_by_test_id("token-actions")
+            for tid in ("token-paid", "revoke-token", "token-cap-edit"):
+                assert acts.get_by_test_id(tid).count() == 1, tid  # inside the actions group, not a grid cell of its own
+            m = row.get_by_test_id("token-paid").evaluate(
+                "b => { const s = getComputedStyle(b), r = b.getBoundingClientRect();"
+                " const lh = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.3;"
+                " return {h: r.height - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom), lh, w: r.width, ws: s.whiteSpace} }")
+            assert m["h"] < m["lh"] * 1.5 and m["w"] > 80 and m["ws"] == "nowrap", m  # one line, not one word per line
+            box = row.bounding_box()
+            assert box["x"] >= 0 and box["x"] + box["width"] <= width + 1  # no sideways overflow at 390 px
+            rv, pd, nm = (row.get_by_test_id(t).bounding_box() for t in ("revoke-token", "token-paid", "token-actions"))
+            assert rv["x"] + rv["width"] <= box["x"] + box["width"] + 1
+            name = row.locator(".ax-name").bounding_box()
+            if width >= 1000:  # desktop: name on the left, every action on the same line on the right
+                assert abs((rv["y"] + rv["height"] / 2) - (pd["y"] + pd["height"] / 2)) < 4
+                assert rv["x"] > pd["x"] and nm["x"] > name["x"] + name["width"] - 1
+                assert row.bounding_box()["height"] < 80
+            else:  # 390 px: the actions stack under the name, still compact
+                assert nm["y"] >= name["y"] + name["height"] - 1 and row.bounding_box()["height"] < 200
+        page.screenshot(path=f"/tmp/apps-rows-{width}.png", full_page=False)
+    finally:
+        ctx.close()
