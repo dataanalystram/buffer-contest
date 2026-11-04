@@ -271,10 +271,16 @@ def cutout_detailed(im: Image.Image, pad: int = 8) -> dict:
     obj = bytearray(0 if bg[i] else 1 for i in range(n))
     comps = _components(obj, sw, sh)
     keep, dropped = [], 0
+    big = comps[0] if comps else None
+    near = 0.05 * (sw * sw + sh * sh) ** 0.5
     for c in comps:
         bw, bh = c["box"][2] - c["box"][0], c["box"][3] - c["box"][1]
-        thin = bw / max(1, bh) > 5 and c["n"] < 0.25 * comps[0]["n"]  # a line of text beside the product
-        if c["n"] >= MIN_PART * n and not thin:
+        thin = bw / max(1, bh) > 5 and c["n"] < 0.25 * big["n"]  # a line of text beside the product
+        # every significant piece is kept: a big one anywhere, a smaller one only next to the main piece (a second
+        # earbud, a cable plug), so the lines of a spec sheet printed beside the product stay out
+        gap = max(big["box"][0] - c["box"][2], c["box"][0] - big["box"][2], big["box"][1] - c["box"][3], c["box"][1] - big["box"][3], 0)
+        significant = c["n"] >= 0.15 * big["n"] or gap <= near
+        if c["n"] >= MIN_PART * n and not thin and significant:
             keep.append(c)
         else:
             dropped += 1
