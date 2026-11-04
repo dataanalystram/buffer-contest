@@ -352,11 +352,16 @@ def add_content_routes(app: FastAPI, core) -> None:
                 "tags": [{"name": k, "count": v} for k, v in sorted(tags.items())]}
 
     @app.get("/api/media/{mid}/usage", tags=["media"])
-    def media_usage_route(mid: str):
+    def media_usage_route(mid: str, request: Request):
         with core.db.session() as s:
             if not s.get(Media, mid):
                 raise HTTPException(404, "Media not found")
-            return media_usage(s, mid)
+            out = media_usage(s, mid)
+        vis = getattr(request.state, "visible_channels", None)   # channel-limited token / restricted teammate
+        if vis is not None:
+            out["posts"] = [p for p in out["posts"] if p["channel_id"] in vis]
+            out["uses"] = len(out["posts"]) + len(out["ideas"])
+        return out
 
     @app.post("/api/media/{mid}/edit", tags=["media"])
     def media_edit(mid: str, payload: dict = Body(...)):

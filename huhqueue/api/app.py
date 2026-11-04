@@ -180,9 +180,13 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
             resp = _err(429, f"Rate limit: {info.rate_per_min} requests/minute for this token")
         if resp is None and info.allowed_channel_ids and not path.startswith(safety.RUNNER_PREFIXES):
             with core.db.session() as s:
-                touched = safety.referenced_channels(s, method, path, dict(request.query_params), body)
-            outside = touched - set(info.allowed_channel_ids)
-            if outside:
+                named, via_ids = safety.scope_refs(s, method, path, dict(request.query_params), body)
+            allowed = set(info.allowed_channel_ids)
+            outside = named - allowed
+            if via_ids - allowed:
+                # a post / target / comment on another channel answers exactly like one that doesn't exist (no probing)
+                resp = _err(404, "Not found")
+            elif outside:
                 resp = _err(403, f"Token '{info.name}' is limited to {len(info.allowed_channel_ids)} channel(s); "
                                  f"not allowed: {', '.join(sorted(outside))}", code="channel_scope")
         counted = method != "GET" and not path.startswith(safety.RUNNER_PREFIXES)
