@@ -145,7 +145,7 @@ def test_make_clips_errors_stay_on_the_page(live, chromium):
     page.get_by_test_id("take-src-link").click()
     page.get_by_test_id("take-url").fill("https://example.com")
     page.get_by_test_id("take-go").click()
-    assert "direct https:// link" in err.inner_text()
+    assert "https:// link to the video" in err.inner_text()
     ctx.close()
 
 

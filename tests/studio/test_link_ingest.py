@@ -85,9 +85,9 @@ def test_an_ai_app_waits_for_the_person_and_cannot_approve_itself(human, app, mo
     assert ok["status"] == "approved" and ok["kind"] == "link_rights"
     c = _consents(app)
     assert len(c) == 1 and c[0]["via"] == "mcp_approval" and c[0]["approval_id"] == aid and c[0]["agent_id"]
-    # a wrong approval id for this link is a 404 (no probing other items)
-    _, err = mcp_call(human, tok, "ingest_video_link", {"url": YT, "approval_id": aid + 99}, mid=3)
-    assert "No approval with that id" in str(err)
+    # a wrong approval id for this link is a 404 (no probing other items); REST keeps the id as given
+    r = bot.post("/api/takes", headers={"Authorization": f"Bearer {tok}"}, json={"url": YT, "approval_id": aid + 99})
+    assert r.status_code == 404 and "No approval with that id" in r.json()["error"] and len(sent) == 0
     t = mcp_call(human, tok, "ingest_video_link", {"url": YT, "approval_id": aid}, mid=4)[1]
     assert t["id"] and t["input"]["platform_url"] == YT and t["input"]["consent_id"] == c[0]["id"] and len(sent) == 1
     # used once: the next take from the same link asks the person again
