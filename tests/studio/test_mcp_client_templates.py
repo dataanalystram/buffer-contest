@@ -151,7 +151,7 @@ def test_ai_app_creates_its_own_template_and_never_overwrites_the_persons(human)
     assert res["isError"] and "create_template" in msg
     res, msg = mcp_call(human, tok, "delete_template", {"template": mine["id"]})
     assert res["isError"]
-    res, own = mcp_call(human, tok, "create_template", FUNDING)  # same name: a NEW template, the person's is untouched
+    res, own = mcp_call(human, tok, "create_template", {**FUNDING, "user_asked": True})  # same name: a NEW template, the person's is untouched
     assert not res["isError"], own
     assert own["id"] != mine["id"] and own["yours"] and own["made_by"] == "Claude (via MCP)"
     res, up = mcp_call(human, tok, "update_template", {"template": own["id"], "about": "Claude's version"})

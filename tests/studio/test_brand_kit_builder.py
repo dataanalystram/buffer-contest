@@ -155,13 +155,13 @@ def test_kit_lifecycle_rest_create_preview_activate_and_templates_follow(human):
 
 def test_kits_over_mcp(human):
     tok = agent_token(human, policy="trusted", cap=50)
-    _, made = mcp_call(human, tok, "create_brand_kit", {"name": "Beta", "colors": {"background": "#FFFFFF", "primary": "#2563EB"}})
+    _, made = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "name": "Beta", "colors": {"background": "#FFFFFF", "primary": "#2563EB"}})
     assert made["kit"]["colors"]["accent"] == "#2563EB" and made["kit"]["colors"]["text"] == "#111114"
     _, lst = mcp_call(human, tok, "list_brand_kits")
     assert [k["name"] for k in lst["kits"]] == ["Beta", "HuhByte AI"]  # HuhByte AI is seeded for every workspace (owner, 2 Nov 2026)
     _, up = mcp_call(human, tok, "update_brand_kit", {"kit_id": made["id"], "head_font": "serif", "end_cta": "Read more"})
     assert up["kit"]["font"] == "serif" and up["kit"]["end_card"]["cta"] == "Read more"
-    _, act = mcp_call(human, tok, "set_active_brand_kit", {"kit_id": made["id"]})
+    _, act = mcp_call(human, tok, "set_active_brand_kit", {"user_asked": True, "kit_id": made["id"]})
     assert act["active"]
     _, pv = mcp_call(human, tok, "preview_brand_kit", {"kit_id": made["id"]})
     assert len(pv["cards"]) > 10 and pv["cards"][0]["url"].startswith("https://hq.test/m/")
@@ -217,7 +217,7 @@ def test_extract_brand_over_mcp_uses_the_extractor(human, monkeypatch):
     assert ex["draft"]["name"] == "Acme Rockets" and ex["logo"] and ex["provenance"]["accent"].startswith("CSS variable")
     _, pv = mcp_call(human, tok, "preview_brand_themes", {"kit": ex["draft"], "logo": ex["logo"]})
     assert [s["label"] for s in pv["stills"]] == ["Reel cover", "Carousel cover", "Square post"]
-    _, made = mcp_call(human, tok, "create_brand_kit", {"url": "acme.test", "activate": True})
+    _, made = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "url": "acme.test", "activate": True})
     assert made["kit"]["name"] == "Acme Rockets" and made["active"]
 
 
@@ -238,7 +238,7 @@ def test_create_from_a_sample_brand_over_rest_and_mcp(human):
     assert k["kit"]["source"]["url"]  # where it was read from
     assert human.post("/api/brand-kits", json={"sample": "acme"}).status_code == 400
     tok = agent_token(human, policy="trusted", cap=50)
-    _, made = mcp_call(human, tok, "create_brand_kit", {"sample": "notion", "activate": True})
+    _, made = mcp_call(human, tok, "create_brand_kit", {"user_asked": True, "sample": "notion", "activate": True})
     assert made["name"] == "Notion" and made["active"]
     assert human.get("/api/brand-studio").json()["kit"]["name"] == "Notion"
 

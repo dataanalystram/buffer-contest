@@ -166,6 +166,10 @@ def undo_package_media(house, a: Actor, rid: int, channel: str = "") -> dict:
     """Restore a channel's previous media (or, with no channel, every channel changed by the latest edit). The
     restored version brings its own template record back; the packages are checked again."""
     _busy_guard(rid)
+    run = house.run(a, rid)
+    if run.get("kind") == "client" and isinstance(run.get("result"), dict):  # a post an AI app staged (create_package)
+        house.studio._guard_write(a, "undo_package_media")
+        return _undo_client_package(house, a, rid, run, channel)
     run = _run(house, a, rid)
     res = run["result"]
     vs_all = res.get("media_versions") or {}
@@ -203,6 +207,57 @@ def undo_package_media(house, a: Actor, rid: int, channel: str = "") -> dict:
                                                    "text": f"Done: {what}. The newer version is off this post (its files stay in your Library)."})
     house._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else run["status"])
     return house.run(a, rid)
+
+
+def _undo_client_package(house, a: Actor, rid: int, run: dict, channel: str = "") -> dict:
+    """Undo for a post an AI app staged with create_package(run_id) (studio/mcp_client_brain.py keeps the previous packages
+    in result.package_versions): back to the previous version, for one channel or the whole post."""
+    from . import mcp_client_brain
+    res = run["result"]
+    from .run_discipline import closed
+    if closed(res):  # sent to Buffer or waiting in Approvals: an undo must never make it ready (and sendable) again
+        raise ActionError("This post was already sent to Buffer or is waiting in Approvals, so it can't be undone here. "
+                          "Start a new post for changes.", 409)
+    vs = res.get("package_versions") or []
+    if not vs:
+        raise ActionError("There's no earlier version of this post to go back to.", 409)
+    prev = vs[-1]
+    cur = {p["channel_id"]: p for p in res.get("packages") or []}
+    back = {p["channel_id"]: p for p in prev.get("packages") or []}
+    if channel:
+        ids = [cid for cid, p in cur.items() if cid == channel or p.get("service") == channel]
+        if not ids or not any(cid in back for cid in ids):
+            raise ActionError("There's no earlier version of that channel's post to go back to.", 409)
+        for cid in ids:
+            if cid in back:
+                cur[cid] = back[cid]
+        if all(cur.get(cid) == back.get(cid) for cid in back):
+            vs.pop()
+        res["packages"] = list(cur.values())
+    else:
+        vs.pop()
+        res["packages"] = prev.get("packages") or []
+    for p in res["packages"]:
+        p.pop("undo", None)
+        if vs:
+            p["undo"] = {"label": "Back to the previous version", "versions": len(vs)}
+    res["media"] = (res["packages"][0].get("media") if res["packages"] else []) or prev.get("media") or []
+    res.setdefault("thread", []).append({"role": "agent", "at": time.time(),
+                                         "text": "Done: back to the previous version. The newer one is off this post."})
+    house._save(rid, run["steps"], res, "ready" if res.get("packages") else run["status"])
+    mcp_client_brain._library_for_run(house, a, rid, res.get("packages") or [], _package_slot(res.get("packages") or []))
+    return house.run(a, rid)
+
+
+def _package_slot(packages: list[dict]) -> int:
+    """The run output the restored packages belong to (create_package(output: n) stamps it); 1 when none says."""
+    for p in packages:
+        v = p.get("output") if isinstance(p, dict) else None
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 1:
+            return v
+        if isinstance(v, str) and v.isdigit() and int(v) >= 1:
+            return int(v)
+    return 1
 
 
 # ---------------------------------------------------------------- brand kits

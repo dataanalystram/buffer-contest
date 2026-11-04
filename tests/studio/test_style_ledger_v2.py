@@ -202,7 +202,11 @@ def test_mcp_ledger_tools(client):
     d1 = call("delete_style_rule", {"rule_id": added["id"]})
     assert d1["needs_confirmation"]
     assert call("delete_style_rule", {"rule_id": added["id"], "confirm_token": d1["confirm_token"]}) == {"deleted": added["id"]}
-    run = call("run_agent", {"query": "travel agents", "server_ai": True})
+    ask = {"query": "travel agents", "server_ai": True}  # server AI is a paid API: the person approves it first
+    wait = call("run_agent", ask)
+    assert wait["needs_user_approval"] is True and wait["spent_usd"] == 0
+    assert client.post(f"/api/approvals/{wait['approval_id']}/approve", json={}).json()["status"] == "approved"
+    run = call("run_agent", ask)
     link = call("create_review_link", {"run_id": run["id"], "hours": 2})
     assert link["url"].startswith("https://hs.test/review/") and link["hours"] == 2
     assert call("list_review_links", {"run_id": run["id"]})["reviews"][0]["status"] == "open"

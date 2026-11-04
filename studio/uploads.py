@@ -57,7 +57,9 @@ TOOLS = [
      "edit_video / render_reel / split_video / create_package. " + BLOCKED + " upload_media_chunk is only for small files "
      "(a few MB). Use library_upload_url / import_from_link for a file that is already at a link.",
      "inputSchema": {"type": "object", "properties": {"name": {"type": "string", "description": "File name, e.g. launch.mp4"},
-         "size": {"type": "integer", "description": "File size in bytes, if you know it (checked against the limit now)"}}}},
+         "size": {"type": "integer", "description": "File size in bytes, if you know it (checked against the limit now)"},
+         "run_id": {"type": "integer", "description": "The post this file is for (start_post): the upload is kept with it. The "
+                    "same file uploaded twice is kept once (deduped: true)."}}}},
     {"name": "upload_media_chunk", "description": "Last resort for SMALL files (up to ~4 MB) when create_upload's URL can't be "
      "reached: send the file as base64 chunks of at most 2 MB each (decoded size), in order (index 0, 1, 2 ...). Leave "
      "upload_id empty on the first chunk; pass the upload_id it returns on every later chunk. Then call "
@@ -94,18 +96,30 @@ def _purge(store) -> None:
         store.x("DELETE FROM upload_sessions WHERE id=?", (uid_,))
 
 
-def _agent_of(a: Actor) -> str:
-    return json.dumps({"id": a.agent.get("id"), "name": a.agent.get("name")}) if a.kind == "agent" and a.agent else ""
+def _agent_of(a: Actor, run_id: int | None = None) -> str:
+    """Who opened the upload (and, since 4 Nov 2026, the post it is for: run_id), kept with the session."""
+    if a.kind == "agent" and a.agent:
+        return json.dumps({"id": a.agent.get("id"), "name": a.agent.get("name"), **({"run_id": int(run_id)} if run_id else {})})
+    return json.dumps({"human": True, "run_id": int(run_id)}) if run_id else ""
 
 
 def _actor(row) -> Actor:
     ag = json.loads(row["agent"] or "null") if row["agent"] else None
-    return Actor(row["user_id"], "agent", {**ag, "policy": "review"}) if ag else Actor(row["user_id"])
+    if ag and ag.get("human"):
+        return Actor(row["user_id"])
+    return Actor(row["user_id"], "agent", {**{k: v for k, v in ag.items() if k != "run_id"}, "policy": "review"}) if ag else Actor(row["user_id"])
+
+
+def _run_of(row) -> int | None:
+    try:
+        return int((json.loads(row["agent"] or "null") or {}).get("run_id") or 0) or None
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def _item_out(it: dict) -> dict:
     return {"library_id": it.get("id"), "media_token": it.get("media_token"), "url": it.get("public_url") or it.get("url"),
-            "kind": it.get("kind"), "name": it.get("name"), "bytes": it.get("size"),
+            "kind": it.get("kind"), "name": it.get("name"), "bytes": it.get("size"), **({"deduped": True} if it.get("deduped") else {}),
             "next": "Use media_token with edit_video / render_reel / split_video, or its url in create_package."}
 
 
@@ -114,19 +128,22 @@ class Uploads:
         self.h, self.store, self.lib = house, house.store, house.library
         ensure(self.store)
 
-    def _open(self, a: Actor, name: str, mode: str, size: int | None) -> tuple[str, str]:
+    def _open(self, a: Actor, name: str, mode: str, size: int | None, run_id: int | None = None) -> tuple[str, str]:
         self.h.studio._guard_write(a, "library_upload")
         self.lib.check_room(a, size)
         _purge(self.store)
         uid_, tok = "up_" + secrets.token_urlsafe(12), "ut_" + secrets.token_urlsafe(24)
         self.store.x("INSERT INTO upload_sessions(id,token_hash,user_id,agent,name,mode,size,parts,created,expires,used) "
-                     "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (uid_, sha(tok), a.uid, _agent_of(a), (name or "upload")[:80], mode, 0, 0,
+                     "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (uid_, sha(tok), a.uid, _agent_of(a, run_id), (name or "upload")[:80], mode, 0, 0,
                                                        time.time(), time.time() + TTL, 0))
         return uid_, tok
 
-    def create(self, a: Actor, name: str = "", size: int | None = None) -> dict:
+    def create(self, a: Actor, name: str = "", size: int | None = None, run_id: int | None = None) -> dict:
         size = int(size) if size not in (None, "") else None
-        uid_, tok = self._open(a, name, "put", size)
+        if run_id:
+            from . import run_discipline
+            run_discipline.own_run(self.store, a, int(run_id))  # 404 for someone else's run
+        uid_, tok = self._open(a, name, "put", size, run_id)
         url = f"{self.h.s.public_url.rstrip('/')}/u/{tok}"
         from .library import FILE_MAX, MB
         fname = (name or "file.mp4").replace("'", "")
@@ -162,6 +179,8 @@ class Uploads:
             raise ActionError("Bad Content-Length.", 400)
         a = _actor(row)
         it = await self.lib.save_stream(a, row["name"], request.stream(), declared, "upload")
+        if _run_of(row) and it.get("id"):
+            self.lib.attach_run(a, it["id"], _run_of(row))
         return _item_out(self._with_public(it))
 
     def chunk(self, a: Actor, upload_id: str, index, data: str, name: str = "", total_size=None) -> dict:
@@ -251,7 +270,8 @@ def call_tool(studio, actor, name: str, args: dict):
     if demo_guard.is_demo(actor.uid):
         raise ActionError("The sample workspace's Library is read-only. Connect Buffer to upload your own files.", 403)
     if name == "create_upload":
-        return up.create(actor, str(args.get("name") or ""), args.get("size"))
+        rid = args.get("run_id")
+        return up.create(actor, str(args.get("name") or ""), args.get("size"), int(rid) if isinstance(rid, int) and rid > 0 else None)
     if name == "upload_media_chunk":
         return up.chunk(actor, str(args.get("upload_id") or ""), args.get("index"), args.get("data"), str(args.get("name") or ""),
                         args.get("total_size"))
