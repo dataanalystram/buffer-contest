@@ -276,7 +276,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def robots():
         body = ("User-agent: *\nAllow: /\nAllow: /docs\nAllow: /privacy\nAllow: /terms\nAllow: /security\nAllow: /docs/api\n"
                 "Disallow: /api/\nDisallow: /mcp\nDisallow: /callback\nDisallow: /login\nDisallow: /demo\nDisallow: /device/\n"
-                "Disallow: /oauth/\nDisallow: /m/\nDisallow: /integrations/\n"
+                "Disallow: /oauth/\nDisallow: /m/\nDisallow: /integrations/\nDisallow: /admin\n"
                 f"Sitemap: {s.public_url}/sitemap.xml\n")
         return Response(body, media_type="text/plain")
 

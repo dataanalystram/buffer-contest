@@ -27,6 +27,9 @@ services:
         value: dataanalystram/buffer-contest
       - key: GH_DISPATCH_TOKEN     # fine-grained PAT: Actions read/write on this repo only
         sync: false
+      # who can open /admin: Buffer account ids or Buffer emails, comma-separated (docs/ADMIN.md); empty = nobody
+      - key: HQ_ADMIN_IDS
+        sync: false
 databases:
   - name: huhqueue-studio-db
     plan: free
