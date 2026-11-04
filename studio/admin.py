@@ -110,7 +110,7 @@ def users(store, q: str = "", limit: int = 100, offset: int = 0, include_demo: b
         marks = ",".join("?" * len(ids))
         for r in store.q(f"SELECT user_id, ts, ip, ua FROM audit WHERE id IN (SELECT MAX(id) FROM audit WHERE user_id IN ({marks}) "
                          f"AND action IN ('connect_buffer','device_signed_in') AND ok=1 GROUP BY user_id)", tuple(ids)):
-            signin[r["user_id"]] = r
+            signin[r["user_id"]] = dict(r)
     out = []
     for r in rows:
         s = signin.get(r["id"]) or {}
