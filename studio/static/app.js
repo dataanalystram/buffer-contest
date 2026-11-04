@@ -742,6 +742,7 @@ async function loadApprovals() {
   if (!rows.length) { box.innerHTML = `<div class="ib-none" data-testid="approvals-empty">Nothing waiting. When an agent writes a post, it shows up here before anything reaches Buffer.</div>`; return; }
   box.innerHTML = "";
   for (const r of rows) {
+    if (r.kind === "paid_api") { box.appendChild(paidApproval(r)); continue; }
     const ch = chOf(r.payload.channel_id), media = (r.payload.media_urls && r.payload.media_urls.length ? r.payload.media_urls : [r.payload.media_url]).filter(Boolean);
     const el = document.createElement("article"); el.className = `appr svc-${ch.service}`; el.setAttribute("data-testid", "approval-item");
     const thumb = media.length ? `<div class="appr-media${media.length > 1 ? " multi" : ""}">${isVidUrl(media[0]) ? `<video src="${esc(media[0])}" muted playsinline preload="metadata"></video><span class="play" aria-hidden="true"></span>` : `<img src="${esc(media[0])}" alt="" loading="lazy">`}${media.length > 1 ? `<span class="more">+${media.length - 1}</span>` : ""}</div>` : "";
@@ -761,6 +762,31 @@ async function loadApprovals() {
   }
 }
 
+// An AI app asking to use something that costs money or credits (HuhQueue's server AI; later Commerce). Nothing ran yet:
+// approving lets that one request run once (studio/consent.py). Rejecting tells the app no.
+function paidCost(est) {
+  if (est && est.usd_max != null) return `up to $${Number(est.usd_max).toFixed(2)}`;
+  if (est && est.credits != null) return `${est.credits} credit${Number(est.credits) === 1 ? "" : "s"}`;
+  return "a cost the app couldn't estimate";
+}
+function paidApproval(r) {
+  const p = r.payload || {}, est = p.estimate || {};
+  const el = document.createElement("article"); el.className = "appr appr-paid"; el.setAttribute("data-testid", "approval-item"); el.dataset.kind = "paid_api";
+  el.innerHTML = `<div class="appr-head">${aiMark(r.agent_name, 22)}<span><b>${esc(r.agent_name)}</b> wants to use <b>${esc(est.provider || "a paid API")}</b></span><small>${esc(timeAgo(r.created * 1000))}</small></div>
+    <div class="appr-body"><p><b>${esc(est.what || p.tool || "")}</b></p>${p.summary ? `<p class="muted">${esc(p.summary)}</p>` : ""}
+    <p data-testid="approval-cost">Cost: ${esc(paidCost(est))}${est.counts_against ? ` · counts against ${esc(est.counts_against)}` : ""}${est.allowance_left_usd != null ? ` ($${Number(est.allowance_left_usd).toFixed(2)} left)` : ""}</p>
+    <p class="muted sm">Nothing has run yet. Approve lets this one request run once; the app asks again for anything else.</p></div>
+    <div class="appr-act"><button class="btn2 sm danger" data-testid="reject">Reject</button><span class="right"><button class="btn accent sm" data-testid="approve">Approve</button></span></div><div data-testid="approval-status"></div>`;
+  $("[data-testid=approve]", el).onclick = async () => {
+    const b = $("[data-testid=approve]", el); b.disabled = true;
+    try { await api(`/api/approvals/${r.id}/approve`, { method: "POST", body: {} });
+      $("[data-testid=approval-status]", el).innerHTML = `<div class="st ok">Approved. ${esc(r.agent_name)} can run it once.</div>`; el.classList.add("sent"); setTimeout(loadInbox, 1400); }
+    catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; b.disabled = false; }
+  };
+  $("[data-testid=reject]", el).onclick = async () => { await api(`/api/approvals/${r.id}/reject`, { method: "POST" }); toast("Rejected. Nothing ran."); loadInbox(); };
+  return el;
+}
+
 // ---------------------------------------------------------------- AI apps: who has access, what they did, connect more
 const POL = { review: "Needs my approval", draft: "Buffer drafts only", trusted: "Can schedule" };
 async function loadTokens() {
@@ -769,9 +795,16 @@ async function loadTokens() {
   box.innerHTML = toks.length ? `<ul class="ax-list">${toks.map((t) => `<li class="ax-row" data-testid="token-row">${aiMark(t.name, 32)}<span class="ax-name"><b>${esc(t.name)}</b><small>${esc(POL[t.policy] || t.policy)} · ${t.daily_cap} posts a day</small></span>
       <span class="ax-used ${t.last_used ? "on" : ""}">${t.last_used ? "Last used " + esc(timeAgo(t.last_used * 1000)) : "Not used yet"}</span>
       <button class="link" type="button" data-testid="token-cap-edit" data-id="${t.id}" data-cap="${t.daily_cap}">Change limit</button>
+      <button class="link" type="button" data-testid="token-paid" data-id="${t.id}" data-on="${t.allow_paid_apis ? 1 : 0}" aria-pressed="${t.allow_paid_apis ? "true" : "false"}" title="Paid APIs: HuhQueue's server AI and, later, product search credits">Paid APIs: ${t.allow_paid_apis ? "allowed" : "ask me"}</button>
       <button class="link danger" type="button" data-testid="revoke-token" data-id="${t.id}">Revoke</button></li>`).join("")}</ul>`
     : `<p class="muted ib-none">No app has a token yet. Claude and ChatGPT sign in with OAuth and appear in the activity below once they act.</p>`;
   box.querySelectorAll("[data-testid=revoke-token]").forEach((b) => (b.onclick = async () => { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "DELETE" }); loadTokens(); }));
+  box.querySelectorAll("[data-testid=token-paid]").forEach((b) => (b.onclick = async () => {
+    const on = b.dataset.on !== "1";
+    if (on && !(await hqConfirm("Let this app use paid APIs without asking? It can then spend your HuhQueue AI allowance (and, later, product search credits) on its own. Each use is in Activity.", { ok: "Allow paid APIs" }))) return;
+    try { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "PATCH", body: { allow_paid_apis: on } }); toast(on ? "Paid APIs allowed for this app" : "This app asks you before using paid APIs"); } catch (e) { toast(e.message, 5000); }
+    loadTokens();
+  }));
   box.querySelectorAll("[data-testid=token-cap-edit]").forEach((b) => (b.onclick = async () => {
     const v = await hqAsk("Actions a day for this app (1 to 100)", b.dataset.cap, { type: "number", min: 1, max: 100, ok: "Save limit" }); if (v === null) return;
     try { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "PATCH", body: { daily_cap: +v } }); toast("Daily limit changed"); } catch (e) { toast(e.message, 5000); }
