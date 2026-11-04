@@ -84,6 +84,12 @@ def test_asking_for_a_hidden_channel_is_refused_not_answered(app, api, channel, 
         r = c.get(f"{p}?channel_id={world['id']}")
         assert r.status_code == 403, (p, r.status_code)
         assert not _leaks(r.text.replace(world["id"], ""), "\x00")
+    # a teammate who can't see the channel is refused by teams.authorize (#100: a read on a hidden channel is a 404)
+    ed = member(app, api, "editor", access={world["id"]: "none"}, name="Eli")
+    for p in ("/api/insights", "/api/insights/export.csv", "/api/reports/summary", "/api/insights/best-times"):
+        r = ed.get(f"{p}?channel_id={world['id']}")
+        assert r.status_code == 404, (p, r.status_code)
+        assert not _leaks(r.text, world["id"])
 
 
 def test_report_archive_is_hidden_from_a_channel_limited_caller(app, api, channel, world, core):

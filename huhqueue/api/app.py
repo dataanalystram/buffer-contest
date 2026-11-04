@@ -714,7 +714,7 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
             if m:
                 use = media_usage(s, mid)
                 if use["uses"] and not force:   # block on the FULL usage; list only the caller's visible channels' posts
-                    shown = filter_usage(use, getattr(request.state, "visible_channels", None), recount=False)
+                    shown = filter_usage(use, visible(request), recount=False)
                     return _err(409, f"This file is used in {use['uses']} post(s) or idea(s) - delete with force=true", usage=shown)
                 media_svc.delete(core, m)
                 s.delete(m)

@@ -8,6 +8,13 @@ filter at the query instead: otherwise another channel's captions, usernames, fo
 
     channel_id = narrow(request, channel_id)   # a comma list the route's own query already understands
     qry = only(qry, PostTarget.channel_id, visible(request))
+
+This is the read side of channel scope. The request side is safety.scope_refs (#100): before any route runs, the guard
+resolves every channel a request NAMES (query channel_id, body, path) or reaches through a post / target / comment id,
+and refuses a scoped token (403 / 404) or a restricted teammate (teams.authorize) that names a channel it can't see. So
+by the time narrow() runs, an asked channel_id is already one the caller may see; narrow() still drops anything else
+(defence in depth) and, when nothing was asked, fills in the visible set so a total never spans hidden channels.
+Every read of request.state.visible_channels goes through visible().
 """
 from __future__ import annotations
 

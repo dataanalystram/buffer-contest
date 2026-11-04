@@ -373,7 +373,7 @@ def add_content_routes(app: FastAPI, core) -> None:
             if not s.get(Media, mid):
                 raise HTTPException(404, "Media not found")
             out = media_usage(s, mid)
-        return filter_usage(out, getattr(request.state, "visible_channels", None))   # channel-limited token / teammate
+        return filter_usage(out, visible(request))   # channel-limited token / teammate
 
     @app.post("/api/media/{mid}/edit", tags=["media"])
     def media_edit(mid: str, payload: dict = Body(...)):
