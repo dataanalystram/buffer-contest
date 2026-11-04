@@ -1,7 +1,7 @@
-"""Delete a One take thread from the conversation sidebar in a real browser, at 1280 and 390 px (owner ask, 4 Nov 2026;
-tests/studio/test_thread_bin.py is the unit side). The trash button on a One take thread opens a choice: Cancel changes
-nothing, "Delete thread only" removes the thread and keeps the take in One take, "Delete thread and its take" also moves
-the take to the take Bin. Make a post threads keep their rename button and get no delete. No horizontal overflow at 390 px."""
+"""Delete a thread from the conversation sidebar in a real browser, at 1280 and 390 px (owner asks, 4 Nov 2026 23:45;
+tests/studio/test_thread_bin.py is the unit side). Deleting a thread is like deleting chat history: every thread has a
+trash button (Make a post, One take, failed ones too); Cancel changes nothing; Delete removes the conversation only, and
+the take stays in One take. Make a post threads keep their rename button. No horizontal overflow at 390 px."""
 import json
 import time
 
@@ -41,36 +41,36 @@ def _flow(page, app, keep_id, del_id, phone):
         pw.expect(page.get_by_test_id("chat-sidebar")).to_be_visible()
     side()
     pw.expect(page.get_by_test_id("chat-thread")).to_have_count(3)
-    assert page.get_by_test_id("chat-thread-delete").count() == 2          # only the One take threads
+    assert page.get_by_test_id("chat-thread-delete").count() == 3          # every thread, the post thread too
     assert page.get_by_test_id("chat-thread-rename").count() == 1          # the post thread keeps rename
     # Cancel changes nothing
     page.locator(f"#hcList [data-del-thread='{keep_id}']").click()
-    dlg = page.get_by_test_id("choose-dialog")
+    dlg = page.get_by_test_id("ask-dialog")
     pw.expect(dlg).to_be_visible()
-    assert page.get_by_test_id("choose-keep").is_visible() and page.get_by_test_id("choose-delete").is_visible()
+    pw.expect(page.get_by_test_id("ask-message")).to_contain_text("Only the conversation is deleted")
     if phone:
         _no_overflow(page, 390)
         box = dlg.bounding_box()
         assert box["x"] >= 0 and box["x"] + box["width"] <= 391
     page.get_by_test_id("ask-cancel").click()
     pw.expect(dlg).to_have_count(0)
+    pw.expect(page.get_by_test_id("chat-sidebar")).to_be_visible()          # the drawer stays open behind the dialog
     pw.expect(page.get_by_test_id("chat-thread")).to_have_count(3)
-    # Delete thread only: gone from the sidebar, the take stays in One take
+    # Delete: gone from the sidebar, the take stays in One take, untouched
     page.locator(f"#hcList [data-del-thread='{keep_id}']").click()
-    page.get_by_test_id("choose-keep").click()
+    page.get_by_test_id("ask-ok").click()
     pw.expect(page.get_by_test_id("chat-thread")).to_have_count(2)
-    pw.expect(page.locator("#toast")).to_contain_text("The take stays in One take")
+    pw.expect(page.locator("#toast")).to_contain_text("Your media stays")
     assert st.q("SELECT status FROM agent_runs WHERE id=?", (keep_id,))[0]["status"] == "ready"
-    # Delete thread and its take: the take goes to the take Bin
+    # the second take thread too: its take is never deleted either
     if phone and page.get_by_test_id("chat-sidebar").is_hidden():
         side()
     page.locator(f"#hcList [data-del-thread='{del_id}']").click()
-    page.get_by_test_id("choose-delete").click()
+    page.get_by_test_id("ask-ok").click()
     pw.expect(page.get_by_test_id("chat-thread")).to_have_count(1)
-    pw.expect(page.locator("#toast")).to_contain_text("Thread and its take moved to the Bin")
-    assert st.q("SELECT status FROM agent_runs WHERE id=?", (del_id,))[0]["status"] == "binned"
-    bin_ = {t["takes"] for t in app.state.house.threads.list(Actor("acc_1"))["threads"]}
-    assert bin_ == {"keep", "delete"}
+    assert st.q("SELECT status FROM agent_runs WHERE id=?", (del_id,))[0]["status"] == "ready"
+    assert {t["kind"] for t in app.state.house.threads.list(Actor("acc_1"))["threads"]} == {"take"}
+    assert len(app.state.house.threads.list(Actor("acc_1"))["threads"]) == 2
     if phone:
         _no_overflow(page, 390)
 

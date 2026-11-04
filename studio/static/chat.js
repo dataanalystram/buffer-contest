@@ -164,7 +164,7 @@
         const on = String(x.id) === String(cur);
         html += `<li class="hc-li${on ? " on" : ""}" data-id="${esc(x.id)}"><button type="button" class="hc-th" data-open="${esc(x.id)}" data-kind="${esc(x.kind)}" data-testid="chat-thread"${on ? ' aria-current="true"' : ""}>
             <span class="hc-th-t" title="${esc(x.title || "Your post")}">${esc(x.title || "Your post")}</span><small class="hc-th-s st-${esc(x.state || x.status)}">${esc(STATE[x.state] || x.state || x.status || "")}${x.summarized ? " · summarized" : ""}</small></button>
-          ${x.kind === "take" ? (x.thread_id ? `<button type="button" class="hc-th-r hc-th-del" data-del-thread="${esc(x.id)}" data-testid="chat-thread-delete" aria-label="Delete thread “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.trash)}</button>` : "") : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}</li>`;
+          ${x.kind === "take" ? "" : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}${x.thread_id ? `<button type="button" class="hc-th-r hc-th-del" data-del-thread="${esc(x.id)}" data-testid="chat-thread-delete" aria-label="Delete thread “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.trash)}</button>` : ""}</li>`;
       }
       html += "</ul>";
     }
@@ -224,20 +224,18 @@
     // typed or approved meanwhile goes to the previous thread
     const dk = document.getElementById("hcDock"); if (dk) { dk.inert = on; dk.classList.toggle("hc-dock-wait", on); }
   }
-  // delete a One take thread (studio/thread_bin.py): the thread only, or the thread and its take (the take Bin). Both
-  // stay restorable for 7 days. The server takes the thread's public id (thr_...); a foreign or missing one is a 404.
+  // delete a thread (studio/thread_bin.py), any kind or state: like deleting chat history, the conversation only. Media
+  // is never deleted (takes, clips, uploads, posts stay). 7 days in the Bin. A foreign or missing id is a 404.
   async function deleteThread(id) {
     const row = HC.rows.find((x) => String(x.id) === String(id)); if (!row || !row.thread_id) return;
-    const pick = await window.hqChoose(`Delete “${String(row.title || "this thread").slice(0, 80)}”?`, [
-      { value: "keep", label: "Delete thread only", hint: "The take and its clips stay in One take" },
-      { value: "delete", label: "Delete thread and its take", hint: "The take goes to the Bin; a render still running stops", danger: true },
-    ], { note: "Both move to the Bin for 7 days, then they're removed for good. Clips already in Buffer stay there.", label: "What to delete" });
-    if (!pick) return;
+    const ok = await window.hqConfirm(`Delete “${String(row.title || "this thread").slice(0, 80)}”?\nOnly the conversation is deleted. ` +
+      (row.kind === "take" ? "The take, its clips and the upload stay in One take." : "Your posts and media stay in the Library and Buffer.") +
+      " It stays in the Bin for 7 days.", { ok: "Delete thread", danger: true });
+    if (!ok) return;
     try {
-      await api(`/api/threads/${encodeURIComponent(row.thread_id)}?takes=${pick}`, { method: "DELETE" });
+      await api(`/api/threads/${encodeURIComponent(row.thread_id)}`, { method: "DELETE" });
       HC.rows = HC.rows.filter((x) => String(x.id) !== String(id)); drawList(true);
-      toast(pick === "delete" ? "Thread and its take moved to the Bin (7 days)." : "Thread moved to the Bin (7 days). The take stays in One take.", 5000);
-      if (pick === "delete" && window.loadTakes) window.loadTakes();
+      toast("Thread deleted. Your media stays (restorable for 7 days).", 5000);
     } catch (err) { toast(err.message, 5000); }
   }
   function rename(id) {
