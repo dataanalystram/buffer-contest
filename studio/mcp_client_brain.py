@@ -27,30 +27,44 @@ from .actions import ActionError, Actor
 S = {"type": "string"}
 SOURCE = "mcp_client_brain"
 INSTRUCTIONS = (
-    "You are the brain: read with research tools, write slides and captions yourself, then call render tools. "
-    "HuhQueue is the hands: it reads links and X posts, finds official media, edits images and VIDEO (trim/cut, split a long "
-    "video into clips, reframe 9:16/4:5/1:1, captions on/off/style, themes, end card, music), renders carousels and Reels "
-    "in the user's brand kit and stages Buffer drafts that wait for the user's approval. You CAN edit videos with HuhQueue: "
-    "list_library(kind=video) -> edit_video(media_token, start_s/end_s or cut_first_s, captions) -> poll render_status(job_id) "
-    "-> show the download URL. Carousel: research_link -> write 5-7 slides yourself -> render_carousel(slides) -> "
-    "brand_check(your caption) -> create_package(captions per channel) -> schedule_package(mode=draft) after the user says yes. "
-    "Long video: split_video(media_token or url, n) -> poll render_status(take_id=...). Heavy jobs return an id at once; poll "
-    "every 10-20 s. Tools marked 'server AI' (run_agent, revise, edit_media, make_post, reply_post) spend the user's "
-    "HuhQueue AI allowance and only run with server_ai: true."
+    "You are the brain; HuhQueue is the hands. Do your own web research with your own tools (search, browsing); HuhQueue's "
+    "tools read a link you give it, edit images and video, render in the person's brand kit and stage Buffer drafts. Work in "
+    "ONE post per request: "
+    "1) Start: call start_post(title, brief, user_asked: true, reason) once for the person's request and keep its run_id. If a "
+    "tool answers reused: true, keep working on that run. "
+    "2) Pass run_id to every render, edit, upload and create_package call. Follow-ups ('brighter', 'swap slide 3', 'shorter "
+    "caption') update the same run: render again with run_id, then create_package(run_id, ...), which replaces the post in "
+    "place and keeps the previous version for undo_package_media. Never start another post, thread, template or brand kit "
+    "unless the person asked; then pass new_post: true (or the tool's user_asked: true) with a one-line reason. "
+    "3) Images: give HuhQueue the image URL (hero_edit(image_url), render_carousel slides[].image, library_upload_url). It "
+    "downloads and edits on its side; don't paste images or upload throwaway copies. If a site blocks the download, ask the "
+    "person for the file with create_send_code. "
+    "4) Carousel: research_link -> write the slides -> render_carousel(run_id, slides) -> brand_check -> "
+    "create_package(run_id, captions) -> show the person -> schedule_package(run_id, mode='draft') only after they say yes. "
+    "Video: edit_video(run_id, ...) / split_video(run_id, ...) -> poll render_status every 10-20 s. "
+    "5) Fit problems: shorten the text and render again with the same run_id (it replaces the slides, it doesn't add a post "
+    "or a Library item). "
+    "6) Paid or credit-spending tools (server AI: run_agent, revise, edit_media, make_post, reply_post with server_ai: true; "
+    "later Commerce) never run on your say-so: they answer needs_user_approval with a cost estimate until the person approves "
+    "it in HuhQueue's Approvals. Ask them; don't retry in a loop. "
+    "7) Drafts only by default; posts wait in Approvals unless the token's policy says otherwise. Same call twice is safe: "
+    "pass idempotency_key on writes you might retry."
 )
 
 # Tools that spend HuhQueue's own model key. Over MCP they need server_ai: true (the person's explicit choice).
 SERVER_AI_TOOLS = {"run_agent", "revise", "edit_media", "make_post", "reply_post"}
 SERVER_AI_NOTE = " Uses HuhQueue's server AI (counts against your HuhQueue AI allowance): pass server_ai: true to run it."
 SEQUENCES = {
-    "run_agent": "research_link(url) or find_media(query) -> write the slides/hook yourself -> render_carousel / render_reel -> "
-                 "create_package(captions) -> schedule_package(mode=draft)",
-    "make_post": "research_link(url) -> write the slides yourself -> render_carousel(slides) -> create_package(captions) -> "
-                 "schedule_package(mode=draft)",
-    "edit_media": "create_upload (a local file) or library_upload_url(public url) or list_library(kind=video) -> edit_video(media_token, ...) -> render_status(job_id)",
-    "revise": "change your slides/caption yourself and call render_carousel / edit_video again; remember_rule saves a brand rule",
+    "run_agent": "start_post(title, user_asked: true) -> research_link(url) or find_media(query) -> write the slides/hook yourself -> "
+                 "render_carousel(run_id) / render_reel(run_id) -> create_package(run_id, captions) -> schedule_package(run_id, mode=draft)",
+    "make_post": "start_post(title, user_asked: true) -> research_link(url) -> write the slides yourself -> render_carousel(run_id, slides) "
+                 "-> create_package(run_id, captions) -> schedule_package(run_id, mode=draft)",
+    "edit_media": "start_post(title, user_asked: true) -> create_upload (a local file) or library_upload_url(public url, run_id) or "
+                  "list_library(kind=video) -> edit_video(run_id, media_token, ...) -> render_status(job_id)",
+    "revise": "change your slides/caption yourself and call render_carousel / edit_video again with the SAME run_id, then "
+              "create_package(run_id) (it updates the post in place); remember_rule saves a brand rule",
     "reply_post": "write the reply yourself, then preview_post / submit_post",
-    "replace_channel_media": "render the new media (render_carousel / edit_video), then create_package with it",
+    "replace_channel_media": "render the new media (render_carousel / edit_video with run_id), then create_package(run_id) with it",
     "edit_brand": "update_brand_kit(colors, font, handle, end_card...) changes the brand kit without AI",
 }
 
@@ -61,7 +75,8 @@ def server_ai_hint(name: str) -> dict:
             "message": f"{name} uses HuhQueue's server AI, which counts against the user's HuhQueue AI allowance. You are the "
                        "brain here: do it with the client-brain tools (no HuhQueue AI), or call again with server_ai: true if "
                        "the user wants HuhQueue's own agent to do it.",
-            "client_brain_sequence": SEQUENCES.get(name, "research_link -> render_carousel / edit_video -> create_package"),
+            "client_brain_sequence": SEQUENCES.get(name, "start_post -> research_link -> render_carousel(run_id) / edit_video(run_id) -> "
+                                                         "create_package(run_id)"),
             "how": INSTRUCTIONS}
 
 
@@ -81,6 +96,9 @@ VIDEO_SRC = {"media_token": {"type": "string", "description": "A HuhQueue media 
              "library_id": {"type": "integer", "description": "A Library item id (list_library)"},
              "url": {"type": "string", "description": "A public https link to a video file you own (imported first)"}}
 
+RUN_ID = {"type": "integer", "description": "The post this belongs to (start_post / create_package returned it). Pass it on "
+          "every call for the same request: the result is kept with that post instead of starting another."}
+IDEM = {"type": "string", "description": "Optional: the same key with the same arguments returns the first result (safe retry)"}
 COVER = {"type": ["boolean", "object"], "description": "Branded cover (thumbnail): true, or {title (cover hook, max ~10 words), "
          "image_url (an official image for the cover), index (0-2, which of the 3 variants opens the Reel), opening_frame "
          "(default true: the cover is the Reel's first frames, so Instagram and TikTok show it as the thumbnail)}. render_status "
@@ -115,25 +133,27 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "render_carousel", "description": "Render a carousel YOU wrote in the user's brand kit. slides[0] is the cover (eyebrow, "
      "headline with ONE accent_word, body = one-line dek, image = hero picture); every other slide is one idea (eyebrow, headline, "
      "body, footnote, optional image). The Follow card is added last. template: editorial (the HuhByte 'ernd' editorial carousel, "
-     "default) or text_slides. Returns media_urls (store them in the Library) and fit problems to fix by writing shorter text. "
-     "No HuhQueue AI is used.",
+     "default) or text_slides. Pass run_id (start_post): the slides become that post's carousel, and rendering again with the same "
+     "run_id REPLACES them (one Library item per post, never a new one per render). Returns media_urls to pass to "
+     "create_package(run_id) and fit_problems to fix by writing shorter text. No HuhQueue AI is used.",
      "inputSchema": {"type": "object", "required": ["slides"], "properties": {
          "slides": {"type": "array", "minItems": 2, "maxItems": 9, "items": SLIDE},
          "template": {"type": "string", "enum": ["editorial", "editorial_story", "text_slides"]},
          "ratio": {"type": "string", "enum": ["4:5", "1:1", "9:16"]}, "follow_line": S,
          "keep_case": {"type": "array", "items": S, "description": "Brand names to keep exactly as written in Title Case "
-                       "headlines, e.g. ['ernd', 'iPhone']"}}}},
+                       "headlines, e.g. ['ernd', 'iPhone']"}, "run_id": RUN_ID, "idempotency_key": IDEM}}},
     {"name": "hero_edit", "description": "The premium cover edit of an official image (no HuhQueue AI): saliency crop to the frame, "
      "colour match to the brand ground, vignette and fade; optional product cut-out tilted with a shadow. Returns the edited "
-     "image URL to use as slides[0].image in render_carousel.",
+     "image URL to use as slides[0].image in render_carousel. Give the image's URL (HuhQueue downloads it); pass run_id so the "
+     "edit is kept with that post (it is never added to the Library on its own).",
      "inputSchema": {"type": "object", "required": ["image_url"], "properties": {"image_url": S, "product_url": S,
-                     "ratio": {"type": "string", "enum": ["4:5", "1:1", "9:16"]}}}},
+                     "ratio": {"type": "string", "enum": ["4:5", "1:1", "9:16"]}, "run_id": RUN_ID, "idempotency_key": IDEM}}},
     {"name": "edit_video", "description": "Edit or cut a video on the HuhQueue server (no HuhQueue AI): trim to start_s..end_s or "
      "cut_first_s seconds off the start, reframe to 9:16 / 4:5 / 1:1 (speaker-aware), burned-in word captions on or off "
      "(transcribed with Whisper on the video worker), a theme/style (list_themes), music only when asked (music: cinematic | pulse; auto = none), a hook title; the "
      "brand's Follow end card is always added last (brand rule). "
-     "Give the video as media_token, library_id or url. Returns a job id at once; poll "
-     "render_status(job_id) every 10-20 s until status is done, then show download_url.",
+     "Give the video as media_token, library_id or url, and run_id for the post it is for. Returns a job id at once; poll "
+     "render_status(job_id) every 10-20 s until status is done, then show download_url and pass it to create_package(run_id).",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC,
          "start_s": {"type": "number"}, "end_s": {"type": "number"},
          "rerender_finished": {"type": "boolean", "description": "A finished HuhQueue reel is re-edited from its original "
@@ -150,27 +170,32 @@ TOOLS: list[dict[str, Any]] = [
          "hook": {"type": "string", "description": "On-screen title you wrote (max ~12 words, facts only)"},
          "credit": {"type": "string", "description": "Credit line for a video the user didn't make"},
          "rights": RIGHTS, "cover": COVER,
-         "rights_confirmed": {"type": "boolean", "description": "Older form of rights=own/permission"}}}},
+         "rights_confirmed": {"type": "boolean", "description": "Older form of rights=own/permission"},
+         "run_id": RUN_ID, "idempotency_key": IDEM}}},
     {"name": "render_reel", "description": "Make a branded 9:16 Reel (no HuhQueue AI): from a video (same options as edit_video) or "
      "from slides (image URLs, e.g. render_carousel's media_urls) as a slideshow with the end card. Returns a job id; poll "
      "render_status(job_id).",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC, "images": {"type": "array", "items": S, "maxItems": 10},
          "hook": S, "theme": S, "captions": {"type": ["boolean", "string"], "enum": [True, False, "auto", "replace", "on", "off"]}, "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
-         "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}, "rights": RIGHTS, "rights_confirmed": {"type": "boolean"}, "credit": S}}},
+         "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"]}, "rights": RIGHTS, "rights_confirmed": {"type": "boolean"}, "credit": S,
+         "run_id": RUN_ID, "idempotency_key": IDEM}}},
     {"name": "split_video", "description": "Split a long video into 3-7 short vertical clips on the video worker (no HuhQueue AI: "
      "Whisper transcript, built-in moment scorer, face-tracked reframe, captions, cover and end card). Give media_token / "
      "library_id / url (a file or a YouTube/Vimeo/X post) and owns: true (or rights_confirmed + credit). Returns take_id; poll "
      "render_status(take_id=...) or list_clips(take_id). sample: true shows the bundled example (Buffer's Buffer Commit kickoff).",
      "inputSchema": {"type": "object", "properties": {**VIDEO_SRC, "n": {"type": "integer", "minimum": 1, "maximum": 7},
          "rights": RIGHTS, "owns": {"type": "boolean"}, "rights_confirmed": {"type": "boolean"}, "credit": S, "name": S,
-         "channel_ids": {"type": "array", "items": S}, "sample": {"type": "boolean"}}}},
+         "channel_ids": {"type": "array", "items": S}, "sample": {"type": "boolean"}, "run_id": RUN_ID, "idempotency_key": IDEM}}},
     {"name": "render_status", "description": "Status of a video job: job_id (edit_video / render_reel / render_template video) or "
      "take_id (split_video). status queued | running | done | failed, with download_url(s) when done and the error when failed.",
      "inputSchema": {"type": "object", "properties": {"job_id": {"type": "integer"}, "take_id": {"type": "integer"}}}},
     {"name": "create_package", "description": "Stage a post YOU wrote: captions per channel (channel id or service name -> text) and "
-     "the media URLs (render_carousel / render_status). Returns run_id with one ready package per channel. Nothing is posted: "
-     "show the user, then schedule_package(run_id, channel_id, mode=draft) creates a Buffer draft (it waits in Approvals when the "
-     "token needs approval). No HuhQueue AI is used.",
+     "the media URLs (render_carousel / render_status). Pass run_id (start_post): the post is UPDATED IN PLACE (new captions "
+     "and media replace the old ones, the previous version is kept for undo_package_media), never a second post. Without "
+     "run_id, this app's open post is updated (reused: true), or a new one is made if there is none. new_post: true with "
+     "user_asked: true only when the person asked for another post. Returns run_id with one ready package per channel. "
+     "Nothing is posted: show the person, then schedule_package(run_id, channel_id, mode=draft) creates a Buffer draft (it "
+     "waits in Approvals when the token needs approval). No HuhQueue AI is used.",
      "inputSchema": {"type": "object", "required": ["captions"], "properties": {
          "captions": {"type": "object", "description": "{channel_id or service: caption}", "additionalProperties": S},
          "media_urls": {"type": "array", "items": S, "maxItems": 10}, "title": S,
@@ -180,13 +205,16 @@ TOOLS: list[dict[str, Any]] = [
          "cover": {"type": "object", "description": "The post's cover: {url (render_status cover_url or any https image; shown on "
                    "the Planner and in previews), frame_s (thumbnail frame in seconds; default 0 = the opening frame, which is "
                    "the branded cover when edit_video made one)}. Instagram, TikTok and Pinterest get it as Buffer's thumbnailOffset.",
-                   "properties": {"url": S, "frame_s": {"type": "number", "minimum": 0}}}}}},
+                   "properties": {"url": S, "frame_s": {"type": "number", "minimum": 0}}},
+         "run_id": RUN_ID, "new_post": {"type": "boolean", "description": "true: a separate new post (needs user_asked: true)"},
+         "user_asked": {"type": "boolean"}, "reason": S, "idempotency_key": IDEM}}},
     {"name": "library_upload_url", "description": "Only for a photo or video that is ALREADY at a public https URL (up to 40 MB; "
      "a Google Drive, Dropbox, OneDrive or iCloud share link goes through import_from_link, up to the Library's per-file "
-     "limit): adds it to the user's Library and returns media_token and library_id for edit_video / split_video / "
-     "render_carousel. For a file on the user's computer or in your sandbox, use create_upload; if your sandbox can't reach "
-     "its URL, create_send_code (the user drags the file in on any device).",
-     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S}}},
+     "limit): adds it to the user's Library (the same file twice is kept once: deduped: true) and returns media_token and "
+     "library_id for edit_video / split_video / render_carousel. Pass run_id to keep it with that post. Don't upload throwaway "
+     "copies of web images: give their URL straight to hero_edit or render_carousel. For a file on the user's computer or in "
+     "your sandbox, use create_upload; if your sandbox can't reach its URL, create_send_code (the user drags the file in on any device).",
+     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "run_id": RUN_ID, "idempotency_key": IDEM}}},
     {"name": "integrations_status", "description": "Which integrations are connected for this user (Product Hunt, X reader key, "
      "image models...) and whether each key last tested OK. Never returns a key.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -302,8 +330,18 @@ def _keep_image(h, a: Actor, im, name: str, meta: dict) -> dict:
     return {"token": tok, "url": h.media_url(tok), "type": "photo", "name": name}
 
 
+def _run_arg(args: dict) -> int | None:
+    """The run_id an MCP call carries (studio/run_discipline.py already checked it is the person's own run)."""
+    try:
+        v = int(args.get("run_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
 def _queue_video(h, a: Actor, spec: dict) -> dict:
-    """One render job, never waited on here: the MCP client polls render_status (MCP tool calls must answer fast)."""
+    """One render job, never waited on here: the MCP client polls render_status (MCP tool calls must answer fast). The post
+    it is for rides in spec['for_run'], not render_jobs.run_id: that column makes finish_video resume a server-AI run."""
     from . import demo_guard
     mode = h.video_mode()
     if demo_guard.is_demo(a.uid):
@@ -522,16 +560,22 @@ def t_render_carousel(studio, a, args):
             ims = None
     if ims is None:
         ims, problems, used = _carousel_text(h, a, slides, ratio)
-    media = [_keep_image(h, a, im, f"slide{i + 1}.jpg", {"template": used, "ratio": ratio}) for i, im in enumerate(ims)]
+    rid = _run_arg(args)
+    extra = {"template": used, "ratio": ratio, **({"run_id": rid} if rid else {})}
+    media = [_keep_image(h, a, im, f"slide{i + 1}.jpg", extra) for i, im in enumerate(ims)]
     lib = None
-    try:
-        lib = h.library.register_generated(a, media, "carousel", None)
-    except Exception:  # noqa: BLE001 - the Library never breaks a render
-        pass
+    if rid:  # one Library item per post: this render replaces the post's earlier one (owner, 4 Nov 2026)
+        try:
+            lib = h.library.register_run(a, media, "carousel", rid)
+        except Exception:  # noqa: BLE001 - the Library never breaks a render
+            pass
+    # without run_id the slides stay run media until create_package stages them (no "Carousel (N slides)" per retry)
     return {"template": used, "ratio": ratio, "slides": len(media), "media_urls": [m["url"] for m in media],
-            "media_tokens": [m["token"] for m in media], "library_id": lib, "fit_problems": problems, "spent_usd": 0,
-            "next": "Fix any fit_problems by writing shorter text and render again; then brand_check your caption and "
-                    "create_package(captions, media_urls)."}
+            "media_tokens": [m["token"] for m in media], "library_id": lib, "run_id": rid, "fit_problems": problems, "spent_usd": 0,
+            "next": ("Fix any fit_problems by writing shorter text and render again with the same run_id (it replaces these "
+                     "slides); then brand_check your caption and create_package(run_id, captions, media_urls)."
+                     if rid else "Start the post with start_post and pass its run_id next time. Fix any fit_problems by writing "
+                     "shorter text and render again; then brand_check your caption and create_package(captions, media_urls).")}
 
 
 def t_hero_edit(studio, a, args):
@@ -556,8 +600,9 @@ def t_hero_edit(studio, a, args):
         im = ImageEnhance.Color(im).enhance(0.85)
         im = ImageEnhance.Brightness(im).enhance(0.86)
         report = {"steps": ["centre crop to the frame", "desaturate 15%", "darken 14%"]}
-    m = _keep_image(h, a, im.convert("RGB"), "hero.jpg", {"edit": how})
-    return {"url": m["url"], "media_token": m["token"], "edit": how, "report": report, "spent_usd": 0}
+    rid = _run_arg(args)
+    m = _keep_image(h, a, im.convert("RGB"), "hero.jpg", {"edit": how, **({"run_id": rid} if rid else {})})
+    return {"url": m["url"], "media_token": m["token"], "edit": how, "report": report, "run_id": rid, "spent_usd": 0}
 
 
 def _rights(args: dict, src_url: str = "") -> dict:
@@ -657,6 +702,8 @@ def t_edit_video(studio, a, args):
     if meta.get("type") not in (None, "video"):
         raise ActionError("That media is not a video.")
     spec = _video_spec(h, a, args, tok, meta)
+    if _run_arg(args):
+        spec["for_run"] = _run_arg(args)
     out = _queue_video(h, a, spec)
     if meta.get("_from_finished"):
         out = {**out, "note": "That video was already a finished reel, so this edit starts again from its original upload "
@@ -679,6 +726,8 @@ def t_render_reel(studio, a, args):
         kit = h.kit(a)
         spec = {"kind": "slideshow", "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": brand.visual_params(kit, h.rules(a)),
                 "slides": toks, "logo": kit.get("logo") or "", "ratio": args.get("ratio") or "9:16", "via": SOURCE}
+        if _run_arg(args):
+            spec["for_run"] = _run_arg(args)
         return _queue_video(h, a, spec)
     return t_edit_video(studio, a, args)
 
@@ -702,7 +751,7 @@ def t_split_video(studio, a, args):
         body["url"] = str(args["url"])
     t = h.takes.start(a, body)
     return {"take_id": t["id"], "status": t.get("status"), "poll": f"render_status(take_id={t['id']}) every 20-30 s",
-            "spent_usd": 0}
+            "spent_usd": 0, **({"run_id": _run_arg(args)} if _run_arg(args) else {})}
 
 
 def t_render_status(studio, a, args):
@@ -793,14 +842,74 @@ def t_create_package(studio, a, args):
                 pk[-1]["options"] = {**(pk[-1].get("options") or {}), "thumbnail_offset_ms": thumb_ms}
     if not pk:
         raise ActionError(f"No connected channel matches {', '.join(unknown)}. list_channels gives ids and services.")
-    inp = {"prompt": str(args.get("title") or "Post from your AI app")[:200], "via": SOURCE,
-           "channels": [{"id": p["channel_id"], "service": p["service"], "name": p["channel"]} for p in pk]}
-    res = {"packages": pk, "media": pk[0]["media"], "story": {"headline": str(args.get("title") or "")[:120]}, "brain": "client"}
-    rid = h.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
-                    (a.uid, "client", json.dumps(inp), "ready", json.dumps([]), json.dumps(res), time.time(), time.time()))
-    return {"run_id": rid, "packages": [{k: p[k] for k in ("channel_id", "service", "format", "status")} | {"brand_check": p["check"]}
-                                        for p in pk], "unknown_channels": unknown, "spent_usd": 0,
-            "next": "Show the user. On their yes: schedule_package(run_id, channel_id, mode='draft')."}
+    chans_in = [{"id": p["channel_id"], "service": p["service"], "name": p["channel"]} for p in pk]
+    rid = _run_arg(args)
+    updated, versions = False, 0
+    if rid:  # one request = one run: update that post in place, keeping what it had for Undo (owner, 4 Nov 2026)
+        rid, versions = _update_package_run(h, a, rid, args, pk, chans_in)
+        updated = True
+    else:
+        inp = {"prompt": str(args.get("title") or "Post from your AI app")[:200], "via": SOURCE, "channels": chans_in}
+        res = {"packages": pk, "media": pk[0]["media"], "story": {"headline": str(args.get("title") or "")[:120]}, "brain": "client"}
+        rid = h.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated,agent_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (a.uid, "client", json.dumps(inp), "ready", json.dumps([]), json.dumps(res), time.time(), time.time(),
+                         a.agent["id"] if a.kind == "agent" and a.agent else None))
+    _library_for_run(h, a, rid, pk)
+    return {"run_id": rid, "updated": updated, "versions_kept": versions,
+            "packages": [{k: p[k] for k in ("channel_id", "service", "format", "status")} | {"brand_check": p["check"]} for p in pk],
+            "unknown_channels": unknown, "spent_usd": 0,
+            "next": "Show the person. Changes: render again with this run_id and call create_package(run_id) again (it replaces "
+                    "this post; undo_package_media goes back). On their yes: schedule_package(run_id, channel_id, mode='draft')."}
+
+
+MAX_PACKAGE_VERSIONS = 6
+
+
+def _update_package_run(h, a: Actor, rid: int, args: dict, pk: list[dict], chans_in: list[dict]) -> tuple[int, int]:
+    """create_package(run_id): the new packages replace the run's in place; the previous ones go to result.package_versions
+    (newest last, at most 6) and each package says what Undo goes back to."""
+    from . import run_discipline
+    row = run_discipline.own_run(h.store, a, rid)  # 404 for someone else's run (checked here too: every surface)
+    if row["kind"] != "client":
+        raise ActionError("That run was made by HuhQueue's own agent; change it with its own tools (reply_post / "
+                          "replace_channel_media), or start your own post with start_post.", 409)
+    res = json.loads(row["result"] or "{}") or {}
+    inp = json.loads(row["input"] or "{}") or {}
+    if run_discipline.closed(res):
+        raise ActionError("That post was already sent to Buffer or is waiting in Approvals, so it isn't changed here. "
+                          "update_package_draft updates its Buffer draft; or ask the person before starting a new post.", 409)
+    old = res.get("packages") or []
+    vs = res.setdefault("package_versions", [])
+    if old:
+        vs.append({"at": time.time(), "packages": json.loads(json.dumps(old, default=str)), "media": res.get("media") or [],
+                   "label": "Back to the previous version"})
+        del vs[:-MAX_PACKAGE_VERSIONS]
+    for p in pk:
+        if vs:
+            p["undo"] = {"label": "Back to the previous version", "versions": len(vs)}
+    res["packages"], res["media"] = pk, pk[0]["media"]
+    if args.get("title"):
+        res["story"] = {**(res.get("story") or {}), "headline": str(args["title"])[:120]}
+        inp["prompt"] = str(args["title"])[:200]
+    inp["channels"] = chans_in
+    h.store.x("UPDATE agent_runs SET input=?, result=?, status='ready', updated=? WHERE id=? AND user_id=?",
+              (json.dumps(inp), json.dumps(res, default=str), time.time(), rid, a.uid))
+    return rid, len(vs)
+
+
+def _library_for_run(h, a: Actor, rid: int, pk: list[dict]) -> None:
+    """The staged post's media is the run's ONE Library item (replaced in place when the post changes)."""
+    media = []
+    for m in (pk[0].get("media") or []) if pk else []:
+        tok = h.media_token_of(m.get("url") or "")
+        if tok:
+            media.append({"token": tok, "type": m.get("type") or "photo", "url": m.get("url")})
+    if not media:
+        return
+    try:
+        h.library.register_run(a, media, pk[0].get("format") or "", rid)
+    except Exception:  # noqa: BLE001 - the Library never breaks staging
+        pass
 
 
 # update_brand_kit is ONE tool, in studio/brand_kits.py (B1, 2 Nov 2026: two tools had the name; kit_id omitted = the
@@ -815,11 +924,20 @@ def t_update_brand_kit(studio, a, args):
 def t_library_upload_url(studio, a, args):
     from . import share_import
     url = str(args.get("url") or "")
+    rid = _run_arg(args)
     if share_import.provider(url):  # a cloud-drive share page: convert it and stream it in (Drive's confirm page included)
         out = share_import.item_out(studio.house, studio.house.share_import.import_link(a, url), share_import.provider(url))
+        if rid and out.get("library_id"):
+            studio.house.library.attach_run(a, out["library_id"], rid)
         return {**out, "token": out["media_token"]}
     up = studio.house.import_url(a, url)
-    return {"media_token": up["token"], "url": up["url"], "type": up["type"], "library_id": up.get("library_id"), "bytes": up.get("bytes")}
+    out = {"media_token": up["token"], "url": up["url"], "type": up["type"], "library_id": up.get("library_id"), "bytes": up.get("bytes")}
+    if up.get("deduped"):
+        out["deduped"] = True
+    if rid and up.get("library_id"):
+        studio.house.library.attach_run(a, up["library_id"], rid)
+        out["run_id"] = rid
+    return out
 
 
 def t_integrations_status(studio, a, args):
