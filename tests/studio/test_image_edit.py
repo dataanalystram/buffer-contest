@@ -140,6 +140,32 @@ def test_another_accounts_run_is_not_found(human, web):
     assert res["isError"] and "No such post run" in out
 
 
+def test_image_tools_follow_run_discipline_thread_url_and_retry_replay(human, web):
+    """Phase 1 x Phase 2: the image tools are run media (thread_url, run ownership) and a retry is not a second edit."""
+    from studio import run_discipline
+    names = {"fetch_image", "cutout_product", "edit_image", "compose_product_card"}
+    assert names <= run_discipline.RUN_MEDIA and names <= run_discipline.DERIVED
+    assert names <= run_discipline.THREAD_LINKED and not names & run_discipline.NO_IDEM
+    tok = agent_token(human, cap=50)
+    st = human.app.state.store
+    rid = _run(st)
+    _, got = mcp_call(human, tok, "fetch_image", {"url": "https://img.test/hp.png", "run_id": rid})
+    assert got["ok"] and got["run_id"] == rid and got["thread_url"].endswith(f"/?tab=library&run={rid}"), got
+    args = {"image": got["media_token"], "engine": "fast", "run_id": rid}
+    _, cut = mcp_call(human, tok, "cutout_product", args)
+    assert cut["ok"] and cut["thread_url"].endswith(f"run={rid}") and not cut.get("idempotent_replay"), cut
+    media0 = _counts(st)[1]
+    _, again = mcp_call(human, tok, "cutout_product", args)  # the app retried the same call
+    assert again["idempotent_replay"] is True and again["media_token"] == cut["media_token"]
+    assert _counts(st)[1] == media0  # no second stored cut-out
+    _, card = mcp_call(human, tok, "compose_product_card", {"image": cut["media_token"], "ratio": "1:1", "run_id": rid})
+    assert card["ok"] and card["run_id"] == rid and card["thread_url"].endswith(f"run={rid}"), card
+    _, ed = mcp_call(human, tok, "edit_image", {"image": card["media_token"], "run_id": rid, "ops": [{"op": "round", "radius": 24}]})
+    assert ed["ok"] and ed["thread_url"].endswith(f"run={rid}"), ed
+    res, out = mcp_call(human, tok, "edit_image", {"image": card["media_token"], "run_id": True, "ops": [{"op": "round"}]})
+    assert res["isError"] and "run_id is the number" in out  # a bool is never run 1
+
+
 # ------------------------------------------------------------------------------------------------ cut-out + edits
 def test_cutout_fast_keeps_the_earcups_and_adds_no_library_item(human, web):
     tok = agent_token(human, cap=50)

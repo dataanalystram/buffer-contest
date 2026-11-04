@@ -56,12 +56,16 @@ REUSERS = {"start_post", "create_package", "make_post"}
 ALWAYS_NEW = {"draft_from_library", "run_agent", "edit_media", "clips_from_video", "split_video"}
 # tools that take an optional run_id for media they render or store (checked for ownership)
 RUN_MEDIA = {"render_carousel", "hero_edit", "edit_video", "render_reel", "split_video", "library_upload_url", "create_upload",
-             "import_from_link", "create_package", "start_post", "continue_run"}
+             "import_from_link", "create_package", "start_post", "continue_run",
+             # image tools (studio/image_edit.py, Phase 2): the picture they fetch, cut out or edit is stored as run media
+             "fetch_image", "cutout_product", "edit_image", "compose_product_card"}
 # a new template or brand kit, or switching the active kit, only when the person asked (user_asked: true)
 NEEDS_USER_ASKED = {"create_template", "create_brand_kit", "set_active_brand_kit"}
 # tools whose identical repeat within DERIVED_TTL is the same call (a retry), never a second render or run
 DERIVED = {"start_post", "continue_run", "create_package", "render_carousel", "hero_edit", "edit_video", "render_reel", "split_video",
-           "library_upload_url", "import_from_link", "schedule_package", "make_post", "draft_from_library", "clips_from_video"}
+           "library_upload_url", "import_from_link", "schedule_package", "make_post", "draft_from_library", "clips_from_video",
+           # same picture + same ops within DERIVED_TTL is a retry: no second fetch, cut-out job or stored edit
+           "fetch_image", "cutout_product", "edit_image", "compose_product_card"}
 # never stored: answers that carry a single-use secret (a confirm token, an upload URL, a send code) or are part of a
 # chunked upload
 NO_IDEM = {"create_send_code", "create_upload", "upload_media_chunk", "finish_upload", "place_clips_in_week", "cleanup_agent_drafts",

@@ -46,11 +46,12 @@ several Make a post threads and a Library item per render. The server now enforc
    `continue_run(run_id, reason)` or `start_post(new_request: true)`. `continue_run` joins an existing run (the person's
    words go in its thread; `format` switches it, as `start_post(run_id, format)` does); a run already sent to Buffer or
    waiting in Approvals answers 409. Every answer from a tool that makes or changes a run (start_post, continue_run, the renders, uploads, create_package,
-   render_status) carries `run_id` and `thread_url`
+   the image tools, render_status) carries `run_id` and `thread_url`
    (`<app>/?tab=library&run=<id>`, which opens the thread in Make a post). The same request repeated within 10 minutes (same title, e.g. the app retried)
    returns the run it already opened with `deduped: true` (`new_post: true` forces a separate one).
 2. **Pass `run_id` everywhere.** `render_carousel`, `hero_edit`, `edit_video`, `render_reel`, `split_video`,
-   `library_upload_url`, `create_upload`, `import_from_link` and `create_package` take it. Follow-ups update the same run:
+   `library_upload_url`, `create_upload`, `import_from_link`, `create_package` and the image tools (`fetch_image`,
+   `cutout_product`, `edit_image`, `compose_product_card`) take it. Follow-ups update the same run:
    `create_package(run_id)` replaces the post's packages **in place** and keeps the previous version
    (`packages[].undo`, `undo_package_media` goes back, 6 versions). A `run_id` of another account, or an archived one,
    answers 404.
@@ -327,7 +328,8 @@ drafts, trusted tokens may move scheduled posts too. Cover/thumbnail: `set_cover
 The server fetches and edits pictures, so the AI app never downloads or pastes image bytes. Every tool takes `run_id`
 (the post this belongs to) and stores what it makes as **run media** of that post: no Library item is added per edit
 (the Library gets one item per finished post). Each edit is a new version; `prev` names the one it was made from.
-No HuhQueue AI is used ($0).
+No HuhQueue AI is used ($0). With a `run_id` the answer also carries `thread_url`; the identical call repeated within
+120 s (a retry) answers the first result instead of fetching, cutting out or storing the picture again.
 
 | Tool | What it does |
 |---|---|
