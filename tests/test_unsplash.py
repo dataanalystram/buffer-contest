@@ -61,3 +61,25 @@ def test_rate_limit_message(api):
         respx.get("https://api.unsplash.com/search/photos").mock(return_value=httpx.Response(403))
         r = api.get("/api/media/unsplash/search?q=x")
     assert r.status_code == 400 and "rate limit" in r.json()["detail"]["message"]
+
+
+def test_download_ping_is_vetted_and_never_follows_redirects(api, core, monkeypatch):
+    """CodeRabbit (4 Nov 2026): the download_location ping only checked the URL text and followed redirects with the
+    Client-ID attached. It now goes through netguard: a private DNS answer is refused and a redirect is not followed.
+    The import itself still succeeds (the ping is best effort)."""
+    from huhqueue import netguard
+    public = [(2, 1, 6, "", ("93.184.216.34", 0))]
+    api.put("/api/app-keys/unsplash", {"unsplash_access_key": "unsplash-key-123456"})
+    for private_dns in (True, False):
+        monkeypatch.setattr(netguard, "_getaddrinfo", lambda h, *a, _p=private_dns, **k:
+                            [(2, 1, 6, "", ("10.0.0.5", 0))] if _p and h == "api.unsplash.com" else public)
+        with respx.mock:
+            respx.get("https://api.unsplash.com/photos/abc123").mock(return_value=httpx.Response(200, json=PHOTO))
+            dl = respx.get("https://api.unsplash.com/photos/abc123/download").mock(
+                return_value=httpx.Response(302, headers={"location": "https://internal.example/steal"}))
+            hop = respx.get("https://internal.example/steal").mock(return_value=httpx.Response(200, json={}))
+            respx.get(url__startswith="https://images.unsplash.com/photo-1").mock(
+                return_value=httpx.Response(200, content=_jpeg(), headers={"content-type": "image/jpeg"}))
+            r = api.post("/api/media/unsplash/import", {"id": "abc123"})
+            assert r.status_code == 200, r.text
+            assert dl.called is (not private_dns) and not hop.called
