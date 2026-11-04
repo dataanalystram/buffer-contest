@@ -444,18 +444,23 @@ def list_links(core, q: str = "", campaign: str = "", source: str = "", request=
         if q:
             like = f"%{q}%"
             qry = qry.where(Link.url.ilike(like) | Link.code.ilike(like) | Link.title.ilike(like))
-        if channels is None:
-            return [link_dict(core, ln, request) for ln in s.scalars(qry.limit(LINKS_LIMIT))]
-        # filter before the cap, page by page, so another channel's newer links can't fill a restricted caller's window
-        out: list = []
-        offset = 0
-        while len(out) < LINKS_LIMIT:
-            page = list(s.scalars(qry.offset(offset).limit(LINKS_LIMIT)))
-            if not page:
-                break
-            out += _visible_links(s, page, channels)
-            offset += len(page)
-        return [link_dict(core, ln, request) for ln in out[:LINKS_LIMIT]]
+        if channels is not None:  # visibility in SQL, before ORDER BY + LIMIT (Greptile perf on #102): one indexed query
+            qry = qry.where(_visible_sql(channels))
+        return [link_dict(core, ln, request) for ln in s.scalars(qry.limit(LINKS_LIMIT))]
+
+
+def _visible_sql(channels: set):
+    """The SQL form of _visible_links for a channel-limited caller: a link made for a post target is visible when that
+    target is on one of ``channels``; one made for a post (no target) when any of the post's targets is; a link tied to
+    neither (a manual link) always. Empty and NULL ids both mean "not tied"."""
+    from sqlalchemy import and_, or_
+    ch = sorted(channels)
+    tid, pid = func.coalesce(Link.target_id, ""), func.coalesce(Link.post_id, "")
+    return or_(
+        and_(tid != "", Link.target_id.in_(select(PostTarget.id).where(PostTarget.channel_id.in_(ch)))),
+        and_(tid == "", pid != "", Link.post_id.in_(select(PostTarget.post_id).where(PostTarget.channel_id.in_(ch)))),
+        and_(tid == "", pid == ""),
+    )
 
 
 def get_link(core, lid: str, request=None, days: int = 30, channels: set | None = None) -> dict:

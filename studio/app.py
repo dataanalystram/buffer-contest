@@ -340,7 +340,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
         mh = getattr(house, "media_health", None) or {}
         return {"ok": True, "configured": s.configured, "db": store.ping(),
-                "media": {"checked_at": mh.get("checked_at"), "missing_files": mh.get("files_missing", 0),
+                # headline: distinct files that are gone (a carousel shared by 3 channel packages is 1 file, not 3);
+                # missing_refs counts every package reference to them, one per channel (audit, 4 Nov 2026)
+                "media": {"checked_at": mh.get("checked_at"), "missing_files": mh.get("unique_files_missing", 0),
+                          "missing_refs": mh.get("files_missing", 0),
                           "unique_missing_files": mh.get("unique_files_missing", 0), "files_in_bin": mh.get("files_in_bin", 0),
                           "files_deleted_by_owner": mh.get("files_deleted_by_owner", 0)} if mh else {"checked_at": None}}
 

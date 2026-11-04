@@ -404,7 +404,7 @@ class Link(Base):
     title: Mapped[str] = mapped_column(String, default="")
     source: Mapped[str] = mapped_column(String, default="manual")      # manual | utm | bio
     target_id: Mapped[str] = mapped_column(String, default="")         # post target a UTM link was made for
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)  # list_links ORDER BY (0011)
 
 
 class LinkClick(Base):
