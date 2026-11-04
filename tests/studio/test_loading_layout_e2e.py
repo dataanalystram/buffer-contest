@@ -11,7 +11,7 @@ from .test_library_bin_e2e import _ctx, _library, live  # noqa: F401  (fixture)
 
 pw = pytest.importorskip("playwright.sync_api")
 
-SLOW_LIB = """(() => { const f = window.fetch; window.fetch = (u, o) => { const p = f(u, o);
+SLOW_LIB = """(() => { const f = window.fetch; window.fetch = (u, o) => { const p = f(u, o); p.catch(() => {});  /* an aborted held request: the real fetch's own rejection is not a page error */
   if (window.__slowLib && String(u).startsWith('/api/library?')) return new Promise((ok, no) => { const t = setTimeout(() => p.then(ok, no), window.__slowLib);
     if (o && o.signal) o.signal.addEventListener('abort', () => { clearTimeout(t); no(new DOMException('Aborted', 'AbortError')); }); });
   return p; }; })()"""
@@ -154,7 +154,7 @@ def test_planner_nodate_panel(live, chromium, close_contexts, w):
     assert not errors, errors
 
 
-SLOW_RUN = """(() => { const f = window.fetch; window.fetch = (u, o) => { const p = f(u, o);
+SLOW_RUN = """(() => { const f = window.fetch; window.fetch = (u, o) => { const p = f(u, o); p.catch(() => {});  /* an aborted held request: the real fetch's own rejection is not a page error */
   if (window.__slowRun && /^\\/api\\/agent\\/runs\\/[^/?]+$/.test(String(u))) return new Promise((ok, no) => { const t = setTimeout(() => p.then(ok, no), window.__slowRun);
     if (o && o.signal) o.signal.addEventListener('abort', () => { window.__slowRunAborted = true; clearTimeout(t); no(new DOMException('Aborted', 'AbortError')); }); });
   return p; }; })()"""
