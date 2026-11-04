@@ -109,6 +109,8 @@ _POST_PATH = re.compile(r"^/api/posts/([^/]+)/")                      # /api/pos
 _COMMENT_PATH = re.compile(r"^/api/comments/([^/]+)")
 _COMMENT_STATIC = {"bulk", "sync", "insights", "suggest-reply", "start-post"}
 _CHANNEL_IN_PATH = (re.compile(r"^/api/queue/([^/]+)"), re.compile(r"^/api/utm/defaults/([^/]+)"))
+MAX_SCOPE_IDS = 500            # >= every route's own ids cap (bulk 500, comments bulk 200): larger lists are refused
+TOO_MANY = "\x00too-many-ids"  # an ids list over MAX_SCOPE_IDS: never in any scope, nothing is looked up
 UNRESOLVED = "\x00unresolved"   # an object named in the PATH that doesn't exist (or has no channel): never in any scope
 
 
@@ -148,8 +150,11 @@ def scope_refs(s, method: str, path: str, query: dict, body) -> tuple[set[str], 
             if body.get(k):
                 refs.append(body[k])
         on_comments = path.startswith("/api/comments")
-        raw_ids = body.get("ids")
-        for oid in raw_ids if isinstance(raw_ids, list) else []:   # bulk: comment ids on /api/comments/*, post targets elsewhere
+        raw_ids = body.get("ids") if isinstance(body.get("ids"), list) else []
+        if len(raw_ids) > MAX_SCOPE_IDS:   # one lookup per id runs before any route: bound it (CodeRabbit 4 Nov 2026)
+            objects.add(TOO_MANY)
+            raw_ids = []
+        for oid in raw_ids:   # bulk: comment ids on /api/comments/*, post targets elsewhere
             objects |= _comment_channels(s, oid) if on_comments else _target_channels(s, oid)
         objects |= _post_channels(s, body.get("post_id"))
         objects |= _target_channels(s, body.get("target_id"))

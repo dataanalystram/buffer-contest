@@ -153,3 +153,31 @@ def test_non_list_ids_do_not_crash_the_scope_check(app, api, core, channel):
     with core.db.session() as s:
         assert safety.scope_refs(s, "POST", "/api/bulk", {}, {"ids": 5}) == (set(), set())
         assert safety.scope_refs(s, "POST", "/api/comments/bulk", {}, {"ids": "cm_other"}) == (set(), set())
+
+
+def test_teammate_moving_own_post_to_a_forbidden_channel_gets_403_not_404(app, api, core, channel):
+    """CodeRabbit (4 Nov 2026): the 404 is chosen per denied channel. A channel the request NAMES (the move destination)
+    keeps its 403; only a channel reached through an object id answers 404."""
+    from .test_teams import member
+    other = api.post("/api/connect/fake/token", {"access_token": "tok-2", "username": "other_brand"}).json()
+    mine = api.post("/api/posts", {"caption": "mine", "channel_ids": [channel["id"]], "when": "draft"}).json()
+    theirs = api.post("/api/posts", {"caption": "secret caption", "channel_ids": [other["id"]], "when": "draft"}).json()
+    ed = member(app, api, "editor", access={other["id"]: "none"}, name="Mo")
+    r = ed.post(f"/api/targets/{mine['targets'][0]['id']}/move", {"channel_id": other["id"]})
+    assert r.status_code == 403, r.text
+    _hidden(ed.post(f"/api/targets/{theirs['targets'][0]['id']}/move", {"channel_id": channel["id"]}))
+
+
+def test_oversized_ids_list_is_refused_before_any_lookup(app, api, core, channel, monkeypatch):
+    """CodeRabbit (4 Nov 2026): scope_refs runs one lookup per id before any route; a list over MAX_SCOPE_IDS is refused
+    without looking any id up."""
+    from huhqueue import safety
+    c, *_ = _setup(app, api, core, channel)
+    calls = []
+    real = safety._target_channels
+    monkeypatch.setattr(safety, "_target_channels", lambda s, t: calls.append(t) or real(s, t))
+    ids = [f"tgt_{i}" for i in range(safety.MAX_SCOPE_IDS + 1)]
+    r = c.post("/api/bulk", json={"action": "delete", "ids": ids})
+    assert r.status_code == 400 and not any(str(x).startswith("tgt_") for x in calls), r.text
+    with core.db.session() as s:
+        assert safety.TOO_MANY in safety.scope_refs(s, "POST", "/api/comments/bulk", {}, {"ids": ids})[1]

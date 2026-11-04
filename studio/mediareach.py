@@ -63,7 +63,7 @@ def _public_url(url: str) -> bool:
     try:
         netguard.check_url(url, https_only=True)
         return True
-    except netguard.FetchError:
+    except ValueError:   # FetchError, or urlparse refusing a malformed Location such as "https://["
         return False
 
 

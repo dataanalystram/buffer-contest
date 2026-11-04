@@ -182,3 +182,25 @@ def test_caption_track_is_fetched_through_netguard(monkeypatch):
     monkeypatch.setattr(netguard, "check_url", lambda u, **k: u)
     assert S.platform_captions("https://www.youtube.com/watch?v=abcdefghijk") is None
     assert seen == [("https://captions.test/t.vtt", True, S.MAX_CAPTION_BYTES)]
+
+
+def test_malformed_redirect_location_is_reported_not_raised(monkeypatch):
+    """CodeRabbit (4 Nov 2026): urlparse raises a plain ValueError on "https://[", which escaped _public_url."""
+    _dns(monkeypatch, {"pub.test": ["93.184.216.34"]})
+    t = Recorder(lambda req: httpx.Response(302, headers={"location": "https://["}, request=req))
+    msg = mediareach.check_one("https://pub.test/i.jpg", httpx.Client(transport=t))
+    assert "redirects to another page" in msg
+
+
+def test_studio_safe_get_caps_a_gzip_bomb_before_inflating(monkeypatch):
+    import gzip
+    _dns(monkeypatch, {"pub.test": ["93.184.216.34"]})
+    bomb = gzip.compress(b"\x00" * 50_000_000)
+    seen = {}
+
+    def routes(req):
+        seen["ae"] = req.headers.get("accept-encoding")
+        return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(bomb), request=req)
+    with pytest.raises(netguard.FetchError):
+        netguard.safe_get("https://pub.test/feed.xml", http=httpx.Client(transport=Recorder(routes)), limit=1_000_000)
+    assert seen["ae"] == "gzip"

@@ -183,7 +183,9 @@ def create_app(core: Core | None = None, start_worker: bool = True) -> FastAPI:
                 named, via_ids = safety.scope_refs(s, method, path, dict(request.query_params), body)
             allowed = set(info.allowed_channel_ids)
             outside = named - allowed
-            if via_ids - allowed:
+            if safety.TOO_MANY in via_ids:
+                resp = _err(400, f"At most {safety.MAX_SCOPE_IDS} ids per request")
+            elif via_ids - allowed:
                 # a post / target / comment on another channel answers exactly like one that doesn't exist (no probing)
                 resp = _err(404, "Not found")
             elif outside:

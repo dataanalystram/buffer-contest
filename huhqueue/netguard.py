@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import zlib
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -48,6 +49,52 @@ METADATA_HOSTS = {"metadata", "metadata.google.internal", "metadata.goog", "inst
 
 class FetchError(ValueError):
     pass
+
+
+ACCEPT_ENCODING = "gzip"   # an encoding capped_body inflates under a bound (never br / zstd)
+
+
+def _with_encoding(headers: dict | None, value: str = ACCEPT_ENCODING) -> dict:
+    return {**{k: v for k, v in (headers or {}).items() if k.lower() != "accept-encoding"}, "Accept-Encoding": value}
+
+
+def capped_body(r: httpx.Response, limit: int):
+    """Yield ``r``'s body decoded, never more than ``limit`` bytes in all (FetchError past it). Raw bytes are read off the
+    wire and gzip / deflate are inflated with an output bound on every step, so a small compressed answer can't expand
+    past the cap in memory before it is checked (httpx's iter_bytes() decodes a whole chunk first). Other encodings are
+    refused. An in-memory response (a test transport's) was read and decoded when it was built: its content is used."""
+    if r.is_stream_consumed:
+        if len(r.content) > limit:
+            raise FetchError("That page is too large to read.")
+        yield r.content
+        return
+    enc = r.headers.get("content-encoding", "").strip().lower()
+    if enc in ("", "identity"):
+        dec = None
+    elif enc in ("gzip", "x-gzip"):
+        dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    elif enc == "deflate":
+        dec = zlib.decompressobj()
+    else:
+        raise FetchError("That link answered in an encoding that can't be read.")
+    total = 0
+    try:
+        for raw in r.iter_raw():
+            out = raw if dec is None else dec.decompress(raw, limit + 1 - total)
+            total += len(out)
+            if total > limit or (dec is not None and dec.unconsumed_tail):
+                raise FetchError("That page is too large to read.")
+            if out:
+                yield out
+        if dec is not None:
+            out = dec.flush()
+            total += len(out)
+            if total > limit:
+                raise FetchError("That page is too large to read.")
+            if out:
+                yield out
+    except zlib.error:
+        raise FetchError("That link's compressed answer is broken, so it can't be read.")
 
 
 def _inner_v4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
@@ -148,6 +195,7 @@ def request(c: httpx.Client, method: str, url: str, *, policy: str = "public", h
     ``max_hops``) when ``follow``; otherwise the redirect response is returned. The body is capped at ``limit`` bytes; with
     ``stream_to`` (a callable taking each chunk) it is handed over chunk by chunk instead of kept. Returns a read
     response whose ``.url`` is the logical URL it ended at."""
+    headers = _with_encoding(headers)   # gzip at most, inflated under the cap (capped_body)
     for _ in range(max_hops + 1):
         ip = check_url(url, policy)
         req, pinned = _build(c, method, url, ip, headers, **kw)
@@ -156,11 +204,8 @@ def request(c: httpx.Client, method: str, url: str, *, policy: str = "public", h
             if r.status_code in REDIRECTS and r.headers.get("location") and follow and method in ("GET", "HEAD"):
                 url = urljoin(url, r.headers["location"])
                 continue
-            buf, total = bytearray(), 0
-            for chunk in r.iter_bytes():
-                total += len(chunk)
-                if total > limit:
-                    raise FetchError("The answer is too large.")
+            buf = bytearray()
+            for chunk in capped_body(r, limit):   # the cap bounds memory before decoding (CodeRabbit, 4 Nov 2026)
                 if stream_to is not None:
                     stream_to(chunk)
                 else:

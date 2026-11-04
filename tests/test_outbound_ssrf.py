@@ -139,3 +139,19 @@ def test_cloud_metadata_ips_outside_link_local_are_refused_under_lan_too(ip):
     Oracle metadata addresses because they are not link-local. They are refused under every policy now."""
     assert netguard.ip_blocked(ip, "lan") and netguard.ip_blocked(ip, "public")
     assert not netguard.ip_blocked("192.168.1.20", "lan")   # a LAN n8n stays allowed
+
+
+def test_gzip_bomb_is_capped_before_it_is_inflated():
+    """CodeRabbit (4 Nov 2026): iter_bytes() inflates a whole chunk before the size check. capped_body reads raw bytes and
+    inflates with an output bound, so a small gzip answer can't grow past the cap; a normal gzip answer still reads."""
+    import gzip
+    bomb = gzip.compress(b"\x00" * 50_000_000)          # ~50 KB on the wire, 50 MB inflated
+    r = httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(bomb))
+    with pytest.raises(netguard.FetchError):
+        for _ in netguard.capped_body(r, 1_000_000):
+            pass
+    ok = httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(gzip.compress(b"hello" * 10)))
+    assert b"".join(netguard.capped_body(ok, 1_000)) == b"hello" * 10
+    br = httpx.Response(200, headers={"content-encoding": "br"}, stream=httpx.ByteStream(b"x"))
+    with pytest.raises(netguard.FetchError):
+        list(netguard.capped_body(br, 1_000))
