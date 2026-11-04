@@ -56,8 +56,13 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
     stats = {"moved": 0, "bytes": 0, "failed": 0, "skipped": 0}
     left = limit if limit is not None else float("inf")
 
-    def gc(key: str) -> None:
-        store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO NOTHING", (key, time.time()))
+    def gc(key: str) -> None:  # due now
+        store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO UPDATE SET at=excluded.at", (key, time.time()))
+
+    def noted(key: str) -> None:
+        """Before the PUT: the key is in blob_gc, due in a day. If this run dies before the row takes the key, the
+        sweep deletes the object then; once a row references it, the sweep drops the note instead (Greptile, PR #110)."""
+        store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO NOTHING", (key, time.time() + 86400))
 
     def one(table: str, where: str, args: tuple, kind: str, uid: str, mime: str) -> None:
         nonlocal left
@@ -68,6 +73,7 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
         data = bytes(got[0]["data"])
         digest = hashlib.sha256(data).hexdigest()
         key = blobstore.new_key(kind, uid)
+        noted(key)
         try:
             ok = _verify_put(bucket, key, data, mime)
         except r2.R2Error as e:
@@ -86,6 +92,7 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
             gc(key)
             stats["skipped"] += 1
             return
+        store.x("DELETE FROM blob_gc WHERE key=?", (key,))  # claimed by its row
         stats["moved"] += 1
         stats["bytes"] += len(data)
         left -= 1

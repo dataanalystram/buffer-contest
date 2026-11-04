@@ -409,3 +409,24 @@ def test_background_sweep_waits_for_an_outer_transaction(app, s3):
         assert not done.is_set()                               # waiting on the store's lock
     t.join(5)
     assert done.is_set() and "media/a/b" not in s3.objects
+
+
+def test_an_interrupted_migration_attempt_is_swept_later_never_orphaned(app, monkeypatch, s3):
+    store = app.state.store
+    monkeypatch.setenv("HQ_MEDIA_STORAGE", "db")
+    app.state.house.put_media(Actor("acc_1"), b"\x89PNG" + b"1" * 40, "x.png")
+    monkeypatch.delenv("HQ_MEDIA_STORAGE")
+
+    class Boom(Exception):
+        pass
+
+    real = r2.Bucket.get
+    monkeypatch.setattr(r2.Bucket, "get", lambda self, *a, **k: (_ for _ in ()).throw(Boom()))
+    with pytest.raises(Boom):                                   # the process "dies" after the PUT, before the UPDATE
+        migrate_media.migrate(store, r2.Bucket(r2.config(), http=blobstore._client()))
+    monkeypatch.setattr(r2.Bucket, "get", real)
+    orphan = next(iter(s3.objects))
+    assert blobstore.sweep(store)["deleted"] == 0 and orphan in s3.objects    # not due yet (a run may still be going)
+    store.x("UPDATE blob_gc SET at=?", (time.time() - 1,))                     # a day later
+    blobstore.sweep(store)
+    assert orphan not in s3.objects

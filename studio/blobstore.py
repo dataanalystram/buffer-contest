@@ -165,7 +165,7 @@ def referenced(store, key: str) -> bool:
 
 
 def pending(store) -> int:
-    return int(store.q("SELECT COUNT(*) AS n FROM blob_gc")[0]["n"] or 0)
+    return int(store.q("SELECT COUNT(*) AS n FROM blob_gc WHERE at<=?", (time.time(),))[0]["n"] or 0)
 
 
 def sweep(store, limit: int = 500) -> dict:
@@ -177,7 +177,8 @@ def sweep(store, limit: int = 500) -> dict:
     if in_tx or not _SWEEP.acquire(blocking=False):
         return {"deleted": 0, "failed": 0, "skipped": True}
     try:
-        rows = store.q("SELECT key FROM blob_gc WHERE key IS NOT NULL ORDER BY at LIMIT ?", (limit,))
+        # at > now: an upload in flight noted ahead of time (migrate_media); it becomes due if nothing ever claims it
+        rows = store.q("SELECT key FROM blob_gc WHERE key IS NOT NULL AND at<=? ORDER BY at LIMIT ?", (time.time(), limit))
         if not rows:
             return {"deleted": 0, "failed": 0}
         cfg = r2.config()
