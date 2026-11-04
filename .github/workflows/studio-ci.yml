@@ -37,10 +37,11 @@ jobs:
         with: {persist-credentials: false}
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: {python-version: "3.12"}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null   # the video end-card / CTA tests run real FFmpeg
       - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0"
+      - run: python -m playwright install --with-deps chromium >/dev/null   # before the tests, so a unit failure can't skip it
       - name: Core tests (tests/ without tests/studio and the browser tests)
         run: python -m pytest tests --ignore=tests/studio --ignore=tests/e2e -q -rs
-      - run: python -m playwright install --with-deps chromium >/dev/null
       - name: Core browser tests (tests/e2e)
         if: always()
         run: python -m pytest tests/e2e -q -rs
