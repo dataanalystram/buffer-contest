@@ -263,8 +263,15 @@ class Studio:
 
     def _preflight(self, ch: dict, text: str, media_urls: list[str], mode: str, options: dict | None = None,
                    probe: bool = True, creating: bool = True) -> dict:
-        return preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating,
-                               known=self._known_probe)
+        res = preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating,
+                              known=self._known_probe)
+        from . import commerce  # #Ad + disclosure for shop links, no Channel3 catalogue images (docs/COMMERCE.md)
+        extra = commerce.preflight_findings(self.store, self.s.public_url, text, media_urls)
+        if extra:
+            res["findings"] = list(res.get("findings") or []) + extra
+            if any(f["level"] == "error" for f in extra):
+                res["status"] = "error"
+        return res
 
     def _known_probe(self, url: str) -> dict | None:
         """Facts the video worker already measured with ffprobe for media HuhQueue rendered (the web dyno has no ffprobe)."""
@@ -640,6 +647,13 @@ class Studio:
                 self.store.audit(a.uid, a.label, action, risk, {"channel": ch["service"], "mode": clean["mode"],
                                                                  "error": msg[:600], "stage": "media check"}, ok=False)
                 raise ActionError(msg, 422)
+        from . import commerce  # offer links are short-lived: every shop link is re-resolved right before Buffer gets the post
+        try:
+            commerce.at_publish(self, a, clean["text"])
+        except ActionError as e:
+            self.store.audit(a.uid, a.label, action, risk, {"channel": ch["service"], "stage": "shop links", "error": str(e)[:300]},
+                             ok=False)
+            raise
         inp = build_post_input(ch, clean["text"], clean["media_url"], clean["mode"], clean.get("due_at"), clean.get("media_urls"),
                                clean.get("options"))
         try:

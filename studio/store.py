@@ -328,6 +328,11 @@ class Store:
         for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
                   "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs", "ai_settings"):
             self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+        try:  # Commerce (studio/commerce.py): the person's shop links and meters
+            from . import commerce
+            commerce.forget_user(self, uid)
+        except Exception:  # noqa: BLE001
+            pass
         for t in ("style_edits", "style_suggestions", "review_links"):  # Style Ledger v2 (studio/ledger.py)
             try:
                 self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))

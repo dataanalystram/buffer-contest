@@ -183,6 +183,10 @@ READ_ONLY |= _image.READ_ONLY
 from . import run_discipline as _rd  # noqa: E402  start_post, cleanup_agent_drafts: one request = one run (4 Nov 2026)
 
 TOOLS += _rd.TOOLS
+from . import commerce as _commerce  # noqa: E402  search_products, get_product, attach_product_to_post (Channel3, Phase 4)
+
+TOOLS += _commerce.TOOLS
+READ_ONLY |= _commerce.READ_ONLY
 from . import consent as _consent  # noqa: E402  approval gate for paid / external APIs (4 Nov 2026)
 
 
@@ -346,7 +350,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _uploads.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
-    for _mod in (_send, _share, _ledger, _parity, _image, _rd):
+    for _mod in (_send, _share, _ledger, _parity, _image, _rd, _commerce):
         extra = _mod.call_tool(studio, actor, name, args)
         if extra is not NotImplemented:
             return extra
