@@ -499,3 +499,35 @@ def test_reencoded_webp_carries_no_location_data():
     back = Image.open(io.BytesIO(clean))
     assert ext == "png" and not back.getexif() and b"PhoneMaker" not in clean and "exif" not in back.info
 
+
+
+def _noise(mode, side, seed=7):
+    import random
+    rnd = random.Random(seed)
+    return Image.frombytes(mode, (side, side), bytes(rnd.getrandbits(8) for _ in range(side * side * len(mode))))
+
+
+def test_a_webp_inside_the_cap_still_opens_after_the_png_reencode(monkeypatch):
+    """Greptile P1 on #103: a lossy WebP under 15 MB can be several times that as PNG, so the stored source answered
+    too_large on the very next edit. The cap is shrunk here so the test stays small; the arithmetic is the same."""
+    monkeypatch.setattr(image_edit, "MAX_FETCH", 400_000)
+    buf = io.BytesIO()
+    _noise("RGB", 600).save(buf, "WEBP", quality=60)
+    data = buf.getvalue()
+    assert len(data) <= image_edit.MAX_FETCH  # a valid, in-cap input
+    opened, ext = image_edit.open_image(data)
+    clean, ext = image_edit.strip_meta(data, ext, opened)
+    assert ext == "png" and len(clean) <= image_edit.MAX_FETCH
+    back, _ = image_edit.open_image(clean)  # main: ImageFetchError too_large here
+    assert back.width < 600 and abs(back.width / back.height - 1) < 0.01
+
+
+def test_a_transparent_edit_result_stays_under_the_cap(human, monkeypatch):
+    monkeypatch.setattr(image_edit, "MAX_FETCH", 400_000)
+    im = _noise("RGBA", 500)
+    a = image_edit.Actor(human.app.state.store.q("SELECT id FROM users")[0]["id"])
+    out = image_edit._store(human.app.state.house, a, im, "cut.png", "edit", None)
+    data = human.app.state.house.get_media(out["media_token"])["data"]
+    assert len(data) <= image_edit.MAX_FETCH and out["transparent"]
+    back, _ = image_edit.open_image(data)
+    assert back.size == (out["width"], out["height"])

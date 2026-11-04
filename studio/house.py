@@ -272,7 +272,11 @@ class House:
         b1, m1 = render.news_card("Your next post, rendered in your brand style", kit, p, logo=logo, ratio="4:5", label="Preview",
                                   credit="example.com")
         b2, _ = render.end_card(kit, p, logo=logo, ratio="4:5")
-        self.store.x("DELETE FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
+        from .library import record_owner_deletes
+        with self.store.tx():  # the old previews go for good; noted as the owner's own delete in the same transaction
+            old = [r["token"] for r in self.store.q("SELECT token FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))]
+            self.store.x("DELETE FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
+            record_owner_deletes(self.store, [(t, a.uid) for t in old])
         t1 = self.put_media(a, b1, "preview.jpg", kind="preview", meta=m1)
         t2 = self.put_media(a, b2, "preview_end.jpg", kind="preview", meta={"type": "photo"})
         return {"cover": self.media_url(t1), "end": self.media_url(t2), "check": brand.brand_check("", m1, rules, kit)}
@@ -449,13 +453,6 @@ class House:
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             ext = "mp4" if data[4:8] == b"ftyp" else ("png" if data[:4] == b"\x89PNG" else "jpg")
         return self.upload(a, "import." + ext, base64.b64encode(data).decode())
-
-    def purge_media(self, days: int = 21) -> int:
-        cutoff = _now() - days * 86400
-        keep = "token NOT IN (SELECT token FROM library_media)"  # Library items are kept until the person deletes them
-        n = self.store.q(f"SELECT COUNT(*) AS n FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))[0]["n"]
-        self.store.x(f"DELETE FROM media WHERE created<? AND meta NOT LIKE ? AND {keep}", (cutoff, '%"logo"%'))
-        return n
 
     # ================================================================ missing media
     # Owner bug, 2 Nov 2026: run 20's ready Instagram carousel showed a broken thumbnail (/m/<token>.jpg answered 404)
