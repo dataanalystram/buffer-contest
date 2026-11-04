@@ -54,9 +54,16 @@ def ensure(store) -> None:
 
 
 def url_hash(url: str) -> str:
-    """One hash per video: youtu.be / watch / shorts links to the same video match (find.canonical)."""
-    from .media.find import canonical
-    return hashlib.sha256(canonical(str(url or "").strip()).encode()).hexdigest()
+    """One hash per video on its OWN host: youtu.be / watch / shorts of one YouTube video match (find.canonical), but
+    only when the link's host is that platform. Any other link hashes as itself, so an approval for
+    https://vimeo.com/123 never covers https://other.example/big.mp4?x=vimeo.com/123 (CodeRabbit / Greptile, PR #111)."""
+    from .media.find import canonical, platform_of
+    u = str(url or "").strip()
+    plat = platform_of(u)
+    key = canonical(u) if plat else ""
+    if not (plat and key.startswith(("youtube:", "x:", "vimeo:", "loom:")) and key.split(":", 1)[0] == plat):
+        key = "url:" + u.split("#")[0]
+    return hashlib.sha256(key.encode()).hexdigest()
 
 
 def record(store, a: Actor, url: str, *, licence: str = "", via: str = "app", approval_id: int | None = None,

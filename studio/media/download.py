@@ -121,7 +121,7 @@ def download_platform(url: str, dest: Path, max_bytes: int = MAX_BYTES, max_heig
         msg = str(e).split("\n")[0]
         why = refusal(msg, plat)
         if why and why[0] == "bot":
-            return _public_fallback(url, plat, dest, max_bytes, max_height, e, why[1])
+            return _public_fallback(url, plat, dest, max_bytes, max_height, e, why[1], max_secs)
         if why:
             raise DownloadError(why[1]) from e
         raise DownloadError(f"Couldn't download the video: {msg[:160]}") from e
@@ -142,27 +142,33 @@ def download_platform(url: str, dest: Path, max_bytes: int = MAX_BYTES, max_heig
     return dest
 
 
-def _public_fallback(url: str, plat: str, dest: Path, max_bytes: int, max_height: int, cause: Exception, why: str) -> Path:
+def _public_fallback(url: str, plat: str, dest: Path, max_bytes: int, max_height: int, cause: Exception, why: str,
+                     max_secs: int = 0) -> Path:
     """yt-dlp was bot-checked. The platform's own public media next: YouTube through the operator's Invidious route
     (studio.media.yt_fallback, off unless configured), X through the post's MP4 (studio.xreader, public syndication;
     the MP4 itself through netguard)."""
     if plat == "youtube":
-        return _youtube_fallback(url, dest, max_bytes, max_height, cause, why)
+        return _youtube_fallback(url, dest, max_bytes, max_height, cause, why, max_secs)
     if plat == "x":
         import re as _re
         m = _re.search(r"(?:x|twitter)\.com/([^/]+)/status/(\d+)", url)
         try:
             from .. import xreader
             art = xreader.read(m.group(1), m.group(2)) if m else {}
-            vid = next((v.get("url") for v in (art.get("videos") or []) if str(v.get("url") or "").startswith("https://")), "")
+            v0 = next((v for v in (art.get("videos") or []) if str(v.get("url") or "").startswith("https://")), {})
+            vid = v0.get("url") or ""
         except Exception:  # noqa: BLE001 - the public read failed too: the clear message below
-            vid = ""
+            v0, vid = {}, ""
+        caps = _Caps(max_secs, max_bytes)
+        if vid and caps(v0):
+            raise DownloadError(caps.why) from cause
         if vid:
             return download_direct(vid, dest, max_bytes=max_bytes)
     raise DownloadError(why) from cause
 
 
-def _youtube_fallback(url: str, dest: Path, max_bytes: int, max_height: int, cause: Exception, why: str = "") -> Path:
+def _youtube_fallback(url: str, dest: Path, max_bytes: int, max_height: int, cause: Exception, why: str = "",
+                      max_secs: int = 0) -> Path:
     """yt-dlp was bot-checked: the Invidious route when the operator turned it on (studio.media.yt_fallback), else the
     plain message to upload the file."""
     from . import yt_fallback
@@ -170,7 +176,9 @@ def _youtube_fallback(url: str, dest: Path, max_bytes: int, max_height: int, cau
     if not yt_fallback.enabled():
         raise DownloadError(why or yt_fallback.FAIL) from cause
     try:
-        yt_fallback.fetch(youtube_id(url) or "", dest, max_bytes=max_bytes, max_height=min(max_height, 720))
+        yt_fallback.fetch(youtube_id(url) or "", dest, max_bytes=max_bytes, max_height=min(max_height, 720), max_secs=max_secs)
+    except yt_fallback.TooLong as e:
+        raise DownloadError(str(e)) from e
     except yt_fallback.FallbackError as e:
         print(f"youtube fallback failed: {str(e)[:300]}")
         raise DownloadError(why or yt_fallback.FAIL) from e

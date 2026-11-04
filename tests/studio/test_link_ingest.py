@@ -207,3 +207,39 @@ def test_attestation_text_matches_the_ui():
     assert f'TK_ATTEST_V = "{link_ingest.ATTESTATION_VERSION}"' in js
     priv = (static / "privacy.html").read_text()
     assert "7 days" in priv and "Video link consents" in priv and "yt-dlp" in priv
+
+
+def test_an_approval_covers_only_that_link_on_its_own_host():
+    h = link_ingest.url_hash
+    assert h("https://vimeo.com/123") != h("https://attacker.example/big.mp4?x=vimeo.com/123")
+    assert h("https://x.com/a/status/123") != h("https://evil.example/v.mp4#x.com/a/status/123")
+    assert h("https://notx.com/a/status/123") != h("https://x.com/a/status/123")
+    assert h("https://youtu.be/QJf0H64BnFo") == h("https://www.youtube.com/watch?v=QJf0H64BnFo")
+
+
+def test_the_fallbacks_keep_the_duration_cap(monkeypatch, tmp_path):
+    from studio.media import yt_fallback
+    _ytdlp(monkeypatch, raise_msg="ERROR: [youtube] x: Sign in to confirm you're not a bot.")
+    monkeypatch.setenv("HQ_YT_FALLBACK", "invidious")
+    monkeypatch.setenv("HQ_INVIDIOUS_INSTANCES", "https://inv.example")
+    monkeypatch.setattr(yt_fallback, "_get_json", lambda url, http=None: {"lengthSeconds": 5 * 3600, "adaptiveFormats": []})
+    pulled = []
+    monkeypatch.setattr(yt_fallback, "_download", lambda *a, **k: pulled.append(a))
+    with pytest.raises(takes.take.TakeError, match="up to 3 h"):
+        takes.fetch_platform(YT, tmp_path / "s.mp4")
+    assert pulled == []
+
+
+def test_postgres_returns_the_consent_id():
+    from studio import store
+    assert "link_consents" in store.ID_TABLES
+
+
+def test_make_a_post_split_asks_for_the_statement(human, app, monkeypatch):
+    _hosts(monkeypatch)
+    _github(app, monkeypatch)
+    body = {"prompt": f"split this into 5 shorts {YT}", "channel_ids": ["ch_ig"], "rights_confirmed": True}
+    r = human.post("/api/agent/runs", json=body)
+    assert r.status_code == 409 and link_ingest.ATTESTATION in r.json()["error"] and _consents(app) == []
+    t = human.post("/api/agent/runs", json={**body, "rights_attested": True}).json()
+    assert t["kind"] == "take" and _consents(app)[0]["take_id"] == t["id"]

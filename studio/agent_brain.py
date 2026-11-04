@@ -287,6 +287,11 @@ class Brain:
             o = oembed(url, http=self.h.http) or {}
             who, where = o.get("author") or "", o.get("provider") or "the web"
             credit = f"Video: {who + ' on ' if who else ''}{where}"
+        from .link_ingest import ATTESTATION
+        if url and a.kind == "human" and body.get("rights_attested") is not True:  # the fetch needs the person's statement
+            whose = "your" if owns else "someone else's"
+            raise ActionError(f"Rights: this fetches {whose} video ({credit}) and splits it into clips, credited on screen and in "
+                              "every caption. Confirm: “" + ATTESTATION + "” (rights_confirmed: true, rights_attested: true).", 409)
         if not owns and not body.get("rights_confirmed"):
             raise ActionError(f"Rights: this splits someone else's video ({credit}) into clips. I'll credit it on screen and in "
                               "every caption. Confirm you have the right to repost it (or that it's fair commentary) and I'll "
@@ -294,7 +299,7 @@ class Brain:
         return self.h.takes.start(a, {"prompt": prompt, "count": sp["n"], "style": "opus", "owns": owns,
                                       "rights_confirmed": bool(body.get("rights_confirmed")), "credit": credit,
                                       # the signed-in person confirmed in Make a post (an AI app's token asks in the Inbox)
-                                      "rights_attested": a.kind == "human" and (owns or bool(body.get("rights_confirmed"))),
+                                      "rights_attested": body.get("rights_attested") is True,
                                       "approval_id": body.get("approval_id"),
                                       "media_token": tok if own_file else "", "url": "" if own_file else url,
                                       "name": str(body.get("media_name") or "")[:80], "captions": body.get("captions") or "",

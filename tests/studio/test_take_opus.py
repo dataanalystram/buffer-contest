@@ -138,7 +138,7 @@ def test_make_a_post_split_request_becomes_a_take(human, app, monkeypatch):
     r = human.post("/api/agent/runs", json={"prompt": f"split this into 5 shorts {YT}", "channel_ids": ["ch_ig"]})
     assert r.status_code == 409 and r.json()["error"].startswith("Rights:") and "Video: Buffer on YouTube" in r.json()["error"]
     t = human.post("/api/agent/runs", json={"prompt": f"split this into 5 shorts {YT}", "channel_ids": ["ch_ig"],
-                                            "rights_confirmed": True}).json()
+                                            "rights_confirmed": True, "rights_attested": True}).json()
     assert t["kind"] == "take" and t["style"] == "opus" and t["input"]["count"] == 5
     # an ordinary post about a link is still a Make a post run
     run = human.post("/api/agent/runs", json={"prompt": "post about this https://example.com/launch", "channel_ids": ["ch_ig"]}).json()

@@ -659,7 +659,8 @@ async function startRun(body) {
     if (e.status !== 409 || !/^Rights:/.test(e.message)) throw e;
     const ok = await askRights(e.message.replace(/^Rights:\s*/, ""));
     if (!ok) return null;
-    return api("/api/agent/runs", { method: "POST", body: { ...body, rights_confirmed: true } });
+    // the person read the server's statement (it carries link_ingest.ATTESTATION) and said yes: that is the consent record
+    return api("/api/agent/runs", { method: "POST", body: { ...body, rights_confirmed: true, rights_attested: true } });
   }
 }
 function askRights(text) {
