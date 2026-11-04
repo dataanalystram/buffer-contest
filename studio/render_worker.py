@@ -41,6 +41,22 @@ def _download(c: httpx.Client, url: str, dest: Path) -> None:
                 fh.write(chunk)
 
 
+def store_source(c: httpx.Client, put_url: str, src: Path) -> int:
+    """Keep a fetched link in the app's bucket (a presigned PUT the app signed for this take) so the renders don't fetch
+    the platform again. Best effort: 0 when the store refused (the renders then fetch the link again)."""
+    n = src.stat().st_size
+    if not put_url.startswith("https://") or n <= 0 or n > MAX_SOURCE:
+        return 0
+    try:
+        with open(src, "rb") as fh:
+            r = c.put(put_url, content=fh, headers={"Content-Length": str(n), "Content-Type": "video/mp4"}, timeout=600)
+        print("source stored:", r.status_code)
+        return n if r.status_code < 300 else 0
+    except (httpx.HTTPError, OSError, RuntimeError) as e:  # RuntimeError: a closed client
+        print("source not stored:", e.__class__.__name__)
+        return 0
+
+
 def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
     from . import take
     from .media import selfcheck
@@ -50,15 +66,22 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
     src = tmp / "source.mp4"
     try:
         from .takes import fetch_platform, render_spec_clip, reuse_captions
-        if spec.get("platform_url"):  # a YouTube / Vimeo / X post: single-extractor yt-dlp, size-capped, vetted
-            fetch_platform(spec["platform_url"], src)
+        fetched = None
+        if spec.get("platform_url"):  # a YouTube / Vimeo / X post: Make a post's own fetch path (yt-dlp, 4 GB / 3 h caps, vetted)
+            fetched = {**fetch_platform(spec["platform_url"], src, MAX_SOURCE), "via": "yt-dlp"}
         else:
             _download(c, urls["source"], src)
+            if spec.get("source_url"):
+                fetched = {"via": "direct"}
+        if fetched is not None and spec["kind"] == "take_analyze" and urls.get("source_put"):
+            fetched["stored_bytes"] = store_source(c, urls["source_put"], src)
         if spec["kind"] == "take_analyze":
             tr = reuse_captions(str(src), spec)  # existing captions first; Whisper only when there are none
             print("captions:", f"reused {tr['source']} ({tr['count']} words)" if tr else "none, transcribing")
-            analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=float(os.environ.get("HQ_MAX_TAKE_SECS", "1800")),
+            analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=float(os.environ.get("HQ_MAX_TAKE_SECS", "10800")),
                                     transcript=tr)
+            if fetched is not None:
+                analysis["fetch"] = fetched
             r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"analysis": analysis})
             print("analysis posted:", r.status_code, r.text[:200])
             return 0 if r.status_code == 200 else 1
