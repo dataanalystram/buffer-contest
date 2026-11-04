@@ -93,7 +93,8 @@ TOOLS: list[dict[str, Any]] = [
          "owns": {"type": "boolean", "description": "Must be true: the user owns this video or has the rights to it"},
          "channel_ids": {"type": "array", "items": {"type": "string"}}, "count": {"type": "integer", "minimum": 1, "maximum": 7},
          "name": {"type": "string"}, "sample": {"type": "boolean"},
-         "upload_id": {"type": "string", "description": "A finished multipart upload of a long video (POST /api/takes/uploads, up to 4 GB when the server has a bucket)"}}}},
+         "upload_id": {"type": "string", "description": "A finished multipart upload of a long video (POST /api/takes/uploads, up to 4 GB when the server has a bucket)"},
+         "jev": {"type": "boolean", "description": "Ask TypeSafe Jev for a second opinion on the speaker's face on a few keyframes (paid, HuhQueue's key): answers needs_user_approval until the person approves. Off by default for apps; local face detection always runs."}}}},
     {"name": "list_clips", "description": "Without take_id: the user's takes. With take_id: the take's progress steps and its clips (video and cover URLs, start/end in the source, hook, transcript, layout, preflight per channel, the caption per network, and where each clip was placed).",
      "inputSchema": {"type": "object", "properties": {"take_id": {"type": "integer"}}}},
     {"name": "adjust_clip", "description": "Trim & caption one clip of a take (the same edits as the UI's Trim & caption window). Any of: in/out (start_ms/end_ms in the source video; the sample take only inside its moment), transcript (the clip's corrected words: fixes the burned-in captions, timings follow the voice), hook (the cover line: at least 3 words quoted from the clip), caption + service or captions {service: text} (post caption per network; only the take's channels, each within its network's limit), music (an Instagram track from search_instagram_audio for the Reel, with music_volume / original_volume 0-100; null removes it; Instagram picks which part of the track plays). Timing, transcript and hook re-render the clip on the video worker (poll list_clips until the clip is ready: it gets a new url); captions and music save at once. Returns the take with changed and rerendering.",
@@ -297,7 +298,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "clips_from_video":
         if args.get("sample"):
             return h.takes.start_sample(actor, {"channel_ids": args.get("channel_ids")})
-        return h.takes.start(actor, {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id")})
+        return h.takes.start(actor, {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "jev")})
     if name == "list_clips":
         if args.get("take_id"):
             t = h.takes.get(actor, int(args["take_id"]))

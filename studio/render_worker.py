@@ -58,7 +58,7 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
             tr = reuse_captions(str(src), spec)  # existing captions first; Whisper only when there are none
             print("captions:", f"reused {tr['source']} ({tr['count']} words)" if tr else "none, transcribing")
             analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=float(os.environ.get("HQ_MAX_TAKE_SECS", "1800")),
-                                    transcript=tr)
+                                    transcript=tr, jev=spec.get("jev") is True)
             r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"analysis": analysis})
             print("analysis posted:", r.status_code, r.text[:200])
             return 0 if r.status_code == 200 else 1

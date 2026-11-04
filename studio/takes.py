@@ -194,11 +194,14 @@ class Takes(TakeBin):
         chans = self._channels(a, body.get("channel_ids"))
         if not chans:
             raise ActionError("Pick at least one connected channel that takes video (Instagram, TikTok, YouTube, X, LinkedIn, Threads).")
+        jev = self._jev_consent(a, body)
+        if isinstance(jev, dict):  # an MCP app asked for Jev: it waits for the person (studio/consent.py), nothing ran
+            return jev
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
         steps = [{"key": k, "label": l, "status": "pending", "detail": "", "data": None} for k, l in STEPS]
         inp = {"media_token": token, "upload_id": upload_id, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
-               "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]],
+               "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]], "jev": jev,
                "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
@@ -217,9 +220,30 @@ class Takes(TakeBin):
                    + (f" · {credit}" if credit and not owns else ""), {"source": self.media_url(token) if token else ("upload" if upload_id else (url or platform_url))})
         self._save(rid, run["steps"], run["result"])
         self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_upload": upload_id, "source_url": url, "platform_url": platform_url,
-                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small")},
+                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small"), "jev": jev},
                     "transcribe", "Reading captions, else transcribing on the video worker (faster-whisper, CPU)")
         return self.get(a, rid)
+
+    def _jev_consent(self, a: Actor, body: dict):
+        """May this take ask Jev (TypeSafe, a paid API on HuhQueue's server key) for a second opinion on faces?
+        A person in the app: yes unless they said jev: false. An MCP app: only when it asks (jev: true) AND the person
+        approves through studio/consent.py (needs_user_approval, or "Allow paid APIs" on that token). Returns True / False,
+        or the consent answer (a dict) when the app's request waits for the person."""
+        want = body.get("jev")
+        if want is not None and not isinstance(want, bool):
+            raise ActionError("jev is true or false.")
+        if a.kind != "agent":
+            return want is not False
+        if want is not True:
+            return False
+        from . import consent
+        if "clips_from_video_jev" not in consent.PAID:
+            from .media import jev_faces
+            consent.register("clips_from_video_jev", "TypeSafe Jev (HuhQueue's key)",
+                             "Jev checks up to a dozen keyframes of the video for the speaker's face",
+                             lambda args: {"calls_max": jev_faces.cap_from_env()})
+        held = consent.gate(self.h.studio, a, "clips_from_video_jev", body)
+        return held if held else True
 
     def start_sample(self, a: Actor, body: dict | None = None) -> dict:
         """The sample take: Buffer's 89-minute Buffer Commit kickoff Q&A (credited), split into 5 clips ahead of time by the same
@@ -668,7 +692,8 @@ class Takes(TakeBin):
                 "timings": res.get("timings") or {}, "picked_by": res.get("picked_by"), "moments": res.get("moments") or [],
                 "clips": clips, "created": run["created"], "updated": run["updated"],
                 "caption_limits": {ch["service"]: drafter.limit_for(ch["service"]) for ch in run["input"]["channels"]},
-                "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback")}
+                "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback"),
+                "face_jev": _jev_view(an.get("jev"))}
 
     def _can_rerender(self, a: Actor, res: dict) -> bool:
         """Trims, transcript fixes and new hooks re-render on the video worker. The sample re-renders from its bundled
@@ -1098,3 +1123,15 @@ def _daily_limits_cached(buffer, uid: str, ids: list[str], day: str) -> list:
             _LIMITS.clear()
         _LIMITS[key] = (_t.time(), lim)
     return lim
+
+
+def _jev_view(rec) -> dict | None:
+    """What the take shows about Jev's second opinion: on or off and why, and each keyframe it looked at (time, why it
+    was picked, the verdict, whether its box went into the reframe track). Never the request or any key."""
+    if not isinstance(rec, dict):
+        return None
+    keep = ("t", "why", "verdict", "face_visible", "box", "used", "ms", "error")
+    frames = [{k: f[k] for k in keep if k in f} for f in (rec.get("frames") or [])[:40] if isinstance(f, dict)]
+    return {"enabled": bool(rec.get("enabled")), "why": str(rec.get("why") or "")[:200], "model": str(rec.get("model") or "")[:40],
+            "cap": rec.get("cap"), "calls": rec.get("calls", 0), "used": rec.get("used", 0), "errors": rec.get("errors", 0),
+            "fallback": rec.get("fallback"), "frames": frames}
