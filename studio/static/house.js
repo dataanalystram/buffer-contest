@@ -208,8 +208,10 @@ function showRun(r) {
   const ready = ["ready"].includes(r.status) || (!busy && pk.length);
   $("#pkgHead").hidden = !pk.length || !ready;
   $("#pkgHelp").hidden = $("#pkgHead").hidden;
-  $("#packages").innerHTML = ready ? pk.map(pkgCard).join("") + (pk.some((p) => p.status === "ready")
+  $("#packages").classList.toggle("multi", !!ready && pk.length > 1);
+  $("#packages").innerHTML = ready ? pkgTabs(r, pk) + pk.map(pkgCard).join("") + (pk.some((p) => p.status === "ready")
     ? `<div class="pkg-all"><button class="btn2" data-testid="save-drafts">Save all as Buffer drafts (not posted)</button></div>` : "") : "";
+  if (ready) wireTabs();
   const sd = $("[data-testid=save-drafts]");
   if (sd) sd.onclick = async () => {
     sd.disabled = true;
@@ -314,7 +316,7 @@ function drawReady(r, busy) {
       const extra = [ratioOf(v.videoWidth, v.videoHeight), isFinite(v.duration) ? fmtDur(v.duration) : ""].filter(Boolean);
       sm.textContent = [parts[0], ...extra, ...parts.slice(1)].join(" · "); };
     v.addEventListener("loadedmetadata", set); if (v.readyState >= 1) set(); });
-  box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => { const c = document.querySelector(`#packages .pkg[data-ch="${CSS.escape(b.dataset.ch)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "start" }); flash([c]); } }));
+  box.querySelectorAll("[data-ch]").forEach((b) => (b.onclick = () => { pkgSelect(b.dataset.ch); const c = document.querySelector(`#packages .pkg[data-ch="${CSS.escape(b.dataset.ch)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "start" }); flash([c]); } }));
 }
 
 // "Template: <name> · why" and the Change template chips (previews drawn from this post's own facts in its kit)
@@ -442,9 +444,13 @@ function pkgCovers(p, sent) {
 function pkgCard(p) {
   const ch = chOf(p.channel_id), sent = ["sent_to_buffer", "pending_approval"].includes(p.status);
   const help = PKG_MODES[0][2];
+  // the caption count: the server's when it sent one, else counted here the way Buffer counts (owner bug, 4 Nov 2026: the
+  // header read "undefined/undefined" for a package saved without length / limit)
+  const len = Number.isFinite(p.length) ? p.length : count(p.service || "", p.text || ""), lim = Number.isFinite(p.limit) ? p.limit : limitFor(p.service);
   return `<article class="pkg" data-testid="package" data-ch="${esc(p.channel_id)}">
-    <header>${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : avatar(ch)}<div><b>${esc(p.channel_name)}</b><small>${esc(netName(p.service))}</small></div><span class="cnt ${p.length > p.limit ? "over" : ""}" data-testid="pkg-count">${p.length}/${p.limit}</span></header>
+    <header>${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : avatar(ch)}<div><b>${esc(p.channel_name || netName(p.service))}</b><small>${esc(netName(p.service))}</small></div><span class="cnt ${len > lim ? "over" : ""}" data-testid="pkg-count">${len}/${lim}</span></header>
     ${pkgMedia(p)}
+    <div class="pkg-side">
     ${sent ? "" : pkgMissing(p)}
     ${pkgCovers(p, sent)}
     ${window.hqPkgControls ? window.hqPkgControls.card(p, sent) : window.pkgMusic ? window.pkgMusic(p, sent) : ""}
@@ -457,7 +463,35 @@ function pkgCard(p) {
     ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.mode === "draft" ? " as a draft (not posted)" : ""}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
       : `<div class="pkg-act"><select data-testid="pkg-mode" aria-label="What to do with this post">${PKG_MODES.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
         <button class="btn sm" data-testid="pkg-send"${p.media_state && p.media_state !== "ok" ? ` disabled title="${esc(MEDIA_GONE)}"` : ""}>${PKG_MODES[0][3]}</button></div><small class="muted sm pkg-help" data-testid="pkg-help">${esc(help)}</small>`}
+    </div>
   </article>`;
+}
+// multi-channel review (owner ask, 4 Nov 2026): one tab per channel across the top (a scroll-snap strip on a narrow
+// screen); the card below is that channel's media and caption. The choice stays while the run redraws.
+const PKG_TAB = { run: null, ch: "" };
+const fmtLine = (p) => { const m = pkgFiles(p)[0] || {}, r = m.ratio || ratioOf(m.width, m.height) || p.ratio || "";
+  return [p.format === "reel" ? "Reel" : (m.type === "video" ? "Video" : FMT_NAME[p.format] || (m.url ? "Image" : "Text")), r].filter(Boolean).join(" · "); };
+function pkgTabs(r, pk) {
+  if (pk.length < 2) return "";
+  if (PKG_TAB.run !== r.id || !pk.some((p) => p.channel_id === PKG_TAB.ch)) { PKG_TAB.run = r.id; PKG_TAB.ch = pk[0].channel_id; }
+  return `<div class="pkg-tabs-wrap"><div class="pkg-tabs" role="tablist" aria-label="Channels in this post" data-testid="pkg-tabs">${pk.map((p) => { const on = p.channel_id === PKG_TAB.ch, ch = chOf(p.channel_id);
+    return `<button type="button" role="tab" class="pkg-tab${on ? " on" : ""}" id="pkt-${esc(p.channel_id)}" aria-selected="${on}" aria-controls="pkp-${esc(p.channel_id)}" tabindex="${on ? 0 : -1}" data-tab="${esc(p.channel_id)}" data-testid="pkg-tab">
+      ${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : ""}<span><b>${esc(netName(p.service))}</b><small>${esc(fmtLine(p))}</small></span></button>`; }).join("")}</div></div>`;
+}
+function pkgSelect(ch, focus) {
+  const box = $("#packages"); if (!box.classList.contains("multi")) return;
+  PKG_TAB.ch = ch;
+  box.querySelectorAll(".pkg-tab").forEach((t) => { const on = t.dataset.tab === ch; t.classList.toggle("on", on); t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1; if (on && focus) t.focus(); if (on) t.scrollIntoView({ block: "nearest", inline: "nearest" }); });
+  box.querySelectorAll(".pkg").forEach((c) => (c.hidden = c.dataset.ch !== ch));
+}
+window.pkgSelect = pkgSelect;
+function wireTabs() {
+  const box = $("#packages"), tabs = [...box.querySelectorAll(".pkg-tab")]; if (!tabs.length) return;
+  box.querySelectorAll(".pkg").forEach((c) => { c.id = "pkp-" + c.dataset.ch; c.setAttribute("role", "tabpanel"); c.setAttribute("aria-labelledby", "pkt-" + c.dataset.ch); });
+  tabs.forEach((t, i) => { t.onclick = () => pkgSelect(t.dataset.tab);
+    t.onkeydown = (e) => { const k = { ArrowRight: 1, ArrowLeft: -1 }[e.key]; if (!k && e.key !== "Home" && e.key !== "End") return; e.preventDefault();
+      const j = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + k + tabs.length) % tabs.length; pkgSelect(tabs[j].dataset.tab, true); }; });
+  pkgSelect(PKG_TAB.ch);
 }
 
 function wirePackages(r) {

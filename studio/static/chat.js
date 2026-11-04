@@ -71,7 +71,7 @@
   const mpNew = document.getElementById("mpNew");
   mpNew.innerHTML = `${ic(I.plus)}<span>New post</span>`; mpNew.setAttribute("aria-label", "New post");
   const menuB = el("button", "btn2 sm icon hc-menu", { type: "button", id: "hcMenu", "data-testid": "chat-sidebar-open", "aria-label": "Threads", "aria-controls": "hcSide", "aria-expanded": "false" });
-  menuB.innerHTML = ic(I.panel);
+  menuB.innerHTML = `${ic(I.panel)}<span class="hc-menu-l">Hide threads</span>`;
   const head = el("div", "hc-head");
   head.innerHTML = `<h2 class="hc-title" id="hcTitle" data-testid="chat-title">Post</h2>`;
   head.appendChild(document.getElementById("mpStatus"));
@@ -171,9 +171,22 @@
     const o = e.target.closest("[data-open]"); if (!o) return;
     sideDrawer(false);
     if (o.dataset.kind === "take") return window.openTake && window.openTake(o.dataset.open);
-    try { const x = await api(`/api/agent/runs/${o.dataset.open}`); window.showRun(x); if (busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
-    catch (err) { toast(err.message, 5000); }
+    // the clicked thread is marked at once and the conversation shows a skeleton until its run arrives; a quicker second
+    // click aborts this request, so the earlier thread never lands over the later one (loading.js)
+    const tk = HQLoad.start("thread");
+    document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = li.dataset.id === o.dataset.open; li.classList.toggle("on", on); const b = li.querySelector(".hc-th"); if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); });
+    threadLoading(true);
+    try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; threadLoading(false); window.showRun(x); if (busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
+    catch (err) { if (!HQLoad.aborted(err) && tk.live()) { threadLoading(false); toast(err.message, 5000); } }
+    finally { if (tk.live()) tk.done(); }
   });
+  // a skeleton over the conversation while another thread loads (the old thread's messages never stay up as if current)
+  function threadLoading(on) {
+    let sk = document.getElementById("hcLoading");
+    rv.classList.toggle("hc-loading", on);
+    if (on && !sk) { sk = el("div", "hc-loading-sk", { id: "hcLoading" }); sk.innerHTML = HQLoad.rows(4, "Loading the thread"); main.insertBefore(sk, main.children[1] || null); }
+    if (sk) sk.hidden = !on;
+  }
   function rename(id) {
     const li = document.querySelector(`#hcList .hc-li[data-id="${sel(id)}"]`); if (!li) return;
     const row = HC.rows.find((x) => String(x.id) === String(id)) || {};
@@ -233,6 +246,7 @@
     const open = isOverlay() ? rv.classList.contains("hc-side-open") : !threadsHidden();
     menuB.setAttribute("aria-expanded", String(open));
     menuB.setAttribute("aria-label", open ? "Hide threads" : "Show threads"); menuB.title = open ? "Hide threads" : "Show threads";
+    menuB.querySelector(".hc-menu-l").textContent = open ? "Hide threads" : "Show threads";
     menuB.classList.toggle("on", open);
   }
   menuB.onclick = () => (isOverlay() ? sideDrawer(!rv.classList.contains("hc-side-open")) : setThreads(threadsHidden(), true));
