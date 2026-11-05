@@ -136,3 +136,30 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .take-rowwrap > [data-testid=take-delete] { position: absolute; top: 8px; right: 8px; z-index: 1; }
 .link.danger { color: var(--bad); background: none; border: 0; cursor: pointer; padding: 2px 4px; }
 @media (prefers-reduced-motion: reduce) { .tk-prog progress { transition: none; } }
+
+/* Your takes / Bin (5 Nov 2026): theme tokens only, lavender accent, flat fills; one column of actions at phone width */
+.tk-listhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 48px 0 12px; }
+.tk-listhead .sec { margin: 0; }
+.tk-seg { margin-bottom: 0; }
+.tk-seg button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+.tk-seg button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.tk-seg button.on { background: var(--hc-lav, #C9ACFA); color: var(--hc-on-lav, #16101f); }
+.tk-bin-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; border: 1px solid currentColor; }
+.tk-bin { display: grid; gap: 10px; position: relative; }
+.tk-binnote { margin: 0; }
+.tk-binrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--raised); min-width: 0; }
+.tk-binrow .rt { min-width: 0; flex: 1 1 220px; }
+.tk-binrow b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-binrow small { color: var(--muted); font-size: 12px; }
+.tk-left { color: var(--hc-lav-ink, var(--muted)); font-weight: 600; }
+.tk-left.soon { color: var(--bad); }
+.tk-binacts { display: flex; gap: 8px; flex-wrap: wrap; }
+.tk-binacts .btn2:disabled { opacity: .55; cursor: default; }
+.tk-err { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--bad); font-size: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.tk-err .btn2 { color: var(--ink); }
+@media (max-width: 1023px) { .tk-binacts .btn2, .tk-err .btn2 { min-height: 44px; } }
+@media (max-width: 480px) {
+  .tk-binacts { width: 100%; }
+  .tk-binacts .btn2 { flex: 1 1 0; min-width: 0; padding: 0 8px; }
+  .tk-binrow b { white-space: normal; overflow-wrap: anywhere; }
+}
