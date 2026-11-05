@@ -404,7 +404,7 @@ def app_decide_link(store, a: Actor, approval_id: Any, approve: bool, rights: An
 
 
 def _attestation() -> str:
-    """The current rights statement (imported late: link_ingest imports this module's callers)."""
+    """The current rights statement (link_ingest is imported lazily here, as everywhere in this module)."""
     from . import link_ingest
     return link_ingest.ATTESTATION
 
