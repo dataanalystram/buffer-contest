@@ -57,6 +57,15 @@ window.openClipEditor = function (id) {
   const ig = igChannel(t);
   $c("ceTabMusic").hidden = !ig;
   $c("ceMusic").innerHTML = ""; $c("ceMusic").className = "";
+  // product card overlay (Commerce): classic One take clips only; text on the brand kit
+  const pc = c.product_card || null;
+  CE.prod = pc ? { ...pc } : null;
+  $c("ceTabProd").hidden = t.style === "opus" || !cut;
+  $c("ceProdOn").checked = !!pc;
+  $c("ceProdName").value = (pc && pc.name) || ""; $c("ceProdPrice").value = (pc && pc.price) || "";
+  $c("ceProdCta").value = (pc && pc.cta) || "Shop now"; $c("ceProdLabel").value = (pc && pc.link_label) || "Link in bio";
+  $c("ceProdPos").value = (pc && pc.position) || "bottom";
+  $c("ceProdFields").hidden = !pc;
   $c("ceErr").textContent = "";
   tab("trim");
   paintTrim(); paintDirty(); frames();
@@ -67,7 +76,7 @@ window.openClipEditor = function (id) {
 // ------------------------------------------------------------------ tabs
 function tab(name) {
   document.querySelectorAll("#clipDialog [data-cetab]").forEach((b) => b.setAttribute("aria-selected", b.dataset.cetab === name));
-  ({ trim: "cePaneTrim", text: "cePaneText", cap: "cePaneCap", music: "cePaneMusic" }[name] && Object.entries({ trim: "cePaneTrim", text: "cePaneText", cap: "cePaneCap", music: "cePaneMusic" })
+  ({ trim: "cePaneTrim", text: "cePaneText", cap: "cePaneCap", music: "cePaneMusic", prod: "cePaneProd" }[name] && Object.entries({ trim: "cePaneTrim", text: "cePaneText", cap: "cePaneCap", music: "cePaneMusic", prod: "cePaneProd" })
     .forEach(([k, id]) => ($c(id).hidden = k !== name)));
   if (name === "music" && CE && !CE.picker) {
     const ig = igChannel(CE.t);
@@ -229,6 +238,15 @@ $c("ceRewrite").onclick = async () => {
   finally { b.disabled = false; b.textContent = "Rewrite with AI"; }
 };
 
+// ------------------------------------------------------------------ product card
+function prodValue() {
+  if (!$c("ceProdOn").checked) return null;
+  return { name: $c("ceProdName").value.trim(), price: $c("ceProdPrice").value.trim(), cta: $c("ceProdCta").value.trim(),
+           link_label: $c("ceProdLabel").value.trim(), position: $c("ceProdPos").value, code: (CE.prod && CE.prod.code) || "" };
+}
+$c("ceProdOn").addEventListener("change", () => { $c("ceProdFields").hidden = !$c("ceProdOn").checked; paintDirty(); });
+["ceProdName", "ceProdPrice", "ceProdCta", "ceProdLabel", "ceProdPos"].forEach((id) => $c(id).addEventListener("input", () => paintDirty()));
+
 // ------------------------------------------------------------------ what changed, and save
 function changes() {
   if (!CE) return [];
@@ -238,10 +256,12 @@ function changes() {
   if (CE.hook.trim() !== (c.hook || "")) out.push("cover hook");
   if (Object.keys(CE.caps).some((s) => (CE.caps[s] || "") !== ((c.post_captions || {})[s] || ""))) out.push("captions");
   if (CE.musicTouched && JSON.stringify(CE.music || null) !== JSON.stringify(c.music || null)) out.push("music");
+  const pv = prodValue(), was = c.product_card || null;
+  if (JSON.stringify(pv) !== JSON.stringify(was ? { name: was.name, price: was.price, cta: was.cta, link_label: was.link_label, position: was.position, code: was.code || "" } : null)) out.push("product card");
   return out;
 }
 function paintDirty() {
-  const ch = changes(), re = ch.some((x) => ["timing", "transcript", "cover hook"].includes(x));
+  const ch = changes(), re = ch.some((x) => ["timing", "transcript", "cover hook", "product card"].includes(x));
   $c("ceDirty").textContent = ch.length ? `Unsaved: ${ch.join(", ")}${re ? ". Saving re-renders this clip." : "."}` : "No changes yet.";
   $c("ceSave").disabled = !ch.length;
 }
@@ -260,6 +280,11 @@ $c("ceForm").addEventListener("submit", async (ev) => {
     body.hook = CE.hook.trim();
   }
   if (ch.includes("captions")) body.captions = Object.fromEntries(Object.keys(CE.caps).filter((s) => (CE.caps[s] || "") !== ((c.post_captions || {})[s] || "")).map((s) => [s, CE.caps[s]]));
+  if (ch.includes("product card")) {
+    const pv = prodValue();
+    if (pv && !pv.name) { tab("prod"); $c("ceErr").textContent = "Give the product a name, or turn the product card off."; return; }
+    body.product_card = pv;
+  }
   if (ch.includes("music")) { body.music = CE.music; if (CE.music) { body.music_volume = CE.music.music_volume; body.original_volume = CE.music.original_volume; } }
   const btn = $c("ceSave"); btn.disabled = true; $c("ceErr").textContent = ""; btn.innerHTML = `<span class="spin" aria-hidden="true"></span>Saving…`;
   try {
