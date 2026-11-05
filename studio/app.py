@@ -1239,11 +1239,12 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         # Tools run in the thread pool, never on the event loop: submit_post waits on Buffer, and Buffer downloads our
         # /m/ media while it decides. Run inline, the whole server stopped answering for the call (Render logs, 2 Nov 2026:
         # /healthz went silent for 13 s during create_package) and Buffer said "Image could not be read from its URL".
+        reg = request.query_params.get("tools") == "registry"  # tools/list = search_tools/describe_tool/call_tool only
         if isinstance(msg, list):
-            res = await run_in_threadpool(lambda: [mcp.handle(studio, a, m) for m in msg])
+            res = await run_in_threadpool(lambda: [mcp.handle(studio, a, m, reg) for m in msg])
             out = [r for r in res if r]
             return JSONResponse(out) if out else Response(status_code=202)
-        r = await run_in_threadpool(mcp.handle, studio, a, msg)
+        r = await run_in_threadpool(mcp.handle, studio, a, msg, reg)
         return JSONResponse(r) if r else Response(status_code=202)
 
     @app.get("/mcp", include_in_schema=False)
