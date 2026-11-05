@@ -420,18 +420,19 @@ def test_layout_plan_and_override_rest(take_clip, app):
     assert {p["id"] for p in r.json()["caption_presets"]} == set(captions_ass.PRESETS)
     r = human.post(f"/api/takes/{rid}/clips/{cid}/layout", json={"scene": 1, "layout": "fit", "bg": "brand", "caption_preset": "typewriter"})
     assert r.status_code == 200, r.text
-    assert r.json()["overrides"] == {"1": {"layout": "fit", "bg": "brand"}} and r.json()["caption_preset"] == "typewriter"
+    assert r.json()["overrides"] == {"1": {"layout": "fit", "bg": "brand", "at": 6.5}} and r.json()["caption_preset"] == "typewriter"
     assert rendered == [(cid,)]
     raw = json.loads(app.state.store.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]["result"])
     c = next(x for x in raw["clips"] if x["id"] == cid)
-    assert c["layout_overrides"] == {"1": {"layout": "fit", "bg": "brand"}}
+    assert c["layout_overrides"] == {"1": {"layout": "fit", "bg": "brand", "at": 6.5}}  # the pin keeps its moment
     # back to automatic
     app.state.store.x("UPDATE agent_runs SET status='ready' WHERE id=?", (rid,))
     r = human.post(f"/api/takes/{rid}/clips/{cid}/layout", json={"scene": 1, "layout": "auto"})
     assert r.status_code == 200 and r.json()["overrides"] == {}
     app.state.store.x("UPDATE agent_runs SET status='ready' WHERE id=?", (rid,))
     r = human.post(f"/api/takes/{rid}/clips/{cid}/layout", json={"scenes": {"0": "split", "1": {"layout": "screen", "style": "stack"}}})
-    assert r.status_code == 200 and r.json()["overrides"] == {"0": {"layout": "split"}, "1": {"layout": "screen", "style": "stack"}}
+    assert r.status_code == 200 and r.json()["overrides"] == {"0": {"layout": "split", "at": 2.0},
+                                                          "1": {"layout": "screen", "style": "stack", "at": 6.5}}
 
 
 @pytest.mark.parametrize("body", [{"layout": "zoom"}, {"layout": 3}, {"scene": "1", "layout": "fit"}, {"scene": True, "layout": "fit"},
@@ -473,7 +474,7 @@ def test_mcp_set_clip_layout_and_tools_list(take_clip, app):
     assert not res["isError"] and len(out["plan"]) == 2
     res, out = mcp_call(human, tok, "set_clip_layout", {"take_id": rid, "clip_id": cid, "layout": "track"})
     assert not res["isError"], out
-    assert out["overrides"] == {"0": {"layout": "track"}, "1": {"layout": "track"}}
+    assert out["overrides"] == {"0": {"layout": "track", "at": 2.0}, "1": {"layout": "track", "at": 6.5}}
     res, out = mcp_call(human, tok, "set_clip_layout", {"take_id": 424242, "clip_id": cid, "layout": "fit"})
     assert res["isError"]
 
