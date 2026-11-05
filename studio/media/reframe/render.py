@@ -164,7 +164,10 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
     if detect_shots and not [c for c in cuts if start < c < end]:
         more = shots_mod.detect(path, start, end)
         cuts += more or []
-    spans = [(a - start, b - start) for a, b in shots_mod.shots_in(cuts, start, end)]
+    cut_spans = [(a - start, b - start) for a, b in shots_mod.shots_in(cuts, start, end)]
+    # a layout may change at a cut or at a sentence boundary: long shots are split at the sentence ends inside them
+    pieces = shots_mod.split_at_sentences(cut_spans, shots_mod.sentence_bounds(words, start), decide.MIN_HOLD)
+    spans, parent = [(a, b) for a, b, _ in pieces], [k for _, _, k in pieces]
     try:
         smp = faces_mod.sample(path, start, end, sw, sh)
         screen_fn = (lambda a, b, boxes: screen_mod.signals(screen_mod.pick_thumbs(smp["thumbs"], a, b), boxes))
@@ -183,17 +186,38 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
         if vis and vision.mode() == "on":
             shots, vis["applied"] = vision.apply(shots, sigs, vis["category"])
     by_id = {t["id"]: t for t in tracks}
+    public, side = decide.public(shots), decide.sidecar(shots)
+    # render: sentence pieces of one shot that kept the same layout are drawn as one segment (one crop path, no seam)
+    rshots, rspans = merge_pieces(shots, parent)
+    rsigs = decide.signals_for(rspans, smp["samples"], tracks, None, _speech(words, start), smp["fps"]) if rspans != spans else sigs
     cover = []
-    for s, sig in zip(shots, sigs):
+    for s, sig in zip(rshots, rsigs):
         geom(s, sig, by_id, (sw, sh))
         if s["layout"] == "track" and s.get("path"):
             pts = [p for fid in s.get("faces") or [] for p in by_id.get(fid, {"points": []})["points"] if s["start"] <= p[0] < s["end"]]
             cover.append((path_mod.coverage(s["path"], pts, s["start"], sw, sh), s["end"] - s["start"]))
     cov = (sum(c * d for c, d in cover) / sum(d for _, d in cover)) if cover else None
-    return {"shots": shots, "sidecar": decide.sidecar(shots), "plan": decide.public(shots), "detector": smp["detector"], "vision": vis,
+    return {"shots": rshots, "sidecar": side, "plan": public, "detector": smp["detector"], "vision": vis,
             "face_coverage": round(cov, 3) if cov is not None else None, "timings": {"faces": round(t_faces, 2)},
             "signals": [{k: v for k, v in s.items() if k != "faces"} | {"faces": [{k: t[k] for k in ("id", "cx", "cy", "h", "presence", "motion")
                                                                                    if k in t} for t in s["faces"]]} for s in sigs]}
+
+
+def merge_pieces(shots: list[dict], parent: list[int]) -> tuple[list[dict], list[tuple[float, float]]]:
+    """Join neighbouring pieces of the same cut-shot that ended up with the same layout and options."""
+    out, par = [], []
+    for s, k in zip(shots, parent):
+        if out and par[-1] == k and _same_look(out[-1], s):
+            out[-1] = {**out[-1], "end": s["end"]}
+            continue
+        out.append(dict(s))
+        par.append(k)
+    return out, [(s["start"], s["end"]) for s in out]
+
+
+def _same_look(a: dict, b: dict) -> bool:
+    keys = ("layout", "bg", "style", "pinned")
+    return all(a.get(k) == b.get(k) for k in keys) and (a["layout"] != "track" or a.get("faces") == b.get("faces"))
 
 
 def geom(s: dict, sig: dict, by_id: dict, src: tuple[int, int]) -> None:
