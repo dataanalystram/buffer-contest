@@ -159,13 +159,16 @@ def _fresh_app_keys():
 @pytest.fixture(autouse=True)
 def _fresh_egress(tmp_path, monkeypatch):
     """The egress meter (studio/egress.py) counts per process and the media disk cache (studio/mediacache.py) writes
-    files: every test gets its own meter state file and cache directory, and starts at zero."""
-    from studio import egress
+    files: every test gets its own meter state file and cache directory, and starts at zero. The R2 free-tier counter
+    (studio/r2usage.py) starts at zero too."""
+    from studio import egress, r2usage
     monkeypatch.setenv("HQ_EGRESS_STATE", str(tmp_path / "egress.json"))
     monkeypatch.setenv("HQ_MEDIA_CACHE_DIR", str(tmp_path / "media-cache"))
     egress.reset()
+    r2usage.reset()
     yield
     egress.reset()
+    r2usage.reset()
 
 
 @pytest.fixture

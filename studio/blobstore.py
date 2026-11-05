@@ -26,7 +26,7 @@ import secrets
 import threading
 import time
 
-from . import r2
+from . import r2, r2usage
 
 KINDS = ("media", "lib")
 _HTTP = None            # tests put a stub S3 transport here (an httpx.Client)
@@ -74,6 +74,11 @@ def bucket(write: bool = False) -> "r2.Bucket | None":
     return _bucket(cfg) if cfg else None
 
 
+def r2_readable() -> bool:
+    """R2 is configured and this month's read cap isn't reached: a row with an object key is read from the bucket."""
+    return bool(bucket()) and not r2usage.can_read()
+
+
 def backend_name() -> str:
     """Where new media goes."""
     return "r2" if bucket(write=True) else "db"
@@ -97,6 +102,10 @@ def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream"
     b = bucket(write=True)
     if not b:
         return data, None, digest
+    capped = r2usage.can_write(len(data))
+    if capped:  # the free tier is never exceeded (studio/r2usage.py): new bytes stay in the database instead
+        print(f"storage: {capped}; kept this {kind} blob in the database", flush=True)
+        return data, None, digest
     key = new_key(kind, uid)
     try:
         b.put(key, data, mime)
@@ -112,7 +121,8 @@ def read(data, key: str | None, start: int | None = None, end: int | None = None
     the BYTEA until Ram approves the cleanup: reading R2 is what stops the database egress). With the bucket off, the
     database copy (if any) is used."""
     b = bucket() if key else None
-    if data is not None and (not key or not b):
+    capped = r2usage.can_read() if b else None
+    if data is not None and (not key or not b or capped):  # past the monthly read cap a database copy still serves
         blob = bytes(data or b"")
         if start is None and end is None:
             return blob
@@ -121,6 +131,8 @@ def read(data, key: str | None, start: int | None = None, end: int | None = None
         return b""
     if not b:
         raise StorageError("This file is in object storage, which isn't configured on this server.")
+    if capped:
+        raise StorageError(f"This file is in object storage and the {capped}; it is back when the month turns (UTC).")
     try:
         return b.get(key, start, end)
     except r2.R2Error as e:
@@ -138,11 +150,16 @@ def rewrite(store, table: str, where: str, args: tuple, data: bytes) -> None:
         b = bucket()
         if not b:
             raise StorageError("This file is in object storage, which isn't configured on this server.")
+        capped = r2usage.can_write(0)
+        if capped:  # privacy steps fail closed (a 503 upstream), never a paid write
+            raise StorageError(f"Couldn't update this file in storage: {capped}.")
         try:
             b.put(key, data)
         except r2.R2Error as e:
             raise StorageError(f"Couldn't update this file in storage ({e}).") from None
-        store.x(f"UPDATE {table} SET sha256=? WHERE {where}", (digest, *args))
+        # a copy-only row (migrate_media keeps the BYTEA until cleanup) gets the same new bytes, so the database copy
+        # never keeps what the rewrite removed (e.g. a video's GPS)
+        store.x(f"UPDATE {table} SET sha256=?, data=CASE WHEN data IS NULL THEN NULL ELSE ? END WHERE {where}", (digest, data, *args))
     else:
         store.x(f"UPDATE {table} SET data=?, sha256=? WHERE {where}", (data, digest, *args))
 

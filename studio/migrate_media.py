@@ -33,7 +33,7 @@ import json
 import sys
 import time
 
-from . import blobstore, r2
+from . import blobstore, r2, r2usage
 
 def plan(store) -> dict:
     """What a run would move: rows and bytes per table, and how many rows are already in R2."""
@@ -61,8 +61,11 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, kee
     """Move rows (see the module docstring). Returns counts; one bad row never stops the rest. ``keep_db_copy``: copy
     only: the row takes the key and hash but keeps its BYTEA (readers use R2 from then on; ``cleanup`` drops the
     database copy later, after Ram approves)."""
-    stats = {"moved": 0, "bytes": 0, "failed": 0, "skipped": 0}
+    stats = {"moved": 0, "bytes": 0, "failed": 0, "skipped": 0, "capped": ""}
     left = limit if limit is not None else float("inf")
+    r2usage.bind(store)
+    r2usage.forget_cache()
+    base = r2usage.stored_bytes(store)  # what R2 already holds; this run adds stats["bytes"] (no stale cache mid-run)
 
     def gc(key: str) -> None:  # due now
         store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO UPDATE SET at=excluded.at", (key, time.time()))
@@ -81,6 +84,19 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, kee
             stats["skipped"] += 1
             return
         data = bytes(got[0]["data"])
+        # the free tier is never exceeded (studio/r2usage.py): stop before a copy that would pass a cap; the remaining
+        # rows stay in the database, untouched. A verified copy is one PUT (Class A) + one GET (Class B).
+        cap = r2usage.caps()
+        why = "" if base + stats["bytes"] + len(data) <= cap["bytes"] else \
+            f"R2 storage cap reached ({cap['bytes'] / r2usage.GB:.1f} GB, HQ_R2_MAX_BYTES)"
+        if not why and r2usage.ops(store)["A"] + 1 > cap["A"]:
+            why = f"R2 monthly write cap reached ({cap['A']:,} Class A operations, HQ_R2_MAX_CLASS_A)"
+        why = why or r2usage.can_read(store) or ""
+        if why:
+            stats["capped"] = why
+            log(f"stopping: {why}; the remaining rows stay in the database")
+            left = 0
+            return
         digest = hashlib.sha256(data).hexdigest()
         key = blobstore.new_key(kind, uid)
         noted(key)
@@ -124,6 +140,7 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, kee
         if left <= 0:
             break
         one("library_chunks", "item_id=? AND n=?", (item_id, n), "lib", uid or "", "application/octet-stream")
+    r2usage.flush(store)
     return stats
 
 
@@ -170,7 +187,8 @@ def report(store, real_emails: list[str] | None = None, limit: int = 2000) -> di
 def cleanup(store, bucket: "r2.Bucket", log=print) -> dict:
     """After a copy-only run and Ram's approval: drop the database copy of every row whose object verifies (same
     length and sha256 as recorded at copy time). A row that doesn't verify keeps its bytes."""
-    stats = {"dropped": 0, "kept": 0}
+    stats = {"dropped": 0, "kept": 0, "capped": ""}
+    r2usage.bind(store)
     for table, where_cols in (("media", ("token",)), ("library_chunks", ("item_id", "n"))):
         try:
             todo = store.q(f"SELECT {', '.join(where_cols)}, storage_key, sha256 FROM {table} "
@@ -180,6 +198,12 @@ def cleanup(store, bucket: "r2.Bucket", log=print) -> dict:
         for r in todo:
             where = " AND ".join(f"{c}=?" for c in where_cols)
             args = tuple(r[c] for c in where_cols)
+            why = r2usage.can_read(store)
+            if why:  # re-verifying reads the object (Class B): stop at the cap, every remaining row keeps its copy
+                stats["capped"] = why
+                log(f"stopping: {why}")
+                r2usage.flush(store)
+                return stats
             try:
                 got = bucket.get(r["storage_key"])
                 ok = bool(r["sha256"]) and hashlib.sha256(got).hexdigest() == r["sha256"]
@@ -191,6 +215,7 @@ def cleanup(store, bucket: "r2.Bucket", log=print) -> dict:
                 continue
             store.x(f"UPDATE {table} SET data=NULL WHERE {where} AND storage_key=?", (*args, r["storage_key"]))
             stats["dropped"] += 1
+    r2usage.flush(store)
     return stats
 
 

@@ -64,6 +64,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         copied = store.copy_from(Store(s.migrate_from, s.session_secret, s.token_key, s.token_keys_previous))
         print(f"migrate: copied {copied or 'nothing (target already has data)'}", flush=True)
     demo_guard.ensure(store)
+    from . import r2usage
+    r2usage.bind(store)  # R2 free-tier operation counts live in this database (studio/r2usage.py)
     # migration: every sealed row moves to the current TOKEN_KEY (the log gets counts only, never values)
     print(f"token keys: {'dedicated TOKEN_KEY' if store.dedicated_key else 'derived from SESSION_SECRET'}; "
           f"{store.rotate_keys()}", flush=True)
@@ -839,16 +841,20 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         seeking works natively (Range). Buffer, Instagram and the render worker keep getting the bytes from this URL
         itself (no redirect): a scheduled post's /m/ link must work whenever Buffer fetches it, and a presigned URL
         expires. The token check already happened (the row was found); the ETag/304 path still answers first."""
-        from . import blobstore
+        from . import blobstore, egress
         from .library import browser_fetch, not_modified
         if os.environ.get("HQ_MEDIA_REDIRECT", "") != "1" or not f.get("r2_key") or not browser_fetch(request):
             return None
         if f.get("etag") and not_modified(request, f["etag"]):
             return None  # serve() answers the 304
-        b = blobstore.bucket()
-        if not b:
-            return None
-        return RedirectResponse(b.get_url(f["r2_key"], 900), 302, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+        if not blobstore.r2_readable():
+            return None  # R2 off or this month's read cap reached (studio/r2usage.py): serve() decides
+        client, etag, size = demo_guard.client_ip(request), f.get("etag") or "", int(f.get("size") or 0)
+        if egress.repeat_blocked(client, etag, size):
+            return None  # a page re-fetching the same file in a loop: serve() answers 429 (owner exempt), no new signature
+        egress.repeat_count(client, etag, size)  # each redirect counts as one whole download for the repeat limit
+        return RedirectResponse(blobstore.bucket().browser_url(f["r2_key"]), 302,
+                                headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
     @app.api_route("/ms/{exp}/{sig}/{token}", methods=["GET", "HEAD"], include_in_schema=False)
     def media_signed(exp: str, sig: str, token: str, request: Request):

@@ -258,6 +258,10 @@ class TakeUploads:
                 if e.status != 410:  # a transient store error keeps the upload for the next try (CodeRabbit)
                     raise
                 self._drop(d)
+        from . import r2usage
+        capped = r2usage.can_write(size, self.store)
+        if capped:  # the R2 free tier is never exceeded (studio/r2usage.py)
+            raise ActionError(f"Large uploads are paused: {capped}. Paste a direct link to the file instead.", 507)
         uid_ = "tu_" + secrets.token_urlsafe(18)
         key = f"takes/{hashlib.sha256(a.uid.encode()).hexdigest()[:16]}/{uid_}.{ext}"
         r = self._s3("POST", key, {"uploads": ""}, headers={"content-type": ctype or "video/mp4"})

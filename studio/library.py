@@ -353,8 +353,9 @@ class Library:
 
     def _chunk(self, r, iid: int | None = None, n: int | None = None) -> bytes:
         try:
-            if r["storage_key"] and r["data"] is None and not blobstore.bucket() and iid is not None:
-                # copied to R2 but R2 is switched off here: the database copy (kept until cleanup) is the source
+            if r["storage_key"] and r["data"] is None and not blobstore.r2_readable() and iid is not None:
+                # copied to R2 but R2 is off here (or this month's read cap is reached, studio/r2usage.py): the database
+                # copy, kept until cleanup, is the source
                 got = self.store.q("SELECT data FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
                 if got and got[0]["data"] is not None:
                     return bytes(got[0]["data"])
@@ -1354,9 +1355,9 @@ def media_file(store, token: str) -> dict | None:
         if size <= 0 or s > e:
             return b""
         try:
-            if key and (blobstore.bucket() or not has_db_copy):
+            if key and (blobstore.r2_readable() or not has_db_copy):
                 return blobstore.read(None, key, s, e)
-            # no key, or a copy-only row read while R2 is switched off: the database copy, by range
+            # no key, or a copy-only row read while R2 is off or past its read cap: the database copy, by range
             got = store.q("SELECT substr(data, CAST(? AS INTEGER), CAST(? AS INTEGER)) AS d FROM media WHERE token=?", (int(s) + 1, e - int(s) + 1, token))
         except blobstore.StorageError as ex:
             raise ActionError(str(ex), 503)

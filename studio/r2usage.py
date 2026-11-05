@@ -1,0 +1,190 @@
+"""R2 free-tier caps, enforced in code (Ram, 5 Nov 2026: R2 must never cost money; docs/STORAGE.md#r2-free-tier-caps).
+
+Cloudflare R2's free tier each month: 10 GB-month stored, 1,000,000 Class A operations (writes: PUT, multipart, list,
+bucket config) and 10,000,000 Class B operations (reads: GET, HEAD). Deletes are free. HuhQueue stays well inside it:
+
+* ``HQ_R2_MAX_BYTES`` (default 8 GB): bytes stored in R2, counted from the rows that point at an object (``media.size``,
+  ``library_chunks.nbytes`` where ``storage_key`` is set, and One take uploads' ``take_uploads.size``). A new write that
+  would pass it is refused: the bytes stay in the database (``blobstore.put``), the copy stops (``migrate_media``) or a
+  large upload is declined (``take_upload``), each with a clear message, never a paid overage.
+* ``HQ_R2_MAX_CLASS_A`` (default 800,000) and ``HQ_R2_MAX_CLASS_B`` (default 8,000,000) per calendar month (UTC),
+  counted in the small ``r2_usage`` table (studio/store.py SCHEMA, row-level security on like every table; one row per
+  month and class, months older than three pruned). Every SigV4 signature counts as one operation of its class
+  (studio/r2.py presign): this server's own calls and each presigned URL it hands out. Past the Class A cap nothing new
+  is written to R2 (database fallback); past the Class B cap reads use the row's database copy when it has one, and
+  otherwise answer a clear 503 until the month turns.
+
+Counts are kept in memory and written in batches (every 30 s or 200 operations, never inside someone's transaction) so
+a busy page isn't a database write per object call; the caps sit 20% under the free tier, which covers what a crash
+could lose. Numbers only: no key, token or user id is stored. Worker-safe: no FastAPI import.
+"""
+from __future__ import annotations
+
+import os
+import threading
+import time
+from datetime import datetime, timezone
+
+GB = 1024 ** 3
+CLASS_A = ("PUT", "POST")        # PutObject, UploadPart, Create/CompleteMultipartUpload, bucket config
+CLASS_B = ("GET", "HEAD")
+FLUSH_S, FLUSH_N, READ_S = 30.0, 200, 60.0
+KEEP_MONTHS = 3
+
+_LOCK = threading.Lock()
+_PENDING: dict[str, int] = {"A": 0, "B": 0}
+_LAST_FLUSH = [time.time()]
+_STORE = [None]
+_CACHE: dict = {}                # what -> (at, value, store), refreshed every READ_S
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(float(os.environ.get(name, str(default)))))
+    except ValueError:
+        return default
+
+
+def caps() -> dict:
+    """The three caps (env overrides; defaults 20% under the free tier)."""
+    return {"bytes": _env_int("HQ_R2_MAX_BYTES", 8 * GB), "A": _env_int("HQ_R2_MAX_CLASS_A", 800_000),
+            "B": _env_int("HQ_R2_MAX_CLASS_B", 8_000_000)}
+
+
+def month() -> str:
+    """The billing month (UTC), e.g. 2026-11."""
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def op_class(method: str) -> str | None:
+    """A (writes), B (reads) or None (DELETE: free)."""
+    m = (method or "").upper()
+    return "A" if m in CLASS_A else "B" if m in CLASS_B else None
+
+
+def bind(store) -> None:
+    """The store whose ``r2_usage`` table keeps the counts (the app binds its own at start-up; scripts such as
+    migrate_media bind theirs)."""
+    _STORE[0] = store
+
+
+def note(method: str, n: int = 1) -> None:
+    """Count bucket operations (studio/r2.py presign calls this for every signature)."""
+    c = op_class(method)
+    if not c or n <= 0:
+        return
+    with _LOCK:
+        _PENDING[c] += int(n)
+        due = sum(_PENDING.values()) >= FLUSH_N or time.time() - _LAST_FLUSH[0] >= FLUSH_S
+    if due:
+        flush()
+
+
+def flush(store=None) -> None:
+    """Write pending counts into this month's rows and prune old months. Never raises (a counter must not break a read)."""
+    st = store or _STORE[0]
+    if st is None or getattr(st, "_tx_depth", 0):
+        return  # never inside a transaction (a failed write there would abort it): a later call saves them
+    with _LOCK:
+        todo = {k: v for k, v in _PENDING.items() if v}
+        for k in todo:
+            _PENDING[k] = 0
+        _LAST_FLUSH[0] = time.time()
+    if not todo:
+        return
+    m = month()
+    try:
+        for c, n in todo.items():
+            st.x("INSERT INTO r2_usage(month, cls, n) VALUES(?,?,?) ON CONFLICT(month, cls) DO UPDATE SET n = r2_usage.n + excluded.n",
+                 (m, c, int(n)))
+        keep = sorted({m, *(r["month"] for r in st.q("SELECT DISTINCT month FROM r2_usage"))}, reverse=True)[:KEEP_MONTHS]
+        st.x(f"DELETE FROM r2_usage WHERE month NOT IN ({','.join('?' * len(keep))})", tuple(keep))
+        _CACHE.pop("ops", None)
+    except Exception as e:  # noqa: BLE001  (the database is down: keep the counts for the next flush)
+        with _LOCK:
+            for c, n in todo.items():
+                _PENDING[c] += n
+        print(f"r2usage: couldn't save operation counts ({e.__class__.__name__})", flush=True)
+
+
+def _cached(st, what: str, fn):
+    hit = _CACHE.get(what)
+    if hit and hit[2] is st and time.time() - hit[0] < READ_S:
+        return hit[1]
+    v = fn()
+    _CACHE[what] = (time.time(), v, st)
+    return v
+
+
+def ops(store=None) -> dict:
+    """This month's Class A / B counts (saved + pending)."""
+    st = store or _STORE[0]
+    saved = {"A": 0, "B": 0}
+    if st is not None:
+        try:
+            saved.update(_cached(st, "ops", lambda: {r["cls"]: int(r["n"] or 0) for r in
+                                                     st.q("SELECT cls, n FROM r2_usage WHERE month=?", (month(),))}))
+        except Exception:  # noqa: BLE001
+            pass
+    with _LOCK:
+        return {c: saved.get(c, 0) + _PENDING[c] for c in ("A", "B")}
+
+
+def stored_bytes(store=None) -> int:
+    """Bytes the database says are in R2 (metadata only: no blob column is read). Unknown counts as full."""
+    st = store or _STORE[0]
+    if st is None:
+        return 0
+
+    def load():
+        have = st._table_names()  # only tables this store has: on Postgres a failed statement aborts a transaction
+        total = int(st.q("SELECT COALESCE(SUM(size),0) AS b FROM media WHERE storage_key IS NOT NULL")[0]["b"] or 0)
+        if "library_chunks" in have:
+            total += int(st.q("SELECT COALESCE(SUM(nbytes),0) AS b FROM library_chunks WHERE storage_key IS NOT NULL")[0]["b"] or 0)
+        if "take_uploads" in have:
+            total += int(st.q("SELECT COALESCE(SUM(size),0) AS b FROM take_uploads WHERE object_key IS NOT NULL "
+                              "AND status IN ('open','joined','ready')")[0]["b"] or 0)
+        return total
+    try:
+        return _cached(st, "bytes", load)
+    except Exception:  # noqa: BLE001  (can't tell: count as full, so a write falls back, never past the cap)
+        return caps()["bytes"] + 1
+
+
+def forget_cache() -> None:
+    """Re-read the counts and stored bytes on the next call."""
+    _CACHE.clear()
+
+
+def can_write(nbytes: int = 0, store=None) -> str | None:
+    """None when a new write of ``nbytes`` stays inside the caps; otherwise the reason (shown to the operator)."""
+    cap = caps()
+    if ops(store)["A"] >= cap["A"]:
+        return f"R2 monthly write cap reached ({cap['A']:,} Class A operations, HQ_R2_MAX_CLASS_A)"
+    if stored_bytes(store) + max(0, int(nbytes)) > cap["bytes"]:
+        return f"R2 storage cap reached ({cap['bytes'] / GB:.1f} GB, HQ_R2_MAX_BYTES)"
+    return None
+
+
+def can_read(store=None) -> str | None:
+    """None while this month's Class B count is under its cap; otherwise the reason."""
+    cap = caps()
+    if ops(store)["B"] >= cap["B"]:
+        return f"R2 monthly read cap reached ({cap['B']:,} Class B operations, HQ_R2_MAX_CLASS_B)"
+    return None
+
+
+def snapshot(store=None) -> dict:
+    """For /admin: numbers only."""
+    cap, o = caps(), ops(store)
+    return {"month": month(), "stored_bytes": stored_bytes(store), "max_bytes": cap["bytes"], "class_a": o["A"],
+            "max_class_a": cap["A"], "class_b": o["B"], "max_class_b": cap["B"],
+            "write_blocked": bool(can_write(0, store)), "read_blocked": bool(can_read(store))}
+
+
+def reset() -> None:
+    """Tests: drop pending counts, the bound store and the cache."""
+    with _LOCK:
+        _PENDING.update({"A": 0, "B": 0})
+    _STORE[0] = None
+    _CACHE.clear()
