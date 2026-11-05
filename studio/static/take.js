@@ -35,10 +35,89 @@ const tdrop = $("#tkDrop");
 ["dragleave", "drop"].forEach((e) => tdrop.addEventListener(e, () => tdrop.classList.remove("over")));
 tdrop.addEventListener("drop", (ev) => { ev.preventDefault(); if (ev.dataTransfer.files[0]) tkPick(ev.dataTransfer.files[0]); });
 $("#tkFile").onchange = (e) => e.target.files[0] && tkPick(e.target.files[0]);
-function tkPick(f) {
-  if (!/^video\//.test(f.type) && !/\.(mp4|mov|m4v|webm)$/i.test(f.name)) return toast("Choose a video file (MP4 or MOV)");
-  if (f.size > 40 * 1024 * 1024) return toast("Uploads here go up to 40 MB. For a longer talk, paste a direct link to the file instead.", 6000);
+// Uploads (4 Nov 2026): with a bucket on the server, the file goes straight to it in 16 MiB parts (resumable, up to
+// max_bytes); without one, as a raw body to the Library upload (100 MB). Never base64 through /api/media any more.
+let TK_UP = null;
+// The size limit as text, synchronously (form errors show at once, never after a round trip): the fallback's 100 MB
+// until the server's config has arrived.
+function tkLim(cfg) {
+  const mb = Math.round(((cfg && cfg.max_bytes) || 100 * 1048576) / 1048576);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(mb % 1024 ? 1 : 0)} GB` : `${mb} MB`;
+}
+async function tkUpCfg() {
+  let cfg = TK_UP;
+  if (!cfg) {  // a failed lookup (signed out yet, offline) is not cached: the next call asks again
+    try { cfg = TK_UP = await api("/api/takes/uploads/config"); } catch (_) { cfg = { multipart: false, max_bytes: 100 * 1048576 }; }
+  }
+  const lim = tkLim(cfg);
+  if (!T.file) $("#tkDropTxt").textContent = `Drop an MP4 or MOV here, or choose a file (up to ${lim}${cfg.multipart ? ", resumes if the connection drops" : "; use a link for longer talks"})`;
+  return { ...cfg, lim };
+}
+tkUpCfg().catch(() => {});  // prefetch, so the drop zone and the form errors name the real limit
+async function tkPick(f) {
+  if (!/^video\//.test(f.type) && !/\.(mp4|mov|m4v|webm)$/i.test(f.name)) return toast("Choose a video file (MP4, MOV or WebM)");
+  const c = await tkUpCfg();
+  if (f.size > c.max_bytes) return toast(`Uploads here go up to ${c.lim}; this one is ${(f.size / 1048576).toFixed(0)} MB. Export a shorter cut, or paste a direct link to the file.`, 7000);
   T.file = f; $("#tkDropTxt").textContent = `${f.name} · ${(f.size / 1048576).toFixed(1)} MB`;
+}
+function tkProg(pct, text) {
+  $("#tkProgBox").hidden = pct == null; if (pct == null) return;
+  $("#tkProg").value = Math.round(pct); $("#tkProgTxt").textContent = text || `${Math.round(pct)}%`;
+}
+const tkSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const tkOnline = () => (navigator.onLine === false ? new Promise((r) => window.addEventListener("online", r, { once: true })) : Promise.resolve());
+function tkXhr(method, url, body, headers, onProg) {
+  return new Promise((ok, bad) => {
+    const x = new XMLHttpRequest(); x.open(method, url);
+    Object.entries(headers || {}).forEach(([k, v]) => x.setRequestHeader(k, v));
+    x.upload.onprogress = (e) => onProg && e.lengthComputable && onProg(e.loaded);
+    x.onload = () => (x.status < 300 ? ok(x) : bad(Object.assign(new Error(((() => { try { return JSON.parse(x.responseText).error; } catch (_) { return ""; } })()) || `Upload failed (HTTP ${x.status}).`), { status: x.status })));
+    x.onerror = () => bad(Object.assign(new Error("The connection dropped."), { net: true }));
+    x.send(body);
+  });
+}
+async function tkUploadMultipart(f) {
+  const up = await api("/api/takes/uploads", { method: "POST", body: { name: f.name, size: f.size, content_type: f.type || "video/mp4", fingerprint: `${f.name}|${f.size}|${f.lastModified || 0}` } });
+  const done = new Map((up.received || []).map((p) => [p.part_number, { part_number: p.part_number, etag: p.etag, size: p.size }]));
+  const ps = up.part_size, todo = [];
+  for (let n = 1; n <= up.parts; n++) if (!done.has(n)) todo.push(n);
+  let sent = [...done.values()].reduce((s, p) => s + p.size, 0);
+  const show = (extra = 0) => tkProg(((sent + extra) / f.size) * 100, `${up.resumed ? "Resumed · " : ""}${((sent + extra) / 1048576).toFixed(0)} of ${(f.size / 1048576).toFixed(0)} MB`);
+  show();
+  for (let i = 0; i < todo.length; i += 20) {
+    const { urls } = await api(`/api/takes/uploads/${up.upload_id}/parts`, { method: "POST", body: { parts: todo.slice(i, i + 20) } });
+    for (const u0 of urls) {
+      let u = u0, fresh = false;
+      const blob = f.slice((u.part_number - 1) * ps, (u.part_number - 1) * ps + u.size);
+      for (let tries = 1; ; tries++) {
+        try {
+          const x = await tkXhr("PUT", u.url, blob, {}, (n) => show(n));
+          const etag = x.getResponseHeader("ETag");
+          if (!etag) throw new Error("The storage bucket doesn't expose the ETag header (its CORS rules need ExposeHeaders: ETag).");
+          done.set(u.part_number, { part_number: u.part_number, etag, size: u.size }); sent += u.size; show(); break;
+        } catch (e) {
+          if (e.status === 403 && !fresh) {  // the signed URL ran out (an hour): ask for a new one and try again
+            fresh = true; tries--;
+            u = (await api(`/api/takes/uploads/${up.upload_id}/parts`, { method: "POST", body: { parts: [u.part_number] } })).urls[0];
+            continue;
+          }
+          if (tries >= 6 || (!e.net && e.status && e.status < 500 && e.status !== 408)) throw new Error(`Part ${u.part_number} didn't upload: ${e.message} Press Make clips again to resume.`);
+          tkProg((sent / f.size) * 100, navigator.onLine === false ? "Offline. Waiting for the connection, then resuming…" : `Connection dropped. Retrying part ${u.part_number}…`);
+          await tkOnline(); await tkSleep(Math.min(16000, 1000 * 2 ** tries));
+        }
+      }
+    }
+  }
+  tkProg(100, "Checking the upload…");
+  await api(`/api/takes/uploads/${up.upload_id}/complete`, { method: "POST", body: { parts: [...done.values()].map(({ part_number, etag }) => ({ part_number, etag })) } });
+  return up.upload_id;
+}
+async function tkUploadLibrary(f) {
+  tkProg(0, "Uploading…");
+  const x = await tkXhr("POST", `/api/library/upload?source=take&name=${encodeURIComponent(f.name)}`, f, { "X-HQ-CSRF": S.csrf, "Content-Type": "application/octet-stream" },
+    (n) => tkProg((n / f.size) * 100, `${(n / 1048576).toFixed(0)} of ${(f.size / 1048576).toFixed(0)} MB`));
+  const it = JSON.parse(x.responseText);
+  return it.media_token || it.token;
 }
 
 $("#takeForm").addEventListener("submit", async (ev) => {
@@ -48,7 +127,7 @@ $("#takeForm").addEventListener("submit", async (ev) => {
   say("");
   if (!$("#tkOwns").checked) return say("Tick “This is my video, or I have the rights to it” first. One take only clips videos you own.");
   if (!T.sel.size) return say("Pick at least one channel for the clips (below).");
-  if (T.src === "upload" && !T.file) return say("Choose a video first (MP4, MOV or WebM up to 40 MB), or try the sample take.");
+  if (T.src === "upload" && !T.file) return say(`Choose a video first (MP4, MOV or WebM up to ${tkLim(TK_UP)}), or try the sample take.`);
   if (T.src === "link") {
     const u = $("#tkUrl").value.trim();
     if (!/^https:\/\/[^\s/]+\.[^\s/]+\/\S+/.test(u)) return say("Paste a direct https:// link to your video file, e.g. https://your-storage.example.com/talk.mp4.");
@@ -60,15 +139,18 @@ $("#takeForm").addEventListener("submit", async (ev) => {
     if (T.src === "upload") {
       if (!T.file) throw new Error("Choose a video first, or try the sample take");
       b.innerHTML = `<span class="spin" aria-hidden="true"></span>Uploading…`;
-      const up = await api("/api/media", { method: "POST", body: { name: T.file.name, data: await readB64(T.file) } });
-      body.media_token = up.token; body.name = T.file.name.replace(/\.[^.]+$/, "");
+      const cfg = await tkUpCfg();
+      if (cfg.multipart) body.upload_id = await tkUploadMultipart(T.file);
+      else body.media_token = await tkUploadLibrary(T.file);
+      body.name = T.file.name.replace(/\.[^.]+$/, "");
+      tkProg(null);
     } else {
       body.url = $("#tkUrl").value.trim();
       if (!body.url) throw new Error("Paste a direct link to your video file");
     }
     const t = await api("/api/takes", { method: "POST", body });
     showTake(t); watchTake(t.id);
-  } catch (e) { say(e.message); }
+  } catch (e) { say(e.message); if ($("#tkProg").value < 100) $("#tkProgTxt").textContent = e.message; }
   finally { b.disabled = false; b.textContent = "Make clips"; }
 });
 $("#tkSample").onclick = async () => {
@@ -181,12 +263,29 @@ function clipRow(c, n, k) {
       ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${p.status === "draft" ? "Buffer draft" : "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
     </div>
-    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button><a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}</div>
+    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button><a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
   </li>`;
 }
 
 // ---------------------------------------------------------------- per-clip editor: Trim & caption (takeedit.js)
-function clipAct(act, id) { if (act === "edit" && window.openClipEditor) window.openClipEditor(id); }
+function clipAct(act, id) {
+  if (act === "edit" && window.openClipEditor) window.openClipEditor(id);
+  if (act === "delete") deleteClip(id);
+}
+async function deleteClip(id) {
+  if (!T.take || !(await hqConfirm("Delete this clip? It moves to the Bin for 7 days, then it's removed for good. A Buffer draft already made from it stays in Buffer.", { ok: "Delete clip", danger: true }))) return;
+  try { await api(`/api/takes/${T.take.id}/clips/${encodeURIComponent(id)}`, { method: "DELETE" }); toast("Clip moved to the Bin (7 days)."); showTake(await api(`/api/takes/${T.take.id}`)); loadTakes(); }
+  catch (e) { toast(e.message, 6000); }
+}
+async function deleteTake(id) {
+  if (!(await hqConfirm("Delete this take and all its clips? It moves to the Bin for 7 days, then it and its files are removed for good. A render still running is stopped.", { ok: "Delete take", danger: true }))) return;
+  try {
+    await api(`/api/takes/${id}`, { method: "DELETE" });
+    toast("Take moved to the Bin (7 days).");
+    if (T.take && String(T.take.id) === String(id)) { clearInterval(T.poll); T.take = null; T.plan = null; $("#takeView").hidden = true; }
+    loadTakes();
+  } catch (e) { toast(e.message, 6000); }
+}
 
 // ---------------------------------------------------------------- The Spread
 $("#spreadGo").onclick = async () => {
@@ -272,9 +371,10 @@ async function loadTakes() {
   const box = $("#takeList");
   try {
     const rows = await api("/api/takes");
-    box.innerHTML = rows.length ? rows.map((x) => `<button class="runrow" data-testid="take-row" data-id="${esc(x.id)}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="vt">▶</span>`}
-      <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${esc(x.clips)} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small></span></button>`).join("")
+    box.innerHTML = rows.length ? rows.map((x) => `<div class="take-rowwrap">${x.sample ? "" : `<button type="button" class="link xs danger" data-testid="take-delete" data-del="${esc(x.id)}" aria-label="Delete take ${esc(x.title)}">Delete</button>`}<button class="runrow" data-testid="take-row" data-id="${esc(x.id)}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="vt">▶</span>`}
+      <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${esc(x.clips)} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small></span></button></div>`).join("")
       : `<div class="empty"><b>No takes yet</b><span>Drop a talk, a podcast episode or a tutorial you recorded, or try the sample take.</span></div>`;
+    box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); deleteTake(b.dataset.del); }));
     box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => { const t = await api(`/api/takes/${b.dataset.id}`); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); window.scrollTo({ top: 0, behavior: "smooth" }); }));
   } catch (_) {}
 }

@@ -214,23 +214,29 @@ def unblock(store, admin_uid: str, uid: str) -> dict:
     return {"id": uid, "status": "active"}
 
 
-def erase_user(store, uid: str, via: str) -> None:
-    """GDPR erasure (self-service Disconnect and delete, or an admin's Delete user): every row, the media objects, the
-    sealed Buffer tokens; a tombstone keeps only the hashed id, the time and how."""
+def erase_user(store, uid: str, via: str, house=None) -> None:
+    """GDPR erasure (self-service Disconnect and delete, or an admin's Delete user): every row, the media objects, One
+    take's uploads in the bucket, the sealed Buffer tokens; a tombstone keeps only the hashed id, the time and how."""
     from . import blobstore
+    tu = getattr(house, "take_uploads", None)
+    if tu is not None:
+        try:  # One take's uploads in the bucket go with the account (best effort; the bucket lifecycle rule backs it up)
+            tu.remove_for_user(uid)
+        except Exception as e:  # noqa: BLE001 - never blocks deleting the account
+            print(f"erase: take uploads not removed ({e.__class__.__name__})", flush=True)
     store.delete_user(uid)
     store.x("INSERT INTO user_tombstones(id_hash,at,via) VALUES(?,?,?) ON CONFLICT(id_hash) DO UPDATE SET at=excluded.at, via=excluded.via",
             (subject_hash(uid), time.time(), via))
     blobstore.sweep_soon(store)
 
 
-def delete(store, admin_uid: str, uid: str, confirm) -> dict:
+def delete(store, admin_uid: str, uid: str, confirm, house=None) -> dict:
     _target(store, uid)
     if uid == admin_uid:
         raise AdminError("You can't delete your own account here. Use Disconnect and delete in Settings.", 400)
     if not isinstance(confirm, str) or confirm != uid:
         raise AdminError("Type the user's id exactly to confirm.", 400)
-    erase_user(store, uid, via="admin")
+    erase_user(store, uid, via="admin", house=house)
     log(store, admin_uid, "delete", uid)
     return {"deleted": True, "subject_hash": subject_hash(uid)}
 
@@ -305,7 +311,7 @@ def add_routes(app, store, studio, cookie: str) -> None:
     async def admin_delete(uid: str, request: Request):
         me = gate(request, write=True)
         b = await body_of(request)
-        return await act(lambda: delete(store, me, uid, b.get("confirm")))
+        return await act(lambda: delete(store, me, uid, b.get("confirm"), getattr(studio, "house", None)))
 
     @app.get("/api/admin/audit", include_in_schema=False)
     def admin_audit(request: Request):

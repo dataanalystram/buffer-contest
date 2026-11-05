@@ -30,3 +30,13 @@ services:
       # who can open /admin: Buffer account ids or Buffer emails, comma-separated (docs/ADMIN.md); empty = nobody
       - key: HQ_ADMIN_IDS
         sync: false
+      # Cloudflare R2 bucket: One take's long uploads (docs/ONE_TAKE_UPLOADS.md) and, once set, all new media (docs/STORAGE.md);
+      # off unless all four are set
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
