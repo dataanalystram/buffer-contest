@@ -53,11 +53,13 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 
 def _summary(desc: str) -> str:
+    """The first sentence of a description, at most SUMMARY_CHARS."""
     first = re.split(r"(?<=[.!?])\s", desc.strip(), maxsplit=1)[0]
     return first if len(first) <= SUMMARY_CHARS else first[:SUMMARY_CHARS - 1].rstrip() + "…"
 
 
 def _int(v: Any, default: int, lo: int, hi: int) -> int:
+    """A whole number clamped to lo..hi (default when missing); 400 on any other type."""
     if v is None:
         return default
     if isinstance(v, bool) or not isinstance(v, int):
@@ -66,6 +68,7 @@ def _int(v: Any, default: int, lo: int, hi: int) -> int:
 
 
 def search(tools: list[dict], args: dict) -> dict:
+    """search_tools: the best keyword matches over names (weighted) and descriptions, capped at MAX_RESULTS."""
     q = args.get("query")
     if not isinstance(q, str) or not q.strip():
         raise ActionError("Give query: words for what you want to do.", 400)
@@ -102,6 +105,7 @@ def search(tools: list[dict], args: dict) -> dict:
 
 
 def describe(by_name: dict[str, dict], read_only: set[str], args: dict) -> dict:
+    """describe_tool: one tool's description and input schema; 404 for an unknown name."""
     name = args.get("name")
     if not isinstance(name, str) or not name.strip():
         raise ActionError("Give name: the tool to describe (from search_tools).", 400)
@@ -118,6 +122,7 @@ _TYPES = {"string": (str,), "integer": (int,), "number": (int, float), "boolean"
 
 
 def _type_ok(v: Any, typ: Any) -> bool:
+    """Whether v is one of the JSON Schema types (a bool is never an integer or number)."""
     types = typ if isinstance(typ, list) else [typ]
     for t in types:
         py = _TYPES.get(t)
@@ -131,6 +136,7 @@ def _type_ok(v: Any, typ: Any) -> bool:
 
 
 def _check(path: str, v: Any, sch: dict) -> str | None:
+    """The first type / enum / range / array-item problem with one value, or None."""
     if not isinstance(sch, dict):
         return None
     typ = sch.get("type")

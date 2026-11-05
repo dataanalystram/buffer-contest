@@ -428,6 +428,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
 
 
 def _registry_only(params: Any) -> bool:
+    """tools/list asked for the registry tools only (_meta huhqueue/tools = registry)."""
     meta = params.get("_meta") if isinstance(params, dict) else None
     return isinstance(meta, dict) and meta.get("huhqueue/tools") == "registry"
 
