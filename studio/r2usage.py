@@ -12,7 +12,10 @@ bucket config) and 10,000,000 Class B operations (reads: GET, HEAD). Deletes are
   month and class, months older than three pruned). Every SigV4 signature counts as one operation of its class
   (studio/r2.py presign): this server's own calls and each presigned URL it hands out. Past the Class A cap nothing new
   is written to R2 (database fallback); past the Class B cap reads use the row's database copy when it has one, and
-  otherwise answer a clear 503 until the month turns.
+  otherwise answer a clear 503 until the month turns. The file's owner (signed in, browser) may still read it past
+  that cap, up to ``HQ_R2_HARD_CLASS_B`` (default 9,500,000, never above 9,900,000): a hard ceiling under the free
+  tier's 10,000,000, so nobody loses access to their own file and the bill still stays at zero.
+* A warning is logged once per month and cap when usage reaches 70% (``WARN_AT``).
 
 Counts are kept in memory and written in batches (every 30 s or 200 operations, never inside someone's transaction) so
 a busy page isn't a database write per object call; the caps sit 20% under the free tier, which covers what a crash
@@ -20,6 +23,8 @@ could lose. Numbers only: no key, token or user id is stored. Worker-safe: no Fa
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import os
 import threading
 import time
@@ -30,6 +35,10 @@ CLASS_A = ("PUT", "POST")        # PutObject, UploadPart, Create/CompleteMultipa
 CLASS_B = ("GET", "HEAD")
 FLUSH_S, FLUSH_N, READ_S = 30.0, 200, 60.0
 KEEP_MONTHS = 3
+WARN_AT = 0.70
+HARD_B_MAX = 9_900_000           # the owner's grace never reaches the free tier's 10,000,000 Class B
+_GRACE = contextvars.ContextVar("r2_owner_grace", default=False)
+_WARNED: set = set()             # (month, what) already warned about
 
 _LOCK = threading.Lock()
 _PENDING: dict[str, int] = {"A": 0, "B": 0}
@@ -49,6 +58,33 @@ def caps() -> dict:
     """The three caps (env overrides; defaults 20% under the free tier)."""
     return {"bytes": _env_int("HQ_R2_MAX_BYTES", 8 * GB), "A": _env_int("HQ_R2_MAX_CLASS_A", 800_000),
             "B": _env_int("HQ_R2_MAX_CLASS_B", 8_000_000)}
+
+
+def hard_class_b() -> int:
+    """The owner's ceiling past the Class B cap: HQ_R2_HARD_CLASS_B (default 9.5M), clamped to 9.9M and never under the
+    cap itself."""
+    return max(caps()["B"], min(_env_int("HQ_R2_HARD_CLASS_B", 9_500_000), HARD_B_MAX))
+
+
+@contextlib.contextmanager
+def owner_grace():
+    """Inside this block a read past the Class B cap is allowed up to hard_class_b() (the file's owner reading it)."""
+    tok = _GRACE.set(True)
+    try:
+        yield
+    finally:
+        _GRACE.reset(tok)
+
+
+def _warn(what: str, used: float, cap: float) -> None:
+    """Log once per month and cap when usage reaches WARN_AT of it (numbers only)."""
+    if cap <= 0 or used < WARN_AT * cap:
+        return
+    k = (month(), what)
+    if k in _WARNED:
+        return
+    _WARNED.add(k)
+    print(f"r2usage: WARNING {what} at {used / cap:.0%} of its free-tier cap ({int(used):,} of {int(cap):,})", flush=True)
 
 
 def month() -> str:
@@ -159,17 +195,22 @@ def forget_cache() -> None:
 def can_write(nbytes: int = 0, store=None) -> str | None:
     """None when a new write of ``nbytes`` stays inside the caps; otherwise the reason (shown to the operator)."""
     cap = caps()
-    if ops(store)["A"] >= cap["A"]:
+    o, have = ops(store), stored_bytes(store)
+    _warn("Class A operations", o["A"], cap["A"])
+    _warn("stored bytes", have, cap["bytes"])
+    if o["A"] >= cap["A"]:
         return f"R2 monthly write cap reached ({cap['A']:,} Class A operations, HQ_R2_MAX_CLASS_A)"
-    if stored_bytes(store) + max(0, int(nbytes)) > cap["bytes"]:
+    if have + max(0, int(nbytes)) > cap["bytes"]:
         return f"R2 storage cap reached ({cap['bytes'] / GB:.1f} GB, HQ_R2_MAX_BYTES)"
     return None
 
 
-def can_read(store=None) -> str | None:
-    """None while this month's Class B count is under its cap; otherwise the reason."""
-    cap = caps()
-    if ops(store)["B"] >= cap["B"]:
+def can_read(store=None, grace: bool = True) -> str | None:
+    """None while this month's Class B count is under its cap (or, inside owner_grace() and with ``grace``, under the
+    hard ceiling); otherwise the reason."""
+    cap, n = caps(), ops(store)["B"]
+    _warn("Class B operations", n, cap["B"])
+    if n >= cap["B"] and not (grace and _GRACE.get() and n < hard_class_b()):
         return f"R2 monthly read cap reached ({cap['B']:,} Class B operations, HQ_R2_MAX_CLASS_B)"
     return None
 
@@ -179,7 +220,8 @@ def snapshot(store=None) -> dict:
     cap, o = caps(), ops(store)
     return {"month": month(), "stored_bytes": stored_bytes(store), "max_bytes": cap["bytes"], "class_a": o["A"],
             "max_class_a": cap["A"], "class_b": o["B"], "max_class_b": cap["B"],
-            "write_blocked": bool(can_write(0, store)), "read_blocked": bool(can_read(store))}
+            "owner_ceiling_class_b": hard_class_b(),
+            "write_blocked": bool(can_write(0, store)), "read_blocked": bool(can_read(store, grace=False))}
 
 
 def reset() -> None:
@@ -188,3 +230,4 @@ def reset() -> None:
         _PENDING.update({"A": 0, "B": 0})
     _STORE[0] = None
     _CACHE.clear()
+    _WARNED.clear()

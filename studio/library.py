@@ -28,7 +28,7 @@ from fastapi import Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import blobstore, demo_guard, egress, mediacache
+from . import blobstore, demo_guard, egress, mediacache, r2usage
 from . import metastrip
 from .actions import ActionError, Actor
 from .buffer_api import BufferError
@@ -1455,6 +1455,7 @@ def add_routes(app, house, actor) -> None:
         refused = _gate(f, request, viewer_owns)
         if refused:
             return refused
+        f = _owner_grace(f, request, viewer_owns)
         client = demo_guard.client_ip(request)
         rng = parse_range(rng_h, size)
         if rng is None and range_unsatisfiable(rng_h, size):
@@ -1484,6 +1485,31 @@ def add_routes(app, house, actor) -> None:
         data = f["read"](0, None)
         egress.served(len(data))
         return Response(data, media_type=f["mime"], headers=headers)
+
+    def _owner_grace(f: dict, request: Request, viewer_owns: bool | None) -> dict:
+        """Past R2's monthly Class B cap a file kept only in R2 answers 503, except to its owner (signed-in browser),
+        whose reads run inside r2usage.owner_grace(): allowed up to the hard ceiling under the free tier."""
+        if not r2usage.can_read(grace=False) or not browser_fetch(request):
+            return f
+        if viewer_owns is None:
+            viewer_owns = bool(f.get("owner")) and viewer_uid(request) == f.get("owner")
+        if not viewer_owns:
+            return f
+        read, it = f["read"], f.get("iter")
+
+        def g_read(s, e):
+            with r2usage.owner_grace():
+                return read(s, e)
+
+        def g_iter():
+            src = it()
+            while True:
+                with r2usage.owner_grace():
+                    b = next(src, None)
+                if b is None:
+                    return
+                yield b
+        return {**f, "read": g_read, "iter": g_iter if it else None}
 
     def _gate(f: dict, request: Request, viewer_owns: bool | None):
         """429 for a browser fetch that isn't the owner's, past the day's budget or repeating the same download."""

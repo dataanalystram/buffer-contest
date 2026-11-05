@@ -381,15 +381,21 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/healthz")
     def health():
         # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
-        from . import egress, mediacache
+        from . import egress, mediacache, r2, r2usage
         mh = getattr(house, "media_health", None) or {}
         eg, mc = egress.snapshot(), mediacache.of(store).stats()
+        r2s = r2usage.snapshot(store) if r2.config() else None
         return {"ok": True, "configured": s.configured, "db": db_ok(),
                 # media bytes today (numbers only): read from the database, sent to clients, and the disk cache
                 "egress": {"db_bytes_today": eg["db_bytes"], "served_bytes_today": eg["served_bytes"],
                            "db_budget": eg["db_budget"], "served_budget": eg["served_budget"], "degraded": eg["degraded"],
                            "cache_files": mc["files"], "cache_bytes": mc["bytes"], "cache_hits": mc["hits"],
                            "cache_misses": mc["misses"]},
+                # R2 against its free-tier caps (studio/r2usage.py), numbers only; {"on": false} while unconfigured
+                "r2": {"on": True, "stored_bytes": r2s["stored_bytes"], "max_bytes": r2s["max_bytes"],
+                       "class_a": r2s["class_a"], "max_class_a": r2s["max_class_a"], "class_b": r2s["class_b"],
+                       "max_class_b": r2s["max_class_b"], "write_blocked": r2s["write_blocked"],
+                       "read_blocked": r2s["read_blocked"]} if r2s else {"on": False},
                 # headline: distinct files that are gone (a carousel shared by 3 channel packages is 1 file, not 3);
                 # missing_refs counts every package reference to them, one per channel (audit, 4 Nov 2026)
                 "media": {"checked_at": mh.get("checked_at"), "missing_files": mh.get("unique_files_missing", 0),

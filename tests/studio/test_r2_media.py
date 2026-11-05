@@ -279,3 +279,45 @@ def test_operation_counts_persist_prune_and_show_in_admin(app, human, s3, monkey
     got = human.get("/api/admin/egress").json()["r2"]
     assert got["configured"] and got["class_a"] >= 1 and got["max_bytes"] == 8 * 1024 ** 3 and got["stored_bytes"] > 0
     assert set(got) >= {"class_b", "max_class_a", "max_class_b", "write_blocked", "read_blocked"}
+
+
+def test_past_the_class_b_cap_only_the_owner_still_reads_an_r2_only_file(app, human, s3, monkeypatch):
+    """Non-owners (other people, Buffer, the worker) get a clear 503; the owner's signed-in browser still gets the file,
+    up to the hard ceiling under the free tier (HQ_R2_HARD_CLASS_B, clamped to 9.9M)."""
+    data = image_bytes(42, 42)
+    only = app.state.house.put_media(Actor("acc_1"), data, "mine.png")
+    other = app.state.house.put_media(Actor("acc_1"), image_bytes(43, 43), "mine2.png")
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_B", "0")
+    stranger = other_user(app, "acc_9", "nine@example.com")
+    assert stranger.get(f"/m/{only}", headers=BROWSER).status_code == 503
+    assert TestClient(app, base_url="https://hq.test").get(f"/m/{only}").status_code == 503   # Buffer / worker
+    assert human.get(f"/m/{only}", headers=BROWSER).content == data                          # the owner
+    assert r2usage.can_read()                                                                # still blocked outside the request
+    monkeypatch.setenv("HQ_R2_HARD_CLASS_B", "0")                                            # the ceiling itself is hard
+    assert human.get(f"/m/{other}", headers=BROWSER).status_code == 503                      # (not in the disk cache yet)
+    monkeypatch.setenv("HQ_R2_HARD_CLASS_B", "50000000")
+    assert r2usage.hard_class_b() == r2usage.HARD_B_MAX < 10_000_000
+
+
+def test_usage_warns_once_at_70_percent(app, s3, monkeypatch, capsys):
+    r2usage.bind(app.state.store)
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_B", "10")
+    r2usage.note("GET", 6)
+    r2usage.can_read()
+    assert "WARNING" not in capsys.readouterr().out
+    r2usage.note("GET", 1)
+    r2usage.can_read()
+    r2usage.can_read()
+    out = capsys.readouterr().out
+    assert out.count("WARNING Class B operations at 70%") == 1 and "acc_" not in out
+
+
+def test_healthz_shows_r2_numbers_only_when_configured(app, monkeypatch):
+    c = TestClient(app, base_url="https://hq.test")
+    assert c.get("/healthz").json()["r2"] == {"on": False}
+    for k, v in {"R2_ACCOUNT_ID": "acct", "R2_ACCESS_KEY_ID": "AKIDTEST", "R2_SECRET_ACCESS_KEY": "dummy-secret-for-tests",
+                 "R2_BUCKET": "hq-media", "R2_ENDPOINT": "https://acct.r2.test"}.items():
+        monkeypatch.setenv(k, v)
+    got = c.get("/healthz").json()["r2"]
+    assert got["on"] and got["max_class_b"] == 8_000_000 and got["max_bytes"] == 8 * 1024 ** 3
+    assert all(isinstance(v, (int, bool)) for v in got.values())                              # numbers only, no key or host

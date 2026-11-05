@@ -76,7 +76,7 @@ def bucket(write: bool = False) -> "r2.Bucket | None":
 
 def r2_readable() -> bool:
     """R2 is configured and this month's read cap isn't reached: a row with an object key is read from the bucket."""
-    return bool(bucket()) and not r2usage.can_read()
+    return bool(bucket()) and not r2usage.can_read(grace=False)
 
 
 def backend_name() -> str:
@@ -121,7 +121,7 @@ def read(data, key: str | None, start: int | None = None, end: int | None = None
     the BYTEA until Ram approves the cleanup: reading R2 is what stops the database egress). With the bucket off, the
     database copy (if any) is used."""
     b = bucket() if key else None
-    capped = r2usage.can_read() if b else None
+    capped = r2usage.can_read(grace=False) if b else None
     if data is not None and (not key or not b or capped):  # past the monthly read cap a database copy still serves
         blob = bytes(data or b"")
         if start is None and end is None:
@@ -131,6 +131,7 @@ def read(data, key: str | None, start: int | None = None, end: int | None = None
         return b""
     if not b:
         raise StorageError("This file is in object storage, which isn't configured on this server.")
+    capped = r2usage.can_read() if capped else None  # the owner's grace (r2usage.owner_grace) applies to R2-only rows
     if capped:
         raise StorageError(f"This file is in object storage and the {capped}; it is back when the month turns (UTC).")
     try:
