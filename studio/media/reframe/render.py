@@ -21,7 +21,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import decide, faces as faces_mod, path as path_mod, screen as screen_mod, shots as shots_mod
+from . import decide, faces as faces_mod, path as path_mod, punch as punch_mod, screen as screen_mod, shots as shots_mod
 from .decide import OUT_H, OUT_W
 
 ACCENT = "#C9ACFA"
@@ -104,7 +104,7 @@ def seg_graph(g: Graph, k: int, seg: dict, src: tuple[int, int], base: int, tmp:
         cmd.write_text(path_mod.sendcmd(p, f"crop@c{k}") or f"0.0 crop@c{k} x {p['keys'][0][1]};\n", encoding="utf-8")
         x0, y0 = p["keys"][0][1], p["keys"][0][2]
         return (f"[s{k}]sendcmd=f='{_esc_path(cmd)}',crop@c{k}=w={p['crop_w']}:h={p['crop_h']}:x={x0}:y={y0},"
-                f"scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1[o{k}]")
+                f"scale={OUT_W}:{OUT_H}:flags=lanczos{punch_mod.filter_for(seg.get('punch'), OUT_W, OUT_H)},setsar=1[o{k}]")
     if lay == "fit":
         fw, fh = _fit(sw, sh, OUT_W - 2 * GUTTER, OUT_H - 2 * GUTTER)
         m = g.inp(mask("round", fw, fh), base)
@@ -202,6 +202,8 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
         if s["layout"] == "track" and s.get("path"):
             pts = [p for fid in s.get("faces") or [] for p in by_id.get(fid, {"points": []})["points"] if s["start"] <= p[0] < s["end"]]
             cover.append((path_mod.coverage(s["path"], pts, s["start"], sw, sh), s["end"] - s["start"]))
+            if len(s.get("faces") or []) == 1:  # one tracked face: its median box, for the punch-in's face-safe peak
+                s["face_med"] = punch_mod.face_size(pts)
     cov = (sum(c * d for c, d in cover) / sum(d for _, d in cover)) if cover else None
     return {"shots": rshots, "sidecar": side, "plan": public, "detector": smp["detector"], "vision": vis,
             "face_coverage": round(cov, 3) if cov is not None else None, "timings": {"faces": round(t_faces, 2)},
@@ -391,8 +393,9 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
            p: dict | None = None, preset: str | None = None, logo_png: str | None = None, plan: dict | None = None,
            scenes: list[float] | None = None, fallback_faces: list[dict] | None = None, pins=None, prefs: dict | None = None,
            audio: str | None = None, cover: str | None = None, cover_s: float = 0.0, end_card: str | None = None,
-           end_s: float = 0.0) -> dict:
-    """Render the clip [start, end] to `out` (1080x1920). Returns {plan, sidecar, timings, ass}."""
+           end_s: float = 0.0, punch_in: bool = False) -> dict:
+    """Render the clip [start, end] to `out` (1080x1920). Returns {plan, sidecar, timings, ass, punch}.
+    punch_in: the gentle zoom in/out on face-tracked shots (studio/media/reframe/punch.py); off renders as before."""
     from .. import captions_ass
     t0 = time.time()
     plan = plan or plan_clip(path, start, end, words, scenes, src, fallback_faces, pins_from(pins), prefs)
@@ -406,6 +409,7 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         if ass:
             ass_path = str(tmp / "cap.ass")
             Path(ass_path).write_text(ass, encoding="utf-8")
+        apply_punch(plan, words, start, src, punch_in)
         t1 = time.time()
         _ff(render_body_cmd(path, start, end - start, plan["shots"], (int(src.get("width") or 1920), int(src.get("height") or 1080)),
                             ass_path, logo_png, out, tmp, accent, brand_bg, audio, cover, cover_s, end_card, end_s))
@@ -414,6 +418,21 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         return plan
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def apply_punch(plan: dict, words: list[dict] | None, start: float, src: dict, on: bool) -> None:
+    """Set (or clear) each shot's punch-in plan in place, and plan['punch'] = {on, shots} for the clip's meta."""
+    sw, sh = int(src.get("width") or 1920), int(src.get("height") or 1080)
+    emph = punch_mod.emphasis(words, start) if on else []
+    n = 0
+    for s in plan["shots"]:
+        s.pop("punch", None)
+        if on:
+            pp = punch_mod.plan_shot(s, emph, s.get("face_med"), (sw, sh))
+            if pp:
+                s["punch"] = pp
+                n += 1
+    plan["punch"] = {"on": bool(on), "shots": n}
 
 
 def probe(out: str) -> dict:
