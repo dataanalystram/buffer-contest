@@ -7,7 +7,8 @@ from __future__ import annotations
 import secrets
 import time
 from pathlib import Path
-from urllib.parse import quote
+import re
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import Body, FastAPI, Query, Request
@@ -34,6 +35,22 @@ HSTS = "max-age=31536000; includeSubDomains"
 CSP = ("default-src 'self'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; "
        "style-src 'self' 'unsafe-inline'; font-src 'self'; "  # fonts are self-hosted (studio/static/fonts): no third party
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+
+
+def _csp() -> str:
+    """The CSP, plus the configured upload bucket's origin in connect-src (One take's browser PUTs its parts straight
+    there; CodeRabbit, PR #107). Only that one origin, and only when a bucket is configured."""
+    from . import take_upload
+    cfg = take_upload.config()
+    if not cfg:
+        return CSP
+    u = urlparse(cfg["endpoint"])
+    origin = f"https://{u.netloc}"
+    if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:\d+)?", origin):
+        return CSP
+    return CSP.replace("connect-src 'self'", f"connect-src 'self' {origin}")
+
+
 # Sign-in and token endpoints: a tighter per-IP limit for everyone who isn't already signed in (guessing, floods)
 AUTH_PATHS = ("/login", "/callback", "/device/", "/oauth/authorize", "/oauth/token", "/oauth/register", "/integrations/")
 SECURITY_TXT_EXPIRES = "2027-10-31T00:00:00Z"
@@ -217,7 +234,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         resp.headers.setdefault("X-Frame-Options", "DENY")
-        resp.headers.setdefault("Content-Security-Policy", CSP)
+        resp.headers.setdefault("Content-Security-Policy", _csp())
         resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
         if request.url.scheme == "https":  # behind Render's TLS the forwarded scheme is trusted (uvicorn --proxy-headers)
@@ -520,6 +537,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         a = actor(request, write=True)
         if a.kind != "human":
             raise ActionError("Only a human can disconnect.", 403)
+        try:  # One take's uploads in the bucket go with the account (best effort; the bucket lifecycle rule backs it up)
+            house.take_uploads.remove_for_user(a.uid)
+        except Exception as e:  # noqa: BLE001 - never blocks deleting the account
+            print(f"disconnect: take uploads not removed ({e.__class__.__name__})", flush=True)
         store.delete_user(a.uid)
         resp = JSONResponse({"ok": True, "deleted": True})
         resp.delete_cookie(COOKIE, path="/")
@@ -926,6 +947,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return etagged(request, house.calendar(a))
 
     # ------------------------------------------------------------ One take -> a week (UI = REST = MCP)
+    from . import take_routes  # before /api/takes/{rid}: /bin and /uploads first
+    take_routes.add_upload_routes(app, house, actor)
+    take_routes.add_bin_routes(app, house, actor)
+
     @app.post("/api/takes")
     def take_start(request: Request, body: dict = Body(...)):
         """clips_from_video: a long video you own (upload media_token, or a direct https url) -> 3-7 captioned 9:16 clips."""
@@ -991,7 +1016,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             error = "The video worker failed."
         try:
             data = base64.b64decode(body["data"]) if body.get("data") else None
-            return house.finish_video(jid, data, body.get("meta"), error, body=body)
+            # off the event loop: analysis picks moments with AI engines (up to minutes) and takes a per-take lock (PR #107)
+            return await run_in_threadpool(house.finish_video, jid, data, body.get("meta"), error, body=body)
         finally:
             house.burn_job_token(jid)
             if error and body.get("log_tail"):
@@ -1015,7 +1041,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 return house.on_recap_file(jid, clip_id, base64.b64decode(body["data"]), body.get("meta") or {})
             except ActionError as e:
                 return JSONResponse({"error": str(e)}, status_code=e.status)
-        return house.takes.on_clip(jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]), body.get("meta") or {})
+        return await run_in_threadpool(house.takes.on_clip, jid, clip_id, base64.b64decode(body["data"]), base64.b64decode(body["cover"]),
+                                       body.get("meta") or {})
 
     # ------------------------------------------------------------ Brand studio + Sources agent (UI = REST = MCP)
     from . import brand_routes

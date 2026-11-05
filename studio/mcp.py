@@ -92,7 +92,8 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}, "media_url": {"type": "string"},
          "owns": {"type": "boolean", "description": "Must be true: the user owns this video or has the rights to it"},
          "channel_ids": {"type": "array", "items": {"type": "string"}}, "count": {"type": "integer", "minimum": 1, "maximum": 7},
-         "name": {"type": "string"}, "sample": {"type": "boolean"}}}},
+         "name": {"type": "string"}, "sample": {"type": "boolean"},
+         "upload_id": {"type": "string", "description": "A finished multipart upload of a long video (POST /api/takes/uploads, up to 4 GB when the server has a bucket)"}}}},
     {"name": "list_clips", "description": "Without take_id: the user's takes. With take_id: the take's progress steps and its clips (video and cover URLs, start/end in the source, hook, transcript, layout, preflight per channel, the caption per network, and where each clip was placed).",
      "inputSchema": {"type": "object", "properties": {"take_id": {"type": "integer"}}}},
     {"name": "adjust_clip", "description": "Trim & caption one clip of a take (the same edits as the UI's Trim & caption window). Any of: in/out (start_ms/end_ms in the source video; the sample take only inside its moment), transcript (the clip's corrected words: fixes the burned-in captions, timings follow the voice), hook (the cover line: at least 3 words quoted from the clip), caption + service or captions {service: text} (post caption per network; only the take's channels, each within its network's limit), music (an Instagram track from search_instagram_audio for the Reel, with music_volume / original_volume 0-100; null removes it; Instagram picks which part of the track plays). Timing, transcript and hook re-render the clip on the video worker (poll list_clips until the clip is ready: it gets a new url); captions and music save at once. Returns the take with changed and rerendering.",
@@ -152,6 +153,10 @@ READ_ONLY |= _library.READ_ONLY
 from . import uploads as _uploads  # noqa: E402  create_upload, upload_media_chunk, finish_upload
 
 TOOLS += _uploads.TOOLS
+from . import take_bin as _take_bin  # noqa: E402  delete_take, list_take_bin, restore_take, purge_take_bin
+
+TOOLS += _take_bin.TOOLS
+READ_ONLY |= _take_bin.READ_ONLY
 from . import reel_audio as _reel_audio  # noqa: E402  search_instagram_audio, set_reel_audio
 
 TOOLS += _reel_audio.TOOLS
@@ -298,7 +303,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "clips_from_video":
         if args.get("sample"):
             return h.takes.start_sample(actor, {"channel_ids": args.get("channel_ids")})
-        return h.takes.start(actor, {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name")})
+        return h.takes.start(actor, {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id")})
     if name == "list_clips":
         if args.get("take_id"):
             t = h.takes.get(actor, int(args["take_id"]))
@@ -350,6 +355,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _uploads.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _take_bin.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     for _mod in (_send, _share, _ledger, _parity, _image, _rd, _commerce):
