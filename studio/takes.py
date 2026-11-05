@@ -216,6 +216,12 @@ class Takes(TakeBin):
         if not owns and not credit:
             raise ActionError("Add a credit line for a video you didn't make (credit: 'Video: @handle on YouTube').")
         style = "opus" if (platform_url or str(body.get("style") or "").lower() in ("opus", "opus_clip", "shorts")) else "take"
+        trim_pauses = body.get("trim_pauses")
+        if trim_pauses is not None and not isinstance(trim_pauses, bool):
+            raise ActionError("trim_pauses is true or false.")
+        # long pauses + filler words cut from each clip (studio/media/cleancut): on by default for One take, off for the
+        # Opus-style render (it has its own pacing) and the sample
+        trim_pauses = (trim_pauses is not False) if style == "take" else False
         captions = body.get("captions") or ""
         if captions:
             if not isinstance(captions, str) or len(captions.encode("utf-8", "ignore")) > MAX_CAPTION_TEXT:
@@ -253,6 +259,7 @@ class Takes(TakeBin):
         inp = {"media_token": token, "upload_id": upload_id, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
                "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]], "jev": jev,
                "punch_in": punch_in,
+               "trim_pauses": trim_pauses,
                "consent_id": consent_id, "licence_hint": licence,
                "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
@@ -655,7 +662,7 @@ class Takes(TakeBin):
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
                           "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else [],
-                          "product_card": c.get("product_card")})
+                          "product_card": c.get("product_card"), **self._trim_spec(run, an, c)})
         for k in ("reframe", "captions", "covers"):
             self._step(run["steps"], k, "running", f"0 of {len(clips)} clips")
         self._save(rid, run["steps"], res, "rendering")
@@ -670,6 +677,23 @@ class Takes(TakeBin):
                 "credit": run["input"].get("credit") or "", "burned_subs": bool(an.get("burned_subs")),
                 "face_detector": an.get("face_detector", True)}
         self._queue(a, rid, spec, "reframe", f"Rendering {len(clips)} clips on the video worker")
+
+    @staticmethod
+    def _trim_spec(run: dict, an: dict, c: dict) -> dict:
+        """The clip's pause/filler trim for the worker: the take's choice (older takes: off) and the detected silences
+        inside the clip, so a pause is only cut where the silence detector agrees."""
+        if run["input"].get("style", "take") != "take" or run["input"].get("trim_pauses") is not True:
+            return {}
+        s, e = float(c["start"]), float(c["end"])
+        sil = []
+        for x in (an.get("silences") or [])[:5000]:
+            try:
+                a, b = float(x[0]), float(x[1])
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+            if b > s and a < e:
+                sil.append([a, b])
+        return {"trim_pauses": True, "silences": sil[:500]}
 
     def _render_sample(self, a: Actor, rid: int, c: dict) -> None:
         """Re-render one sample clip from its bundled source window: the same opus-style render as a long-video take, with
@@ -849,6 +873,9 @@ class Takes(TakeBin):
             d["layout"], d["face_coverage"] = m.get("layout"), m.get("face_coverage")
             d["layout_plan"], d["caption_preset"] = m.get("layout_plan"), c.get("caption_preset") or m.get("caption_preset")
             d["cover_offset_ms"] = m.get("cover_offset_ms")
+            tr = m.get("trim") if isinstance(m.get("trim"), dict) else {}
+            d["trimmed_s"] = tr.get("trimmed_s") or 0.0  # pauses + filler cut from this clip (studio/media/cleancut)
+            d["trim"] = {k: tr.get(k) for k in ("trimmed_s", "pauses", "fillers", "skipped")} if tr else None
             d["words"] = clip_words(words, c, c["start"] - 4, c["end"] + 4)
             d["transcript"] = " ".join(w["w"] for w in clip_words(words, c, c["start"], c["end"]))
             d["transcript_edited"] = bool(c.get("words_fix"))

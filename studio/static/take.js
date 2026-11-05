@@ -140,7 +140,7 @@ $("#takeForm").addEventListener("submit", async (ev) => {
     const u = $("#tkUrl").value.trim();
     if (!/^https:\/\/[^\s/]+\.[^\s/]+\/\S+/.test(u)) return say("Paste an https:// link to the video: a YouTube, Vimeo or X post, or the video file.");
   }
-  const body = { owns: true, channel_ids: [...T.sel], punch_in: !!$("#tkPunch").checked };
+  const body = { owns: true, channel_ids: [...T.sel], punch_in: !!$("#tkPunch").checked, trim_pauses: !!$("#tkTrim").checked };
   const n = $("#tkCount").value; if (n) body.count = +n;
   const b = $("#tkGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
   try {
@@ -278,7 +278,7 @@ function clipRow(c, n, k) {
     <span class="clip-n" aria-hidden="true">${n}</span>
     <div class="clip-body">
       <p class="clip-hook" data-testid="clip-hook">${esc(c.hook)}</p>
-      <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.score != null ? ` · <span class="pill sm clip-score" data-testid="clip-score">Score ${Math.round(c.score)}</span>` : ""}</p>
+      <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.trimmed_s > 0 ? ` · <span data-testid="clip-trimmed" title="Long pauses and filler words cut from this clip">trimmed ${(+c.trimmed_s).toFixed(1)} s</span>` : ""}${c.score != null ? ` · <span class="pill sm clip-score" data-testid="clip-score">Score ${Math.round(c.score)}</span>` : ""}</p>
       ${c.why ? `<p class="xs clip-why" data-testid="clip-why" title="${esc(c.why)}">${c.rank ? `<b>#${c.rank}</b> · ` : ""}Why this moment: ${esc(c.why)}</p>` : ""}
       ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${escUrl(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
