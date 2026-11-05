@@ -1,7 +1,7 @@
 // View transitions (owner ask, 5 Nov 2026): "switching tabs or views flashes the wrong page, then it vanishes at once".
 // One helper every screen change goes through (showTab, a sub-tab, View run, open a take, open a thread):
-//  - the target screen is hidden (visibility, so it keeps its layout for the loaders that measure) and the HuhQueue logo
-//    loader shows in its place at once: the old screen's content is never on view while the new one loads;
+//  - the target screen's content is hidden (visibility, so it keeps its layout for the loaders that measure) and the
+//    HuhQueue logo loader shows in its place at once: the old screen's content is never on view while the new one loads;
 //  - the screen's loaders run, then it is shown once, after at least MIN_MS so a fast answer doesn't flicker;
 //  - past SLOW_MS the loader adds list skeletons under the mark; past CAP_MS the screen is shown with its own skeletons;
 //  - a newer transition aborts the older one (AbortController: HQView.signal, plus the left screen's HQLoad requests), so a

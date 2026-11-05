@@ -125,7 +125,7 @@ def test_a_deep_link_that_fails_shows_retry_in_place(live, chromium, close_conte
     err = page.get_by_test_id("view-error")
     err.wait_for(state="visible")
     assert "The run store is busy" in err.inner_text()
-    assert page.locator("#tab-library").is_visible() is False and not page.locator("#tab-library").get_attribute("hidden")
+    assert page.locator("#tab-library").is_visible() and not page.get_by_test_id("library-item").first.is_visible()
     assert "tab=library" in page.url, "a failed View run must not leave the Library"
     page.get_by_test_id("view-retry").click()
     _settled(page, "agent")
