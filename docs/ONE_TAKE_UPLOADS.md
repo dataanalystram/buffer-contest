@@ -108,3 +108,11 @@ id is the same 404. REST: `DELETE /api/threads/{thread_id}` (`?takes=delete` is 
 ## Shared with media storage
 The same `R2_*` variables and the same signer (`studio/r2.py`) also move new images and videos out of the database once
 set (docs/STORAGE.md). Keep the `takes/` 7-day lifecycle rule scoped to that prefix: `media/` and `lib/` must never expire.
+
+## Deleting a take or a clip: one Bin (5 Nov 2026)
+
+One take has no Bin of its own. Deleting a take (its card's ⋯ menu) or a clip moves it to **Library › Bin** for 7 days,
+with Undo in the toast; the Library Bin lists binned takes and clips next to Library items, with Restore and Delete
+permanently. A clip deleted from the Library (Created by › One take, ⋯, Move to bin) goes to the same place. While a take or
+clip is in the Bin its Library items are hidden (their files aren't served) and it counts in the Library's `bin_count`.
+Agents keep the same tools: `delete_take`, `list_take_bin`, `restore_take`, `purge_take_bin`.

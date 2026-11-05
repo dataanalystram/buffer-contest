@@ -197,16 +197,16 @@ def test_a_long_name_with_another_lastmodified_is_a_new_upload(human, app, s3): 
 def test_leaving_one_take_aborts_a_take_still_opening():
     js = TAKE_JS.read_text()
     abort = js[js.index("function tkAbort("):js.index("function tkErr(")]
-    assert 'if (except !== "takes") HQLoad.start("takeopen").done();' in abort
-    assert '!op.live() || $("#tab-take").hidden || T.view !== "takes") return;' in js
+    assert 'HQLoad.start("takeopen").done();' in abort
+    assert 'if (!op.live() || $("#tab-take").hidden) return;' in js
 
 
-def test_switching_to_the_bin_aborts_a_take_still_opening():
-    """tkView("bin") calls tkAbort("bin"): a take opened from the list must not draw over the Bin (CodeRabbit)."""
+def test_opening_a_take_from_elsewhere_fetches_it_before_switching_screens():
+    """window.openTake (View run, a thread) fetches the take first and switches to One take once (no flash, one history
+    entry); a newer open aborts the older one."""
     js = TAKE_JS.read_text()
-    abort = js[js.index("function tkAbort("):js.index("function tkErr(")]
-    assert 'if (except !== "takes") HQLoad.start("takeopen").done();' in abort
-    assert 'T.view !== "takes") return;' in js
+    body = js[js.index("window.openTake = async (id) => {"):js.index("window.HS_TABS")]
+    assert body.index("await api(") < body.index('showTab("take")') and 'HQLoad.start("takeopen")' in body
 
 
 def test_a_legacy_unhashed_fingerprint_still_resumes_and_is_upgraded(human, app, s3):  # noqa: F811

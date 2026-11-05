@@ -39,7 +39,7 @@ const IC = {
 };
 const FILTERS = [
   { key: "date", label: "Date", icon: IC.cal, all: "All time", opts: [["1d", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"], ["90d", "Last 90 days"], ["365d", "Last 12 months"]] },
-  { key: "created_by", label: "Created by", icon: IC.layers, all: "All", opts: [["agent", "Made by the agent"], ["you", "Uploaded by you"]] },
+  { key: "created_by", label: "Created by", icon: IC.layers, all: "All", opts: [["agent", "Made by the agent"], ["you", "Uploaded by you"], ["one_take", "One take"]] },
   { key: "used_in", label: "Used in", icon: IC.tag, all: "All posts", opts: [["used", "Used in a post"], ["unused", "Not used yet"], ["draft", "Drafts"], ["scheduled", "Scheduled"], ["sent", "Sent"]] },
   { key: "run", label: "Generation", icon: IC.spark, all: "All runs", opts: [] },
 ];
@@ -63,7 +63,9 @@ function libBadge(it) {
 const selBox = (it) => `<label class="lp-sel" title="Select"><input type="checkbox" data-testid="library-select" aria-label="Select ${esc(it.title || it.name)}"${LIB.sel.has(String(it.id)) ? " checked" : ""}></label>`;
 const byLine = (it, extra = "") => {
   const agent = it.source === "generated";
-  return `<small class="lp-by${agent ? "" : " you"}">${agent ? IC.spark : IC.user}<span>${esc(SRC_NAME[it.source] || it.source)}</span>${it.created ? `<span class="lp-dot lp-when" aria-hidden="true">·</span><span class="lp-when">${esc(libWhen(it.created))}</span>` : ""}${extra}</small>`;
+  // a clip One take rendered says so (the One take filter in Created by lists exactly these and the videos given to it)
+  const who = it.one_take && agent ? "Made by One take" : SRC_NAME[it.source] || it.source;
+  return `<small class="lp-by${agent ? "" : " you"}"${it.one_take ? ' data-testid="library-by-one-take"' : ""}>${agent ? IC.spark : IC.user}<span>${esc(who)}</span>${it.created ? `<span class="lp-dot lp-when" aria-hidden="true">·</span><span class="lp-when">${esc(libWhen(it.created))}</span>` : ""}${extra}</small>`;
 };
 function libCard(it) {
   const { fmtDur, fmtSize } = window.HQ_FMT;
@@ -150,7 +152,7 @@ async function libPurge(body, ids) {
   binDrop(ids);
   const b = $("#libEmptyBin"); b.disabled = true;
   try { const r = await api("/api/library/bin/purge", { method: "POST", body }); libMeter(r); return r; }
-  finally { b.disabled = false; loadLibrary({ keep: true }); }  // the current view: a purge that ends after a switch to Library must not leave it loading
+  finally { b.disabled = !!(LIB.binData && LIB.binData.take_err); loadLibrary({ keep: true }); }  // the current view: a purge that ends after a switch to Library must not leave it loading
 }
 // draws the Library from an /api/library answer: loadLibrary after it fetches, and the boot-end redraw from LIB.data
 function libDraw(d) {
@@ -168,6 +170,7 @@ function libDraw(d) {
   libPaintControls();
   const total = d.total ?? d.items.length, offset = d.offset || 0;
   LIB.page = Math.floor(offset / LIB.per) + 1;
+  closeMenusIn(grid);
   grid.innerHTML = d.items.length ? d.items.map(libCard).join("") : libEmpty(d);
   grid.querySelectorAll(".lp-card[data-testid=library-item]").forEach(wireLibCard);
   grid.querySelectorAll("[data-empty-act]").forEach((b) => (b.onclick = () => {
@@ -236,37 +239,92 @@ function useInPost(it) {
   setTimeout(() => window.attachToPost({ media_token: it.media_token, name: it.name, kind: it.kind, url: it.url, thumb: it.thumb }), 50);
   toast("Attached to a new post. Say what to post and press Make it.");
 }
-// a delete goes to the Bin (7 days): the toast offers Undo, which restores the item and every post's files
+// a delete goes to the Bin (7 days): the toast offers Undo, which restores the item and every post's files (a One take
+// clip comes back on its take)
+const takeClipPath = (tc, tail = "") => `/api/takes/${encodeURIComponent(tc.take_id)}/clips/${encodeURIComponent(tc.clip_id)}${tail}`;
 function undoToast(item, r) {
   const t = document.getElementById("toast"); if (!t) return toast("Moved to the Bin");
   t.innerHTML = `Moved to the Bin for ${(r && r.in_trash_days) || 7} days. <button type="button" class="linkish" data-testid="lib-undo">Undo</button>`;
   t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 8000);
   const b = t.querySelector("[data-testid=lib-undo]");
-  if (b) b.onclick = async () => { try { await api(`/api/library/${item.id}/restore`, { method: "POST", body: {} }); toast("Restored"); loadLibrary({ keep: true }); } catch (e) { toast(e.message, 5000); } };
+  const path = item.take_clip ? takeClipPath(item.take_clip, "/restore") : `/api/library/${encodeURIComponent(item.id)}/restore`;
+  if (b) b.onclick = async () => { t.hidden = true; try { await api(path, { method: "POST", body: {} }); toast("Restored"); loadLibrary({ keep: true }); } catch (e) { toast(e.message, 5000); } };
+}
+/** Delete Library items: One take clips go to their take's Bin (DELETE /api/takes/{take_id}/clips/{clip_id}, then the
+ *  take Bin purge for a permanent delete), everything else through the Library's own delete. One item's failure throws
+ *  (the dialog shows it, with "Delete anyway" on a 409); with several, the failures come back under refused. */
+async function libDeleteItems(items, mode, force) {
+  const clips = items.filter((x) => x.take_clip), rest = items.filter((x) => !x.take_clip);
+  if (rest.length === 1 && !clips.length) {
+    const r = await api(`/api/library/${encodeURIComponent(rest[0].id)}?mode=${mode}&force=${force ? 1 : 0}`, { method: "DELETE" });
+    return { ...r, deleted: [r.id], refused: [] };
+  }
+  let out = { mode, deleted: [], refused: [], in_trash_days: mode === "bin" ? 7 : null };
+  if (rest.length) {
+    const r = await api("/api/library/bulk-delete", { method: "POST", body: { ids: rest.map((x) => +x.id), mode, force: !!force } });
+    out = { ...out, ...r, deleted: [...(r.deleted || [])], refused: [...(r.refused || [])] };
+  }
+  for (const x of clips) {
+    const tc = x.take_clip;
+    try {
+      const r = await api(takeClipPath(tc), { method: "DELETE" });
+      if (r && r.in_bin_days) out.in_trash_days = r.in_bin_days;
+      if (mode === "permanent") {
+        const p = await api("/api/takes/bin/purge", { method: "POST", body: { clips: [{ take_id: tc.take_id, clip_id: tc.clip_id }] } });
+        if (!(p.purged_clips || []).length) throw new Error(((p.refused || [])[0] || {}).error || "That clip is in the Bin; it wasn't deleted permanently.");
+      }
+      out.deleted.push(x.id);
+    } catch (e) {
+      if (items.length === 1) throw e;
+      out.refused.push({ id: x.id, error: e.message, status: e.status, needs_force: false });
+    }
+  }
+  return out;
 }
 function libMediaList(it) {
   if (it.kind === "carousel") return (it.slides || [it.url]).map((u) => ({ url: u, type: "photo" }));
   return [{ url: it.url, type: it.kind === "video" ? "video" : "photo" }];
 }
 // ---------------------------------------------------------------- open a run (Used in, View run, a /?tab=library&run= link)
+// View run flicker (owner bug, 5 Nov 2026): this used to showTab("agent") BEFORE fetching the run, so Make a post (its
+// Threads list) was drawn and pushed onto the history, then a One take run switched again to One take (a second entry,
+// so Back landed on Threads). Now the run is fetched first and only its own screen is opened, once: one history entry,
+// and Back returns to the Library. A newer View run, or leaving the screen meanwhile, drops the late answer.
+const visibleTab = () => (document.querySelector(".tab:not([hidden])") || {}).id || "";  // showTab shows exactly one .tab
+/** Open a run (View run, Used in, a deep link): fetch it first, then show its own screen once. */
 async function openRunById(rid) {
-  showTab("agent");
-  try { const r = await api(`/api/agent/runs/${encodeURIComponent(rid)}`); libNav(); if (r.kind === "take") return window.openTake(r.id); window.showRunFromLibrary?.(r); }
-  catch (e) { toast(e.message); }
+  const tk = HQLoad.start("openrun"), from = visibleTab();
+  try {
+    const r = await api(`/api/agent/runs/${encodeURIComponent(rid)}`, { signal: tk.signal });
+    if (!tk.live() || visibleTab() !== from) return;  // the person moved on meanwhile: never yank them to the run
+    if (r.kind === "take") return await window.openTake(r.id);
+    showTab("agent"); window.showRunFromLibrary?.(r);
+  } catch (e) { if (!HQLoad.aborted(e) && tk.live()) toast(e.message); }
+  finally { tk.done(); }
 }
 window.hqOpenRun = openRunById;
 
 // ---------------------------------------------------------------- menus: popovers on desktop, bottom sheets on a phone
 const isSheet = () => matchMedia("(max-width:640px)").matches;
+// Overlapping menus (owner bug, 5 Nov 2026): opening a card's ⋯ raised the CARD (z-index 30) but closing reset
+// btn.closest(".lp-card, .lp-mw"), which is the ⋯ button's own .lp-mw wrapper, so the card kept z-index 30 until a
+// reload and painted over every menu opened later (the Created by menu under the first card). MENU now remembers the
+// element it raised and closing resets exactly that one; a list redraw, leaving the screen and a back/forward page
+// restore close an open menu, so none is ever drawn open on load.
 let MENU = null;
+/** Close the open menu, reset the element it raised, drop a phone scrim, and optionally give focus back to its button. */
 function closeMenus(focusBack) {
   if (!MENU) return;
-  const { btn, menu } = MENU; MENU = null;
+  const { btn, menu, raised } = MENU; MENU = null;
   menu.hidden = true; btn.setAttribute("aria-expanded", "false");
-  const card = btn.closest(".lp-card, .lp-mw"); if (card) card.style.zIndex = "";
+  if (raised) raised.style.zIndex = "";
   const sc = document.getElementById("libScrim"); if (sc) sc.remove();
-  if (focusBack) btn.focus();
+  if (focusBack && btn.isConnected) btn.focus();
 }
+/** Close the open menu when it lives in `box` (call before redrawing box: a detached menu must not stay "open"). */
+function closeMenusIn(box) { if (MENU && box && box.contains(MENU.menu)) closeMenus(); }
+window.hqMenu = { toggle: (btn, menu) => toggleMenu(btn, menu), close: (f) => closeMenus(f), closeIn: (box) => closeMenusIn(box) };
+window.addEventListener("pageshow", () => { closeMenus(); document.querySelectorAll(".lp-menu:not([hidden])").forEach((m) => (m.hidden = true)); });
 function toggleMenu(btn, menu) {
   if (MENU && MENU.menu === menu) return closeMenus(true);
   closeMenus();
@@ -275,7 +333,7 @@ function toggleMenu(btn, menu) {
     const sc = document.createElement("div"); sc.className = "lp-scrim"; sc.id = "libScrim"; sc.setAttribute("aria-hidden", "true");
     sc.onclick = (e) => { e.stopPropagation(); closeMenus(true); }; menu.parentNode.insertBefore(sc, menu);
   } else {  // a popover above the cards after it; open it upward when it would spill under the window
-    const card = btn.closest(".lp-card") || btn.closest(".lp-mw"); if (card) card.style.zIndex = "30";
+    const card = btn.closest(".lp-card") || btn.closest(".lp-mw"); if (card) { card.style.zIndex = "30"; MENU.raised = card; }
     menu.style.top = ""; menu.style.bottom = "";
     const r = menu.getBoundingClientRect();
     if (r.bottom > innerHeight - 8 && r.height < btn.getBoundingClientRect().top - 16) { menu.style.top = "auto"; menu.style.bottom = "calc(100% + 6px)"; }
@@ -297,6 +355,7 @@ document.addEventListener("keydown", (e) => {
 
 // ---------------------------------------------------------------- tabs, filters, search, layout
 function libPaintControls() {
+  closeMenusIn($("#libPills"));
   document.querySelectorAll("#libTabs [role=tab]").forEach((b) => { const on = b.dataset.type === LIB.f.type; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
   const tl = $("#libTabs"), st = tl.querySelector("[aria-selected=true]");  // keep the chosen tab in view on a phone
   if (st && (st.offsetLeft < tl.scrollLeft || st.offsetLeft + st.offsetWidth > tl.scrollLeft + tl.clientWidth)) tl.scrollLeft = st.offsetLeft - 8;
@@ -380,7 +439,14 @@ async function libBulkPermanent() {
   const items = selItems();
   if (LIB.view === "bin") {
     if (!(await hqConfirm(`Delete ${plural(items.length, "item")} permanently? The files are removed now. This can't be undone.`, { ok: "Delete permanently", danger: true }))) return;
-    try { const ids = items.map((x) => +x.id); libSelClear(); const r = await libPurge({ ids }, ids); toast(`${plural(r.purged.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000); }
+    try {
+      const tks = items.filter((x) => x.bin_kind), ids = items.filter((x) => !x.bin_kind).map((x) => +x.id);
+      libSelClear(); binDrop(tks.map((x) => x.id));
+      const t = await takePurge(tks).catch((e) => ({ purged: [], refused: tks.map((x) => ({ id: x.id, error: e.message })) }));
+      const r = ids.length ? await libPurge({ ids }, ids) : (loadLibrary({ keep: true }), { purged: [], refused: [] });
+      const purged = r.purged.length + t.purged.length, refused = [...r.refused, ...t.refused];
+      toast(`${plural(purged, "item")} deleted permanently` + (refused.length ? ` · ${refusedNote(refused)}` : ""), 6000);
+    }
     catch (e) { toast(e.message, 6000); }
     return;
   }
@@ -390,8 +456,14 @@ async function libBulkPermanent() {
 $("#libBulkPerm").onclick = libBulkPermanent;
 $("#libBulkPermMenu").onclick = libBulkPermanent;
 $("#libBulkRestore").onclick = async () => {
-  try { const r = await api("/api/library/bin/restore", { method: "POST", body: { ids: selItems().map((x) => +x.id) } }); libMeter(r); libSelClear(); loadLibrary({ keep: true }); toast(`${plural(r.restored.length, "item")} restored`); }
-  catch (e) { toast(e.message, 6000); }
+  const its = selItems(), tks = its.filter((x) => x.bin_kind), ids = its.filter((x) => !x.bin_kind).map((x) => +x.id);
+  try {
+    let n = 0, err = "";
+    for (const it of tks) { try { await takeRestore(it); n++; } catch (e) { err = err || e.message; } }
+    if (ids.length) { const r = await api("/api/library/bin/restore", { method: "POST", body: { ids } }); libMeter(r); n += r.restored.length; }
+    libSelClear(); loadLibrary({ keep: true }); toast(`${plural(n, "item")} restored` + (err ? ` · ${err}` : ""), err ? 6000 : undefined);
+  }
+  catch (e) { toast(e.message, 6000); loadLibrary({ keep: true }); }
 };
 
 // ---------------------------------------------------------------- the delete choice: Move to Bin (default) or Delete permanently
@@ -415,12 +487,7 @@ function libDeleteDialog(items, preset) {
       const mode = dlg.querySelector("input[name=libDelMode]:checked").value;
       go.disabled = true;
       try {
-        if (one) {
-          const r = await api(`/api/library/${items[0].id}?mode=${mode}&force=${force || used.length ? 1 : 0}`, { method: "DELETE" });
-          result = { ...r, deleted: [r.id], refused: [] };
-        } else {
-          result = await api("/api/library/bulk-delete", { method: "POST", body: { ids: items.map((x) => +x.id), mode, force: force || !!used.length } });
-        }
+        result = await libDeleteItems(items, mode, force || !!used.length);
         dlg.close();
       } catch (ex) {
         err.textContent = ex.message; err.hidden = false; go.disabled = false;
@@ -445,7 +512,39 @@ function libSetView(v) {
 $("#libViewItems").onclick = () => libSetView("items");
 $("#libViewBin").onclick = () => libSetView("bin");
 const leftLabel = (n) => (n <= 0 ? "Removed for good today" : n === 1 ? "1 day left" : `${n} days left`);
+/** One take's Bin rows as Library Bin items: ids "take:<id>" / "clip:<take id>:<clip id>" (never parsed: take_id and
+ *  clip_id ride along), so they never collide with numeric Library ids. */
+function takeBinItems(tb) {
+  const takes = (tb.takes || []).map((x) => ({ id: `take:${x.take_id}`, bin_kind: "take", take_id: x.take_id, name: x.title || "Your take",
+    sub: `One take · ${x.clips} clip${x.clips === 1 ? "" : "s"}`, kind: "video", deleted_at: x.deleted_at, days_left: x.days_left }));
+  const clips = (tb.clips || []).map((x) => ({ id: `clip:${x.take_id}:${x.clip_id}`, bin_kind: "clip", take_id: x.take_id, clip_id: x.clip_id,
+    name: x.hook || "A clip", sub: `One take clip · from ${x.take_title || "your take"}`, kind: "video", deleted_at: x.deleted_at, days_left: x.days_left }));
+  return [...takes, ...clips];
+}
+const takeRef = (it) => (it.bin_kind === "clip" ? { take_id: it.take_id, clip_id: it.clip_id } : { take_id: it.take_id });
+const takeRestore = (it) => api(it.bin_kind === "clip" ? takeClipPath(it, "/restore") : `/api/takes/${encodeURIComponent(it.take_id)}/restore`, { method: "POST", body: {} });
+/** Purge One take Bin rows for good (POST /api/takes/bin/purge); returns the Library Bin ids purged and refused. */
+async function takePurge(its) {
+  if (!its.length) return { purged: [], refused: [] };
+  const body = { take_ids: its.filter((x) => x.bin_kind === "take").map((x) => x.take_id),
+    clips: its.filter((x) => x.bin_kind === "clip").map((x) => ({ take_id: x.take_id, clip_id: x.clip_id })) };
+  const r = await api("/api/takes/bin/purge", { method: "POST", body });
+  const gone = new Set([...(r.purged_takes || []).map((t) => `take:${t}`), ...(r.purged_clips || []).map((c) => `clip:${c.take_id}:${c.clip_id}`)]);
+  return { purged: its.filter((x) => gone.has(x.id)).map((x) => x.id), refused: (r.refused || []).map((x) => ({ ...x, id: x.clip_id ? `clip:${x.take_id}:${x.clip_id}` : `take:${x.take_id}` })) };
+}
+/** One take take or clip in the Library Bin: a placeholder still (binned files aren't served), days left, Restore and
+ *  Delete permanently. Every value is escaped. */
+function takeBinCard(it) {
+  return `<article class="lp-card lp-bin lp-take-bin${LIB.sel.has(String(it.id)) ? " picked" : ""}" data-testid="bin-item" data-kind="${esc(it.bin_kind)}" data-id="${esc(it.id)}">
+    ${selBox(it)}
+    <div class="lp-thw"><div class="lp-th lp-th-ph" aria-hidden="true">${IC.reel}</div><span class="lp-badge reel">${IC.reel}One take</span><span class="lp-left${it.days_left <= 1 ? " soon" : ""}" data-testid="bin-days-left">${esc(leftLabel(it.days_left))}</span></div>
+    <div class="lp-info"><div class="lp-trow"><b class="lp-t" title="${esc(it.name)}">${esc(it.name)}</b></div>
+      <small class="lp-meta"><span>${esc(it.sub)} · deleted ${esc(libWhen(it.deleted_at))}</span></small>
+      <div class="lp-binacts"><button type="button" class="lp-act" data-act="restore" data-testid="bin-restore">Restore</button><button type="button" class="lp-act danger" data-act="purge" data-testid="bin-delete-permanently">Delete permanently</button></div></div>
+  </article>`;
+}
 function binCard(it) {
+  if (it.bin_kind) return takeBinCard(it);
   const { fmtSize } = window.HQ_FMT;
   const th = it.kind === "video" ? `<video src="${esc(it.url)}#t=1.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${esc(it.thumb || it.url)}" alt="" loading="lazy" decoding="async">`;
   return `<article class="lp-card lp-bin${LIB.sel.has(String(it.id)) ? " picked" : ""}" data-testid="bin-item" data-id="${esc(it.id)}">
@@ -462,12 +561,29 @@ async function loadBin(opts = {}) {
   const tk = HQLoad.start("library"); ++LIB.seq;  // aborts a Library request still in flight: its cards never land here
   libLoading(4, opts.keep);
   try {
-    const d = await api("/api/library/bin", { signal: tk.signal });
+    // the two Bins load side by side; One take's failing never hides the Library's items (a partial Bin, said in a toast)
+    let takeErr = "";
+    const [lb, tb] = await Promise.all([api("/api/library/bin", { signal: tk.signal }),
+      api("/api/takes/bin", { signal: tk.signal }).catch((e) => { if (HQLoad.aborted(e)) throw e; takeErr = e.message; return { takes: [], clips: [] }; })]);
     if (!tk.live() || LIB.view !== "bin") return;
+    if (takeErr) toast(`One take's deleted takes and clips didn't load: ${takeErr}`, 6000);
+    const items = [...lb.items, ...takeBinItems(tb)].sort((p, q) => (q.deleted_at || 0) - (p.deleted_at || 0));
+    // take_err marks a partial Bin: Empty bin stays off until One take's Bin loads, so it can't purge takes nobody saw
+    const d = { ...lb, items, total: items.length, take_err: takeErr };
     LIB.bin = d.items; LIB.binData = d;
     binDraw(d);
   } catch (e) { if (!HQLoad.aborted(e) && tk.live()) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; grid.setAttribute("aria-busy", "false"); } }
   finally { if (tk.live()) { HQLoad.busy(grid.parentElement, false); tk.done(); } }
+}
+/** A partial Bin (One take's Bin didn't load): a lasting note and Empty bin off, so it can't purge unseen takes and clips. */
+function binPartial(err) {
+  const eb = $("#libEmptyBin"), note = $("#libBinNote");
+  if (note.dataset.def === undefined) note.dataset.def = note.textContent;
+  eb.disabled = !!err;
+  eb.title = err ? "Off until One take's deleted takes and clips load" : "";
+  note.textContent = err ? `One take's deleted takes and clips didn't load (${err}). Empty bin is off until they do: open the Bin again to retry.` : note.dataset.def;
+  note.classList.toggle("lp-warn", !!err);
+  if (err) note.setAttribute("role", "status"); else note.removeAttribute("role");
 }
 // draws the Bin from an /api/library/bin answer: loadBin after it fetches, and the boot-end redraw from LIB.binData
 function binDraw(d) {
@@ -479,10 +595,21 @@ function binDraw(d) {
   const page = d.items.slice((LIB.binPage - 1) * per, LIB.binPage * per);
   LIB.pageIds = page.map((x) => String(x.id));
   $("#libSelAllWrap").hidden = !page.length; $("#libEmptyBin").hidden = !d.items.length;
+  binPartial(d.take_err);
+  closeMenusIn(grid);
   grid.innerHTML = page.length ? page.map(binCard).join("")
     : `<div class="lp-empty" data-testid="bin-empty"><span class="lp-empty-ic" aria-hidden="true">${IC.bin}</span><b>The Bin is empty</b><span>Items you move to the Bin stay here for ${d.days} days, then they're removed for good.</span></div>`;
   grid.querySelectorAll(".lp-bin").forEach((el) => {
     const it = d.items.find((x) => String(x.id) === el.dataset.id); wireSel(el);
+    if (it && it.bin_kind) {  // a One take take or clip: restored onto One take, purged with its files
+      el.querySelector("[data-act=restore]").onclick = async () => { try { await takeRestore(it); LIB.sel.delete(String(it.id)); toast(it.bin_kind === "clip" ? "Clip restored to its take" : "Take restored to One take"); loadLibrary({ keep: true }); } catch (e) { toast(e.message, 5000); if (e.status === 404) loadLibrary({ keep: true }); } };
+      el.querySelector("[data-act=purge]").onclick = async () => {
+        if (!(await hqConfirm(`Delete “${it.name}” permanently? ${it.bin_kind === "clip" ? "The clip and its files are" : "The take, its clips and its files are"} removed now. This can't be undone.`, { ok: "Delete permanently", danger: true }))) return;
+        try { LIB.sel.delete(String(it.id)); binDrop([it.id]); const r = await takePurge([it]); if (!r.purged.length) toast((r.refused[0] || {}).error || "That isn't in the Bin any more.", 6000); else toast("Deleted permanently"); }
+        catch (e) { toast(e.message, 5000); } finally { loadLibrary({ keep: true }); }
+      };
+      return;
+    }
     el.querySelector("[data-act=restore]").onclick = async () => { try { const r = await api(`/api/library/${it.id}/restore`, { method: "POST", body: {} }); libMeter(r); LIB.sel.delete(String(it.id)); toast("Restored to your Library"); loadLibrary({ keep: true }); } catch (e) { toast(e.message, 5000); } };
     el.querySelector("[data-act=purge]").onclick = async () => {
       if (!(await hqConfirm(`Delete “${it.name}” permanently? The file is removed now. This can't be undone.`, { ok: "Delete permanently", danger: true }))) return;
@@ -493,9 +620,16 @@ function binDraw(d) {
   libFoot(d.items.length, (LIB.binPage - 1) * per, page.length, "items", (n) => { LIB.binPage = n; loadBin(); libTop(); });
 }
 $("#libEmptyBin").onclick = async () => {
+  if (LIB.binData && LIB.binData.take_err) return;  // a partial Bin never empties: One take's takes and clips weren't shown
   if (!(await hqConfirm("Empty the Bin? Every item in it is deleted permanently now. This can't be undone.", { ok: "Empty bin", danger: true }))) return;
-  try { libSelClear(); const r = await libPurge({ all: true }, (LIB.bin || []).map((x) => x.id)); toast(`${plural(r.purged.length, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000); }
-  catch (e) { toast(e.message, 6000); }
+  try {
+    libSelClear(); binDrop((LIB.bin || []).filter((x) => x.bin_kind).map((x) => x.id));
+    const t = await api("/api/takes/bin/purge", { method: "POST", body: { all: true } });  // One take's takes and clips too
+    const r = await libPurge({ all: true }, (LIB.bin || []).map((x) => x.id));
+    const n = r.purged.length + (t.purged_takes || []).length + (t.purged_clips || []).length;
+    toast(`${plural(n, "item")} deleted permanently` + (r.refused.length ? ` · ${refusedNote(r.refused)}` : ""), 6000);
+  }
+  catch (e) { toast(e.message, 6000); loadLibrary({ keep: true }); }
 };
 
 // ---------------------------------------------------------------- Create draft: the item's media + its run's caption per channel
@@ -612,6 +746,7 @@ $("#libPickFile").onchange = async (e) => {
 window.pickFromLibrary = pickFromLibrary;
 
 libPaintControls();
+new MutationObserver(() => { if ($("#tab-library").hidden) closeMenusIn($("#tab-library")); }).observe($("#tab-library"), { attributes: true, attributeFilter: ["hidden"] });
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { library: loadLibrary });
 // boot-end redraw of a Library opened while boot loaded (app.js reloadOpenScreen): redraw the open view (Library or Bin)
 // from the answer it already has, never a second /api/library or /api/library/bin; a fetch still in flight draws itself.
