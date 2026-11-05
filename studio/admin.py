@@ -250,7 +250,7 @@ def delete(store, admin_uid: str, uid: str, confirm, house=None) -> dict:
 
 
 # ------------------------------------------------------------------ agent / MCP tokens of one account (admin view)
-TOKEN_ID_RE = re.compile(r"[0-9]{1,12}")
+TOKEN_ID_RE = re.compile(r"[0-9]{1,9}")  # fits a 32-bit id column, so a long id is a clean 404, never a database error
 
 
 def tokens_of(store, uid: str) -> list[dict]:
@@ -359,14 +359,15 @@ def usage(store) -> dict:
     """What the service spends on its own keys and free tiers, against the caps enforced in code."""
     from . import budget, commerce, free_quota
     out: dict = {}
-    try:
-        budget.ensure(store)
-        c, oc = budget.caps(), budget.oci_caps()
-        out["claude"] = {"spent_usd": round(budget._spent(store, "global"), 4), "cap_usd": c["global"],
-                         "testing_spent_usd": round(budget._spent(store, "testing"), 4), "testing_cap_usd": c["testing"]}
-        out["oci"] = {"spent_usd": round(budget._spent(store, budget.OCI_GLOBAL), 4), "cap_usd": oc["global"]}
-    except Exception as e:  # noqa: BLE001
-        out["claude"] = out["oci"] = {"error": e.__class__.__name__}
+    def spent(scope: str) -> float:
+        try:
+            return round(budget._spent(store, scope), 4)
+        except Exception:  # noqa: BLE001  (the budget table is created on the first AI call: nothing spent yet)
+            return 0.0
+    c, oc = budget.caps(), budget.oci_caps()
+    out["claude"] = {"spent_usd": spent("global"), "cap_usd": c["global"], "testing_spent_usd": spent("testing"),
+                     "testing_cap_usd": c["testing"]}
+    out["oci"] = {"spent_usd": spent(budget.OCI_GLOBAL), "cap_usd": oc["global"]}
     try:
         commerce.ensure(store)
         m = commerce._month()

@@ -152,7 +152,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             if not a:
                 failed_token(auth[7:].strip(), request)
                 raise ActionError("Invalid or revoked agent token.", 401)
-            if opsctl.token_hit(a.agent):  # an admin's hourly cap for this token (studio/opsctl.py): reads count too
+            counted = getattr(request.state, "hq_token_counted", False)  # once per request, however often actor() runs
+            request.state.hq_token_counted = True
+            if not counted and opsctl.token_hit(a.agent):  # an admin's hourly cap for this token (studio/opsctl.py): reads count too
                 raise ActionError("This token reached the hourly request limit the HuhQueue operator set. Try again later.", 429)
             if write:  # the kill switch stops every agent write, whatever the route (SECURITY_RULES 4)
                 studio.kill_switch_check(a, request.url.path)
