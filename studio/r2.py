@@ -45,8 +45,8 @@ def endpoint_for(acct: str) -> str | None:
     explicit = os.environ.get("R2_ENDPOINT", "").strip().rstrip("/")
     if explicit:
         return explicit if explicit.startswith("https://") and urlparse(explicit).hostname else None
-    if not re.fullmatch(r"[0-9a-f]{32}", acct or ""):
-        return None  # a Cloudflare account id is 32 hex characters: anything else can't be put into a host name
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", acct or ""):
+        return None  # a Cloudflare account id (32 hex characters) is one DNS label: nothing else goes into the host name
     jur = os.environ.get("R2_JURISDICTION", "").strip().lower()
     if jur and jur not in JURISDICTIONS:
         return None
