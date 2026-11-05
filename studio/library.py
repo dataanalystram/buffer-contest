@@ -1473,11 +1473,12 @@ def add_routes(app, house, actor) -> None:
         return Response(data, media_type=f["mime"], headers=headers)
 
     def _gate(f: dict, request: Request, viewer_owns: bool | None):
-        """429 for a non-owner past the day's budget (browser fetches only) or repeating the same download."""
+        """429 for a browser fetch that isn't the owner's, past the day's budget or repeating the same download."""
+        if not browser_fetch(request):  # Buffer, Instagram, the render worker: never slowed (publishing must not break)
+            return None
         etag, size = f.get("etag") or "", int(f.get("size") or 0)
-        client = demo_guard.client_ip(request)
-        repeat = egress.repeat_blocked(client, etag, size)
-        budget = egress.over_budget() and browser_fetch(request)
+        repeat = egress.repeat_blocked(demo_guard.client_ip(request), etag, size)
+        budget = egress.over_budget()
         if not (repeat or budget):
             return None
         if viewer_owns is None:

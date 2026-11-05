@@ -81,7 +81,11 @@ def test_head_without_a_stored_size_never_loads_the_bytes(app, client, spy):
     assert app.state.house.media_head(TOK) == {"mime": "video/mp4", "size": len(data)}
 
 
-def test_r2_objects_are_read_by_range_in_1_mb_pieces(app, client, monkeypatch):
+@pytest.mark.parametrize("cache_mb", ["1024", "0"])
+def test_r2_objects_are_read_by_range_in_1_mb_pieces(app, client, monkeypatch, cache_mb):
+    # with the disk cache on (Egress guard) the first request fills the copy in 1 MB ranged pieces and later ones read
+    # nothing from storage; with it off, each request reads only its range. Never a whole-object read either way.
+    monkeypatch.setenv("HQ_MEDIA_CACHE_MB", cache_mb)
     data = _blob(2 * CHUNK + 99)
     _put(app.state.house.store, TOK, None, len(data), key="media/owner/obj1")
     calls = []
@@ -92,10 +96,16 @@ def test_r2_objects_are_read_by_range_in_1_mb_pieces(app, client, monkeypatch):
         return data[start:end + 1]
     monkeypatch.setattr(blobstore, "read", fake_read)
     r = client.get(f"/m/{TOK}", headers={"Range": "bytes=5-9"})
-    assert r.status_code == 206 and r.content == data[5:10] and calls == [("media/owner/obj1", 5, 9)]
+    assert r.status_code == 206 and r.content == data[5:10]
+    assert all(e - s + 1 <= CHUNK for _, s, e in calls)
+    if cache_mb == "0":
+        assert calls == [("media/owner/obj1", 5, 9)]
+    else:
+        assert len(calls) == 3
     calls.clear()
     r = client.get(f"/m/{TOK}")
-    assert r.content == data and all(e - s + 1 <= CHUNK for _, s, e in calls) and len(calls) == 3
+    assert r.content == data and all(e - s + 1 <= CHUNK for _, s, e in calls)
+    assert len(calls) == (3 if cache_mb == "0" else 0)
 
 
 def test_m_etag_and_if_none_match_answer_304(app, client):

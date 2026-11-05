@@ -13,7 +13,7 @@ fetch of someone else's media (or an anonymous one) answers 429 with Retry-After
 own requests, server-to-server fetchers (Buffer, Instagram, the render worker: no Sec-Fetch headers), HEAD and 304 are
 never refused, so publishing and the owner's screens keep working.
 
-Repeat downloads: one client (by IP) that has already been sent more than 3x a file's size of that same file in
+Repeat downloads: one browser client (by IP; server-to-server fetchers are exempt) that has already been sent more than 3x a file's size of that same file in
 ``HQ_EGRESS_REPEAT_S`` seconds (default 600) gets 429 for it until the window passes (a player seeking is fine; a page
 re-downloading the same video in a loop is not). The owner is never limited.
 
