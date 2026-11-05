@@ -75,20 +75,20 @@ CONTROL = ("idempotency_key", "user_asked", "new_post", "new_request", "reason",
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS mcp_idem (user_id TEXT, agent_id INTEGER, ikey TEXT, tool TEXT, args_hash TEXT, result TEXT, "
           "at REAL, PRIMARY KEY (user_id, agent_id, ikey))")
-_ready: set[int] = set()
 _lock = threading.Lock()
+_FLAG = "_mcp_idem_ready"  # on the Store, never id(store): a reused id must not skip CREATE TABLE on a new database
 
 
 def ensure(store) -> None:
-    if id(store) in _ready:
+    if getattr(store, _FLAG, False):
         return
     with _lock:
-        if id(store) in _ready:
+        if getattr(store, _FLAG, False):
             return
         store.x(SCHEMA.replace(" REAL", " DOUBLE PRECISION") if store.pg else SCHEMA)
         if store.pg:
             store.x("ALTER TABLE mcp_idem ENABLE ROW LEVEL SECURITY")
-        _ready.add(id(store))
+        setattr(store, _FLAG, True)
 
 
 def is_agent(a: Actor) -> bool:
@@ -127,13 +127,29 @@ def closed(res: dict) -> bool:
     return False
 
 
+def _deleted(store, uid: str) -> set[int]:
+    from .thread_bin import deleted_ids
+    return deleted_ids(store, uid)
+
+
+# deleted threads are left out in SQL, before the LIMIT, so they never hide an older open run (Greptile, 5 Nov 2026)
+_NOT_DELETED = "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
+
+
+def _ensure_threads(store) -> None:
+    from .thread_bin import _ensure
+    _ensure(store)
+
+
 def active_run(store, a: Actor) -> dict | None:
     """This token's open run: the newest one it made that is draft/ready, not sent or awaiting approval, touched within
     ACTIVE_S. Never another app's run (agent_id) and never another person's (user_id)."""
     if not is_agent(a):
         return None
+    _ensure_threads(store)  # a thread the person deleted (in the Bin or purged) is never reused
     rows = store.q("SELECT id, kind, status, result, updated FROM agent_runs WHERE user_id=? AND agent_id=? AND status IN ('draft','ready') "
-                   "AND updated>? ORDER BY updated DESC, id DESC LIMIT 5", (a.uid, a.agent["id"], time.time() - ACTIVE_S))
+                   "AND updated>? " + _NOT_DELETED + "ORDER BY updated DESC, id DESC LIMIT 5",
+                   (a.uid, a.agent["id"], time.time() - ACTIVE_S, a.uid))
     for r in rows:
         try:
             res = json.loads(r["result"] or "{}")
@@ -172,8 +188,9 @@ def same_request(store, a: Actor, title: str) -> dict | None:
     by the app answers it instead of a second run. A different title is a new request and gets its own run."""
     if not is_agent(a) or not _norm(title):
         return None
+    _ensure_threads(store)  # a deleted thread is not "the same request": asking again opens a new post (Greptile, 5 Nov)
     rows = store.q("SELECT id, input, result FROM agent_runs WHERE user_id=? AND agent_id=? AND status IN ('draft','ready') "
-                   "AND created>? ORDER BY id DESC LIMIT 10", (a.uid, a.agent["id"], time.time() - DEDUPE_S))
+                   "AND created>? " + _NOT_DELETED + "ORDER BY id DESC LIMIT 10", (a.uid, a.agent["id"], time.time() - DEDUPE_S, a.uid))
     for r in rows:
         try:
             inp, res = json.loads(r["input"] or "{}"), json.loads(r["result"] or "{}")
@@ -335,6 +352,9 @@ def replay(store, a: Actor, name: str, args: dict, key: tuple[str, bool]) -> Any
         out = json.loads(r["result"])
     except ValueError:
         return None
+    if name in ("start_post", "continue_run") and isinstance(out, dict) and isinstance(out.get("run_id"), int) \
+            and out["run_id"] in _deleted(store, a.uid):
+        return None  # it would open a deleted thread: ask again (renders and other finished work still replay)
     return {**out, "idempotent_replay": True} if isinstance(out, dict) else out
 
 
@@ -421,6 +441,9 @@ def start_post(studio, a: Actor, args: dict) -> dict:
     rid = _rid(args.get("run_id"))
     if rid:
         run = own_run(store, a, rid)
+        from .thread_bin import purged
+        if purged(store, a.uid, rid):  # a thread deleted for good takes no more writes (outputs stay readable)
+            raise ActionError("No such post run.", 404)
         touch(store, a, rid)
         try:
             res = json.loads(run["result"] or "{}") or {}
@@ -480,6 +503,9 @@ def continue_run(studio, a: Actor, args: dict) -> dict:
         raise ActionError("continue_run needs the run_id of the post to continue (start_post returned it).")
     studio.kill_switch_check(a, "continue_run")
     run = own_run(store, a, rid)
+    from .thread_bin import purged
+    if purged(store, a.uid, rid):  # before the message is appended: a purged conversation stays gone
+        raise ActionError("No such post run.", 404)
     try:
         res = json.loads(run["result"] or "{}") or {}
     except ValueError:
@@ -614,10 +640,11 @@ def cleanup_agent_drafts(studio, a: Actor, args: dict) -> dict:
 def call_tool(studio, actor: Actor, name: str, args: dict):
     if name not in NAMES:
         return NotImplemented
+    from .thread_bin import with_thread_id
     if name == "start_post":
-        return start_post(studio, actor, args or {})
+        return with_thread_id(studio.store, actor, start_post(studio, actor, args or {}))
     if name == "continue_run":
-        return continue_run(studio, actor, args or {})
+        return with_thread_id(studio.store, actor, continue_run(studio, actor, args or {}))
     return cleanup_agent_drafts(studio, actor, args or {})
 
 
@@ -629,7 +656,8 @@ def add_routes(app, house, actor) -> None:
         a = actor(request, write=True)
         b = dict(body or {})
         args, early = before(house.studio, a, "start_post", b)
-        return after(house.studio, a, "start_post", args, early if early is not None else start_post(house.studio, a, strip_control(args, "start_post")))
+        from .thread_bin import with_thread_id
+        return with_thread_id(house.store, a, after(house.studio, a, "start_post", args, early if early is not None else start_post(house.studio, a, strip_control(args, "start_post"))))
 
     @app.post("/api/agent/continue-run")
     def rest_continue_run(request: Request, body: dict = Body(default={})):
@@ -637,7 +665,8 @@ def add_routes(app, house, actor) -> None:
         a = actor(request, write=True)
         b = dict(body or {})
         args, early = before(house.studio, a, "continue_run", b)
-        return after(house.studio, a, "continue_run", args, early if early is not None else continue_run(house.studio, a, strip_control(args, "continue_run")))
+        from .thread_bin import with_thread_id
+        return with_thread_id(house.store, a, after(house.studio, a, "continue_run", args, early if early is not None else continue_run(house.studio, a, strip_control(args, "continue_run"))))
 
     @app.post("/api/agent/cleanup")
     def rest_cleanup(request: Request, body: dict = Body(default={})):

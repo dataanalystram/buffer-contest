@@ -224,11 +224,14 @@ class Takes(TakeBin):
         chans = self._channels(a, body.get("channel_ids"))
         if not chans:
             raise ActionError("Pick at least one connected channel that takes video (Instagram, TikTok, YouTube, X, LinkedIn, Threads).")
+        jev = self._jev_consent(a, body)
+        if isinstance(jev, dict):  # an MCP app asked for Jev: it waits for the person (studio/consent.py), nothing ran
+            return jev
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
         steps = [{"key": k, "label": l, "status": "pending", "detail": "", "data": None} for k, l in STEPS]
         inp = {"media_token": token, "upload_id": upload_id, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
-               "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]],
+               "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]], "jev": jev,
                "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
@@ -247,9 +250,33 @@ class Takes(TakeBin):
                    + (f" · {credit}" if credit and not owns else ""), {"source": self.media_url(token) if token else ("upload" if upload_id else (url or platform_url))})
         self._save(rid, run["steps"], run["result"])
         self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_upload": upload_id, "source_url": url, "platform_url": platform_url,
-                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small")},
+                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small"), "jev": jev},
                     "transcribe", "Reading captions, else transcribing on the video worker (faster-whisper, CPU)")
         return self.get(a, rid)
+
+    def _jev_consent(self, a: Actor, body: dict):
+        """May this take ask Jev (TypeSafe, a paid API on HuhQueue's server key) for a second opinion on faces?
+        A person in the app: yes unless they said jev: false. An MCP app: only when it asks (jev: true) AND the person
+        approves through studio/consent.py (needs_user_approval, or "Allow paid APIs" on that token). Returns True / False,
+        or the consent answer (a dict) when the app's request waits for the person."""
+        want = body.get("jev")
+        if want is not None and not isinstance(want, bool):
+            raise ActionError("jev is true or false.")
+        if a.kind != "agent":
+            return want is not False
+        if want is not True:
+            return False
+        from . import consent
+        if "clips_from_video_jev" not in consent.PAID:
+            from .media import jev_faces
+            consent.register("clips_from_video_jev", "TypeSafe Jev (HuhQueue's key)",
+                             "Jev checks up to a dozen keyframes of the video for the speaker's face",
+                             lambda args: {"calls_max": jev_faces.cap_from_env()})
+        held = consent.gate(self.h.studio, a, "clips_from_video_jev", body)
+        if held:  # the approval is filed as clips_from_video_jev; the tool the app calls again is clips_from_video (jev: true)
+            return {**held, "tool": "clips_from_video",
+                    "message": held["message"].replace("clips_from_video_jev", "clips_from_video (with jev: true)")}
+        return True
 
     def start_sample(self, a: Actor, body: dict | None = None) -> dict:
         """The sample take: Buffer's 89-minute Buffer Commit kickoff Q&A (credited), split into 5 clips ahead of time by the same
@@ -377,7 +404,7 @@ class Takes(TakeBin):
                 self._download(spec["source_url"], src)
             if spec["kind"] == "take_analyze":
                 analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=MAX_TAKE_SECS,
-                                        transcript=reuse_captions(str(src), spec))
+                                        transcript=reuse_captions(str(src), spec), jev=spec.get("jev") is True)
                 self.on_analysis(jid, analysis, "")
             else:
                 logo = self.h.get_media(spec["logo"])["data"] if spec.get("logo") and self.h.get_media(spec["logo"]) else None
@@ -420,6 +447,7 @@ class Takes(TakeBin):
         # Each read-modify-write runs under the take's lock, the same one delete / restore / purge take (take_bin.py), so a
         # callback already past its cancelled check can't save an old result over the Bin's. Picking the moments (AI
         # engines, up to minutes) runs outside it; the take is read again, and checked again, before the result is saved.
+        analysis = self._studio_jev(jid, analysis) if not error else analysis  # outside the lock: network calls
         with self._job_lock(jid):  # a fresh context each time (the lock itself is per take)
             first = self._on_analysis(jid, analysis, error)
         if first.get("done") is not None:
@@ -441,6 +469,70 @@ class Takes(TakeBin):
                 self._save(rid, steps, res, "failed")
                 return {"ok": False}
             return self._land_moments(a, rid, steps, res, mined, used)
+
+    def _jev_used(self, uid: str, add: int = 0) -> int:
+        """Jev keyframes this account used today on the server's key (the daily cap; everything stays free)."""
+        st = self.store
+        if not getattr(st, "_jev_usage_ok", False):
+            st.x("CREATE TABLE IF NOT EXISTS jev_usage (day TEXT, user_id TEXT, n INTEGER, PRIMARY KEY(day, user_id))")
+            if st.pg:
+                st.x("ALTER TABLE jev_usage ENABLE ROW LEVEL SECURITY")
+            st._jev_usage_ok = True
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        if add:
+            st.x("INSERT INTO jev_usage(day,user_id,n) VALUES(?,?,?) ON CONFLICT(day,user_id) DO UPDATE SET n=jev_usage.n+excluded.n",
+                 (day, uid, int(add)))
+        rows = st.q("SELECT n FROM jev_usage WHERE day=? AND user_id=?", (day, uid))
+        return int(rows[0]["n"]) if rows else 0
+
+    def _studio_jev(self, jid: int, analysis):
+        """A worker without TYPESAFE_API_KEY sends its keyframes (analysis["jev_frames"]); the server, which has the key, asks
+        Jev for them (studio/media/jev_faces.py studio_opinion) and merges the boxes into the face track. Only for a take whose
+        input says jev (a person in the app, or an approved MCP request), within the per-take and per-day caps. The frames
+        are never saved; the key never leaves the server and is never logged. Never fails the take."""
+        if not isinstance(analysis, dict) or "jev_frames" not in analysis:
+            return analysis
+        frames = analysis.pop("jev_frames")
+        try:
+            from .media import jev_faces
+            if self.job_cancelled(jid):
+                return analysis
+            j = self._job(jid)
+            run = self._run(Actor(j["user_id"]), j["run_id"])
+            base = {"enabled": False, "model": jev_faces.MODEL, "frames": [], "calls": 0, "used": 0, "errors": 0, "fallback": None}
+            key = os.environ.get("TYPESAFE_API_KEY", "")
+            if run["input"].get("jev") is not True:
+                analysis["jev"] = {**base, "why": "off for this take (not started by a person in the app, or not approved)"}
+                return analysis
+            if not key:
+                analysis["jev"] = {**base, "why": "off: TYPESAFE_API_KEY isn't set on the server"}
+                return analysis
+            clean = jev_faces.clean_frames(frames, jev_faces.cap_from_env())
+            with self.store.tx():  # reserve the allowance first (atomic): two takes at once can't both spend the same calls
+                cap = min(len(clean), max(0, jev_faces.daily_cap() - self._jev_used(j["user_id"])))
+                if cap > 0:
+                    self._jev_used(j["user_id"], cap)
+            if cap <= 0:
+                analysis["jev"] = {**base, "why": "off: today's free Jev allowance for this account is used up" if clean
+                                   else "on: no usable keyframes"}
+                return analysis
+            rec = None
+            try:
+                faces, rec = jev_faces.studio_opinion(analysis.get("faces") or [], clean[:cap], key, cap,
+                                                      http=getattr(self, "_jev_http", None), log=lambda m: print(m, flush=True))
+            finally:
+                spent = int((rec or {}).get("calls") or 0)
+                if cap - spent > 0:
+                    self._jev_used(j["user_id"], -(cap - spent))  # hand back what wasn't used
+            analysis["faces"], analysis["jev"] = faces, rec
+            if rec.get("used"):
+                analysis["face_detector"] = True
+                pv = analysis.get("providers") or {}
+                pv["faces"] = f"{pv.get('faces', '')} + Jev second opinion ({rec['used']} of {rec['calls']} keyframes used)".strip(" +")
+                analysis["providers"] = pv
+        except Exception as e:  # noqa: BLE001 - a second opinion never fails the take; local faces + centred crop
+            analysis["jev"] = {"enabled": False, "why": f"error: {e.__class__.__name__}", "frames": [], "fallback": "local faces + centred crop"}
+        return analysis
 
     def _mine(self, run: dict, analysis: dict, eng, chat) -> dict:
         if run["input"].get("style") == "opus":
@@ -719,7 +811,8 @@ class Takes(TakeBin):
                 "timings": res.get("timings") or {}, "picked_by": res.get("picked_by"), "moments": res.get("moments") or [],
                 "clips": clips, "created": run["created"], "updated": run["updated"],
                 "caption_limits": {ch["service"]: drafter.limit_for(ch["service"]) for ch in run["input"]["channels"]},
-                "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback")}
+                "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback"),
+                "face_jev": _jev_view(an.get("jev"))}
 
     def _can_rerender(self, a: Actor, res: dict) -> bool:
         """Trims, transcript fixes and new hooks re-render on the video worker. The sample re-renders from its bundled
@@ -1153,3 +1246,15 @@ def _daily_limits_cached(buffer, uid: str, ids: list[str], day: str) -> list:
             _LIMITS.clear()
         _LIMITS[key] = (_t.time(), lim)
     return lim
+
+
+def _jev_view(rec) -> dict | None:
+    """What the take shows about Jev's second opinion: on or off and why, and each keyframe it looked at (time, why it
+    was picked, the verdict, whether its box went into the reframe track). Never the request or any key."""
+    if not isinstance(rec, dict):
+        return None
+    keep = ("t", "why", "verdict", "face_visible", "box", "used", "ms", "error")
+    frames = [{k: f[k] for k in keep if k in f} for f in (rec.get("frames") or [])[:40] if isinstance(f, dict)]
+    return {"enabled": bool(rec.get("enabled")), "why": str(rec.get("why") or "")[:200], "model": str(rec.get("model") or "")[:40],
+            "cap": rec.get("cap"), "calls": rec.get("calls", 0), "used": rec.get("used", 0), "errors": rec.get("errors", 0),
+            "fallback": rec.get("fallback"), "frames": frames}
