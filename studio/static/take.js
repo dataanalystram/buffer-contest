@@ -420,6 +420,7 @@ const TK_IC = {  // Lucide (ISC): more-horizontal, trash-2
 };
 /** Cancel the list request in flight and a take still opening (One take was left). */
 function tkAbort() { HQLoad.start(TK_KEY).done(); HQLoad.start("takeopen").done(); }
+/** Draw a load error with a Retry button in box (role=alert, never a silent empty list). */
 function tkErr(box, msg, retry, id) {
   box.setAttribute("aria-busy", "false");
   box.innerHTML = `<div class="tk-err" role="alert" data-testid="${id}-error"><span>${esc(msg || "Something went wrong.")}</span><button type="button" class="btn2 sm" data-testid="${id}-retry">Retry</button></div>`;
@@ -429,6 +430,7 @@ function tkErr(box, msg, retry, id) {
 new MutationObserver(() => { if ($("#tab-take").hidden) { tkAbort(); if (window.hqMenu) window.hqMenu.closeIn($("#takeList")); } })
   .observe($("#tab-take"), { attributes: true, attributeFilter: ["hidden"] });
 const tkWhen = (ts) => new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+/** One card under Your takes: open button (thumb, one-line title, status) and a ⋯ menu with Delete (not on the sample). */
 function tkCard(x) {
   const title = x.title || "Your take";
   const meta = `${x.status} · ${x.clips} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${tkWhen(x.created)}`;
@@ -439,6 +441,7 @@ function tkCard(x) {
       <span class="rt"><b data-testid="take-title">${esc(title)}</b><small>${esc(meta)}</small></span></button>${menu}
   </article>`;
 }
+/** Load Your takes into #takeList through one live request (aborted when One take is left); Retry on a failure. */
 async function loadTakes() {
   const box = $("#takeList"), tk = HQLoad.start(TK_KEY), sig = { signal: tk.signal };
   if (!box.querySelector(".tk-card, .empty")) { box.innerHTML = HQLoad.rows(3, "Loading your takes"); box.setAttribute("aria-busy", "true"); }

@@ -57,7 +57,7 @@ def live(tmp_path, monkeypatch):
                                       {"id": "c2", "status": "ready", "token": t2, "hook": "Vice City is back", "start": 30, "end": 52, "score": 70}]}),
                 time.time(), time.time()))
     server = serve(app, port)
-    yield {"base": f"http://127.0.0.1:{port}", "app": app, "rid": rid, "talk": talk, "t1": t1, "ups": ups}
+    yield {"base": f"http://127.0.0.1:{port}", "app": app, "rid": rid, "talk": talk, "t1": t1, "ups": ups, "h": h}
     server.should_exit = True
 
 
@@ -197,4 +197,16 @@ def test_menus_layer_above_cards_after_a_card_menu_was_closed_and_never_open_on_
     page.get_by_test_id("library-item").first.wait_for()
     assert page.locator(".lp-menu:not([hidden])").count() == 0
     assert page.locator("[data-testid=library-filter-created-by]").get_attribute("aria-expanded") == "false"
+    assert not errors, errors
+
+
+def test_a_failing_one_take_bin_still_shows_the_librarys_bin_items(live, chromium, close_contexts):
+    """CodeRabbit (PR #115): /api/takes/bin failing must not hide the Library's own Bin items; a toast says what's missing."""
+    base = live["base"]
+    live["h"].library.delete(A, live["ups"][0])
+    page, errors, _ = _page(chromium, base, 1280)
+    page.route("**/api/takes/bin", lambda r: r.fulfill(status=500, content_type="application/json", body='{"error": "Takes Bin is resting."}'))
+    page.locator("#libViewBin").click()
+    pw.expect(page.get_by_test_id("bin-item")).to_have_count(1)
+    pw.expect(page.locator("#toast")).to_contain_text("Takes Bin is resting.")
     assert not errors, errors

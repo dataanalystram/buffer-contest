@@ -291,6 +291,7 @@ function libMediaList(it) {
 // so Back landed on Threads). Now the run is fetched first and only its own screen is opened, once: one history entry,
 // and Back returns to the Library. A newer View run, or leaving the screen meanwhile, drops the late answer.
 const visibleTab = () => (document.querySelector(".tab:not([hidden])") || {}).id || "";  // showTab shows exactly one .tab
+/** Open a run (View run, Used in, a deep link): fetch it first, then show its own screen once. */
 async function openRunById(rid) {
   const tk = HQLoad.start("openrun"), from = visibleTab();
   try {
@@ -311,6 +312,7 @@ const isSheet = () => matchMedia("(max-width:640px)").matches;
 // element it raised and closing resets exactly that one; a list redraw, leaving the screen and a back/forward page
 // restore close an open menu, so none is ever drawn open on load.
 let MENU = null;
+/** Close the open menu, reset the element it raised, drop a phone scrim, and optionally give focus back to its button. */
 function closeMenus(focusBack) {
   if (!MENU) return;
   const { btn, menu, raised } = MENU; MENU = null;
@@ -521,6 +523,7 @@ function takeBinItems(tb) {
 }
 const takeRef = (it) => (it.bin_kind === "clip" ? { take_id: it.take_id, clip_id: it.clip_id } : { take_id: it.take_id });
 const takeRestore = (it) => api(it.bin_kind === "clip" ? takeClipPath(it, "/restore") : `/api/takes/${encodeURIComponent(it.take_id)}/restore`, { method: "POST", body: {} });
+/** Purge One take Bin rows for good (POST /api/takes/bin/purge); returns the Library Bin ids purged and refused. */
 async function takePurge(its) {
   if (!its.length) return { purged: [], refused: [] };
   const body = { take_ids: its.filter((x) => x.bin_kind === "take").map((x) => x.take_id),
@@ -529,6 +532,8 @@ async function takePurge(its) {
   const gone = new Set([...(r.purged_takes || []).map((t) => `take:${t}`), ...(r.purged_clips || []).map((c) => `clip:${c.take_id}:${c.clip_id}`)]);
   return { purged: its.filter((x) => gone.has(x.id)).map((x) => x.id), refused: (r.refused || []).map((x) => ({ ...x, id: x.clip_id ? `clip:${x.take_id}:${x.clip_id}` : `take:${x.take_id}` })) };
 }
+/** One take take or clip in the Library Bin: a placeholder still (binned files aren't served), days left, Restore and
+ *  Delete permanently. Every value is escaped. */
 function takeBinCard(it) {
   return `<article class="lp-card lp-bin lp-take-bin${LIB.sel.has(String(it.id)) ? " picked" : ""}" data-testid="bin-item" data-kind="${esc(it.bin_kind)}" data-id="${esc(it.id)}">
     ${selBox(it)}
@@ -556,8 +561,12 @@ async function loadBin(opts = {}) {
   const tk = HQLoad.start("library"); ++LIB.seq;  // aborts a Library request still in flight: its cards never land here
   libLoading(4, opts.keep);
   try {
-    const [lb, tb] = await Promise.all([api("/api/library/bin", { signal: tk.signal }), api("/api/takes/bin", { signal: tk.signal })]);
+    // the two Bins load side by side; One take's failing never hides the Library's items (a partial Bin, said in a toast)
+    let takeErr = "";
+    const [lb, tb] = await Promise.all([api("/api/library/bin", { signal: tk.signal }),
+      api("/api/takes/bin", { signal: tk.signal }).catch((e) => { if (HQLoad.aborted(e)) throw e; takeErr = e.message; return { takes: [], clips: [] }; })]);
     if (!tk.live() || LIB.view !== "bin") return;
+    if (takeErr) toast(`One take's deleted takes and clips didn't load: ${takeErr}`, 6000);
     const items = [...lb.items, ...takeBinItems(tb)].sort((p, q) => (q.deleted_at || 0) - (p.deleted_at || 0));
     const d = { ...lb, items, total: items.length };
     LIB.bin = d.items; LIB.binData = d;
