@@ -27,6 +27,8 @@ services:
         value: dataanalystram/buffer-contest
       - key: GH_DISPATCH_TOKEN     # fine-grained PAT: Actions read/write on this repo only
         sync: false
+      - key: CHANNEL3_API_KEY      # Commerce (docs/COMMERCE.md): free tier only, hard stop at 1,000 credits/month in code
+        sync: false
 databases:
   - name: huhqueue-studio-db
     plan: free
