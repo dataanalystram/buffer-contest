@@ -97,14 +97,21 @@ def test_a_binned_take_or_clip_leaves_the_library_and_is_counted_in_its_bin(huma
 
 
 def test_take_index_skips_a_malformed_run_and_never_reads_another_persons(app):
+    """Every take run is read, however many newer runs there are; another person's never."""
     st = app.state.store
     st.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
          ("acc_1", "take", "{}", "ready", "[]", "not json", time.time(), time.time()))
     st.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
-         ("acc_1", "take", "{}", "ready", "[]", json.dumps({"clips": ["x", {"id": "c9", "status": "binned", "token": 7}]}), time.time(), time.time()))
+         ("acc_1", "take", "{}", "ready", "[]", json.dumps({"clips": [{"id": "c9", "status": "binned", "token": 7}]}), time.time(), time.time()))
     _take(st, "acc_other", [{"id": "c1", "status": "binned", "token": "theirs.mp4"}], status="ready")
-    idx = app.state.house.library._take_index(A)
-    assert idx["bin_n"] == 1 and "theirs.mp4" not in idx["binned"] and idx["clips"] == {}
+    old = _take(st, "acc_1", [{"id": "c1", "status": "binned", "token": "old.mp4"}], name="An old take")
+    for i in range(205):  # 205 newer runs: the old take is still read
+        st.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
+             ("acc_1", "agent", "{}", "ready", "[]", "{}", time.time(), time.time()))
+    lib = app.state.house.library
+    idx = lib._take_index(lib._runs(A))
+    assert idx["bin_n"] == 2 and "theirs.mp4" not in idx["binned"] and "old.mp4" in idx["binned"] and idx["clips"] == {}
+    assert old in idx["runs"]
 
 
 def test_mcp_list_library_offers_the_one_take_filter(human, app):

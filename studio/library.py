@@ -612,7 +612,10 @@ class Library:
     def _runs(self, a: Actor) -> list[dict]:
         from .house import _run_thumb, _run_thumb_src
         out = []
-        for r in self.store.q("SELECT id, kind, input, result, status, created FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT 200", (a.uid,)):
+        # the latest 200 runs, and every One take run however old (the One take filter, its clips' delete and the one Bin
+        # need them all), in one read
+        for r in self.store.q("SELECT id, kind, input, result, status, created FROM agent_runs WHERE user_id=? AND (kind='take' OR id IN "
+                              "(SELECT id FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT 200)) ORDER BY id DESC", (a.uid, a.uid)):
             try:
                 inp, res = json.loads(r["input"] or "{}"), json.loads(r["result"] or "{}")
             except ValueError:
@@ -715,7 +718,7 @@ class Library:
         else:
             runs = self._runs(a)  # one query for every run; each item's "used in" is matched in memory (no N+1)
             self.backfill(a, runs)
-            takes = self._take_index(a)
+            takes = self._take_index(runs)
             where, args = ["user_id=?", "storage NOT IN ('pending','trash')"], [a.uid]
             if flt.get("since"):  # the cheap filters go to SQL (date, who made it); type stays in memory for the tab counts
                 where.append("created >= ?")
@@ -774,17 +777,17 @@ class Library:
                 "facets": facets, "filters": {k: v for k, v in flt.items() if k != "since" and v not in ("", None)},
                 "_take_bin_n": take_bin_n}
 
-    def _take_index(self, a: Actor) -> dict:
-        """This person's One take runs in one read: their ids, which media token is which clip (so a Library delete of a clip
+    @staticmethod
+    def _take_index(runs: list[dict]) -> dict:
+        """This person's One take runs (from _runs, the list's one read of agent_runs, which holds every take run): their ids, which media token is which clip (so a Library delete of a clip
         goes to the take's Bin), the tokens of takes and clips in the Bin (hidden from the Library list) and how many
         takes and clips the Bin holds (the Library's Bin count). Owner-scoped; a malformed run is skipped."""
         out: dict = {"runs": set(), "clips": {}, "binned": set(), "bin_n": 0}
-        for r in self.store.q("SELECT id, status, result FROM agent_runs WHERE user_id=? AND kind='take'", (a.uid,)):
-            out["runs"].add(r["id"])
-            try:
-                res = json.loads(r["result"] or "{}") or {}
-            except ValueError:
+        for r in runs:
+            if r.get("kind") != "take":
                 continue
+            out["runs"].add(r["run_id"])
+            res = r.get("_res")
             if not isinstance(res, dict):
                 continue
             binned = r["status"] == "binned"
@@ -802,7 +805,7 @@ class Library:
                     if not binned:
                         out["bin_n"] += 1
                 elif toks and isinstance(c.get("token"), str) and c.get("id"):
-                    out["clips"][c["token"].removeprefix(TRASH_TOKEN)] = (r["id"], str(c["id"]))
+                    out["clips"][c["token"].removeprefix(TRASH_TOKEN)] = (r["run_id"], str(c["id"]))
         return out
 
     def item(self, a: Actor, iid) -> dict:
