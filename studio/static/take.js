@@ -244,6 +244,7 @@ function pfMini(c) {
   const pf = c.preflight || {};
   return Object.entries(pf).map(([cid, r]) => `<span class="pf-chip s-${esc(r.status)}" data-testid="clip-preflight" data-status="${esc(r.status)}" title="${esc((r.findings || []).map((f) => f.message).join("\n"))}"><b aria-hidden="true">${PF_ICON[r.status]}</b><span class="sr">${PF_WORD[r.status]}: </span>${esc(r.chip)}</span>`).join("");
 }
+const LAYOUT_IC = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/></svg>`;  // Lucide layout-template
 const SCISSORS = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg>`;
 function clipRow(c, n, k) {
   const placed = (c.placements || []).filter((p) => ["draft", "pending_approval"].includes(p.status));
@@ -263,13 +264,14 @@ function clipRow(c, n, k) {
       ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${p.status === "draft" ? "Buffer draft" : "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
     </div>
-    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button><a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
+    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button>${T.take && T.take.style === "take" && !T.take.sample ? `<button type="button" class="btn2 sm" data-act="layout" data-clip="${esc(c.id)}" data-testid="clip-layout">${LAYOUT_IC}<span>Layout</span></button>` : ""}<a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
   </li>`;
 }
 
 // ---------------------------------------------------------------- per-clip editor: Trim & caption (takeedit.js)
 function clipAct(act, id) {
   if (act === "edit" && window.openClipEditor) window.openClipEditor(id);
+  if (act === "layout" && window.openClipLayout) window.openClipLayout(id);  // takelayout.js
   if (act === "delete") deleteClip(id);
 }
 async function deleteClip(id) {
