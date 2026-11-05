@@ -139,13 +139,23 @@ def test_cleanup_skips_a_row_rewritten_after_it_was_verified(app, human, s3, mon
 
 
 def test_second_runner_does_nothing_while_one_holds_the_lock(app, s3, monkeypatch):
+    """Postgres: another session holds the advisory lock (another instance mid-run); SQLite: the in-process lock."""
+    store = app.state.store
     monkeypatch.setenv("HQ_R2_MIGRATE", "copy")
-    assert r2_migrate_bg._PROC.acquire(blocking=False)
+    if store.pg:
+        held = r2_migrate_bg._Conn(store.path)
+        assert held.q("SELECT pg_try_advisory_lock(?) AS ok", (r2_migrate_bg.LOCK_KEY,))[0]["ok"]
+        release = held.close
+    else:
+        assert r2_migrate_bg._PROC.acquire(blocking=False)
+        release = r2_migrate_bg._PROC.release
     try:
-        assert r2_migrate_bg.run(app.state.store, _bucket(), log=lambda *_: None)["state"] == "other_instance"
+        assert r2_migrate_bg.run(store, _bucket(), log=lambda *_: None)["state"] == "other_instance"
     finally:
-        r2_migrate_bg._PROC.release()
+        release()
     assert not s3.calls
+    if store.pg:  # the lock is released when its holder's session ends: the next run gets it
+        assert r2_migrate_bg.run(store, _bucket(), log=lambda *_: None)["state"] == "done"
 
 
 def test_not_configured_does_nothing(app, monkeypatch):

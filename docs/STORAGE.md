@@ -54,6 +54,35 @@ if any row failed, 2 if R2 isn't configured. The sweep never deletes a key that 
 already go to R2; dry run; run; then `VACUUM FULL media, library_chunks;` in the Supabase SQL editor at a quiet moment,
 because Postgres only reuses freed space and the 500 MB quota counts the table files).
 
+## In-process migration (`HQ_R2_MIGRATE`, 5 Nov 2026)
+Render's free web service has no shell and a Render Job is billed per second, so the same copy and cleanup also run
+**inside the web service**, on a background thread 30 s after boot (`HQ_R2_MIGRATE_DELAY_S`), when the operator sets
+`HQ_R2_MIGRATE` on the service (`studio/r2_migrate_bg.py`):
+
+| Value | What it does |
+|---|---|
+| unset, `off`, anything else | nothing |
+| `copy` | `migrate(keep_db_copy=True)`: each row still holding bytes is PUT, read back (streamed, length + sha256) and only then switched to its key; the database copy stays |
+| `cleanup` | `cleanup()`: each row on R2 that still has its database copy is re-downloaded and its sha256 compared with the one recorded at copy time; only a match drops that row's copy (the UPDATE is guarded on the key and that hash). Setting this value is the operator's approval, as `--i-have-a-verified-backup` is for the CLI |
+
+- **One instance**: `pg_try_advisory_lock(0x48515232)` on the migration's own connection; an instance that doesn't get it
+  (old and new overlap during a deploy) does nothing and reports `other_instance`.
+- **Bounded memory, no contention**: one row at a time on that dedicated connection (the requests' shared connection is
+  never held by a large read), at most one file in memory (largest today 26 MB); the read-back check streams in 1 MB pieces.
+- **Free-tier caps** (`r2usage`) stop it before any cap, counted in the app's own `r2_usage` rows; the rows left keep
+  their bytes. **Egress**: its database reads are metered apart (`egress.migration_read`, `/healthz` → `egress.db_migration_bytes_today`)
+  and never count toward `HQ_EGRESS_DB_DAILY_MB`, so the one-off copy can't pause anyone's previews.
+- **Idempotent and resumable**: a restart (deploy, crash) runs it again and it skips what is done. Unset the variable once
+  `/healthz` shows `done`.
+- **Report** (numbers and fixed words only): `/healthz` → `r2_migrate` (`mode`, `state` = waiting / running / done /
+  done_with_errors / failed / other_instance / not_configured / off, `copied`, `verified`, `failed`, `skipped`, `dropped`,
+  `kept`, `bytes`, `before` / `after` row counts) and `GET /api/admin/egress` → `r2_migrate` (the same plus `now`: rows still
+  only in the database), shown under Media bandwidth in `/admin`. One `r2 migrate: report …` log line at the end.
+- Never runs in tests unless a test sets the variable or calls `run()`.
+
+Order on production: set the `R2_*` variables and `HQ_R2_MIGRATE=copy` → deploy → `/healthz` shows `done` and spot checks
+pass → `HQ_R2_MIGRATE=cleanup` → deploy → `done` → `VACUUM FULL media, library_chunks;` → unset `HQ_R2_MIGRATE`.
+
 ## Bucket settings
 Same bucket as One take is fine (different prefixes: `takes/`, `media/`, `lib/`). Do **not** add a lifecycle rule that
 expires `media/` or `lib/`: those are the person's Library and posts. `scripts/r2_bucket_setup.py` prints the CORS
