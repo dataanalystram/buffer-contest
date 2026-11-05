@@ -170,6 +170,7 @@ function stopWatch() {
   clearTimeout(H.poll); H.watching = null;
   if (H.unwake) { H.unwake(); H.unwake = null; }
   if (H.abort) { H.abort.abort(); H.abort = null; }
+  if (H.unvis) { H.unvis(); H.unvis = null; }
 }
 function watch(id) {
   // keeps polling through a failed request (a deploy, a cold start): one error used to stop the UI at "Write captions"
@@ -198,7 +199,7 @@ function watch(id) {
       const r = got.run; tag = got.tag; pace = POLL_MIN;
       showRun(r);
       if (["running", "rendering"].includes(r.status)) later(1400);
-      else { if (H.watching === id) { H.watching = null; H.abort = null; } loadRuns(); readyBadge(); }
+      else { if (H.watching === id) { H.watching = null; H.abort = null; if (H.unvis) { H.unvis(); H.unvis = null; } } loadRuns(); readyBadge(); }
     } catch (e) {
       if (!mine()) return;  // a newer watcher owns the poll now: a late failure never touches its timer or wake listener
       if (window.HQLoad && HQLoad.aborted(e)) return;
@@ -207,6 +208,10 @@ function watch(id) {
       later(Math.min(15000, 1500 * 2 ** Math.min(errs, 4)));
     }
   };
+  // the tab hidden mid-wait: the pending poll is dropped at once (not sent later while hidden) and the wake catches up
+  const onVis = () => { if (!mine() || !document.hidden) return; clearTimeout(H.poll); if (H.unwake) H.unwake(); H.unwake = wakeUp(); };
+  document.addEventListener("visibilitychange", onVis);
+  H.unvis = () => document.removeEventListener("visibilitychange", onVis);
   H.poll = setTimeout(tick, 900);
 }
 // leaving the thread's screen stops the poll; coming back to a run that is still working starts it again
