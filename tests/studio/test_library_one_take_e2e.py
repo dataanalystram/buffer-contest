@@ -209,4 +209,12 @@ def test_a_failing_one_take_bin_still_shows_the_librarys_bin_items(live, chromiu
     page.locator("#libViewBin").click()
     pw.expect(page.get_by_test_id("bin-item")).to_have_count(1)
     pw.expect(page.locator("#toast")).to_contain_text("Takes Bin is resting.")
+    # CodeRabbit round 2: a partial Bin can't be emptied (the purge would take One take's unseen takes and clips too)
+    pw.expect(page.get_by_test_id("library-empty-bin")).to_be_disabled()
+    pw.expect(page.get_by_test_id("library-bin-note")).to_contain_text("didn't load")
+    page.unroute("**/api/takes/bin")
+    page.locator("#libViewItems").click()
+    page.locator("#libViewBin").click()
+    pw.expect(page.get_by_test_id("library-empty-bin")).to_be_enabled()
+    pw.expect(page.get_by_test_id("library-bin-note")).to_contain_text("7 days")
     assert not errors, errors

@@ -152,7 +152,7 @@ async function libPurge(body, ids) {
   binDrop(ids);
   const b = $("#libEmptyBin"); b.disabled = true;
   try { const r = await api("/api/library/bin/purge", { method: "POST", body }); libMeter(r); return r; }
-  finally { b.disabled = false; loadLibrary({ keep: true }); }  // the current view: a purge that ends after a switch to Library must not leave it loading
+  finally { b.disabled = !!(LIB.binData && LIB.binData.take_err); loadLibrary({ keep: true }); }  // the current view: a purge that ends after a switch to Library must not leave it loading
 }
 // draws the Library from an /api/library answer: loadLibrary after it fetches, and the boot-end redraw from LIB.data
 function libDraw(d) {
@@ -568,11 +568,22 @@ async function loadBin(opts = {}) {
     if (!tk.live() || LIB.view !== "bin") return;
     if (takeErr) toast(`One take's deleted takes and clips didn't load: ${takeErr}`, 6000);
     const items = [...lb.items, ...takeBinItems(tb)].sort((p, q) => (q.deleted_at || 0) - (p.deleted_at || 0));
-    const d = { ...lb, items, total: items.length };
+    // take_err marks a partial Bin: Empty bin stays off until One take's Bin loads, so it can't purge takes nobody saw
+    const d = { ...lb, items, total: items.length, take_err: takeErr };
     LIB.bin = d.items; LIB.binData = d;
     binDraw(d);
   } catch (e) { if (!HQLoad.aborted(e) && tk.live()) { grid.innerHTML = `<div class="st err">${esc(e.message)}</div>`; grid.setAttribute("aria-busy", "false"); } }
   finally { if (tk.live()) { HQLoad.busy(grid.parentElement, false); tk.done(); } }
+}
+/** A partial Bin (One take's Bin didn't load): a lasting note and Empty bin off, so it can't purge unseen takes and clips. */
+function binPartial(err) {
+  const eb = $("#libEmptyBin"), note = $("#libBinNote");
+  if (note.dataset.def === undefined) note.dataset.def = note.textContent;
+  eb.disabled = !!err;
+  eb.title = err ? "Off until One take's deleted takes and clips load" : "";
+  note.textContent = err ? `One take's deleted takes and clips didn't load (${err}). Empty bin is off until they do: open the Bin again to retry.` : note.dataset.def;
+  note.classList.toggle("lp-warn", !!err);
+  if (err) note.setAttribute("role", "status"); else note.removeAttribute("role");
 }
 // draws the Bin from an /api/library/bin answer: loadBin after it fetches, and the boot-end redraw from LIB.binData
 function binDraw(d) {
@@ -584,6 +595,7 @@ function binDraw(d) {
   const page = d.items.slice((LIB.binPage - 1) * per, LIB.binPage * per);
   LIB.pageIds = page.map((x) => String(x.id));
   $("#libSelAllWrap").hidden = !page.length; $("#libEmptyBin").hidden = !d.items.length;
+  binPartial(d.take_err);
   closeMenusIn(grid);
   grid.innerHTML = page.length ? page.map(binCard).join("")
     : `<div class="lp-empty" data-testid="bin-empty"><span class="lp-empty-ic" aria-hidden="true">${IC.bin}</span><b>The Bin is empty</b><span>Items you move to the Bin stay here for ${d.days} days, then they're removed for good.</span></div>`;
@@ -608,6 +620,7 @@ function binDraw(d) {
   libFoot(d.items.length, (LIB.binPage - 1) * per, page.length, "items", (n) => { LIB.binPage = n; loadBin(); libTop(); });
 }
 $("#libEmptyBin").onclick = async () => {
+  if (LIB.binData && LIB.binData.take_err) return;  // a partial Bin never empties: One take's takes and clips weren't shown
   if (!(await hqConfirm("Empty the Bin? Every item in it is deleted permanently now. This can't be undone.", { ok: "Empty bin", danger: true }))) return;
   try {
     libSelClear(); binDrop((LIB.bin || []).filter((x) => x.bin_kind).map((x) => x.id));
