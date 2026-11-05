@@ -20,7 +20,7 @@ def _no_remote():
 def test_check_enforces_every_groq_limit_with_the_margin():
     now = 100000.0
     assert free_quota.check([], "groq", 30, now) == (True, "")
-    rpm = [(now - 1, 10.0)] * 17                                       # 18th request: over 90% of 20/min
+    rpm = [(now - 1, 10.0)] * 18                                       # 19th request: over 90% of 20/min
     assert not free_quota.check(rpm, "groq", 10, now)[0]
     hour = [(now - 120 - i, 600.0) for i in range(10)]                 # 6,000 s in the hour + 600 > 6,480
     assert not free_quota.check(hour, "groq", 600, now)[0]
