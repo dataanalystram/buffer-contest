@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import difflib
+import contextlib
 import json
 import os
 import re
@@ -30,6 +31,7 @@ import httpx
 
 from . import brand, demo, drafter, llm, netguard, sources, take
 from .actions import CONFIRM_TTL, ActionError, Actor
+from .take_bin import TakeBin
 from .store import sha
 
 MOMENTS_AI = "AI engine"  # placeholder source while the engine order runs; replaced by the engine that answered
@@ -65,15 +67,44 @@ def sample_meta() -> dict | None:
     return json.loads(p.read_text()) if p.exists() else None
 
 
-class Takes:
+class Takes(TakeBin):
     def __init__(self, house):
         self.h, self.studio, self.store, self.s = house, house.studio, house.store, house.s
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()  # guards _locks only
+        self._locks: dict[int, threading.RLock] = {}
+        self._held = threading.local()  # how many take locks this thread holds (House._sweep_quietly skips while > 0)
 
     # ------------------------------------------------------------------ helpers
+    def holds_take_lock(self) -> bool:
+        return getattr(self._held, "n", 0) > 0
+
+    @contextlib.contextmanager
+    def _take_lock(self, rid):
+        """One lock per take: a worker callback's read-modify-write and the Bin's delete / restore / purge of that take never
+        interleave, and one take's slow step never holds up anyone else's (Greptile / CodeRabbit, PR #107). Taken before any
+        store transaction, never inside one."""
+        try:
+            rid = int(rid)
+        except (TypeError, ValueError):
+            rid = -1
+        with self._lock:
+            lk = self._locks.setdefault(rid, threading.RLock())
+        with lk:
+            # The watchdog sweep (House.sweep_stale_jobs) runs other takes' callbacks, which take their locks: it never
+            # runs on a thread holding one, so take locks are only ever nested by a purge, in id order (no deadlock).
+            self._held.n = getattr(self._held, "n", 0) + 1
+            try:
+                yield lk
+            finally:
+                self._held.n -= 1
+
+    def _job_lock(self, jid: int):
+        rows = self.store.q("SELECT run_id FROM render_jobs WHERE id=?", (jid,))
+        return self._take_lock(rows[0]["run_id"] if rows else -1)
+
     def _run(self, a: Actor, rid: int) -> dict:
         r = self.h.run(a, rid)
-        if r["kind"] != "take":
+        if r["kind"] != "take" or r["status"] == "binned":  # a take in the Bin is gone until it is restored
             raise ActionError("No such take.", 404)
         return r
 
@@ -145,18 +176,22 @@ class Takes:
         if not (owns or rights):
             raise ActionError("Confirm this is your own video (owns: true), or that you have the right to clip it "
                               "(rights_confirmed: true, with a credit line). One take only clips videos you own or have the rights to.")
-        token, url = (body.get("media_token") or "").strip(), (body.get("url") or body.get("media_url") or "").strip()
+        token, url = str(body.get("media_token") or "").strip(), str(body.get("url") or body.get("media_url") or "").strip()
+        upload_id = str(body.get("upload_id") or "").strip()
+        if upload_id:  # a long video uploaded in parts to the bucket (take_upload.py): checked now, claimed once the take exists
+            self.h.take_uploads.check_ready(a, upload_id)
+            token, url = "", ""
         base = self.s.public_url.rstrip("/") + "/m/"
         if url.startswith(base):
             token, url = url[len(base):], ""
-        if not token and not url:
+        if not token and not url and not upload_id:
             raise ActionError("Upload a video (media_token), or give a link to the video (a YouTube / Vimeo / X post, or a file).")
         platform_url, credit = "", str(body.get("credit") or "").strip()[:160]
         if token:
             meta = self.h.media_meta(a, token)
             if not meta or meta.get("type") != "video":
                 raise ActionError("Unknown video. Upload it first (POST /api/media).", 404)
-        else:
+        elif url:
             p = urlparse(url)
             if p.scheme != "https" or not p.hostname or not drafter._public(p.hostname):
                 raise ActionError("The link must be a public https:// address of a video.")
@@ -192,7 +227,7 @@ class Takes:
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
         steps = [{"key": k, "label": l, "status": "pending", "detail": "", "data": None} for k, l in STEPS]
-        inp = {"media_token": token, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
+        inp = {"media_token": token, "upload_id": upload_id, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
                "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]],
                "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
@@ -200,12 +235,18 @@ class Takes:
         rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
                            (a.uid, "take", json.dumps(inp), "running", json.dumps(steps), json.dumps({}), _now(), _now()))
         self.store.audit(a.uid, a.label, "clips_from_video", "read",
-                         {"take": rid, "source": "upload" if token else ("platform" if platform_url else "link"), "style": style})
+                         {"take": rid, "source": "upload" if token or upload_id else ("platform" if platform_url else "link"), "style": style})
+        if upload_id:
+            try:
+                self.h.take_uploads.claim_for_take(a, upload_id, rid)
+            except ActionError:  # another take claimed it first: this run never starts
+                self.store.x("DELETE FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
+                raise
         run = self._run(a, rid)
-        self._step(run["steps"], "upload", "done", "Your upload" if token else f"Your link ({urlparse(url or platform_url).hostname})"
-                   + (f" · {credit}" if credit and not owns else ""), {"source": self.media_url(token) if token else (url or platform_url)})
+        self._step(run["steps"], "upload", "done", "Your upload" if token or upload_id else f"Your link ({urlparse(url or platform_url).hostname})"
+                   + (f" · {credit}" if credit and not owns else ""), {"source": self.media_url(token) if token else ("upload" if upload_id else (url or platform_url))})
         self._save(rid, run["steps"], run["result"])
-        self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_url": url, "platform_url": platform_url,
+        self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_upload": upload_id, "source_url": url, "platform_url": platform_url,
                              "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small")},
                     "transcribe", "Reading captions, else transcribing on the video worker (faster-whisper, CPU)")
         return self.get(a, rid)
@@ -301,8 +342,11 @@ class Takes:
             from .media import yt_fallback
             spec["yt_fallback"] = yt_fallback.config()
         base = self.s.public_url.rstrip("/") + "/m/"
+        src = spec.get("source_url") or (base + spec["source"] if spec.get("source") else "")
+        if spec.get("source_upload"):  # a multipart upload in the bucket: a presigned GET the worker streams
+            src = self.h.take_uploads.signed_url(spec["source_upload"])
         return {"id": jid, "status": j["status"], "spec": spec,
-                "urls": {"source": spec.get("source_url") or (base + spec["source"] if spec.get("source") else ""),
+                "urls": {"source": src,
                          "logo": base + spec["logo"] if spec.get("logo") else ""}}
 
     def _local_job(self, jid: int) -> None:
@@ -317,6 +361,11 @@ class Takes:
                 if win.parent != SAMPLE_DIR.resolve() or not win.is_file():
                     raise take.TakeError("The sample's source window is missing.")
                 src.write_bytes(win.read_bytes())
+            elif spec.get("source_upload"):
+                url_ = self.h.take_uploads.signed_url(spec["source_upload"])
+                if not url_:
+                    raise take.TakeError("The uploaded video is gone. Upload it again.")
+                self._download(url_, src)
             elif spec.get("source"):
                 m = self.h.get_media(spec["source"])
                 if not m:
@@ -348,7 +397,8 @@ class Takes:
 
     def _download(self, url: str, dest: Path) -> None:
         """Stream a linked video to disk (public https host only, size-capped); never held in memory."""
-        limit = int(os.environ.get("HQ_MAX_TAKE_BYTES", str(1500 * 1024 * 1024)))
+        from .take_upload import max_bytes
+        limit = int(os.environ.get("HQ_MAX_TAKE_BYTES") or max_bytes())  # was 1500 MB: the "~1500 MB" limit (owner, 4 Nov 2026)
         n = 0
         try:  # https only, every redirect hop checked again (SECURITY_RULES 1)
             with netguard.safe_stream(url, http=self.h.http, https_only=True, headers=sources.UA, timeout=60) as r:
@@ -367,6 +417,47 @@ class Takes:
 
     # ------------------------------------------------------------------ callbacks (worker or local)
     def on_analysis(self, jid: int, analysis: dict | None, error: str = "") -> dict:
+        # Each read-modify-write runs under the take's lock, the same one delete / restore / purge take (take_bin.py), so a
+        # callback already past its cancelled check can't save an old result over the Bin's. Picking the moments (AI
+        # engines, up to minutes) runs outside it; the take is read again, and checked again, before the result is saved.
+        with self._job_lock(jid):  # a fresh context each time (the lock itself is per take)
+            first = self._on_analysis(jid, analysis, error)
+        if first.get("done") is not None:
+            return first["done"]
+        a, rid, run, eng, chat, used = first["ctx"]
+        try:
+            mined = self._mine(run, analysis, eng, chat)
+        except take.TakeError as e:
+            mined = e
+        with self._job_lock(jid):
+            if self.job_cancelled(jid):
+                return {"ok": False, "cancelled": True}
+            fresh = self._run(a, rid)
+            if fresh["status"] != "running":  # deleted and restored meanwhile (restore says failed): its analysis is over
+                return {"ok": False, "cancelled": True}
+            steps, res = fresh["steps"], fresh["result"]
+            if isinstance(mined, take.TakeError):
+                self._step(steps, "moments", "failed", str(mined))
+                self._save(rid, steps, res, "failed")
+                return {"ok": False}
+            return self._land_moments(a, rid, steps, res, mined, used)
+
+    def _mine(self, run: dict, analysis: dict, eng, chat) -> dict:
+        if run["input"].get("style") == "opus":
+            from .media import longform
+            lo, hi = (run["input"].get("range") or [longform.MIN_S, longform.MAX_S])[:2]
+            mined = longform.pick_moments(analysis.get("words") or [], (analysis.get("probe") or {}).get("duration"),
+                                          run["input"].get("count"), lo, hi, scenes=analysis.get("scenes"),
+                                          silences=analysis.get("silences"), engine=eng, chat_json=chat)
+            for m in mined["moments"]:
+                m["why"] = m["reason"]
+            return mined
+        return take.mine_moments(analysis, run["input"].get("count"), eng, chat)
+
+    def _on_analysis(self, jid: int, analysis: dict | None, error: str = "") -> dict:
+        """The locked first half of on_analysis: {"done": answer} when it ends here, else {"ctx": ...} to pick moments."""
+        if self.job_cancelled(jid):  # the take was deleted meanwhile: nothing lands on it
+            return {"done": {"ok": False, "cancelled": True}}
         j = self._job(jid)
         a, rid = Actor(j["user_id"]), j["run_id"]
         run = self._run(a, rid)
@@ -375,7 +466,7 @@ class Takes:
             self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", ((error or "no analysis")[:500], _now(), jid))
             self._step(steps, "transcribe", "failed", (error or "The worker returned no transcript.")[:300])
             self._save(rid, steps, res, "failed")
-            return {"ok": False}
+            return {"done": {"ok": False}}
         self.store.x("UPDATE render_jobs SET status='done', updated=? WHERE id=?", (_now(), jid))
         res["analysis"] = analysis
         res["providers"], res["timings"] = analysis.get("providers", {}), analysis.get("timings", {})
@@ -388,21 +479,9 @@ class Takes:
         self._step(steps, "moments", "running", "Scoring every stretch of the talk")
         self._save(rid, steps, res)
         eng, chat, used = self._moment_chat(a)
-        try:
-            if run["input"].get("style") == "opus":
-                from .media import longform
-                lo, hi = (run["input"].get("range") or [longform.MIN_S, longform.MAX_S])[:2]
-                mined = longform.pick_moments(analysis.get("words") or [], (analysis.get("probe") or {}).get("duration"),
-                                              run["input"].get("count"), lo, hi, scenes=analysis.get("scenes"),
-                                              silences=analysis.get("silences"), engine=eng, chat_json=chat)
-                for m in mined["moments"]:
-                    m["why"] = m["reason"]
-            else:
-                mined = take.mine_moments(analysis, run["input"].get("count"), eng, chat)
-        except take.TakeError as e:
-            self._step(steps, "moments", "failed", str(e))
-            self._save(rid, steps, res, "failed")
-            return {"ok": False}
+        return {"ctx": (a, rid, run, eng, chat, used)}
+
+    def _land_moments(self, a: Actor, rid: int, steps: list, res: dict, mined: dict, used: dict) -> dict:
         if used.get("label") and mined["picked_by"].startswith(MOMENTS_AI):
             mined["picked_by"] = used["label"] + mined["picked_by"][len(MOMENTS_AI):]
         res["moments"], res["picked_by"] = mined["moments"], mined["picked_by"]
@@ -439,7 +518,8 @@ class Takes:
         for k in ("reframe", "captions", "covers"):
             self._step(run["steps"], k, "running", f"0 of {len(clips)} clips")
         self._save(rid, run["steps"], res, "rendering")
-        spec = {"kind": "take_render", "source": run["input"].get("media_token") or "", "source_url": run["input"].get("url") or "",
+        spec = {"kind": "take_render", "source": run["input"].get("media_token") or "", "source_upload": run["input"].get("upload_id") or "",
+                "source_url": run["input"].get("url") or "",
                 "platform_url": run["input"].get("platform_url") or "",
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": p, "logo": kit.get("logo") or "",
                 "scenes": an.get("scenes") or [], "src": an["probe"], "clips": clips,
@@ -474,13 +554,17 @@ class Takes:
         self._queue(a, rid, spec, "reframe", "Re-rendering 1 clip on the video worker")
 
     def on_clip(self, jid: int, clip_id: str, data: bytes, cover: bytes, meta: dict) -> dict:
-        with self._lock:
+        with self._job_lock(jid):
+            if self.job_cancelled(jid):
+                return {"ok": False, "cancelled": True}
             j = self._job(jid)
             a, rid = Actor(j["user_id"]), j["run_id"]
             run = self._run(a, rid)
             steps, res = run["steps"], run["result"]
             base_id, _, ratio = clip_id.partition("@")
             clip = next((c for c in res.get("clips", []) if c["id"] == base_id), None)
+            if clip and clip.get("status") == "binned":  # deleted while it rendered
+                return {"ok": False, "cancelled": True}
             if not clip:
                 raise ActionError("No such clip.", 404)
             if ratio:  # another aspect ratio of the same clip (Opus-style takes): kept beside it, used by placement
@@ -503,6 +587,12 @@ class Takes:
             return {"ok": True, "token": tok}
 
     def on_render_done(self, jid: int, error: str = "") -> dict:
+        with self._job_lock(jid):
+            return self._on_render_done(jid, error)
+
+    def _on_render_done(self, jid: int, error: str = "") -> dict:
+        if self.job_cancelled(jid):
+            return {"ok": False, "cancelled": True}
         j = self._job(jid)
         a, rid = Actor(j["user_id"]), j["run_id"]
         run = self._run(a, rid)
@@ -517,7 +607,7 @@ class Takes:
                 c["status"], c["rerender_error"] = "rendered", why
             else:
                 c["status"], c["error"] = "failed", why
-        ok = [c for c in res.get("clips", []) if c.get("url")]
+        ok = [c for c in res.get("clips", []) if c.get("url") and c.get("status") != "binned"]
         if not ok:
             for k in ("reframe", "captions", "covers"):
                 self._step(steps, k, "failed", (error or "No clip rendered.")[:300])
@@ -525,7 +615,13 @@ class Takes:
             return {"ok": False}
         layouts = [c["meta"].get("layout") for c in ok if c.get("meta")]
         cov = [c["meta"].get("face_coverage") for c in ok if c.get("meta", {}).get("layout") == "track"]
+        nofaces = [c["id"] for c in ok if (c.get("meta") or {}).get("layout") in ("pad", "center") or (c.get("meta") or {}).get("face_fallback")]
+        if nofaces:  # said on the take, never a silent fallback (owner ask, 4 Nov 2026)
+            res["face_fallback"] = {"clips": nofaces, "note": "no face found, centered crop used"}
+        else:  # a later render that found faces clears an earlier render's note
+            res.pop("face_fallback", None)
         self._step(steps, "reframe", "done", (f"Face-tracked on {layouts.count('track')} of {len(ok)} clips"
+                                              + (f"; no face found, centered crop used on {len(nofaces)}" if nofaces else "")
                                               + (f" (face kept in frame {min(cov) * 100:.0f}%+ of the time)" if cov else "")
                                               + (f"; blurred-pad layout on {layouts.count('pad')}" if layouts.count("pad") else "")))
         self._step(steps, "captions", "done", "Word-by-word captions in your brand font, clear of the bottom 20%")
@@ -569,7 +665,7 @@ class Takes:
         kit, rules = self.h.kit(a), self.h.rules(a)
         worst = {"ok": 0, "warning": 0, "error": 0}
         for clip in res.get("clips", []):
-            if not clip.get("url"):
+            if not clip.get("url") or clip.get("status") == "binned":  # a clip in the Bin stays there (never back to ready)
                 continue
             clip["preflight"] = {}
             for ch in run["input"]["channels"]:
@@ -581,7 +677,7 @@ class Takes:
                 clip["preflight"][c["id"]] = {k: pf[k] for k in ("status", "chip", "findings", "service", "network")}
                 worst[pf["status"]] += 1
             clip["status"] = "ready"
-        n = len([c for c in res.get("clips", []) if c.get("url")])
+        n = len([c for c in res.get("clips", []) if c.get("url") and c.get("status") != "binned"])
         msg = f"{n} clips × {len(run['input']['channels'])} channel(s): {worst['ok']} pass" + \
               (f", {worst['warning']} warning(s)" if worst["warning"] else "") + (f", {worst['error']} need a fix" if worst["error"] else "")
         self._step(steps, "preflight", "warn" if worst["error"] else "done", msg)
@@ -599,6 +695,8 @@ class Takes:
         rules = self.h.rules(a)
         clips = []
         for c in res.get("clips", []):
+            if c.get("status") == "binned":  # in the Bin (list_take_bin): not part of the take until restored
+                continue
             d = {k: c.get(k) for k in ("id", "moment_id", "status", "start", "end", "hook", "text", "score", "why", "url", "cover_url",
                                        "error", "placements", "preflight", "captions", "rank", "reasons", "rerender_error")}
             d["variants"] = {r: v["url"] for r, v in (c.get("variants") or {}).items()}
@@ -621,7 +719,7 @@ class Takes:
                 "timings": res.get("timings") or {}, "picked_by": res.get("picked_by"), "moments": res.get("moments") or [],
                 "clips": clips, "created": run["created"], "updated": run["updated"],
                 "caption_limits": {ch["service"]: drafter.limit_for(ch["service"]) for ch in run["input"]["channels"]},
-                "can_rerender": self._can_rerender(a, res)}
+                "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback")}
 
     def _can_rerender(self, a: Actor, res: dict) -> bool:
         """Trims, transcript fixes and new hooks re-render on the video worker. The sample re-renders from its bundled
@@ -644,10 +742,11 @@ class Takes:
 
     def list(self, a: Actor, limit: int = 20) -> list[dict]:
         out = []
-        for r in self.store.q("SELECT id,input,status,result,created FROM agent_runs WHERE user_id=? AND kind='take' ORDER BY id DESC LIMIT ?",
+        for r in self.store.q("SELECT id,input,status,result,created FROM agent_runs WHERE user_id=? AND kind='take' AND status<>'binned' "
+                              "ORDER BY id DESC LIMIT ?",
                               (a.uid, limit)):
             inp, res = json.loads(r["input"]), json.loads(r["result"] or "{}")
-            clips = res.get("clips") or []
+            clips = [c for c in res.get("clips") or [] if c.get("status") != "binned"]
             out.append({"id": r["id"], "status": r["status"], "title": inp.get("name") or (res.get("source") or {}).get("title") or "Your take",
                         "sample": bool(inp.get("sample")), "clips": len(clips), "ready": sum(1 for c in clips if c["status"] == "ready"),
                         "placed": sum(1 for c in clips for p in c.get("placements") or [] if p.get("status") in ("draft", "pending_approval")),
@@ -656,6 +755,10 @@ class Takes:
 
     # ------------------------------------------------------------------ edit one clip (trim / caption / hook)
     def adjust(self, a: Actor, rid: int, clip_id: str, body: dict) -> dict:
+        with self._take_lock(rid):  # an edit's read-and-save never overlaps a delete into the Bin (Greptile, PR #107)
+            return self._adjust(a, rid, clip_id, body)
+
+    def _adjust(self, a: Actor, rid: int, clip_id: str, body: dict) -> dict:
         """adjust_clip (Trim & caption): any of in/out (start_ms/end_ms in the source), transcript (fixes the burned-in
         captions), hook (the cover line, quoted from the clip), caption + service or captions {service: text} (post
         captions), music (an Instagram track for the Reel, or null). Timing, transcript and hook re-render the clip on the
@@ -665,7 +768,7 @@ class Takes:
         if run["status"] in ("running", "rendering"):
             raise ActionError("This take is still being worked on. Try again when it's ready.", 409)
         res = run["result"]
-        clip = next((c for c in res.get("clips", []) if c["id"] == clip_id), None)
+        clip = next((c for c in res.get("clips", []) if c["id"] == clip_id and c.get("status") != "binned"), None)
         if not clip:
             raise ActionError("No such clip in this take.", 404)
         services = {ch["service"] for ch in run["input"]["channels"]}
@@ -773,7 +876,7 @@ class Takes:
         Returns the suggestion only (nothing is saved until adjust_clip). Runs in the person's engine order."""
         self.h.studio._guard_write(a, "adjust_clip")
         run = self._run(a, rid)
-        clip = next((c for c in (run["result"] or {}).get("clips", []) if c["id"] == clip_id), None)
+        clip = next((c for c in (run["result"] or {}).get("clips", []) if c["id"] == clip_id and c.get("status") != "binned"), None)
         if not clip:
             raise ActionError("No such clip in this take.", 404)
         if service not in {ch["service"] for ch in run["input"]["channels"]}:
@@ -985,7 +1088,7 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
             take.frame_at(str(out), 0.4, str(cover))  # the hook is on screen from frame 0
             rf = got["reframe"]
             meta = {"type": "video", "style": "opus", "ratio": r, "duration": got["duration"], "width": got["width"],
-                    "height": got["height"], "layout": {"track": "track", "pad": "pad"}.get(rf["mode"], "center"),
+                    "height": got["height"], "layout": {"track": "track", "pad": "pad", "fit": "fit"}.get(rf["mode"], "center"),  # fit: a vertical source, no fallback
                     "face_coverage": rf.get("face_coverage"), "captions": got["captions"], "burned_subs": got["burned_subs"],
                     "caption_problems": got["caption_problems"], "cover_offset_ms": 400, "credit": spec.get("credit") or ""}
             yield (c["id"] if i == 0 else f"{c['id']}@{r}"), out.read_bytes(), cover.read_bytes(), meta

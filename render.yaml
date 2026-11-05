@@ -27,6 +27,15 @@ services:
         value: dataanalystram/buffer-contest
       - key: GH_DISPATCH_TOKEN     # fine-grained PAT: Actions read/write on this repo only
         sync: false
+      # One take's long uploads go straight to a Cloudflare R2 bucket (docs/ONE_TAKE_UPLOADS.md); off unless all four are set
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
 databases:
   - name: huhqueue-studio-db
     plan: free
