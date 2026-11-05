@@ -1468,12 +1468,18 @@ class House:
         """Whether this job may use a free provider at all: Groq only for jobs that transcribe; vision only for a One
         take render whose owner turned on Smart layout (beta)."""
         from . import free_quota
-        rows = self.store.q("SELECT spec FROM render_jobs WHERE id=?", (jid,))
+        rows = self.store.q("SELECT spec, user_id FROM render_jobs WHERE id=?", (jid,))
         spec = json.loads(rows[0]["spec"]) if rows else {}
         kind = str(spec.get("kind", ""))
         if provider in free_quota.VISION:
             allowed = kind == "take_render" and any(isinstance(c, dict) and c.get("smart_layout") is True
                                                     for c in spec.get("clips") or [])
+            if allowed:  # and the owner's setting NOW: turning Smart layout off stops the frames of a job already queued
+                from . import take_layout
+                try:
+                    allowed = take_layout._prefs(self.store, str(rows[0]["user_id"] or "")).get("smart_layout") is True
+                except Exception:  # noqa: BLE001 - any read error means no
+                    allowed = False
             return (True, "") if allowed else (False, "Smart layout (beta) is off for this take")
         if kind not in ("take_analyze", "transcribe"):
             return False, "this job doesn't transcribe"

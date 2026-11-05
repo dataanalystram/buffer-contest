@@ -685,7 +685,8 @@ class Takes(TakeBin):
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": brand.visual_params(kit, rules), "logo": kit.get("logo") or "",
                 "scenes": [], "src": {"duration": dur, "width": w.get("width", 960), "height": w.get("height", 640), "audio": True},
                 "clips": [{"id": clip["id"], "start": round(clip["start"] - off, 3), "end": round(clip["end"] - off, 3), "hook": clip["hook"],
-                           "words": words, "faces": [], "variant_ids": []}],
+                           "words": words, "faces": [], "smart_layout": take_layout.smart_layout_on(self.h, a),
+                           "variant_ids": []}],
                 "style": "opus", "ratios": ["9:16"], "credit": (res.get("source") or {}).get("credit") or "", "burned_subs": False,
                 "face_detector": False, "sample_window": w["file"]}
         self._queue(a, rid, spec, "reframe", "Re-rendering 1 clip on the video worker")

@@ -84,6 +84,10 @@ def _set_spec(app, jid, **kw):
     st.x("UPDATE render_jobs SET spec=? WHERE id=?", (json.dumps(spec), jid))
 
 
+def _opt_in(human, on=True):
+    assert human.post("/api/takes/settings/smart-layout", json={"smart_layout": on}).json()["smart_layout"] is on
+
+
 def test_quota_route_token_types_and_scope(human, app, monkeypatch):
     _, jid, jt = _take_job(human, app, monkeypatch)
     w = TestClient(app, base_url="https://hq.test")
@@ -100,13 +104,27 @@ def test_quota_route_token_types_and_scope(human, app, monkeypatch):
     assert w.post(url, headers=h, json={"provider": "nvidia", "units": 1}).json()["ok"] is False  # owner didn't opt in
     assert w.post(url, headers=h, json={"provider": "groq", "units": 30}).json()["ok"] is False   # render: no ASR
     _set_spec(app, jid, clips=[{"id": "c1", "smart_layout": True}])
+    _opt_in(human)
     assert w.post(url, headers=h, json={"provider": "nvidia", "units": 1}).json()["ok"] is True
+
+
+def test_turning_smart_layout_off_stops_a_queued_job(human, app, monkeypatch):
+    _, jid, jt = _take_job(human, app, monkeypatch)
+    _set_spec(app, jid, kind="take_render", clips=[{"id": "c1", "smart_layout": True}])   # queued while it was on
+    _opt_in(human)
+    w = TestClient(app, base_url="https://hq.test")
+    url, h = f"/api/worker/jobs/{jid}/quota", {"x-job-token": jt}
+    assert w.post(url, headers=h, json={"provider": "nvidia", "units": 1}).json()["ok"] is True
+    _opt_in(human, False)                                                                  # the owner turns it off
+    r = w.post(url, headers=h, json={"provider": "openrouter", "units": 1}).json()
+    assert r["ok"] is False and "Smart layout" in r["why"]
 
 
 def test_quota_ledger_holds_across_runs(human, app, monkeypatch):
     _, jid, jt = _take_job(human, app, monkeypatch)
     w = TestClient(app, base_url="https://hq.test")
     _set_spec(app, jid, kind="take_render", clips=[{"id": "c1", "smart_layout": True}])
+    _opt_in(human)
     oks = [w.post(f"/api/worker/jobs/{jid}/quota", headers={"x-job-token": jt}, json={"provider": "nvidia", "units": 1}).json()["ok"]
            for _ in range(22)]
     assert oks.count(True) == 20 and oks[-1] is False                                          # 20 a minute, shared

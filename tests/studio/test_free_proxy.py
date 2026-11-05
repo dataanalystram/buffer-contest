@@ -14,7 +14,7 @@ from studio import free_proxy, free_quota, instabox_worker as ib
 from studio.media import asr
 from studio.media.reframe import vision
 
-from .test_free_quota import _set_spec
+from .test_free_quota import _opt_in, _set_spec
 from .test_worker_failure_report import _take_job
 
 GROQ_KEY = "gsk_dummy_server_only"
@@ -174,6 +174,9 @@ def test_vision_route_needs_the_owners_opt_in_before_anything(human, app, monkey
     _set_spec(app, jid, kind="take_render", clips=[{"id": "c1", "smart_layout": False}])
     assert w.post(url, headers={"x-job-token": jt}, json={"frames": "junk"}).json()["ok"] is False  # opt-in checked first
     _set_spec(app, jid, clips=[{"id": "c1", "smart_layout": True}])
+    r = w.post(url, headers={"x-job-token": jt}, json={"frames": "junk"}).json()            # owner's setting is off now
+    assert r["ok"] is False and "Smart layout" in r["why"]
+    _opt_in(human)
     for bad in ({"frames": "junk"}, {"frames": []}, {"frames": [7]}, {}):
         assert w.post(url, headers={"x-job-token": jt}, json=bad).status_code == 400
 
@@ -181,6 +184,7 @@ def test_vision_route_needs_the_owners_opt_in_before_anything(human, app, monkey
 def test_vision_route_asks_with_the_apps_key_and_sends_clean_frames(human, app, monkeypatch):
     _, jid, jt = _take_job(human, app, monkeypatch)
     _set_spec(app, jid, kind="take_render", clips=[{"id": "c1", "smart_layout": True}])
+    _opt_in(human)
     monkeypatch.setenv("NVIDIA_API_KEY", NV_KEY)
     fake = FakeHTTP([_answer('{"layout": "screencast"}')])
     free_proxy.HTTP = fake
