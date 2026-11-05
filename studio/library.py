@@ -25,10 +25,10 @@ import time
 from pathlib import Path
 
 from fastapi import Body, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import blobstore, demo_guard
+from . import blobstore, demo_guard, egress, mediacache
 from . import metastrip
 from .actions import ActionError, Actor
 from .buffer_api import BufferError
@@ -115,6 +115,7 @@ def record_owner_deletes(store, pairs) -> None:
     (tests/studio/test_owner_delete_record.py lists them)."""
     pairs = list(pairs)
     now = _now()
+    mediacache.of(store).forget([t for t, _ in pairs] + [TRASH_TOKEN + t for t, _ in pairs])  # no copy outlives the row
     for i in range(0, len(pairs), 300):
         part = pairs[i:i + 300]
         store.x("INSERT INTO library_purged(token,user_id,at) VALUES " + ",".join(["(?,?,?)"] * len(part)) +
@@ -839,8 +840,10 @@ class Library:
     def _file_of(self, d: dict, i: int = 0) -> dict:
         if d["storage"] == "chunks":
             size = int(d["size"] or 0)
-            return {"mime": d["mime"], "size": size, "read": lambda s, e: self._read(d["id"], s, e), "name": d["name"],
-                    "iter": lambda: self._iter(d["id"]), "etag": etag_for(d.get("sha256"), str(d.get("token") or ""), size)}
+            tok = str(d.get("token") or "")
+            return mediacache.wrap(self.store, {"mime": d["mime"], "size": size, "read": lambda s, e: self._read(d["id"], s, e),
+                                                "name": d["name"], "iter": lambda: self._iter(d["id"]), "owner": d.get("user_id"),
+                                                "etag": etag_for(d.get("sha256"), tok, size)}, tok or f"item:{d['id']}", "library")
         toks = d["meta"].get("tokens") or [d["token"]]
         tok = toks[max(0, min(int(i or 0), len(toks) - 1))]
         f = media_file(self.store, tok)  # a rendered post's file: read by range, streamed, never loaded whole
@@ -863,7 +866,8 @@ class Library:
         d = self.by_token(token)
         if not d:
             return None
-        return {"token": token, "user_id": d["user_id"], "mime": d["mime"], "data": self._read(d["id"], 0, None),
+        f = self._file_of(d)  # through the disk cache: a render or Buffer push reads the database once per file
+        return {"token": token, "user_id": d["user_id"], "mime": d["mime"], "data": b"".join(f["iter"]()),
                 "size": int(d["size"] or 0), "meta": json.dumps({"kind": "upload", **d["meta"]})}
 
     def meta(self, a: Actor, token: str) -> dict | None:
@@ -1328,7 +1332,7 @@ def media_file(store, token: str) -> dict | None:
     512 MB (5 Nov 2026, 08:10 and 11:31 GMT)."""
     if not token:
         return None
-    rows = store.q("SELECT mime, storage_key, sha256, size, length(data) AS n FROM media WHERE token=?", (token,))
+    rows = store.q("SELECT user_id, mime, storage_key, sha256, size, length(data) AS n FROM media WHERE token=?", (token,))
     if not rows:
         return None
     r = rows[0]
@@ -1350,7 +1354,10 @@ def media_file(store, token: str) -> dict | None:
     def it():
         for s in range(0, size, CHUNK):
             yield read(s, min(s + CHUNK, size) - 1)
-    return {"mime": r["mime"], "size": size, "read": read, "iter": it, "etag": etag_for(r["sha256"], token, size)}
+    # read through the instance's disk cache: the bytes leave the database once, then every request reads the copy
+    # (Supabase egress, 5 Nov 2026: 30 GB against a 5 GB free plan, studio/mediacache.py)
+    return mediacache.wrap(store, {"mime": r["mime"], "size": size, "read": read, "iter": it, "owner": r["user_id"],
+                                   "etag": etag_for(r["sha256"], token, size)}, token, "media")
 
 
 def not_modified(request, etag: str) -> bool:
@@ -1392,25 +1399,61 @@ def range_unsatisfiable(header: str, size: int) -> bool:
 
 
 NO_STORE = "no-store, max-age=0"
+# A /m/ token names one file's bytes for good (a new version is a new token), so a browser keeps it a year and never asks
+# again; "private": no shared cache keeps someone's media. A Library file by id gets a week (+ ETag revalidation).
+MEDIA_CACHE = "private, max-age=31536000, immutable"
+LIB_FILE_CACHE = "private, max-age=604800"
+SESSION_COOKIE = "hq_sid"  # studio/app.py COOKIE
+
+
+def if_range_ok(header: str, etag: str) -> bool:
+    """If-Range: a Range applies only when the validator is our current strong ETag (a date or weak tag never matches,
+    RFC 9110 13.1.5). No If-Range: the Range applies."""
+    h = (header or "").strip()
+    if not h:
+        return True
+    return bool(etag) and not h.startswith("W/") and h == etag
+
+
+def browser_fetch(request) -> bool:
+    """A browser's own fetch (it sends Sec-Fetch-* headers); Buffer, Instagram and the render worker don't."""
+    return bool(request.headers.get("sec-fetch-mode") or request.headers.get("sec-fetch-dest"))
 
 
 def add_routes(app, house, actor) -> None:
     lib = house.library
 
-    def serve(f: dict, request: Request, cache: str):
+    def serve(f: dict, request: Request, cache: str, viewer_owns: bool | None = None):
+        """One media answer: 304 on a matching ETag, 206 for a Range (honouring If-Range), else the whole file streamed.
+        Bytes come from the instance's disk cache after the first read (studio/mediacache.py) and are counted in the
+        egress meter. Past the daily budget, or after repeated downloads of the same file by one client, a request that
+        isn't the owner's gets 429 + Retry-After (studio/egress.py); HEAD, 304 and server-to-server fetchers past the
+        budget are never refused."""
         size = f["size"]
         headers = {"Accept-Ranges": "bytes", "Cache-Control": cache, "Content-Disposition": "inline"}
-        if f.get("etag"):
-            headers["ETag"] = f["etag"]
-            if not_modified(request, f["etag"]):  # the browser already holds these bytes: no body (bandwidth, 5 Nov 2026)
+        etag = f.get("etag") or ""
+        if etag:
+            headers["ETag"] = etag
+            if not_modified(request, etag):  # the browser already holds these bytes: no body (bandwidth, 5 Nov 2026)
                 return Response(status_code=304, headers=headers)
-        rng = parse_range(request.headers.get("range", ""), size)
-        if rng is None and range_unsatisfiable(request.headers.get("range", ""), size):
+        rng_h = request.headers.get("range", "")
+        if rng_h and not if_range_ok(request.headers.get("if-range", ""), etag):
+            rng_h = ""  # If-Range names another version: the whole current file, 200 (RFC 9110 13.1.5)
+        refused = _gate(f, request, viewer_owns)
+        if refused:
+            return refused
+        client = demo_guard.client_ip(request)
+        rng = parse_range(rng_h, size)
+        if rng is None and range_unsatisfiable(rng_h, size):
             return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
         if rng:
             s, e = rng
             e = min(e, s + 8 * MB - 1)  # one range answer reads at most 8 MB (players ask again for the rest)
-            return Response(f["read"](s, e), status_code=206, media_type=f["mime"], headers={**headers, "Content-Range": f"bytes {s}-{e}/{size}"})
+            body = f["read"](s, e)
+            egress.served(len(body))
+            egress.repeat_count(client, etag, len(body))
+            return Response(body, status_code=206, media_type=f["mime"], headers={**headers, "Content-Range": f"bytes {s}-{e}/{size}"})
+        egress.repeat_count(client, etag, size)
         if f.get("iter"):
             # the first chunk is read BEFORE the headers go out: storage that's down answers a clean 503 (ActionError),
             # not a 200 that breaks mid-download (Greptile, PR #110). Later chunks still stream one at a time.
@@ -1419,10 +1462,41 @@ def add_routes(app, house, actor) -> None:
 
             def body():
                 if first:
+                    egress.served(len(first))
                     yield first
-                yield from it
+                for b in it:
+                    egress.served(len(b))
+                    yield b
             return StreamingResponse(body(), media_type=f["mime"], headers={**headers, "Content-Length": str(size)})
-        return Response(f["read"](0, None), media_type=f["mime"], headers=headers)
+        data = f["read"](0, None)
+        egress.served(len(data))
+        return Response(data, media_type=f["mime"], headers=headers)
+
+    def _gate(f: dict, request: Request, viewer_owns: bool | None):
+        """429 for a non-owner past the day's budget (browser fetches only) or repeating the same download."""
+        etag, size = f.get("etag") or "", int(f.get("size") or 0)
+        client = demo_guard.client_ip(request)
+        repeat = egress.repeat_blocked(client, etag, size)
+        budget = egress.over_budget() and browser_fetch(request)
+        if not (repeat or budget):
+            return None
+        if viewer_owns is None:
+            viewer_owns = bool(f.get("owner")) and viewer_uid(request) == f.get("owner")
+        if viewer_owns:
+            return None
+        egress.note_refused("repeat" if repeat else "budget")
+        wait = 60 if repeat else egress.retry_after()
+        msg = ("This file was just downloaded several times from your network. It loads again in a few minutes." if repeat
+               else "Media previews are paused for today to stay inside the free plan's bandwidth. They're back tomorrow (UTC).")
+        return JSONResponse({"error": msg}, status_code=429, headers={"Retry-After": str(wait), "Cache-Control": "no-store"})
+
+    def viewer_uid(request: Request) -> str:
+        """The signed-in person behind a browser request (session cookie only; never raises, never audits)."""
+        try:
+            sess = house.store.session(request.cookies.get(SESSION_COOKIE))
+            return str(sess["user_id"] or "") if sess else ""
+        except Exception:  # noqa: BLE001 - a bad cookie is just "not the owner"
+            return ""
 
     @app.get("/api/library")
     def library_list(request: Request, response: Response, q: str = "", kind: str = "", offset: int = 0, per: int = 0, type: str = "",
@@ -1455,7 +1529,7 @@ def add_routes(app, house, actor) -> None:
 
     @app.get("/api/library/bin/{iid}/file")
     def library_bin_file(iid: int, request: Request, i: int = 0):
-        return serve(lib.bin_file(actor(request), iid, i), request, "private, no-store")
+        return serve(lib.bin_file(actor(request), iid, i), request, "private, no-store", viewer_owns=True)
 
     @app.post("/api/library/bin/restore")
     def library_bin_restore(request: Request, body: dict = Body(...)):
@@ -1481,7 +1555,7 @@ def add_routes(app, house, actor) -> None:
 
     @app.get("/api/library/{iid}/file")
     def library_file(iid: int, request: Request, i: int = 0):
-        return serve(lib.file(actor(request), iid, i), request, "private, max-age=3600")
+        return serve(lib.file(actor(request), iid, i), request, LIB_FILE_CACHE, viewer_owns=True)  # lib.file checked ownership
 
     @app.delete("/api/library/{iid}")
     def library_delete(iid: int, request: Request, force: int = 0, mode: str = "bin"):

@@ -7,6 +7,11 @@
 <main class="adm" data-testid="admin">
   <header class="adm-top"><h1>Admin</h1><a href="/app" data-testid="admin-back">Back to the app</a></header>
   <section class="adm-overview" aria-label="Storage" id="overview" data-testid="admin-overview"></section>
+  <section aria-labelledby="egressH" data-testid="admin-egress"><h2 id="egressH">Media bandwidth (today, UTC)</h2>
+    <p class="adm-msg" id="egressWarn" data-testid="admin-egress-warning" role="status" hidden></p>
+    <div class="adm-overview" id="egressToday" data-testid="admin-egress-today"></div>
+    <div class="adm-scroll"><table data-testid="admin-egress-days"><thead><tr><th>Day</th><th>Read from database</th><th>Sent to clients</th><th>Refused</th></tr></thead>
+      <tbody id="egressDays"></tbody></table></div></section>
   <section aria-labelledby="usersH">
     <div class="adm-bar"><h2 id="usersH">Users</h2>
       <label class="adm-search">Search <input id="q" data-testid="admin-search" type="search" placeholder="id, name or email" autocomplete="off"></label>

@@ -385,15 +385,18 @@ class House:
         from .library import TRASH_TOKEN
         if not token or token.startswith(TRASH_TOKEN):  # /m/trash~<token> must not serve a binned file (owner-only preview)
             return None
-        rows = self.store.q("SELECT token,user_id,mime,data,size,meta,storage_key FROM media WHERE token=?", (token,))
+        # metadata only; the bytes come through the instance's disk cache (studio/mediacache.py), so a render, a Buffer
+        # push or an edit reads a file from the database once per instance, not once per call (Supabase egress, 5 Nov 2026)
+        rows = self.store.q("SELECT token,user_id,mime,size,meta FROM media WHERE token=?", (token,))
         if not rows:
             return self.library.blob(token)  # an uploaded Library file works as a media token everywhere
         d = dict(rows[0])
-        from . import blobstore
-        try:
-            d["data"] = blobstore.read(d["data"], d.pop("storage_key"))
-        except blobstore.StorageError as e:
-            raise ActionError(str(e), 503)
+        from .library import media_file
+        f = media_file(self.store, token)
+        if f is None:  # deleted between the two reads
+            return None
+        d["data"] = b"".join(f["iter"]())
+        d["size"] = d.get("size") or len(d["data"])
         return d
 
     def media_head(self, token: str) -> dict | None:
