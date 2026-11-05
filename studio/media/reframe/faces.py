@@ -99,30 +99,43 @@ def frames(path: str, start: float, end: float, fps: float = FPS, width: int | N
 
 
 def sample(path: str, start: float, end: float, src_w: int, src_h: int, fps: float = FPS) -> dict:
-    """Face samples + grey thumbnails over the clip span. Raises FaceModelError when YuNet can't run here."""
+    """Face samples + grey thumbnails over the clip span. Raises FaceModelError when YuNet can't run here.
+    Decodes at 640 wide (fast); when most samples find no face or only a small one, a second 1 fps pass at full
+    resolution looks again (a webcam bubble in a screen recording)."""
     import cv2
     W = min(src_w, MAX_W) - min(src_w, MAX_W) % 2
     H = int(round(W * src_h / max(1, src_w) / 2)) * 2
     dh = int(round(DET_W * H / W / 2)) * 2
     fast = detector(DET_W, dh)
-    full = None
     out, thumbs = [], {}
     th = int(round(THUMB_W * H / W / 2)) * 2
-    for k, (t, img) in enumerate(frames(path, start, end, fps, W, src_w, src_h)):
-        small = cv2.resize(img, (DET_W, dh), interpolation=cv2.INTER_AREA)
-        found = [f for f in _boxes(fast, small, W / DET_W, H / dh, W, H) if f["score"] >= MIN_SCORE]
-        if (not found or max(f["h"] for f in found) * dh < SMALL_PX) and k % int(max(1, fps)) == 0:
-            if full is None:
-                full = detector(W, H)
-            big = [f for f in _boxes(full, img, 1.0, 1.0, W, H) if f["score"] >= MIN_SCORE]
-            if len(big) > len(found):
-                found = big
+    small_or_none = 0
+    for t, img in frames(path, start, end, fps, DET_W, src_w, src_h):
+        found = [f for f in _boxes(fast, img, 1.0, 1.0, DET_W, dh) if f["score"] >= MIN_SCORE]
+        if not found or max(f["h"] for f in found) * dh < SMALL_PX:
+            small_or_none += 1
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         for f in found:
-            f["mouth"] = _mouth(gray, f, W, H)
+            f["mouth"] = _mouth(gray, f, DET_W, dh)
             f.pop("lm", None)
         out.append({"t": t, "faces": found})
         thumbs[t] = cv2.resize(gray, (THUMB_W, th), interpolation=cv2.INTER_AREA)
+    if out and W > DET_W and small_or_none >= len(out) / 2:
+        full = detector(W, H)
+        by_t = {s["t"]: s for s in out}
+        for t, img in frames(path, start, end, 1.0, W, src_w, src_h):
+            big = [f for f in _boxes(full, img, 1.0, 1.0, W, H) if f["score"] >= MIN_SCORE]
+            near = min(by_t, key=lambda x: abs(x - t)) if by_t else None
+            if near is None or not big or len(big) <= len(by_t[near]["faces"]):
+                continue
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            for f in big:
+                f["mouth"] = _mouth(gray, f, W, H)
+                f.pop("lm", None)
+            # the full-resolution faces hold for the second around this sample (5 samples at 5 fps)
+            for x in by_t:
+                if abs(x - t) < 0.5 + 1e-6 and len(by_t[x]["faces"]) < len(big):
+                    by_t[x]["faces"] = [dict(f) for f in big]
     return {"samples": out, "thumbs": thumbs, "size": (W, H), "detector": "YuNet (OpenCV FaceDetectorYN)", "fps": fps}
 
 
