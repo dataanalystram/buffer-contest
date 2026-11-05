@@ -285,15 +285,15 @@ def test_start_needs_ownership_and_a_direct_file_link(human, app, monkeypatch):
     r = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4"})
     assert r.status_code == 400 and "owns" in r.json()["error"]
     for bad in ("https://www.facebook.com/somebrand", "https://www.twitch.tv/someone"):     # pages, not video posts
-        r = human.post("/api/takes", json={"url": bad, "owns": True})
+        r = human.post("/api/takes", json={"url": bad, "owns": True, "rights_attested": True})
         assert r.status_code == 400 and "not a profile or page" in r.json()["error"]
     # a video post on YouTube / TikTok is an Opus-style take now (test_take_opus.py covers it end to end)
     monkeypatch.setattr("studio.media.find.oembed", lambda url, http=None: None)
-    yt = human.post("/api/takes", json={"url": "https://youtu.be/abc", "owns": True}).json()
+    yt = human.post("/api/takes", json={"url": "https://youtu.be/abc", "owns": True, "rights_attested": True}).json()
     assert yt["style"] == "opus" and yt["input"]["platform_url"] == "https://youtu.be/abc"
-    assert human.post("/api/takes", json={"url": "http://cdn.example.com/a.mp4", "owns": True}).status_code == 400
-    assert human.post("/api/takes", json={"url": "https://127.0.0.1/a.mp4", "owns": True}).status_code == 400
-    t = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True}).json()
+    assert human.post("/api/takes", json={"url": "http://cdn.example.com/a.mp4", "owns": True, "rights_attested": True}).status_code == 400
+    assert human.post("/api/takes", json={"url": "https://127.0.0.1/a.mp4", "owns": True, "rights_attested": True}).status_code == 400
+    t = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True, "rights_attested": True}).json()
     assert t["status"] == "failed" and "no video worker" in t["steps"][1]["detail"]                # honest, not spinning
     assert t["input"]["channels"] == [{"id": "ch_ig", "service": "instagram", "name": "huhbyte.ai"}]
 
@@ -381,7 +381,7 @@ def test_worker_failure_is_reported_on_the_take(human, app, monkeypatch):
     toks = {}
     monkeypatch.setattr(house, "_dispatch_github", lambda jid, workflow="", inputs=None, ttl=1800: (toks.setdefault(jid, house.issue_job_token(jid, ttl)), (True, ""))[1])
     monkeypatch.setattr(house.takes, "_mode", lambda: "github")
-    t = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True}).json()
+    t = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True, "rights_attested": True}).json()
     jid, jt = next(iter(toks.items()))
     w = TestClient(app, base_url="https://hq.test")
     w.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt}, json={"error": "TakeError: This video has no audio track"})
@@ -461,7 +461,7 @@ def test_worker_download_errors_are_plain_words(human, app, monkeypatch):
     toks = {}
     monkeypatch.setattr(house, "_dispatch_github", lambda jid, workflow="", inputs=None, ttl=1800: (toks.setdefault(jid, house.issue_job_token(jid, ttl)), (True, ""))[1])
     monkeypatch.setattr(house.takes, "_mode", lambda: "github")
-    t = human.post("/api/takes", json={"url": "https://cdn.example.com/not-a-video", "owns": True}).json()
+    t = human.post("/api/takes", json={"url": "https://cdn.example.com/not-a-video", "owns": True, "rights_attested": True}).json()
     jid, jt = next(iter(toks.items()))
     w = TestClient(app, base_url="https://hq.test")
     w.post(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt}, json={"error": raw})

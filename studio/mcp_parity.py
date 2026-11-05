@@ -246,7 +246,7 @@ PAGES: dict[str, dict] = {
     "brand": {"title": "Brand kit", "shows": "Brand kits (colors, font, logo, end card, voice) and the Style Ledger.",
               "tools": ["get_brand", "list_brand_kits", "create_brand_kit", "update_brand_kit", "edit_brand", "remember_rule", "brand_check"]},
     "one_take": {"title": "One take", "shows": "A long video split into short clips placed in a week.",
-                 "tools": ["clips_from_video", "list_clips", "adjust_clip", "rewrite_clip_caption", "place_clips_in_week", "split_video",
+                 "tools": ["clips_from_video", "ingest_video_link", "list_clips", "adjust_clip", "rewrite_clip_caption", "place_clips_in_week", "split_video",
                            "delete_take", "list_take_bin", "restore_take", "purge_take_bin",
                            "list_threads", "get_thread", "delete_thread", "restore_thread", "list_thread_bin", "purge_thread_bin"]},
     "settings_ai": {"title": "Settings > AI engine", "shows": "Which engine the in-app agent uses, keys, logs.",

@@ -776,8 +776,8 @@ class Studio:
         if not rows or rows[0]["status"] != "pending":
             raise ActionError("No pending approval with that id.", 404)
         from . import consent
-        if consent.is_paid_row(rows[0]):
-            raise ActionError("That approval is a request to use a paid API, not a post: it has no time.", 409)
+        if consent.row_kind(rows[0]) != "post":
+            raise ActionError("That approval is a request to use a paid API or fetch a video link, not a post: it has no time.", 409)
         clean = json.loads(rows[0]["payload"])
         clean.update(due_at=self._due(due_at), mode="schedule")
         self.store.x("UPDATE approvals SET payload=? WHERE id=?", (json.dumps(clean), approval_id))
@@ -789,26 +789,32 @@ class Studio:
         """Approval items: agent posts (kind post) and, since 4 Nov 2026, requests to use a paid API (kind paid_api,
         studio/consent.py). Internal readers that expect a post payload pass kind='post'."""
         out = []
-        like = '%"kind": "paid_api"%'  # consent.py writes payload with json.dumps defaults; the Python check below confirms
-        cond = {"post": " AND payload NOT LIKE ?", "paid_api": " AND payload LIKE ?"}.get(kind, "")
+        # consent.py writes payload with json.dumps defaults; the Python check below confirms (link_rights: video links)
+        likes = {"post": ('%"kind": "paid_api"%', '%"kind": "link_rights"%'), "paid_api": ('%"kind": "paid_api"%',),
+                 "link_rights": ('%"kind": "link_rights"%',)}.get(kind, ())
+        cond = (" AND payload NOT LIKE ? AND payload NOT LIKE ?" if kind == "post" else " AND payload LIKE ?") if likes else ""
+        from . import consent
         for r in self.store.q(f"SELECT * FROM approvals WHERE user_id=? AND status=?{cond} ORDER BY id DESC LIMIT 50",
-                              (a.uid, status, *((like,) if cond else ()))):
+                              (a.uid, status, *likes)):
             d = dict(r)
             d["payload"] = json.loads(d["payload"])
             d["result"] = json.loads(d["result"]) if d["result"] else None
-            d["kind"] = "paid_api" if isinstance(d["payload"], dict) and d["payload"].get("kind") == "paid_api" else "post"
-            if kind in ("post", "paid_api") and d["kind"] != kind:
+            d["kind"] = consent.row_kind(d)
+            if kind in ("post", "paid_api", "link_rights") and d["kind"] != kind:
                 continue
             out.append(d)
         return out
 
-    def decide(self, a: Actor, approval_id: int, approve: bool, text: str | None = None, mode: str | None = None) -> dict:
+    def decide(self, a: Actor, approval_id: int, approve: bool, text: str | None = None, mode: str | None = None,
+               rights_attested: bool = False, attestation_version: object = None) -> dict:
         if a.kind != "human":
             raise ActionError("Only a signed-in human can approve or reject agent posts.", 403)
         rows = self.store.q("SELECT * FROM approvals WHERE id=? AND user_id=?", (approval_id, a.uid))
         if not rows or rows[0]["status"] != "pending":
             raise ActionError("No pending approval with that id.", 404)
         from . import consent
+        if consent.row_kind(rows[0]) == consent.LINK_KIND:  # an AI app asking to fetch a video link: the person attests the rights
+            return consent.decide_link(self.store, a, dict(rows[0]), approve, rights_attested, attestation_version)
         if consent.is_paid_row(rows[0]):  # an AI app asking to spend money or credits: approving lets that one call run
             return consent.decide(self.store, a, dict(rows[0]), approve)
         clean = json.loads(rows[0]["payload"])
