@@ -286,6 +286,10 @@ PUBLIC = {  # path -> why it is open to anyone
     "/api/admin/users/{uid}/block": "404 unless HQ_ADMIN_IDS", "/api/admin/users/{uid}/unblock": "404 unless HQ_ADMIN_IDS",
     "/api/admin/users/{uid}/delete": "404 unless HQ_ADMIN_IDS", "/api/admin/audit": "404 unless HQ_ADMIN_IDS",
     "/api/admin/egress": "404 unless HQ_ADMIN_IDS (media bandwidth numbers only)",
+    "/api/admin/switches": "404 unless HQ_ADMIN_IDS (kill switches)", "/api/admin/switches/{name}": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/usage": "404 unless HQ_ADMIN_IDS (credit and free-tier numbers only)",
+    "/api/admin/users/{uid}/tokens": "404 unless HQ_ADMIN_IDS", "/api/admin/users/{uid}/tokens/{tid}/revoke": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/users/{uid}/tokens/{tid}/limit": "404 unless HQ_ADMIN_IDS",
 }
 
 

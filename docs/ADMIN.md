@@ -1,7 +1,7 @@
 # Admin panel (`/admin`)
 
-The operator's view of who uses this HuhQueue, and the three things only the operator can do: block, unblock and delete an
-account. Code: `studio/admin.py` (routes + actions), `studio/admin_ui/` (the page). Tests: `tests/studio/test_admin_storage.py`.
+The operator's view of who uses this HuhQueue and what it spends, and what only the operator can do: block, unblock and
+delete an account, cap or revoke one of its tokens, and pause publishing, AI, Channel3, R2 uploads or video links for everyone. Code: `studio/admin.py` (routes + actions), `studio/admin_ui/` (the page). Tests: `tests/studio/test_admin_storage.py`, `tests/studio/test_admin_controls.py`.
 
 ## Who can open it
 - Set `HQ_ADMIN_IDS` on the web service: comma-separated **Buffer account ids** and/or **Buffer emails** (case-insensitive),
@@ -43,6 +43,38 @@ Buffer (that creates a new, empty account); to keep someone out, block instead.
 Buffer has no token-revocation call in this codebase: deletion erases the tokens from our database; the person can also
 remove HuhQueue in their Buffer account settings (the privacy page says so).
 
+## Agent and MCP tokens of one account
+**Tokens** on a user's row opens their agent tokens and MCP apps: name, app, policy, last used, requests this hour,
+audited actions in the last 24 h, and two caps (never the token or its hash):
+- **Hourly cap** (`agent_tokens.admin_hourly_cap`, 1–100,000, empty = none): every authenticated request on the token
+  counts, reads included, on REST and `/mcp`; past it the request answers **429** (`/mcp` with `Retry-After`). A sliding
+  one-hour window in memory (one process); a deploy starts it at zero. Use it for a noisy token such as a smoke-test agent.
+- **Daily cap** (1–100): the token's existing daily cap on actions (`Studio._guard_write`).
+- **Revoke** (two clicks): `revoked=1`, for good. Its MCP refresh token is refused too (`mcp_oauth` checks `revoked`).
+  To stop a whole account reversibly, Block instead.
+
+## Kill switches
+`studio/opsctl.py`, table `ops_switches` (no row = running). Each switch stops **new** work of its kind for everyone,
+the admin included, at the one place that work starts; work already running finishes.
+
+| Switch | Stops | Where |
+|---|---|---|
+| `publishing` | anything sent to Buffer (create and edit post); 503 with a plain message. Delete still works. | `BufferClient.create_post` / `edit_post` |
+| `ai` | AI on HuhQueue's own keys: Claude and OCI (`budget.check` / `oci_check`), the free engines (`free_check`), the free starter model, the Groq / NVIDIA / OpenRouter ledger (`free_quota.Ledger.reserve`), the link drafter. The brain falls back to the rule writer, the worker to local Whisper and the layout rules. A person's own key keeps working. | `studio/budget.py`, `studio/free_quota.py`, `House._ai_reserve`, `Studio.draft_from_link` |
+| `channel3` | every request to api.trychannel3.com (search, detail, `/go` resolution); nothing is spent | `commerce._request` |
+| `r2_uploads` | new writes to the bucket: new media stays in the database, One take large uploads answer 507; reads and deletes go on | `r2usage.can_write` |
+| `link_ingest` | new video links (One take, `ingest_video_link`, `clips_from_video`, the agent's Opus path), before any consent is recorded; uploads still work | `Takes.start` |
+
+**Fails closed**: if the switch table can't be read, every switch reads as paused until a read succeeds. A process with no
+store (the video worker, scripts) has nothing to read and is never paused here; the web app binds its store at start-up.
+State is cached 5 s per process; a change in /admin applies at once on this instance. Every Pause / Resume is in the admin log.
+
+## Credits and free tiers
+`GET /api/admin/usage`: Claude spend on our key against `AI_BUDGET_TOTAL_USD` (and the testing pool), OCI Gemini against
+`AI_OCI_BUDGET_TOTAL_USD`, Channel3 credits this month on our key against the free 1,000, and the Groq / NVIDIA / OpenRouter
+requests in the last 24 h against each free daily limit. Supabase egress (bytes read from the database) and Render bandwidth
+(bytes sent to clients) are the **Media bandwidth** section (`/api/admin/egress`, studio/egress.py), with R2 against its caps.
+
 ## Admin log
 `admin_audit`: time, the admin's account id, action, a hash of the subject's id (`sha256("hq-subject:" + id)`), detail
 (the block reason), ok. A deleted account's id and email never appear in it; when an admin's own account is erased,
@@ -58,6 +90,10 @@ All under a signed-in admin browser session; writes need the `X-HQ-CSRF` header 
 - `POST /api/admin/users/{id}/block` `{reason?}` · `POST /api/admin/users/{id}/unblock`
 - `POST /api/admin/users/{id}/delete` `{confirm: "<id>"}`
 - `GET /api/admin/audit?limit=100`
+- `GET /api/admin/users/{id}/tokens` · `POST /api/admin/users/{id}/tokens/{tid}/revoke`
+- `POST /api/admin/users/{id}/tokens/{tid}/limit` `{hourly_cap?: 1-100000|null, daily_cap?: 1-100}`
+- `GET /api/admin/switches` · `POST /api/admin/switches/{name}` `{paused: bool, reason?}`
+- `GET /api/admin/usage`
 
 ## Requests to delete
 Someone who can still sign in uses Settings → Disconnect and delete. Someone who can't (lost Buffer access) asks through

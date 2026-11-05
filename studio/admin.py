@@ -16,6 +16,9 @@ runs and posts, storage used, status), and three actions, each CSRF-checked and 
   hashed id, the time and how. The admin audit row keeps the hashed id, time and admin.
 
 An admin can't block or delete their own account.
+
+Also (docs/ADMIN.md): one account's agent / MCP tokens with an hourly request cap, the daily cap and Revoke; the global
+kill switches (studio/opsctl.py); and the credit / free-tier meters. Every write is CSRF-checked and in ``admin_audit``.
 """
 from __future__ import annotations
 
