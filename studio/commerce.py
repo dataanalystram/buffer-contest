@@ -651,10 +651,9 @@ def with_disclosure(text: str, link: str = "", affiliate: bool = True) -> str:
     return t
 
 
-# a full URL may follow any punctuation (``Shop:https://..``, ``[https://..]``); a bare host can't follow a host character
-# or a '/' (``x.example/hq.test/go/..`` is a path on another site), so ``shop.hq.test`` never matches as ``hq.test``
-_GO_RX = re.compile(r"(?:(?<![A-Za-z0-9.\-_%~])(https?):[/\\]{2}|(?<![A-Za-z0-9.\-_%~/\\]))"
-                    r"([A-Za-z0-9.\-:@\[\]_%~]+)/go/([A-Za-z0-9_\-]{10,32})", re.IGNORECASE)
+_GO_TAIL = re.compile(r"/go/([A-Za-z0-9_\-]{10,32})")  # no backtracking: each /go/ is found once, left to right
+_AUTH = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:@[]_~")
+_AUTH_MAX = 300  # a host (253) plus a port and some userinfo; a longer run is judged on its last 300 characters
 
 
 def _fold(text: str) -> str:
@@ -672,9 +671,20 @@ def go_codes(public_url: str, text: str) -> list[str]:
     if not want:
         return []
     glued = re.compile(r"(?:^|[:@])" + re.escape(want) + r"\.?(?::[^:@]*)?$")  # one linear pass, any authority length
+    t = _fold(unquote(_fold(text)))
     out = []
-    for _scheme, authority, code in _GO_RX.findall(_fold(unquote(_fold(text)))):
-        auth = authority.lower()
+    for m in _GO_TAIL.finditer(t):
+        # walk back over the authority (bounded), then look at what comes before it: after '//' it is a URL's host
+        # (``Shop:https://..``, ``[https://..]``); after a single '/' it is a path on another site; otherwise a bare host
+        end = start = m.start()
+        while start > 0 and end - start < _AUTH_MAX and t[start - 1] in _AUTH:
+            start -= 1
+        auth = t[start:end].lower()
+        if not auth:
+            continue
+        capped = start > 0 and t[start - 1] in _AUTH  # longer than _AUTH_MAX: judged as a bare host (fail closed)
+        if not capped and t[max(0, start - 2):start] not in ("//", "\\\\", "/\\", "\\/") and start > 0 and t[start - 1] in "/\\":
+            continue  # ``x.example/hq.test/go/..``: a path on another site, not our host
         try:
             host = (urlparse("//" + auth).hostname or "").rstrip(".")
         except ValueError:  # a malformed authority (bad brackets): judged by the glued check below
@@ -683,7 +693,7 @@ def go_codes(public_url: str, text: str) -> list[str]:
         # a ':' or '@' (a linkifier opens ``Link:hq.test/go/..`` on hq.test): fail closed, so text glued on before the host
         # can't hide a shop link from the #Ad rules
         if host == want or glued.search(auth):
-            out.append(code)
+            out.append(m.group(1))
     return list(dict.fromkeys(out))
 
 

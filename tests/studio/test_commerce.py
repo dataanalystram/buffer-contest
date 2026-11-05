@@ -499,3 +499,10 @@ def test_shop_links_after_punctuation_or_with_unicode_dots_still_count():
     assert commerce.go_codes("https://hq.test", t) == ["abcdefghijkl", "bcdefghijklm", "cdefghijklmn", "defghijklmno",
                                                        "efghijklmnop", "fghijklmnopq", "ghijklmnopqr", "hijklmnopqrs"]
     assert commerce.go_codes("https://hq.test", "https://shop.hq\u3002test/go/abcdefghijkl") == []
+
+
+def test_shop_link_scan_is_linear_on_colons_and_brackets_without_a_link():
+    for junk in (":" * 200000, "[:@" * 70000, "a:" * 100000, "/go/" * 50000):
+        started = time.monotonic()
+        assert commerce.go_codes("https://hq.test", junk) == []
+        assert time.monotonic() - started < 2, junk[:6]
