@@ -52,7 +52,7 @@ def _ff(args: list[str], timeout: int = 1800) -> None:
 def mask(kind: str, w: int, h: int, r: int = RADIUS, color: str | None = None) -> str:
     """A PNG mask: 'round' (rounded rectangle, grey), 'circle' (grey), 'ring' (an RGBA disc in `color`)."""
     MASK_DIR.mkdir(parents=True, exist_ok=True)
-    key = hashlib.sha1(f"{kind}:{w}:{h}:{r}:{color}".encode()).hexdigest()[:12]
+    key = hashlib.sha1(f"{kind}:{w}:{h}:{r}:{color}".encode(), usedforsecurity=False).hexdigest()[:12]
     out = MASK_DIR / f"{kind}_{w}x{h}_{key}.png"
     if out.exists() and out.stat().st_size > 0:
         return str(out)
