@@ -75,6 +75,15 @@ def check(kind: str = "take_render", load_model: bool = False) -> dict:
         have["face_detector"] = which if ok else None
         if not ok:
             missing.append(f"No face detector loads ({which})")
+    if kind == "take_render":  # per-shot layouts find faces on each clip span with YuNet (studio/media/reframe)
+        from .reframe import enabled as layouts_on
+        if layouts_on():
+            try:
+                from .reframe.faces import detector
+                detector(64, 64)
+                have["layout_faces"] = "YuNet (OpenCV FaceDetectorYN)"
+            except Exception as e:  # noqa: BLE001 - FaceModelError, a broken cv2
+                missing.append(f"The layout face detector doesn't load ({str(e)[:100]})")
     if kind == "take_analyze":
         try:
             import faster_whisper  # noqa: F401  MIT
