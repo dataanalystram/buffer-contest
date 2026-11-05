@@ -11,7 +11,7 @@ after which requests answer 402. Media bytes live in BYTEA columns (`media.data`
 7.3 MB; `library_chunks.data`: 5 MB; `upload_parts.data`: empty). The Egress guard (docs/STORAGE.md) stops the
 re-reading that produced the egress; this plan is about shrinking what is stored once the demo data is no longer needed.
 
-## Rules (all five, every time)
+## Rules (all six, every time)
 
 1. **A backup first**, taken the same day (below).
 2. **A proven restore** of that backup into a throwaway Postgres, with row counts compared to production.
@@ -21,6 +21,21 @@ re-reading that produced the egress; this plan is about shrinking what is stored
    and a purge queues those objects for deletion (`blob_gc` → `blobstore.sweep`). Before any purge, either confirm that
    no `media` / `library_chunks` row has a `storage_key` (`SELECT count(*) ... WHERE storage_key IS NOT NULL` = 0), or
    copy every referenced object to a backup bucket/folder and verify each sha256 against the row.
+6. **Writes frozen** from before the backup until the last delete (section 0).
+
+## 0. Freeze writes (from before the backup until the last delete)
+
+`pg_dump` doesn't block writers, so anything created after the dump would be missing from the backup and could still be
+purged (CodeRabbit, PR #119). For the whole window, from before the dump and any R2 copy until every delete and the
+final counts are done:
+
+1. Suspend the web service in Render (there is no in-app maintenance switch), so no new media, runs or uploads are
+   written. Buffer fetches a scheduled post's `/m/` link when it publishes, so pick a window with no scheduled post in
+   it (check Buffer's queue first) and keep it short.
+2. Stop background work: suspend the render worker and any cron job, and wait until `render_jobs` has no row in
+   `queued`/`running` and `upload_sessions` has none open (read-only counts).
+3. Only then take the dump (step 1) and, if R2 is in use, the object copy (rule 5). Lift the freeze after step 4's counts
+   match what the plan expected.
 
 ## 1. Backup
 
@@ -53,6 +68,7 @@ right before the reset.
 
 ```sh
 createdb restore_check
+psql -d restore_check -c "DROP SCHEMA IF EXISTS public CASCADE"   # the dump recreates it; otherwise --exit-on-error stops there
 pg_restore --exit-on-error -d restore_check --no-owner --no-privileges hq-full-YYYY-MM-DD.dump || { echo "restore failed: stop"; exit 1; }
 for t in users agent_runs media library_items library_media library_chunks render_jobs approvals; do
   psql -d restore_check -tAc "select '$t', count(*) from $t"
@@ -62,8 +78,8 @@ psql -d restore_check -tAc "select 'chunk_bytes', coalesce(sum(length(data)),0) 
 ```
 
 Run the same counts and byte sums against production (read-only, `SET default_transaction_read_only = on`). **Every**
-line must match, and `pg_restore` must exit 0 (with `--exit-on-error`; restore into a fresh database so "schema public
-already exists" can't occur, or drop it first). Any mismatch or restore error stops the reset.
+line must match, and `pg_restore` must exit 0 (with `--exit-on-error`, after the `DROP SCHEMA` above so "schema public
+already exists" can't stop it). Any mismatch or restore error stops the reset.
 
 ## 3. What to empty vs keep (proposal)
 

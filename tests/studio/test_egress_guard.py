@@ -411,3 +411,38 @@ def test_library_file_by_id_revalidates_every_time(app, human):
     r = human.get(f"/api/library/{up['id']}/file")
     assert r.headers["cache-control"] == "private, no-cache"
     assert human.get(f"/api/library/{up['id']}/file", headers={"If-None-Match": r.headers["etag"]}).status_code == 304
+
+
+def test_forget_removes_copies_on_disk_and_retries_a_failed_unlink(tmp_path, monkeypatch):
+    """CodeRabbit, PR #119: an unlink that fails is retried later (never dropped from view while the file stays), and a
+    copy the LRU doesn't know (left by a racing fill) is found on disk."""
+    c = mediacache.MediaCache(str(tmp_path / "c"), cap=10 * MB)
+    p = c.path_for("gone", '"e"', 3, lambda: iter([b"abc"]))
+    stray = c.dir / (mediacache._tok_part("gone") + "-stray")
+    stray.write_bytes(b"xyz")                      # on disk, not in the LRU
+    real_unlink = Path.unlink
+    calls = {"n": 0}
+
+    def flaky(self, *a, **k):
+        if self == p and calls["n"] == 0:
+            calls["n"] += 1
+            raise PermissionError("busy")
+        return real_unlink(self, *a, **k)
+    monkeypatch.setattr(Path, "unlink", flaky)
+    c.forget(["gone"])
+    assert not stray.exists() and p.exists() and c.pending_removals() == 1   # kept for retry, not forgotten
+    assert c.stats()["files"] == 0                                           # and never served again
+    c.path_for("other", '"e"', 3, lambda: iter([b"def"]))                    # any later call retries it
+    assert not p.exists() and c.pending_removals() == 0
+
+
+def test_a_fill_that_overlaps_a_forget_keeps_no_copy(tmp_path):
+    """CodeRabbit, PR #119: an erasure while a copy is being filled must not leave that copy behind."""
+    c = mediacache.MediaCache(str(tmp_path / "c"), cap=10 * MB)
+
+    def fill():
+        yield b"ab"
+        c.forget(["racing"])                       # the account is erased mid-fill
+        yield b"c"
+    assert c.path_for("racing", '"e"', 3, fill) is None
+    assert c.stats()["files"] == 0 and not [f for f in c.dir.iterdir() if not f.name.startswith(".")]

@@ -52,6 +52,8 @@ class MediaCache:
         self._lock = threading.Lock()
         self._fills: dict[str, threading.Lock] = {}
         self._lru: OrderedDict[str, int] = OrderedDict()
+        self._gen = 0                    # forget() bumps it: a fill that overlapped a forget never keeps its copy
+        self._doomed: set[str] = set()   # forgotten copies whose unlink failed: retried on every later call, never served
         self.hits = self.misses = self.fills = self.evictions = self.bypass = 0
         if self.cap <= 0:
             return
@@ -77,7 +79,7 @@ class MediaCache:
         with self._lock:
             return {"on": self.on, "cap_bytes": self.cap, "bytes": sum(self._lru.values()), "files": len(self._lru),
                     "hits": self.hits, "misses": self.misses, "fills": self.fills, "evictions": self.evictions,
-                    "bypass": self.bypass}
+                    "bypass": self.bypass, "pending_removals": len(self._doomed)}
 
     # ------------------------------------------------------------------ fill / read
     def path_for(self, token: str, etag: str, size: int, fill) -> Path | None:
@@ -91,6 +93,7 @@ class MediaCache:
         name = self._name(token, etag)
         p = self.dir / name
         with self._lock:
+            self._retry_doomed()
             if name in self._lru and p.exists():
                 self._lru.move_to_end(name)
                 self.hits += 1
@@ -103,6 +106,7 @@ class MediaCache:
                     self.hits += 1
                     return p
                 self.misses += 1
+                gen = self._gen
             n, tmp = 0, None
             try:
                 fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".fill-")
@@ -132,6 +136,9 @@ class MediaCache:
                 with self._lock:
                     self._fills.pop(name, None)
             with self._lock:
+                if self._gen != gen:  # a permanent delete ran while this copy was filling: it must not stay on disk
+                    self._drop(name)
+                    return None
                 self._lru[name] = n
                 self._lru.move_to_end(name)
                 self.fills += 1
@@ -145,10 +152,7 @@ class MediaCache:
             name, n = self._lru.popitem(last=False)
             total -= n
             self.evictions += 1
-            try:
-                (self.dir / name).unlink()
-            except OSError:
-                pass
+            self._drop(name)
 
     def forget(self, tokens) -> int:
         """Remove every copy of these tokens (a permanent delete): their bytes don't stay on disk until eviction."""
@@ -157,14 +161,40 @@ class MediaCache:
         parts = {_tok_part(t) for t in tokens if t}
         gone = 0
         with self._lock:
-            for name in [k for k in self._lru if k.split("-", 1)[0] in parts]:
+            self._gen += 1
+            on_disk = set()
+            try:  # every copy on disk, not only the ones the LRU knows (CodeRabbit, PR #119)
+                on_disk = {f.name for f in self.dir.iterdir() if not f.name.startswith(".")}
+            except OSError:
+                pass
+            for name in {k for k in set(self._lru) | on_disk if k.split("-", 1)[0] in parts}:
                 self._lru.pop(name, None)
-                try:
-                    (self.dir / name).unlink()
-                except OSError:
-                    pass
+                self._drop(name)
                 gone += 1
         return gone
+
+    def _drop(self, name: str) -> None:
+        """Unlink one copy (caller holds the lock). A failed unlink keeps the name in ``_doomed``, retried on later
+        calls, so an erased person's file is never forgotten on disk (CodeRabbit, PR #119)."""
+        try:
+            (self.dir / name).unlink()
+            self._doomed.discard(name)
+        except FileNotFoundError:
+            self._doomed.discard(name)
+        except OSError as e:
+            self._doomed.add(name)
+            print(f"media cache: couldn't remove a forgotten copy ({e.__class__.__name__}); will retry", flush=True)
+
+    def _retry_doomed(self) -> None:
+        """Retry every failed removal (caller holds the lock)."""
+        for name in list(self._doomed):
+            self._lru.pop(name, None)
+            self._drop(name)
+
+    def pending_removals(self) -> int:
+        """Forgotten copies still waiting for a successful unlink."""
+        with self._lock:
+            return len(self._doomed)
 
 
 def _unlink(p) -> None:
