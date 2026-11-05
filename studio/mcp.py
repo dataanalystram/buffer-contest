@@ -350,7 +350,8 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "clips_from_video":
         if args.get("sample"):
             return h.takes.start_sample(actor, {"channel_ids": args.get("channel_ids")})
-        body = {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "approval_id", "credit", "jev")}
+        body = {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "approval_id", "credit", "jev",
+                                     "trim_pauses")}
         if "punch_in" in args:
             body["punch_in"] = args["punch_in"]
         return h.takes.start(actor, {**body, "_tool": "clips_from_video"})

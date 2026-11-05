@@ -39,14 +39,17 @@ _NOT_FILLER_AFTER_LIKE = frozenset({"a", "an", "the", "this", "that", "these", "
 
 
 def _tok(w: dict) -> str:
+    """A word as bare lower-case letters (punctuation dropped)."""
     return re.sub(r"[^a-z']+", "", str(w.get("w", "")).lower())
 
 
 def _raw(w: dict) -> str:
+    """A word as the ASR wrote it (punctuation kept)."""
     return str(w.get("w", "")).strip()
 
 
 def _is_filler(ws: list[dict], i: int, start: float, end: float) -> bool:
+    """Is word i a filler? um / uh / ... always; "like" only between pauses or commas, never before a noun phrase."""
     t = _tok(ws[i])
     if t in FILLERS:
         return True
@@ -63,6 +66,7 @@ def _is_filler(ws: list[dict], i: int, start: float, end: float) -> bool:
 
 
 def _merge(iv: list[list[float]]) -> list[list[float]]:
+    """Overlapping or touching intervals merged, sorted."""
     out: list[list[float]] = []
     for a, b in sorted(iv):
         if out and a <= out[-1][1] + 1e-6:
@@ -73,6 +77,7 @@ def _merge(iv: list[list[float]]) -> list[list[float]]:
 
 
 def _intersect(a: float, b: float, sil: list[list[float]]) -> list[list[float]]:
+    """The parts of [a, b] the silence detector also heard as silence."""
     return [[max(a, s), min(b, e)] for s, e in sil if min(b, e) - max(a, s) > 0]
 
 
@@ -200,6 +205,7 @@ def remap_points(items: list, keep: list[list[float]], key: str | None = None) -
 
 
 def _filter_graph(keep: list[list[float]], offset: float, audio: bool) -> str:
+    """The ffmpeg filter graph that keeps only `keep` (times relative to `offset`), joined with short audio fades."""
     parts, labels = [], []
     for i, (a, b) in enumerate(keep):
         a, b = a - offset, b - offset
@@ -229,6 +235,7 @@ def cut(path: str, keep: list[list[float]], out: str, audio: bool = True, timeou
 
 
 def _measured(stderr: str) -> dict | None:
+    """The last loudnorm JSON block in ffmpeg's stderr as floats, or None for silence / garbage."""
     m = None
     for m in re.finditer(r"\{[^{}]*\"input_i\"[^{}]*\}", stderr or ""):
         pass

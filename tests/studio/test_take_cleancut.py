@@ -7,6 +7,8 @@ import subprocess
 import pytest
 
 from studio import take, takes
+
+from .conftest import agent_token, mcp_call
 from studio.media import cleancut
 
 needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="ffmpeg not installed")
@@ -179,3 +181,14 @@ def test_render_spec_carries_trim_and_only_the_clips_silences():
     assert cls._trim_spec({"input": {"style": "take"}}, an, {"start": 0, "end": 5}) == {}   # takes from before: off
     assert cls._trim_spec({"input": {"style": "opus", "trim_pauses": True}}, an, {"start": 0, "end": 5}) == {}
 
+
+
+def test_mcp_clips_from_video_forwards_trim_pauses_false(human, app, monkeypatch):
+    got = []
+    monkeypatch.setattr(app.state.house.takes, "start", lambda actor, body: got.append(body) or {"id": 1})
+    tok = agent_token(human)
+    for want in (False, True, None):
+        args = {"media_url": "https://x.test/m/abc", "owns": True, **({} if want is None else {"trim_pauses": want})}
+        res, _ = mcp_call(human, tok, "clips_from_video", args)
+        assert not res["isError"]
+    assert [b["trim_pauses"] for b in got] == [False, True, None]   # an explicit false reaches Takes.start
