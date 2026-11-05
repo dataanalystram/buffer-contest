@@ -134,8 +134,8 @@ def test_cleanup_skips_a_row_rewritten_after_it_was_verified(app, human, s3, mon
         return out
     monkeypatch.setattr(migrate_media, "_digest", racing)
     st = migrate_media.cleanup(store, _bucket(), log=lambda *_: None)
-    assert st["dropped"] == 1                                               # counted as verified, but…
-    assert store.q("SELECT data FROM media WHERE token=?", (tok,))[0]["data"] is not None   # …the guard kept the copy
+    assert st["dropped"] == 0 and st["kept"] == 1                           # the guard kept the copy, and says so
+    assert store.q("SELECT data FROM media WHERE token=?", (tok,))[0]["data"] is not None
 
 
 def test_second_runner_does_nothing_while_one_holds_the_lock(app, s3, monkeypatch):

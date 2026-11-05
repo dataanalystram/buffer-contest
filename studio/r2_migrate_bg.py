@@ -74,7 +74,7 @@ def reset() -> None:
 
 
 class _Conn:
-    """A dedicated Postgres connection with the calls migrate_media needs (q, x, _table_names). It holds the advisory
+    """A dedicated Postgres connection with the calls migrate_media needs (q, x, xn, _table_names). It holds the advisory
     lock for the whole run, and its reads never wait on (or block) the requests' shared connection."""
 
     pg = True
@@ -94,6 +94,8 @@ class _Conn:
         with self._db.cursor() as c:
             c.execute(sql.replace("?", "%s"), args)
             return c.rowcount
+
+    xn = x  # rows changed (Store.xn): the cleanup counts only copies its guarded UPDATE dropped
 
     def _table_names(self) -> set[str]:
         return {str(r["name"]) for r in

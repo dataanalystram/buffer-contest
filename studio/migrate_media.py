@@ -238,9 +238,9 @@ def cleanup(store, bucket: "r2.Bucket", log=print, usage=None, on_row=None) -> d
                     on_row(stats)
                 continue
             # guarded on the key and the hash it verified: a row rewritten meanwhile keeps its database copy
-            store.x(f"UPDATE {table} SET data=NULL WHERE {where} AND storage_key=? AND sha256=?",
-                    (*args, r["storage_key"], r["sha256"]))
-            stats["dropped"] += 1
+            n = store.xn(f"UPDATE {table} SET data=NULL WHERE {where} AND storage_key=? AND sha256=?",
+                         (*args, r["storage_key"], r["sha256"]))
+            stats["dropped" if n else "kept"] += 1  # only copies the UPDATE actually dropped count (CodeRabbit, PR #127)
             if on_row:
                 on_row(stats)
     r2usage.flush(u)
