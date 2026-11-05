@@ -24,6 +24,12 @@
     panel: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/>', clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/>',
     up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+    // from Lucide (https://lucide.dev, ISC licence; see NOTICE): bot, user, square, arrow-down, check, key-round
+    bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+    user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    stop: '<rect width="14" height="14" x="5" y="5" rx="2"/>', down: '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    key: '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>',
   };
   // the threads column: inline (and hideable, kept in localStorage hq_threads) on a wide screen, an overlay below 1101 px
   const TKEY = "hq_threads", overlayMq = matchMedia("(max-width:1100px)"), docEl = document.documentElement;
@@ -76,7 +82,7 @@
   const head = el("div", "hc-head");
   head.innerHTML = `<h2 class="hc-title" id="hcTitle" data-testid="chat-title">Post</h2>`;
   head.appendChild(document.getElementById("mpStatus"));
-  const model = el("button", "hc-chip hc-model", { type: "button", id: "hcModel", "data-testid": "chat-model", "data-go": "settings:ai", title: "The model that runs this agent. Change it in Settings > AI engine." });
+  const model = el("button", "hc-chip hc-model", { type: "button", id: "hcModel", "data-testid": "chat-model", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": "hcModelMenu", title: "The model that runs this agent. Click to change it." });
   const ctxB = el("button", "hc-chip hc-ctxb", { type: "button", id: "hcCtxB", "data-testid": "chat-context", "aria-controls": "hcCtx", "aria-expanded": "false" });
   ctxB.innerHTML = `${ic(I.info)}<span>Context</span>`;
   bar.prepend(menuB, head);
@@ -90,7 +96,7 @@
   const row0 = reply.querySelector(".row"), up = document.getElementById("replyUpload"), go = reply.querySelector("[data-testid=reply-go]"), qf = document.getElementById("replyChips");
   const pbox = el("div", "hc-box", { "data-testid": "chat-prompt-box" }), tools = el("div", "hc-ctools");
   up.classList.add("hc-attach"); const upl = up.querySelector("span"); if (upl) upl.className = "hc-attach-l";
-  const cmodel = el("button", "hc-pill hc-cmodel", { type: "button", id: "hcCModel", "data-testid": "chat-composer-model", "data-go": "settings:ai" });
+  const cmodel = el("button", "hc-pill hc-cmodel", { type: "button", id: "hcCModel", "data-testid": "chat-composer-model", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": "hcModelMenu" });
   const hint = el("span", "hc-hint muted xs"); hint.textContent = "Enter to send · Shift+Enter for a new line";
   go.classList.add("hc-send"); go.innerHTML = `${ic(I.up)}<span class="hc-send-l">Send</span>`;
   tools.append(up, cmodel, el("span", "hc-sp", { "aria-hidden": "true" }), hint, go);
@@ -340,7 +346,8 @@
     model.setAttribute("aria-label", label);
     // the composer pill (sidebars layout) names the model that writes the NEXT reply, short so the pill never squeezes
     // to "b…"; the run's own model and an MCP run's hint ride in its title and label
-    cmodel.innerHTML = `${ic(I.chip)}<span>${esc(nxt || n)}</span>`;
+    const es = HC.eng, nx = !mcp && es && es.engines ? es.engines.find((o) => o.id === es.runs) : null;
+    cmodel.innerHTML = `${ic(I.chip)}<span>${esc(nx ? nx.short : (nxt || n))}</span>`;
     cmodel.setAttribute("aria-label", label);
     cmodel.title = mcp ? `${n} — ${br.hint}` : nxt ? `Next reply: ${nxt} (this post was made with ${n})` : `Model: ${n}`;
     if (mcp) cmodel.dataset.hint = br.hint || ""; else delete cmodel.dataset.hint;
@@ -419,7 +426,7 @@
     readyTxt.textContent = ready ? `${ready} post${ready === 1 ? "" : "s"} ready to send` : "";
     ctxB.querySelector("span").textContent = summ.summarized ? "Context · summarized" : "Context";
     if (HC.dirty) drawList();
-    drawTitle(); drawModel();
+    drawTitle(); drawModel(); avatars(); working(r);
     if (HC.panelFor && !document.querySelector(`#packages .pkg[data-ch="${sel(HC.panelFor)}"]`)) closePanel();
     else if (HC.panelFor) openPanel(HC.panelFor, false);
     // the open drawer refreshes only when the thread changed (a new turn, a new status), never on every poll tick
@@ -553,5 +560,166 @@
   // the start screen's prompt sends on Enter too (Shift+Enter: new line), like the thread composer
   const aq = document.getElementById("agQuery");
   if (aq) aq.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && aq.value.trim()) { e.preventDefault(); document.getElementById("agentForm").requestSubmit(); } });
-  window.HQ_CHAT = { decorate, openPanel, closePanel, openCtx, closeCtx };
+  // ------------------------------------------------------------ the model menu (4 Nov 2026)
+  // The model pill used to be a data-go link to Settings > AI engine, so "Change model" left the chat. It opens a menu
+  // here instead: every engine GET /api/ai/engine lists, the current one checked, the unavailable ones disabled with the
+  // reason (and "Add a key in Settings" where a key would unlock one). A pick is saved with PUT /api/ai/engine (the
+  // account's engine, so this chat's next reply uses it) and the pill redraws. WAI-ARIA menu: arrow keys, Home/End,
+  // Enter/Space, Esc (focus back to the pill), Tab or a click outside closes. A bottom sheet at phone width.
+  const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const mm = el("div", "hc-mm", { id: "hcModelMenu", role: "menu", "aria-label": "Choose the model", "data-testid": "chat-model-menu", tabindex: "-1" });
+  mm.hidden = true;
+  document.body.appendChild(mm);
+  const MM = { from: null, busy: false, seq: 0 };
+  const KEYED = { own: true, "gemini-studio": true, nvidia: true, hf: true, claude: true };  // a saved key of yours unlocks these
+  function mmItems() { return [...mm.querySelectorAll("[role=menuitemradio]")]; }
+  function mmNav() { return [...mm.querySelectorAll("[role=menuitemradio],.hc-mm-key")]; }  // arrows also reach "Add a key"
+  function mmDraw(st) {
+    const sel = st.selected || "auto";
+    const rows = [{ id: "auto", short: "Automatic", model: (st.order_labels || []).slice(0, 3).join(" → "), available: true, reason: "" }, ...(st.engines || [])];
+    mm.innerHTML = `<div class="hc-mm-h"><b>Model</b><small>${esc(st.runs_label ? "Now running: " + st.runs_label : "")}</small></div>` +
+      rows.map((o) => {
+        const on = o.id === sel, dis = !o.available && o.id !== "auto";
+        const keyLink = dis && KEYED[o.id] ? `<button type="button" class="link xs hc-mm-key" data-go="settings:ai" data-testid="chat-model-addkey" role="menuitem" tabindex="-1">${ic(I.key)}Add a key in Settings</button>` : "";
+        return `<div class="hc-mm-row${on ? " on" : ""}${dis ? " na" : ""}"><button type="button" role="menuitemradio" class="hc-mm-i" data-eng="${esc(o.id)}"
+            data-testid="chat-model-option" aria-checked="${on}" ${dis ? 'aria-disabled="true"' : ""} tabindex="-1">
+          <span class="hc-mm-ck" aria-hidden="true">${on ? ic(I.check) : ""}</span>
+          <span class="hc-mm-t"><b>${esc(o.short || o.label || o.id)}</b><small>${esc(dis ? o.reason || "Unavailable" : o.model || "")}</small></span></button>${keyLink}</div>`;
+      }).join("") + (st.note ? `<p class="hc-mm-note xs muted" role="note">${esc(st.note)}</p>` : "");
+    mm.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => mmClose(false)));
+    mmItems().forEach((b) => (b.onclick = () => mmPick(b)));
+  }
+  function mmPlace() {
+    const a = MM.from; if (!a || mm.hidden) return;
+    if (matchMedia("(max-width:600px)").matches) { mm.classList.add("sheet"); mm.style.left = mm.style.top = mm.style.width = ""; return; }
+    mm.classList.remove("sheet");
+    const r = a.getBoundingClientRect(), w = Math.min(340, innerWidth - 16), h = mm.offsetHeight;
+    mm.style.width = w + "px";
+    mm.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + "px";
+    const up = r.top - h - 8 >= 8 || r.bottom + h + 8 > innerHeight;  // above the composer pill when it fits
+    mm.style.top = (up ? Math.max(8, r.top - h - 8) : r.bottom + 8) + "px";
+  }
+  async function mmOpen(from) {
+    MM.from = from; [model, cmodel].forEach((b) => b.setAttribute("aria-expanded", b === from ? "true" : "false"));
+    mm.hidden = false; mm.setAttribute("aria-busy", "true");
+    if (HC.eng) mmDraw(HC.eng); else mm.innerHTML = `<div class="hc-mm-h"><b>Model</b><small>Loading the models…</small></div>`;
+    mmPlace();
+    (mm.querySelector("[aria-checked=true]") || mm).focus();
+    const seq = ++MM.seq;  // a pick (PUT) or another open makes this answer stale: never let it overwrite HC.eng
+    try { const st = await api("/api/ai/engine"); if (seq !== MM.seq) return; HC.eng = st; if (mm.hidden || MM.from !== from) return; mmDraw(HC.eng); mmPlace(); (mm.querySelector("[aria-checked=true]") || mmItems()[0] || mm).focus(); }
+    catch (e) { if (!mm.hidden) mm.innerHTML = `<div class="hc-mm-h"><b>Model</b><small>${esc(e.message || "The models didn't load.")}</small></div>`; }
+    finally { mm.removeAttribute("aria-busy"); }
+  }
+  function mmClose(focusBack = true) {
+    if (mm.hidden) return;
+    mm.hidden = true; [model, cmodel].forEach((b) => b.setAttribute("aria-expanded", "false"));
+    if (focusBack && MM.from) MM.from.focus();
+  }
+  async function mmPick(b) {
+    if (b.getAttribute("aria-disabled") === "true" || MM.busy) return;
+    const id = b.dataset.eng;
+    if (HC.eng && (HC.eng.selected || "auto") === id) return mmClose();
+    MM.busy = true; MM.seq++; b.setAttribute("aria-busy", "true");
+    try {
+      HC.eng = await api("/api/ai/engine", { method: "PUT", body: { engine: id } });
+      try { const br = await api("/api/agent/brain"); if (window.H_STATE) window.H_STATE.brain = br.brain; } catch (_) { /* the pill still redraws */ }
+      mmClose(); drawModel();
+      if (window.HQ_AI_ENGINE) window.HQ_AI_ENGINE.refresh();  // Settings > AI engine shows the same pick
+      const o = (HC.eng.engines || []).find((x) => x.id === id);
+      if (window.toast) toast(HC.eng.note || `This chat now uses ${o ? o.short : "Automatic"}`, HC.eng.note ? 6000 : 3000);
+    } catch (e) { if (window.toast) toast(e.message || "Couldn't change the model", 5000); }
+    finally { MM.busy = false; b.removeAttribute("aria-busy"); }
+  }
+  [model, cmodel].forEach((b) => b.addEventListener("click", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (b.dataset.hint) { if (window.toast) toast(b.dataset.hint, 6000); return; }  // an AI app ran this post over MCP: its model is picked there
+    if (!mm.hidden && MM.from === b) mmClose(); else mmOpen(b);
+  }));
+  mm.addEventListener("keydown", (e) => {
+    const items = mmNav(), i = items.indexOf(document.activeElement);
+    const go = (n) => { e.preventDefault(); if (items.length) items[(n + items.length) % items.length].focus(); };
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mmClose(); }
+    else if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i < 0 ? items.length - 1 : i - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(items.length - 1);
+    else if (e.key === "Tab") mmClose(false);
+    else if ((e.key === "Enter" || e.key === " ") && i >= 0) { e.preventDefault(); if (items[i].classList.contains("hc-mm-key")) items[i].click(); else mmPick(items[i]); }
+  });
+  document.addEventListener("click", (e) => { if (!mm.hidden && !mm.contains(e.target) && !model.contains(e.target) && !cmodel.contains(e.target)) mmClose(false); });
+  window.addEventListener("resize", mmPlace);
+  window.addEventListener("scroll", () => { if (!mm.hidden && !mm.classList.contains("sheet")) mmPlace(); }, { passive: true });
+  window.addEventListener("popstate", () => mmClose(false));
+  api("/api/ai/engine").then((st) => { HC.eng = st; if (run()) drawModel(); }).catch(() => {});
+
+  // ------------------------------------------------------------ avatars: one icon each for the agent and you (Lucide)
+  function avatars() {
+    document.querySelectorAll("#agentThread .msg > b:first-child").forEach((n) => {
+      if (n.querySelector(":scope > .hc-av")) return;
+      const agent = !!n.closest(".agent");
+      const av = el("span", "hc-av " + (agent ? "a" : "u"), { "aria-hidden": "true", "data-testid": "chat-avatar" });
+      av.innerHTML = ic(agent ? I.bot : I.user);
+      n.prepend(av);
+    });
+  }
+
+  // ------------------------------------------------------------ the working message (4 Nov 2026)
+  // The only sign of work used to be a small spinner under the title. While a run works, the last message in the chat is
+  // the agent typing: dots, then "Step N of M · <the step>", the time it has taken and Stop. It follows the run poll
+  // (house.js watch -> showRun -> decorate). The page follows it down unless you scrolled up; then "Jump to latest"
+  // brings you back. No new step for 60 s: "Still working, this step can take a minute". Reduced motion: no animation.
+  // A run the server cut off shows house.js's Resume card instead (status "interrupted").
+  const wk = el("div", "msg agent hc-work", { id: "hcWork", "data-testid": "chat-working" });
+  wk.hidden = true;
+  wk.innerHTML = `<b><span class="hc-av a" aria-hidden="true">${ic(I.bot)}</span>Agent</b>
+    <span class="hc-work-b"><span class="hc-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="hc-work-t" data-testid="chat-working-step" role="status" aria-live="polite">Thinking…</span>
+      <span class="hc-work-s muted xs" data-testid="chat-working-time" aria-hidden="true"></span>
+      <button type="button" class="btn2 sm hc-work-stop" data-testid="chat-working-stop">${ic(I.stop)}<span>Stop</span></button></span>
+    <span class="hc-work-slow muted xs" data-testid="chat-working-slow" role="status" hidden>Still working, this step can take a minute.</span>`;
+  const wkDock = reply.closest(".mp-composer") || reply;
+  (wkDock.parentNode || main).insertBefore(wk, wkDock);
+  const jump = el("button", "hc-jump", { type: "button", "data-testid": "chat-jump-latest" });
+  jump.innerHTML = `${ic(I.down)}<span>Jump to latest</span>`; jump.hidden = true;
+  document.body.appendChild(jump);
+  const W = { rid: null, key: "", at: 0, pinned: true, t: 0 };
+  const nearEnd = () => innerHeight + scrollY >= document.documentElement.scrollHeight - 160;
+  function toLatest(smooth) { wk.scrollIntoView({ block: "end", behavior: smooth && !reduced() ? "smooth" : "auto" }); }
+  const chatOn = () => !root.hidden && !rv.hidden && !wk.hidden;  // the pill belongs to the chat screen only
+  window.addEventListener("scroll", () => { if (!chatOn()) { jump.hidden = true; return; } W.pinned = nearEnd(); jump.hidden = W.pinned; }, { passive: true });
+  new MutationObserver(() => { if (!chatOn()) jump.hidden = true; }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
+  jump.onclick = () => { W.pinned = true; jump.hidden = true; toLatest(true); };
+  wk.querySelector(".hc-work-stop").onclick = async (e) => {
+    const b = e.currentTarget, r = run(); if (!r) return;
+    b.disabled = true; b.querySelector("span").textContent = "Stopping…";
+    try { const n = await api(`/api/agent/runs/${r.id}/stop`, { method: "POST", body: {} }); if (!n.stopping) window.showRun(n); if (window.toast) toast(n.stopping ? "Stopping after this step" : "Stopped"); }
+    catch (err) { b.disabled = false; b.querySelector("span").textContent = "Stop"; if (window.toast) toast(err.message || "Couldn't stop it", 5000); }
+  };
+  function wkText(r) {
+    const steps = r.steps || [], cur = steps.find((x) => x.status === "running");
+    const total = Math.max(steps.length, ((r.result || {}).plan || []).length);
+    const t = cur ? `Step ${steps.indexOf(cur) + 1} of ${total} · ${cur.label}` : steps.length ? `Working… step ${steps.length} of ${total}` : "Thinking…";
+    const th = (r.result || {}).thread || [], lastUser = [...th].reverse().find((m) => m.role === "user");
+    const t0 = Number((lastUser || {}).at) || Number(r.created) || 0;
+    const tt = wk.querySelector(".hc-work-t"), ts = wk.querySelector(".hc-work-s");
+    if (tt.textContent !== t) tt.textContent = t;
+    const took = t0 ? secs(Date.now() / 1000 - t0) : "";
+    if (ts.textContent !== took) ts.textContent = took;
+    wk.querySelector(".hc-work-slow").hidden = Date.now() - W.at < 60000;
+  }
+  function working(r) {
+    const busy = busyRun(r);
+    if (!busy) { if (!wk.hidden) { wk.hidden = true; jump.hidden = true; } clearInterval(W.t); W.rid = null; return; }
+    const key = `${r.id}:${(r.steps || []).map((x) => x.status).join(",")}:${((r.result || {}).thread || []).length}`;
+    if (W.rid !== r.id) { W.rid = r.id; W.pinned = true; W.at = Date.now(); const b = wk.querySelector(".hc-work-stop"); b.disabled = false; b.querySelector("span").textContent = "Stop"; }
+    if (key !== W.key) { W.key = key; W.at = Date.now(); }
+    const was = wk.hidden; wk.hidden = false;
+    wkText(r);
+    clearInterval(W.t); W.t = setInterval(() => { const x = run(); if (x && busyRun(x)) wkText(x); else clearInterval(W.t); }, 1000);
+    if (!chatOn()) { jump.hidden = true; return; }
+    if (W.pinned) { jump.hidden = true; requestAnimationFrame(() => toLatest(!was)); } else jump.hidden = false;
+  }
+  // tests: age the last progress past 60 s without waiting
+  window.HQ_CHAT_WORK = { stale: () => { W.at = Date.now() - 61000; const r = run(); if (r) wkText(r); } };
+  window.HQ_CHAT = { decorate, openPanel, closePanel, openCtx, closeCtx, openModelMenu: () => mmOpen(cmodel) };
 })();
