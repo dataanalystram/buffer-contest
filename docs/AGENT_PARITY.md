@@ -90,4 +90,6 @@ own caps (4 GB, 3 h) and keeps the platform's licence flag.
 
 Each confirmation is a `link_consents` row (person, link, hash, time, statement version, licence hint). An agent token never
 writes one. A platform refusal names its reason (age-restricted, private, members-only, unavailable, bot check) and only
-then asks for the file. Tests: `tests/studio/test_link_ingest.py`.
+then asks for the file. The statement version binds the consent: an Inbox item an app asked under an older statement
+can't be approved (409; it closes, and the app's next call makes a fresh item with the new text), and an approval or
+One take form that shows an older version answers 409 (reload). Tests: `tests/studio/test_link_ingest.py`.
