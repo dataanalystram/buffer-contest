@@ -156,6 +156,10 @@ from . import take_bin as _take_bin  # noqa: E402  delete_take, list_take_bin, r
 
 TOOLS += _take_bin.TOOLS
 READ_ONLY |= _take_bin.READ_ONLY
+from . import take_layout as _take_layout  # noqa: E402  get_clip_layout, set_clip_layout (per-scene layouts, caption look)
+
+TOOLS += _take_layout.TOOLS
+READ_ONLY |= _take_layout.READ_ONLY
 from . import reel_audio as _reel_audio  # noqa: E402  search_instagram_audio, set_reel_audio
 
 TOOLS += _reel_audio.TOOLS
@@ -321,6 +325,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return h.takes.place(actor, int(args.get("take_id") or 0), body)
     if name == "get_limits":
         return {**studio.limits(actor), "plan": studio.plan(actor)}
+    extra = _take_layout.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
     extra = _brand_routes.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
