@@ -105,32 +105,34 @@ def sample(path: str, start: float, end: float, src_w: int, src_h: int, fps: flo
     import cv2
     W = min(src_w, MAX_W) - min(src_w, MAX_W) % 2
     H = int(round(W * src_h / max(1, src_w) / 2)) * 2
-    dh = int(round(DET_W * H / W / 2)) * 2
-    fast = detector(DET_W, dh)
+    dw = min(DET_W, W)  # frames() never upscales: a source narrower than 640 decodes at its own width
+    dh = int(round(dw * H / W / 2)) * 2
+    fast = detector(dw, dh)
     out, thumbs = [], {}
     th = int(round(THUMB_W * H / W / 2)) * 2
     small_or_none = 0
-    for t, img in frames(path, start, end, fps, DET_W, src_w, src_h):
-        found = [f for f in _boxes(fast, img, 1.0, 1.0, DET_W, dh) if f["score"] >= MIN_SCORE]
+    for t, img in frames(path, start, end, fps, dw, src_w, src_h):
+        dh = img.shape[0]
+        found = [f for f in _boxes(fast, img, 1.0, 1.0, img.shape[1], dh) if f["score"] >= MIN_SCORE]
         if not found or max(f["h"] for f in found) * dh < SMALL_PX:
             small_or_none += 1
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         for f in found:
-            f["mouth"] = _mouth(gray, f, DET_W, dh)
+            f["mouth"] = _mouth(gray, f, img.shape[1], dh)
             f.pop("lm", None)
         out.append({"t": t, "faces": found})
         thumbs[t] = cv2.resize(gray, (THUMB_W, th), interpolation=cv2.INTER_AREA)
-    if out and W > DET_W and small_or_none >= len(out) / 2:
+    if out and W > dw and small_or_none >= len(out) / 2:
         full = detector(W, H)
         by_t = {s["t"]: s for s in out}
         for t, img in frames(path, start, end, 1.0, W, src_w, src_h):
-            big = [f for f in _boxes(full, img, 1.0, 1.0, W, H) if f["score"] >= MIN_SCORE]
+            big = [f for f in _boxes(full, img, 1.0, 1.0, img.shape[1], img.shape[0]) if f["score"] >= MIN_SCORE]
             near = min(by_t, key=lambda x: abs(x - t)) if by_t else None
             if near is None or not big or len(big) <= len(by_t[near]["faces"]):
                 continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             for f in big:
-                f["mouth"] = _mouth(gray, f, W, H)
+                f["mouth"] = _mouth(gray, f, img.shape[1], img.shape[0])
                 f.pop("lm", None)
             # the full-resolution faces hold for the second around this sample (5 samples at 5 fps)
             for x in by_t:

@@ -201,10 +201,18 @@ def _run_len(seq: list[dict], i: int) -> float:
 
 
 def sidecar(shots: list[dict]) -> list[dict]:
-    """The layout sidecar: [{start, end, layout}] in clip seconds, consecutive shots of one layout merged."""
+    """The layout sidecar: [{start, end, layout, style?}] in clip seconds; consecutive shots of one layout (and, for
+    screen, one style: PiP and stacked put captions in different places) are merged."""
     out = []
-    for lay, a, b, _, _ in _runs(shots):
-        out.append({"start": round(a, 3), "end": round(b, 3), "layout": lay})
+    for s in shots:
+        style = s.get("style") if s["layout"] == "screen" else None
+        if out and out[-1]["layout"] == s["layout"] and out[-1].get("style") == style:
+            out[-1]["end"] = round(s["end"], 3)
+            continue
+        e = {"start": round(s["start"], 3), "end": round(s["end"], 3), "layout": s["layout"]}
+        if style:
+            e["style"] = style
+        out.append(e)
     return out
 
 

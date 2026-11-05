@@ -28,7 +28,6 @@ import logging
 import os
 import re
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -47,7 +46,6 @@ QUESTION = ("These are keyframes from one short video clip. Which ONE layout fit
             "talk = one person on camera; screencast = a screen, slides or app recording (maybe with a small webcam); "
             "two-speaker = two people talking in the same shot; wide = a wide shot, a group, a stage or anything else.\n"
             'Answer with JSON only: {"layout": "talk|screencast|two-speaker|wide"}')
-_lock = threading.Lock()
 
 
 class PaidModelRefused(RuntimeError):
@@ -95,23 +93,34 @@ class Limits:
             return False, f"{provider['name']}: {RPM} requests/minute guard"
         return True, ""
 
+    def reserve(self, provider: dict) -> tuple[bool, str]:
+        """Check and count one request at once, under a lock shared by every job on this machine."""
+        from ..asr import _locked
+        with _locked(self.path):
+            ok, why = self.allow(provider)
+            if ok:
+                self._record(provider["name"])
+            return ok, why
+
     def record(self, name: str) -> None:
-        with _lock:
-            d = self._load()
-            d[name] = self.stamps(name) + [self.now()]
-            try:
-                tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
-                tmp.write_text(json.dumps(d))
-                os.replace(tmp, self.path)
-            except OSError:
-                pass
+        from ..asr import _locked
+        with _locked(self.path):
+            self._record(name)
+
+    def _record(self, name: str) -> None:
+        d = self._load()
+        d[name] = self.stamps(name) + [self.now()]
+        try:
+            tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(d))
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------- frames
 def keyframes(path: str, start: float, end: float, src_w: int, src_h: int, n: int = 8) -> list[bytes]:
     """Up to n (<= 12) JPEG keyframes, <= 1024 px on the long side, re-encoded from raw pixels (no metadata)."""
-    import subprocess
-
     from PIL import Image
 
     from ... import mediasafe
@@ -129,7 +138,6 @@ def keyframes(path: str, start: float, end: float, src_w: int, src_h: int, n: in
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=72)  # a fresh JPEG from pixels: no EXIF, GPS or other metadata
         out.append(buf.getvalue())
-    _ = subprocess  # (mediasafe wraps subprocess)
     return out
 
 
@@ -180,11 +188,10 @@ def pick(frames: list[bytes], limits: Limits | None = None, http=None, env=None)
         except PaidModelRefused as e:
             log.info("layout vision: %s", e)
             continue
-        ok, why = limits.allow(prov)
+        ok, why = limits.reserve(prov)
         if not ok:
             log.info("layout vision: %s; next", why)
             continue
-        limits.record(prov["name"])
         try:
             cat = ask(prov, frames, key, http)
         except Exception as e:  # noqa: BLE001 - any failure: the next provider, then the rules

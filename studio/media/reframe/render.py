@@ -182,6 +182,7 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
         vis = vision.pick_for_clip(path, start, end, sw, sh)
         if vis and vision.mode() == "on":
             shots, vis["applied"] = vision.apply(shots, sigs, vis["category"])
+            shots = decide.stabilize(shots, pins)  # the hold and the change cap apply to the final choices too
     by_id = {t["id"]: t for t in tracks}
     cover = []
     for s, sig in zip(shots, sigs):

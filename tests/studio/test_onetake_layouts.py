@@ -515,3 +515,50 @@ def test_licence_guard_no_banned_packages():
             if re.search(rf"(^|[^a-z0-9_-]){re.escape(name)}([^a-z0-9_-]|$)", text):
                 hits.append((f.relative_to(ROOT).as_posix(), name))
     assert not hits, f"non-permissive or banned packages found: {hits}"
+
+
+# ---------------------------------------------------------------------- review fixes
+def test_sidecar_keeps_the_screen_style_for_captions():
+    shots = [{"start": 0, "end": 3, "layout": "screen", "style": "pip"}, {"start": 3, "end": 6, "layout": "screen", "style": "stack"}]
+    side = decide.sidecar(shots)
+    assert [(s["layout"], s.get("style")) for s in side] == [("screen", "pip"), ("screen", "stack")]
+    assert captions_ass.band_y(side[1]) == 960 and captions_ass.band_y(side[0]) == 1030
+
+
+def test_layout_writes_count_against_the_agent_allowance():
+    from studio.actions import Studio
+    assert "set_clip_layout" in Studio.COUNTED
+
+
+def test_smart_layout_table_is_made_in_every_fresh_database(tmp_path):
+    from studio import take_layout
+    from studio.store import Store
+
+    class H:
+        pass
+    for k in range(2):
+        h = H()
+        h.store = Store(str(tmp_path / f"db{k}.sqlite"), "s" * 64)
+        assert take_layout.smart_layout_on(h, Actor("u1")) is False
+        h.store.audit = lambda *a, **kw: None
+        assert take_layout.set_smart_layout(h, Actor("u1"), True)["smart_layout"] is True
+
+
+def test_budgets_check_and_count_in_one_step(tmp_path):
+    b = asr.Budget(str(tmp_path / "g.json"))
+    got = [b.reserve(30)[0] for _ in range(25)]
+    assert got.count(True) == 18 and b.usage()["rpm"] == 18
+    lim = vision.Limits(str(tmp_path / "v.json"))
+    ok = [lim.reserve(vision.PROVIDERS[1])[0] for _ in range(25)]
+    assert ok.count(True) == vision.RPM
+
+
+def test_vision_choice_is_stabilised_again(monkeypatch):
+    monkeypatch.setenv("HQ_LAYOUT_SPLIT", "1")
+    shots = [{"start": 0, "end": 5, "layout": "track", "rule": "R3"}, {"start": 5, "end": 6, "layout": "track", "rule": "R3"},
+             {"start": 6, "end": 12, "layout": "track", "rule": "R3"}]
+    sigs = [{"faces": [_face(0, 0.5, 0.2)]}, {"faces": [_face(0, 0.2, 0.2), _face(1, 0.8, 0.2)]}, {"faces": [_face(0, 0.5, 0.2)]}]
+    out, n = vision.apply(shots, sigs, "two-speaker")
+    assert n == 1 and out[1]["layout"] == "split"
+    side = decide.sidecar(decide.stabilize(out))
+    assert all(s["end"] - s["start"] >= 2.0 for s in side)

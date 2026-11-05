@@ -41,15 +41,14 @@ TOOLS = [
 ]
 READ_ONLY = {"get_clip_layout"}
 NAMES = {t["name"] for t in TOOLS}
-_TABLE = False
+_TABLES: set[int] = set()   # stores (by id) where take_prefs exists: each database creates it on first use
 
 
 # ---------------------------------------------------------------------- Smart layout (beta) opt-in
 def _table(store) -> None:
-    global _TABLE
-    if not _TABLE:
+    if id(store) not in _TABLES:
         store.x("CREATE TABLE IF NOT EXISTS take_prefs (user_id TEXT PRIMARY KEY, data TEXT, updated REAL)")
-        _TABLE = True
+        _TABLES.add(id(store))
 
 
 def _prefs(store, uid: str) -> dict:
@@ -84,7 +83,7 @@ def set_smart_layout(house, a: Actor, on) -> dict:
         raise ActionError("smart_layout must be true or false.")
     if a.kind == "agent":
         raise ActionError("Only the account owner can turn Smart layout on or off, in Settings.", 403)
-    d = _prefs(house.store, a.uid)
+    d = _prefs(house.store, a.uid)  # creates take_prefs in this database when it isn't there yet
     d["smart_layout"] = on
     house.store.x("INSERT INTO take_prefs(user_id,data,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
                   "data=excluded.data, updated=excluded.updated", (a.uid, json.dumps(d), time.time()))
@@ -158,7 +157,7 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         raise ActionError(f"caption_preset must be one of: {', '.join(captions_ass.PRESETS)}.")
     if lay is None and preset is None and not batch:
         raise ActionError("Nothing to change: give layout (with an optional scene) and/or caption_preset.")
-    takes.h.studio._guard_write(a, "adjust_clip")
+    takes.h.studio._guard_write(a, "set_clip_layout")  # counted in Studio.COUNTED: each re-render uses the agent's allowance
     rid = _take_id(rid)
     with takes._take_lock(rid):
         run, res, clip = _clip(takes, a, rid, clip_id)

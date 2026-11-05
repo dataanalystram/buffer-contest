@@ -37,7 +37,35 @@ TIMEOUT_S = 120.0
 LOCAL_DEFAULT = "base.en"
 LANG = {"english": "en", "spanish": "es", "french": "fr", "german": "de", "italian": "it", "portuguese": "pt", "hindi": "hi",
         "japanese": "ja", "chinese": "zh", "korean": "ko", "dutch": "nl", "russian": "ru", "arabic": "ar", "turkish": "tr"}
-_lock = threading.Lock()
+_lock = threading.RLock()
+
+
+class _locked:
+    """A thread lock plus an exclusive flock on `<usage file>.lock` (POSIX; threads only elsewhere)."""
+
+    def __init__(self, path: Path):
+        self.lockfile = Path(str(path) + ".lock")
+        self.fh = None
+
+    def __enter__(self):
+        _lock.acquire()
+        try:
+            import fcntl
+            self.fh = open(self.lockfile, "a+")
+            fcntl.flock(self.fh, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            self.fh = None
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self.fh is not None:
+                import fcntl
+                fcntl.flock(self.fh, fcntl.LOCK_UN)
+                self.fh.close()
+        finally:
+            _lock.release()
+        return False
 
 
 class GroqUnavailable(RuntimeError):
@@ -99,15 +127,27 @@ class Budget:
         return True, ""
 
     def record(self, secs: float) -> None:
-        with _lock:
-            d = self._load()
-            ev = self._events(d)
-            ev.append([self.now(), max(MIN_BILLED_S, float(secs))])
-            d["events"] = ev
-            self._save(d)
+        with _locked(self.path):
+            self._record(secs)
+
+    def _record(self, secs: float) -> None:
+        d = self._load()
+        ev = self._events(d)
+        ev.append([self.now(), max(MIN_BILLED_S, float(secs))])
+        d["events"] = ev
+        self._save(d)
+
+    def reserve(self, secs: float) -> tuple[bool, str]:
+        """Check and count one request in one step, under a lock shared by every job on this machine (threads and
+        processes), so two jobs can't both take the last free request."""
+        with _locked(self.path):
+            ok, why = self.allow(secs)
+            if ok:
+                self._record(secs)
+            return ok, why
 
     def block(self, seconds: float) -> None:
-        with _lock:
+        with _locked(self.path):
             d = self._load()
             d["blocked_until"] = self.now() + max(60.0, float(seconds))
             self._save(d)
@@ -136,13 +176,12 @@ def audio_chunks(path: str, tmp: Path, chunk_s: float = CHUNK_S) -> list[tuple[f
 # ---------------------------------------------------------------------- Groq
 def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> tuple[list[dict], str]:
     """One chunk through Groq (words in chunk seconds, language). Raises GroqUnavailable instead of ever retrying."""
-    ok, why = budget.allow(secs)
+    ok, why = budget.reserve(secs)  # checked and counted at once, before the call (a timeout still used the request)
     if not ok:
         raise GroqUnavailable(why)
     import httpx
     client = http or httpx.Client(timeout=TIMEOUT_S, trust_env=False, follow_redirects=False)
     try:
-        budget.record(secs)  # counted before the call: a timeout still used the request
         r = client.post(GROQ_URL, headers={"Authorization": f"Bearer {key}"},
                         data={"model": GROQ_MODEL, "response_format": "verbose_json", "timestamp_granularities[]": "word",
                               "temperature": "0"},

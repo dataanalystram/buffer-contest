@@ -48,12 +48,13 @@ function draw() {
     : "This clip hasn't been rendered with scene layouts yet. Pick a layout for the whole clip, or a caption look.";
   const rows = v.plan.length ? v.plan : [{ scene: 0, start: 0, end: 0, layout: "auto" }];
   $l("tlScenes").innerHTML = rows.map((s) => {
-    const cur = L.pick[s.scene] || "auto";
+    const cur = (L.pick[s.scene] && L.pick[s.scene].layout) || "auto";
     return `<li class="tl-scene" data-scene="${s.scene}"><span class="tl-when">${v.plan.length ? `Scene ${s.scene + 1} · ${clock(s.start)}–${clock(s.end)} · now ${esc(NAMES[s.layout] || s.layout)}` : "Whole clip"}</span>
       <div class="tl-seg" role="radiogroup" aria-label="Layout for scene ${s.scene + 1}">${v.layouts.map((k) => `<button type="button" role="radio" class="chip sm" data-lay="${k}" aria-checked="${cur === k}" data-testid="layout-${k}">${icon(k)}<span>${esc(NAMES[k] || k)}</span></button>`).join("")}</div></li>`;
   }).join("");
   $l("tlScenes").querySelectorAll(".tl-scene").forEach((li) => li.querySelectorAll("[data-lay]").forEach((b) => (b.onclick = () => {
-    L.pick[+li.dataset.scene] = b.dataset.lay; draw();
+    const old = L.pick[+li.dataset.scene];  // keep a saved bg / style when the same layout is picked again
+    L.pick[+li.dataset.scene] = old && old.layout === b.dataset.lay ? old : { layout: b.dataset.lay }; draw();
   })));
   $l("tlCaps").innerHTML = v.caption_presets.map((p) => `<button type="button" role="radio" class="chip sm" data-cap="${esc(p.id)}" aria-checked="${L.cap === p.id}" data-testid="caption-${esc(p.id)}">${esc(p.label)}</button>`).join("");
   $l("tlCaps").querySelectorAll("[data-cap]").forEach((b) => (b.onclick = () => { L.cap = b.dataset.cap; draw(); }));
@@ -73,7 +74,7 @@ window.openClipLayout = async function (id) {
       api("/api/takes/settings/smart-layout", { signal: my.ctl.signal })]);
     if (L !== my) return;  // the sheet moved on: drop this late answer
     my.view = v; my.cap = v.caption_preset;
-    Object.entries(v.overrides || {}).forEach(([k, o]) => (my.pick[+k] = o.layout));
+    Object.entries(v.overrides || {}).forEach(([k, o]) => (my.pick[+k] = { ...o }));
     $l("tlSmart").checked = !!s.smart_layout;
     draw();
   } catch (e) { if (L === my && e.name !== "AbortError") $l("tlErr").textContent = e.message; }
@@ -84,7 +85,7 @@ async function save() {
   const my = L, b = $l("tlSave");
   const scenes = {};
   const n = Math.max(1, my.view.plan.length);
-  for (let i = 0; i < n; i++) scenes[String(i)] = my.pick[i] || "auto";
+  for (let i = 0; i < n; i++) scenes[String(i)] = my.pick[i] || "auto";  // full override objects: bg / style survive
   b.disabled = true;
   try {
     await api(`/api/takes/${my.take}/clips/${encodeURIComponent(my.id)}/layout`, { method: "POST", body: { scenes, caption_preset: my.cap }, signal: my.ctl.signal });
