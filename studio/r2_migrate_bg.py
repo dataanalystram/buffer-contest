@@ -133,7 +133,7 @@ def _acquire(store):
 
 def run(store, bucket=None, log=print) -> dict:
     """The whole run, synchronously (the thread calls this; tests call it directly). Returns snapshot()."""
-    from . import library, migrate_media, r2
+    from . import blobstore, library, migrate_media, r2
     m = mode()
     with _LOCK:
         _STATE.clear()
@@ -163,7 +163,7 @@ def run(store, bucket=None, log=print) -> dict:
             library.ensure(store)
         except Exception:  # noqa: BLE001  (no Library: the media table still migrates)
             pass
-        bucket = bucket or r2.Bucket(cfg)
+        bucket = bucket or r2.Bucket(cfg, http=blobstore._client())
         _set(before=migrate_media.plan(work))
 
         def quiet(msg: str) -> None:
