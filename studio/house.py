@@ -1436,9 +1436,9 @@ class House:
     # ---- the weekly recap (job kind media_recap): cover + one video slide per story + Follow card (4:5) and one Reel (9:16)
     RECAP_KINDS = {"cover": ("photo", "png"), "follow": ("photo", "png"), "reel": ("video", "mp4")}
 
-    def free_quota_reserve(self, jid: int, provider: str, units: float) -> dict:
-        """One free-tier reservation for this job (route: /api/worker/jobs/{jid}/quota, token-checked). Groq only for
-        jobs that transcribe; vision only for a One take render whose owner turned on Smart layout (beta)."""
+    def free_quota_allowed(self, jid: int, provider: str) -> tuple[bool, str]:
+        """Whether this job may use a free provider at all: Groq only for jobs that transcribe; vision only for a One
+        take render whose owner turned on Smart layout (beta)."""
         from . import free_quota
         rows = self.store.q("SELECT spec FROM render_jobs WHERE id=?", (jid,))
         spec = json.loads(rows[0]["spec"]) if rows else {}
@@ -1446,10 +1446,18 @@ class House:
         if provider in free_quota.VISION:
             allowed = kind == "take_render" and any(isinstance(c, dict) and c.get("smart_layout") is True
                                                     for c in spec.get("clips") or [])
-            if not allowed:
-                return {"ok": False, "why": "Smart layout (beta) is off for this take"}
-        elif kind not in ("take_analyze", "transcribe"):
-            return {"ok": False, "why": "this job doesn't transcribe"}
+            return (True, "") if allowed else (False, "Smart layout (beta) is off for this take")
+        if kind not in ("take_analyze", "transcribe"):
+            return False, "this job doesn't transcribe"
+        return True, ""
+
+    def free_quota_reserve(self, jid: int, provider: str, units: float) -> dict:
+        """One free-tier reservation for this job (route: /api/worker/jobs/{jid}/quota, token-checked; also the app's
+        own Groq / vision proxy, studio/free_proxy.py)."""
+        from . import free_quota
+        ok, why = self.free_quota_allowed(jid, provider)
+        if not ok:
+            return {"ok": False, "why": why}
         if not hasattr(self, "_free_ledger"):
             self._free_ledger = free_quota.Ledger(self.store)
         ok, why = self._free_ledger.reserve(provider, units)

@@ -11,6 +11,18 @@ would cross MARGIN of a provider's free limit. The worker treats a refusal, and 
 Groq then falls back to faster-whisper on the machine and the vision picker to the rules. Nothing ever retries into a
 paid tier. The worker's own per-machine counters (studio/media/asr.py, studio/media/reframe/vision.py) still apply.
 
+The keys never leave the app (5 Nov 2026). Production runs jobs on the InstaBox box and the repo holds no Actions
+secrets, so a worker has no GROQ / NVIDIA / OPENROUTER key. The worker sets PROXY (WorkerProxy) and the APP makes the
+free call with its own key, on the job's token, under the same ledger (the pattern #108 uses for Jev):
+
+    POST /api/worker/jobs/{jid}/asr     body: one 16 kHz mono FLAC chunk (<= 25 MB), header x-audio-seconds
+        -> {"ok": true, "words": [{w, s, e, p}], "language": "en", "model": ...} or {"ok": false, "why": "..."}
+    POST /api/worker/jobs/{jid}/vision  {"frames": [<base64 JPEG>, ...]} (<= 12, each <= 400 KB, <= 1024 px)
+        -> {"ok": true, "category": ..., "provider": ..., "model": ...} or {"ok": false, "why": "..."}
+
+Server side: studio/free_proxy.py. A worker that has its own key and no PROXY (a self-hoster's machine) still calls
+the provider itself, reserving on REMOTE first.
+
 No FastAPI here: the worker imports this module.
 """
 from __future__ import annotations
@@ -28,12 +40,17 @@ LIMITS: dict[str, dict] = {
 }
 VISION = ("nvidia", "openrouter")
 MAX_UNITS = 3600.0
+ASR_MAX_BYTES = 25 * 1024 * 1024        # Groq's free-tier file cap; a 10-minute 16 kHz mono FLAC chunk is ~10-19 MB
+ASR_MAX_SECONDS = 610.0                 # one chunk (studio/media/asr.py CHUNK_S = 600) plus rounding
+VISION_MAX_FRAMES, VISION_FRAME_MAX_BYTES, VISION_MAX_PX = 12, 400_000, 1024
 DAY = 86400.0
 _lock = threading.Lock()
 
 # The worker sets this to a callable (provider, units) -> (ok, why) that asks the app. None (local runs, tests, the web
 # server itself): only the machine's own counters apply.
 REMOTE = None
+# The worker sets this to a WorkerProxy: the app makes Groq / vision calls with ITS key. None: no proxy (local, tests).
+PROXY = None
 
 
 def check(events: list[tuple[float, float]], provider: str, units: float, now: float) -> tuple[bool, str]:
@@ -119,3 +136,33 @@ def worker_remote(client, base: str, headers: dict, jid: int):
             return False, f"{provider}: the ledger's answer couldn't be read"
         return d.get("ok") is True, str(d.get("why") or "")
     return ask
+
+
+class WorkerProxy:
+    """The worker's side of the app's free-call proxy. Never raises: any error answers {"ok": False, "why": ...}, so the
+    caller falls back to faster-whisper or to the rules. Holds the job token only (no provider key exists here)."""
+
+    def __init__(self, client, base: str, headers: dict, jid: int):
+        self.client, self.headers = client, dict(headers)
+        self.url = f"{base.rstrip('/')}/api/worker/jobs/{int(jid)}"
+
+    def _post(self, path: str, what: str, timeout: float, **kw) -> dict:
+        try:
+            r = self.client.post(self.url + path, timeout=timeout, **kw)
+            if r.status_code != 200:
+                return {"ok": False, "why": f"{what}: the app answered {r.status_code}"}
+            d = r.json()
+        except Exception as e:  # noqa: BLE001 - network, closed client, bad JSON: no free call this time
+            return {"ok": False, "why": f"{what}: the app didn't answer ({e.__class__.__name__})"}
+        if not isinstance(d, dict):
+            return {"ok": False, "why": f"{what}: the app's answer couldn't be read"}
+        return d
+
+    def asr(self, flac: bytes, secs: float) -> dict:
+        h = {**self.headers, "content-type": "audio/flac", "x-audio-seconds": f"{float(secs):.3f}"}
+        return self._post("/asr", "groq", 180.0, content=flac, headers=h)
+
+    def vision(self, frames: list[bytes]) -> dict:
+        import base64
+        body = {"frames": [base64.b64encode(f).decode() for f in frames[:VISION_MAX_FRAMES]]}
+        return self._post("/vision", "vision", 90.0, json=body, headers=self.headers)

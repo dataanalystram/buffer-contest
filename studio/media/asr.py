@@ -12,6 +12,9 @@
 * Usage is counted in a small JSON file (``HQ_ASR_USAGE_FILE``, default in the temp dir) so several jobs on one
   machine share one budget, AND on the video worker every request is first reserved on the app's shared ledger
   (studio/free_quota.py), because each GitHub Actions run is a fresh machine whose own counter starts at zero.
+* On the video worker (InstaBox or GitHub Actions) there is no Groq key: each chunk goes to the APP
+  (``free_quota.PROXY``, ``POST /api/worker/jobs/{id}/asr``), which calls Groq with its own key under the ledger
+  (studio/free_proxy.py). The key never leaves the app; a refusal or any error means local for the rest.
 * The local fallback is faster-whisper ``base.en`` (CPU int8; ``HQ_ASR_LOCAL_MODEL`` picks another, e.g. ``small`` for
   other languages).
 
@@ -66,6 +69,14 @@ def _file_lock(path: Path):
 
 class GroqUnavailable(RuntimeError):
     """Groq can't take this chunk (no key, a free limit is near, a 429, an error): transcribe it locally."""
+
+
+class GroqRateLimited(GroqUnavailable):
+    """Groq answered 429; ``wait`` is its retry-after in seconds. Never retried."""
+
+    def __init__(self, wait: float):
+        super().__init__("Groq rate limit (429)")
+        self.wait = wait
 
 
 def local_model(requested: str | None = None) -> str:
@@ -168,22 +179,17 @@ def audio_chunks(path: str, tmp: Path, chunk_s: float = CHUNK_S) -> list[tuple[f
 
 
 # ---------------------------------------------------------------------- Groq
-def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> tuple[list[dict], str]:
-    """One chunk through Groq (words in chunk seconds, language). Raises GroqUnavailable instead of ever retrying."""
-    ok, why = budget.reserve(secs)  # counted before the call: a timeout still used the request
-    if not ok:
-        raise GroqUnavailable(why)
-    from .. import free_quota  # the app's shared ledger: a fresh worker machine's own counter starts at zero
-    ok, why = free_quota.remote_ok("groq", secs)
-    if not ok:
-        raise GroqUnavailable(why)
+def groq_post(data: bytes, name: str, key: str, http=None) -> tuple[list[dict], str]:
+    """ONE request to Groq (no budget here: callers reserve first). Words in chunk seconds, language. Raises
+    GroqUnavailable (GroqRateLimited on a 429) instead of ever retrying. Used by the worker with its own key and by
+    the app's proxy (studio/free_proxy.py)."""
     import httpx
     client = http or httpx.Client(timeout=TIMEOUT_S, trust_env=False, follow_redirects=False)
     try:
         r = client.post(GROQ_URL, headers={"Authorization": f"Bearer {key}"},
                         data={"model": GROQ_MODEL, "response_format": "verbose_json", "timestamp_granularities[]": "word",
                               "temperature": "0"},
-                        files={"file": (flac.name, flac.read_bytes(), "audio/flac")})
+                        files={"file": (name, data, "audio/flac")})
     except Exception as e:  # noqa: BLE001 - network, closed client, anything: local takes over
         raise GroqUnavailable(f"Groq unreachable ({e.__class__.__name__})")
     finally:
@@ -194,18 +200,67 @@ def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> 
             wait = float(r.headers.get("retry-after") or 60)
         except ValueError:
             wait = 60.0
-        budget.block(wait)
-        raise GroqUnavailable("Groq rate limit (429)")
+        raise GroqRateLimited(wait)
     if r.status_code != 200:
         raise GroqUnavailable(f"Groq answered {r.status_code}")
     try:
         d = r.json()
-        words = [{"w": str(w["word"]).strip(), "s": round(float(w["start"]), 2), "e": round(float(w["end"]), 2), "p": 1.0}
-                 for w in d.get("words") or [] if str(w.get("word", "")).strip()]
-    except (ValueError, KeyError, TypeError):
+        words = clean_words(d.get("words") or [], groq=True)
+    except (ValueError, KeyError, TypeError, AttributeError):
         raise GroqUnavailable("Groq's answer couldn't be read")
     lang = str(d.get("language") or "").lower()
     return words, LANG.get(lang, lang[:2] if len(lang) == 2 else lang)
+
+
+def clean_words(raw, groq: bool = False) -> list[dict]:
+    """[{w, s, e, p}] from Groq's words (``groq``: {word, start, end}) or from the app's proxy answer ({w, s, e, p}).
+    TypeError / ValueError on anything malformed."""
+    if not isinstance(raw, list) or len(raw) > 200_000:
+        raise TypeError("words must be a list")
+    out = []
+    for w in raw:
+        if not isinstance(w, dict):
+            raise TypeError("a word must be an object")
+        text = str(w["word"] if groq else w["w"]).strip()
+        if not text:
+            continue
+        s, e = float(w["start"] if groq else w["s"]), float(w["end"] if groq else w["e"])
+        p = 1.0 if groq else float(w.get("p", 1.0))
+        out.append({"w": text[:200], "s": round(s, 2), "e": round(e, 2), "p": round(min(1.0, max(0.0, p)), 2)})
+    return out
+
+
+def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> tuple[list[dict], str]:
+    """One chunk through Groq with THIS machine's key (a self-hoster's worker). Raises GroqUnavailable."""
+    ok, why = budget.reserve(secs)  # counted before the call: a timeout still used the request
+    if not ok:
+        raise GroqUnavailable(why)
+    from .. import free_quota  # the app's shared ledger: a fresh worker machine's own counter starts at zero
+    ok, why = free_quota.remote_ok("groq", secs)
+    if not ok:
+        raise GroqUnavailable(why)
+    try:
+        return groq_post(flac.read_bytes(), flac.name, key, http)
+    except GroqRateLimited as e:
+        budget.block(e.wait)
+        raise
+
+
+def proxy_chunk(flac: Path, secs: float, proxy) -> tuple[list[dict], str]:
+    """One chunk through the APP (it holds the key and the ledger). Raises GroqUnavailable on a refusal or any error."""
+    data = flac.read_bytes()
+    from .. import free_quota
+    if len(data) > free_quota.ASR_MAX_BYTES:
+        raise GroqUnavailable("this part is over Groq's 25 MB free-tier file cap")
+    d = proxy.asr(data, secs)
+    if d.get("ok") is not True:
+        raise GroqUnavailable(str(d.get("why") or "the app couldn't transcribe this part"))
+    try:
+        words = clean_words(d.get("words"))
+    except (TypeError, ValueError, KeyError):
+        raise GroqUnavailable("the app's transcript couldn't be read")
+    lang = str(d.get("language") or "")[:8]
+    return words, lang
 
 
 def _local_chunk(flac: Path, model: str) -> tuple[list[dict], str]:
@@ -223,9 +278,12 @@ def _local_chunk(flac: Path, model: str) -> tuple[list[dict], str]:
 
 def free_first(path: str, key: str | None = None, budget: Budget | None = None, http=None, local=None):
     """(words, language, provider) with Groq doing every chunk it can inside the free limits and the rest local, or
-    None when Groq can't do even the first chunk (no key, a limit, an error): the caller's local path runs then."""
+    None when Groq can't do even the first chunk (no key, a limit, an error): the caller's local path runs then.
+    On the video worker (``free_quota.PROXY`` set, no explicit ``key``) the app makes each Groq call with its key."""
+    from .. import free_quota
+    proxy = free_quota.PROXY if key is None else None
     key = key if key is not None else os.environ.get("GROQ_API_KEY", "")
-    if not key:
+    if proxy is None and not key:
         return None
     budget = budget or Budget()
     tmp = Path(tempfile.mkdtemp(prefix="hq_asr_"))
@@ -240,7 +298,7 @@ def free_first(path: str, key: str | None = None, budget: Budget | None = None, 
             got = None
             if not why:
                 try:
-                    got = groq_chunk(f, n, key, budget, http)
+                    got = proxy_chunk(f, n, proxy) if proxy is not None else groq_chunk(f, n, key, budget, http)
                     groq_n += 1
                 except GroqUnavailable as e:
                     why = str(e)
@@ -253,7 +311,7 @@ def free_first(path: str, key: str | None = None, budget: Budget | None = None, 
             ws, lg = got
             lang = lang or lg
             words += [{**w, "s": round(w["s"] + off, 2), "e": round(w["e"] + off, 2)} for w in ws]
-        label = f"Groq {GROQ_MODEL} (free tier)"
+        label = f"Groq {GROQ_MODEL} (free tier{', via the app' if proxy is not None else ''})"
         if local_n:
             label += f" + faster-whisper {local_model()} for {local_n} of {len(chunks)} parts ({why})"
         return words, lang, label

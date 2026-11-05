@@ -19,6 +19,10 @@ Limits enforced here, before each request: a per-provider day counter and a 20-r
 machine and on the app's shared ledger (studio/free_quota.py: a worker run is a fresh machine). Every request
 times out after 20 s; any error, refusal or unreadable answer falls back to the next provider and then to the rules,
 logged at INFO, never raised.
+
+On the video worker there are no provider keys: the keyframes go to the APP (``free_quota.PROXY``,
+``POST /api/worker/jobs/{id}/vision``), which re-checks the owner's opt-in, re-encodes them and runs ``pick`` with its
+own keys under the ledger (studio/free_proxy.py). The keys never leave the app.
 """
 from __future__ import annotations
 
@@ -199,10 +203,11 @@ def ask(provider: dict, frames: list[bytes], key: str, http=None) -> str | None:
     return parse(msg.get("content") or "") or parse(msg.get("reasoning_content") or "")
 
 
-def pick(frames: list[bytes], limits: Limits | None = None, http=None, env=None) -> dict | None:
-    """{category, provider} from the first free provider that answers, or None (rules only)."""
+def pick(frames: list[bytes], limits: Limits | None = None, http=None, env=None, reserve=None) -> dict | None:
+    """{category, provider} from the first free provider that answers, or None (rules only). ``reserve``: a callable
+    provider_name -> (ok, why) that replaces this machine's counters and REMOTE (the app passes its ledger)."""
     env = os.environ if env is None else env
-    limits = limits or Limits()
+    limits = limits or (Limits() if reserve is None else None)
     for prov in PROVIDERS:
         key = env.get(prov["key_env"], "")
         if not key:
@@ -212,10 +217,13 @@ def pick(frames: list[bytes], limits: Limits | None = None, http=None, env=None)
         except PaidModelRefused as e:
             log.info("layout vision: %s", e)
             continue
-        ok, why = limits.reserve(prov)
-        if ok:
-            from ... import free_quota  # the app's shared day/minute ledger (each worker run is a fresh machine)
-            ok, why = free_quota.remote_ok(prov["name"], 1)
+        if reserve is not None:
+            ok, why = reserve(prov["name"])
+        else:
+            ok, why = limits.reserve(prov)
+            if ok:
+                from ... import free_quota  # the app's shared day/minute ledger (each worker run is a fresh machine)
+                ok, why = free_quota.remote_ok(prov["name"], 1)
         if not ok:
             log.info("layout vision: %s; next", why)
             continue
@@ -236,7 +244,8 @@ def pick_for_clip(path: str, start: float, end: float, src_w: int, src_h: int) -
         frames = keyframes(path, start, end, src_w, src_h)
         if not frames:
             return None
-        got = pick(frames)
+        from ... import free_quota
+        got = via_app(free_quota.PROXY, frames) if free_quota.PROXY is not None else pick(frames)
         if got:
             got["mode"] = mode()
             log.info("layout vision (%s): %s says %s", got["mode"], got["provider"], got["category"])
@@ -244,6 +253,17 @@ def pick_for_clip(path: str, start: float, end: float, src_w: int, src_h: int) -
     except Exception as e:  # noqa: BLE001
         log.info("layout vision: skipped (%s)", e.__class__.__name__)
         return None
+
+
+def via_app(proxy, frames: list[bytes]) -> dict | None:
+    """The worker's path: the app asks the free providers with its keys. Only a clean answer counts."""
+    d = proxy.vision(frames)
+    if d.get("ok") is not True or d.get("category") not in CATEGORIES:
+        log.info("layout vision: %s", str(d.get("why") or "no answer from the app")[:200])
+        return None
+    names = {p["name"]: p["model"] for p in PROVIDERS}
+    prov = d.get("provider") if d.get("provider") in names else "app"
+    return {"category": d["category"], "provider": prov, "model": names.get(prov, ""), "via": "app"}
 
 
 def apply(shots: list[dict], sigs: list[dict], category: str) -> tuple[list[dict], int]:

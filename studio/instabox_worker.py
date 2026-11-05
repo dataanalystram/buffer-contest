@@ -70,11 +70,18 @@ def wake(http: httpx.Client, mid: str) -> tuple[bool, str]:
     return False, f"machine not ready in {wait} s"
 
 
+def layout_vision() -> str:
+    """The Smart layout mode the box runs (the app's HQ_LAYOUT_VISION, default shadow like take.yml). Frames only ever
+    leave when the take's owner turned Smart layout on, and then through the app (studio/free_proxy.py)."""
+    m = os.environ.get("HQ_LAYOUT_VISION", "shadow").strip().lower()
+    return m if m in ("off", "shadow", "on") else "off"
+
+
 def command(jid: int, app_url: str, kind: str = "", ref: str = "main") -> str:
     """The exec command. Reads the job token from stdin; nothing secret is in this string."""
     # HQ_LOCK: the worker takes the box's one-job-at-a-time lock itself, after its heartbeat starts, so a job waiting its
     # turn behind a long One take still looks alive to the app's watchdog (House.sweep_stale_jobs)
-    env = f"HQ_JOB_ID={int(jid)} HQ_APP={shlex.quote(app_url)} HQ_LOCK=/data/hq.lock"
+    env = f"HQ_JOB_ID={int(jid)} HQ_APP={shlex.quote(app_url)} HQ_LOCK=/data/hq.lock HQ_LAYOUT_VISION={layout_vision()}"
     if kind:
         env += f" HQ_KIND={shlex.quote(kind)}"
     head = ("set -e; IFS= read -r JOB_TOKEN; export JOB_TOKEN; cd /data/hq; "

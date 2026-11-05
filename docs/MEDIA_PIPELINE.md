@@ -248,6 +248,17 @@ rules; 20 s timeout, any error falls back. Each worker run is a fresh machine, s
 the app's shared ledger (`studio/free_quota.py`, `POST /api/worker/jobs/{id}/quota` with the job's token); a refusal
 or any error means the free call is skipped, never a paid one.
 
+**The keys stay on the app (5 Nov 2026).** Production runs jobs on the InstaBox box, whose environment carries only the
+job id, the app URL and the one-job token, and the repo has no Actions secrets, so no worker holds a Groq, NVIDIA or
+OpenRouter key. The worker (`free_quota.PROXY`, set by `render_worker`) hands the free calls to the app with its job
+token, the same pattern as the Jev second opinion: `POST /api/worker/jobs/{id}/asr` (one 16 kHz mono FLAC chunk ≤ 25 MB,
+≤ 610 s; the app reserves the larger of the FLAC header's duration and `x-audio-seconds` on the ledger, then calls Groq
+once; a 429 pauses Groq for every job until its retry-after) and `POST /api/worker/jobs/{id}/vision` (≤ 12 base64
+JPEGs, each ≤ 400 KB and ≤ 1024 px; the app re-checks the owner's Smart layout opt-in before decoding, re-encodes every
+frame without metadata, then runs the picker reserving each request). Both answer `{"ok": false, "why": ...}` on a
+refusal, so the worker transcribes locally / keeps the rules. Server side: `studio/free_proxy.py`. The box runs
+`HQ_LAYOUT_VISION` from the app's env (default `shadow`, like `take.yml`).
+
 `split_video` writes `manifest.json` (transcript source, burned subs, reframe detector, every clip's score, reason, hook
 and renders). Third-party video needs `rights_confirmed` and a credit line, exactly like `media_render`.
 

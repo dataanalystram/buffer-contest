@@ -65,6 +65,10 @@ python3 -m venv /data/venv && /data/venv/bin/pip install -r /data/hq/requirement
 ```
 Jobs log to `/data/logs/job-<id>.log` on the box.
 App env on Render: `HQ_RENDER_BACKEND=instabox`, `INSTABOX_API_KEY` (secret), `HQ_INSTABOX_MACHINE`, `HQ_INSTABOX_REF`.
+No provider key is ever put on the box: Groq ASR and the Smart layout vision picker are called by the app with its own
+`GROQ_API_KEY` / `NVIDIA_API_KEY` / `OPENROUTER_API_KEY`, on the job's token, under the free-tier ledger
+(`POST /api/worker/jobs/{id}/asr` and `/vision`, studio/free_proxy.py). The exec command passes `HQ_LAYOUT_VISION`
+(the app's value, default `shadow`; anything else but off/shadow/on becomes off).
 
 ## Cost per video
 Free plan: **$0**. On Pro (if ever needed): ~1–2 min of a 4/8 box per Reel ≈ $0.001; a 60-min One take

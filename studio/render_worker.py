@@ -285,6 +285,7 @@ def _main(args, base: str) -> int:
     # the app's watchdog fails the job when no heartbeat arrives
     from . import free_quota  # every free Groq / vision request is reserved on the app's ledger first
     free_quota.REMOTE = free_quota.worker_remote(c, base, h, args.job)
+    free_quota.PROXY = free_quota.WorkerProxy(c, base, h, args.job)  # Groq / vision calls are made by the app, with its keys
     with Heartbeat(base, h, args.job):
         lock = _lock()
         try:
@@ -296,6 +297,7 @@ def _main(args, base: str) -> int:
             return 1
         finally:
             free_quota.REMOTE = None
+            free_quota.PROXY = None
             if lock:
                 lock.close()
 
