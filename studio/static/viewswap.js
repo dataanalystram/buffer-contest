@@ -81,13 +81,21 @@
     const t0 = now(), st = setTimeout(() => { if (my === seq) slow(o); }, SLOW_MS);
     const jobs = (Array.isArray(work) ? work : [work]).map(run);
     const done = Promise.all(jobs).then(() => null, (e) => e);
-    const cap = sleep(CAP_MS).then(() => null);
+    const cap = sleep(CAP_MS).then(() => ({ capped: true }));
+    const again = opts.retry ? () => swap(el, [opts.retry], { label: opts.label, retry: opts.retry }) : null;
     return Promise.race([done, cap]).then(async (err) => {
+      const capped = !!(err && err.capped); if (capped) err = null;
       const left = MIN_MS - (now() - t0); if (left > 0) await sleep(left);
       clearTimeout(st);
       if (my !== seq) return;  // a newer screen was picked meanwhile: it owns the loader now
-      if (err && !aborted(err)) { fail(o, el, err, opts.retry ? () => swap(el, [opts.retry], { label: opts.label, retry: opts.retry }) : null, false); return; }
+      if (err && !aborted(err)) { fail(o, el, err, again, false); return; }
       clear(el); curEl = null;
+      // shown at the cap with its own skeletons: a loader that fails later still says so, with Retry (and Close), but
+      // only while this is still the screen picked last (a newer or same-tab transition bumps seq) (CodeRabbit, #123)
+      if (capped) done.then((late) => {
+        if (!late || aborted(late) || my !== seq || !el.isConnected) return;
+        curEl = el; fail(overlay(el, opts.label), el, late, again, true);
+      });
     });
   }
   /** Keep the screen still open under the loader while a deep link (View run, a take) fetches what it opens. */

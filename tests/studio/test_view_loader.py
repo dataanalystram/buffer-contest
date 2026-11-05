@@ -70,3 +70,13 @@ def test_loader_polish_never_blocks_clicks_caps_at_1500ms_and_is_still_under_red
     assert re.search(r"\.hq-vt-err\{[^}]*pointer-events:auto", css)
     blocks = re.findall(r"@media \(prefers-reduced-motion:reduce\)\{(.+?\})\}", css, flags=re.S)
     assert any(".hq-vt *" in b and "animation-name:none" in b and "transition:none" in b for b in blocks), blocks
+
+
+def test_a_loader_that_fails_after_the_cap_still_shows_retry_while_its_screen_is_current():
+    """CodeRabbit (#123): past CAP_MS the screen is shown; a late failure shows the inline error with Retry and Close,
+    only while no newer transition began (seq), never over another screen."""
+    js = (Path(__file__).resolve().parents[2] / "studio" / "static" / "viewswap.js").read_text()
+    assert "const cap = sleep(CAP_MS).then(() => ({ capped: true }));" in js
+    assert "if (capped) done.then((late) => {" in js
+    assert "if (!late || aborted(late) || my !== seq || !el.isConnected) return;" in js
+    assert "fail(overlay(el, opts.label), el, late, again, true);" in js
