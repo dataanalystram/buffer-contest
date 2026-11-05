@@ -2,7 +2,7 @@
    its place. Our own loader after the idea of 21st.dev's Logo Trace Loader (dqnamo, MIT; no code copied, see NOTICE): a
    short lavender dash loops around the mark's rounded-square outline and the mark breathes. Flat colours, no gradients;
    static under prefers-reduced-motion. */
-.tab.hq-vt-wait{position:relative;visibility:hidden;min-height:min(60vh,520px)}
+.hq-vt-wait{position:relative;visibility:hidden;min-height:min(60vh,520px)}
 .hq-vt{visibility:visible;position:absolute;left:0;right:0;top:0;z-index:6;display:flex;flex-direction:column;align-items:center;
   gap:20px;padding:min(16vh,128px) 16px 24px;min-height:min(60vh,520px);background:var(--paper)}
 .hq-vt-in{display:flex;flex-direction:column;align-items:center}
