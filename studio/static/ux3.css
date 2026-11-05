@@ -228,3 +228,27 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
 /* For you: the interests accepted in setup, shown above the feed they decide */
 .nf-for{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 16px}
 .nf-for p{flex-basis:100%;margin:0}
+
+/* Video-link approval card (5 Nov 2026): one column, so the link, the note and the statement never squeeze into columns */
+#tab-inbox .appr-paid .appr-body,#tab-inbox .appr-stack{flex-direction:column;align-items:stretch;gap:10px}
+.appr-stack>*{margin:0;min-width:0}
+.appr-url{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:600;
+  color:var(--accent-ink);text-decoration:underline;text-underline-offset:2px}
+.appr-url:hover,.appr-url:focus-visible{white-space:normal;overflow-wrap:anywhere}
+.appr-note{line-height:1.45}
+.appr-attest{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid var(--line);border-radius:10px;
+  background:var(--sunken);font-size:14px;line-height:1.45;cursor:pointer;min-height:44px}
+.appr-attest input{width:18px;height:18px;margin:2px 0 0;flex:none;accent-color:var(--accent)}
+.appr-attest:has(input:checked){border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.appr-attest:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:2px}
+#tab-inbox .appr-link .appr-act{flex-wrap:nowrap}
+/* Settings → Auto-approve video links */
+.set-auto{display:flex;flex-direction:column;gap:12px}
+.set-auto-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.set-auto .switch input:checked+span{background:var(--ink)}  /* a setting, not something waiting for a person: no accent (DESIGN.md) */
+.set-auto-form{display:flex;flex-direction:column;gap:12px;padding-top:4px}
+.set-auto-form fieldset{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.set-auto-form legend{font-size:13px;font-weight:600;margin-bottom:4px}
+.set-auto-apps{display:flex;flex-direction:column;gap:2px;padding-left:28px}
+.set-auto-sum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}
+.auto-pill{margin-left:6px}  /* the neutral .pill: auto-approved needs nobody */

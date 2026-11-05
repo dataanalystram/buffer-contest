@@ -35,7 +35,7 @@ CREATORS = {"create_package", "make_post", "draft_from_library", "use_library_it
             "start_post"}
 # polling and lookups are not "what the agent did"; everything else is shown
 QUIET = {"get_run", "render_status", "list_clips", "whoami", "list_channels", "get_limits", "get_activity", "list_queue", "list_rules",
-         "list_approvals", "list_calendar", "get_inbox", "get_brand", "get_brain", "get_ai_engine", "get_ai_logs", "list_ai_keys",
+         "list_approvals", "list_pending_approvals", "list_calendar", "get_inbox", "get_brand", "get_brain", "get_ai_engine", "get_ai_logs", "list_ai_keys",
          "list_library", "list_library_bin", "list_recent_uploads", "integrations_status", "get_post_context", "get_page_context",
          "list_templates", "get_template", "list_themes", "get_post_templates", "list_music", "list_brand_kits", "get_onboarding",
          "upload_media_chunk"}

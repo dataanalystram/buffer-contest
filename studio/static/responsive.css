@@ -18,8 +18,6 @@
   border:1px solid var(--bad);border-radius:10px;font-size:14px}
 .ib-groups{display:flex;flex-direction:column;gap:16px;max-width:880px;margin-bottom:32px}
 .ib-group{border:1px solid var(--line);border-radius:12px;background:var(--raised);padding:16px 20px;scroll-margin-top:96px}
-.ib-group.u-now{border-left:4px solid var(--accent)}
-.ib-group.u-soon{border-left:4px solid var(--warn)}
 .ib-gh{display:flex;align-items:center;gap:10px}
 .ib-gh .ic{width:18px;height:18px;color:var(--muted)}.ib-group.u-now .ib-gh .ic{color:var(--accent)}
 .ib-gh h2{font-size:17px;line-height:1.3;font-weight:600}
@@ -27,8 +25,12 @@
 .ib-count{min-width:24px;height:24px;padding:0 8px;border-radius:999px;display:inline-grid;place-items:center;font-size:13px;font-weight:700;
   font-variant-numeric:tabular-nums;background:var(--sunken)}
 .ib-group.u-now .ib-count{background:var(--accent);color:var(--on-accent)}
-.ib-urg{margin-left:auto;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.ib-group.u-now .ib-urg{color:var(--accent-ink)}.ib-group.u-soon .ib-urg{color:var(--warn)}
+/* urgency is a small pill with a dot (5 Nov 2026), never a coloured bar down the card's edge */
+.ib-urg{margin-left:auto;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border:1px solid var(--line);border-radius:999px;
+  font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);white-space:nowrap;background:var(--raised)}
+.ib-dot{width:6px;height:6px;border-radius:999px;background:currentColor;flex:none}
+.ib-group.u-now .ib-urg{color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.ib-group.u-soon .ib-urg{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--line))}
 .ib-sum{margin:6px 0 0 28px;font-size:14px;color:var(--muted);line-height:1.45}
 .ib-items{list-style:none;margin:12px 0 0;padding:0;border-top:1px solid var(--line)}
 .ib-item{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}

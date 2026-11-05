@@ -141,6 +141,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>The Inbox is the first screen after you sign in: a dashboard of your day. From the top:</p>
 <ul><li><b>Stats</b>: posts scheduled, posts awaiting approval, failed posts and the Buffer requests you have left.</li>
 <li><b>Waiting for your approval</b>: posts your agents wrote, as cards with each channel's media and the app that wrote it. Approve and they go to Buffer at their time. This is the only place approvals live.</li>
+<li><b>Video links from your AI apps</b>: a card with the link, a note that nothing was fetched yet, and the rights statement to tick before Approve. Tired of approving every video? Settings → Privacy &amp; data → <b>Auto-approve video links</b> (off by default) approves them for all your apps or the ones you pick, logs each one in Activity as auto-approved, and turns off in one click. It never covers paid features or posting.</li>
 <li><b>Today's queue</b>: what Buffer sends in the next 24 hours, in order (<b>Coming up</b> when nothing is due today).</li>
 <li><b>Needs attention</b>: grouped by urgency, <b>Now</b>, <b>Soon</b> and <b>This week</b>.</li>
 <li><b>Agent activity</b>: what each AI app did, with its logo.</li>
@@ -410,7 +411,9 @@ _DESC = {
     "POST /api/preflight/fix": "Apply preflight fixes (trim, crop, recompress) for one channel",
     "GET /api/preflight/rules": "The preflight rule pack with the official doc each rule comes from",
     "GET /api/approvals": "Posts waiting for a person to approve", "POST /api/approvals/{approval_id}/approve": "Approve a waiting post; it goes to Buffer",
-    "POST /api/approvals/{approval_id}/reject": "Reject a waiting post", "POST /api/approvals/{approval_id}/reschedule": "Change a waiting post's time",
+    "POST /api/approvals/{approval_id}/reject": "Reject a waiting post",
+    "GET /api/settings/link-auto-approve": "Whether video links from your AI apps are approved without asking, and for which apps",
+    "PUT /api/settings/link-auto-approve": "Turn auto-approve for video links on (with the rights statement) or off, for every app or the ones you pick", "POST /api/approvals/{approval_id}/reschedule": "Change a waiting post's time",
     "GET /api/agent/brain": "Status of the post agent's AI engine", "GET /api/agent/runs": "Your recent Make a post runs",
     "POST /api/agent/runs": "Start a Make a post run from a topic, a link or your media",
     "GET /api/agent/runs/{rid}": "One run: its timeline, AI calls, cost and the post per channel",

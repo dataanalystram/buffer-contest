@@ -72,6 +72,7 @@ NO_IDEM = {"create_send_code", "create_upload", "upload_media_chunk", "finish_up
            "submit_post", "preview_post"}
 # arguments that steer this layer and never reach a tool's own logic or its idempotency hash
 CONTROL = ("idempotency_key", "user_asked", "new_post", "new_request", "reason", "approval_id")
+KEEP_APPROVAL_ID = {"approve_link_ingest", "reject_link_ingest"}  # approval_id is what these tools act on (5 Nov 2026)
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS mcp_idem (user_id TEXT, agent_id INTEGER, ikey TEXT, tool TEXT, args_hash TEXT, result TEXT, "
           "at REAL, PRIMARY KEY (user_id, agent_id, ikey))")
@@ -381,7 +382,8 @@ KEEP_REASON = {"start_post", "continue_run"}  # start_post keeps the person's wo
 
 def strip_control(args: dict, name: str = "") -> dict:
     """The arguments a tool sees: run_id stays (and reason for start_post), the layer's own fields go."""
-    return {k: v for k, v in (args or {}).items() if k not in CONTROL or k == "run_id" or (k == "reason" and name in KEEP_REASON)}
+    return {k: v for k, v in (args or {}).items() if k not in CONTROL or k == "run_id" or (k == "reason" and name in KEEP_REASON)
+            or (k == "approval_id" and name in KEEP_APPROVAL_ID)}
 
 
 # ------------------------------------------------------------------------------------------------ tools
