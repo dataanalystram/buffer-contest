@@ -151,3 +151,20 @@ def test_binned_tokens_past_the_sql_cap_widen_the_limit_and_the_page_stays_full(
     monkeypatch.setattr(library, "BIN_SQL_MAX", 1)   # two of the three binned tokens fall past the bound list
     got = [i["id"] for i in h.library._list(A, limit=2)["items"]]
     assert got and set(got) == set(old) and len(got) == 2, got
+
+
+def test_duplicate_rows_of_an_overflow_binned_token_never_shorten_the_page(human, app, monkeypatch):
+    """CodeRabbit (#121): a token can have more than one row; the page refills by rows, not by the overflow token count."""
+    st, h = app.state.store, app.state.house
+    old = [h.library.save_bytes(A, jpeg(340 + i, 340), f"k{i}.jpg")["id"] for i in range(2)]
+    tok = h.put_media(A, MP4 + b"dup", "dup.mp4", kind="render", meta={"type": "video"})
+    _take(st, "acc_1", [{"id": "c0", "status": "binned", "token": tok}], name="Dup binned")
+    h.library.backfill(A)
+    row = dict(st.q("SELECT * FROM library_items WHERE user_id=? AND token=?", ("acc_1", tok))[0])
+    for _ in range(3):  # three more rows for the same binned token, all newer than the kept items
+        st.x("INSERT INTO library_items(user_id,name,kind,mime,size,token,storage,source,meta,created) VALUES(?,?,?,?,?,?,?,?,?,?)",
+             ("acc_1", row["name"], row["kind"], row["mime"], row["size"], tok, row["storage"], row["source"], row["meta"] or "{}", time.time() + 2000))
+    st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 2000, "acc_1", tok))
+    monkeypatch.setattr(library, "BIN_SQL_MAX", 0)   # the binned token is past the bound list: skipped as rows are read
+    got = [i["id"] for i in h.library._list(A, limit=2)["items"]]
+    assert set(got) == set(old) and len(got) == 2, got

@@ -743,16 +743,22 @@ class Library:
                 where.append("(source='take' OR run_id IN (SELECT id FROM agent_runs WHERE user_id=? AND kind='take'))")
                 args.append(a.uid)
             # binned takes and clips leave in SQL, before LIMIT, so a page never comes back short because the newest
-            # rows were in the Bin. The bound list is capped (BIN_SQL_MAX); any binned tokens past it widen the LIMIT
-            # by their count and are skipped below, so the page is still full.
+            # rows were in the Bin. The bound list is capped (BIN_SQL_MAX); binned tokens past it are skipped as rows are
+            # read, and more rows are read until the page is full (CodeRabbit, #121: a token can have several rows).
             lim = max(1, min(int(limit or 200), 500))
             binned = sorted(takes["binned"])
             in_sql, rest = binned[:BIN_SQL_MAX], binned[BIN_SQL_MAX:]
             if in_sql:
                 where.append(f"token NOT IN ({','.join('?' * len(in_sql))})")
                 args.extend(in_sql)
-            rows = self.store.q(f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY created DESC, id DESC LIMIT ?",
-                                (*args, lim + len(rest)))
+            sql = f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY created DESC, id DESC LIMIT ? OFFSET ?"  # noqa: S608  where: fixed clauses, values bound
+            rows, off, batch = [], 0, lim + len(rest)
+            for _ in range(20):  # refill by rows (a token can have more than one row) until the page is full or none remain
+                part = self.store.q(sql, (*args, batch, off))
+                rows.extend(r for r in part if r["token"] not in takes["binned"])
+                if len(rows) >= lim or len(part) < batch or not rest:
+                    break
+                off += len(part)
             by_run = {r["run_id"]: r for r in runs}
             items = []
             for r in rows:
