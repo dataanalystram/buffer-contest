@@ -154,7 +154,8 @@ def test_one_take_deletes_go_to_the_library_bin_with_undo_restore_and_delete_for
     page.get_by_test_id("ask-cancel").click()
     assert _status(app, live["old"]) == "binned"
     old.get_by_test_id("bin-delete-permanently").click()
-    page.get_by_test_id("ask-ok").click()
+    with page.expect_response(lambda r: "/api/takes/bin/purge" in r.url and r.request.method == "POST"):  # the card leaves at once (optimistic); wait for the purge to answer
+        page.get_by_test_id("ask-ok").click()
     pw.expect(page.get_by_test_id("bin-item")).to_have_count(1)
     assert _status(app, live["old"]) is None
     # Restore the take from the Library Bin: it's back in Your takes
