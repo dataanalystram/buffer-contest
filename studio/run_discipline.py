@@ -75,20 +75,20 @@ CONTROL = ("idempotency_key", "user_asked", "new_post", "new_request", "reason",
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS mcp_idem (user_id TEXT, agent_id INTEGER, ikey TEXT, tool TEXT, args_hash TEXT, result TEXT, "
           "at REAL, PRIMARY KEY (user_id, agent_id, ikey))")
-_ready: set[int] = set()
 _lock = threading.Lock()
+_FLAG = "_mcp_idem_ready"  # on the Store, never id(store): a reused id must not skip CREATE TABLE on a new database
 
 
 def ensure(store) -> None:
-    if id(store) in _ready:
+    if getattr(store, _FLAG, False):
         return
     with _lock:
-        if id(store) in _ready:
+        if getattr(store, _FLAG, False):
             return
         store.x(SCHEMA.replace(" REAL", " DOUBLE PRECISION") if store.pg else SCHEMA)
         if store.pg:
             store.x("ALTER TABLE mcp_idem ENABLE ROW LEVEL SECURITY")
-        _ready.add(id(store))
+        setattr(store, _FLAG, True)
 
 
 def is_agent(a: Actor) -> bool:
