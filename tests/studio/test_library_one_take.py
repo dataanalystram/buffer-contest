@@ -122,3 +122,32 @@ def test_mcp_list_library_offers_the_one_take_filter(human, app):
     res, out = mcp_call(human, tok, "list_library", {"created_by": "one_take"})
     assert not res["isError"], out
     assert s["talk"] in {i["id"] for i in out["items"]} and all(i["one_take"] for i in out["items"])
+
+
+def test_binned_takes_are_excluded_before_the_limit_so_a_page_is_never_short(human, app):
+    """Binned take/clip tokens are cut in SQL, before LIMIT: the newest rows being binned never shrinks the page."""
+    st, h = app.state.store, app.state.house
+    old = [h.library.save_bytes(A, jpeg(320 + i, 320), f"old{i}.jpg")["id"] for i in range(3)]
+    toks = [h.put_media(A, MP4 + bytes([i]), f"b{i}.mp4", kind="render", meta={"type": "video"}) for i in range(3)]
+    _take(st, "acc_1", [{"id": f"c{i}", "status": "binned", "token": t} for i, t in enumerate(toks)], name="Binned clips")
+    lib = h.library
+    lib.backfill(A)
+    for t in toks:  # the binned clips' rows are the newest in the Library
+        st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 1000, "acc_1", t))
+    out = lib._list(A, limit=3)
+    got = [i["id"] for i in out["items"]]
+    assert len(got) == 3 and set(got) == set(old), got
+    assert not {i["media_token"] for i in out["items"]} & set(toks)
+
+
+def test_binned_tokens_past_the_sql_cap_widen_the_limit_and_the_page_stays_full(human, app, monkeypatch):
+    st, h = app.state.store, app.state.house
+    old = [h.library.save_bytes(A, jpeg(330 + i, 330), f"keep{i}.jpg")["id"] for i in range(2)]
+    toks = [h.put_media(A, MP4 + b"x" + bytes([i]), f"x{i}.mp4", kind="render", meta={"type": "video"}) for i in range(3)]
+    _take(st, "acc_1", [{"id": f"c{i}", "status": "binned", "token": t} for i, t in enumerate(toks)], name="Many binned")
+    h.library.backfill(A)
+    for t in toks:
+        st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 1000, "acc_1", t))
+    monkeypatch.setattr(library, "BIN_SQL_MAX", 1)   # two of the three binned tokens fall past the bound list
+    got = [i["id"] for i in h.library._list(A, limit=2)["items"]]
+    assert got and set(got) == set(old) and len(got) == 2, got
