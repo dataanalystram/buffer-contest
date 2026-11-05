@@ -75,3 +75,54 @@ service-initiated, 1-5 Nov). The serving path now:
   Range answers, streams and HEAD pass through byte for byte. A gzipped answer's ETag is weakened (`W/`).
 - The run and take polls (`house.js watch`, `take.js watchTake`) wait at least 30 s while the tab is hidden and catch up
   when it is shown again (`HQLoad.pollMs` / `HQLoad.wake`).
+
+## Egress guard: each file leaves the database once (5 Nov 2026)
+
+**Why.** Supabase's free plan allows 5 GB of egress a month; the dashboard showed 30.07 GB (601%) while Render sent only
+~6 GB to clients. The gap was amplification between this server and Postgres: before #118 every Range answer read the
+whole `media.data` BYTEA (a video player sends 10–20 Range requests per view, so a 7–26 MB video left the database
+10–20 times to send a few MB), and `House.get_media` read whole files again for every render, Buffer push, edit and
+logo (2,771 whole-file reads in 6 days, from `pg_stat_statements`). The database is also at 75% of its 0.5 GB, so
+nothing here adds rows or blobs to it.
+
+**Layers** (the interface every reader goes through):
+
+| Layer | Module | Holds |
+| --- | --- | --- |
+| Reference + metadata | `media`, `library_items`, `library_chunks` rows | token, owner, MIME, size, sha256, storage_key |
+| Bytes backend | `studio/blobstore.py` | `db` (BYTEA, today) or `r2` (S3-compatible, off until R2 is set up) |
+| Read-through disk cache | `studio/mediacache.py` | one copy per file on the instance's disk |
+
+`library.media_file()` and `Library._file_of()` return a ranged reader (`mime`, `size`, `etag`, `read(s, e)`,
+`iter()`); both are wrapped by `mediacache.wrap()`. The first read of any range copies the whole file from the
+backend once (1 MB pieces, never whole in memory), atomically (temp file + rename, one fill per file at a time);
+every later read, ranged or whole, is a local file read. `House.get_media` (renders, Buffer pushes, image edits, logos)
+and `Library.blob` read through the same cache, so internal callers no longer re-download either. The render worker
+(GitHub Actions / InstaBox) has no database access: it fetches `/m/` over HTTPS, which is served from this cache.
+
+* Key: the token plus the ETag (sha256 when the row has one), so a changed file never gets the old copy.
+* Ownership first: routes resolve the row and refuse foreign or missing ids (404) before asking for bytes; the cache
+  is never a way in. A permanent delete (`record_owner_deletes`) removes the copy at once.
+* `HQ_MEDIA_CACHE_MB` (default 1024; 0 = off), `HQ_MEDIA_CACHE_DIR` (default the temp dir). LRU eviction; a file over a
+  quarter of the cap is served without a copy. The cache lives on the Store object; Render's disk is ephemeral, so a
+  deploy starts empty (each file is read once again per deploy).
+* Switching on R2 later needs no code change here: `blobstore` reads the object by range and the cache sits above it.
+
+**HTTP.** `/m/<token>`: `Cache-Control: private, max-age=31536000, immutable` (a token's bytes never change) with a
+strong ETag; `If-None-Match` → 304; `Range` → 206 with `Content-Range` (max 8 MB per answer); `If-Range` applies the
+range only for the current ETag (otherwise the whole file, 200). Library files by id: `private, max-age=604800` + ETag.
+
+**Meter and budget** (`studio/egress.py`). Per UTC day: media bytes read from the backend (`db`) and media bytes sent
+(`served`). Budgets `HQ_EGRESS_DB_DAILY_MB` (130) and `HQ_EGRESS_SERVE_DAILY_MB` (150) keep a month under ~4 GB and
+~4.5 GB. At 80% one warning line is logged; at 100% a *browser* fetch (Sec-Fetch headers) of media that isn't the
+signed-in viewer's own answers 429 + Retry-After until midnight UTC. Never refused: the owner, Buffer / Instagram /
+the render worker (no Sec-Fetch headers), HEAD and 304. One browser client that was already sent more than 3x a file's
+size of the same file within `HQ_EGRESS_REPEAT_S` (600 s) gets 429 for that file (owner exempt). The day's totals and 14
+daily summaries are kept in a small JSON file on the instance disk (`HQ_EGRESS_STATE`); at each UTC midnight a
+`egress daily …` summary line is logged. Numbers only: `/healthz` → `egress`, admin → `GET /api/admin/egress` and the
+"Media bandwidth" section of `/admin`.
+
+**Not covered by the cache** (text, not BYTEA): list and poll queries that read `agent_runs.result` (~15 KB a row), e.g.
+the Library list's runs read and the threads list, measured at ~0.5 GB in 6 days. Next step: select only the fields the
+lists show (a follow-up). `/healthz` now pings the database at most every 15 s (`HQ_HEALTH_PING_S`; 124k pings in
+6 days before).
