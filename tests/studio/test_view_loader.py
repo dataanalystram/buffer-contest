@@ -50,9 +50,10 @@ def test_deep_links_hold_the_open_screen_and_fail_in_place():
     assert "visibleTab() !== from || !hold.live()) return hold.done();" in body and "HQLoad.aborted(e) || !tk.live()) hold.done();" in body
     take = (ST / "take.js").read_text()
     ot = take[take.index("window.openTake = async (id) => {"):take.index("window.HS_TABS")]
-    assert 'cur.id !== "tab-take" ? HQView.hold(cur, ' in ot and "hold.fail(e, () => window.openTake(id))" in ot
+    assert 'cur.id !== "tab-take" ? HQView.hold(cur, ' in ot and "hold.fail(err, () => window.openTake(id))" in ot
     assert ot.index("await api(") < ot.index('showTab("take")') and "(hold && !hold.live())" in ot
     app = (ST / "app.js").read_text()
-    assert "subTab.work = undefined;" in app and "return Promise.allSettled([loadTokens(), loadAppUsage()" in app
+    assert "subTab.work = undefined;" in app and "return Promise.all([loadTokens(), loadAppUsage()" in app
+    assert "HQLoad.cancel(\"openrun\")" in body and "taking too long" in body and "taking too long" in ot
     lt = take[take.index("async function loadTake() {"):take.index("window.openTake = async")]
     assert "const list = loadTakes();" in lt and "  await list;\n}" in lt  # One take is shown once its list is drawn

@@ -295,18 +295,28 @@ const visibleTab = () => (document.querySelector(".tab:not([hidden])") || {}).id
 // The screen still open keeps the HuhQueue logo loader while the run is fetched (viewswap.js hold): its old content is never
 // left on view, and a failure shows Retry / Close in place instead of a toast. Moving on or an abort just drops the loader.
 const NO_HOLD = { done() {}, live: () => true, fail(e) { if (e && e.message) toast(e.message); } };
+const HOLD_MS = 15000;  // the longest a deep link keeps the open screen under the loader before it offers Retry
 async function openRunById(rid) {
   const tk = HQLoad.start("openrun"), from = visibleTab();
   const fromEl = document.getElementById(from);
   const hold = window.HQView && fromEl ? HQView.hold(fromEl, "Opening the run") : NO_HOLD;
+  // bounded (CodeRabbit, #117): a request that hangs is cancelled after HOLD_MS and the hold offers Retry / Close; a newer
+  // transition (another screen or sub-tab) cancels it too
+  let late = false;
+  const cap = setTimeout(() => { if (tk.live()) { late = true; HQLoad.cancel("openrun"); } }, HOLD_MS);
+  if (hold.signal) hold.signal.addEventListener("abort", () => { if (tk.live()) HQLoad.cancel("openrun"); }, { once: true });
   try {
     const r = await api(`/api/agent/runs/${encodeURIComponent(rid)}`, { signal: tk.signal });
+    clearTimeout(cap);
     // the person moved on meanwhile (another screen, a sub-tab, another open): never yank them to the run
     if (!tk.live() || visibleTab() !== from || !hold.live()) return hold.done();
     if (r.kind === "take") { await window.openTake(r.id); return hold.done(); }
     showTab("agent"); window.showRunFromLibrary?.(r); hold.done();
-  } catch (e) { if (HQLoad.aborted(e) || !tk.live()) hold.done(); else hold.fail(e, () => openRunById(rid)); }
-  finally { tk.done(); }
+  } catch (e) {
+    if (late) hold.fail(new Error("Opening the run is taking too long."), () => openRunById(rid));
+    else if (HQLoad.aborted(e) || !tk.live()) hold.done();
+    else hold.fail(e, () => openRunById(rid));
+  } finally { clearTimeout(cap); tk.done(); }
 }
 window.hqOpenRun = openRunById;
 

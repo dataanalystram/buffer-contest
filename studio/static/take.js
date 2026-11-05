@@ -482,16 +482,23 @@ async function loadTake() {
 window.openTake = async (id) => {
   const op = HQLoad.start("takeopen"), cur = document.querySelector(".tab:not([hidden])");
   const hold = window.HQView && cur && cur.id !== "tab-take" ? HQView.hold(cur, "Opening the take") : null;
+  // bounded (CodeRabbit, #117): a hung request is cancelled after 15 s and the hold offers Retry / Close; a newer
+  // transition cancels it too
+  let late = false;
+  const cap = setTimeout(() => { if (op.live()) { late = true; HQLoad.cancel("takeopen"); } }, 15000);
+  if (hold && hold.signal) hold.signal.addEventListener("abort", () => { if (op.live()) HQLoad.cancel("takeopen"); }, { once: true });
   try {
     const t = await api(`/api/takes/${encodeURIComponent(id)}`, { signal: op.signal });
+    clearTimeout(cap);
     // moved on (another screen, a sub-tab, another open): never yank them to One take
     if (!op.live() || document.querySelector(".tab:not([hidden])") !== cur || (hold && !hold.live())) return hold?.done();
     showTab("take"); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
     hold?.done();
   } catch (e) {
-    if (HQLoad.aborted(e) || !op.live()) hold?.done();
-    else if (hold) hold.fail(e, () => window.openTake(id));
-    else toast(e.message, 6000);
-  } finally { op.done(); }
+    const err = late ? new Error("Opening the take is taking too long.") : e;
+    if (!late && (HQLoad.aborted(e) || !op.live())) hold?.done();
+    else if (hold) hold.fail(err, () => window.openTake(id));
+    else toast(err.message, 6000);
+  } finally { clearTimeout(cap); op.done(); }
 };
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { take: loadTake });

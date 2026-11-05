@@ -899,8 +899,8 @@ async function loadAppUsage() {
       <span class="ax-um">${g.models.length ? g.models.slice(0, 3).map((m) => `${aiMark(m.model || m.provider, 12)} ${esc(m.model || "unknown model")} ×${m.calls}`).join("<br>") : "model not reported by the app"}</span></button>`).join("")}</div>` : "";
   } catch (_) { box.innerHTML = ""; }
 }
-// its requests' promise: the view transition waits for them (settled, so one failing panel keeps its own message)
-function loadApps() { return Promise.allSettled([loadTokens(), loadAppUsage(), (window.HS_TABS || {}).connect?.()]); }
+// its requests' promise: the view transition waits for them, and a failure shows the transition's Retry in place
+function loadApps() { return Promise.all([loadTokens(), loadAppUsage(), (window.HS_TABS || {}).connect?.()]); }
 $("#tokenForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {
