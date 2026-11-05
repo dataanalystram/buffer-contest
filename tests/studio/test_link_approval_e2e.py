@@ -172,7 +172,7 @@ def test_settings_auto_approve_toggle_needs_the_statement_and_turns_off(live, ch
         # covered: the app's link starts at once, and Activity marks it auto-approved
         t = _mcp(base, tok, "ingest_video_link", {"url": LONG})
         assert t.get("id") and len(live["sent"]) == 1, t
-        page.get_by_test_id("tab-activity").click() if page.get_by_test_id("tab-activity").count() else page.goto(base + "/?tab=activity")
+        page.goto(base + "/?tab=activity")
         page.get_by_test_id("activity-auto-approved").first.wait_for()
         # off again in one click
         page.goto(base + "/?tab=settings")
