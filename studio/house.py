@@ -720,9 +720,11 @@ class House:
         out, named = [], _chat_titles(self.store, a.uid)
         from .thread_bin import deleted_ids as _deleted_threads
         gone = _deleted_threads(self.store, a.uid)  # threads deleted from the sidebar (the conversation only; media stays)
-        # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads
+        # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads; deleted threads are left out
+        # before the LIMIT, so they never use up the sidebar's slots
         for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
-                              "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, limit)):
+                              "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
+                              "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, a.uid, limit)):
             d = dict(r)
             if d["id"] in gone:
                 continue

@@ -507,15 +507,26 @@ class Takes(TakeBin):
             if not key:
                 analysis["jev"] = {**base, "why": "off: TYPESAFE_API_KEY isn't set on the server"}
                 return analysis
-            cap = min(jev_faces.cap_from_env(), max(0, jev_faces.daily_cap() - self._jev_used(j["user_id"])))
+            clean = jev_faces.clean_frames(frames, jev_faces.cap_from_env())
+            with self.store.tx():  # reserve the allowance first (atomic): two takes at once can't both spend the same calls
+                cap = min(len(clean), max(0, jev_faces.daily_cap() - self._jev_used(j["user_id"])))
+                if cap > 0:
+                    self._jev_used(j["user_id"], cap)
             if cap <= 0:
-                analysis["jev"] = {**base, "why": "off: today's free Jev allowance for this account is used up"}
+                analysis["jev"] = {**base, "why": "off: today's free Jev allowance for this account is used up" if clean
+                                   else "on: no usable keyframes"}
                 return analysis
-            clean = jev_faces.clean_frames(frames, cap)
-            faces, rec = jev_faces.studio_opinion(analysis.get("faces") or [], clean, key, cap, http=getattr(self, "_jev_http", None),
-                                                  log=lambda m: print(m, flush=True))
-            if rec.get("calls"):
-                self._jev_used(j["user_id"], rec["calls"])
+            try:
+                faces, rec = jev_faces.studio_opinion(analysis.get("faces") or [], clean[:cap], key, cap,
+                                                      http=getattr(self, "_jev_http", None), log=lambda m: print(m, flush=True))
+            finally:
+                spent = 0
+                try:
+                    spent = int(rec.get("calls") or 0)  # noqa: F821 - rec is unset when studio_opinion raised
+                except NameError:
+                    pass
+                if cap - spent > 0:
+                    self._jev_used(j["user_id"], -(cap - spent))  # hand back what wasn't used
             analysis["faces"], analysis["jev"] = faces, rec
             if rec.get("used"):
                 analysis["face_detector"] = True

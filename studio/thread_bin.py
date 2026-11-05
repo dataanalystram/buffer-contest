@@ -204,7 +204,8 @@ class ThreadBin:
         named = _titles(self.store, a.uid)
         gone = deleted_ids(self.store, a.uid)
         rows = self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
-                            "ORDER BY updated DESC, id DESC LIMIT ?", (a.uid, SCAN))
+                            "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
+                            "ORDER BY updated DESC, id DESC LIMIT ?", (a.uid, a.uid, SCAN))
         items = []
         for r in rows:
             inp, res = json.loads(r["input"] or "{}") or {}, json.loads(r["result"] or "{}") or {}
@@ -377,6 +378,27 @@ class ThreadBin:
         n = 0
         for r in self.store.q("SELECT run_id, user_id FROM thread_deleted WHERE purged_at IS NULL AND deleted_at <= ?", (cut,)):
             n += self._purge_one(r["user_id"], int(r["run_id"]), cut)  # the deletion time is checked again under the lock
+        self._reclear()
+        return n
+
+    def _reclear(self) -> int:
+        """A late write (a client render's record_output read the result before the purge and saved it after) can bring
+        a purged conversation back into the run's result: the sweep clears it again. Tombstoned threads stay hidden anyway."""
+        import contextlib
+        n = 0
+        for r in self.store.q("SELECT d.run_id, d.user_id, a.kind FROM thread_deleted d JOIN agent_runs a ON a.id=d.run_id "
+                              "WHERE d.purged_at IS NOT NULL AND (a.result LIKE ? OR a.result LIKE ?)", ('%"thread": [{%', '%"thread_summary"%')):
+            rid, uid = int(r["run_id"]), r["user_id"]
+            with (self.h.takes._take_lock(rid) if r["kind"] == "take" else contextlib.nullcontext()), self.store.tx():
+                rows = self.store.q("SELECT status, result FROM agent_runs WHERE id=? AND user_id=?", (rid, uid))
+                if not rows or (rows[0]["status"] in ("running", "queued") and r["kind"] != "take"):
+                    continue
+                res = json.loads(rows[0]["result"] or "{}") or {}
+                if res.get("thread") or res.get("thread_summary"):
+                    res["thread"] = []
+                    res.pop("thread_summary", None)
+                    self.store.x("UPDATE agent_runs SET result=? WHERE id=? AND user_id=?", (json.dumps(res, default=str), rid, uid))
+                    n += 1
         return n
 
 
