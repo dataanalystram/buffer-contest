@@ -17,7 +17,7 @@ def _section(html: str) -> str:
 def test_shop_section_text_only_attribution_and_disclosure(client):
     sec = _section(client.get("/").text)
     assert "Shop-ready posts, powered by" in sec
-    assert re.search(r'<a href="https://trychannel3\.com" rel="noopener noreferrer"[^>]*>Channel3</a>', sec)
+    assert re.search(r'<a href="https://trychannel3\.com" rel="noopener noreferrer"[^>]*data-testid="land-shop-channel3"[^>]*>Channel3</a>', sec)
     assert "<img" not in sec and "<picture" not in sec and "channel3-logo" not in sec  # no logo, no catalogue image
     assert "#Ad" in sec
     assert "commission" in sec.lower()
@@ -25,7 +25,12 @@ def test_shop_section_text_only_attribution_and_disclosure(client):
 
 def test_homepage_never_searches_channel3(client, monkeypatch):
     calls = []
-    monkeypatch.setattr(commerce, "search", lambda *a, **k: calls.append(1), raising=False)
+    assert commerce.FNS["search_products"] is commerce.search_products
+
+    def record(*a, **k):
+        calls.append(1)
+    monkeypatch.setattr(commerce, "search_products", record)  # both call paths: the function and its registry binding
+    monkeypatch.setitem(commerce.FNS, "search_products", record)
     html = client.get("/").text
     js = client.get(re.search(r'src="(/static/landing\.js[^"]*)"', html).group(1)).text
     for body in (html, js):
