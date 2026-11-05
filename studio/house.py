@@ -15,6 +15,7 @@ import secrets
 import threading
 import time
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -786,10 +787,12 @@ class House:
                 self._step(steps, cur["key"], "failed", str(e))
             self._save(rid, steps, res, "failed")
         except Exception as e:  # never leave a run spinning
+            ref = uuid.uuid4().hex[:8]
+            print(f"run error ref={ref} run={rid}: {e.__class__.__name__}: {str(e)[:300]}", flush=True)
             traceback.print_exc()
             cur = next((s for s in steps if s["status"] == "running"), None)
             if cur:
-                self._step(steps, cur["key"], "failed", f"Unexpected error: {e.__class__.__name__}")
+                self._step(steps, cur["key"], "failed", f"Something went wrong on our side (reference {ref}). Try again.")
             self._save(rid, steps, res, "failed")
 
     # ---------------------------------------------------------------- news pipeline

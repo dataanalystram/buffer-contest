@@ -402,12 +402,32 @@ document.querySelectorAll(".pg-tabs").forEach((seg) => {
     const n = bs[(i + (fwd ? 1 : bs.length - 1)) % bs.length]; n.click(); n.focus(); e.preventDefault();
   });
 });
+// History (4 Nov 2026): every screen and sub-tab change used to REPLACE the history entry, so the app never had more than
+// one entry and Back left it, landing on Buffer's OAuth page (the entry before /?connected=1). Now a real navigation
+// PUSHES an entry ({hq: tab, sub}); the first URL of the page load and a Back/Forward (popstate) only replace, and Back
+// re-opens the screen it names. The Planner keeps its own filters in the URL with replaceState on top of its entry.
+const NAV = { first: true, popping: false };
 function urlFor(name, sub) {
-  if (name === "planner") return;
   const demo = S.session?.demo ? "demo=1&" : "";
   const q = name === "inbox" ? "" : `tab=${name}${sub && sub !== SUB_DEFAULT[name] ? "&sub=" + sub : ""}`;
-  history.replaceState(null, "", q || demo ? "/?" + (demo + q).replace(/&$/, "") : "/");
+  const url = q || demo ? "/?" + (demo + q).replace(/&$/, "") : "/";
+  const st = { hq: name, sub: sub || "" }, cur = history.state || {};
+  const same = cur.hq === name && (cur.sub || "") === (sub || "");
+  // the Planner's own URL (its filters: a shared link, a reload, Back/Forward) stays on its entry
+  const keepPl = name === "planner" && (same || NAV.first || NAV.popping) && new URLSearchParams(location.search).get("tab") === "planner";
+  if (NAV.first || NAV.popping || same) history.replaceState(st, "", keepPl ? location.href : url);
+  else history.pushState(st, "", url);
+  NAV.first = false;
 }
+window.addEventListener("popstate", (e) => {
+  if (!S.session || !S.session.connected) return;
+  const st = e.state && e.state.hq ? e.state : (() => { const p = new URLSearchParams(location.search); return { hq: p.get("tab") || "inbox", sub: p.get("sub") || "" }; })();
+  NAV.popping = true;
+  // the Planner entry carries its own filters in the URL: read them back before it draws (it would keep the newer ones)
+  if (st.hq === "planner" && typeof plLoadState === "function") { try { plLoadState(); } catch (_) { /* its defaults */ } }
+  try { showTab(st.hq, st.sub || ""); } finally { NAV.popping = false; }
+});
+window.HQ_NAV_STATE = NAV;
 function showTab(name, sub = "") {
   window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
   if (TAB_ALIAS[name]) {

@@ -38,7 +38,7 @@ def message(would: str) -> str:
 # Writes a demo session may make: dry runs, previews and the canned AI runs (they only touch the demo's own run rows).
 ALLOW = [
     ("POST", r"/api/logout"),
-    ("POST", r"/api/agent/runs"), ("POST", r"/api/agent/runs/\d+/(messages|revise|theme)"),
+    ("POST", r"/api/agent/runs"), ("POST", r"/api/agent/runs/\d+/(messages|revise|theme|stop|resume)"),
     ("POST", r"/api/agent/runs/\d+/tools/[a-z_]+"),  # minus BLOCKED_TOOLS (checked here and again inside the tools)
     ("POST", r"/api/takes/sample"),
     ("POST", r"/api/draft"), ("POST", r"/api/link/preview"), ("POST", r"/api/check"),
