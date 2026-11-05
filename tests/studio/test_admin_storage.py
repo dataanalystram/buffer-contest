@@ -24,6 +24,7 @@ class StubS3:
     def __init__(self):
         self.objects: dict[str, bytes] = {}
         self.fail_put = False
+        self.fail_get = False
         self.corrupt_get = False
         self.calls: list[tuple[str, str]] = []
 
@@ -39,6 +40,8 @@ class StubS3:
             self.objects[key] = request.content
             return httpx.Response(200, headers={"ETag": '"x"'})
         if request.method == "GET":
+            if self.fail_get:
+                return httpx.Response(503)
             if key not in self.objects:
                 return httpx.Response(404)
             data = self.objects[key]
@@ -64,6 +67,7 @@ def s3(monkeypatch):
     monkeypatch.delenv("HQ_MEDIA_STORAGE", raising=False)
     blobstore.set_http(httpx.Client(transport=httpx.MockTransport(stub)))
     yield stub
+    assert blobstore.join_background(10)   # no background sweep outlives the test (CodeRabbit, PR #110)
     blobstore.set_http(None)
 
 
@@ -72,6 +76,7 @@ def _no_bucket_by_default(monkeypatch):
     for k in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "R2_ENDPOINT", "HQ_ADMIN_IDS"):
         monkeypatch.delenv(k, raising=False)
     yield
+    blobstore.join_background(10)
 
 
 def other_user(app, uid: str, email: str) -> TestClient:
@@ -243,6 +248,7 @@ def test_delete_user_erases_rows_media_and_tokens_and_leaves_a_tombstone(app, hu
     assert _rows_for(store, "acc_1") == {}
     assert store.q("SELECT COUNT(*) AS n FROM library_chunks")[0]["n"] == 0
     assert store.user("acc_1") is None and human.get("/api/me").status_code == 401
+    blobstore.join_background(10)
     blobstore.sweep(store, wait=10)
     assert s3.objects == {} and blobstore.pending(store) == 0       # the R2 objects went too
     tomb = store.q("SELECT * FROM user_tombstones")
@@ -256,6 +262,7 @@ def test_self_service_disconnect_is_the_same_erasure(app, human, s3):
     store, house = app.state.store, app.state.house
     house.put_media(Actor("acc_1"), image_bytes(32, 32), "a.png")
     assert human.post("/api/disconnect").json()["deleted"] is True
+    blobstore.join_background(10)
     blobstore.sweep(store, wait=10)
     assert s3.objects == {} and _rows_for(store, "acc_1") == {}
     assert store.q("SELECT via FROM user_tombstones")[0]["via"] == "self"
@@ -292,6 +299,7 @@ def test_r2_backend_keeps_bytes_out_of_the_database_and_serves_them(app, human, 
     keys = {c["storage_key"] for c in ch}
     human.delete(f"/api/library/{item['id']}?mode=permanent&force=1")
     assert not store.q("SELECT 1 AS x FROM library_chunks WHERE item_id=?", (item["id"],))
+    blobstore.join_background(10)
     blobstore.sweep(store, wait=10)
     assert not keys & set(s3.objects)
 
@@ -431,3 +439,123 @@ def test_an_interrupted_migration_attempt_is_swept_later_never_orphaned(app, mon
     store.x("UPDATE blob_gc SET at=?", (time.time() - 1,))                     # a day later
     blobstore.sweep(store)
     assert orphan not in s3.objects
+
+
+# ------------------------------------------------------------------ PR #110 review fixes
+def _gps_mp4() -> bytes:
+    import struct as _s
+    ftyp = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 12
+    body = b"udta\xa9xyz" + b"\x00\x12\x15\xc7" + b"+53.3498-006.2603/" + b"\x00" * 64
+    return ftyp + _s.pack(">I", 8 + len(body)) + b"moov" + body + b"\x00\x00\x00\x10mdat" + b"\x01" * 8
+
+
+def test_video_gps_check_fails_closed_when_storage_cant_be_read(app, human, s3):
+    """Greptile P1: an R2 read failure during the GPS scrub must refuse the upload, never publish it with GPS in it."""
+    from studio.actions import ActionError
+    store, lib = app.state.store, app.state.house.library
+    s3.fail_get = True
+    with pytest.raises(ActionError) as e:
+        lib.save_bytes(Actor("acc_1"), _gps_mp4(), "trip.mp4")
+    assert e.value.status == 503 and "location" in str(e.value)
+    assert store.q("SELECT COUNT(*) AS n FROM library_items")[0]["n"] == 0          # nothing left half-made
+    assert store.q("SELECT COUNT(*) AS n FROM library_media")[0]["n"] == 0          # never given a public /m/ link
+    r = human.post("/api/library/upload?name=trip.mp4", content=_gps_mp4())       # the streamed route: same clear 503
+    assert r.status_code == 503 and "location" in r.json()["error"]
+    assert store.q("SELECT COUNT(*) AS n FROM library_items")[0]["n"] == 0
+    s3.fail_get = False                                                             # storage back: GPS blanked, saved
+    item = lib.save_bytes(Actor("acc_1"), _gps_mp4(), "trip.mp4")
+    keys = [c["storage_key"] for c in store.q("SELECT storage_key FROM library_chunks WHERE item_id=?", (item["id"],))]
+    assert keys and b"+53.3498" not in b"".join(s3.objects[k] for k in keys)
+
+
+def test_streamed_upload_keeps_bucket_calls_off_the_event_loop(app, human, s3, monkeypatch):
+    """Greptile P1: save_stream()'s bucket PUTs run in the thread pool, with tight timeouts."""
+    import asyncio
+    import io
+    import os
+
+    from PIL import Image
+    seen = []
+    real = blobstore.put
+
+    def spy(*a, **k):
+        try:
+            asyncio.get_running_loop()
+            seen.append("loop")
+        except RuntimeError:
+            seen.append("thread")
+        return real(*a, **k)
+    monkeypatch.setattr(blobstore, "put", spy)
+    buf = io.BytesIO()
+    Image.frombytes("RGB", (900, 700), os.urandom(900 * 700 * 3)).save(buf, "PNG")   # noise: > 1 MB, several chunks
+    r = human.post("/api/library/upload?name=noise.png", content=buf.getvalue())
+    assert r.status_code == 200, r.text
+    assert len(seen) >= 2 and set(seen) == {"thread"}
+    b = blobstore.bucket()
+    assert b.timeout.connect == 5 and b.timeout.read == 20
+
+
+def test_sweep_soon_runs_after_commit_never_on_rollback_and_teardown_joins_it(app, s3, monkeypatch):
+    """CodeRabbit: sweep_soon inside a transaction is scheduled for after the commit; its thread can be joined."""
+    store = app.state.store
+    started = []
+    real = blobstore._spawn
+    monkeypatch.setattr(blobstore, "_spawn", lambda st: (started.append(1), real(st)))
+    s3.objects["media/a/b"] = b"1"
+    with store.tx():
+        store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0)", ("media/a/b", time.time()))
+        blobstore.sweep_soon(store)
+        assert started == []                                    # not inside the transaction
+    assert started == [1]
+    assert blobstore.join_background(10) and "media/a/b" not in s3.objects
+    started.clear()
+    with pytest.raises(RuntimeError), store.tx():
+        store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0)", ("media/a/c", time.time()))
+        blobstore.sweep_soon(store)
+        raise RuntimeError("rolled back")
+    assert started == [] and blobstore.pending(store) == 0
+
+
+def test_take_bin_purge_releases_clip_objects(app, s3):
+    """Greptile P2: TakeBin._drop_tokens() queues the media rows' R2 keys in blob_gc like every other delete."""
+    store, house = app.state.store, app.state.house
+    tok = house.put_media(Actor("acc_1"), b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 40, "clip.mp4", kind="render")
+    key = store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"]
+    assert key in s3.objects
+    with store.tx():
+        house.takes._drop_tokens("acc_1", [tok])
+    assert not store.q("SELECT 1 AS x FROM media WHERE token=?", (tok,))
+    assert blobstore.pending(store) == 1
+    blobstore.join_background(10)
+    blobstore.sweep(store, wait=10)
+    assert key not in s3.objects and blobstore.pending(store) == 0
+
+
+def test_a_rolled_back_insert_takes_its_new_object_with_it(app, s3):
+    """Greptile P2: a PUT whose row's transaction rolls back is discarded, not left orphaned in R2."""
+    store, house = app.state.store, app.state.house
+    with pytest.raises(RuntimeError), store.tx():
+        house.put_media(Actor("acc_1"), image_bytes(16, 16), "a.png")
+        assert s3.objects
+        raise RuntimeError("rolled back")
+    assert s3.objects == {} and not store.q("SELECT 1 AS x FROM media")
+
+
+def test_library_download_answers_503_before_headers_when_storage_is_down(app, human, s3):
+    """Greptile P2: the first chunk is read before the response starts, so an outage is a clean 503."""
+    item = app.state.house.library.save_bytes(Actor("acc_1"), image_bytes(300, 200), "p.png")
+    s3.fail_get = True
+    r = human.get(f"/api/library/{item['id']}/file")
+    assert r.status_code == 503 and "storage" in r.json()["error"]
+    s3.fail_get = False
+    assert human.get(f"/api/library/{item['id']}/file").status_code == 200
+
+
+def test_block_dialog_names_the_account_and_a_stalled_request_never_locks_it():
+    from pathlib import Path
+    root = Path(admin.__file__).parent / "admin_ui"
+    js, html = (root / "admin.js").read_text(), (root / "index.html").read_text()
+    assert 'id="blkWho"' in html and '$("blkWho").textContent' in js and '$("blkH").textContent' in js
+    assert "new AbortController()" in js and "signal: c.signal" in js and "BLOCK_TIMEOUT_MS" in js
+    assert '$("blkCancel").disabled = true' not in js                     # Cancel always works
+    assert 'addEventListener("click", closeBlock)' in js and "blkCtl.abort()" in js

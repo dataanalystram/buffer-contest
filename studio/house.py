@@ -376,6 +376,7 @@ class House:
         except BaseException:
             blobstore.discard(self.store, key)  # no row points at it
             raise
+        blobstore.undo_on_rollback(self.store, key)  # a surrounding transaction that rolls back takes the object with it
         return tok
 
     def get_media(self, token: str) -> dict | None:

@@ -49,3 +49,12 @@ because Postgres only reuses freed space and the 500 MB quota counts the table f
 Same bucket as One take is fine (different prefixes: `takes/`, `media/`, `lib/`). Do **not** add a lifecycle rule that
 expires `media/` or `lib/`: those are the person's Library and posts. (The `takes/` 7-day rule stays.) No CORS change is
 needed for media: the browser never talks to the bucket for it.
+
+## Failure behaviour (PR #110 review)
+- Every bucket call has a 5 s connect and 20 s overall timeout. Streamed Library uploads write chunks from the thread
+  pool, never on the event loop, so a slow bucket can't stall other requests or `/healthz`.
+- The video GPS check fails closed: if storage can't be read (or rewritten) while a video's location is blanked, the
+  upload is refused with a 503 and nothing is kept or published.
+- A whole-file Library download reads its first chunk before the headers go out, so a storage outage is a clean 503.
+- Deletes (Library purge, account deletion, One take Bin purge) note keys in `blob_gc`; the background sweep is scheduled
+  for after the transaction commits. A new object whose row's transaction rolls back is discarded.

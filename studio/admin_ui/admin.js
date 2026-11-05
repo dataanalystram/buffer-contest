@@ -4,6 +4,8 @@
   const $ = (id) => document.getElementById(id);
   const PER = 50;
   let csrf = "", offset = 0, total = 0, ctl = null, me = "", rows = [], busy = false;
+  const BLOCK_TIMEOUT_MS = 15000;          // a block request that stalls is aborted; Cancel/Esc always close the dialog
+  let blkCtl = null, blkSeq = 0;           // the open dialog's request; a late answer for an older dialog is ignored
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const when = (t) => (t ? new Date(t * 1000).toLocaleString() : "—");
@@ -64,6 +66,7 @@
       if (kind === "block") {               // an in-app confirm dialog (CLAUDE.md: never window.confirm / prompt)
         if (busy) return;
         const u = rows.find((x) => x.id === id) || { id };
+        $("blkH").textContent = `Block ${u.name || u.email || u.id}?`;   // the account it will block, before anything is sent
         $("blkWho").textContent = `${u.name || "(no name)"}${u.email ? " · " + u.email : ""} · ${u.id}`;
         $("blkReason").value = ""; $("blk").dataset.id = id; $("blkOk").disabled = false; $("blk").showModal(); return;
       } else if (kind === "unblock") {
@@ -81,18 +84,32 @@
     const b = ev.target.closest("button[data-act]");
     if (b && !b.disabled) act(b.dataset.act, b.dataset.id);
   });
-  $("blkCancel").addEventListener("click", () => { if (!busy) $("blk").close(); });
-  $("blk").addEventListener("cancel", (ev) => { if (busy) ev.preventDefault(); });   // no Esc while the request runs
+  function closeBlock() {                  // Cancel / Esc: always works, even while a request is pending
+    const pending = busy;
+    blkSeq++;                               // the pending request's answer no longer touches any dialog
+    if (blkCtl) blkCtl.abort();
+    blkCtl = null; busy = false; $("blkOk").disabled = false;
+    if ($("blk").open) $("blk").close();
+    if (pending) { say("Block request stopped. The list is reloaded so you can see whether it went through."); load(); }
+  }
+  $("blkCancel").addEventListener("click", closeBlock);
+  $("blk").addEventListener("cancel", (ev) => { ev.preventDefault(); closeBlock(); });
   $("blkForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     if (busy) return;                     // one request per dialog: no double submit, no duplicate audit rows
-    busy = true; $("blkOk").disabled = true; $("blkCancel").disabled = true;
-    const id = $("blk").dataset.id;
+    busy = true; $("blkOk").disabled = true;
+    const id = $("blk").dataset.id, seq = ++blkSeq, c = new AbortController();
+    blkCtl = c;
+    const timer = setTimeout(() => c.abort(), BLOCK_TIMEOUT_MS);
+    let msg = "Blocked.";
     try {
-      await api(`/api/admin/users/${encodeURIComponent(id)}/block`, { method: "POST", body: JSON.stringify({ reason: $("blkReason").value }) });
-      say("Blocked.");
-    } catch (e) { say(e.message); }
-    busy = false; $("blkCancel").disabled = false;
+      await api(`/api/admin/users/${encodeURIComponent(id)}/block`, { method: "POST", signal: c.signal,
+        body: JSON.stringify({ reason: $("blkReason").value }) });
+    } catch (e) {
+      msg = e.name === "AbortError" ? "The block request didn't finish in time. The list is reloaded so you can see whether it went through." : e.message;
+    } finally { clearTimeout(timer); }
+    if (seq !== blkSeq) return;           // closed (or reopened) meanwhile: closeBlock already reconciled
+    blkCtl = null; busy = false; say(msg);
     $("blk").close(); load();
   });
   $("delInput").addEventListener("input", () => { $("delOk").disabled = $("delInput").value !== $("del").dataset.id; });

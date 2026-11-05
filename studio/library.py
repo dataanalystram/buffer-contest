@@ -20,11 +20,13 @@ import json
 import os
 import re
 import secrets
+import struct
 import time
 from pathlib import Path
 
 from fastapi import Body, Request
 from fastapi.responses import Response, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import blobstore, demo_guard
 from . import metastrip
@@ -253,6 +255,10 @@ class _Writer:
             self.n += 1
             self.out += len(part)
 
+    def needs_io(self, piece: bytes) -> bool:
+        """Would feed(piece) write a chunk (a database row and, with R2, a bucket PUT)? Then it runs off the event loop."""
+        return len(self.buf) + len(piece) >= CHUNK
+
     def feed(self, piece: bytes) -> None:
         self.size += len(piece)
         if self.size > self.room:
@@ -286,6 +292,10 @@ class _Writer:
 
     def abort(self) -> None:
         self.lib._drop(self.iid)
+
+
+class _ScrubStorageError(Exception):
+    """The GPS check couldn't read the upload's bytes from storage (never an odd file: that's a parse error)."""
 
 
 class Library:
@@ -330,6 +340,7 @@ class Library:
         except BaseException:
             blobstore.discard(self.store, key)  # no row points at it
             raise
+        blobstore.undo_on_rollback(self.store, key)  # a surrounding transaction that rolls back takes the object with it
 
     @staticmethod
     def _chunk(r) -> bytes:
@@ -346,14 +357,19 @@ class Library:
 
     async def save_stream(self, a: Actor, name: str, stream, declared: int | None, source: str = "upload") -> dict:
         """Stream a request body into chunks: capped while it streams, MIME sniffed from the first bytes, nothing
-        decoded. A file that breaks a rule leaves nothing behind."""
-        w = _Writer(self, a, declared, source)
+        decoded. A file that breaks a rule leaves nothing behind. Every step that writes a chunk (the database and, with
+        R2, a bucket call of up to 20 s) runs in the thread pool, never on the event loop, so one upload can't stall other
+        requests or /healthz (Greptile, PR #110)."""
+        w = await run_in_threadpool(_Writer, self, a, declared, source)
         try:
             async for piece in stream:
-                w.feed(piece)
-            return w.finish(name)
+                if w.needs_io(piece):
+                    await run_in_threadpool(w.feed, piece)
+                else:
+                    w.feed(piece)
+            return await run_in_threadpool(w.finish, name)
         except BaseException:
-            w.abort()
+            w.abort()  # database only (the objects go to blob_gc, swept on a thread): safe even while being cancelled
             raise
 
     def save_iter(self, a: Actor, name: str, pieces, declared: int | None, source: str = "upload") -> dict:
@@ -377,10 +393,10 @@ class Library:
         try:
             for n, i in enumerate(range(0, len(data), CHUNK)):
                 self._put_chunk(a.uid, iid, n, data[i:i + CHUNK])
+            return self._finish(a, iid, tok, name, kind, len(data), hashlib.sha256(data).hexdigest(), source)
         except BaseException:
-            self._drop(iid)
+            self._drop(iid)  # a refused finish (e.g. the GPS check couldn't read storage) leaves nothing half-made
             raise
-        return self._finish(a, iid, tok, name, kind, len(data), hashlib.sha256(data).hexdigest(), source)
 
     def _finish(self, a, iid, tok, name, kind, size, digest, source) -> dict:
         mime, ext, k = kind
@@ -407,21 +423,39 @@ class Library:
         self.store.audit(a.uid, a.label, "library_upload", "read", {"kind": k, "bytes": size, "source": source})
         return self.item(a, iid)
 
+    SCRUB_UNAVAILABLE = ("This video couldn't be checked for location data because file storage didn't answer, so it "
+                         "wasn't saved. Upload it again in a minute.")
+
     def _scrub_video(self, iid: int, size: int) -> None:
-        """Blank the GPS position a phone writes into a video's moov box, in place (same length: nothing moves)."""
+        """Blank the GPS position a phone writes into a video's moov box, in place (same length: nothing moves).
+        Fails closed: when storage can't be read or rewritten the upload is refused (503) and the caller drops it, so a
+        video is never published with its location still in it (Greptile, PR #110). Only a box layout the parser doesn't
+        understand keeps the file as it came."""
+        def read(s, e):
+            try:
+                return self._read(iid, s, e)
+            except ActionError as err:  # _chunk(): the object couldn't be read (StorageError -> 503)
+                raise _ScrubStorageError(str(err)) from None
         try:
-            patches = metastrip.video_location_patches(lambda s, e: self._read(iid, s, e), size)
-        except Exception:  # noqa: BLE001  (an odd box layout: keep the file as it came)
+            patches = metastrip.video_location_patches(read, size)
+        except _ScrubStorageError:
+            print("library: a video's location check couldn't read storage; upload refused", flush=True)
+            raise ActionError(self.SCRUB_UNAVAILABLE, 503) from None
+        except (struct.error, ValueError, IndexError, OverflowError):  # an odd box layout: keep the file as it came
             return
-        for off, new in patches:
-            for n in range(off // CHUNK, (off + len(new) - 1) // CHUNK + 1):
-                rows = self.store.q("SELECT data, storage_key FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
-                if not rows:
-                    continue
-                buf = bytearray(self._chunk(rows[0]))
-                lo, hi = max(off, n * CHUNK), min(off + len(new), (n + 1) * CHUNK)
-                buf[lo - n * CHUNK:hi - n * CHUNK] = new[lo - off:hi - off]
-                blobstore.rewrite(self.store, "library_chunks", "item_id=? AND n=?", (iid, n), bytes(buf))
+        try:
+            for off, new in patches:
+                for n in range(off // CHUNK, (off + len(new) - 1) // CHUNK + 1):
+                    rows = self.store.q("SELECT data, storage_key FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
+                    if not rows:
+                        continue
+                    buf = bytearray(self._chunk(rows[0]))
+                    lo, hi = max(off, n * CHUNK), min(off + len(new), (n + 1) * CHUNK)
+                    buf[lo - n * CHUNK:hi - n * CHUNK] = new[lo - off:hi - off]
+                    blobstore.rewrite(self.store, "library_chunks", "item_id=? AND n=?", (iid, n), bytes(buf))
+        except (blobstore.StorageError, ActionError):
+            print("library: a video's location couldn't be blanked in storage; upload refused", flush=True)
+            raise ActionError(self.SCRUB_UNAVAILABLE, 503) from None
 
     def _image_size(self, iid: int) -> dict:
         try:
@@ -1271,7 +1305,16 @@ def add_routes(app, house, actor) -> None:
             e = min(e, s + 8 * MB - 1)  # one range answer reads at most 8 MB (players ask again for the rest)
             return Response(f["read"](s, e), status_code=206, media_type=f["mime"], headers={**headers, "Content-Range": f"bytes {s}-{e}/{size}"})
         if f.get("iter"):
-            return StreamingResponse(f["iter"](), media_type=f["mime"], headers={**headers, "Content-Length": str(size)})
+            # the first chunk is read BEFORE the headers go out: storage that's down answers a clean 503 (ActionError),
+            # not a 200 that breaks mid-download (Greptile, PR #110). Later chunks still stream one at a time.
+            it = f["iter"]()
+            first = next(it, b"")
+
+            def body():
+                if first:
+                    yield first
+                yield from it
+            return StreamingResponse(body(), media_type=f["mime"], headers={**headers, "Content-Length": str(size)})
         return Response(f["read"](0, None), media_type=f["mime"], headers=headers)
 
     @app.get("/api/library")
