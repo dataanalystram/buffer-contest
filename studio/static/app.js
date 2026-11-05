@@ -494,7 +494,7 @@ function ibGroup(g) {
   return `<section class="ib-group u-${g.urgency}" id="ib-${g.key}" data-testid="inbox-group" data-group="${g.key}" data-urgency="${g.urgency}" data-count="${g.count}" aria-labelledby="ibh-${g.key}">
     <header class="ib-gh"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IB_ICON[g.key] || ""}</svg>
       <h3 id="ibh-${g.key}" tabindex="-1">${esc(g.title)}</h3><span class="ib-count" data-testid="inbox-count" aria-label="${g.count} item${g.count === 1 ? "" : "s"}">${g.count}</span>
-      <span class="ib-urg">${IB_URG[g.urgency]}</span></header>
+      <span class="ib-urg" data-testid="inbox-urgency"><span class="ib-dot" aria-hidden="true"></span>${IB_URG[g.urgency]}</span></header>
     <p class="ib-sum" data-testid="inbox-group-summary">${esc(g.summary)}</p>
     ${g.key === "plan" ? `<div class="plan" id="planBox" data-testid="plan-box"></div>` : ""}
     ${(g.items || []).length && g.key !== "plan" ? `<ul class="${g.key === "open_slots" ? "ib-slots" : "ib-items"}">${g.items.map((it) => ibItem(g, it)).join("")}</ul>` : ""}${more}
@@ -821,13 +821,16 @@ function paidCost(est) {
 // Approve stays off until the statement is ticked; approving writes the consent record, nothing is fetched yet.
 function linkApproval(r) {
   const p = r.payload || {};
-  const el = document.createElement("article"); el.className = "appr appr-paid"; el.setAttribute("data-testid", "approval-item"); el.dataset.kind = "link_rights";
+  const el = document.createElement("article"); el.className = "appr appr-paid appr-link"; el.setAttribute("data-testid", "approval-item"); el.dataset.kind = "link_rights";
+  // one column (5 Nov 2026): the link, what approving does, the statement to tick, then Reject / Approve. The old row put
+  // the link, the statement and the note in three squeezed columns.
   el.innerHTML = `<div class="appr-head">${aiMark(r.agent_name, 22)}<span><b>${esc(r.agent_name)}</b> wants One take to fetch a video</span><small>${esc(timeAgo(r.created * 1000))}</small></div>
-    <div class="appr-body"><p><a class="link" href="${escUrl(p.url || "")}" target="_blank" rel="noopener noreferrer" data-testid="approval-link">${esc(p.url || "")}</a></p>
+    <div class="appr-body appr-stack">
+    <a class="appr-url" href="${escUrl(p.url || "")}" title="${esc(p.url || "")}" target="_blank" rel="noopener noreferrer" data-testid="approval-link">${esc(p.url || "")}</a>
     ${p.licence ? `<p class="muted sm" data-testid="approval-licence">Licence the platform states: ${esc(p.licence)}</p>` : ""}
-    <label class="chk"><input type="checkbox" data-testid="approval-attest"> ${esc(p.attestation || "I own this video or have permission to use it; I'm responsible for rights.")}</label>
-    <p class="muted sm">Nothing has been fetched yet. Approve lets this app start one take from this link.</p></div>
-    <div class="appr-act"><button class="btn2 sm danger" data-testid="reject">Reject</button><span class="right"><button class="btn accent sm" data-testid="approve" disabled>Approve</button></span></div><div data-testid="approval-status"></div>`;
+    <p class="appr-note muted sm" data-testid="approval-note">Nothing has been fetched yet. Approve lets this app start one take from this link.</p>
+    <label class="appr-attest" data-testid="approval-attest-row"><input type="checkbox" data-testid="approval-attest"><span>${esc(p.attestation || "I own this video or have permission to use it; I'm responsible for rights.")}</span></label></div>
+    <div class="appr-act"><button class="btn2 sm danger" data-testid="reject">Reject</button><span class="right"><button class="btn accent sm" data-testid="approve" disabled>Approve</button></span></div><div data-testid="approval-status" role="status"></div>`;
   const tick = $("[data-testid=approval-attest]", el), ok = $("[data-testid=approve]", el);
   tick.onchange = () => { ok.disabled = !tick.checked; };
   ok.onclick = async () => {
@@ -921,6 +924,7 @@ function loadSettings() {
   if (window.onbState) onbState().then((st) => ($("#setOnbState").textContent = st.done ? "Setup is done. Open it again to change what you post, your channels or your brand." : st.skipped ? "You skipped setup. It takes about a minute." : "Setup isn't finished yet."));
   (window.HS_TABS || {}).ai?.();
   (window.HS_TABS || {}).integrations?.();
+  (window.HS_TABS || {}).linkauto?.();
 }
 // who you are and your Buffer channels, from S (no fetch): loadSettings draws it, and so does a boot that finished after
 // Settings opened (HS_REDRAW.settings), with the Integrations tiles redrawn from the data they already fetched

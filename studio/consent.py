@@ -181,11 +181,10 @@ def decide(store, a: Actor, row: dict, approve: bool) -> dict:
     tool = (json.loads(row["payload"] or "{}") or {}).get("tool", "")
     stamp = time.time()
     with store.tx():  # status='pending' in the UPDATE: a double submit can't re-approve (and un-use) an approval
-        store.x("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",
-                ("approved" if approve else "rejected", stamp, aid, a.uid))
-        now = store.q("SELECT status, decided FROM approvals WHERE id=? AND user_id=?", (aid, a.uid))
-    if not now or now[0]["status"] != ("approved" if approve else "rejected") or now[0]["decided"] != stamp:
-        raise ActionError("No pending approval with that id.", 404)  # someone else decided it first: this call changed nothing
+        won = store.xn("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",
+                       ("approved" if approve else "rejected", stamp, aid, a.uid))
+    if won != 1:  # the changed-row count, never a re-read float (store.xn): someone else decided it first, nothing changed
+        raise ActionError("No pending approval with that id.", 404)
     if not approve:
         store.audit(a.uid, a.label, "reject_paid_api", "safety", {"approval_id": aid, "tool": tool})
         return {"status": "rejected", "approval_id": aid, "kind": KIND}
@@ -198,7 +197,9 @@ def decide(store, a: Actor, row: dict, approve: bool) -> dict:
 # An AI app that wants One take to fetch a video link (YouTube, Vimeo, X, a file) can't confirm the rights itself: the
 # request waits in Inbox -> Approvals as kind "link_rights" until the signed-in person ticks the attestation there and
 # approves. No token setting skips this ("Allow paid APIs" is about money, not rights). Approving writes the consent
-# record (studio/link_ingest.py); the app's next call with the same link uses it once.
+# record (studio/link_ingest.py); the app's next call with the same link uses it once. Since 5 Nov 2026 the person can also
+# say yes through the app (approve_link_ingest with i_own_or_have_rights: true, recorded with the app and the time), or
+# turn on their own standing "Auto-approve video links" in Settings (studio/link_auto.py), which only a human can set.
 LINK_KIND = "link_rights"
 
 
@@ -244,6 +245,9 @@ def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any
                 if again and again[0]["result"] == used:
                     store.audit(a.uid, a.label, "link_rights", "read", {"approval_id": r["id"], "consent_id": cid})
                     return {"consent_id": int(cid), "approval_id": r["id"]}
+    auto = _auto_approve(store, a, url, h, licence, tool)
+    if auto:
+        return auto
     from .userlocks import held
     with held(a.uid, "link_rights"):  # two parallel asks for one link make ONE approval item
         rows = _link_rows(store, a)
@@ -265,10 +269,41 @@ def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any
             "licence_hint": licence or "unknown (the worker reports what the platform states)",
             "attestation": link_ingest.ATTESTATION, "fetched": False,
             "message": ("Before HuhQueue fetches this video, the person has to confirm they own it or have permission to use it. "
-                        "Ask them to open HuhQueue → Inbox → Approvals, tick the rights statement and approve. Then call "
+                        "Ask them to open HuhQueue → Inbox → Approvals, tick the rights statement and approve (or, if they tell you "
+                        "they own it or have permission and are responsible for rights, call approve_link_ingest with "
+                        "i_own_or_have_rights: true). Then call "
                         f"{tool} again with the same url (approval_id: {aid}). Don't ask them to upload the file, and don't "
                         "confirm the rights yourself: nothing was fetched."),
             "how": "list_approvals shows when it is approved."}
+
+
+def _auto_approve(store, a: Actor, url: str, h: str, licence: str, tool: str) -> dict | None:
+    """Settings → "Auto-approve video links" (studio/link_auto.py) covers this app: the item is written approved and used
+    at once, with a consent record naming the app. Only the rights question is answered; the fetch keeps every cap."""
+    from . import link_auto, link_ingest
+    setting = link_auto.covers(store, a)
+    if not setting:
+        return None
+    app = (a.agent or {}).get("name") or "an AI app"
+    now = time.time()
+    link_ingest.ensure(store)
+    with store.tx():
+        payload = {"kind": LINK_KIND, "tool": tool, "url": str(url)[:2000], "url_hash": h, "host": link_ingest.host(url),
+                   "licence": (licence or "")[:120], "attestation": link_ingest.ATTESTATION,
+                   "attestation_version": link_ingest.ATTESTATION_VERSION, "app": app, "auto_approved": True,
+                   "decided_by": {"app": app, "agent_id": a.agent["id"], "at": now, "via": "auto_approve",
+                                  "standing_attested_at": setting.get("attested_at")}}
+        aid = store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,result,created,decided) VALUES(?,?,?,?,?,?,?,?)",
+                      (a.uid, a.agent["id"], a.agent["name"], json.dumps(payload), "approved",
+                       json.dumps({"used_at": now, "tool": tool, "auto_approved": True}), now, now))
+        cid = link_ingest.record_for_app(store, a.uid, url, app=app, via="auto_approve", licence=licence, approval_id=aid,
+                                         agent_id=a.agent["id"])
+        if not cid:
+            raise ActionError("The consent record didn't save, so nothing was fetched. Try again.", 500)
+        store.x("UPDATE approvals SET payload=? WHERE id=? AND user_id=?", (json.dumps({**payload, "consent_id": cid}), aid, a.uid))
+    store.audit(a.uid, a.label, "auto_approve_link_rights", "safety",
+                {"approval_id": aid, "consent_id": cid, "host": link_ingest.host(url), "app": app, "auto_approved": True})
+    return {"consent_id": int(cid), "approval_id": aid, "auto_approved": True}
 
 
 def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_version: Any = None) -> dict:
@@ -310,25 +345,87 @@ def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_
         raise ActionError("The rights statement changed since this page loaded. Reload, read it and tick it again.", 409)
     link_ingest.ensure(store)  # the table exists (committed) before the decision's transaction writes to it
     stamp = time.time()
+    by_app = getattr(a, "kind", "") == "agent"  # approve_link_ingest: an AI app relays the person's statement (owner ask, 5 Nov)
+    app_name = ((a.agent or {}).get("name") or "an AI app") if by_app else "HuhQueue"
+    decided_by = {"app": app_name, "agent_id": (a.agent or {}).get("id") if by_app else None, "at": stamp,
+                  "via": "mcp_app_approval" if by_app else "mcp_approval"}
     with store.tx():
-        store.x("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",
-                ("approved" if approve else "rejected", stamp, aid, a.uid))
-        now = store.q("SELECT status, decided FROM approvals WHERE id=? AND user_id=?", (aid, a.uid))
-        if not now or now[0]["status"] != ("approved" if approve else "rejected") or now[0]["decided"] != stamp:
+        # the changed-row count says this call decided it (store.xn). Before 5 Nov this re-read ``decided`` and compared
+        # it with ``stamp`` using ==, which failed on the production database: Approve and Reject both answered "No
+        # pending approval with that id" and the item stayed pending.
+        won = store.xn("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",
+                       ("approved" if approve else "rejected", stamp, aid, a.uid))
+        if won != 1:
             raise ActionError("No pending approval with that id.", 404)
         cid = None
         if approve:  # the decision, the consent record and its id on the item commit together (or the item stays pending)
-            cid = link_ingest.record(store, a, p.get("url", ""), licence=p.get("licence", ""), via="mcp_approval",
-                                     approval_id=aid, agent_id=row.get("agent_id"))
+            if by_app:
+                cid = link_ingest.record_for_app(store, a.uid, p.get("url", ""), app=app_name, via="mcp_app_approval",
+                                                 licence=p.get("licence", ""), approval_id=aid, agent_id=row.get("agent_id"))
+            else:
+                cid = link_ingest.record(store, a, p.get("url", ""), licence=p.get("licence", ""), via="mcp_approval",
+                                         approval_id=aid, agent_id=row.get("agent_id"))
             if not cid:
                 raise ActionError("The consent record didn't save. Nothing was approved; try Approve again.", 500)
-            store.x("UPDATE approvals SET payload=? WHERE id=? AND user_id=?", (json.dumps({**p, "consent_id": cid}), aid, a.uid))
+        store.x("UPDATE approvals SET payload=? WHERE id=? AND user_id=?",
+                (json.dumps({**p, **({"consent_id": cid} if cid else {}), "decided_by": decided_by}), aid, a.uid))
     if not approve:
-        store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid})
-        return {"status": "rejected", "approval_id": aid, "kind": LINK_KIND}
-    store.audit(a.uid, a.label, "approve_link_rights", "safety", {"approval_id": aid, "consent_id": cid})
-    return {"status": "approved", "approval_id": aid, "kind": LINK_KIND, "consent_id": cid,
+        store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid, "by": app_name})
+        return {"status": "rejected", "approval_id": aid, "kind": LINK_KIND, "decided_by": app_name}
+    store.audit(a.uid, a.label, "approve_link_rights", "safety", {"approval_id": aid, "consent_id": cid, "by": app_name})
+    return {"status": "approved", "approval_id": aid, "kind": LINK_KIND, "consent_id": cid, "decided_by": app_name,
             "message": "Approved: the app can fetch this video once for a take."}
+
+
+# ---------------------------------------------------------------- approve from the AI app (owner ask, 5 Nov 2026)
+# The person tells Claude "yes, it's my video": approve_link_ingest relays that, with i_own_or_have_rights: true. Only
+# link-rights items, only the person's own (a foreign, missing, decided or other-kind id is 404), and the consent record
+# names the app and the time. Paid-API and post approvals are never decided here: those stay in the app.
+def _app_row(store, a: Actor, approval_id: Any) -> dict:
+    """This person's pending link-rights item by id: 400 for a bad id type, else 404 for anything that isn't one."""
+    if isinstance(approval_id, bool) or not isinstance(approval_id, int):
+        raise ActionError("approval_id is the number ingest_video_link or list_pending_approvals returned.", 400)
+    rows = store.q("SELECT * FROM approvals WHERE id=? AND user_id=?", (approval_id, a.uid))
+    if not rows or rows[0]["status"] != "pending" or row_kind(rows[0]) != LINK_KIND:
+        raise ActionError("No pending video-link approval with that id.", 404)
+    return dict(rows[0])
+
+
+def app_decide_link(store, a: Actor, approval_id: Any, approve: bool, rights: Any = None) -> dict:
+    """approve_link_ingest / reject_link_ingest over MCP. 400 for a bad id type or, on approve, anything but
+    ``i_own_or_have_rights: true``; 404 for an id that isn't this person's pending link item."""
+    if getattr(a, "kind", "") != "agent" or not a.agent:
+        raise ActionError("Approve video links in HuhQueue → Inbox → Approvals.", 400)
+    if approve and rights is not True:
+        raise ActionError("Pass i_own_or_have_rights: true only after the person told you: “" + _attestation() + "” "
+                          "Nothing was approved.", 400)
+    row = _app_row(store, a, approval_id)
+    return decide_link(store, a, row, approve, attested=bool(approve))
+
+
+def _attestation() -> str:
+    """The current rights statement (link_ingest is imported lazily here, as everywhere in this module)."""
+    from . import link_ingest
+    return link_ingest.ATTESTATION
+
+
+def pending_links(store, a: Actor) -> list[dict]:
+    """list_pending_approvals: the person's video links waiting for the rights statement (every app of theirs), newest
+    first. Only what approving needs: the link, its host, which app asked, when, and the statement."""
+    out = []
+    for r in store.q("SELECT id, agent_name, payload, created FROM approvals WHERE user_id=? AND status='pending' "
+                     "AND payload LIKE ? AND created>? ORDER BY id DESC LIMIT 50",
+                     (a.uid, '%"kind": "link_rights"%', time.time() - APPROVAL_TTL)):
+        try:
+            p = json.loads(r["payload"] or "{}")
+        except ValueError:
+            continue
+        if not isinstance(p, dict) or p.get("kind") != LINK_KIND:
+            continue
+        out.append({"approval_id": r["id"], "kind": LINK_KIND, "url": p.get("url", ""), "host": p.get("host", ""),
+                    "asked_by": r["agent_name"], "created": r["created"], "licence_hint": p.get("licence", ""),
+                    "attestation": p.get("attestation", ""), "attestation_version": p.get("attestation_version", "")})
+    return out
 
 
 def row_kind(row: Any) -> str:

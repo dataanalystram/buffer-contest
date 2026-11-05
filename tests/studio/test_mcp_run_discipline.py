@@ -315,12 +315,15 @@ def test_paid_api_is_refused_until_the_person_approves_and_runs_once(human, fake
     mine = [i for i in items if i["id"] == wait["approval_id"]]
     assert len(mine) == 1 and mine[0]["kind"] == "paid_api" and mine[0]["payload"]["tool"] == "run_agent"
     assert "best headphones" in mine[0]["payload"]["summary"]
-    # an agent can never approve it: not over REST with its token, and there is no MCP tool for it
+    # an agent can never approve it: not over REST with its token, and no MCP tool approves a paid API (approve_link_ingest,
+    # 5 Nov 2026, relays the person's rights statement for a video link only; a paid item's id answers 404 there)
     r = human.post(f"/api/approvals/{wait['approval_id']}/approve", headers={"Authorization": f"Bearer {tok}", "X-HQ-CSRF": ""},
                    cookies={}, json={})
     assert r.status_code == 403  # (a bare bearer client is checked in the next test)
     names = {t["name"] for t in mcp.TOOLS}
-    assert not any("approve" in n for n in names)
+    assert {n for n in names if "approve" in n} == {"approve_link_ingest"}
+    err, msg = _call(human, tok, "approve_link_ingest", {"approval_id": wait["approval_id"], "i_own_or_have_rights": True})
+    assert err and "No pending video-link approval" in msg
     # the person approves in HuhQueue
     ok = human.post(f"/api/approvals/{wait['approval_id']}/approve", json={}).json()
     assert ok["status"] in ("approved",) and ok["kind"] == "paid_api"

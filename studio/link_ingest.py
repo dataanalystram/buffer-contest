@@ -35,9 +35,14 @@ SOURCE_RETENTION_DAYS = 7  # a fetched source kept in the bucket is deleted afte
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS link_consents (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, url TEXT, url_hash TEXT, attestation_version TEXT,
-  attestation TEXT, licence TEXT, via TEXT, agent_id INTEGER, approval_id INTEGER, take_id INTEGER, created REAL);
+  attestation TEXT, licence TEXT, via TEXT, agent_id INTEGER, approval_id INTEGER, take_id INTEGER, created REAL,
+  approved_by_app TEXT, approved_at REAL);
 CREATE INDEX IF NOT EXISTS link_consents_user ON link_consents(user_id, url_hash);
 """
+# who said yes and when (5 Nov 2026): "HuhQueue" for the signed-in person, else the AI app that relayed the person's
+# statement (approve_link_ingest) or the app the person's standing auto-approve covered (studio/link_auto.py)
+ADDED = (("approved_by_app", "TEXT"), ("approved_at", "REAL"))
+VIA_APP = ("mcp_app_approval", "auto_approve")
 
 
 def ensure(store) -> None:
@@ -49,7 +54,14 @@ def ensure(store) -> None:
             stmt = stmt.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY").replace(" REAL", " DOUBLE PRECISION")
         store.x(stmt)
     if store.pg:
+        for name, typ in ADDED:
+            store.x(f"ALTER TABLE link_consents ADD COLUMN IF NOT EXISTS {name} {typ.replace('REAL', 'DOUBLE PRECISION')}")
         store.x("ALTER TABLE link_consents ENABLE ROW LEVEL SECURITY")
+    else:
+        have = {r["name"] for r in store.q("PRAGMA table_info(link_consents)")}
+        for name, typ in ADDED:
+            if name not in have:
+                store.x(f"ALTER TABLE link_consents ADD COLUMN {name} {typ}")
     if not getattr(store, "_tx_depth", 0):  # inside a tx a rollback can undo the table: only a committed schema is cached
         store._link_consents_ready = True
 
@@ -72,11 +84,28 @@ def record(store, a: Actor, url: str, *, licence: str = "", via: str = "app", ap
     """Write the consent record. Only for a signed-in human (the app's checkbox, or Studio.decide on an approval item)."""
     if getattr(a, "kind", "") != "human":
         raise ActionError("Only the signed-in person can confirm the rights to a video. An AI app asks them in the Inbox.", 403)
+    return _insert(store, a.uid, url, licence=licence, via=via, approval_id=approval_id, agent_id=agent_id, app="HuhQueue")
+
+
+def record_for_app(store, uid: str, url: str, *, app: str, via: str, licence: str = "", approval_id: int | None = None,
+                   agent_id: int | None = None) -> int:
+    """The person's statement relayed by an AI app: ``approve_link_ingest`` with ``i_own_or_have_rights: true``, or
+    their standing auto-approve (studio/link_auto.py) covering this app. Only those two paths call this; the row names
+    the app and the time, so Activity and the privacy export show who said yes."""
+    if via not in VIA_APP:
+        raise ActionError("Only the person's own approval writes a consent record.", 403)
+    return _insert(store, uid, url, licence=licence, via=via, approval_id=approval_id, agent_id=agent_id,
+                   app=" ".join(str(app or "an AI app").split())[:120])
+
+
+def _insert(store, uid: str, url: str, *, licence: str, via: str, approval_id, agent_id, app: str) -> int:
+    """One consent row with who said yes (``app``) and when (``approved_at``)."""
     ensure(store)
+    now = time.time()
     return store.x("INSERT INTO link_consents(user_id,url,url_hash,attestation_version,attestation,licence,via,agent_id,"
-                   "approval_id,take_id,created) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                   (a.uid, str(url)[:2000], url_hash(url), ATTESTATION_VERSION, ATTESTATION, (licence or "")[:120], via,
-                    agent_id, approval_id, None, time.time()))
+                   "approval_id,take_id,created,approved_by_app,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (uid, str(url)[:2000], url_hash(url), ATTESTATION_VERSION, ATTESTATION, (licence or "")[:120], via,
+                    agent_id, approval_id, None, now, app, now))
 
 
 def attach(store, uid: str, consent_id: int, take_id: int) -> None:
@@ -86,7 +115,8 @@ def attach(store, uid: str, consent_id: int, take_id: int) -> None:
 
 def for_user(store, uid: str, limit: int = 50) -> list[dict]:
     ensure(store)
-    return [dict(r) for r in store.q("SELECT id,url,attestation_version,licence,via,take_id,created FROM link_consents "
+    return [dict(r) for r in store.q("SELECT id,url,attestation_version,licence,via,take_id,created,approved_by_app,approved_at "
+                                     "FROM link_consents "
                                      "WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid, int(limit)))]
 
 

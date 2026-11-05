@@ -95,8 +95,6 @@ dialog.sheet h2{font-size:20px;font-weight:600;margin-bottom:16px}
 
 /* ---------- Inbox (v2): softer groups, status tints, clear primary action */
 .ib-group{border-radius:var(--r-tile);box-shadow:var(--e1)}
-.ib-group.u-now{border-left-width:1px;border-color:var(--line);box-shadow:inset 3px 0 0 var(--accent),var(--e1)}
-.ib-group.u-soon{border-left-width:1px;border-color:var(--line);box-shadow:inset 3px 0 0 var(--warn),var(--e1)}
 .ib-urg{text-transform:none;letter-spacing:0;font-size:12px}
 .ib-chip{min-height:44px}
 

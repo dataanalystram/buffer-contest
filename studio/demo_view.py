@@ -95,6 +95,7 @@ WOULD = [
     (r"^/api/posts/[^/]+$", "DELETE", "delete this post from Buffer"),
     (r"^/api/posts/", None, "change this post in Buffer"),
     (r"^/api/prefs/", None, "save your appearance setting"),
+    (r"^/api/settings/link-auto-approve$", None, "change auto-approve for video links"),
     (r"^/api/radar/feeds", "DELETE", "unfollow this feed"),
     (r"^/api/radar/feeds", None, "follow this feed"),
     (r"^/api/safety/kill$", None, "stop every agent with the kill switch"),
