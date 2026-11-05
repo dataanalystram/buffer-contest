@@ -17,6 +17,11 @@ function replyChips(r) {
 }
 // agent replies are markdown: escaped first, then **bold**, *italic*, `code`, [links](https://...) and "- " lists. Nothing
 // else becomes HTML (owner, 3 Nov 2026: replies showed a raw **Question:**)
+// A bare exception class is never shown (4 Nov 2026): runs saved before the fix still say "Unexpected error: AttributeError"
+const BARE_ERR = /^\s*Unexpected error:\s*[A-Za-z_][\w.]*\s*$/;
+const PLAIN_ERR = "Something went wrong on my side, so I stopped. What's made so far is kept. Press Retry to try again.";
+function plainErr(t) { return BARE_ERR.test(String(t || "")) ? PLAIN_ERR : t; }
+window.hqPlainErr = plainErr;
 function md(t) {
   const inline = (x) => x.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, "$1<i>$2</i>")
     .replace(/`([^`\n]+)`/g, "<code>$1</code>")
@@ -180,7 +185,7 @@ function showRun(r) {
   }
   $("#timeline").innerHTML = groups.map(({ s, n }) => `<li class="step ${s.status}" data-testid="step" data-key="${s.key}">
       <span class="dot" aria-hidden="true">${STATUS_ICON[s.status] || ""}</span>
-      <div><b>${esc(s.label)}${n > 1 ? ` <span class="xn" data-testid="step-count">×${n}</span>` : ""}</b>${s.detail ? `<small>${esc(s.detail)}</small>` : ""}${stepExtra(s)}</div></li>`).join("");
+      <div><b>${esc(s.label)}${n > 1 ? ` <span class="xn" data-testid="step-count">×${n}</span>` : ""}</b>${s.detail ? `<small>${esc(plainErr(s.detail))}</small>` : ""}${stepExtra(s)}</div></li>`).join("");
   const res = r.result || {}, media = res.media || [], busy = ["running", "rendering"].includes(r.status);
   const pk = res.packages || [];
   let html = "";
@@ -238,11 +243,17 @@ function agentExtras(r, busy) {
   $("#agentPlan").hidden = !plan.length;
   $("#agentPlan").innerHTML = plan.map((p) => `<li>${esc(p)}</li>`).join("");
   const th = (res.thread || []).slice(1);
-  $("#agentThread").innerHTML = th.map((m) => `<div class="msg ${m.role}" data-testid="thread-msg"><b>${m.role === "user" ? "You" : "Agent"}</b><span class="md">${m.role === "user" ? esc(m.text) : md(m.text)}</span></div>`).join("") +
+  $("#agentThread").innerHTML = th.map((m) => `<div class="msg ${m.role}" data-testid="thread-msg"><b>${m.role === "user" ? "You" : "Agent"}</b><span class="md">${m.role === "user" ? esc(m.text) : md(plainErr(m.text))}</span></div>`).join("") +
+    // something broke on our side: a plain sentence (in the thread) and a Retry button that sends the same words again
+    (r.status === "failed" && !busy && (res.error || BARE_ERR.test(((th[th.length - 1] || {}).text) || "")) ? `<div class="st warn ask-card" data-testid="chat-retry-card">
+      <span>That didn't finish.${res.error && res.error.ref ? ` Reference <code>${esc(res.error.ref)}</code>.` : ""}</span>
+      <div class="row"><button type="button" class="btn sm" data-testid="chat-retry-run">Retry</button></div></div>` : "") +
     // someone else's video: ONE question, answered with a button (never typed twice)
     (res.rights_question && !res.recap && !(res.rights || {}).mode && !busy ? `<div class="st warn ask-card" role="group" aria-label="Video rights" data-testid="rights-card">
       <span class="md">${md(res.rights_question)}</span><div class="row"><button type="button" class="btn sm" data-testid="rights-yes" data-say="Yes, I have the rights to repost it with credit">Yes, I have the rights</button>
       <button type="button" class="btn2 sm" data-testid="rights-slides" data-say="Use slides instead">Use slides instead</button></div></div>` : "") +
+    (r.status === "failed" && res.stopped && !busy ? `<div class="st warn ask-card" data-testid="chat-stopped"><span>Stopped, as you asked. What's made so far is kept.</span>
+      <div class="row"><button type="button" class="btn sm" data-testid="mp-resume">Resume</button></div></div>` : "") +
     (r.status === "interrupted" ? `<div class="st warn ask-card" data-testid="interrupted"><span>The server restarted while I was working${(res.interrupted || {}).after ? ` (after “${esc(res.interrupted.after)}”)` : ""}. What's made so far is kept.</span>
       <div class="row"><button type="button" class="btn sm" data-testid="mp-resume">Resume</button></div></div>` : "") +
     (window.hqAskCard ? window.hqAskCard(res, busy) : "") +
@@ -256,6 +267,14 @@ function agentExtras(r, busy) {
   $("#agentThread").hidden = !$("#agentThread").innerHTML.trim();
   if (window.hqAskCard) window.hqAskCard.wire($("#agentThread"), r);  // Keep Reel / Switch, which kit, which track
   $("#agentThread").querySelectorAll("button[data-say][data-testid^=recap-rights-],button[data-say][data-testid^=rights-]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
+  const rt = $("#agentThread [data-testid=chat-retry-run]");
+  if (rt) rt.onclick = async () => { rt.disabled = true;
+    // an old run saved before res.error existed: repeat the last thing you asked (resume when there was no reply yet)
+    const lastAsk = th.length > 1 ? ([...th].reverse().find((m) => m.role === "user") || {}).text : "";
+    const again = (((res.error || {}).retry_text) || (res.error ? "" : lastAsk) || "").trim();
+    try { const n = again ? await api(`/api/agent/runs/${r.id}/messages`, { method: "POST", body: { text: again } })
+      : await api(`/api/agent/runs/${r.id}/resume`, { method: "POST", body: {} }); showRun(n); watch(n.id); }
+    catch (e) { toast(e.message, 5000); rt.disabled = false; } };
   const rs = $("#agentThread [data-testid=mp-resume]");
   if (rs) rs.onclick = async () => { rs.disabled = true;
     try { const n = await api(`/api/agent/runs/${r.id}/resume`, { method: "POST", body: {} }); showRun(n); watch(n.id); } catch (e) { toast(e.message, 5000); rs.disabled = false; } };

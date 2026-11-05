@@ -61,7 +61,8 @@ function plSaveState() {
   try { localStorage.setItem(PL_KEY, JSON.stringify(s)); } catch (_) {}
   const u = new URLSearchParams({ tab: "planner" });
   for (const [k, v] of Object.entries(s)) if (v && !(k === "tz" && v === localTz())) u.set(k, v);
-  history.replaceState(null, "", "/?" + u.toString());
+  // only on the Planner's own history entry (app.js urlFor pushed it): never rewrite the screen you came from
+  if (!$("#tab-planner").hidden) history.replaceState({ hq: "planner", sub: "" }, "", "/?" + u.toString());
 }
 const plFiltersActive = () => PL.ch.size || PL.type || PL.status || PL.q;
 

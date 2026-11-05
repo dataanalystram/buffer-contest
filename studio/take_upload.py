@@ -208,7 +208,14 @@ class TakeUploads:
         for r in self.store.q("SELECT id FROM take_uploads WHERE take_id IS NULL AND updated<?", (cut,)):
             with _CLAIM:  # re-read under the claim lock: an upload a take claimed meanwhile is never deleted (Greptile)
                 rows = self.store.q("SELECT * FROM take_uploads WHERE id=? AND take_id IS NULL AND updated<?", (r["id"], cut))
-                n += bool(rows) and self._drop(dict(rows[0]))
+                if not rows:
+                    continue
+                d = dict(rows[0])
+                # Marked for deletion before the lock is let go: claim_for_take only takes a 'ready' row, so no take can
+                # claim it now, and the slow bucket DELETE below runs outside the lock every user's take start needs.
+                d["status"] = "del_open" if d["status"] in ("open", "del_open") and d["s3_upload"] else "del_ready"
+                self.store.x("UPDATE take_uploads SET status=? WHERE id=? AND take_id IS NULL", (d["status"], d["id"]))
+            n += self._drop(d)
         return n
 
     def remove_for_user(self, uid: str) -> int:
@@ -260,7 +267,10 @@ class TakeUploads:
         r = self._s3("POST", key, {"uploads": ""}, headers={"content-type": ctype or "video/mp4"})
         if r.status_code >= 300:
             raise ActionError(f"The upload store refused a new upload (HTTP {r.status_code}).", 502)
-        s3id = ET.fromstring(r.content).findtext(f"{S3NS}UploadId") or ""
+        try:
+            s3id = ET.fromstring(r.content).findtext(f"{S3NS}UploadId") or ""  # noqa: S314 - the configured bucket's answer
+        except ET.ParseError:  # a malformed answer is the store's fault: a clean 502, as in _list_parts (CodeRabbit)
+            raise ActionError("The upload store sent an answer that isn't XML.", 502) from None
         if not s3id:
             raise ActionError("The upload store didn't return an upload id.", 502)
         now = time.time()

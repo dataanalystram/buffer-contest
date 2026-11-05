@@ -130,9 +130,9 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 
 /* upload progress + delete (4 Nov 2026) */
 .tk-prog { display: grid; gap: 4px; margin-top: 8px; }
-.tk-prog progress { width: 100%; height: 8px; accent-color: #C9ACFA; }
-.tk-prog small { color: var(--mut, #666); }
+.tk-prog progress { width: 100%; height: 8px; accent-color: var(--hc-lav, #C9ACFA); }
+.tk-prog small { color: var(--muted); }
 .take-rowwrap { position: relative; }
 .take-rowwrap > [data-testid=take-delete] { position: absolute; top: 8px; right: 8px; z-index: 1; }
-.link.danger { color: #c0392b; background: none; border: 0; cursor: pointer; padding: 2px 4px; }
+.link.danger { color: var(--bad); background: none; border: 0; cursor: pointer; padding: 2px 4px; }
 @media (prefers-reduced-motion: reduce) { .tk-prog progress { transition: none; } }
