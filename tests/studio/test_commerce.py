@@ -506,3 +506,16 @@ def test_shop_link_scan_is_linear_on_colons_and_brackets_without_a_link():
         started = time.monotonic()
         assert commerce.go_codes("https://hq.test", junk) == []
         assert time.monotonic() - started < 2, junk[:6]
+
+
+def test_deleting_the_account_erases_its_shop_links_and_meter_in_one_transaction(human, app, c3):
+    rid = _run(human)
+    assert human.post("/api/commerce/attach", json={"run_id": rid, "product_id": "p_jbl730"}).status_code == 200
+    human.post("/api/commerce/search", json={"query": "lamp"})
+    store = app.state.studio.store
+    uid = store.q("SELECT user_id FROM commerce_links")[0]["user_id"]
+    assert store.q("SELECT 1 AS n FROM commerce_user_day WHERE user_id=?", (uid,))
+    store.delete_user(uid)
+    assert not store.q("SELECT 1 AS n FROM commerce_links WHERE user_id=?", (uid,))
+    assert not store.q("SELECT 1 AS n FROM commerce_user_day WHERE user_id=?", (uid,))
+    assert not store.q("SELECT 1 AS n FROM commerce_credits WHERE scope=?", ("u:" + uid,))
