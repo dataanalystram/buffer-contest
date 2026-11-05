@@ -657,3 +657,18 @@ def test_part_urls_never_cross_the_class_a_cap_and_reads_stop_at_the_class_b_cap
     monkeypatch.setenv("HQ_R2_MAX_CLASS_B", "0")
     r = human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={})
     assert r.status_code == 507                                          # the part-list GET isn't signed
+
+
+def test_link_puts_count_at_their_cap_until_stored_and_an_open_upload_isnt_counted_twice(human, app, s3, monkeypatch):
+    """Concurrent link uploads can't together pass HQ_R2_MAX_BYTES; a fresh upload's part URLs aren't refused because its
+    size was counted both as a reservation and as its row (CodeRabbit, PR #120)."""
+    from studio import r2usage
+    tu = app.state.house.take_uploads
+    monkeypatch.setenv("HQ_R2_MAX_BYTES", str(take_upload.max_bytes() + 10 * 1024 * 1024))
+    assert tu.link_target("acc_1", 501)                                  # one in-flight link: counted at max_bytes()
+    assert tu.link_target("acc_1", 502) == ""                            # a second would pass the cap: streamed instead
+    assert r2usage.stored_bytes() >= take_upload.max_bytes()
+    up = human.post("/api/takes/uploads", json={"name": "e.mp4", "size": 7 * 1024 * 1024}).json()
+    r = human.post(f"/api/takes/uploads/{up['upload_id']}/parts", json={"parts": [1, 2]})
+    assert r.status_code == 200 and len(r.json()["urls"]) == 2
+    assert r2usage._reserved() == 0                                      # settled: the rows carry the bytes

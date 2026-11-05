@@ -368,3 +368,20 @@ def test_cleanup_stopped_at_the_read_cap_reports_it(app, human, s3, monkeypatch)
     monkeypatch.setenv("HQ_R2_MAX_CLASS_B", "0")
     st = migrate_media.cleanup(store, _bucket(), log=lambda *_: None)
     assert st["capped"] and st["dropped"] == 0
+
+
+
+def test_with_ops_refuses_a_batch_that_would_cross_the_cap(app, monkeypatch):
+    r2usage.bind(app.state.store)
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_A", str(r2usage.ops()["A"] + 1))
+    ran = []
+    why, out = r2usage.with_ops("A", 2, lambda: ran.append(1))
+    assert why and out is None and not ran
+    why, _ = r2usage.with_ops("A", 1, lambda: ran.append(1))
+    assert why is None and ran == [1]
+
+
+def test_admin_reports_writes_blocked_when_storage_is_exactly_full(app, s3, monkeypatch):
+    r2usage.bind(app.state.store)
+    monkeypatch.setenv("HQ_R2_MAX_BYTES", "0")
+    assert r2usage.snapshot()["write_blocked"]

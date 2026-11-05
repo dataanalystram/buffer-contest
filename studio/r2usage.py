@@ -39,6 +39,7 @@ WARN_AT = 0.70
 HARD_B_MAX = 9_900_000           # the owner's grace never reaches the free tier's 10,000,000 Class B
 _GRACE = contextvars.ContextVar("r2_owner_grace", default=False)
 _WARNED: set = set()             # (month, what) already warned about
+LINK_PUT_S = 6 * 3600 + 600     # a worker's link PUT URL lives 6 h (take_upload.GET_TTL): its row counts that long
 REDIRECT_FRAC = 0.5              # browser redirects stop at this share of the Class B cap
 RESERVE_S = 2 * 60.0             # a reservation outlives two stored-bytes reads, so its row is counted by then
 _RESERVED: list = []             # [at, nbytes] written or about to be written in this process (one uvicorn process)
@@ -183,7 +184,8 @@ def stored_bytes(store=None) -> int:
             total += int(st.q("SELECT COALESCE(SUM(nbytes),0) AS b FROM library_chunks WHERE storage_key IS NOT NULL")[0]["b"] or 0)
         if "take_uploads" in have:
             total += int(st.q("SELECT COALESCE(SUM(size),0) AS b FROM take_uploads WHERE object_key IS NOT NULL "
-                              "AND status IN ('open','joined','ready')")[0]["b"] or 0)
+                              "AND (status IN ('open','joined','ready') OR (status='link_put' AND updated > ?))",
+                              (time.time() - LINK_PUT_S,))[0]["b"] or 0)
         return total
     try:
         return _cached(st, "bytes", load)
@@ -223,6 +225,29 @@ def release(nbytes: int) -> None:
                 return
 
 
+def settle(nbytes: int) -> None:
+    """The reserved write's row is now in the database (committed): drop the reservation and the cached total in one
+    step, so the next check re-reads a total that includes it (no double count, no gap)."""
+    with _RES_LOCK:
+        for i, r in enumerate(_RESERVED):
+            if r[1] == int(nbytes):
+                del _RESERVED[i]
+                break
+        _CACHE.pop("bytes", None)
+
+
+def with_ops(cls: str, n: int, fn, store=None):
+    """Run ``fn`` (which signs ``n`` operations of class ``cls``) only if they fit under this month's cap; the check and
+    the signing happen under one lock, so two requests can't spend the same remaining operations (CodeRabbit, PR #120).
+    Returns (reason, None) when refused, else (None, fn())."""
+    with _RES_LOCK:
+        cap = caps()["A" if cls == "A" else "B"]
+        if ops(store)[cls] + int(n) > cap:
+            return (f"R2 monthly {'write' if cls == 'A' else 'read'} cap reached ({cap:,} Class {cls} operations, "
+                    f"HQ_R2_MAX_CLASS_{cls})"), None
+        return None, fn()
+
+
 def redirect_ok(store=None) -> bool:
     """Browser redirects (presigned GETs) only below REDIRECT_FRAC of the Class B cap."""
     return ops(store)["B"] < REDIRECT_FRAC * caps()["B"]
@@ -257,7 +282,8 @@ def snapshot(store=None) -> dict:
     return {"month": month(), "stored_bytes": stored_bytes(store), "max_bytes": cap["bytes"], "class_a": o["A"],
             "max_class_a": cap["A"], "class_b": o["B"], "max_class_b": cap["B"],
             "owner_ceiling_class_b": hard_class_b(),
-            "write_blocked": bool(can_write(0, store)), "read_blocked": bool(can_read(store, grace=False))}
+            "write_blocked": bool(can_write(0, store)) or stored_bytes(store) >= cap["bytes"],
+            "read_blocked": bool(can_read(store, grace=False))}
 
 
 def reset() -> None:

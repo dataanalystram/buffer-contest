@@ -172,10 +172,10 @@ def report(store, real_emails: list[str] | None = None, limit: int = 2000) -> di
         t["bytes"] += int(r["size"] or 0)
     try:
         for r in store.q("SELECT i.id, i.user_id, i.mime, i.size, SUM(CASE WHEN c.storage_key IS NULL THEN 0 ELSE 1 END) AS in_r2, "
-                         "COUNT(c.n) AS chunks FROM library_items i JOIN library_chunks c ON c.item_id=i.id GROUP BY i.id, i.user_id, i.mime, i.size"):
+                         "SUM(CASE WHEN c.data IS NULL THEN 0 ELSE 1 END) AS in_db, COUNT(c.n) AS chunks FROM library_items i JOIN library_chunks c ON c.item_id=i.id GROUP BY i.id, i.user_id, i.mime, i.size"):
             k = kind(r["user_id"])
             rows.append({"table": "library_chunks", "item": int(r["id"]), "owner": who(r["user_id"]), "kind": k, "mime": r["mime"],
-                         "bytes": int(r["size"] or 0), "where": "r2" if int(r["in_r2"] or 0) == int(r["chunks"] or 0) else "db"})
+                         "bytes": int(r["size"] or 0), "where": ("r2+db" if int(r["in_db"] or 0) else "r2") if int(r["in_r2"] or 0) == int(r["chunks"] or 0) else "db"})
             t = totals.setdefault(k, {"rows": 0, "bytes": 0})
             t["rows"] += 1
             t["bytes"] += int(r["size"] or 0)
