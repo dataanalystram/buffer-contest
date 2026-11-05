@@ -58,6 +58,8 @@ def test_the_page_wires_the_bin_with_abort_retry_and_tokens():
     assert re.search(r"function tkView\(v\)[\s\S]*?tkAbort\(T\.view\)", js)
     assert 'if ($("#tab-take").hidden) tkAbort();' in js
     assert js.count("HQLoad.aborted(e) || !tk.live()") >= 2                              # a lost race never draws
+    assert 'HQLoad.start("takeopen")' in js and "if (!op.live()) return;" in js            # nor a take opened before the latest
+    assert "tkRefresh();  // the list refreshes" in js                                   # even when the open take's refresh fails
     # a failed load says so with Retry, never a silent empty list
     assert '"take-bin")' in js and '"take-list")' in js and "-retry" in js and 'role="alert"' in js
     lists = js[js.index("async function loadTakes"):js.index("async function loadTake()")]
@@ -72,3 +74,4 @@ def test_the_page_wires_the_bin_with_abort_retry_and_tokens():
     assert "gradient(" not in bin_css and "gradient(" not in js[js.index("list of takes, and the Bin"):]
     assert "var(--hc-lav" in bin_css and "var(--muted)" in bin_css and "var(--bad)" in bin_css
     assert "@media (max-width: 480px)" in bin_css
+    assert "outline: 2px solid var(--focus)" in bin_css and "font-weight: 700" not in bin_css  # DESIGN.md focus ring, type scale

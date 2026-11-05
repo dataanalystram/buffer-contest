@@ -142,9 +142,9 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .tk-listhead .sec { margin: 0; }
 .tk-seg { margin-bottom: 0; }
 .tk-seg button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
-.tk-seg button:focus-visible { outline: 2px solid var(--hc-lav, #C9ACFA); outline-offset: 2px; }
+.tk-seg button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .tk-seg button.on { background: var(--hc-lav, #C9ACFA); color: var(--hc-on-lav, #16101f); }
-.tk-bin-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; border: 1px solid currentColor; }
+.tk-bin-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; border: 1px solid currentColor; }
 .tk-bin { display: grid; gap: 10px; position: relative; }
 .tk-binnote { margin: 0; }
 .tk-binrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--raised); min-width: 0; }

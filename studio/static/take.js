@@ -285,8 +285,8 @@ async function deleteClip(id) {
   try {
     const r = await api(`/api/takes/${encodeURIComponent(rid)}/clips/${encodeURIComponent(id)}`, { method: "DELETE" });
     tkUndoToast(`Clip moved to the Bin for ${(r && r.in_bin_days) || 7} days.`, { take_id: rid, clip_id: id });
-    await tkShowIfOpen(rid);
-    tkRefresh();
+    tkRefresh();  // the list refreshes whether or not the open take's own refresh below succeeds
+    tkShowIfOpen(rid).catch((e) => toast(e.message, 6000));
   } catch (e) { toast(e.message, 6000); }
 }
 async function deleteTake(id) {
@@ -465,8 +465,13 @@ async function loadTakes() {
       : `<div class="empty"><b>No takes yet</b><span>Drop a talk, a podcast episode or a tutorial you recorded, or try the sample take.</span></div>`;
     box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); deleteTake(b.dataset.del); }));
     box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => {
-      try { const t = await api(`/api/takes/${encodeURIComponent(b.dataset.id)}`); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" }); }
-      catch (e) { toast(e.message, 6000); }
+      const op = HQLoad.start("takeopen");  // opening another take aborts this one: only the latest pick is drawn
+      try {
+        const t = await api(`/api/takes/${encodeURIComponent(b.dataset.id)}`, { signal: op.signal });
+        if (!op.live()) return;
+        showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
+      } catch (e) { if (!HQLoad.aborted(e) && op.live()) toast(e.message, 6000); }
+      finally { op.done(); }
     }));
   } catch (e) {
     if (HQLoad.aborted(e) || !tk.live()) return;
