@@ -183,7 +183,9 @@ async function boot() {
   else { // the sample opens on the brand kit builder, filled with the sample brand (owner, 2 Nov 2026); once per browser tab
     const firstDemo = s.demo && !p.get("tab") && !sessionStorage.getItem("hq_demo_landed");
     if (firstDemo) sessionStorage.setItem("hq_demo_landed", "1");
-    showTab(p.get("tab") || (firstDemo ? "brand" : "inbox"), p.get("sub") || "");
+    const tm = location.pathname.match(THREAD_PATH);
+    if (tm) openThreadAt(tm[1]);  // a reload of /threads/<id> stays on that thread
+    else showTab(p.get("tab") || (firstDemo ? "brand" : "inbox"), p.get("sub") || "");
   }
   if (window.onbMaybeOpen) onbMaybeOpen({ justConnected, demo: !!s.demo });
   if (window.HQ_NAV !== nav0 && S.navEarly) reloadOpenScreen();
@@ -413,12 +415,38 @@ document.querySelectorAll(".pg-tabs").forEach((seg) => {
 // one entry and Back left it, landing on Buffer's OAuth page (the entry before /?connected=1). Now a real navigation
 // PUSHES an entry ({hq: tab, sub}); the first URL of the page load and a Back/Forward (popstate) only replace, and Back
 // re-opens the screen it names. The Planner keeps its own filters in the URL with replaceState on top of its entry.
-const NAV = { first: true, popping: false };
+const NAV = { first: true, popping: false, restoring: "" };
+// A thread's own address (5 Nov 2026): an open Make a post thread is /threads/<its public id>, so a reload (or Back to it)
+// reopens it instead of the start screen. Opening a thread pushes its address; a reload, Back/Forward or a thread that
+// can't be opened only replace. Leaving the thread (New post, another screen) goes back to /?tab=agent or that screen.
+const THREAD_PATH = /^\/threads\/(thr_[a-z2-7]{26})\/?$/;
+const threadOpen = () => { const t = document.getElementById("tab-agent"); return !!t && !t.hidden && t.classList.contains("mp-in-thread"); };
+function hqThreadUrl(tid) {
+  if (!tid || !/^thr_[a-z2-7]{26}$/.test(tid) || !threadOpen()) return;
+  const url = "/threads/" + tid; if (location.pathname === url) return;
+  const st = { hq: "agent", sub: "", thread: tid };
+  if (NAV.first || NAV.popping || NAV.restoring === tid) history.replaceState(st, "", url); else history.pushState(st, "", url);
+  NAV.first = false;
+}
+function hqThreadUrlOff(replace) {
+  if (!THREAD_PATH.test(location.pathname)) return;
+  const st = { hq: "agent", sub: "" }, url = (S.session?.demo ? "/?demo=1&" : "/?") + "tab=agent";
+  if (replace || NAV.popping) history.replaceState(st, "", url); else history.pushState(st, "", url);
+}
+function openThreadAt(tid) {
+  NAV.restoring = tid;
+  showTab("agent");
+  window.hqThreadDone = () => { if (NAV.restoring === tid) NAV.restoring = ""; };
+  if (window.hqOpenThread) window.hqOpenThread(tid); else NAV.restoring = "";
+}
+window.hqThreadUrl = hqThreadUrl; window.hqThreadUrlOff = hqThreadUrlOff;
 function urlFor(name, sub) {
   const demo = S.session?.demo ? "demo=1&" : "";
   const q = name === "inbox" ? "" : `tab=${name}${sub && sub !== SUB_DEFAULT[name] ? "&sub=" + sub : ""}`;
   const url = q || demo ? "/?" + (demo + q).replace(/&$/, "") : "/";
   const st = { hq: name, sub: sub || "" }, cur = history.state || {};
+  // Make a post again with its thread still open (or being reopened): the thread's address stays
+  if (name === "agent" && THREAD_PATH.test(location.pathname) && (threadOpen() || NAV.restoring)) { NAV.first = false; return; }
   const same = cur.hq === name && (cur.sub || "") === (sub || "");
   // the Planner's own URL (its filters: a shared link, a reload, Back/Forward) stays on its entry
   const keepPl = name === "planner" && (same || NAV.first || NAV.popping) && new URLSearchParams(location.search).get("tab") === "planner";
@@ -432,7 +460,16 @@ window.addEventListener("popstate", (e) => {
   NAV.popping = true;
   // the Planner entry carries its own filters in the URL: read them back before it draws (it would keep the newer ones)
   if (st.hq === "planner" && typeof plLoadState === "function") { try { plLoadState(); } catch (_) { /* its defaults */ } }
-  try { showTab(st.hq, st.sub || ""); } finally { NAV.popping = false; }
+  const tm = location.pathname.match(THREAD_PATH);
+  try {
+    if (tm) { const cur = window.H_STATE && H_STATE.run; if (!(threadOpen() && cur && cur.thread_id === tm[1])) openThreadAt(tm[1]); }
+    else {  // a thread load still in flight is dropped too, so its late answer can't reopen it or move the address (CodeRabbit)
+      if (window.hcCancelThread) window.hcCancelThread();
+      NAV.restoring = "";
+      if (st.hq === "agent" && threadOpen() && window.mpLeaveThread) window.mpLeaveThread(true);
+      showTab(st.hq, st.sub || "");
+    }
+  } finally { NAV.popping = false; }
 });
 window.HQ_NAV_STATE = NAV;
 function showTab(name, sub = "") {
@@ -452,6 +489,11 @@ function showTab(name, sub = "") {
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
   sub = subTab(name, sub);
   urlFor(name, sub);
+  if (from === "agent" && name !== "agent" && window.stopWatch) window.stopWatch();  // no thread poll behind another screen
+  if (name === "agent" && from !== "agent") {
+    if (window.resumeWatch) window.resumeWatch();
+    const r = window.H_STATE && H_STATE.run; if (r && r.thread_id && threadOpen()) hqThreadUrl(r.thread_id);
+  }
   // View transitions (owner ask, 5 Nov 2026; viewswap.js): a different screen shows the HuhQueue loader in its place at
   // once, its loaders run, and it is shown once they have drawn (at least 150 ms, no flicker). The same screen again (a
   // refresh) just reloads in place. History is untouched: urlFor above already pushed or replaced the entry.

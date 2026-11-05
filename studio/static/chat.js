@@ -45,8 +45,13 @@
     catch (_) { const t = el("textarea", "sr"); t.value = text; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); } catch (__) { /* stays selectable */ } t.remove(); }
     if (window.toast) toast("Copied");
   }
-  const top = () => document.documentElement.style.setProperty("--hc-top", ((document.querySelector("header.top") || {}).offsetHeight || 64) + "px");
+  // the sticky app header's real height. It was measured once (and on resize), so a header that grew after load (the
+  // account name arriving and wrapping it, a banner, a font swap) covered the top of the thread's sticky bar: the "Agent ·
+  // Carousel · 1 ready" overlap at 390 and 1280 px (owner, 5 Nov 2026). A ResizeObserver keeps it current.
+  const topEl = document.querySelector("header.top");
+  const top = () => document.documentElement.style.setProperty("--hc-top", ((topEl || {}).offsetHeight || 64) + "px");
   top(); window.addEventListener("resize", top);
+  if (topEl && window.ResizeObserver) new ResizeObserver(top).observe(topEl, { box: "border-box" });  // padding too
 
   // ------------------------------------------------------------ the shell: sidebar | main column | preview panel
   rv.classList.add("hc");
@@ -88,6 +93,10 @@
   bar.prepend(menuB, head);
   bar.append(model, ctxB);
   bar.appendChild(mpNew);
+  // the thread bar's own height (one line or two, with or without the status): anything else sticky in the thread (a post
+  // card's media column) sits below it, never under it (it used a fixed 72 px, shorter than the bar in the sidebars layout)
+  const barH = () => docEl.style.setProperty("--hc-bar", (bar.offsetHeight || 60) + "px");
+  barH(); if (window.ResizeObserver) new ResizeObserver(barH).observe(bar, { box: "border-box" });
   // the composer gets a footer with the model; the actions row becomes the Ready to send bar
   // the composer: one prompt box (text on top; attach, the model pill and Send in a row under it), the quick fixes as a
   // compact row above it, and the Ready to send bar above that, all in one sticky dock with a solid backing, so nothing in
@@ -192,8 +201,9 @@
     // the clicked thread is marked at once and the conversation shows a skeleton until its run arrives; a quicker second
     // click aborts this request, so the earlier thread never lands over the later one (loading.js)
     const tk = HQLoad.start("thread"), H = window.H_STATE || {};
-    // the previous thread's poll stops here: a late answer for it can never redraw over the thread picked now (house.js watch)
-    clearTimeout(H.poll); H.watching = null;
+    // the previous thread's poll stops here (its request in flight is aborted): a late answer for it can never redraw over
+    // the thread picked now (house.js watch)
+    window.stopWatch();
     markThread(o.dataset.open);
     threadLoading(true);
     try { const x = await api(`/api/agent/runs/${o.dataset.open}`, { signal: tk.signal }); if (!tk.live()) return; const mx = H.missed === String(x.id); H.missed = null; threadLoading(false); window.showRun(x); if (mx || busyRun(x)) window.watchRun(x.id); window.scrollTo({ top: 0 }); }
@@ -216,7 +226,29 @@
   // leaving the thread view (New post, a recent post, a Discover story): the thread request in flight is aborted, so its
   // answer (or its recovery fetch) never reopens a thread over the screen picked now, and the skeleton and inert dock go
   // (the open thread's poll stops too, so a late poll answer can't replace the screen picked now)
-  window.hcCancelThread = () => { HQLoad.start("thread").done(); const W = window.H_STATE; if (W) { clearTimeout(W.poll); W.watching = null; } threadLoading(false); };
+  window.hcCancelThread = () => { HQLoad.start("thread").done(); if (window.stopWatch) window.stopWatch(); threadLoading(false); };
+  // open a thread by its public id (thr_...): a reload of /threads/<id>, or Back/Forward to it (app.js). The thread's run is
+  // found through GET /api/threads/{tid} (owner-scoped; someone else's or a missing id is a 404), then drawn like a click
+  // in the sidebar; a run still working is watched. A newer open aborts this one. A thread that can't be opened says so
+  // and leaves Make a post on its start screen (its address goes back to /?tab=agent).
+  window.hqOpenThread = async (tid) => {
+    const tk = HQLoad.start("thread");
+    window.stopWatch();
+    threadLoading(true);
+    try {
+      const t = await api(`/api/threads/${encodeURIComponent(tid)}`, { signal: tk.signal }); if (!tk.live()) return;
+      const r0 = (t.runs || [])[0]; if (!r0) throw Object.assign(new Error("That thread isn't available."), { status: 404 });
+      if (r0.kind === "take") { threadLoading(false); window.hqThreadDone && window.hqThreadDone(); return window.openTake && window.openTake(r0.run_id); }
+      const x = await api(`/api/agent/runs/${encodeURIComponent(r0.run_id)}`, { signal: tk.signal }); if (!tk.live()) return;
+      threadLoading(false); markThread(x.id); window.showRun(x); if (busyRun(x)) window.watchRun(x.id);
+      window.scrollTo({ top: 0 });
+    } catch (err) {
+      if (HQLoad.aborted(err) || !tk.live()) return;
+      threadLoading(false);
+      toast(err.status === 404 ? "That thread isn't available (deleted, or not yours)." : err.message, 5000);
+      if (window.mpLeaveThread) window.mpLeaveThread(true);
+    } finally { if (tk.live()) tk.done(); window.hqThreadDone && window.hqThreadDone(); }
+  };
   function markThread(id) {
     document.querySelectorAll("#hcList .hc-li").forEach((li) => { const on = String(li.dataset.id) === String(id); li.classList.toggle("on", on); const b = li.querySelector(".hc-th"); if (!b) return; if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); });
   }

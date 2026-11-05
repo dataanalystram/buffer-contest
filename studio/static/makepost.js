@@ -229,10 +229,14 @@
   if (va) { va.removeAttribute("data-go"); va.onclick = () => { window.LIB_PRESET = { kind: LIB_KIND[MP.filter] ?? "" }; showTab("library"); }; }
 
   // ------------------------------------------------------------ the chat thread
-  function leaveThread() {
+  // replace: the address goes back to /?tab=agent in place (a thread that could not be opened, Back to the list); a
+  // New post click pushes it, so Back returns to the thread
+  function leaveThread(replace) {
     root.classList.remove("mp-in-thread"); $("#runView").hidden = true;
-    clearTimeout(H_STATE.poll); H_STATE.watching = null; H_STATE.run = null; if (window.hcCancelThread) window.hcCancelThread(); setStep("create");
+    window.stopWatch(); H_STATE.run = null; if (window.hcCancelThread) window.hcCancelThread(); setStep("create");
+    if (window.hqThreadUrlOff) window.hqThreadUrlOff(!!replace);
   }
+  window.mpLeaveThread = leaveThread;
   $("#mpNew").onclick = () => { leaveThread(); q().focus(); };
   const hostIcon = (u) => { const h = hostOf(u); return h ? `<a class="mp-src" href="${escUrl(u)}" target="_blank" rel="noopener" data-testid="mp-source">${fav(h)}<span>${esc(h)}</span></a>` : ""; };
   function sources(r) {
@@ -248,6 +252,7 @@
   window.mpOnRun = (r) => {
     const res = r.result || {}, busy = ["running", "rendering"].includes(r.status), pk = res.packages || [];
     root.classList.add("mp-in-thread");
+    if (window.hqThreadUrl && r.thread_id) window.hqThreadUrl(r.thread_id);  // the address bar names the open thread
     setStep(busy || !pk.length ? "create" : "review");
     const inp = r.input || {}, up = res.upload;
     const said = inp.prompt || inp.brief || inp.query || inp.url || "(your file)";

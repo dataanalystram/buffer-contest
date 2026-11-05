@@ -717,8 +717,49 @@ class House:
             self._save(rid, d["steps"], d["result"], "failed")
         if isinstance(d.get("result"), dict):
             self.annotate_media(d["result"])
+        try:  # the thread's public id on EVERY run answer (start, reply, resume, poll...): the page keeps it in the address
+            # bar (/threads/thr_...) so a reload stays on it. A start used to come back without it (only GET added it).
+            from .thread_bin import public_id
+            d["thread_id"] = public_id(self.store, a.uid, rid)
+        except Exception:  # noqa: BLE001  an address is a nicety; the run still opens
+            traceback.print_exc()
         from . import mcp_runs  # what an MCP client (Claude, ChatGPT...) did on this run: its steps and its brain line
         return mcp_runs.merge(self.store, d)
+
+    def run_tag(self, a: Actor, rid: int) -> str | None:
+        """A validator for what ``run()`` would show of a BUSY run, read as md5s on Postgres (~100 bytes, never the run's
+        text) so an open thread's live poll costs no egress while nothing changed (the run-list md5s of #119). ``None``
+        when the full read must run: a missing or foreign run (its 404 comes from ``run()``), a run that is not running,
+        or a stale one (``run()`` reports it stopped). It covers the run's own columns and its MCP steps (insert-only)."""
+        import hashlib
+        self._sweep_quietly()  # the throttled watchdog still runs on a 304 poll, as it does on every run read
+        if self.store.pg:
+            rows = self.store.q("SELECT status, updated, md5(COALESCE(input,'')) AS hi, md5(COALESCE(steps,'')) AS hs, "
+                                "md5(COALESCE(result,'')) AS hr FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
+        else:  # SQLite (local and tests): no egress, the text is hashed here
+            rows = [{"status": r["status"], "updated": r["updated"],
+                     **{k: hashlib.md5((r[c] or "").encode(), usedforsecurity=False).hexdigest() for k, c in (("hi", "input"), ("hs", "steps"), ("hr", "result"))}}
+                    for r in self.store.q("SELECT status, updated, input, steps, result FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))]
+        if not rows:
+            return None
+        d = rows[0]
+        if d["status"] not in ("running", "rendering") or (d["updated"] or 0) < _now() - STALE_RUN:
+            return None
+        try:
+            from . import mcp_runs
+            mcp_runs.ensure(self.store)
+            m = self.store.q("SELECT COUNT(*) AS n, MAX(id) AS mx FROM mcp_calls WHERE user_id=? AND run_id=?", (a.uid, rid))[0]
+            mk = f"{m['n'] or 0}.{m['mx'] or 0}"
+            # the packages' media_state is read live from the Library (annotate_media): a file binned, restored or deleted
+            # there changes this fingerprint, so the poll never answers 304 over a changed media/send state (CodeRabbit,
+            # #124). Indexed on (user_id, id); ids only, no file data.
+            lb = self.store.q("SELECT COUNT(*) AS n, MAX(id) AS mx, SUM(CASE WHEN storage='trash' THEN id ELSE 0 END) AS tb, "
+                              "SUM(CASE WHEN storage='trash' THEN 1 ELSE 0 END) AS tn FROM library_items WHERE user_id=?", (a.uid,))[0]
+            lk = f"{lb['n'] or 0}.{lb['mx'] or 0}.{lb['tb'] or 0}.{lb['tn'] or 0}"
+        except Exception:  # noqa: BLE001  no validator rather than a wrong one: the poll reads the full run
+            return None
+        raw = "|".join(str(x) for x in (rid, d["status"], d["hi"], d["hs"], d["hr"], mk, lk))
+        return '"r' + hashlib.sha256(raw.encode()).hexdigest()[:24] + '"'
 
     def _sweep_quietly(self) -> None:
         takes_ = getattr(self, "takes", None)

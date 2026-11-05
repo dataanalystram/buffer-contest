@@ -36,7 +36,7 @@
 @container (min-width:720px){
   .pkg{display:grid;grid-template-columns:minmax(260px,5fr) minmax(0,7fr);column-gap:24px;row-gap:12px;align-items:start}
   .pkg>header{grid-column:1/-1}
-  .pkg>.pkg-media{grid-column:1;position:sticky;top:calc(var(--hc-top,64px) + 72px)}
+  .pkg>.pkg-media{grid-column:1;position:sticky;top:calc(var(--hc-top,64px) + var(--hc-bar,72px) + 8px)}
   .pkg>.pkg-side{grid-column:2}
   .pkg .pkg-media video,.pkg .pkg-media .pm-img{max-height:min(72vh,720px);width:auto;max-width:100%;margin:0 auto;display:block}
   .pkg .pkg-media .pm-img img{max-height:min(72vh,720px);object-fit:contain}
