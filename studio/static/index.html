@@ -301,10 +301,10 @@
             <div class="field grow" id="tkUploadF"><label class="label" for="tkFile">Your video</label>
               <div class="drop" id="tkDrop" data-testid="take-drop"><input id="tkFile" data-testid="take-file" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm"><span id="tkDropTxt">Drop an MP4 or MOV here, or choose a file (up to 100 MB; use a link for longer talks)</span></div>
               <div class="tk-prog" id="tkProgBox" hidden><progress id="tkProg" data-testid="take-upload-progress" max="100" value="0" aria-label="Upload progress"></progress><small id="tkProgTxt" data-testid="take-upload-status" aria-live="polite"></small></div></div>
-            <div class="field grow" id="tkLinkF" hidden><label class="label" for="tkUrl">Direct link to your video file</label><input id="tkUrl" data-testid="take-url" type="url" placeholder="https://your-storage.example.com/talk.mp4"><span class="muted xs">A file you host (cloud storage, your site). Social media pages aren't accepted.</span></div>
+            <div class="field grow" id="tkLinkF" hidden><label class="label" for="tkUrl">Link to your video</label><input id="tkUrl" data-testid="take-url" type="url" placeholder="https://youtu.be/… or https://your-storage.example.com/talk.mp4"><span class="muted xs" data-testid="take-url-hint">A YouTube, Vimeo or X video post, or a video file link. Our video worker fetches it once you confirm the rights below (no account or cookies used; up to 4 GB and 3 h).</span></div>
             <div class="field"><label class="label" for="tkCount">Clips</label><select id="tkCount" data-testid="take-count"><option value="">Let it decide (3–7)</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></div>
             <div class="take-go-row">
-              <label class="chk"><input type="checkbox" id="tkOwns" data-testid="take-owns"> This is my video, or I have the rights to it</label>
+              <label class="chk" data-testid="take-attest"><input type="checkbox" id="tkOwns" data-testid="take-owns"> I own this video or have permission to use it (e.g. my own content, a licence, or Creative Commons); I'm responsible for rights.</label>
               <span class="row"><button class="btn2" id="tkSample" data-testid="take-sample" type="button">Try the sample take</button>
               <button class="btn" id="tkGo" data-testid="take-go" type="submit">Make clips</button></span></div>
           <p class="st-err" id="tkErr" data-testid="take-error" role="alert"></p>

@@ -135,7 +135,7 @@ def sha(value: str) -> str:
 
 ID_TABLES = ("admin_audit", "agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs",
              "template_slots", "source_runs", "library_items", "brand_kit_library",
-             "style_edits", "style_suggestions", "review_links")  # Brand studio slots, Sources runs and brand kits (own schemas in brand_studio.py, sources_agent.py, brand_kits.py)
+             "style_edits", "style_suggestions", "review_links", "link_consents")  # Brand studio slots, Sources runs and brand kits (own schemas in brand_studio.py, sources_agent.py, brand_kits.py)
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
           "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
           "ai_settings", "blob_gc", "admin_audit", "user_tombstones")
@@ -147,7 +147,7 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
 # a reconnect from resetting an allowance.
 OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "source_runs", "source_settings",
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
-                   "thread_ids", "thread_deleted", "jev_usage")
+                   "thread_ids", "thread_deleted", "jev_usage", "link_consents")
 
 def _run_callbacks(fns) -> None:
     for fn in fns or ():
@@ -427,7 +427,10 @@ class Store:
             if "commerce_credits" in have:
                 self.x("DELETE FROM commerce_credits WHERE scope=?", ("u:" + uid,))
             if "take_uploads" in have:  # One take's multipart uploads; the bucket objects are removed by erase_user first
-                self.x("DELETE FROM take_uploads WHERE user_id=?", (uid,))
+                # a bucket delete that didn't confirm (del_open / del_ready) keeps its row, cut loose from the person (no
+                # name, no fingerprint, no user), so purge_stale still removes the object; every other row goes now
+                self.x("DELETE FROM take_uploads WHERE user_id=? AND status NOT IN ('del_open','del_ready')", (uid,))
+                self.x("UPDATE take_uploads SET user_id='', name='', fingerprint=NULL, take_id=NULL, updated=0 WHERE user_id=?", (uid,))
             if "library_purged" in have:  # the purged-run token list (Bin purge never resurrects) goes with the account too
                 self.x("DELETE FROM library_purged WHERE user_id=?", (uid,))
             if {"upload_parts", "upload_sessions"} <= have:

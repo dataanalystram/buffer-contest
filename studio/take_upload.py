@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS take_uploads (
 # status: open (parts arriving) -> joined (the store joined the parts; the checks are next) -> ready (a take can use it).
 # del_open / del_ready: the store didn't confirm a delete; the record stays so the sweep retries it (never forgotten).
 _CLAIM = threading.Lock()
+LINK_NAME = ":fetched-link"  # take_uploads.name of a source the worker fetched from a link (not a browser upload)
 
 
 def max_bytes() -> int:
@@ -103,6 +104,8 @@ class TakeUploads:
     def _s3(self, method: str, key: str, params: dict | None = None, content: bytes | None = None, headers: dict | None = None):
         cfg = self._cfg()
         c = self.http or self.h.http
+        if c is None:  # House.http is None unless create_app got a client: keep one of our own (operator's bucket host only)
+            c = self.http = httpx.Client(timeout=60, trust_env=False)
         try:
             r = c.request(method, presign(cfg, method, key, params, 300), content=content, headers=headers or {}, timeout=60)
         except httpx.HTTPError as e:
@@ -353,6 +356,59 @@ class TakeUploads:
         if not rows or rows[0]["status"] != "ready":
             return ""
         return presign(self._cfg(), "GET", rows[0]["object_key"], None, GET_TTL)
+
+    # ------------------------------------------------------------------ fetched link sources (studio/link_ingest.py)
+    # A video link the worker fetched is kept in the bucket (when one is configured) so the take's renders read it from
+    # there instead of fetching the platform again. Status link_put (the worker may PUT it) -> ready (stored); deleted
+    # after link_ingest.SOURCE_RETENTION_DAYS, when the take is purged, or with the account. No bucket: the worker
+    # streams the link for each job and nothing is stored.
+    def link_target(self, uid: str, rid: int) -> str:
+        """A presigned PUT for this take's fetched source ('' without a bucket, or once it is stored)."""
+        cfg = config()
+        if not cfg:
+            return ""
+        rows = self.store.q("SELECT * FROM take_uploads WHERE take_id=? AND user_id=? AND name=?", (rid, uid, LINK_NAME))
+        if rows and rows[0]["status"] != "link_put":
+            return ""
+        if rows:
+            key = rows[0]["object_key"]
+        else:
+            lid = "tl_" + secrets.token_urlsafe(18)
+            key = f"takes/{hashlib.sha256(uid.encode()).hexdigest()[:16]}/{lid}.mp4"
+            now = time.time()
+            self.store.x("INSERT INTO take_uploads(id,user_id,name,size,part_size,parts,status,object_key,s3_upload,take_id,created,updated,"
+                         "fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (lid, uid, LINK_NAME, 0, 0, 1, "link_put", key, "", rid, now, now, None))
+        return presign(cfg, "PUT", key, None, GET_TTL)
+
+    def link_stored(self, uid: str, rid: int, size: int) -> str:
+        """The worker says it stored the source: the object must be there with that size; then it is ready."""
+        rows = self.store.q("SELECT * FROM take_uploads WHERE take_id=? AND user_id=? AND name=? AND status='link_put'", (rid, uid, LINK_NAME))
+        if not rows or not config():
+            return ""
+        d = dict(rows[0])
+        try:
+            r = self._s3("HEAD", d["object_key"])
+            ok = r.status_code == 200 and int(r.headers.get("content-length") or -1) == int(size) and 0 < int(size) <= max_bytes()
+        except (ActionError, ValueError, httpx.HTTPError):
+            ok = False
+        if not ok:
+            return ""
+        self.store.x("UPDATE take_uploads SET status='ready', size=?, updated=? WHERE id=?", (int(size), time.time(), d["id"]))
+        return d["id"]
+
+    def link_source(self, uid: str, rid: int) -> str:
+        rows = self.store.q("SELECT id FROM take_uploads WHERE take_id=? AND user_id=? AND name=? AND status='ready'", (rid, uid, LINK_NAME))
+        return rows[0]["id"] if rows else ""
+
+    def purge_link_sources(self, now: float | None = None) -> int:
+        """Raw fetched sources leave the bucket after 7 days (privacy page), whatever their take is doing."""
+        from .link_ingest import SOURCE_RETENTION_DAYS
+        if not config():
+            return 0
+        cut = (now or time.time()) - SOURCE_RETENTION_DAYS * 86400
+        old = [dict(r) for r in self.store.q("SELECT * FROM take_uploads WHERE name=? AND created<?", (LINK_NAME, cut))]
+        return sum(1 for d in old if self._drop(d))
 
     def remove_for_take(self, rid: int, uid: str) -> int:
         rows = [dict(r) for r in self.store.q("SELECT * FROM take_uploads WHERE take_id=? AND user_id=?", (rid, uid))]

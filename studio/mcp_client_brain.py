@@ -828,7 +828,11 @@ def t_split_video(studio, a, args):
         body["media_token"] = _video_source(h, a, args)[0]
     elif args.get("url"):
         body["url"] = str(args["url"])
-    t = h.takes.start(a, body)
+    if args.get("approval_id") not in (None, ""):
+        body["approval_id"] = args["approval_id"]
+    t = h.takes.start(a, {**body, "_tool": "split_video"})
+    if t.get("needs_user_approval"):  # a video link: the person confirms the rights in the Inbox first (consent.link_gate)
+        return t
     return {"take_id": t["id"], "status": t.get("status"), "poll": f"render_status(take_id={t['id']}) every 20-30 s",
             "spent_usd": 0, **({"run_id": _run_arg(args)} if _run_arg(args) else {})}
 

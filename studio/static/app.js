@@ -774,6 +774,7 @@ async function loadApprovals() {
   box.innerHTML = "";
   for (const r of rows) {
     if (r.kind === "paid_api") { box.appendChild(paidApproval(r)); continue; }
+    if (r.kind === "link_rights") { box.appendChild(linkApproval(r)); continue; }
     const ch = chOf(r.payload.channel_id), media = (r.payload.media_urls && r.payload.media_urls.length ? r.payload.media_urls : [r.payload.media_url]).filter(Boolean);
     const el = document.createElement("article"); el.className = `appr svc-${ch.service}`; el.setAttribute("data-testid", "approval-item");
     const thumb = media.length ? `<div class="appr-media${media.length > 1 ? " multi" : ""}">${isVidUrl(media[0]) ? `<video src="${esc(media[0])}" muted playsinline preload="metadata"></video><span class="play" aria-hidden="true"></span>` : `<img src="${esc(media[0])}" alt="" loading="lazy">`}${media.length > 1 ? `<span class="more">+${media.length - 1}</span>` : ""}</div>` : "";
@@ -799,6 +800,33 @@ function paidCost(est) {
   if (est && est.usd_max != null) return `up to $${Number(est.usd_max).toFixed(2)}`;
   if (est && est.credits != null) return `${est.credits} credit${Number(est.credits) === 1 ? "" : "s"}`;
   return "a cost the app couldn't estimate";
+}
+// An AI app asking One take to fetch a video link: only the person can confirm the rights (studio/consent.py decide_link).
+// Approve stays off until the statement is ticked; approving writes the consent record, nothing is fetched yet.
+function linkApproval(r) {
+  const p = r.payload || {};
+  const el = document.createElement("article"); el.className = "appr appr-paid"; el.setAttribute("data-testid", "approval-item"); el.dataset.kind = "link_rights";
+  el.innerHTML = `<div class="appr-head">${aiMark(r.agent_name, 22)}<span><b>${esc(r.agent_name)}</b> wants One take to fetch a video</span><small>${esc(timeAgo(r.created * 1000))}</small></div>
+    <div class="appr-body"><p><a class="link" href="${escUrl(p.url || "")}" target="_blank" rel="noopener noreferrer" data-testid="approval-link">${esc(p.url || "")}</a></p>
+    ${p.licence ? `<p class="muted sm" data-testid="approval-licence">Licence the platform states: ${esc(p.licence)}</p>` : ""}
+    <label class="chk"><input type="checkbox" data-testid="approval-attest"> ${esc(p.attestation || "I own this video or have permission to use it; I'm responsible for rights.")}</label>
+    <p class="muted sm">Nothing has been fetched yet. Approve lets this app start one take from this link.</p></div>
+    <div class="appr-act"><button class="btn2 sm danger" data-testid="reject">Reject</button><span class="right"><button class="btn accent sm" data-testid="approve" disabled>Approve</button></span></div><div data-testid="approval-status"></div>`;
+  const tick = $("[data-testid=approval-attest]", el), ok = $("[data-testid=approve]", el);
+  tick.onchange = () => { ok.disabled = !tick.checked; };
+  ok.onclick = async () => {
+    if (!tick.checked) return;
+    ok.disabled = true;
+    try { await api(`/api/approvals/${r.id}/approve`, { method: "POST", body: { rights_attested: true, attestation_version: p.attestation_version || "" } });
+      $("[data-testid=approval-status]", el).innerHTML = `<div class="st ok">Approved. ${esc(r.agent_name)} can fetch it for one take.</div>`; el.classList.add("sent"); setTimeout(loadInbox, 1400); }
+    catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; ok.disabled = !tick.checked; }
+  };
+  $("[data-testid=reject]", el).onclick = async () => {
+    const b = $("[data-testid=reject]", el); b.disabled = true;
+    try { await api(`/api/approvals/${r.id}/reject`, { method: "POST" }); toast("Rejected. Nothing was fetched."); loadInbox(); }
+    catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; b.disabled = false; }
+  };
+  return el;
 }
 function paidApproval(r) {
   const p = r.payload || {}, est = p.estimate || {};

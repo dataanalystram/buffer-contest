@@ -194,6 +194,153 @@ def decide(store, a: Actor, row: dict, approve: bool) -> dict:
             "message": f"Approved: the app can run {tool} once for this request."}
 
 
+# ---------------------------------------------------------------------- video-link rights (owner ask, 4 Nov 2026)
+# An AI app that wants One take to fetch a video link (YouTube, Vimeo, X, a file) can't confirm the rights itself: the
+# request waits in Inbox -> Approvals as kind "link_rights" until the signed-in person ticks the attestation there and
+# approves. No token setting skips this ("Allow paid APIs" is about money, not rights). Approving writes the consent
+# record (studio/link_ingest.py); the app's next call with the same link uses it once.
+LINK_KIND = "link_rights"
+
+
+def _link_rows(store, a: Actor) -> list[dict]:
+    out = []
+    for r in store.q("SELECT id, payload, status, result, created, decided FROM approvals WHERE user_id=? AND agent_id=? "
+                     "AND status IN ('pending','approved') AND created>? ORDER BY id DESC LIMIT 100",
+                     (a.uid, a.agent["id"], time.time() - APPROVAL_TTL)):
+        try:
+            p = json.loads(r["payload"] or "{}")
+        except ValueError:
+            continue
+        if isinstance(p, dict) and p.get("kind") == LINK_KIND:
+            out.append({**dict(r), "payload": p})
+    return out
+
+
+def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any = None, tool: str = "ingest_video_link") -> dict:
+    """An agent asks to fetch a video link. Returns {"consent_id": n} when the person approved this exact link (used up
+    now), else needs_user_approval with the Inbox item. Whatever the agent passes (owns, rights_attested) changes nothing."""
+    from . import link_ingest
+    if getattr(a, "kind", "") != "agent" or not a.agent:
+        raise ActionError("Only an AI app token asks for link approval.", 400)
+    store = studio.store
+    h = link_ingest.url_hash(url)
+    cur = link_ingest.ATTESTATION_VERSION  # an item asked (or approved) under an older statement never counts
+    mine = [r for r in _link_rows(store, a) if r["payload"].get("url_hash") == h and r["payload"].get("attestation_version") == cur]
+    if approval_id not in (None, ""):
+        try:
+            want = int(approval_id)
+        except (TypeError, ValueError):
+            raise ActionError("approval_id is the number needs_user_approval returned.")
+        if not any(r["id"] == want for r in mine):
+            raise ActionError("No approval with that id for this link. Call without approval_id to ask the person.", 404)
+        mine = [r for r in mine if r["id"] == want]
+    with store.tx():
+        for r in mine:
+            cid = r["payload"].get("consent_id")
+            if r["status"] == "approved" and not r["result"] and cid:
+                used = json.dumps({"used_at": time.time(), "tool": tool})
+                store.x("UPDATE approvals SET result=? WHERE id=? AND user_id=? AND status='approved' AND result IS NULL", (used, r["id"], a.uid))
+                again = store.q("SELECT result FROM approvals WHERE id=?", (r["id"],))
+                if again and again[0]["result"] == used:
+                    store.audit(a.uid, a.label, "link_rights", "read", {"approval_id": r["id"], "consent_id": cid})
+                    return {"consent_id": int(cid), "approval_id": r["id"]}
+    from .userlocks import held
+    with held(a.uid, "link_rights"):  # two parallel asks for one link make ONE approval item
+        rows = _link_rows(store, a)
+        pending = next((r for r in rows if r["status"] == "pending" and r["payload"].get("url_hash") == h
+                        and r["payload"].get("attestation_version") == link_ingest.ATTESTATION_VERSION), None)
+        if pending:
+            aid = pending["id"]
+        else:
+            if sum(1 for r in rows if r["status"] == "pending") >= MAX_PENDING:
+                raise ActionError("This app already has too many video links waiting for the person's approval. Ask them "
+                                  "to review those in HuhQueue → Inbox → Approvals first.", 429)
+            payload = {"kind": LINK_KIND, "tool": tool, "url": str(url)[:2000], "url_hash": h, "host": link_ingest.host(url),
+                       "licence": (licence or "")[:120], "attestation": link_ingest.ATTESTATION,
+                       "attestation_version": link_ingest.ATTESTATION_VERSION, "app": (a.agent or {}).get("name") or ""}
+            aid = store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
+                          (a.uid, a.agent["id"], a.agent["name"], json.dumps(payload), "pending", time.time()))
+            store.audit(a.uid, a.label, "link_rights", "held", {"approval_id": aid, "host": link_ingest.host(url)})
+    return {"needs_user_approval": True, "approval_id": aid, "kind": LINK_KIND, "tool": tool, "url": url,
+            "licence_hint": licence or "unknown (the worker reports what the platform states)",
+            "attestation": link_ingest.ATTESTATION, "fetched": False,
+            "message": ("Before HuhQueue fetches this video, the person has to confirm they own it or have permission to use it. "
+                        "Ask them to open HuhQueue → Inbox → Approvals, tick the rights statement and approve. Then call "
+                        f"{tool} again with the same url (approval_id: {aid}). Don't ask them to upload the file, and don't "
+                        "confirm the rights yourself: nothing was fetched."),
+            "how": "list_approvals shows when it is approved."}
+
+
+def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_version: Any = None) -> dict:
+    """Studio.decide for a link-rights item (the caller checked: a signed-in human, their row, pending). Approving needs the
+    attestation ticked under the CURRENT statement version and writes the consent record; nothing is fetched here.
+
+    409 when the statement changed: the item was asked under an older version (it is closed, so the app's next call makes
+    a fresh item with the new text), or the page the person approved from showed an older version (``seen_version``; the
+    item stays pending: reload and tick again)."""
+    from . import link_ingest
+    aid = row["id"]
+    try:
+        p = json.loads(row["payload"] or "{}") or {}
+    except ValueError:
+        p = {}
+    if not isinstance(p, dict):
+        p = {}
+    if seen_version is not None and not isinstance(seen_version, str):
+        raise ActionError("attestation_version is the statement version string the page showed.", 400)
+    if approve and attested is not True:
+        raise ActionError("Tick “" + link_ingest.ATTESTATION + "” to approve (rights_attested: true).", 403)
+    if approve and float(row.get("created") or 0) <= time.time() - APPROVAL_TTL:
+        # link_gate only redeems items younger than APPROVAL_TTL: approving an older one would write a consent nobody uses
+        with store.tx():
+            store.x("UPDATE approvals SET status='rejected', result=?, decided=? WHERE id=? AND user_id=? AND status='pending'",
+                    (json.dumps({"closed": "expired"}), time.time(), aid, a.uid))
+        store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid, "reason": "expired"})
+        raise ActionError("This request is more than a day old, so it was closed and nothing was fetched. Ask the app to "
+                          "send the link again.", 410)
+    if approve and p.get("attestation_version") != link_ingest.ATTESTATION_VERSION:
+        stale = json.dumps({"closed": "statement_changed", "asked_version": str(p.get("attestation_version") or "")[:40]})
+        with store.tx():
+            store.x("UPDATE approvals SET status='rejected', result=?, decided=? WHERE id=? AND user_id=? AND status='pending'",
+                    (stale, time.time(), aid, a.uid))
+        store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid, "reason": "statement_changed"})
+        raise ActionError("The rights statement changed after this app asked, so this request was closed and nothing was "
+                          "fetched. Ask the app to send the link again, then read the new statement and approve.", 409)
+    if approve and seen_version not in (None, "", link_ingest.ATTESTATION_VERSION):
+        raise ActionError("The rights statement changed since this page loaded. Reload, read it and tick it again.", 409)
+    link_ingest.ensure(store)  # the table exists (committed) before the decision's transaction writes to it
+    stamp = time.time()
+    with store.tx():
+        store.x("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",
+                ("approved" if approve else "rejected", stamp, aid, a.uid))
+        now = store.q("SELECT status, decided FROM approvals WHERE id=? AND user_id=?", (aid, a.uid))
+        if not now or now[0]["status"] != ("approved" if approve else "rejected") or now[0]["decided"] != stamp:
+            raise ActionError("No pending approval with that id.", 404)
+        cid = None
+        if approve:  # the decision, the consent record and its id on the item commit together (or the item stays pending)
+            cid = link_ingest.record(store, a, p.get("url", ""), licence=p.get("licence", ""), via="mcp_approval",
+                                     approval_id=aid, agent_id=row.get("agent_id"))
+            if not cid:
+                raise ActionError("The consent record didn't save. Nothing was approved; try Approve again.", 500)
+            store.x("UPDATE approvals SET payload=? WHERE id=? AND user_id=?", (json.dumps({**p, "consent_id": cid}), aid, a.uid))
+    if not approve:
+        store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid})
+        return {"status": "rejected", "approval_id": aid, "kind": LINK_KIND}
+    store.audit(a.uid, a.label, "approve_link_rights", "safety", {"approval_id": aid, "consent_id": cid})
+    return {"status": "approved", "approval_id": aid, "kind": LINK_KIND, "consent_id": cid,
+            "message": "Approved: the app can fetch this video once for a take."}
+
+
+def row_kind(row: Any) -> str:
+    """'paid_api', 'link_rights' or 'post'."""
+    try:
+        p = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"] or "{}")
+    except (ValueError, KeyError, TypeError):
+        return "post"
+    k = p.get("kind") if isinstance(p, dict) else None
+    return k if k in (KIND, LINK_KIND) else "post"
+
+
 def is_paid_row(row: Any) -> bool:
     try:
         p = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"] or "{}")

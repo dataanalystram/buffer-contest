@@ -184,7 +184,8 @@ studio/media/*  Media agent (find, download, transcribe, captions, compose, styl
     function in studio/media/music.py. The pulse bed is our own.
   Libraries and programs used (called, no code copied):
   - yt-dlp  https://github.com/yt-dlp/yt-dlp  Licence: The Unlicense (public domain). Platform metadata and downloads,
-      one extractor per allow-listed host.
+      one extractor per allow-listed host (Make a post, the weekly recap, and One take / MCP video links once the person
+      confirms the rights). Pinned in requirements-worker*.txt; runs on the video worker only, never with cookies.
   - faster-whisper  https://github.com/SYSTRAN/faster-whisper  Licence: MIT, Copyright (c) 2023 SYSTRAN; Whisper model
       weights (Systran/faster-whisper-tiny / -base, CTranslate2 conversions of openai/whisper) MIT, Copyright (c) 2022
       OpenAI, downloaded at run time, not redistributed; Silero VAD (bundled in faster-whisper) MIT.

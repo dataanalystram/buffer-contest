@@ -45,7 +45,7 @@ THUMB_OFFSET = ("instagram", "tiktok", "pinterest")  # Buffer: metadata.thumbnai
 SOCIAL_PAGES = ("youtube.com", "youtu.be", "tiktok.com", "instagram.com", "facebook.com", "x.com", "twitter.com", "vimeo.com",
                 "linkedin.com", "twitch.tv")
 SAMPLE_DIR = Path(__file__).parent / "sample_take"
-MAX_TAKE_SECS = int(os.environ.get("HQ_MAX_TAKE_SECS", "1800"))
+MAX_TAKE_SECS = int(os.environ.get("HQ_MAX_TAKE_SECS", "10800"))  # 3 h, as for a video link (link_ingest.MAX_LINK_SECS); was 30 min
 MAX_CAPTION_TEXT = 4 * 1024 * 1024  # an uploaded .srt/.vtt; checked before it is parsed (SECURITY_RULES 6)
 # Opus-style takes render each clip in the ratio its channel needs (Instagram is posted as a Reel here)
 TAKE_RATIO = {"instagram": "9:16", "tiktok": "9:16", "youtube": "9:16", "facebook": "9:16", "linkedin": "4:5", "threads": "4:5",
@@ -173,10 +173,11 @@ class Takes(TakeBin):
                               "Connect Buffer to cut your own videos.", 403)
         from .media.find import platform_of
         owns, rights = bool(body.get("owns")), bool(body.get("rights_confirmed"))
-        if not (owns or rights):
+        token, url = str(body.get("media_token") or "").strip(), str(body.get("url") or body.get("media_url") or "").strip()
+        is_link = bool(url) and not str(body.get("upload_id") or "").strip() and not url.startswith(self.s.public_url.rstrip("/") + "/m/")
+        if not (owns or rights or (is_link and a.kind == "agent")):  # an AI app's link: the person attests in the Inbox (below)
             raise ActionError("Confirm this is your own video (owns: true), or that you have the right to clip it "
                               "(rights_confirmed: true, with a credit line). One take only clips videos you own or have the rights to.")
-        token, url = str(body.get("media_token") or "").strip(), str(body.get("url") or body.get("media_url") or "").strip()
         upload_id = str(body.get("upload_id") or "").strip()
         if upload_id:  # a long video uploaded in parts to the bucket (take_upload.py): checked now, claimed once the take exists
             self.h.take_uploads.check_ready(a, upload_id)
@@ -206,6 +207,8 @@ class Takes(TakeBin):
             elif any(host == d or host.endswith("." + d) for d in SOCIAL_PAGES):
                 raise ActionError("Give a link to the video post itself (YouTube, Vimeo, X, Loom, TikTok) or the video file, "
                                   "not a profile or page.")
+            elif not credit and not owns and a.kind == "agent":  # an AI app's direct file link: credit its host, and the
+                credit = f"Video: {host}"[:160]                  # person still confirms the rights in the Inbox
         if not owns and not credit:
             raise ActionError("Add a credit line for a video you didn't make (credit: 'Video: @handle on YouTube').")
         style = "opus" if (platform_url or str(body.get("style") or "").lower() in ("opus", "opus_clip", "shorts")) else "take"
@@ -229,9 +232,23 @@ class Takes(TakeBin):
             return jev
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
+        consent_id, licence, link = None, "", url or platform_url
+        if link:  # rights first, then the fetch (owner ask, 4 Nov 2026): a signed-in person attests; an AI app asks them
+            from . import consent, link_ingest
+            licence = link_ingest.licence_hint(link, http=self.h.http)
+            if a.kind == "agent":
+                g = consent.link_gate(self.studio, a, link, licence=licence, approval_id=body.get("approval_id"),
+                                      tool=str(body.get("_tool") or "ingest_video_link"))
+                if g.get("needs_user_approval"):
+                    return g
+                consent_id = g["consent_id"]
+            else:
+                consent_id = link_ingest.human_attest(self.store, a, link, body, licence)
+            rights = True
         steps = [{"key": k, "label": l, "status": "pending", "detail": "", "data": None} for k, l in STEPS]
         inp = {"media_token": token, "upload_id": upload_id, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
                "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]], "jev": jev,
+               "consent_id": consent_id, "licence_hint": licence,
                "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
@@ -239,6 +256,9 @@ class Takes(TakeBin):
                            (a.uid, "take", json.dumps(inp), "running", json.dumps(steps), json.dumps({}), _now(), _now()))
         self.store.audit(a.uid, a.label, "clips_from_video", "read",
                          {"take": rid, "source": "upload" if token or upload_id else ("platform" if platform_url else "link"), "style": style})
+        if consent_id:
+            from . import link_ingest
+            link_ingest.attach(self.store, a.uid, consent_id, rid)
         if upload_id:
             try:
                 self.h.take_uploads.claim_for_take(a, upload_id, rid)
@@ -372,15 +392,22 @@ class Takes(TakeBin):
         src = spec.get("source_url") or (base + spec["source"] if spec.get("source") else "")
         if spec.get("source_upload"):  # a multipart upload in the bucket: a presigned GET the worker streams
             src = self.h.take_uploads.signed_url(spec["source_upload"])
-        return {"id": jid, "status": j["status"], "spec": spec,
-                "urls": {"source": src,
-                         "logo": base + spec["logo"] if spec.get("logo") else ""}}
+        urls = {"source": src, "logo": base + spec["logo"] if spec.get("logo") else ""}
+        if spec["kind"] == "take_analyze" and (spec.get("platform_url") or spec.get("source_url")) and spec.get("take"):
+            try:  # a bucket keeps the fetched link for the renders (deleted after 7 days); none: streamed per job only
+                put = self.h.take_uploads.link_target(j["user_id"], int(spec["take"]))
+            except ActionError:
+                put = ""
+            if put:
+                urls["source_put"] = put
+        return {"id": jid, "status": j["status"], "spec": spec, "urls": urls}
 
     def _local_job(self, jid: int) -> None:
         """Self-host / CI: run the worker's job in-process (FFmpeg on PATH)."""
         j = self._job(jid)
         spec = j["spec"]
         tmp = Path(tempfile.mkdtemp(prefix="hq_takejob_"))
+        fetched = None
         try:
             src = tmp / "source.mp4"
             if spec.get("sample_window"):
@@ -399,12 +426,15 @@ class Takes(TakeBin):
                     raise take.TakeError("The uploaded video is gone.")
                 src.write_bytes(m["data"])
             elif spec.get("platform_url"):
-                fetch_platform(spec["platform_url"], src)
+                fetched = {**fetch_platform(spec["platform_url"], src), "via": "yt-dlp"}
             else:
                 self._download(spec["source_url"], src)
+                fetched = {"via": "direct"}
             if spec["kind"] == "take_analyze":
                 analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=MAX_TAKE_SECS,
                                         transcript=reuse_captions(str(src), spec), jev=spec.get("jev") is True)
+                if fetched is not None:
+                    analysis["fetch"] = fetched
                 self.on_analysis(jid, analysis, "")
             else:
                 logo = self.h.get_media(spec["logo"])["data"] if spec.get("logo") and self.h.get_media(spec["logo"]) else None
@@ -560,6 +590,16 @@ class Takes(TakeBin):
             self._save(rid, steps, res, "failed")
             return {"done": {"ok": False}}
         self.store.x("UPDATE render_jobs SET status='done', updated=? WHERE id=?", (_now(), jid))
+        fetched = analysis.pop("fetch", None)
+        if isinstance(fetched, dict):  # what the worker learned fetching a link: the platform's licence, if it states one
+            res["fetch"] = {k: (str(fetched.get(k))[:200] if fetched.get(k) is not None else None) for k in ("title", "licence", "via")}
+            lic = res["fetch"].get("licence") or run["input"].get("licence_hint") or ""
+            if lic:
+                was = next((x["detail"] for x in steps if x["key"] == "upload"), "")
+                self._step(steps, "upload", "done", (was + f" · licence: {lic}")[:300])
+            n = fetched.get("stored_bytes")
+            if isinstance(n, int) and n > 0:
+                self.h.take_uploads.link_stored(a.uid, rid, n)
         res["analysis"] = analysis
         res["providers"], res["timings"] = analysis.get("providers", {}), analysis.get("timings", {})
         pr = analysis.get("probe") or {}
@@ -611,9 +651,11 @@ class Takes(TakeBin):
         for k in ("reframe", "captions", "covers"):
             self._step(run["steps"], k, "running", f"0 of {len(clips)} clips")
         self._save(rid, run["steps"], res, "rendering")
-        spec = {"kind": "take_render", "source": run["input"].get("media_token") or "", "source_upload": run["input"].get("upload_id") or "",
-                "source_url": run["input"].get("url") or "",
-                "platform_url": run["input"].get("platform_url") or "",
+        stored = self.h.take_uploads.link_source(a.uid, rid) if (run["input"].get("url") or run["input"].get("platform_url")) else ""
+        spec = {"kind": "take_render", "source": run["input"].get("media_token") or "",
+                "source_upload": run["input"].get("upload_id") or stored,  # a link fetched once and kept: no second fetch
+                "source_url": "" if stored else run["input"].get("url") or "",
+                "platform_url": "" if stored else run["input"].get("platform_url") or "",
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": p, "logo": kit.get("logo") or "",
                 "scenes": an.get("scenes") or [], "src": an["probe"], "clips": clips,
                 "style": run["input"].get("style") or "take", "ratios": run["input"].get("ratios") or ["9:16"],
@@ -1155,14 +1197,22 @@ def encode(data: bytes) -> str:
 
 
 # ---------------------------------------------------------------------- shared by the local runner and render_worker
-def fetch_platform(url: str, dest: Path) -> None:
-    """A YouTube / Vimeo / X post -> dest, through studio.media.download (single extractor, size + height caps, vetted).
-    YouTube often refuses datacenter IPs; the error then says to upload the file."""
+def fetch_platform(url: str, dest: Path, max_bytes: int | None = None) -> dict:
+    """A YouTube / Vimeo / X post -> dest on the video worker, through the SAME path Make a post's Reels use
+    (studio.media.download.download_video: yt-dlp with that platform's extractor only, mp4 <= 1080p, no cookies), with
+    One take's caps: 4 GB (take_upload.max_bytes) and 3 h (link_ingest.MAX_LINK_SECS). Returns the fetch meta (title,
+    duration, licence). When the platform refuses, the error says why and asks for the file."""
+    from . import link_ingest, mediasafe
     from .media.download import DownloadError, download_video
+    from .take_upload import max_bytes as cap
     try:
-        download_video(url, dest)
+        got = download_video(url, dest, max_bytes=int(max_bytes or os.environ.get("HQ_MAX_TAKE_BYTES") or cap()),
+                             max_secs=min(link_ingest.MAX_LINK_SECS, MAX_TAKE_SECS))
     except DownloadError as e:
         raise take.TakeError(str(e))
+    except mediasafe.MediaRefused as e:
+        raise take.TakeError(f"The fetched file isn't a plain video ({e}).")
+    return got.get("meta") or {}
 
 
 def reuse_captions(path: str, spec: dict) -> dict | None:
