@@ -732,7 +732,7 @@ class House:
                                 "md5(COALESCE(result,'')) AS hr FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
         else:  # SQLite (local and tests): no egress, the text is hashed here
             rows = [{"status": r["status"], "updated": r["updated"],
-                     **{k: hashlib.md5((r[c] or "").encode()).hexdigest() for k, c in (("hi", "input"), ("hs", "steps"), ("hr", "result"))}}
+                     **{k: hashlib.md5((r[c] or "").encode(), usedforsecurity=False).hexdigest() for k, c in (("hi", "input"), ("hs", "steps"), ("hr", "result"))}}
                     for r in self.store.q("SELECT status, updated, input, steps, result FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))]
         if not rows:
             return None
