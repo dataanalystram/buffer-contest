@@ -298,6 +298,7 @@ def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_
                           "fetched. Ask the app to send the link again, then read the new statement and approve.", 409)
     if approve and seen_version not in (None, "", link_ingest.ATTESTATION_VERSION):
         raise ActionError("The rights statement changed since this page loaded. Reload, read it and tick it again.", 409)
+    link_ingest.ensure(store)  # the table exists (committed) before the decision's transaction writes to it
     stamp = time.time()
     with store.tx():
         store.x("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",

@@ -50,7 +50,8 @@ def ensure(store) -> None:
         store.x(stmt)
     if store.pg:
         store.x("ALTER TABLE link_consents ENABLE ROW LEVEL SECURITY")
-    store._link_consents_ready = True
+    if not getattr(store, "_tx_depth", 0):  # inside a tx a rollback can undo the table: only a committed schema is cached
+        store._link_consents_ready = True
 
 
 def url_hash(url: str) -> str:

@@ -340,3 +340,16 @@ def test_account_deletion_keeps_an_unconfirmed_bucket_delete_for_the_sweep(app):
     left = {r["id"]: dict(r) for r in st.q("SELECT * FROM take_uploads WHERE id IN ('u0','u1','u2')")}
     assert set(left) == {"u1", "u2"}                                         # the sweep still deletes these objects
     assert all(r["user_id"] == "" and r["name"] == "" and r["fingerprint"] is None for r in left.values())
+
+
+def test_the_consent_schema_is_only_cached_once_committed(tmp_path):
+    """A rollback can undo a table created inside a transaction: ensure() caches readiness only outside one."""
+    from studio.store import Store
+    st = Store(str(tmp_path / "s.db"), "x" * 32)
+    with pytest.raises(RuntimeError):
+        with st.tx():
+            link_ingest.ensure(st)
+            raise RuntimeError("rolled back")
+    assert not getattr(st, "_link_consents_ready", False)
+    link_ingest.ensure(st)
+    assert st._link_consents_ready and st.q("SELECT COUNT(*) AS n FROM link_consents")[0]["n"] == 0
