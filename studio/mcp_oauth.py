@@ -249,6 +249,8 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
                     store.audit(row["user_id"], "system", "signin_failed", "auth", {"via": "mcp oauth code", "client": c["client_id"]}, ok=False)
                 return _err("invalid_grant", "Code is unknown, used or expired.")
             store.x("UPDATE oauth_codes SET used=1 WHERE code_hash=?", (row["code_hash"],))
+            if store.blocked(row["user_id"]):  # suspended by an admin (studio/admin.py): no new tokens, same neutral answer
+                return _err("invalid_grant", "Code is unknown, used or expired.")
             if f.get("redirect_uri") and f["redirect_uri"] != row["redirect_uri"]:
                 return _err("invalid_grant", "redirect_uri doesn't match.")
             digest = base64.urlsafe_b64encode(hashlib.sha256(f.get("code_verifier", "").encode()).digest()).rstrip(b"=")
@@ -264,7 +266,7 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
                     store.audit(row["user_id"], "system", "signin_failed", "auth", {"via": "mcp oauth refresh", "client": c["client_id"]}, ok=False)
                 return _err("invalid_grant", "Refresh token is unknown, used or expired.")
             old = store.q("SELECT revoked FROM agent_tokens WHERE id=?", (row["agent_id"],))
-            if not old or old[0]["revoked"]:
+            if not old or old[0]["revoked"] or store.blocked(row["user_id"]):
                 return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
             store.x("UPDATE oauth_refresh SET used=1 WHERE token_hash=?", (row["token_hash"],))
             store.x("UPDATE agent_tokens SET revoked=1 WHERE id=?", (row["agent_id"],))

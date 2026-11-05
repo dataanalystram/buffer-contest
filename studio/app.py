@@ -88,6 +88,11 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 except Exception:  # noqa: BLE001  keep watching
                     import traceback
                     traceback.print_exc()
+                try:  # media objects whose rows were deleted (studio/blobstore.py): retried until the bucket confirms
+                    from . import blobstore
+                    blobstore.sweep(store, limit=200)
+                except Exception:  # noqa: BLE001
+                    pass
         if every > 0:
             threading.Thread(target=loop, name="hq-job-watchdog", daemon=True).start()
         try:
@@ -130,6 +135,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         if sess and sess["user_id"] and store.user(sess["user_id"]):
             if write and request.headers.get("x-hq-csrf") != sess["csrf"]:
                 raise ActionError("Missing or wrong CSRF token. Reload the page.", 403)
+            store.touch(sess["user_id"])
             return Actor(sess["user_id"])
         auth = request.headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
@@ -287,7 +293,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def robots():
         body = ("User-agent: *\nAllow: /\nAllow: /docs\nAllow: /privacy\nAllow: /terms\nAllow: /security\nAllow: /docs/api\n"
                 "Disallow: /api/\nDisallow: /mcp\nDisallow: /callback\nDisallow: /login\nDisallow: /demo\nDisallow: /device/\n"
-                "Disallow: /oauth/\nDisallow: /m/\nDisallow: /integrations/\n"
+                "Disallow: /oauth/\nDisallow: /m/\nDisallow: /integrations/\nDisallow: /admin\n"
                 f"Sitemap: {s.public_url}/sitemap.xml\n")
         return Response(body, media_type="text/plain")
 
@@ -422,7 +428,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             resp = RedirectResponse("/?connecting=" + str(int(wait)), 302)
             set_cookie(resp, new_sid)
             return resp
-        _finish_signin(new_sid, tokens, acct)
+        if not _finish_signin(new_sid, tokens, acct):
+            resp = RedirectResponse("/?error=" + quote(BLOCKED_MSG), 302)
+            set_cookie(resp, new_sid)
+            return resp
         resp = RedirectResponse(pending.get("next") or "/?connected=1", 302)
         set_cookie(resp, new_sid)
         return resp
@@ -431,7 +440,14 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         """Buffer's Retry-After plus 5-30 s of jitter, so sign-ins deferred together don't all retry in the same second."""
         return float(max(1, int(retry_after or 60))) + 5 + secrets.randbelow(26)
 
-    def _finish_signin(sid: str, tokens: dict, acct: dict) -> None:
+    BLOCKED_MSG = "This account can't sign in right now. If you think this is a mistake, contact us (see /privacy)."
+
+    def _finish_signin(sid: str, tokens: dict, acct: dict) -> bool:
+        """False (nothing stored, the session stays signed out) for an account an admin blocked (studio/admin.py)."""
+        if store.blocked(acct["id"]):
+            store.update_session(sid, oauth=None)
+            store.audit(acct["id"], "system", "signin_failed", "auth", {"via": "buffer oauth", "reason": "account suspended"}, ok=False)
+            return False
         orgs = acct.get("organizations") or [{}]
         store.upsert_user(acct["id"], acct.get("email") or "", acct.get("name") or "", orgs[0].get("id", ""),
                           orgs[0].get("name", ""), tokens)
@@ -439,6 +455,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             buffer._cache.pop(k, None)  # a fresh sign-in re-reads channels and posts; the account it just read stays cached
         store.update_session(sid, user_id=acct["id"], oauth=None)
         store.audit(acct["id"], "you", "connect_buffer", "auth", {"scopes": tokens.get("scope", "")})
+        return True
 
     def _pending_signin(sid: str, sess: dict) -> dict | None:
         """A sign-in Buffer's rate limit deferred: finish it now if Retry-After has passed (one Buffer call, only when the
@@ -460,7 +477,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 p.update(retry_at=time.time() + left, tries=int(p.get("tries") or 0) + 1)
                 store.update_session(sid, oauth=store.seal({"signin": p}))
             else:
-                _finish_signin(sid, p["tokens"], acct)
+                if not _finish_signin(sid, p["tokens"], acct):
+                    return {"failed": True, "message": BLOCKED_MSG}
                 return {"done": True, "next": p.get("next") or ""}
         mins = max(1, int((left + 59) // 60))
         return {"retry_in": int(left) + 1, "message": f"Buffer is busy; finishing connecting in {mins} min."}
@@ -503,7 +521,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/device/{tok}", include_in_schema=False)
     def device_open(tok: str):
         rows = store.q("SELECT * FROM device_links WHERE token_hash=?", (sha(tok),))
-        if not rows or rows[0]["used"] or rows[0]["expires"] < time.time():
+        if not rows or rows[0]["used"] or rows[0]["expires"] < time.time() or store.blocked(rows[0]["user_id"]):
             store.audit(rows[0]["user_id"] if rows else "", "system", "signin_failed", "auth",
                         {"via": "device link", "reason": "used or expired" if rows else "unknown link"}, ok=False)
             return RedirectResponse("/?error=" + quote("That device link is used or expired. Create a new one."), 302)
@@ -537,11 +555,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         a = actor(request, write=True)
         if a.kind != "human":
             raise ActionError("Only a human can disconnect.", 403)
-        try:  # One take's uploads in the bucket go with the account (best effort; the bucket lifecycle rule backs it up)
-            house.take_uploads.remove_for_user(a.uid)
-        except Exception as e:  # noqa: BLE001 - never blocks deleting the account
-            print(f"disconnect: take uploads not removed ({e.__class__.__name__})", flush=True)
-        store.delete_user(a.uid)
+        from . import admin as admin_mod  # the same erasure as an admin's Delete user: rows, media + One take objects, tombstone
+        admin_mod.erase_user(store, a.uid, via="self", house=house)
         resp = JSONResponse({"ok": True, "deleted": True})
         resp.delete_cookie(COOKIE, path="/")
         return resp
@@ -1073,6 +1088,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     run_rules_mod.add_routes(app, house, actor)
     from . import integrations as integrations_mod  # Settings -> Integrations: per-user keys + the Product Hunt callback
     integrations_mod.add_routes(app, house, actor, COOKIE, s.public_url, s.secure_cookies)
+
+    from . import admin as admin_mod  # /admin + /api/admin: HQ_ADMIN_IDS only, 404 for everyone else (docs/ADMIN.md); no MCP tools
+    admin_mod.add_routes(app, store, studio, COOKIE)
 
     # ------------------------------------------------------------ MCP
     mcp_oauth.add_mcp_oauth_routes(app, store, studio, s.public_url, lambda r: store.session(r.cookies.get(COOKIE)))

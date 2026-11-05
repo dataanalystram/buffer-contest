@@ -277,6 +277,11 @@ PUBLIC = {  # path -> why it is open to anyone
                            "wrong codes rate-limited per network)",
     "/send/{code}/file": "a file into the code owner's Library (the code is the credential; 10 files, 30 minutes, Library caps)",
     "/api/uploads/limits": "the upload size limits (public numbers, no account data)",
+    # the admin panel answers 404 (not 401/403) to everyone not in HQ_ADMIN_IDS, so it can't be found by probing
+    # (studio/admin.py; tests/studio/test_admin_storage.py checks the 404 for anonymous, signed-in and agent callers)
+    "/admin": "404 unless HQ_ADMIN_IDS", "/admin/{name}": "404 unless HQ_ADMIN_IDS", "/api/admin/users": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/users/{uid}/block": "404 unless HQ_ADMIN_IDS", "/api/admin/users/{uid}/unblock": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/users/{uid}/delete": "404 unless HQ_ADMIN_IDS", "/api/admin/audit": "404 unless HQ_ADMIN_IDS",
 }
 
 

@@ -309,6 +309,8 @@ class TakeBin:
                     self._drop_tokens(uid, sorted(set(toks)))
                     res["clips"] = keep
                     self._save_raw(rid, res)
+        from . import blobstore  # stdlib + httpx only (no FastAPI): fine for the worker's imports
+        blobstore.sweep_soon(st)  # the released objects go once this transaction has committed
         for rid in files:  # the uploaded source on disk (after the commit: a rollback never leaves a record without its file)
             try:
                 self.h.take_uploads.remove_for_take(rid, uid)
@@ -319,11 +321,14 @@ class TakeBin:
     def _drop_tokens(self, uid: str, toks: list[str]) -> None:
         if not toks:
             return
+        from . import blobstore
         st, now = self.store, _now()
         for i in range(0, len(toks), 300):
             part = toks[i:i + 300]
             both = part + [TRASH_TOKEN + t for t in part]
-            st.x(f"DELETE FROM media WHERE user_id=? AND token IN ({','.join('?' * len(both))})", (uid, *both))
+            # clip / cover renders keep their bytes in R2 when it's configured: release() notes each key in blob_gc in
+            # the same transaction, so the sweep deletes the objects after the commit (Greptile, PR #110)
+            blobstore.release(st, "media", f"user_id=? AND token IN ({','.join('?' * len(both))})", (uid, *both))
             st.x("INSERT INTO library_purged(token,user_id,at) VALUES " + ",".join(["(?,?,?)"] * len(part)) +
                  " ON CONFLICT(token) DO NOTHING", tuple(v for t in part for v in (t, uid, now)))
 
