@@ -133,3 +133,27 @@ def test_a_deep_link_that_fails_shows_retry_in_place(live, chromium, close_conte
     page.locator("#runView").wait_for(state="visible")
     assert page.locator("[data-testid=view-error]").count() == 0
     assert not errors, errors
+
+
+@pytest.mark.parametrize("w", VIEWPORTS)
+def test_boot_never_hides_the_screen_already_on_view(live, chromium, close_contexts, w):  # noqa: F811
+    """Make a post is on view before boot finishes. Someone who types in it then (the smoke tests do, right after goto)
+    keeps it: boot opening that same screen reloads it in place, never under the loader, so focus and Enter survive.
+    Before the fix boot's showTab("agent") swapped it (its sub went from none to "agent") and the composer went
+    visibility:hidden mid-typing; the Enter that followed never started a run."""
+    ctx, page, errors = _ctx(chromium, live["base"], w)
+    page.add_init_script(PROBE)
+    page.add_init_script("window.__hqDelay['/api/channels'] = 1500")  # a slow boot (PROBE delays it inside the page)
+    page.add_init_script("""document.addEventListener('DOMContentLoaded', () => {
+        const t = document.getElementById('tab-agent'); window.__hqHid = 0;
+        new MutationObserver(() => { if (t.classList.contains('hq-vt-wait')) window.__hqHid += 1; })
+          .observe(t, { attributes: true, attributeFilter: ['class'] }); });""")
+    page.goto(live["base"] + "/?tab=agent", wait_until="domcontentloaded")
+    q = page.get_by_test_id("agent-query")
+    q.fill("Post this on all my channels")         # while boot still waits on /api/channels
+    page.wait_for_function("document.body.dataset.booted === '1'", timeout=30000)
+    page.evaluate("() => new Promise((r) => setTimeout(r, 400))")   # past the loader's 150 ms floor
+    assert page.evaluate("window.__hqHid") == 0, "boot put Make a post (already on view) under the loader"
+    assert q.is_visible() and q.input_value() == "Post this on all my channels"
+    assert page.evaluate("document.activeElement && document.activeElement.id") == "agQuery"
+    assert not errors, errors
