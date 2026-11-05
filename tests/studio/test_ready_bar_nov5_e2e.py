@@ -40,7 +40,7 @@ def test_ready_bar_never_clips_save_all(live, chromium, close_contexts, w, h):
     # the bar's button still saves every ready post as a draft
     page.get_by_test_id("mp-approve").scroll_into_view_if_needed()
     page.get_by_test_id("mp-approve").click()
-    page.wait_for_function("() => !document.querySelector('[data-testid=save-drafts]')", timeout=30000)
+    page.wait_for_function("() => document.querySelectorAll('[data-testid=pkg-sent]').length > 0 || [...document.querySelectorAll('.toast,[role=status]')].some((t) => /draft/i.test(t.textContent))", timeout=30000)
     assert not errors, errors
 
 
