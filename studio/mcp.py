@@ -523,7 +523,9 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
             return ok({"content": content, "structuredContent": result if isinstance(result, dict) else {"items": result}, "isError": False})
         except (ActionError, BufferError) as e:
             mcp_runs.record(studio.store, actor, name, clean, None, False, int((time.monotonic() - t0) * 1000), str(e), model_hint=hint)
-            return ok({"content": [{"type": "text", "text": str(e)}], "isError": True})
+            # the HTTP status the same call answers over REST (400 bad input, 404 not yours or missing), so an app can tell
+            return ok({"content": [{"type": "text", "text": str(e)}], "isError": True,
+                       "structuredContent": {"error": str(e), "status": int(getattr(e, "status", 400) or 400)}})
         finally:
             brain_llm.client_brain_end(tok)
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"Method not found: {method}"}}
