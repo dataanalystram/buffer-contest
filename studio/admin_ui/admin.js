@@ -45,11 +45,12 @@
     $("egressToday").innerHTML = cards.map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
     const hi = Math.max(pct(t.db_bytes, t.db_budget), pct(t.served_bytes, t.served_budget));
     const w = $("egressWarn");
-    const capMsg = [r.write_blocked ? "new files stay in the database" : "", r.read_blocked ? "reads use database copies until next month" : ""].filter(Boolean).join("; ");
-    w.hidden = hi < 80 && !capMsg;
-    w.textContent = capMsg ? `R2 free-tier cap reached: ${capMsg}.`
-      : t.degraded ? "Over today's budget: other people's media previews are paused until midnight UTC. Your own files and Buffer are unaffected."
-      : hi >= 80 ? `${hi}% of today's media budget used.` : "";
+    const capMsg = [r.write_blocked ? "new files stay in the database" : "",
+      r.read_blocked ? "files with a database copy are served from it; files kept only in R2 answer 503 to everyone but their owner until next month (UTC)" : ""].filter(Boolean).join("; ");
+    w.hidden = hi < 80 && !capMsg && !t.degraded;
+    w.textContent = [capMsg ? `R2 free-tier cap reached: ${capMsg}.` : "",
+      t.degraded ? "Over today's budget: other people's media previews are paused until midnight UTC. Your own files and Buffer are unaffected."
+        : hi >= 80 ? `${hi}% of today's media budget used.` : ""].filter(Boolean).join(" ");
     $("egressDays").innerHTML = (d.days || []).map((x) => `<tr data-testid="admin-egress-day"><td>${esc(x.day)}</td>
       <td>${esc(size(x.db_bytes))} <small>of ${esc(size(x.db_budget))}</small></td><td>${esc(size(x.served_bytes))} <small>of ${esc(size(x.served_budget))}</small></td>
       <td>${esc((x.refused_budget || 0) + (x.refused_repeat || 0))}</td></tr>`).join("") || `<tr><td colspan="4">No full day yet.</td></tr>`;

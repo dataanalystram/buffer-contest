@@ -630,3 +630,17 @@ def test_a_mediapipe_model_that_fails_to_load_falls_back_to_haar(monkeypatch, tm
     monkeypatch.setattr(take, "_face_track_cv2", lambda path, fps, why: seen.append(why) or ([], why))
     faces, why = take.face_track("clip.mp4", 3.0, model_path=str(model))
     assert faces == [] and seen and "couldn't load" in why
+
+
+def test_past_an_r2_cap_no_new_put_capability_is_issued(human, app, s3, monkeypatch):
+    """Part URLs, the completion POST and the worker's link PUT all check the free-tier caps first (CodeRabbit, PR #120)."""
+    up = human.post("/api/takes/uploads", json={"name": "c.mp4", "size": 7 * 1024 * 1024}).json()
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_A", "0")
+    r = human.post(f"/api/takes/uploads/{up['upload_id']}/parts", json={"parts": [1]})
+    assert r.status_code == 507 and "paused" in r.json()["error"]
+    tu = app.state.house.take_uploads
+    from studio import r2usage
+    monkeypatch.setattr(tu, "_list_parts", lambda d: {1: ("e1", 5 * 1024 * 1024), 2: ("e2", 2 * 1024 * 1024)})
+    r = human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={})
+    assert r.status_code == 507 and r2usage.can_write(0)
+    assert tu.link_target("acc_1", 4242) == ""                           # the worker streams the link instead

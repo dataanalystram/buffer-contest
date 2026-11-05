@@ -86,6 +86,16 @@ A `r2usage: WARNING … at 70%` line is logged once per month and cap. `/healthz
 (stored bytes, Class A/B counts and caps, blocked flags; `{"on": false}` when R2 isn't configured), as does
 `GET /api/admin/egress` → `r2`.
 
+- **Writes reserve their bytes** (`r2usage.reserve`) under a lock before the PUT, so two writes inside one stored-bytes
+  cache window can't both pass on the same old total; a failed PUT releases it, and a reservation lapses after 2 minutes
+  (its row is in the total by then; counting both meanwhile only errs safe). The studio runs one uvicorn process, so the
+  reservation is in memory. One take uploads reserve their declared size at create; part URLs, the multipart completion
+  POST and the worker's link PUT each check the caps first (past one: 507, or the worker streams the link).
+- **Browser redirects** (`HQ_MEDIA_REDIRECT=1`) stop at half the Class B cap. A presigned URL already handed out stays
+  usable until it expires (at most 15 min) and its later uses (a player's Range requests) aren't counted, so the
+  uncounted half of the cap is headroom under the free tier; past half, browsers are served through `/m/` instead.
+- `migrate()` is copy-only by default (`keep_db_copy=True`); dropping the database copy is always explicit.
+
 ## Failure behaviour (PR #110 review)
 - Every bucket call has a 5 s connect and 20 s overall timeout. Streamed Library uploads write chunks from the thread
   pool, never on the event loop, so a slow bucket can't stall other requests or `/healthz`.

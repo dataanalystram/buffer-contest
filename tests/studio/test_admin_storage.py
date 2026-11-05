@@ -361,7 +361,7 @@ def test_migration_dry_run_moves_nothing_then_verifies_and_is_idempotent(app, hu
     blobstore.sweep(store)                                 # the failed attempt's objects go; the rows keep their bytes
     assert bytes(store.q("SELECT data FROM media WHERE token=?", (tok,))[0]["data"]) == data
     s3.corrupt_get = False
-    st = migrate_media.migrate(store, r2.Bucket(r2.config(), http=blobstore._client()))
+    st = migrate_media.migrate(store, r2.Bucket(r2.config(), http=blobstore._client()), keep_db_copy=False)
     assert st["failed"] == 0 and st["moved"] == 1 + before["library_chunks"]["rows"]
     row = store.q("SELECT data, storage_key, sha256 FROM media WHERE token=?", (tok,))[0]
     assert row["data"] is None and s3.objects[row["storage_key"]] == data and row["sha256"] == hashlib.sha256(data).hexdigest()
@@ -370,7 +370,7 @@ def test_migration_dry_run_moves_nothing_then_verifies_and_is_idempotent(app, hu
     store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO NOTHING", (row["storage_key"], time.time()))
     blobstore.sweep(store)                                 # a queued delete of a key a row still uses never runs
     assert s3.objects[row["storage_key"]] == data and blobstore.pending(store) == 0
-    again = migrate_media.migrate(store, r2.Bucket(r2.config(), http=blobstore._client()))
+    again = migrate_media.migrate(store, r2.Bucket(r2.config(), http=blobstore._client()), keep_db_copy=False)
     assert again["moved"] == 0 and again["failed"] == 0                     # idempotent
     after = migrate_media.plan(store)
     assert after["media"]["rows"] == 0 and after["media"]["already_in_r2"] == 1

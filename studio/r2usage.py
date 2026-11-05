@@ -39,8 +39,12 @@ WARN_AT = 0.70
 HARD_B_MAX = 9_900_000           # the owner's grace never reaches the free tier's 10,000,000 Class B
 _GRACE = contextvars.ContextVar("r2_owner_grace", default=False)
 _WARNED: set = set()             # (month, what) already warned about
+REDIRECT_FRAC = 0.5              # browser redirects stop at this share of the Class B cap
+RESERVE_S = 2 * 60.0             # a reservation outlives two stored-bytes reads, so its row is counted by then
+_RESERVED: list = []             # [at, nbytes] written or about to be written in this process (one uvicorn process)
 
 _LOCK = threading.Lock()
+_RES_LOCK = threading.Lock()
 _PENDING: dict[str, int] = {"A": 0, "B": 0}
 _LAST_FLUSH = [time.time()]
 _STORE = [None]
@@ -192,10 +196,42 @@ def forget_cache() -> None:
     _CACHE.clear()
 
 
+def _reserved() -> int:
+    now = time.time()
+    _RESERVED[:] = [r for r in _RESERVED if now - r[0] < RESERVE_S]
+    return sum(r[1] for r in _RESERVED)
+
+
+def reserve(nbytes: int, store=None) -> str | None:
+    """Check and reserve in one step (under the lock): None and ``nbytes`` counted against the storage cap for
+    RESERVE_S (by then its row is in the total; double counting meanwhile only errs safe), or the reason it's refused.
+    Two writes inside one stored-bytes cache window can't both pass on the same old total (CodeRabbit, PR #120). The
+    studio runs one uvicorn process (Dockerfile.studio), so the reservation is in memory."""
+    with _RES_LOCK:
+        why = can_write(nbytes, store)
+        if not why and nbytes > 0:
+            _RESERVED.append([time.time(), int(nbytes)])
+        return why
+
+
+def release(nbytes: int) -> None:
+    """A reserved write that didn't happen."""
+    with _RES_LOCK:
+        for i, r in enumerate(_RESERVED):
+            if r[1] == int(nbytes):
+                del _RESERVED[i]
+                return
+
+
+def redirect_ok(store=None) -> bool:
+    """Browser redirects (presigned GETs) only below REDIRECT_FRAC of the Class B cap."""
+    return ops(store)["B"] < REDIRECT_FRAC * caps()["B"]
+
+
 def can_write(nbytes: int = 0, store=None) -> str | None:
     """None when a new write of ``nbytes`` stays inside the caps; otherwise the reason (shown to the operator)."""
     cap = caps()
-    o, have = ops(store), stored_bytes(store)
+    o, have = ops(store), stored_bytes(store) + _reserved()
     _warn("Class A operations", o["A"], cap["A"])
     _warn("stored bytes", have, cap["bytes"])
     if o["A"] >= cap["A"]:
@@ -231,3 +267,4 @@ def reset() -> None:
     _STORE[0] = None
     _CACHE.clear()
     _WARNED.clear()
+    _RESERVED.clear()

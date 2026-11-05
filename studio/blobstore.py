@@ -102,7 +102,7 @@ def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream"
     b = bucket(write=True)
     if not b:
         return data, None, digest
-    capped = r2usage.can_write(len(data))
+    capped = r2usage.reserve(len(data))
     if capped:  # the free tier is never exceeded (studio/r2usage.py): new bytes stay in the database instead
         print(f"storage: {capped}; kept this {kind} blob in the database", flush=True)
         return data, None, digest
@@ -110,6 +110,7 @@ def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream"
     try:
         b.put(key, data, mime)
     except r2.R2Error as e:
+        r2usage.release(len(data))
         print(f"storage: R2 put failed ({e}); kept this {kind} blob in the database", flush=True)
         return data, None, digest
     return None, key, digest

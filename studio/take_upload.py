@@ -259,7 +259,7 @@ class TakeUploads:
                     raise
                 self._drop(d)
         from . import r2usage
-        capped = r2usage.can_write(size, self.store)
+        capped = r2usage.reserve(size, self.store)
         if capped:  # the R2 free tier is never exceeded (studio/r2usage.py)
             raise ActionError(f"Large uploads are paused: {capped}. Paste a direct link to the file instead.", 507)
         uid_ = "tu_" + secrets.token_urlsafe(18)
@@ -292,6 +292,10 @@ class TakeUploads:
         if not nums or nums[0] < 1 or nums[-1] > d["parts"]:
             raise ActionError(f"Part numbers go from 1 to {d['parts']}.")
         cfg = self._cfg()
+        from . import r2usage
+        capped = r2usage.can_write(0, self.store)  # this upload's size is already in the stored total (open rows)
+        if capped:  # no new PUT capability once a cap is reached (CodeRabbit, PR #120)
+            raise ActionError(f"Large uploads are paused: {capped}. Paste a direct link to the file instead.", 507)
         self.store.x("UPDATE take_uploads SET updated=? WHERE id=?", (time.time(), d["id"]))
         return {"upload_id": d["id"], "expires_in": URL_TTL, "urls": [
             {"part_number": n, "size": (ln := min(d["part_size"], d["size"] - (n - 1) * d["part_size"])),
@@ -351,6 +355,10 @@ class TakeUploads:
             raise ActionError(f"Part {bad[0]} doesn't match what the store holds (ETag). Upload it again.", 422)
         xml = "<CompleteMultipartUpload>" + "".join(
             f"<Part><PartNumber>{n}</PartNumber><ETag>\"{have[n][0]}\"</ETag></Part>" for n in range(1, d["parts"] + 1)) + "</CompleteMultipartUpload>"
+        from . import r2usage
+        capped = r2usage.can_write(0, self.store)  # the completion POST is a Class A operation too (CodeRabbit, PR #120)
+        if capped:  # the row stays open: finish again next month, or the stale sweep clears it
+            raise ActionError(f"Large uploads are paused: {capped}.", 507)
         r = self._s3("POST", d["object_key"], {"uploadId": d["s3_upload"]}, content=xml.encode(), headers={"content-type": "application/xml"})
         if r.status_code >= 300 or b"<Error>" in r.content[:200]:
             raise ActionError(f"The upload store couldn't join the parts (HTTP {r.status_code}). Try finishing again.", 502)
@@ -418,6 +426,9 @@ class TakeUploads:
             return ""
         rows = self.store.q("SELECT * FROM take_uploads WHERE take_id=? AND user_id=? AND name=?", (rid, uid, LINK_NAME))
         if rows and rows[0]["status"] != "link_put":
+            return ""
+        from . import r2usage
+        if r2usage.can_write(max_bytes(), self.store):  # past a cap: no PUT; the worker streams the link instead
             return ""
         if rows:
             key = rows[0]["object_key"]

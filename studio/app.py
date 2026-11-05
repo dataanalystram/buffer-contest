@@ -847,14 +847,16 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         seeking works natively (Range). Buffer, Instagram and the render worker keep getting the bytes from this URL
         itself (no redirect): a scheduled post's /m/ link must work whenever Buffer fetches it, and a presigned URL
         expires. The token check already happened (the row was found); the ETag/304 path still answers first."""
-        from . import blobstore, egress
+        from . import blobstore, egress, r2usage
         from .library import browser_fetch, not_modified
         if os.environ.get("HQ_MEDIA_REDIRECT", "") != "1" or not f.get("r2_key") or not browser_fetch(request):
             return None
         if f.get("etag") and not_modified(request, f["etag"]):
             return None  # serve() answers the 304
-        if not blobstore.r2_readable():
-            return None  # R2 off or this month's read cap reached (studio/r2usage.py): serve() decides
+        if not blobstore.r2_readable() or not r2usage.redirect_ok():
+            # R2 off, or reads past half this month's Class B cap: a presigned URL's later uses (a player's Range
+            # requests, up to 15 min) aren't counted here, so the uncounted half stays as headroom under the free tier
+            return None  # serve() decides
         client, etag, size = demo_guard.client_ip(request), f.get("etag") or "", int(f.get("size") or 0)
         if egress.repeat_blocked(client, etag, size):
             return None  # a page re-fetching the same file in a loop: serve() answers 429 (owner exempt), no new signature

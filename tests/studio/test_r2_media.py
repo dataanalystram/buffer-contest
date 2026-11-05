@@ -321,3 +321,50 @@ def test_healthz_shows_r2_numbers_only_when_configured(app, monkeypatch):
     got = c.get("/healthz").json()["r2"]
     assert got["on"] and got["max_class_b"] == 8_000_000 and got["max_bytes"] == 8 * 1024 ** 3
     assert all(isinstance(v, (int, bool)) for v in got.values())                              # numbers only, no key or host
+
+
+# ------------------------------------------------------------------ CodeRabbit, PR #120
+def test_two_writes_in_one_cache_window_cant_pass_the_storage_cap_together(app, human, s3, monkeypatch, capsys):
+    data = image_bytes(60, 60)
+    monkeypatch.setenv("HQ_R2_MAX_BYTES", str(int(len(data) * 1.5)))
+    r2usage.bind(app.state.store)
+    assert r2usage.stored_bytes() == 0                                   # the total is now cached for a minute
+    a = app.state.house.put_media(Actor("acc_1"), data, "a.png")
+    b = app.state.house.put_media(Actor("acc_1"), data, "b.png")
+    keys = [app.state.store.q("SELECT storage_key FROM media WHERE token=?", (t,))[0]["storage_key"] for t in (a, b)]
+    assert keys[0] and keys[1] is None and len(s3.objects) == 1           # the second stays in the database
+    assert "R2 storage cap reached" in capsys.readouterr().out
+
+
+def test_a_failed_put_releases_its_reservation(app, s3, monkeypatch):
+    r2usage.reserve(1000)
+    r2usage.release(1000)
+    assert r2usage._reserved() == 0
+
+
+def test_browser_redirects_stop_at_half_the_class_b_cap(app, human, s3, monkeypatch):
+    monkeypatch.setenv("HQ_MEDIA_REDIRECT", "1")
+    data = image_bytes(66, 66)
+    tok = app.state.house.put_media(Actor("acc_1"), data, "r.png")
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_B", "10")
+    r2usage.note("GET", 5)
+    r = TestClient(app, base_url="https://hq.test").get(f"/m/{tok}", headers=BROWSER, follow_redirects=False)
+    assert r.status_code == 200 and r.content == data                     # served through /m/, no new presigned URL
+
+
+def test_migrate_is_copy_only_unless_told_otherwise(app, human, s3, monkeypatch):
+    store = app.state.store
+    data = image_bytes(24, 24)
+    tok = _db_media(app, monkeypatch, data)
+    st = migrate_media.migrate(store, _bucket(), log=lambda *_: None)
+    row = store.q("SELECT data, storage_key FROM media WHERE token=?", (tok,))[0]
+    assert st["moved"] >= 1 and row["storage_key"] and bytes(row["data"]) == data
+
+
+def test_cleanup_stopped_at_the_read_cap_reports_it(app, human, s3, monkeypatch):
+    store = app.state.store
+    _db_media(app, monkeypatch, image_bytes(25, 25))
+    migrate_media.migrate(store, _bucket(), log=lambda *_: None)
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_B", "0")
+    st = migrate_media.cleanup(store, _bucket(), log=lambda *_: None)
+    assert st["capped"] and st["dropped"] == 0

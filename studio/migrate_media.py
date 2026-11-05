@@ -57,7 +57,7 @@ def _verify_put(b: "r2.Bucket", key: str, data: bytes, mime: str) -> bool:
     return len(got) == len(data) and hashlib.sha256(got).hexdigest() == digest
 
 
-def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, keep_db_copy: bool = False) -> dict:
+def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, keep_db_copy: bool = True) -> dict:
     """Move rows (see the module docstring). Returns counts; one bad row never stops the rest. ``keep_db_copy``: copy
     only: the row takes the key and hash but keeps its BYTEA (readers use R2 from then on; ``cleanup`` drops the
     database copy later, after Ram approves)."""
@@ -194,7 +194,9 @@ def cleanup(store, bucket: "r2.Bucket", log=print) -> dict:
             todo = store.q(f"SELECT {', '.join(where_cols)}, storage_key, sha256 FROM {table} "
                            "WHERE storage_key IS NOT NULL AND data IS NOT NULL")
         except Exception:  # noqa: BLE001
-            continue
+            if table == "media":
+                raise  # media always exists: a failed scan must not read as "nothing to clean" (CodeRabbit, PR #120)
+            continue  # no Library tables
         for r in todo:
             where = " AND ".join(f"{c}=?" for c in where_cols)
             args = tuple(r[c] for c in where_cols)
@@ -257,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.cleanup:
         stats = cleanup(store, r2.Bucket(cfg))
         print(json.dumps({"cleanup": stats, "next": "VACUUM FULL media, library_chunks; returns the freed space"}, indent=2))
-        return 0 if not stats["kept"] else 1
+        return 0 if not (stats["kept"] or stats["capped"]) else 1
     stats = migrate(store, r2.Bucket(cfg), limit=a.limit, keep_db_copy=not a.drop_db_copy)
     print(json.dumps({"before": before, "result": stats, "after": plan(store), "kept_db_copy": not a.drop_db_copy,
                       "next": ("readers now use R2; the database copies stay until --cleanup (Ram's approval)" if not a.drop_db_copy
