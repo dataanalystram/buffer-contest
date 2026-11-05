@@ -318,6 +318,14 @@ def add_routes(app, store, studio, cookie: str) -> None:
         b = await body_of(request)
         return await act(lambda: delete(store, me, uid, b.get("confirm"), getattr(studio, "house", None)))
 
+    @app.get("/api/admin/egress", include_in_schema=False)
+    def admin_egress(request: Request):
+        """Media bandwidth today against the daily budgets, the disk cache and the last 14 daily summaries (numbers only)."""
+        gate(request)
+        from . import egress, mediacache
+        return JSONResponse({"today": egress.snapshot(), "days": egress.history(), "cache": mediacache.of(store).stats()},
+                            headers={"Cache-Control": "no-store"})
+
     @app.get("/api/admin/audit", include_in_schema=False)
     def admin_audit(request: Request):
         gate(request)

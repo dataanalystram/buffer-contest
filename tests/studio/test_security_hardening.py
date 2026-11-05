@@ -284,6 +284,7 @@ PUBLIC = {  # path -> why it is open to anyone
     "/admin": "404 unless HQ_ADMIN_IDS", "/admin/{name}": "404 unless HQ_ADMIN_IDS", "/api/admin/users": "404 unless HQ_ADMIN_IDS",
     "/api/admin/users/{uid}/block": "404 unless HQ_ADMIN_IDS", "/api/admin/users/{uid}/unblock": "404 unless HQ_ADMIN_IDS",
     "/api/admin/users/{uid}/delete": "404 unless HQ_ADMIN_IDS", "/api/admin/audit": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/egress": "404 unless HQ_ADMIN_IDS (media bandwidth numbers only)",
 }
 
 

@@ -418,9 +418,15 @@ class Store:
         a failure part-way erases nothing (CodeRabbit, PR #110). Only tables this store has are touched, so no statement
         fails (on Postgres a failed statement would abort the transaction). Media objects in R2 are released into blob_gc
         with their rows (studio/blobstore.py) and deleted by the sweep that follows the commit."""
-        from . import blobstore
+        from . import blobstore, mediacache
         with self.tx():
             have = self._table_names()
+            # the media disk cache (studio/mediacache.py) keeps no copy of an erased person's files (CodeRabbit, PR #119)
+            toks = [r["token"] for r in self.q("SELECT token FROM media WHERE user_id=?", (uid,))]
+            for t in ("library_items", "library_media"):
+                if t in have:
+                    toks += [r["token"] for r in self.q(f"SELECT token FROM {t} WHERE user_id=?", (uid,)) if r["token"]]
+            mediacache.of(self).forget(toks + ["trash~" + t for t in toks])
             blobstore.release(self, "media", "user_id=?", (uid,))
             for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
                       "oauth_refresh", "brand_kits", "style_rules", "agent_runs", "render_jobs", "ai_settings"):

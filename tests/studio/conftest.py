@@ -156,6 +156,18 @@ def _fresh_app_keys():
     appkeys.reset(); xreader.reset()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_egress(tmp_path, monkeypatch):
+    """The egress meter (studio/egress.py) counts per process and the media disk cache (studio/mediacache.py) writes
+    files: every test gets its own meter state file and cache directory, and starts at zero."""
+    from studio import egress
+    monkeypatch.setenv("HQ_EGRESS_STATE", str(tmp_path / "egress.json"))
+    monkeypatch.setenv("HQ_MEDIA_CACHE_DIR", str(tmp_path / "media-cache"))
+    egress.reset()
+    yield
+    egress.reset()
+
+
 @pytest.fixture
 def fake():
     return FakeBuffer()

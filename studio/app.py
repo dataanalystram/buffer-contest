@@ -359,11 +359,35 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 f"Policy: {repo}/blob/main/docs/SECURITY.md\n")
         return Response(body, media_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=86400"})
 
+    ping_memo = {"at": 0.0, "ok": False}
+
+    def db_ok() -> bool:
+        """store.ping() at most every HQ_HEALTH_PING_S seconds (default 15): /healthz is hit ~3-13 times a minute by
+        Render's health check and uptime pings (124k `SELECT 1` in 6 days), each a pooler round-trip. Still touches the
+        database often enough to keep a free Supabase project from pausing. A failed ping is never remembered."""
+        try:
+            every = float(os.environ.get("HQ_HEALTH_PING_S", "15"))
+        except ValueError:
+            every = 15.0
+        now = time.time()
+        if ping_memo["ok"] and now - ping_memo["at"] < every:
+            return True
+        ok = store.ping()
+        ping_memo.update(at=now, ok=bool(ok))
+        return ok
+
     @app.get("/healthz")
     def health():
         # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
+        from . import egress, mediacache
         mh = getattr(house, "media_health", None) or {}
-        return {"ok": True, "configured": s.configured, "db": store.ping(),
+        eg, mc = egress.snapshot(), mediacache.of(store).stats()
+        return {"ok": True, "configured": s.configured, "db": db_ok(),
+                # media bytes today (numbers only): read from the database, sent to clients, and the disk cache
+                "egress": {"db_bytes_today": eg["db_bytes"], "served_bytes_today": eg["served_bytes"],
+                           "db_budget": eg["db_budget"], "served_budget": eg["served_budget"], "degraded": eg["degraded"],
+                           "cache_files": mc["files"], "cache_bytes": mc["bytes"], "cache_hits": mc["hits"],
+                           "cache_misses": mc["misses"]},
                 # headline: distinct files that are gone (a carousel shared by 3 channel packages is 1 file, not 3);
                 # missing_refs counts every package reference to them, one per channel (audit, 4 Nov 2026)
                 "media": {"checked_at": mh.get("checked_at"), "missing_files": mh.get("unique_files_missing", 0),
@@ -789,8 +813,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.api_route("/m/{token}", methods=["GET", "HEAD"], include_in_schema=False)
     def media(token: str, request: Request):
         head = request.method == "HEAD"
-        from .library import TRASH_TOKEN, media_file
-        cache = "public, max-age=86400"
+        from .library import MEDIA_CACHE, TRASH_TOKEN, media_file
+        cache = MEDIA_CACHE  # private, a year, immutable: a token's bytes never change (Egress guard, 5 Nov 2026)
         lib_item = house.library.by_token(token)
         if lib_item:  # an uploaded Library file: read only the chunks a range asks for
             f = house.library._file_of(lib_item)

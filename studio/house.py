@@ -385,15 +385,18 @@ class House:
         from .library import TRASH_TOKEN
         if not token or token.startswith(TRASH_TOKEN):  # /m/trash~<token> must not serve a binned file (owner-only preview)
             return None
-        rows = self.store.q("SELECT token,user_id,mime,data,size,meta,storage_key FROM media WHERE token=?", (token,))
+        # metadata only; the bytes come through the instance's disk cache (studio/mediacache.py), so a render, a Buffer
+        # push or an edit reads a file from the database once per instance, not once per call (Supabase egress, 5 Nov 2026)
+        rows = self.store.q("SELECT token,user_id,mime,size,meta FROM media WHERE token=?", (token,))
         if not rows:
             return self.library.blob(token)  # an uploaded Library file works as a media token everywhere
         d = dict(rows[0])
-        from . import blobstore
-        try:
-            d["data"] = blobstore.read(d["data"], d.pop("storage_key"))
-        except blobstore.StorageError as e:
-            raise ActionError(str(e), 503)
+        from .library import media_file
+        f = media_file(self.store, token)
+        if f is None:  # deleted between the two reads
+            return None
+        d["data"] = b"".join(f["iter"]())
+        d["size"] = d.get("size") or len(d["data"])
         return d
 
     def media_head(self, token: str) -> dict | None:
@@ -737,9 +740,11 @@ class House:
         gone = _deleted_threads(self.store, a.uid)  # threads deleted from the sidebar (the conversation only; media stays)
         # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads; deleted threads are left out
         # before the LIMIT, so they never use up the sidebar's slots
-        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
-                              "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
-                              "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, a.uid, limit)):
+        from . import run_text  # the text only when it changed (Supabase egress, 5 Nov 2026)
+        for r in run_text.attach(self.store, self.store.q(
+                f"SELECT id,kind,{run_text.cols(self.store)},status,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
+                "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
+                "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, a.uid, limit))):
             d = dict(r)
             if d["id"] in gone:
                 continue
@@ -1876,7 +1881,9 @@ class House:
                           "id": ap["id"], "agent": ap["agent_name"], "thumb": media[0] if media else "",
                           "type": "video" if media and media[0].lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) else
                           ("carousel" if len(set(media)) > 1 else "image" if media else "text"), "draggable": True})
-        for r in self.store.q("SELECT id,result,updated FROM agent_runs WHERE user_id=? AND status='ready' ORDER BY id DESC LIMIT 20", (a.uid,)):
+        from . import run_text  # the text only when it changed (Supabase egress, 5 Nov 2026)
+        for r in run_text.attach(self.store, self.store.q(
+                f"SELECT id,{run_text.cols(self.store)},updated FROM agent_runs WHERE user_id=? AND status='ready' ORDER BY id DESC LIMIT 20", (a.uid,))):
             try:
                 res = json.loads(r["result"] or "{}")
             except ValueError:
