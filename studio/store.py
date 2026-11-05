@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS admin_audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, admin TEXT, action TEXT, subject_hash TEXT, detail TEXT, ok INTEGER);
 CREATE TABLE IF NOT EXISTS user_tombstones (
   id_hash TEXT PRIMARY KEY, at REAL, via TEXT);
+CREATE TABLE IF NOT EXISTS ops_switches (
+  name TEXT PRIMARY KEY, paused INTEGER DEFAULT 0, at REAL, by_hash TEXT, reason TEXT);
 """
 
 
@@ -116,7 +118,8 @@ ADDED_COLUMNS = {
               ("token_label", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"), ("tokens_in", "INTEGER"),
               ("tokens_out", "INTEGER"), ("cost_usd", "REAL"), ("ip", "TEXT"), ("ua", "TEXT")),
     "agent_tokens": (("client_id", "TEXT"), ("client_info", "TEXT"), ("app", "TEXT"),
-                     ("allow_paid_apis", "INTEGER")),  # the person's "Allow paid APIs" switch for this app (studio/consent.py), off by default
+                     ("allow_paid_apis", "INTEGER"),  # the person's "Allow paid APIs" switch for this app (studio/consent.py)
+                     ("admin_hourly_cap", "INTEGER")),  # an admin's hourly request cap for this token (studio/opsctl.py), NULL = none  # the person's "Allow paid APIs" switch for this app (studio/consent.py), off by default
     # which agent token made the run (studio/run_discipline.py: one request = one run, run caps, cleanup)
     "agent_runs": (("agent_id", "INTEGER"),),
     "render_jobs": (("result", "TEXT"),),
@@ -140,7 +143,7 @@ ID_TABLES = ("admin_audit", "agent_tokens", "approvals", "audit", "feeds", "styl
              "style_edits", "style_suggestions", "review_links", "link_consents")  # Brand studio slots, Sources runs and brand kits (own schemas in brand_studio.py, sources_agent.py, brand_kits.py)
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
           "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
-          "ai_settings", "blob_gc", "admin_audit", "user_tombstones", "r2_usage")
+          "ai_settings", "blob_gc", "admin_audit", "user_tombstones", "r2_usage", "ops_switches")
 
 
 # Per-person tables created by other modules (each on first use). Disconnect and delete removes them too (found in the

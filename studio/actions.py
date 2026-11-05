@@ -441,6 +441,9 @@ class Studio:
             except drafter.FetchError as e:
                 raise ActionError(str(e))
         ai = {"base_url": self.s.ai_base_url, "api_key": self.s.ai_api_key, "model": self.s.ai_model}
+        from . import opsctl
+        if opsctl.paused("ai", self.store):  # the operator's AI kill switch: the rule drafter, no call on our key
+            ai = {"base_url": "", "api_key": "", "model": ""}
         if self.s.ai_base_url and demo_guard.is_demo(a.uid):  # the free sample's AI allowance, reserved atomically first
             if not demo_guard.reserve(self.store, a.uid, "ai"):
                 ai = {"base_url": "", "api_key": "", "model": ""}

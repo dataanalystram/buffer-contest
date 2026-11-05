@@ -406,7 +406,13 @@ class BufferClient:
         return (p.get("metadata") or {}).get("audio")
 
     # ---- writes
+    def _publishing_open(self) -> None:
+        from . import opsctl
+        if opsctl.paused("publishing", self.store):  # the operator's kill switch (studio/opsctl.py): nothing reaches Buffer
+            raise BufferError(opsctl.message("publishing"), 503)
+
     def create_post(self, uid: str, inp: dict) -> dict:
+        self._publishing_open()
         q = """mutation($input: CreatePostInput!) { createPost(input: $input) {
                  ... on PostActionSuccess { post { id text status dueAt channelId } }
                  ... on MutationError { message } } }"""
@@ -456,6 +462,7 @@ class BufferClient:
 
     def edit_post(self, uid: str, inp: dict) -> dict:
         """editPost: only the fields given change (Buffer keeps text, assets and slot when they are omitted)."""
+        self._publishing_open()
         q = """mutation($input: EditPostInput!) { editPost(input: $input) {
                  ... on PostActionSuccess { post { id text status dueAt channelId } }
                  ... on MutationError { message } } }"""

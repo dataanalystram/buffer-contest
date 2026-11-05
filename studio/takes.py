@@ -243,6 +243,10 @@ class Takes(TakeBin):
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
         consent_id, licence, link = None, "", url or platform_url
+        if link:  # the operator's kill switch (studio/opsctl.py) answers before anything is recorded or fetched
+            from . import opsctl
+            if opsctl.paused("link_ingest", self.store):
+                raise ActionError(opsctl.message("link_ingest"), 503)
         if link:  # rights first, then the fetch (owner ask, 4 Nov 2026): a signed-in person attests; an AI app asks them
             from . import consent, link_ingest
             licence = link_ingest.licence_hint(link, http=self.h.http)

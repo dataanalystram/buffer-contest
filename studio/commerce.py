@@ -330,6 +330,9 @@ def _key_for(store, uid: str, *, operator: bool = False) -> tuple[str, bool]:
 def _request(key: str, method: str, path: str, *, uid: str, body: dict | None = None, params: dict | None = None,
              byo: bool = False) -> dict:
     """One request to api.trychannel3.com through netguard. Errors never carry the key (it travels in a header only)."""
+    from . import opsctl
+    if opsctl.paused("channel3"):  # the operator's kill switch (studio/opsctl.py): nothing leaves, nothing is spent
+        raise CommerceError(opsctl.message("channel3"), 503)
     url = API + path + (("?" + urlencode(params, doseq=True)) if params else "")
     if (urlparse(url).hostname or "") != HOST:
         raise CommerceError("Only api.trychannel3.com is allowed.", 400)

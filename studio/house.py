@@ -645,6 +645,10 @@ class House:
     def _ai_reserve(self, a: Actor, eng: dict | None) -> dict | None:
         """The engine for ONE AI call, or None (built-in writer). The free sample's AI allowance is reserved here, before
         the call, in one atomic step, so parallel calls can't run past the cap (SECURITY_RULES 3)."""
+        if eng and eng["source"] == "free starter":
+            from . import opsctl
+            if opsctl.paused("ai", self.store):  # the operator's AI kill switch: the built-in writer instead
+                return None
         if eng and eng["source"] == "free starter" and not demo_guard.reserve(self.store, a.uid, "ai"):
             return None
         return eng

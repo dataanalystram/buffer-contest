@@ -112,6 +112,7 @@ def meter(store, uid: str) -> dict:
 
 def check(store, uid: str, model: str, est_in: int, max_out: int) -> None:
     """Refuse BEFORE the call when the worst case would cross any cap."""
+    ai_open(store)
     worst = price(model, est_in, max_out)
     c = caps()
     g = _spent(store, "global")
@@ -162,8 +163,16 @@ def oci_caps() -> dict:
     return {"global": float(e("AI_OCI_BUDGET_TOTAL_USD") or "200"), "user": float(e("AI_OCI_BUDGET_PER_USER_USD") or "3")}
 
 
+def ai_open(store) -> None:
+    """The operator's AI kill switch (studio/opsctl.py): no call on HuhQueue's keys while it is on."""
+    from . import opsctl
+    if opsctl.paused("ai", store):
+        raise BudgetExceeded(opsctl.message("ai"))
+
+
 def oci_check(store, uid: str, model: str, est_in: int, max_out: int) -> None:
     from . import oci_genai
+    ai_open(store)
     worst = oci_genai.price(model, est_in, max_out)
     c = oci_caps()
     if _spent(store, OCI_GLOBAL) + worst > c["global"]:
@@ -234,6 +243,7 @@ def _free_scopes(eid: str, uid: str) -> tuple[str, str]:
 
 def free_check(store, uid: str, eid: str) -> None:
     from . import free_engines
+    ai_open(store)
     app_s, user_s = _free_scopes(eid, uid)
     c, name = free_caps(eid), free_engines.ENGINES[eid]["short"]
     if _calls(store, app_s) >= c["app"]:
