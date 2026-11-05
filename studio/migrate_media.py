@@ -50,22 +50,35 @@ def plan(store) -> dict:
     return out
 
 
+def _digest(b: "r2.Bucket", key: str) -> tuple[int, str]:
+    """(length, sha256) of the object as the bucket serves it, streamed (never a second copy of the file in memory)."""
+    if hasattr(b, "digest"):
+        return b.digest(key)
+    got = b.get(key)
+    return len(got), hashlib.sha256(got).hexdigest()
+
+
 def _verify_put(b: "r2.Bucket", key: str, data: bytes, mime: str) -> bool:
     digest = hashlib.sha256(data).hexdigest()
     b.put(key, data, mime or "application/octet-stream")
-    got = b.get(key)
-    return len(got) == len(data) and hashlib.sha256(got).hexdigest() == digest
+    n, got = _digest(b, key)
+    return n == len(data) and got == digest
 
 
-def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, keep_db_copy: bool = True) -> dict:
+def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, keep_db_copy: bool = True, usage=None,
+            on_row=None) -> dict:
     """Move rows (see the module docstring). Returns counts; one bad row never stops the rest. ``keep_db_copy``: copy
     only: the row takes the key and hash but keeps its BYTEA (readers use R2 from then on; ``cleanup`` drops the
-    database copy later, after Ram approves)."""
+    database copy later, after Ram approves). ``usage``: the store whose r2_usage table keeps the operation counts
+    (default ``store``; the in-process run passes the app's own store and does the row work on a dedicated
+    connection). ``on_row(stats)`` is called after every row (progress)."""
+    from . import egress
     stats = {"moved": 0, "bytes": 0, "failed": 0, "skipped": 0, "capped": ""}
     left = limit if limit is not None else float("inf")
-    r2usage.bind(store)
+    u = usage if usage is not None else store
+    r2usage.bind(u)
     r2usage.forget_cache()
-    base = r2usage.stored_bytes(store)  # what R2 already holds; this run adds stats["bytes"] (no stale cache mid-run)
+    base = r2usage.stored_bytes(u)  # what R2 already holds; this run adds stats["bytes"] (no stale cache mid-run)
 
     def gc(key: str) -> None:  # due now
         store.x("INSERT INTO blob_gc(key,at,tries) VALUES(?,?,0) ON CONFLICT(key) DO UPDATE SET at=excluded.at", (key, time.time()))
@@ -83,15 +96,18 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, kee
         if not got or got[0]["data"] is None:
             stats["skipped"] += 1
             return
-        data = bytes(got[0]["data"])
+        data = got[0]["data"]
+        del got
+        data = data if isinstance(data, bytes) else bytes(data)
+        egress.migration_read(len(data))  # metered apart: a one-off copy never trips the daily preview budget
         # the free tier is never exceeded (studio/r2usage.py): stop before a copy that would pass a cap; the remaining
         # rows stay in the database, untouched. A verified copy is one PUT (Class A) + one GET (Class B).
         cap = r2usage.caps()
         why = "" if base + stats["bytes"] + len(data) <= cap["bytes"] else \
             f"R2 storage cap reached ({cap['bytes'] / r2usage.GB:.1f} GB, HQ_R2_MAX_BYTES)"
-        if not why and r2usage.ops(store)["A"] + 1 > cap["A"]:
+        if not why and r2usage.ops(u)["A"] + 1 > cap["A"]:
             why = f"R2 monthly write cap reached ({cap['A']:,} Class A operations, HQ_R2_MAX_CLASS_A)"
-        why = why or r2usage.can_read(store) or ""
+        why = why or r2usage.can_read(u) or ""
         if why:
             stats["capped"] = why
             log(f"stopping: {why}; the remaining rows stay in the database")
@@ -130,6 +146,8 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, kee
         if left <= 0:
             break
         one("media", "token=?", (token,), "media", uid or "", mime)
+        if on_row:
+            on_row(stats)
     try:
         todo_c = [(r["item_id"], r["n"], r["user_id"]) for r in store.q(
             "SELECT c.item_id, c.n, i.user_id FROM library_chunks c JOIN library_items i ON i.id=c.item_id "
@@ -140,7 +158,9 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, kee
         if left <= 0:
             break
         one("library_chunks", "item_id=? AND n=?", (item_id, n), "lib", uid or "", "application/octet-stream")
-    r2usage.flush(store)
+        if on_row:
+            on_row(stats)
+    r2usage.flush(u)
     return stats
 
 
@@ -185,11 +205,13 @@ def report(store, real_emails: list[str] | None = None, limit: int = 2000) -> di
     return {"rows": rows, "totals": totals}
 
 
-def cleanup(store, bucket: "r2.Bucket", log=print) -> dict:
+def cleanup(store, bucket: "r2.Bucket", log=print, usage=None, on_row=None) -> dict:
     """After a copy-only run and Ram's approval: drop the database copy of every row whose object verifies (same
-    length and sha256 as recorded at copy time). A row that doesn't verify keeps its bytes."""
+    length and sha256 as recorded at copy time). A row that doesn't verify keeps its bytes. ``usage`` / ``on_row``: as
+    for migrate()."""
     stats = {"dropped": 0, "kept": 0, "capped": ""}
-    r2usage.bind(store)
+    u = usage if usage is not None else store
+    r2usage.bind(u)
     for table, where_cols in (("media", ("token",)), ("library_chunks", ("item_id", "n"))):
         if table != "media" and table not in store._table_names():
             continue  # no Library tables; any other failed scan raises, never "nothing to clean" (CodeRabbit, PR #120)
@@ -198,24 +220,30 @@ def cleanup(store, bucket: "r2.Bucket", log=print) -> dict:
         for r in todo:
             where = " AND ".join(f"{c}=?" for c in where_cols)
             args = tuple(r[c] for c in where_cols)
-            why = r2usage.can_read(store)
+            why = r2usage.can_read(u)
             if why:  # re-verifying reads the object (Class B): stop at the cap, every remaining row keeps its copy
                 stats["capped"] = why
                 log(f"stopping: {why}")
-                r2usage.flush(store)
+                r2usage.flush(u)
                 return stats
             try:
-                got = bucket.get(r["storage_key"])
-                ok = bool(r["sha256"]) and hashlib.sha256(got).hexdigest() == r["sha256"]
+                _n, got = _digest(bucket, r["storage_key"])
+                ok = bool(r["sha256"]) and got == r["sha256"]
             except r2.R2Error as e:
                 log(f"{table}: {e}")
                 ok = False
             if not ok:
                 stats["kept"] += 1
+                if on_row:
+                    on_row(stats)
                 continue
-            store.x(f"UPDATE {table} SET data=NULL WHERE {where} AND storage_key=?", (*args, r["storage_key"]))
+            # guarded on the key and the hash it verified: a row rewritten meanwhile keeps its database copy
+            store.x(f"UPDATE {table} SET data=NULL WHERE {where} AND storage_key=? AND sha256=?",
+                    (*args, r["storage_key"], r["sha256"]))
             stats["dropped"] += 1
-    r2usage.flush(store)
+            if on_row:
+                on_row(stats)
+    r2usage.flush(u)
     return stats
 
 

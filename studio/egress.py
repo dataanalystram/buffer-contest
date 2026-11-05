@@ -59,7 +59,7 @@ def _today() -> str:
 
 def _fresh(day: str) -> dict:
     return {"day": day, "db": 0, "served": 0, "db_media": 0, "db_library": 0, "refused_budget": 0, "refused_repeat": 0,
-            "warned": []}
+            "db_migration": 0, "warned": []}
 
 
 def _load() -> None:
@@ -143,6 +143,18 @@ def db_read(n: int, kind: str = "media") -> None:
         _save()
 
 
+def migration_read(n: int) -> None:
+    """Bytes the one-off R2 migration read from the database (studio/r2_migrate_bg.py): shown on their own and never
+    added to ``db``, so moving every file once can't trip the daily budget that pauses other people's previews."""
+    if n <= 0:
+        return
+    with _LOCK:
+        _load()
+        _roll()
+        _S["cur"]["db_migration"] = int(_S["cur"].get("db_migration", 0)) + int(n)
+        _save()
+
+
 def served(n: int) -> None:
     if n <= 0:
         return
@@ -222,7 +234,8 @@ def snapshot() -> dict:
                 "served_budget": b["served"], "db_pct": round(100 * cur["db"] / b["db"], 1) if b["db"] else 0.0,
                 "served_pct": round(100 * cur["served"] / b["served"], 1) if b["served"] else 0.0,
                 "degraded": bool((b["db"] and cur["db"] >= b["db"]) or (b["served"] and cur["served"] >= b["served"])),
-                "refused_budget": cur["refused_budget"], "refused_repeat": cur["refused_repeat"]}
+                "refused_budget": cur["refused_budget"], "refused_repeat": cur["refused_repeat"],
+                "db_migration_bytes": int(cur.get("db_migration", 0))}
 
 
 def history() -> list[dict]:

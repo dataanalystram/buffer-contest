@@ -109,6 +109,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     studio.house = house
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         house_mod.start_media_check(house)
+    # the one-shot R2 copy / cleanup, only when HQ_R2_MIGRATE says so (studio/r2_migrate_bg.py, docs/STORAGE.md)
+    from . import r2_migrate_bg
+    r2_migrate_bg.start(store)
     app.state.settings, app.state.store, app.state.buffer, app.state.studio, app.state.house = s, store, buffer, studio, house
 
     # ------------------------------------------------------------ helpers
@@ -393,7 +396,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/healthz")
     def health():
         # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
-        from . import egress, mediacache, r2, r2usage
+        from . import egress, mediacache, r2, r2_migrate_bg, r2usage
         mh = getattr(house, "media_health", None) or {}
         eg, mc = egress.snapshot(), mediacache.of(store).stats()
         r2s = r2usage.snapshot(store) if r2.config() else None
@@ -402,7 +405,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 "egress": {"db_bytes_today": eg["db_bytes"], "served_bytes_today": eg["served_bytes"],
                            "db_budget": eg["db_budget"], "served_budget": eg["served_budget"], "degraded": eg["degraded"],
                            "cache_files": mc["files"], "cache_bytes": mc["bytes"], "cache_hits": mc["hits"],
-                           "cache_misses": mc["misses"]},
+                           "cache_misses": mc["misses"], "db_migration_bytes_today": eg.get("db_migration_bytes", 0)},
+                # the in-process R2 migration (studio/r2_migrate_bg.py): mode, state and counts only
+                "r2_migrate": r2_migrate_bg.snapshot(),
                 # R2 against its free-tier caps (studio/r2usage.py), numbers only; {"on": false} while unconfigured
                 "r2": {"on": True, "stored_bytes": r2s["stored_bytes"], "max_bytes": r2s["max_bytes"],
                        "class_a": r2s["class_a"], "max_class_a": r2s["max_class_a"], "class_b": r2s["class_b"],

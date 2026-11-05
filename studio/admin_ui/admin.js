@@ -42,6 +42,10 @@
     if (r.configured) cards.push(["R2 stored", `${size(r.stored_bytes)} of ${size(r.max_bytes)}`],
       ["R2 writes this month", `${(r.class_a || 0).toLocaleString()} of ${(r.max_class_a || 0).toLocaleString()}`],
       ["R2 reads this month", `${(r.class_b || 0).toLocaleString()} of ${(r.max_class_b || 0).toLocaleString()}`]);
+    const mg = d.r2_migrate || {};   // the in-process R2 migration (studio/r2_migrate_bg.py): its last report
+    if (mg.mode || (mg.state && mg.state !== "off")) cards.push(["R2 migration (" + (mg.mode || "off") + ")", `${mg.state || "?"} · copied ${mg.copied || 0} · verified ${mg.verified || 0} · failed ${mg.failed || 0} · dropped ${mg.dropped || 0} · kept ${mg.kept || 0}`]);
+    const left = (mg.now || {}), lm = left.media || {}, lc = left.library_chunks || {};
+    if (left.media) cards.push(["Still only in the database", `${(lm.rows || 0) + (lc.rows || 0)} rows · ${size((lm.bytes || 0) + (lc.bytes || 0))}`]);
     $("egressToday").innerHTML = cards.map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
     const hi = Math.max(pct(t.db_bytes, t.db_budget), pct(t.served_bytes, t.served_budget));
     const w = $("egressWarn");
