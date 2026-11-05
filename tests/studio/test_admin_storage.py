@@ -97,7 +97,7 @@ def not_found_body(app):
 
 
 ADMIN_URLS = [("GET", "/admin"), ("GET", "/admin/admin.js"), ("GET", "/api/admin/users"), ("GET", "/api/admin/users?limit=abc"),
-              ("GET", "/api/admin/audit"), ("POST", "/api/admin/users/acc_1/block"), ("POST", "/api/admin/users/acc_1/unblock"),
+              ("GET", "/api/admin/audit"), ("GET", "/api/admin/egress"), ("POST", "/api/admin/users/acc_1/block"), ("POST", "/api/admin/users/acc_1/unblock"),
               ("POST", "/api/admin/users/acc_1/delete")]
 
 

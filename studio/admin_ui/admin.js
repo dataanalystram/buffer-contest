@@ -32,6 +32,23 @@
     $("overview").innerHTML = cards.map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
   }
 
+  // Media bandwidth (studio/egress.py): today's bytes against the daily budgets, the 80% warning, the last 14 days
+  function egressDraw(d) {
+    const t = d.today || {}, c = d.cache || {};
+    const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+    const cards = [["Read from database", `${size(t.db_bytes)} of ${size(t.db_budget)}`], ["Sent to clients", `${size(t.served_bytes)} of ${size(t.served_budget)}`],
+      ["Disk cache", `${c.files || 0} files · ${size(c.bytes)}`], ["Cache hits / misses", `${c.hits || 0} / ${c.misses || 0}`]];
+    $("egressToday").innerHTML = cards.map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
+    const hi = Math.max(pct(t.db_bytes, t.db_budget), pct(t.served_bytes, t.served_budget));
+    const w = $("egressWarn");
+    w.hidden = hi < 80;
+    w.textContent = t.degraded ? "Over today's budget: other people's media previews are paused until midnight UTC. Your own files and Buffer are unaffected."
+      : hi >= 80 ? `${hi}% of today's media budget used.` : "";
+    $("egressDays").innerHTML = (d.days || []).map((x) => `<tr data-testid="admin-egress-day"><td>${esc(x.day)}</td>
+      <td>${esc(size(x.db_bytes))} <small>of ${esc(size(x.db_budget))}</small></td><td>${esc(size(x.served_bytes))} <small>of ${esc(size(x.served_budget))}</small></td>
+      <td>${esc((x.refused_budget || 0) + (x.refused_repeat || 0))}</td></tr>`).join("") || `<tr><td colspan="4">No full day yet.</td></tr>`;
+  }
+
   function row(u) {
     const self = u.id === me;
     const block = u.status === "blocked"
@@ -55,6 +72,8 @@
       $("rows").innerHTML = d.users.map(row).join("") || `<tr><td colspan="9">No users.</td></tr>`;
       $("page").textContent = total ? `${offset + 1}–${Math.min(offset + PER, total)} of ${total}` : "";
       $("prev").disabled = offset === 0; $("next").disabled = offset + PER >= total;
+      try { egressDraw(await api("/api/admin/egress", { signal: ctl.signal })); }
+      catch (e) { if (e.name !== "AbortError") $("egressToday").textContent = `Couldn't load media bandwidth: ${e.message}`; }
       const a = await api("/api/admin/audit?limit=50", { signal: ctl.signal });
       $("audit").innerHTML = a.items.map((x) => `<tr><td>${esc(when(x.ts))}</td><td><code>${esc(x.admin)}</code></td><td>${esc(x.action)}</td>
         <td><code>${esc((x.subject_hash || "").slice(0, 12))}</code></td></tr>`).join("") || `<tr><td colspan="4">Nothing yet.</td></tr>`;
