@@ -21,6 +21,7 @@ FPS = 5.0
 DET_W = 640            # detection width of the fast pass
 SMALL_PX = 36          # a face under this many px tall at DET_W gets a full-resolution look
 MAX_W = 1920           # "full resolution" is capped at 1920 wide (4K sources decode at 1920)
+LOOK_W = 1280          # the second, 1 fps look for small faces runs at most this wide
 THUMB_W = 320          # grey thumbnails kept for the screen signals
 MIN_SCORE = 0.7
 
@@ -82,8 +83,10 @@ def frames(path: str, start: float, end: float, fps: float = FPS, width: int | N
     W = min(src_w, width or MAX_W)
     W -= W % 2
     H = int(round(W * src_h / max(1, src_w) / 2)) * 2
-    proc = mediasafe.popen(["ffmpeg", "-v", "error", "-ss", f"{max(0.0, start):.3f}", "-t", f"{max(0.1, end - start):.3f}",
-                            "-i", path, "-vf", f"fps={fps},scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+    # detection frames only: skip the deblocking filter while decoding and scale with a fast bilinear (speed, 2 vCPU)
+    proc = mediasafe.popen(["ffmpeg", "-v", "error", "-skip_loop_filter", "all", "-ss", f"{max(0.0, start):.3f}",
+                            "-t", f"{max(0.1, end - start):.3f}", "-i", path, "-an", "-sn", "-dn",
+                            "-vf", f"fps={fps},scale={W}:{H}:flags=fast_bilinear", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
                            stdout=subprocess.PIPE)
     size, k = W * H * 3, 0
     try:
@@ -121,16 +124,20 @@ def sample(path: str, start: float, end: float, src_w: int, src_h: int, fps: flo
         out.append({"t": t, "faces": found})
         thumbs[t] = cv2.resize(gray, (THUMB_W, th), interpolation=cv2.INTER_AREA)
     if out and W > DET_W and small_or_none >= len(out) / 2:
-        full = detector(W, H)
+        # the second look runs at <= 1280 wide (a 1080p webcam bubble is still ~60 px tall there): half the pixels of
+        # 1920, which keeps a screen recording inside the 1.2x-realtime budget on 2 vCPU
+        LW = min(W, LOOK_W)
+        LH = int(round(LW * src_h / max(1, src_w) / 2)) * 2
+        full = detector(LW, LH)
         by_t = {s["t"]: s for s in out}
-        for t, img in frames(path, start, end, 1.0, W, src_w, src_h):
-            big = [f for f in _boxes(full, img, 1.0, 1.0, W, H) if f["score"] >= MIN_SCORE]
+        for t, img in frames(path, start, end, 1.0, LW, src_w, src_h):
+            big = [f for f in _boxes(full, img, 1.0, 1.0, LW, LH) if f["score"] >= MIN_SCORE]
             near = min(by_t, key=lambda x: abs(x - t)) if by_t else None
             if near is None or not big or len(big) <= len(by_t[near]["faces"]):
                 continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             for f in big:
-                f["mouth"] = _mouth(gray, f, W, H)
+                f["mouth"] = _mouth(gray, f, LW, LH)
                 f.pop("lm", None)
             # the full-resolution faces hold for the second around this sample (5 samples at 5 fps)
             for x in by_t:

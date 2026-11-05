@@ -23,6 +23,10 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0" "opencv-python-headless>=4.10,<5"   # numpy: studio.media music + render tests; OpenCV: the One take layout golden plans (YuNet)
       - name: Studio tests on SQLite
         run: python -m pytest tests/studio -q
+      - name: One take layout speed on 2 cores (informative, target <= 1.2x realtime)
+        continue-on-error: true
+        timeout-minutes: 8
+        run: taskset -c 0,1 python scripts/bench_layouts.py 30 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Studio tests on Postgres (production store)
         env: {STUDIO_TEST_PG: "postgresql://postgres:test@localhost:5432/studio"}
         run: python -m pytest tests/studio -q --ignore-glob="tests/studio/test_media_*"   # media tests use no store; run once above
