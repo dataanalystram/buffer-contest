@@ -950,8 +950,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     from . import take_routes  # before /api/takes/{rid}: /bin and /uploads first
     take_routes.add_upload_routes(app, house, actor)
     take_routes.add_bin_routes(app, house, actor)
-    from . import take_layout  # per-clip layout plan + per-scene overrides, Smart layout setting
-    take_layout.add_routes(app, house, actor)
+    from . import take_layout_routes  # per-clip layout plan + per-scene overrides, Smart layout setting
+    take_layout_routes.add_routes(app, house, actor)
 
     @app.post("/api/takes")
     def take_start(request: Request, body: dict = Body(...)):

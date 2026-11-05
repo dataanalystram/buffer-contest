@@ -172,7 +172,10 @@ def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> 
 
 
 def _local_chunk(flac: Path, model: str) -> tuple[list[dict], str]:
-    from faster_whisper import WhisperModel  # MIT
+    try:
+        from faster_whisper import WhisperModel  # MIT
+    except ImportError:
+        raise RuntimeError("faster-whisper isn't installed on this worker")
     wm = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 2)
     segs, info = wm.transcribe(str(flac), word_timestamps=True, vad_filter=True, vad_parameters={"min_silence_duration_ms": 400},
                                beam_size=1, condition_on_previous_text=False)
