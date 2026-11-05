@@ -173,3 +173,10 @@ daily summaries are kept in a small JSON file on the instance disk (`HQ_EGRESS_S
 the Library list's runs read and the threads list, measured at ~0.5 GB in 6 days. Next step: select only the fields the
 lists show (a follow-up). `/healthz` now pings the database at most every 15 s (`HQ_HEALTH_PING_S`; 124k pings in
 6 days before).
+
+**An open thread's live poll** (5 Nov 2026). While a run works, the open thread polls `GET /api/agent/runs/{rid}` with
+`If-None-Match`. A busy run carries an ETag built from md5s of its `input`, `steps` and `result` columns (read on Postgres
+as ~100 bytes, never the text; `House.run_tag`) plus its MCP step count, so an unchanged poll answers **304 with no body
+and no run text read**. Unchanged polls back off from 1.4 s to 10 s; a hidden tab sends nothing until it is shown again;
+leaving the thread or Make a post aborts the request in flight and stops the poll. A finished, stale, foreign or missing
+run never gets a validator (always the full read, so its 404 and the media-state check are unchanged).
