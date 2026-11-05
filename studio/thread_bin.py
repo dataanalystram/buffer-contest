@@ -52,7 +52,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": LIST_MAX},
                                                       "cursor": {"type": "string"}}}},
     {"name": "get_thread", "description": "One previous thread: its messages (oldest first, paginated with cursor), and the runs / takes "
-     "inside it with their outputs (post captions per channel and media, or a take's clips). Then continue_run(run_id) to keep "
+     "inside it with their outputs (post captions per channel and media, an AI app's finished renders, or a take's clips). Then continue_run(run_id) to keep "
      "working on it.",
      "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": _th["schema"], "cursor": {"type": "string"}}}},
     {"name": "delete_thread", "description": "Delete a thread (Make a post or One take, in any state, failed ones too) from the "
@@ -133,6 +133,17 @@ def deleted_ids(store, uid: str) -> set[int]:
     """This person's runs whose thread is deleted (in the Bin, or purged: a tombstone)."""
     _ensure(store)
     return {int(r["run_id"]) for r in store.q("SELECT run_id FROM thread_deleted WHERE user_id=?", (uid,))}
+
+
+def purged(store, uid: str, rid) -> bool:
+    """The thread was removed for good (a tombstone): nothing may write to its conversation again (reply, continue_run,
+    start_post with its run_id). Its outputs stay readable (record_output and lookups use own_run, not this)."""
+    _ensure(store)
+    try:
+        rid = int(rid)
+    except (TypeError, ValueError):
+        return False
+    return bool(store.q("SELECT 1 FROM thread_deleted WHERE run_id=? AND user_id=? AND purged_at IS NOT NULL", (rid, uid)))
 
 
 def _has_table(store, name: str) -> bool:
@@ -240,7 +251,12 @@ class ThreadBin:
         else:
             outputs = {"packages": [{"channel_id": p.get("channel_id"), "service": p.get("service"), "format": p.get("format"),
                                      "text": _clip(p.get("text")), "media": [m.get("url") for m in p.get("media") or [] if isinstance(m, dict)][:10],
-                                     "sent": bool(p.get("sent"))} for p in res.get("packages") or [] if isinstance(p, dict)]}
+                                     "sent": bool(p.get("sent"))} for p in res.get("packages") or [] if isinstance(p, dict)],
+                       # an AI app's finished renders (record_output) before any package exists (Greptile, 5 Nov 2026)
+                       "renders": [{"output": o.get("output"), "format": o.get("format"),
+                                    "media": [u for u in o.get("media_urls") or [] if isinstance(u, str)][:10],
+                                    "library_id": o.get("library_id"), "versions": o.get("versions")}
+                                   for o in (res.get("outputs") or [])[:50] if isinstance(o, dict)]}
         return {"id": public_id(self.store, a.uid, rid), "title": title, "updated_at": run.get("updated"),
                 "summary": self._summary(run["kind"], run["status"], inp, res),
                 "runs": [{"run_id": rid, "kind": "take" if run["kind"] == "take" else "post", "status": run["status"],

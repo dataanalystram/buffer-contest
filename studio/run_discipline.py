@@ -421,6 +421,9 @@ def start_post(studio, a: Actor, args: dict) -> dict:
     rid = _rid(args.get("run_id"))
     if rid:
         run = own_run(store, a, rid)
+        from .thread_bin import purged
+        if purged(store, a.uid, rid):  # a thread deleted for good takes no more writes (outputs stay readable)
+            raise ActionError("No such post run.", 404)
         touch(store, a, rid)
         try:
             res = json.loads(run["result"] or "{}") or {}
@@ -480,6 +483,9 @@ def continue_run(studio, a: Actor, args: dict) -> dict:
         raise ActionError("continue_run needs the run_id of the post to continue (start_post returned it).")
     studio.kill_switch_check(a, "continue_run")
     run = own_run(store, a, rid)
+    from .thread_bin import purged
+    if purged(store, a.uid, rid):  # before the message is appended: a purged conversation stays gone
+        raise ActionError("No such post run.", 404)
     try:
         res = json.loads(run["result"] or "{}") or {}
     except ValueError:

@@ -75,10 +75,11 @@ MediaPipe upgrade that breaks detection fails CI. (OpenCV stays `<5` on all thre
 * Model: `jev-1.14.0`, pinned (docs.typesafe.ai/models, 4 Nov 2026: the newest release; `jev-latest` and `jev-preview`
   both point to it, and Box needs Jev 1.14+). `HQ_JEV_MODEL` may name an alias or a newer version; older ones fall back.
 * Where it runs in production: `TYPESAFE_API_KEY` is set on the HuhQueue server (Render), not on the video workers. A
-  worker without the key (InstaBox, or GitHub Actions without the repo secret) picks the keyframes, re-encodes them and
+  worker (InstaBox, GitHub Actions, or the local one) picks the keyframes, re-encodes them and
   returns them with the analysis; the server checks each one (JPEG, size, re-encoded again), asks Jev, merges the boxes and
   drops the frames before the take is saved. The key never leaves the server and is never logged (errors are scrubbed).
-  A worker that has the key (the optional repo secret) asks Jev itself.
+  Every worker does this, even one with the key (and the in-process local worker on the server): only the server
+  counts the per-account daily allowance, so only the server asks Jev.
 * Free, capped: at most `HQ_JEV_FACE_CAP` keyframes per take (default 12) and `HQ_JEV_DAILY_CAP` keyframes per account
   per day on the server's key (default 60, counted in `jev_usage`; 0 turns it off). Past either cap the take keeps the
   local faces. SubQ is not used for faces (not confirmed free for image questions).

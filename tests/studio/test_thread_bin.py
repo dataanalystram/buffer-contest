@@ -267,3 +267,44 @@ def test_the_sweep_clears_a_conversation_a_late_write_brought_back(human, app):
     st.x("UPDATE agent_runs SET result=? WHERE id=?", (json.dumps({"thread": [{"role": "user", "text": "old", "at": 1}]}), rid))
     house.threads.purge_expired(days=0)
     assert json.loads(st.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]["result"])["thread"] == []
+
+
+def test_a_purged_thread_takes_no_more_writes_but_its_renders_stay_readable(human, app, monkeypatch):
+    """CodeRabbit + Greptile, 5 Nov 2026: get_thread shows an AI app's finished renders (result.outputs) before any package;
+    once a thread is purged, reply (REST), continue_run and start_post(run_id) answer 404 before anything is written."""
+    st = app.state.store
+    tok = agent_token(human, policy="trusted", cap=50)
+    _, sp = mcp_call(human, tok, "start_post", {"title": "Launch reel", "brief": "the launch", "user_asked": True, "reason": "asked"})
+    rid = sp["run_id"]
+    res = json.loads(st.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]["result"])
+    res["outputs"] = [{"output": 1, "format": "reel", "media_tokens": ["t1"], "media_urls": ["https://hq.test/m/r1.mp4"],
+                       "library_id": 9, "versions": 1, "at": 1}]
+    res["thread"] = [{"role": "user", "text": "make a reel", "at": 1}]
+    st.x("UPDATE agent_runs SET result=? WHERE id=?", (json.dumps(res), rid))
+    _, g = mcp_call(human, tok, "get_thread", {"thread_id": sp["thread_id"]})
+    assert g["runs"][0]["outputs"]["renders"] == [{"output": 1, "format": "reel", "media": ["https://hq.test/m/r1.mp4"],
+                                                   "library_id": 9, "versions": 1}]
+    assert human.delete(f"/api/threads/{sp['thread_id']}").json()["deleted"]
+    assert human.post("/api/threads/bin/purge", json={"thread_ids": [sp["thread_id"]]}).json()["purged_threads"] == [sp["thread_id"]]
+    before = st.q("SELECT result, updated FROM agent_runs WHERE id=?", (rid,))[0]
+    r = human.post(f"/api/agent/runs/{rid}/messages", json={"text": "one more change"})
+    assert r.status_code == 404, r.text
+    res_, msg = mcp_call(human, tok, "continue_run", {"run_id": rid, "reason": "same post"})
+    assert res_["isError"] and "No such post run" in msg
+    res_, msg = mcp_call(human, tok, "start_post", {"run_id": rid, "format": "carousel", "user_asked": True, "reason": "x"})
+    assert res_["isError"] and "No such post run" in msg
+    after = st.q("SELECT result, updated FROM agent_runs WHERE id=?", (rid,))[0]
+    assert dict(after) == dict(before)                                                     # nothing was written
+    assert thread_bin.purged(st, "acc_1", rid) and not thread_bin.purged(st, "acc_other", rid)
+    assert not thread_bin.purged(st, "acc_1", "junk")
+
+
+def test_an_idempotent_replay_of_start_post_carries_thread_id(human, app, monkeypatch):
+    """CodeRabbit, 5 Nov 2026: a cached start_post / continue_run answer (rows from before thread ids) gets thread_id too."""
+    from studio import run_discipline
+    tok = agent_token(human, policy="trusted", cap=50)
+    _, sp = mcp_call(human, tok, "start_post", {"title": "Launch post", "brief": "the launch", "user_asked": True, "reason": "asked"})
+    monkeypatch.setattr(run_discipline, "replay", lambda *a, **k: {"run_id": sp["run_id"], "reused": True})
+    _, again = mcp_call(human, tok, "start_post", {"title": "Launch post", "brief": "the launch", "user_asked": True,
+                                                    "reason": "asked", "idempotency_key": "k-1"})
+    assert again["thread_id"] == sp["thread_id"], again

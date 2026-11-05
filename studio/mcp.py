@@ -460,6 +460,9 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
             replayed = _rd.replay(studio.store, actor, name, clean, key) if key else None
             if replayed is not None:
                 result = replayed
+                if name in ("start_post", "continue_run"):  # a replay carries thread_id like a fresh answer (older rows too)
+                    from .thread_bin import with_thread_id
+                    result = with_thread_id(studio.store, actor, result)
             else:
                 clean, early = _rd.before(studio, actor, name, clean)
                 result = early if early is not None else call_tool(studio, actor, name, _rd.strip_control(clean, name))

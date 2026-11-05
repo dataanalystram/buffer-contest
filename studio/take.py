@@ -612,8 +612,8 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
             jev: bool | None = None) -> dict:
     """transcript: captions that already exist (studio.media.subtitles.resolve_transcript: an uploaded .srt/.vtt, the
     platform's track, a caption stream in the file). When it has words, Whisper is skipped entirely.
-    jev: the job's consent for Jev's second opinion on a few keyframes (studio/media/jev_faces.py); it also needs
-    TYPESAFE_API_KEY on the worker, and never fails the analysis."""
+    jev: the job's consent for Jev's second opinion on a few keyframes (studio/media/jev_faces.py). The worker only picks
+    and returns the keyframes; the server asks Jev within its per-take and per-account daily caps. Never fails the analysis."""
     t0 = time.time()
     from . import mediasafe
     try:  # plain video only, before PySceneDetect/MediaPipe (their own decoders) ever open it
@@ -649,14 +649,19 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
     jev_frames = None
     try:
         from .media import jev_faces
-        if jev is True and not os.environ.get("TYPESAFE_API_KEY"):  # the key lives on the server: hand it the keyframes
+        # Jev is asked only by the server (takes.py _studio_jev), never here, even when this process has TYPESAFE_API_KEY:
+        # only the server holds the per-account daily allowance (jev_usage), so every paid call is counted (CodeRabbit,
+        # 5 Nov 2026: a worker with the key used to ask Jev itself and skipped the daily cap)
+        if jev is True:
             jev_frames = jev_faces.keyframe_jpegs(path, faces, scenes, info["duration"], log=log)
             jev_rec = {"enabled": True, "why": "pending: the server asks Jev for these keyframes (the key stays there)",
                        "model": jev_faces.MODEL, "cap": jev_faces.cap_from_env(), "frames": [], "calls": 0, "used": 0,
                        "errors": 0, "pending": len(jev_frames), "fallback": None}
             log(f"jev: {len(jev_frames)} keyframes for the server")
         else:
-            faces, jev_rec = jev_faces.second_opinion(path, faces, scenes, info["duration"], jev, log=log)
+            jev_rec = {"enabled": False, "why": "off for this take (not started by a person in the app, or not approved)",
+                       "model": jev_faces.MODEL, "cap": jev_faces.cap_from_env(), "frames": [], "calls": 0, "used": 0,
+                       "errors": 0, "fallback": None}
     except Exception as e:  # noqa: BLE001 - Jev is a second opinion: it never fails the take
         jev_rec = {"enabled": False, "why": f"error: {e.__class__.__name__}", "frames": [], "fallback": "local faces + centred crop"}
         log(f"jev: {jev_rec['why']}; local faces + centred crop")

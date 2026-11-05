@@ -240,6 +240,8 @@
     if (!ok) return;
     try {
       await api(`/api/threads/${encodeURIComponent(row.thread_id)}`, { method: "DELETE" });
+      // the open conversation was deleted: leave it the way New post does, so nothing is sent to it afterwards
+      const cur = run(); if (cur && String(cur.id) === String(id)) mpNew.click();
       HC.rows = HC.rows.filter((x) => String(x.id) !== String(id)); drawList(true);
       toast("Thread deleted. Your media stays (restorable for 7 days).", 5000);
     } catch (err) { toast(err.message, 5000); }

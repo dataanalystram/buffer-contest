@@ -154,10 +154,28 @@ def test_analyze_records_jev_and_never_fails_on_it(monkeypatch):
 
     def boom(*a, **k):
         raise RuntimeError("boom")
-    monkeypatch.setenv("TYPESAFE_API_KEY", KEY)  # a worker with the key asks Jev itself
-    monkeypatch.setattr(jev_faces, "second_opinion", boom)
+    monkeypatch.setattr(jev_faces, "keyframe_jpegs", boom)
     an = take.analyze("v.mp4", transcript={"words": [{"w": "hi", "s": 0, "e": 1}], "source": "srt"}, jev=True, log=lambda m: None)
     assert an["jev"]["enabled"] is False and "error" in an["jev"]["why"] and an["faces"] == []
+
+
+def test_a_worker_with_the_key_still_leaves_jev_to_the_server(monkeypatch):
+    """CodeRabbit, 5 Nov 2026: a worker (or the server's local worker) with TYPESAFE_API_KEY asked Jev itself and skipped the
+    per-account daily allowance, which only the server counts (jev_usage). Now every worker only hands over keyframes."""
+    from studio import take
+    monkeypatch.setenv("TYPESAFE_API_KEY", KEY)
+    monkeypatch.setattr(take, "probe", lambda p: {"duration": 30.0, "width": 1280, "height": 720, "audio": True, "codec": "h264"})
+    monkeypatch.setattr(take, "detect_silences", lambda p: [])
+    monkeypatch.setattr(take, "detect_scenes", lambda p: ([10.0, 20.0], "test"))
+    monkeypatch.setattr(take, "face_track", lambda p, d: ([], "OpenCV Haar cascade (test)"))
+    monkeypatch.setattr(jev_faces, "frame_image", lambda p, t, width=768: _portrait())
+    called = []
+    monkeypatch.setattr(jev_faces, "second_opinion", lambda *a, **k: called.append(1) or ([], {}))
+    monkeypatch.setattr(jev_faces, "ask", lambda *a, **k: called.append(1) or {})
+    import studio.mediasafe as ms
+    monkeypatch.setattr(ms, "check_source", lambda p, *a, **k: {})
+    an = take.analyze("v.mp4", transcript={"words": [{"w": "hi", "s": 0, "e": 1}], "source": "srt"}, jev=True, log=lambda m: None)
+    assert called == [] and an["jev"]["calls"] == 0 and 0 < len(an["jev_frames"]) == an["jev"]["pending"]
 
 
 def test_people_in_the_app_get_jev_and_mcp_apps_wait_for_approval(human, app, monkeypatch):
