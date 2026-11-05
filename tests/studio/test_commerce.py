@@ -490,3 +490,12 @@ def test_shop_link_scan_stays_fast_and_closed_on_a_long_glued_authority():
     started = time.monotonic()
     assert commerce.go_codes("https://hq.test", t) == ["abcdefghijkl"]
     assert time.monotonic() - started < 2
+
+
+def test_shop_links_after_punctuation_or_with_unicode_dots_still_count():
+    t = ("Shop:https://hq.test/go/abcdefghijkl [https://hq.test/go/bcdefghijklm] (hq.test/go/cdefghijklmn) "
+         "https://hq\u3002test/go/defghijklmno https://\uff48\uff51\uff0etest/go/efghijklmnop https://hq.test./go/fghijklmnopq "
+         "https://hq%2Etest/go/ghijklmnopqr https:\\\\hq.test/go/hijklmnopqrs")
+    assert commerce.go_codes("https://hq.test", t) == ["abcdefghijkl", "bcdefghijklm", "cdefghijklmn", "defghijklmno",
+                                                       "efghijklmnop", "fghijklmnopq", "ghijklmnopqr", "hijklmnopqrs"]
+    assert commerce.go_codes("https://hq.test", "https://shop.hq\u3002test/go/abcdefghijkl") == []

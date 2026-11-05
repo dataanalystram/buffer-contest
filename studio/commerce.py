@@ -37,9 +37,10 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Callable
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 import httpx
 
@@ -650,29 +651,38 @@ def with_disclosure(text: str, link: str = "", affiliate: bool = True) -> str:
     return t
 
 
-_GO_RX = re.compile(r"(?<![A-Za-z0-9.\-:@/\[\]_%~])(?:(https?)://)?([A-Za-z0-9.\-:@\[\]_%~]+)/go/([A-Za-z0-9_\-]{10,32})",
-                    re.IGNORECASE)
+# a full URL may follow any punctuation (``Shop:https://..``, ``[https://..]``); a bare host can't follow a host character
+# or a '/' (``x.example/hq.test/go/..`` is a path on another site), so ``shop.hq.test`` never matches as ``hq.test``
+_GO_RX = re.compile(r"(?:(?<![A-Za-z0-9.\-_%~])(https?):[/\\]{2}|(?<![A-Za-z0-9.\-_%~/\\]))"
+                    r"([A-Za-z0-9.\-:@\[\]_%~]+)/go/([A-Za-z0-9_\-]{10,32})", re.IGNORECASE)
+
+
+def _fold(text: str) -> str:
+    """The text the way a browser reads a host: NFKC (full-width letters and dots) and ideographic full stops as '.'."""
+    return unicodedata.normalize("NFKC", text or "").replace("\u3002", ".")
 
 
 def go_codes(public_url: str, text: str) -> list[str]:
     """Every HuhQueue shop link code in the text, all of them (callers refuse more than MAX_LINKS, never skip any). Each
-    candidate's authority is parsed with urllib and its hostname compared exactly (any letter case) with the public host, so
-    ``shop.hq.test/go/...`` is not a shop link. The scheme's s is optional, the way a browser would still open it. Any port
-    on the public host counts (80/443 are the defaults; another or a malformed port fails closed, as a shop link)."""
-    want = (urlparse(public_url).hostname or "").lower()
+    candidate's authority is parsed with urllib and its hostname compared exactly (any letter case, Unicode dots folded,
+    percent-decoded, a trailing root dot dropped) with the public host, so ``shop.hq.test/go/...`` is not a shop link. The
+    scheme's s is optional, the way a browser would still open it. Any port on the public host counts (80/443 are the
+    defaults; another or a malformed port fails closed, as a shop link)."""
+    want = (urlparse(public_url).hostname or "").lower().rstrip(".")
     if not want:
         return []
-    glued = re.compile(r"(?:^|[:@])" + re.escape(want) + r"(?::[^:@]*)?$")  # one linear pass, any authority length
+    glued = re.compile(r"(?:^|[:@])" + re.escape(want) + r"\.?(?::[^:@]*)?$")  # one linear pass, any authority length
     out = []
-    for _scheme, authority, code in _GO_RX.findall(text or ""):
+    for _scheme, authority, code in _GO_RX.findall(_fold(unquote(_fold(text)))):
+        auth = authority.lower()
         try:
-            host = (urlparse("//" + authority).hostname or "").lower()
+            host = (urlparse("//" + auth).hostname or "").rstrip(".")
         except ValueError:  # a malformed authority (bad brackets): judged by the glued check below
             host = ""
         # exact host (the port, default, other or malformed, never takes a link out of the rules), or our host right after
         # a ':' or '@' (a linkifier opens ``Link:hq.test/go/..`` on hq.test): fail closed, so text glued on before the host
         # can't hide a shop link from the #Ad rules
-        if host == want or glued.search(authority.lower()):
+        if host == want or glued.search(auth):
             out.append(code)
     return list(dict.fromkeys(out))
 
