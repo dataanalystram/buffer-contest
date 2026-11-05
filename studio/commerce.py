@@ -662,19 +662,18 @@ def go_codes(public_url: str, text: str) -> list[str]:
     want = (urlparse(public_url).hostname or "").lower()
     if not want:
         return []
+    glued = re.compile(r"(?:^|[:@])" + re.escape(want) + r"(?::[^:@]*)?$")  # one linear pass, any authority length
     out = []
     for _scheme, authority, code in _GO_RX.findall(text or ""):
-        # the whole authority, then what follows each ':' or '@' (a linkifier opens ``Link:hq.test/go/..`` on hq.test):
-        # fail closed, so text glued on before the host can't hide a shop link from the #Ad rules
-        tries = [authority] + [authority[i + 1:] for i, ch in enumerate(authority) if ch in ":@"]
-        for cand in tries:
-            try:
-                host = (urlparse("//" + cand).hostname or "").lower()
-            except ValueError:  # a malformed authority (bad brackets): not a URL on our host
-                continue
-            if host == want:  # exact host; the port (default, other or malformed) never takes a link out of the rules
-                out.append(code)
-                break
+        try:
+            host = (urlparse("//" + authority).hostname or "").lower()
+        except ValueError:  # a malformed authority (bad brackets): judged by the glued check below
+            host = ""
+        # exact host (the port, default, other or malformed, never takes a link out of the rules), or our host right after
+        # a ':' or '@' (a linkifier opens ``Link:hq.test/go/..`` on hq.test): fail closed, so text glued on before the host
+        # can't hide a shop link from the #Ad rules
+        if host == want or glued.search(authority.lower()):
+            out.append(code)
     return list(dict.fromkeys(out))
 
 

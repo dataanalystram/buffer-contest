@@ -5,6 +5,7 @@ sealed and never shown, #Ad + disclosure, no catalogue images, offer links re-re
 redirect, scope (404) and type (400) checks, list caps, netguard on every request.
 """
 import json
+import time
 
 import httpx
 import pytest
@@ -482,3 +483,10 @@ def test_shop_link_with_an_explicit_port_still_counts():
 def test_shop_link_with_a_port_needs_ad(human):
     pf = human.post("/api/preflight", json={"channel_id": "ch_x", "text": "Great buds https://hq.test:443/go/abcdefghijkl"}).json()
     assert "commerce.ad_first" in _rules(pf)
+
+
+def test_shop_link_scan_stays_fast_and_closed_on_a_long_glued_authority():
+    t = ":" * 50000 + "hq.test/go/abcdefghijkl " + "a@" * 20000 + "evil.example/go/bcdefghijklm"
+    started = time.monotonic()
+    assert commerce.go_codes("https://hq.test", t) == ["abcdefghijkl"]
+    assert time.monotonic() - started < 2
