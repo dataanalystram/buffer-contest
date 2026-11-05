@@ -346,6 +346,8 @@ def replay(store, a: Actor, name: str, args: dict, key: tuple[str, bool]) -> Any
         out = json.loads(r["result"])
     except ValueError:
         return None
+    if isinstance(out, dict) and isinstance(out.get("run_id"), int) and out["run_id"] in _deleted(store, a.uid):
+        return None  # the answer named a thread the person deleted since: the call runs again (never a deleted run's id)
     return {**out, "idempotent_replay": True} if isinstance(out, dict) else out
 
 
