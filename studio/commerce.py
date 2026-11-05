@@ -650,13 +650,32 @@ def with_disclosure(text: str, link: str = "", affiliate: bool = True) -> str:
     return t
 
 
+_GO_RX = re.compile(r"(?<![A-Za-z0-9.\-:@/\[\]_%~])(?:(https?)://)?([A-Za-z0-9.\-:@\[\]_%~]+)/go/([A-Za-z0-9_\-]{10,32})",
+                    re.IGNORECASE)
+
+
 def go_codes(public_url: str, text: str) -> list[str]:
-    """Every HuhQueue shop link code in the text, all of them (callers refuse more than MAX_LINKS, never skip any). The
-    host matches in any letter case and with or without the scheme's s, the way a browser would still open it."""
-    p = urlparse(public_url)
-    host = re.escape((p.hostname or "").lower()) + (f":{p.port}" if p.port else "")
-    rx = re.compile(r"(?:https?://)?" + host + r"/go/([A-Za-z0-9_\-]{10,32})", re.IGNORECASE)
-    return list(dict.fromkeys(rx.findall(text or "")))
+    """Every HuhQueue shop link code in the text, all of them (callers refuse more than MAX_LINKS, never skip any). Each
+    candidate's authority is parsed with urllib and its hostname compared exactly (any letter case) with the public host, so
+    ``shop.hq.test/go/...`` is not a shop link. The scheme's s is optional, the way a browser would still open it. Any port
+    on the public host counts (80/443 are the defaults; another or a malformed port fails closed, as a shop link)."""
+    want = (urlparse(public_url).hostname or "").lower()
+    if not want:
+        return []
+    out = []
+    for _scheme, authority, code in _GO_RX.findall(text or ""):
+        # the whole authority, then what follows each ':' or '@' (a linkifier opens ``Link:hq.test/go/..`` on hq.test):
+        # fail closed, so text glued on before the host can't hide a shop link from the #Ad rules
+        tries = [authority] + [authority[i + 1:] for i, ch in enumerate(authority) if ch in ":@"]
+        for cand in tries:
+            try:
+                host = (urlparse("//" + cand).hostname or "").lower()
+            except ValueError:  # a malformed authority (bad brackets): not a URL on our host
+                continue
+            if host == want:  # exact host; the port (default, other or malformed) never takes a link out of the rules
+                out.append(code)
+                break
+    return list(dict.fromkeys(out))
 
 
 SOURCE_AD = "https://www.ccpc.ie/business/help-for-business/guidelines-for-business/influencer-advertising-and-marketing"

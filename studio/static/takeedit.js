@@ -57,10 +57,10 @@ window.openClipEditor = function (id) {
   const ig = igChannel(t);
   $c("ceTabMusic").hidden = !ig;
   $c("ceMusic").innerHTML = ""; $c("ceMusic").className = "";
-  // product card overlay (Commerce): classic One take clips only; text on the brand kit
+  // product card overlay (Commerce): your own classic One take clips only (not the sample); text on the brand kit
   const pc = c.product_card || null;
   CE.prod = pc ? { ...pc } : null;
-  $c("ceTabProd").hidden = t.style === "opus" || !cut;
+  $c("ceTabProd").hidden = t.style === "opus" || !!t.sample || !cut;  // sample renders never draw the card (409)
   $c("ceProdOn").checked = !!pc;
   $c("ceProdName").value = (pc && pc.name) || ""; $c("ceProdPrice").value = (pc && pc.price) || "";
   $c("ceProdCta").value = pc ? pc.cta || "" : "Shop now"; $c("ceProdLabel").value = pc ? pc.link_label || "" : "Link in bio";  // defaults only for a new card

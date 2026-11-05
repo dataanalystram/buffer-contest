@@ -464,3 +464,21 @@ def test_long_cta_and_label_never_overlap():
     card = product_card.clean({"name": "Lamp", "price": "€20", "cta": "W" * 40, "link_label": "W" * 40})
     product_card.draw_overlay(ov, card, p, {}, avoid=(600, 700))
     assert ov.getbbox()
+
+
+def test_shop_link_host_is_exact_not_a_subdomain_or_suffix():
+    t = ("#Ad https://shop.hq.test/go/abcdefghijkl http://evilhq.test/go/bcdefghijklm "
+         "https://x.example/hq.test/go/cdefghijklmn https://hq.test.evil.example/go/defghijklmno")
+    assert commerce.go_codes("https://hq.test", t) == []
+
+
+def test_shop_link_with_an_explicit_port_still_counts():
+    t = ("https://hq.test:443/go/abcdefghijkl http://HQ.test:80/go/bcdefghijklm hq.test:8443/go/cdefghijklmn "
+         "hq.test:99999/go/defghijklmno Link:hq.test/go/efghijklmnop")
+    assert commerce.go_codes("https://hq.test", t) == ["abcdefghijkl", "bcdefghijklm", "cdefghijklmn", "defghijklmno",
+                                                       "efghijklmnop"]
+
+
+def test_shop_link_with_a_port_needs_ad(human):
+    pf = human.post("/api/preflight", json={"channel_id": "ch_x", "text": "Great buds https://hq.test:443/go/abcdefghijkl"}).json()
+    assert "commerce.ad_first" in _rules(pf)
