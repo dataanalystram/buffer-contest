@@ -797,7 +797,7 @@ function linkApproval(r) {
   ok.onclick = async () => {
     if (!tick.checked) return;
     ok.disabled = true;
-    try { await api(`/api/approvals/${r.id}/approve`, { method: "POST", body: { rights_attested: true } });
+    try { await api(`/api/approvals/${r.id}/approve`, { method: "POST", body: { rights_attested: true, attestation_version: p.attestation_version || "" } });
       $("[data-testid=approval-status]", el).innerHTML = `<div class="st ok">Approved. ${esc(r.agent_name)} can fetch it for one take.</div>`; el.classList.add("sent"); setTimeout(loadInbox, 1400); }
     catch (e) { $("[data-testid=approval-status]", el).innerHTML = `<div class="st err">${esc(e.message)}</div>`; ok.disabled = !tick.checked; }
   };

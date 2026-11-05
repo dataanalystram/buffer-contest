@@ -806,7 +806,7 @@ class Studio:
         return out
 
     def decide(self, a: Actor, approval_id: int, approve: bool, text: str | None = None, mode: str | None = None,
-               rights_attested: bool = False) -> dict:
+               rights_attested: bool = False, attestation_version: object = None) -> dict:
         if a.kind != "human":
             raise ActionError("Only a signed-in human can approve or reject agent posts.", 403)
         rows = self.store.q("SELECT * FROM approvals WHERE id=? AND user_id=?", (approval_id, a.uid))
@@ -814,7 +814,7 @@ class Studio:
             raise ActionError("No pending approval with that id.", 404)
         from . import consent
         if consent.row_kind(rows[0]) == consent.LINK_KIND:  # an AI app asking to fetch a video link: the person attests the rights
-            return consent.decide_link(self.store, a, dict(rows[0]), approve, rights_attested)
+            return consent.decide_link(self.store, a, dict(rows[0]), approve, rights_attested, attestation_version)
         if consent.is_paid_row(rows[0]):  # an AI app asking to spend money or credits: approving lets that one call run
             return consent.decide(self.store, a, dict(rows[0]), approve)
         clean = json.loads(rows[0]["payload"])

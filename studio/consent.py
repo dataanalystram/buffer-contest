@@ -214,7 +214,8 @@ def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any
         raise ActionError("Only an AI app token asks for link approval.", 400)
     store = studio.store
     h = link_ingest.url_hash(url)
-    mine = [r for r in _link_rows(store, a) if r["payload"].get("url_hash") == h]
+    cur = link_ingest.ATTESTATION_VERSION  # an item asked (or approved) under an older statement never counts
+    mine = [r for r in _link_rows(store, a) if r["payload"].get("url_hash") == h and r["payload"].get("attestation_version") == cur]
     if approval_id not in (None, ""):
         try:
             want = int(approval_id)
@@ -236,7 +237,8 @@ def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any
     from .userlocks import held
     with held(a.uid, "link_rights"):  # two parallel asks for one link make ONE approval item
         rows = _link_rows(store, a)
-        pending = next((r for r in rows if r["status"] == "pending" and r["payload"].get("url_hash") == h), None)
+        pending = next((r for r in rows if r["status"] == "pending" and r["payload"].get("url_hash") == h
+                        and r["payload"].get("attestation_version") == link_ingest.ATTESTATION_VERSION), None)
         if pending:
             aid = pending["id"]
         else:
@@ -259,14 +261,35 @@ def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any
             "how": "list_approvals shows when it is approved."}
 
 
-def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool) -> dict:
+def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_version: Any = None) -> dict:
     """Studio.decide for a link-rights item (the caller checked: a signed-in human, their row, pending). Approving needs the
-    attestation ticked and writes the consent record; nothing is fetched here."""
+    attestation ticked under the CURRENT statement version and writes the consent record; nothing is fetched here.
+
+    409 when the statement changed: the item was asked under an older version (it is closed, so the app's next call makes
+    a fresh item with the new text), or the page the person approved from showed an older version (``seen_version``; the
+    item stays pending: reload and tick again)."""
     from . import link_ingest
     aid = row["id"]
-    p = json.loads(row["payload"] or "{}") or {}
+    try:
+        p = json.loads(row["payload"] or "{}") or {}
+    except ValueError:
+        p = {}
+    if not isinstance(p, dict):
+        p = {}
+    if seen_version is not None and not isinstance(seen_version, str):
+        raise ActionError("attestation_version is the statement version string the page showed.", 400)
     if approve and attested is not True:
         raise ActionError("Tick “" + link_ingest.ATTESTATION + "” to approve (rights_attested: true).", 403)
+    if approve and p.get("attestation_version") != link_ingest.ATTESTATION_VERSION:
+        stale = json.dumps({"closed": "statement_changed", "asked_version": str(p.get("attestation_version") or "")[:40]})
+        with store.tx():
+            store.x("UPDATE approvals SET status='rejected', result=?, decided=? WHERE id=? AND user_id=? AND status='pending'",
+                    (stale, time.time(), aid, a.uid))
+        store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid, "reason": "statement_changed"})
+        raise ActionError("The rights statement changed after this app asked, so this request was closed and nothing was "
+                          "fetched. Ask the app to send the link again, then read the new statement and approve.", 409)
+    if approve and seen_version not in (None, "", link_ingest.ATTESTATION_VERSION):
+        raise ActionError("The rights statement changed since this page loaded. Reload, read it and tick it again.", 409)
     stamp = time.time()
     with store.tx():
         store.x("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",

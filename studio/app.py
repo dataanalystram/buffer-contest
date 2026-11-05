@@ -631,7 +631,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.post("/api/approvals/{approval_id}/approve")
     def approve(approval_id: int, request: Request, body: dict = Body(default={})):
         return studio.decide(actor(request, write=True), approval_id, True, body.get("text"), body.get("mode"),
-                             rights_attested=body.get("rights_attested") is True)
+                             rights_attested=body.get("rights_attested") is True,
+                             attestation_version=body.get("attestation_version"))
 
     @app.post("/api/approvals/{approval_id}/reject")
     def reject(approval_id: int, request: Request):

@@ -243,3 +243,30 @@ def test_make_a_post_split_asks_for_the_statement(human, app, monkeypatch):
     assert r.status_code == 409 and link_ingest.ATTESTATION in r.json()["error"] and _consents(app) == []
     t = human.post("/api/agent/runs", json={**body, "rights_attested": True}).json()
     assert t["kind"] == "take" and _consents(app)[0]["take_id"] == t["id"]
+
+
+def test_an_approval_asked_under_an_older_statement_is_refused(human, app, monkeypatch):
+    """The statement version is part of the consent: an item the app asked under an older statement can't be approved
+    (409, closed, nothing recorded), and the app's next call makes a fresh item with the new text."""
+    _hosts(monkeypatch)
+    sent = _github(app, monkeypatch)
+    tok = agent_token(human, policy="trusted", cap=50)
+    old = mcp_call(human, tok, "ingest_video_link", {"url": YT})[1]
+    assert old["needs_user_approval"] is True
+    monkeypatch.setattr(link_ingest, "ATTESTATION_VERSION", "2099-01-01.1")       # the statement changed after the ask
+    r = human.post(f"/api/approvals/{old['approval_id']}/approve", json={"rights_attested": True})
+    assert r.status_code == 409 and "statement changed" in r.json()["error"]
+    assert _consents(app) == [] and sent == []
+    assert not [x for x in human.get("/api/approvals").json() if x["id"] == old["approval_id"]]  # closed, not left waiting
+    new = mcp_call(human, tok, "ingest_video_link", {"url": YT}, mid=2)[1]
+    assert new["needs_user_approval"] is True and new["approval_id"] != old["approval_id"]
+    aid = new["approval_id"]
+    # a page that still shows the older statement is refused too, and the item stays pending
+    r = human.post(f"/api/approvals/{aid}/approve", json={"rights_attested": True, "attestation_version": "2026-11-04.1"})
+    assert r.status_code == 409 and _consents(app) == []
+    r = human.post(f"/api/approvals/{aid}/approve", json={"rights_attested": True, "attestation_version": ["x"]})
+    assert r.status_code == 400
+    ok = human.post(f"/api/approvals/{aid}/approve", json={"rights_attested": True, "attestation_version": "2099-01-01.1"}).json()
+    assert ok["status"] == "approved"
+    c = _consents(app)
+    assert len(c) == 1 and c[0]["attestation_version"] == "2099-01-01.1"
