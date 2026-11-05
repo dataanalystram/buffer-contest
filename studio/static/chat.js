@@ -23,6 +23,7 @@
     fold: '<path d="M4 6h16M4 12h10M4 18h7"/>',
     panel: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/>', clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/>',
     up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     // from Lucide (https://lucide.dev, ISC licence; see NOTICE): bot, user, square, arrow-down, check, key-round
     bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
     user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
@@ -169,7 +170,7 @@
         const on = String(x.id) === String(cur);
         html += `<li class="hc-li${on ? " on" : ""}" data-id="${esc(x.id)}"><button type="button" class="hc-th" data-open="${esc(x.id)}" data-kind="${esc(x.kind)}" data-testid="chat-thread"${on ? ' aria-current="true"' : ""}>
             <span class="hc-th-t" title="${esc(x.title || "Your post")}">${esc(x.title || "Your post")}</span><small class="hc-th-s st-${esc(x.state || x.status)}">${esc(STATE[x.state] || x.state || x.status || "")}${x.summarized ? " · summarized" : ""}</small></button>
-          ${x.kind === "take" ? "" : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}</li>`;
+          ${x.kind === "take" ? "" : `<button type="button" class="hc-th-r" data-rename="${esc(x.id)}" data-testid="chat-thread-rename" aria-label="Rename “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.pen)}</button>`}${x.thread_id ? `<button type="button" class="hc-th-r hc-th-del" data-del-thread="${esc(x.id)}" data-testid="chat-thread-delete" aria-label="Delete thread “${esc(String(x.title || "").slice(0, 60))}”">${ic(I.trash)}</button>` : ""}</li>`;
       }
       html += "</ul>";
     }
@@ -184,6 +185,7 @@
   document.getElementById("hcQ").addEventListener("input", (e) => { HC.q = e.target.value; HC.shown = PAGE; drawList(true); });
   document.getElementById("hcList").addEventListener("click", async (e) => {
     const r = e.target.closest("[data-rename]"); if (r) return rename(r.dataset.rename);
+    const dt = e.target.closest("[data-del-thread]"); if (dt) return deleteThread(dt.dataset.delThread);
     const o = e.target.closest("[data-open]"); if (!o) return;
     sideDrawer(false);
     if (o.dataset.kind === "take") return window.openTake && window.openTake(o.dataset.open);
@@ -227,6 +229,22 @@
     // the composer and the Ready bar belong to the thread still on screen: inert until the picked one arrives, so nothing
     // typed or approved meanwhile goes to the previous thread
     const dk = document.getElementById("hcDock"); if (dk) { dk.inert = on; dk.classList.toggle("hc-dock-wait", on); }
+  }
+  // delete a thread (studio/thread_bin.py), any kind or state: like deleting chat history, the conversation only. Media
+  // is never deleted (takes, clips, uploads, posts stay). 7 days in the Bin. A foreign or missing id is a 404.
+  async function deleteThread(id) {
+    const row = HC.rows.find((x) => String(x.id) === String(id)); if (!row || !row.thread_id) return;
+    const ok = await window.hqConfirm(`Delete “${String(row.title || "this thread").slice(0, 80)}”?\nOnly the conversation is deleted. ` +
+      (row.kind === "take" ? "The take, its clips and the upload stay in One take." : "Your posts and media stay in the Library and Buffer.") +
+      " It stays in the Bin for 7 days.", { ok: "Delete thread", danger: true });
+    if (!ok) return;
+    try {
+      await api(`/api/threads/${encodeURIComponent(row.thread_id)}`, { method: "DELETE" });
+      // the open conversation was deleted: leave it the way New post does, so nothing is sent to it afterwards
+      const cur = run(); if (cur && String(cur.id) === String(id)) mpNew.click();
+      HC.rows = HC.rows.filter((x) => String(x.id) !== String(id)); drawList(true);
+      toast("Thread deleted. Your media stays (restorable for 7 days).", 5000);
+    } catch (err) { toast(err.message, 5000); }
   }
   function rename(id) {
     const li = document.querySelector(`#hcList .hc-li[data-id="${sel(id)}"]`); if (!li) return;
@@ -536,8 +554,8 @@
     else if (!panel.hidden) { e.preventDefault(); closePanel(); }
     else if (rv.classList.contains("hc-side-open")) { e.preventDefault(); sideDrawer(false); }
   });
-  // a click outside the threads drawer (phone) closes it
-  document.addEventListener("click", (e) => { if (rv.classList.contains("hc-side-open") && !side.contains(e.target) && !menuB.contains(e.target)) sideDrawer(false); });
+  // a click outside the threads drawer (phone) closes it; a dialog opened from the drawer (Delete thread's choice) is not outside
+  document.addEventListener("click", (e) => { if (rv.classList.contains("hc-side-open") && !side.contains(e.target) && !menuB.contains(e.target) && !(e.target.closest && e.target.closest("dialog"))) sideDrawer(false); });
   // leaving the thread (New post, Discover) closes its panels
   mpNew.addEventListener("click", () => { closePanel(); closeCtx(); if (rv.classList.contains("hc-side-open")) sideDrawer(false); scrimSync(); });
 

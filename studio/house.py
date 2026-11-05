@@ -121,7 +121,7 @@ def start_media_check(house: "House", every: float | None = None, first_delay: f
             except Exception as e:  # noqa: BLE001
                 print(f"library trash: {e.__class__.__name__}: {e}", flush=True)
             try:  # One take's Bin (takes and clips) after TRASH_DAYS, and bucket uploads nobody finished or used
-                n = house.takes.purge_expired() + house.take_uploads.purge_stale()
+                n = house.threads.purge_expired() + house.takes.purge_expired() + house.take_uploads.purge_stale() + house.take_uploads.purge_link_sources()
                 if n:
                     print(f"take bin: removed {n} item(s) for good", flush=True)
             except Exception as e:  # noqa: BLE001
@@ -170,6 +170,8 @@ class House:
         self.uploads = Uploads(self)
         from .take_upload import TakeUploads
         self.take_uploads = TakeUploads(self)  # One take's long videos: multipart straight to the bucket (R2), off unless configured  # create_upload / upload_media_chunk (any MCP client, no public host)
+        from .thread_bin import ThreadBin
+        self.threads = ThreadBin(self)  # thread ids, list/get threads, delete/restore any thread, never its media (studio/thread_bin.py)
         from .ledger import Ledger
         self.ledger = Ledger(self)  # Style Ledger v2: groups, scope, learned suggestions, evidence, review links
         from .send import Send
@@ -273,11 +275,13 @@ class House:
         b1, m1 = render.news_card("Your next post, rendered in your brand style", kit, p, logo=logo, ratio="4:5", label="Preview",
                                   credit="example.com")
         b2, _ = render.end_card(kit, p, logo=logo, ratio="4:5")
+        from . import blobstore
         from .library import record_owner_deletes
         with self.store.tx():  # the old previews go for good; noted as the owner's own delete in the same transaction
             old = [r["token"] for r in self.store.q("SELECT token FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))]
-            self.store.x("DELETE FROM media WHERE user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
+            blobstore.release(self.store, "media", "user_id=? AND meta LIKE ?", (a.uid, '%"preview"%'))
             record_owner_deletes(self.store, [(t, a.uid) for t in old])
+        blobstore.sweep_soon(self.store)  # their R2 objects, after the commit (studio/blobstore.py)
         t1 = self.put_media(a, b1, "preview.jpg", kind="preview", meta=m1)
         t2 = self.put_media(a, b2, "preview_end.jpg", kind="preview", meta={"type": "photo"})
         return {"cover": self.media_url(t1), "end": self.media_url(t2), "check": brand.brand_check("", m1, rules, kit)}
@@ -366,19 +370,30 @@ class House:
         mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif",
                 "mp4": "video/mp4", "mov": "video/quicktime", "m4v": "video/mp4", "webm": "video/webm"}.get(ext, "application/octet-stream")
         tok = secrets.token_urlsafe(18) + "." + ext
-        self.store.x("INSERT INTO media(token,user_id,name,mime,data,size,meta,created) VALUES(?,?,?,?,?,?,?,?)",
-                     (tok, a.uid, name[:80], mime, data, len(data), json.dumps({"kind": kind, **(meta or {})}), _now()))
+        from . import blobstore  # the bytes go to R2 when it is configured, else stay in the row (docs/STORAGE.md)
+        inline, key, digest = blobstore.put("media", a.uid, data, mime)
+        try:
+            self.store.x("INSERT INTO media(token,user_id,name,mime,data,size,meta,created,storage_key,sha256) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                         (tok, a.uid, name[:80], mime, inline, len(data), json.dumps({"kind": kind, **(meta or {})}), _now(), key, digest))
+        except BaseException:
+            blobstore.discard(self.store, key)  # no row points at it
+            raise
+        blobstore.undo_on_rollback(self.store, key)  # a surrounding transaction that rolls back takes the object with it
         return tok
 
     def get_media(self, token: str) -> dict | None:
         from .library import TRASH_TOKEN
         if not token or token.startswith(TRASH_TOKEN):  # /m/trash~<token> must not serve a binned file (owner-only preview)
             return None
-        rows = self.store.q("SELECT token,user_id,mime,data,size,meta FROM media WHERE token=?", (token,))
+        rows = self.store.q("SELECT token,user_id,mime,data,size,meta,storage_key FROM media WHERE token=?", (token,))
         if not rows:
             return self.library.blob(token)  # an uploaded Library file works as a media token everywhere
         d = dict(rows[0])
-        d["data"] = bytes(d["data"])
+        from . import blobstore
+        try:
+            d["data"] = blobstore.read(d["data"], d.pop("storage_key"))
+        except blobstore.StorageError as e:
+            raise ActionError(str(e), 503)
         return d
 
     def media_head(self, token: str) -> dict | None:
@@ -717,10 +732,16 @@ class House:
     def runs(self, a: Actor, limit: int = 20) -> list[dict]:
         from .chat_context import titles as _chat_titles  # names given in the Make a post sidebar win
         out, named = [], _chat_titles(self.store, a.uid)
-        # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads
+        from .thread_bin import deleted_ids as _deleted_threads
+        gone = _deleted_threads(self.store, a.uid)  # threads deleted from the sidebar (the conversation only; media stays)
+        # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads; deleted threads are left out
+        # before the LIMIT, so they never use up the sidebar's slots
         for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
-                              "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, limit)):
+                              "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
+                              "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, a.uid, limit)):
             d = dict(r)
+            if d["id"] in gone:
+                continue
             inp, res = json.loads(d.pop("input")), json.loads(d.pop("result") or "{}")
             from .headline import title as _title  # never the raw request with its URL (owner P0)
             d["title"] = _title((res.get("story") or {}).get("headline") or "", _req(inp), "Your media" if d["kind"] == "media" else "Your post")
@@ -750,6 +771,13 @@ class House:
                           "scheduled" if any(x.get("mode") in ("queue", "schedule") for x in sent) else
                           "draft" if sent else "ready" if pk else d["status"])
             out.append(d)
+        try:  # the public thread id (thr_...) the sidebar's delete and MCP's get_thread use
+            from .thread_bin import public_ids
+            ids = public_ids(self.store, a.uid, [d["id"] for d in out])
+            for d in out:
+                d["thread_id"] = ids[d["id"]]
+        except Exception:  # noqa: BLE001 - never hide the threads over their ids
+            traceback.print_exc()
         return out
 
     def _save(self, rid: int, steps: list, result: dict, status: str | None = None) -> None:

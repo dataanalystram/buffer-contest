@@ -30,5 +30,7 @@ jobs:
         if: github.event.inputs.kind == 'take_analyze'
         with: {path: ~/.cache/huggingface, key: whisper-small-v1}
       - name: Job ${{ github.event.inputs.job_id }} (${{ github.event.inputs.kind }})
-        env: {HQ_JOB_ID: "${{ github.event.inputs.job_id }}", HQ_APP: "${{ github.event.inputs.app }}", HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite"}
+        # Jev: the worker returns a few keyframes (spec.jev only); the server asks Jev with its key within the per-take and
+        # per-account daily caps (studio/takes.py _studio_jev). No TYPESAFE_API_KEY here, so no call skips the daily cap.
+        env: {HQ_JOB_ID: "${{ github.event.inputs.job_id }}", HQ_APP: "${{ github.event.inputs.app }}", HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite", HQ_JEV_FACE_CAP: "12"}
         run: python -m studio.render_worker --job "$HQ_JOB_ID" --app "$HQ_APP"

@@ -135,7 +135,7 @@ def _take_job(human, app, monkeypatch):
     monkeypatch.setattr(house, "_dispatch_github", lambda jid, workflow="", inputs=None, ttl=1800:
                         (toks.setdefault(jid, house.issue_job_token(jid, ttl)), (True, ""))[1])
     monkeypatch.setattr(house.takes, "_mode", lambda: "github")
-    t = human.post("/api/takes", json={"url": BAD, "owns": True}).json()
+    t = human.post("/api/takes", json={"url": BAD, "owns": True, "rights_attested": True}).json()
     assert t["status"] == "running"
     jid, jt = next(iter(toks.items()))
     return t, jid, jt

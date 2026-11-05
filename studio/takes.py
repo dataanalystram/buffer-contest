@@ -45,7 +45,7 @@ THUMB_OFFSET = ("instagram", "tiktok", "pinterest")  # Buffer: metadata.thumbnai
 SOCIAL_PAGES = ("youtube.com", "youtu.be", "tiktok.com", "instagram.com", "facebook.com", "x.com", "twitter.com", "vimeo.com",
                 "linkedin.com", "twitch.tv")
 SAMPLE_DIR = Path(__file__).parent / "sample_take"
-MAX_TAKE_SECS = int(os.environ.get("HQ_MAX_TAKE_SECS", "1800"))
+MAX_TAKE_SECS = int(os.environ.get("HQ_MAX_TAKE_SECS", "10800"))  # 3 h, as for a video link (link_ingest.MAX_LINK_SECS); was 30 min
 MAX_CAPTION_TEXT = 4 * 1024 * 1024  # an uploaded .srt/.vtt; checked before it is parsed (SECURITY_RULES 6)
 # Opus-style takes render each clip in the ratio its channel needs (Instagram is posted as a Reel here)
 TAKE_RATIO = {"instagram": "9:16", "tiktok": "9:16", "youtube": "9:16", "facebook": "9:16", "linkedin": "4:5", "threads": "4:5",
@@ -173,10 +173,11 @@ class Takes(TakeBin):
                               "Connect Buffer to cut your own videos.", 403)
         from .media.find import platform_of
         owns, rights = bool(body.get("owns")), bool(body.get("rights_confirmed"))
-        if not (owns or rights):
+        token, url = str(body.get("media_token") or "").strip(), str(body.get("url") or body.get("media_url") or "").strip()
+        is_link = bool(url) and not str(body.get("upload_id") or "").strip() and not url.startswith(self.s.public_url.rstrip("/") + "/m/")
+        if not (owns or rights or (is_link and a.kind == "agent")):  # an AI app's link: the person attests in the Inbox (below)
             raise ActionError("Confirm this is your own video (owns: true), or that you have the right to clip it "
                               "(rights_confirmed: true, with a credit line). One take only clips videos you own or have the rights to.")
-        token, url = str(body.get("media_token") or "").strip(), str(body.get("url") or body.get("media_url") or "").strip()
         upload_id = str(body.get("upload_id") or "").strip()
         if upload_id:  # a long video uploaded in parts to the bucket (take_upload.py): checked now, claimed once the take exists
             self.h.take_uploads.check_ready(a, upload_id)
@@ -206,6 +207,8 @@ class Takes(TakeBin):
             elif any(host == d or host.endswith("." + d) for d in SOCIAL_PAGES):
                 raise ActionError("Give a link to the video post itself (YouTube, Vimeo, X, Loom, TikTok) or the video file, "
                                   "not a profile or page.")
+            elif not credit and not owns and a.kind == "agent":  # an AI app's direct file link: credit its host, and the
+                credit = f"Video: {host}"[:160]                  # person still confirms the rights in the Inbox
         if not owns and not credit:
             raise ActionError("Add a credit line for a video you didn't make (credit: 'Video: @handle on YouTube').")
         style = "opus" if (platform_url or str(body.get("style") or "").lower() in ("opus", "opus_clip", "shorts")) else "take"
@@ -224,11 +227,28 @@ class Takes(TakeBin):
         chans = self._channels(a, body.get("channel_ids"))
         if not chans:
             raise ActionError("Pick at least one connected channel that takes video (Instagram, TikTok, YouTube, X, LinkedIn, Threads).")
+        jev = self._jev_consent(a, body)
+        if isinstance(jev, dict):  # an MCP app asked for Jev: it waits for the person (studio/consent.py), nothing ran
+            return jev
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
+        consent_id, licence, link = None, "", url or platform_url
+        if link:  # rights first, then the fetch (owner ask, 4 Nov 2026): a signed-in person attests; an AI app asks them
+            from . import consent, link_ingest
+            licence = link_ingest.licence_hint(link, http=self.h.http)
+            if a.kind == "agent":
+                g = consent.link_gate(self.studio, a, link, licence=licence, approval_id=body.get("approval_id"),
+                                      tool=str(body.get("_tool") or "ingest_video_link"))
+                if g.get("needs_user_approval"):
+                    return g
+                consent_id = g["consent_id"]
+            else:
+                consent_id = link_ingest.human_attest(self.store, a, link, body, licence)
+            rights = True
         steps = [{"key": k, "label": l, "status": "pending", "detail": "", "data": None} for k, l in STEPS]
         inp = {"media_token": token, "upload_id": upload_id, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
-               "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]],
+               "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]], "jev": jev,
+               "consent_id": consent_id, "licence_hint": licence,
                "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
@@ -236,6 +256,9 @@ class Takes(TakeBin):
                            (a.uid, "take", json.dumps(inp), "running", json.dumps(steps), json.dumps({}), _now(), _now()))
         self.store.audit(a.uid, a.label, "clips_from_video", "read",
                          {"take": rid, "source": "upload" if token or upload_id else ("platform" if platform_url else "link"), "style": style})
+        if consent_id:
+            from . import link_ingest
+            link_ingest.attach(self.store, a.uid, consent_id, rid)
         if upload_id:
             try:
                 self.h.take_uploads.claim_for_take(a, upload_id, rid)
@@ -247,9 +270,33 @@ class Takes(TakeBin):
                    + (f" · {credit}" if credit and not owns else ""), {"source": self.media_url(token) if token else ("upload" if upload_id else (url or platform_url))})
         self._save(rid, run["steps"], run["result"])
         self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_upload": upload_id, "source_url": url, "platform_url": platform_url,
-                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small")},
+                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small"), "jev": jev},
                     "transcribe", "Reading captions, else transcribing on the video worker (faster-whisper, CPU)")
         return self.get(a, rid)
+
+    def _jev_consent(self, a: Actor, body: dict):
+        """May this take ask Jev (TypeSafe, a paid API on HuhQueue's server key) for a second opinion on faces?
+        A person in the app: yes unless they said jev: false. An MCP app: only when it asks (jev: true) AND the person
+        approves through studio/consent.py (needs_user_approval, or "Allow paid APIs" on that token). Returns True / False,
+        or the consent answer (a dict) when the app's request waits for the person."""
+        want = body.get("jev")
+        if want is not None and not isinstance(want, bool):
+            raise ActionError("jev is true or false.")
+        if a.kind != "agent":
+            return want is not False
+        if want is not True:
+            return False
+        from . import consent
+        if "clips_from_video_jev" not in consent.PAID:
+            from .media import jev_faces
+            consent.register("clips_from_video_jev", "TypeSafe Jev (HuhQueue's key)",
+                             "Jev checks up to a dozen keyframes of the video for the speaker's face",
+                             lambda args: {"calls_max": jev_faces.cap_from_env()})
+        held = consent.gate(self.h.studio, a, "clips_from_video_jev", body)
+        if held:  # the approval is filed as clips_from_video_jev; the tool the app calls again is clips_from_video (jev: true)
+            return {**held, "tool": "clips_from_video",
+                    "message": held["message"].replace("clips_from_video_jev", "clips_from_video (with jev: true)")}
+        return True
 
     def start_sample(self, a: Actor, body: dict | None = None) -> dict:
         """The sample take: Buffer's 89-minute Buffer Commit kickoff Q&A (credited), split into 5 clips ahead of time by the same
@@ -345,15 +392,22 @@ class Takes(TakeBin):
         src = spec.get("source_url") or (base + spec["source"] if spec.get("source") else "")
         if spec.get("source_upload"):  # a multipart upload in the bucket: a presigned GET the worker streams
             src = self.h.take_uploads.signed_url(spec["source_upload"])
-        return {"id": jid, "status": j["status"], "spec": spec,
-                "urls": {"source": src,
-                         "logo": base + spec["logo"] if spec.get("logo") else ""}}
+        urls = {"source": src, "logo": base + spec["logo"] if spec.get("logo") else ""}
+        if spec["kind"] == "take_analyze" and (spec.get("platform_url") or spec.get("source_url")) and spec.get("take"):
+            try:  # a bucket keeps the fetched link for the renders (deleted after 7 days); none: streamed per job only
+                put = self.h.take_uploads.link_target(j["user_id"], int(spec["take"]))
+            except ActionError:
+                put = ""
+            if put:
+                urls["source_put"] = put
+        return {"id": jid, "status": j["status"], "spec": spec, "urls": urls}
 
     def _local_job(self, jid: int) -> None:
         """Self-host / CI: run the worker's job in-process (FFmpeg on PATH)."""
         j = self._job(jid)
         spec = j["spec"]
         tmp = Path(tempfile.mkdtemp(prefix="hq_takejob_"))
+        fetched = None
         try:
             src = tmp / "source.mp4"
             if spec.get("sample_window"):
@@ -372,12 +426,15 @@ class Takes(TakeBin):
                     raise take.TakeError("The uploaded video is gone.")
                 src.write_bytes(m["data"])
             elif spec.get("platform_url"):
-                fetch_platform(spec["platform_url"], src)
+                fetched = {**fetch_platform(spec["platform_url"], src), "via": "yt-dlp"}
             else:
                 self._download(spec["source_url"], src)
+                fetched = {"via": "direct"}
             if spec["kind"] == "take_analyze":
                 analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=MAX_TAKE_SECS,
-                                        transcript=reuse_captions(str(src), spec))
+                                        transcript=reuse_captions(str(src), spec), jev=spec.get("jev") is True)
+                if fetched is not None:
+                    analysis["fetch"] = fetched
                 self.on_analysis(jid, analysis, "")
             else:
                 logo = self.h.get_media(spec["logo"])["data"] if spec.get("logo") and self.h.get_media(spec["logo"]) else None
@@ -420,6 +477,7 @@ class Takes(TakeBin):
         # Each read-modify-write runs under the take's lock, the same one delete / restore / purge take (take_bin.py), so a
         # callback already past its cancelled check can't save an old result over the Bin's. Picking the moments (AI
         # engines, up to minutes) runs outside it; the take is read again, and checked again, before the result is saved.
+        analysis = self._studio_jev(jid, analysis) if not error else analysis  # outside the lock: network calls
         with self._job_lock(jid):  # a fresh context each time (the lock itself is per take)
             first = self._on_analysis(jid, analysis, error)
         if first.get("done") is not None:
@@ -441,6 +499,70 @@ class Takes(TakeBin):
                 self._save(rid, steps, res, "failed")
                 return {"ok": False}
             return self._land_moments(a, rid, steps, res, mined, used)
+
+    def _jev_used(self, uid: str, add: int = 0) -> int:
+        """Jev keyframes this account used today on the server's key (the daily cap; everything stays free)."""
+        st = self.store
+        if not getattr(st, "_jev_usage_ok", False):
+            st.x("CREATE TABLE IF NOT EXISTS jev_usage (day TEXT, user_id TEXT, n INTEGER, PRIMARY KEY(day, user_id))")
+            if st.pg:
+                st.x("ALTER TABLE jev_usage ENABLE ROW LEVEL SECURITY")
+            st._jev_usage_ok = True
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        if add:
+            st.x("INSERT INTO jev_usage(day,user_id,n) VALUES(?,?,?) ON CONFLICT(day,user_id) DO UPDATE SET n=jev_usage.n+excluded.n",
+                 (day, uid, int(add)))
+        rows = st.q("SELECT n FROM jev_usage WHERE day=? AND user_id=?", (day, uid))
+        return int(rows[0]["n"]) if rows else 0
+
+    def _studio_jev(self, jid: int, analysis):
+        """A worker without TYPESAFE_API_KEY sends its keyframes (analysis["jev_frames"]); the server, which has the key, asks
+        Jev for them (studio/media/jev_faces.py studio_opinion) and merges the boxes into the face track. Only for a take whose
+        input says jev (a person in the app, or an approved MCP request), within the per-take and per-day caps. The frames
+        are never saved; the key never leaves the server and is never logged. Never fails the take."""
+        if not isinstance(analysis, dict) or "jev_frames" not in analysis:
+            return analysis
+        frames = analysis.pop("jev_frames")
+        try:
+            from .media import jev_faces
+            if self.job_cancelled(jid):
+                return analysis
+            j = self._job(jid)
+            run = self._run(Actor(j["user_id"]), j["run_id"])
+            base = {"enabled": False, "model": jev_faces.MODEL, "frames": [], "calls": 0, "used": 0, "errors": 0, "fallback": None}
+            key = os.environ.get("TYPESAFE_API_KEY", "")
+            if run["input"].get("jev") is not True:
+                analysis["jev"] = {**base, "why": "off for this take (not started by a person in the app, or not approved)"}
+                return analysis
+            if not key:
+                analysis["jev"] = {**base, "why": "off: TYPESAFE_API_KEY isn't set on the server"}
+                return analysis
+            clean = jev_faces.clean_frames(frames, jev_faces.cap_from_env())
+            with self.store.tx():  # reserve the allowance first (atomic): two takes at once can't both spend the same calls
+                cap = min(len(clean), max(0, jev_faces.daily_cap() - self._jev_used(j["user_id"])))
+                if cap > 0:
+                    self._jev_used(j["user_id"], cap)
+            if cap <= 0:
+                analysis["jev"] = {**base, "why": "off: today's free Jev allowance for this account is used up" if clean
+                                   else "on: no usable keyframes"}
+                return analysis
+            rec = None
+            try:
+                faces, rec = jev_faces.studio_opinion(analysis.get("faces") or [], clean[:cap], key, cap,
+                                                      http=getattr(self, "_jev_http", None), log=lambda m: print(m, flush=True))
+            finally:
+                spent = int((rec or {}).get("calls") or 0)
+                if cap - spent > 0:
+                    self._jev_used(j["user_id"], -(cap - spent))  # hand back what wasn't used
+            analysis["faces"], analysis["jev"] = faces, rec
+            if rec.get("used"):
+                analysis["face_detector"] = True
+                pv = analysis.get("providers") or {}
+                pv["faces"] = f"{pv.get('faces', '')} + Jev second opinion ({rec['used']} of {rec['calls']} keyframes used)".strip(" +")
+                analysis["providers"] = pv
+        except Exception as e:  # noqa: BLE001 - a second opinion never fails the take; local faces + centred crop
+            analysis["jev"] = {"enabled": False, "why": f"error: {e.__class__.__name__}", "frames": [], "fallback": "local faces + centred crop"}
+        return analysis
 
     def _mine(self, run: dict, analysis: dict, eng, chat) -> dict:
         if run["input"].get("style") == "opus":
@@ -468,6 +590,16 @@ class Takes(TakeBin):
             self._save(rid, steps, res, "failed")
             return {"done": {"ok": False}}
         self.store.x("UPDATE render_jobs SET status='done', updated=? WHERE id=?", (_now(), jid))
+        fetched = analysis.pop("fetch", None)
+        if isinstance(fetched, dict):  # what the worker learned fetching a link: the platform's licence, if it states one
+            res["fetch"] = {k: (str(fetched.get(k))[:200] if fetched.get(k) is not None else None) for k in ("title", "licence", "via")}
+            lic = res["fetch"].get("licence") or run["input"].get("licence_hint") or ""
+            if lic:
+                was = next((x["detail"] for x in steps if x["key"] == "upload"), "")
+                self._step(steps, "upload", "done", (was + f" · licence: {lic}")[:300])
+            n = fetched.get("stored_bytes")
+            if isinstance(n, int) and n > 0:
+                self.h.take_uploads.link_stored(a.uid, rid, n)
         res["analysis"] = analysis
         res["providers"], res["timings"] = analysis.get("providers", {}), analysis.get("timings", {})
         pr = analysis.get("probe") or {}
@@ -518,9 +650,11 @@ class Takes(TakeBin):
         for k in ("reframe", "captions", "covers"):
             self._step(run["steps"], k, "running", f"0 of {len(clips)} clips")
         self._save(rid, run["steps"], res, "rendering")
-        spec = {"kind": "take_render", "source": run["input"].get("media_token") or "", "source_upload": run["input"].get("upload_id") or "",
-                "source_url": run["input"].get("url") or "",
-                "platform_url": run["input"].get("platform_url") or "",
+        stored = self.h.take_uploads.link_source(a.uid, rid) if (run["input"].get("url") or run["input"].get("platform_url")) else ""
+        spec = {"kind": "take_render", "source": run["input"].get("media_token") or "",
+                "source_upload": run["input"].get("upload_id") or stored,  # a link fetched once and kept: no second fetch
+                "source_url": "" if stored else run["input"].get("url") or "",
+                "platform_url": "" if stored else run["input"].get("platform_url") or "",
                 "kit": {k: kit[k] for k in brand.DEFAULT_KIT}, "params": p, "logo": kit.get("logo") or "",
                 "scenes": an.get("scenes") or [], "src": an["probe"], "clips": clips,
                 "style": run["input"].get("style") or "take", "ratios": run["input"].get("ratios") or ["9:16"],
@@ -719,7 +853,8 @@ class Takes(TakeBin):
                 "timings": res.get("timings") or {}, "picked_by": res.get("picked_by"), "moments": res.get("moments") or [],
                 "clips": clips, "created": run["created"], "updated": run["updated"],
                 "caption_limits": {ch["service"]: drafter.limit_for(ch["service"]) for ch in run["input"]["channels"]},
-                "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback")}
+                "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback"),
+                "face_jev": _jev_view(an.get("jev"))}
 
     def _can_rerender(self, a: Actor, res: dict) -> bool:
         """Trims, transcript fixes and new hooks re-render on the video worker. The sample re-renders from its bundled
@@ -1039,14 +1174,22 @@ def encode(data: bytes) -> str:
 
 
 # ---------------------------------------------------------------------- shared by the local runner and render_worker
-def fetch_platform(url: str, dest: Path) -> None:
-    """A YouTube / Vimeo / X post -> dest, through studio.media.download (single extractor, size + height caps, vetted).
-    YouTube often refuses datacenter IPs; the error then says to upload the file."""
+def fetch_platform(url: str, dest: Path, max_bytes: int | None = None) -> dict:
+    """A YouTube / Vimeo / X post -> dest on the video worker, through the SAME path Make a post's Reels use
+    (studio.media.download.download_video: yt-dlp with that platform's extractor only, mp4 <= 1080p, no cookies), with
+    One take's caps: 4 GB (take_upload.max_bytes) and 3 h (link_ingest.MAX_LINK_SECS). Returns the fetch meta (title,
+    duration, licence). When the platform refuses, the error says why and asks for the file."""
+    from . import link_ingest, mediasafe
     from .media.download import DownloadError, download_video
+    from .take_upload import max_bytes as cap
     try:
-        download_video(url, dest)
+        got = download_video(url, dest, max_bytes=int(max_bytes or os.environ.get("HQ_MAX_TAKE_BYTES") or cap()),
+                             max_secs=min(link_ingest.MAX_LINK_SECS, MAX_TAKE_SECS))
     except DownloadError as e:
         raise take.TakeError(str(e))
+    except mediasafe.MediaRefused as e:
+        raise take.TakeError(f"The fetched file isn't a plain video ({e}).")
+    return got.get("meta") or {}
 
 
 def reuse_captions(path: str, spec: dict) -> dict | None:
@@ -1153,3 +1296,15 @@ def _daily_limits_cached(buffer, uid: str, ids: list[str], day: str) -> list:
             _LIMITS.clear()
         _LIMITS[key] = (_t.time(), lim)
     return lim
+
+
+def _jev_view(rec) -> dict | None:
+    """What the take shows about Jev's second opinion: on or off and why, and each keyframe it looked at (time, why it
+    was picked, the verdict, whether its box went into the reframe track). Never the request or any key."""
+    if not isinstance(rec, dict):
+        return None
+    keep = ("t", "why", "verdict", "face_visible", "box", "used", "ms", "error")
+    frames = [{k: f[k] for k in keep if k in f} for f in (rec.get("frames") or [])[:40] if isinstance(f, dict)]
+    return {"enabled": bool(rec.get("enabled")), "why": str(rec.get("why") or "")[:200], "model": str(rec.get("model") or "")[:40],
+            "cap": rec.get("cap"), "calls": rec.get("calls", 0), "used": rec.get("used", 0), "errors": rec.get("errors", 0),
+            "fallback": rec.get("fallback"), "frames": frames}

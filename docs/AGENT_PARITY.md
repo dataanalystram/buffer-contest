@@ -74,3 +74,22 @@ The first line is keyword-first (the company / product people search for, when t
 at most 5 hashtags (`agent_tools.keyword_first`, `agent_tools.cap_hashtags`), whichever writer wrote it.
 
 Tests: `tests/studio/test_editorial_parity.py`.
+
+## Video links (One take, MCP)
+
+A video link the person gives (YouTube, Vimeo, X, or a direct MP4) is fetched by the **same** code everywhere:
+`studio.media.download.download_video` on the video worker (InstaBox first, GitHub Actions as its fallback). Make a post's
+Reels (`render_reel` → job `media_render`), the weekly recap and One take (`take_analyze`) all call it; One take adds its
+own caps (4 GB, 3 h) and keeps the platform's licence flag.
+
+| Way in | Link | Rights |
+|---|---|---|
+| One take (UI) | the link field takes YouTube / Vimeo / X posts and MP4 links | a checkbox with the rights statement; the request carries `rights_attested: true` |
+| REST | `POST /api/takes` with `url` | `rights_attested: true` from a signed-in session; 403 without it |
+| MCP | `ingest_video_link` (or `clips_from_video` with `url`) | `needs_user_approval`: the person ticks the statement in Inbox → Approvals; the app calls again with `approval_id` |
+
+Each confirmation is a `link_consents` row (person, link, hash, time, statement version, licence hint). An agent token never
+writes one. A platform refusal names its reason (age-restricted, private, members-only, unavailable, bot check) and only
+then asks for the file. The statement version binds the consent: an Inbox item an app asked under an older statement
+can't be approved (409; it closes, and the app's next call makes a fresh item with the new text), and an approval or
+One take form that shows an older version answers 409 (reload). Tests: `tests/studio/test_link_ingest.py`.

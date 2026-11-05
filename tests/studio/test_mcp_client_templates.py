@@ -80,6 +80,30 @@ def test_external_make_post_run_gets_the_mcp_brain(human):
     assert [s["tool"] for s in got["steps"]] == ["make_post"]
 
 
+def test_a_new_store_with_a_reused_object_id_still_gets_its_tables(tmp_path, monkeypatch):
+    """CI flake, 5 Nov 2026 (KeyError 'label' above): ensure() remembered id(store), CPython reuses a freed Store's id, so
+    the next test's fresh database skipped CREATE TABLE mcp_calls; record() failed silently and the run lost its MCP brain.
+    Every id() collides here: readiness must follow the Store object, not its id."""
+    from studio import run_discipline
+    from studio.store import Store
+    monkeypatch.setattr(mcp_runs, "id", lambda _o: 1, raising=False)
+    monkeypatch.setattr(run_discipline, "id", lambda _o: 1, raising=False)
+    first = Store(str(tmp_path / "a.db"), "s" * 64)
+    mcp_runs.ensure(first)
+    run_discipline.ensure(first)
+    second = Store(str(tmp_path / "b.db"), "s" * 64)  # a new database behind an object with the "same" id
+    mcp_runs.ensure(second)
+    run_discipline.ensure(second)
+    assert second.q("SELECT COUNT(*) n FROM mcp_calls")[0]["n"] == 0
+    assert second.q("SELECT COUNT(*) n FROM mcp_idem")[0]["n"] == 0
+    actor = Actor("u", kind="agent", agent={"id": 7, "name": "claude", "client_info": "claude-ai 1.2", "app": "claude"})
+    rid = second.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
+                   ("u", "agent", "{}", "ready", "[]", json.dumps({"brain": {}}), 0, 0))
+    mcp_runs.record(second, actor, "make_post", {"run_id": rid}, {}, True, 5)
+    run = mcp_runs.merge(second, {"id": rid, "user_id": "u", "steps": [], "result": {"brain": {}}})
+    assert run["result"]["brain"]["label"] == "Claude · via MCP"
+
+
 def test_model_hint_from_meta_is_shown_and_human_runs_are_untouched(human):
     tok = agent_token(human, policy="trusted", cap=50)
     _init(human, tok)

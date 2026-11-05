@@ -42,7 +42,9 @@ INSTRUCTIONS = (
     "3, two more reels of the same story) stay in that run_id. A NEW request with new content, even in this same chat, is a "
     "new post: start_post(new_request: true), never more of the old thread. If you can't tell whether a request is about "
     "the same content, ask the person: 'Continue in the current post or start a new one?' Then use continue_run(run_id) or "
-    "start_post(new_request: true). Every answer carries run_id and thread_url (link the person to it). New posts are "
+    "start_post(new_request: true). Earlier work: when the person refers to something from before ('the reel from yesterday', "
+    "'that talk I clipped', 'the post about X'), call list_threads(query) and get_thread(thread_id) FIRST, then "
+    "continue_run(run_id) on the matching run; if more than one thread could be it, ask the person which one. Every answer carries run_id and thread_url (link the person to it). New posts are "
     "never refused for how many you made; the same request repeated within 10 minutes returns the post already open. "
     "3) Images: give HuhQueue the image URL (hero_edit(image_url), render_carousel slides[].image, library_upload_url). It "
     "downloads and edits on its side; don't paste images or upload throwaway copies. If a site blocks the download, ask the "
@@ -826,7 +828,11 @@ def t_split_video(studio, a, args):
         body["media_token"] = _video_source(h, a, args)[0]
     elif args.get("url"):
         body["url"] = str(args["url"])
-    t = h.takes.start(a, body)
+    if args.get("approval_id") not in (None, ""):
+        body["approval_id"] = args["approval_id"]
+    t = h.takes.start(a, {**body, "_tool": "split_video"})
+    if t.get("needs_user_approval"):  # a video link: the person confirms the rights in the Inbox first (consent.link_gate)
+        return t
     return {"take_id": t["id"], "status": t.get("status"), "poll": f"render_status(take_id={t['id']}) every 20-30 s",
             "spent_usd": 0, **({"run_id": _run_arg(args)} if _run_arg(args) else {})}
 
