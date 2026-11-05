@@ -236,6 +236,15 @@ def free_caption_y(frames: list[dict], seg: dict, default_y: int, src_w: int, sr
     return None
 
 
+def main(argv: list[str] | None = None) -> int:
+    """`python -m studio.media.ocr` prints the worker's OCR status as JSON (read-only: no frames, no network)."""
+    import json
+    import sys
+    st = status()
+    print(json.dumps({**st, "min_version": ".".join(map(str, MIN_VERSION))}))
+    return 0 if st["ok"] or "--soft" in (argv if argv is not None else sys.argv[1:]) else 1
+
+
 def alt_text(hook: str, text: str, limit: int = 420) -> str:
     """A plain description of a clip: what is said (the hook) and the text on screen."""
     hook = (hook or "").strip().rstrip("…")
@@ -244,3 +253,7 @@ def alt_text(hook: str, text: str, limit: int = 420) -> str:
     if text:
         out += f". On-screen text: {text}"
     return out[:limit]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
