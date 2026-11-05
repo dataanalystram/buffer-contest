@@ -5,7 +5,8 @@
 /* the screen itself stays on view (it holds the loader); everything else in it is hidden, keeping its layout */
 .hq-vt-wait{position:relative;min-height:min(60vh,520px)}
 .hq-vt-wait > :not(.hq-vt){visibility:hidden}
-.hq-vt{visibility:visible;position:absolute;left:0;right:0;top:0;z-index:6;display:flex;flex-direction:column;align-items:center;
+/* the overlay never takes a click or a tap (#117 follow-up): only its error box (Retry, Close) does */
+.hq-vt{visibility:visible;pointer-events:none;position:absolute;left:0;right:0;top:0;z-index:6;display:flex;flex-direction:column;align-items:center;
   gap:20px;padding:min(16vh,128px) 16px 24px;min-height:min(60vh,520px);background:var(--paper)}
 .hq-vt-in{display:flex;flex-direction:column;align-items:center}
 .hq-vt-mark{position:relative;width:64px;height:64px;display:grid;place-items:center}
@@ -20,12 +21,13 @@
   .hq-vt{animation:hq-vt-in 120ms ease-out}
 }
 /* reduced motion: the whole outline drawn, still; the mark at rest */
-@media (prefers-reduced-motion:reduce){.hq-vt-trace{stroke-dasharray:none;opacity:.9}}
+@media (prefers-reduced-motion:reduce){.hq-vt-trace{stroke-dasharray:none;opacity:.9}
+  .hq-vt,.hq-vt *,.hq-vt-inline *{animation-name:none!important;transition:none!important}}
 @keyframes hq-vt-trace{to{stroke-dashoffset:-100}}
 @keyframes hq-vt-breathe{50%{transform:scale(.92);opacity:.78}}
 @keyframes hq-vt-in{from{opacity:0}}
 .hq-vt-sk{width:min(720px,100%)}
-.hq-vt-err{display:grid;justify-items:center;gap:8px;max-width:440px;text-align:center;padding:20px;border:1px solid var(--line);
+.hq-vt-err{pointer-events:auto;display:grid;justify-items:center;gap:8px;max-width:440px;text-align:center;padding:20px;border:1px solid var(--line);
   border-radius:12px;background:var(--raised);color:var(--ink)}
 .hq-vt-err span{color:var(--muted);overflow-wrap:anywhere}
 .hq-vt-acts{display:flex;gap:12px;align-items:center;margin-top:4px}

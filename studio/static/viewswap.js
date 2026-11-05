@@ -8,10 +8,12 @@
 //    late answer never reveals or redraws over the screen picked now;
 //  - a loader that fails shows an inline error with Retry instead of a blank or wrong page.
 // The loader is our own code (vanilla SVG + CSS), after the idea of the Logo Trace Loader on 21st.dev (dqnamo, MIT): a short
-// lavender dash loops around the mark's outline while work runs. No code copied (see NOTICE). Static under reduced motion.
+// lavender dash loops around the mark's outline while work runs. No code copied (see NOTICE). Still under reduced motion
+// (nothing in it animates), and it never takes a click (pointer-events:none; only its error box with Retry does).
 "use strict";
 (() => {
-  const MIN_MS = 150, SLOW_MS = 300, CAP_MS = 8000;
+  // CAP_MS: a slow screen is shown with its own skeletons after 1.5 s at most, never held behind the mark (#117 follow-up)
+  const MIN_MS = 150, SLOW_MS = 300, CAP_MS = 1500;
   // HQLoad request keys that belong to a screen: leaving the screen aborts them (take.js aborts its own on leave)
   const KEYS = { inbox: ["inbox"], library: ["library", "openrun"], planner: ["planner"] };
   let seq = 0, ctl = null, curEl = null;
