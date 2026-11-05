@@ -653,6 +653,24 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def reject(approval_id: int, request: Request):
         return studio.decide(actor(request, write=True), approval_id, False)
 
+    # Settings → Privacy & data → Auto-approve video links (studio/link_auto.py): off by default, the person's own switch
+    @app.get("/api/settings/link-auto-approve")
+    def link_auto_get(request: Request):
+        from . import link_auto
+        return link_auto.get(store, actor(request))
+
+    @app.put("/api/settings/link-auto-approve")
+    async def link_auto_put(request: Request):
+        from starlette.concurrency import run_in_threadpool
+
+        from . import link_auto
+        a = await run_in_threadpool(actor, request, True)
+        try:
+            body = await request.json()
+        except ValueError:
+            raise ActionError("Send a JSON object.", 400)
+        return await run_in_threadpool(link_auto.put, store, a, body)
+
     @app.post("/api/ideas")
     def ideas(request: Request, body: dict = Body(...)):
         return studio.create_idea(actor(request, write=True), body.get("title", ""), body.get("text", ""))

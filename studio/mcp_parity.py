@@ -235,7 +235,7 @@ PAGES: dict[str, dict] = {
     "planner": {"title": "Planner", "shows": "Scheduled, sent and draft Buffer posts on a calendar, plus each channel's slots.",
                 "tools": ["list_calendar", "list_queue", "update_post", "reschedule_post", "replace_draft_media", "delete_draft", "preflight_post"]},
     "inbox": {"title": "Inbox", "shows": "What waits for a person: approvals, failed posts, preflight problems, open slots.",
-              "tools": ["get_inbox", "list_approvals", "update_post", "reschedule_post"]},
+              "tools": ["get_inbox", "list_approvals", "list_pending_approvals", "approve_link_ingest", "reject_link_ingest", "update_post", "reschedule_post"]},
     "library": {"title": "Library", "shows": "Every upload and every rendered image, carousel and Reel; the Bin.",
                 "tools": ["list_library", "delete_library_item", "bulk_delete_library", "list_library_bin", "restore_library_items",
                           "cleanup_agent_drafts",

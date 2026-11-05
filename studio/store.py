@@ -147,7 +147,7 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
 # a reconnect from resetting an allowance.
 OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "source_runs", "source_settings",
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
-                   "thread_ids", "thread_deleted", "jev_usage", "link_consents", "take_prefs")
+                   "thread_ids", "thread_deleted", "jev_usage", "link_consents", "take_prefs", "link_auto_approve")
 
 def _run_callbacks(fns) -> None:
     for fn in fns or ():
@@ -268,7 +268,7 @@ class Store:
                 self._undo.append(fn)
 
     # ---- low level
-    def _pg(self, sql: str, args: tuple, fetch: bool):
+    def _pg(self, sql: str, args: tuple, fetch: bool | str):
         sql = sql.replace("?", "%s")
         with self._lock:
             for attempt in (0, 1):
@@ -277,6 +277,8 @@ class Store:
                         self._db = self._connect()
                     with self._db.cursor() as c:
                         c.execute(sql, args)
+                        if fetch == "rowcount":
+                            return c.rowcount
                         return c.fetchall() if fetch else None
                 except self._psycopg.OperationalError:
                     if attempt or getattr(self, "_tx_depth", 0):  # inside tx(): a reconnect would lose the transaction
@@ -303,6 +305,17 @@ class Store:
         with self._lock:
             cur = self._db.execute(sql, args)
             return cur.lastrowid
+
+    def xn(self, sql: str, args: tuple = ()) -> int:
+        """Run an UPDATE/DELETE and return how many rows it changed. A conditional UPDATE (``... AND status='pending'``)
+        that changed 1 row is how a caller knows it won a race. Never re-read a float it wrote and compare it with ``==``
+        for that: a time that went through the production database (Postgres behind the Supabase pooler) need not come
+        back bit-identical, so ``decided == stamp`` failed and Approve / Reject on a video-link approval answered "No
+        pending approval with that id" while the item stayed pending (5 Nov 2026, approval 136)."""
+        if self.pg:
+            return int(self._pg(sql.strip(), args, "rowcount") or 0)
+        with self._lock:
+            return int(self._db.execute(sql, args).rowcount or 0)
 
     def ping(self) -> bool:
         return bool(self.q("SELECT 1 AS ok"))

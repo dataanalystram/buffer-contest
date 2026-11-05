@@ -51,6 +51,14 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["confirm_token"], "properties": {"confirm_token": {"type": "string"}}}},
     {"name": "list_approvals", "description": "Your submissions and their status (pending, approved, rejected).",
      "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["pending", "approved", "rejected"]}}}},
+    {"name": "list_pending_approvals", "description": "Video links waiting for the person's rights statement (from any of their AI apps): approval_id, url, host, which app asked, when, and the statement they must agree to. Use it with approve_link_ingest / reject_link_ingest. Paid-API and post approvals are not listed here; those are decided in HuhQueue → Inbox.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "approve_link_ingest", "description": "Approve one waiting video-link request (from ingest_video_link or clips_from_video) on the person's word. ONLY call it after the person told you, in this conversation, that they own the video or have permission to use it (e.g. their own content, a licence, or Creative Commons) and that they are responsible for rights: then pass i_own_or_have_rights: true (anything else answers 400 and approves nothing). Never assume it. The consent record stores which app approved it and when. Then call ingest_video_link again with the same url and approval_id. This approves only the fetch for one take: it never spends money, never posts, and every cap still applies. A foreign or missing approval_id answers 404.",
+     "inputSchema": {"type": "object", "required": ["approval_id", "i_own_or_have_rights"], "properties": {
+         "approval_id": {"type": "integer"},
+         "i_own_or_have_rights": {"type": "boolean", "description": "true only when the person said they own the video or have permission to use it and are responsible for rights"}}}},
+    {"name": "reject_link_ingest", "description": "Reject one waiting video-link request (the person said no, or it was a mistake). Nothing is fetched. A foreign or missing approval_id answers 404.",
+     "inputSchema": {"type": "object", "required": ["approval_id"], "properties": {"approval_id": {"type": "integer"}}}},
     {"name": "list_queue", "description": "Posts in Buffer by status: scheduled (default), draft, sent or error (failed to publish). Each has an id for update_post, reschedule_post and delete_draft.",
      "inputSchema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["scheduled", "draft", "sent", "error"]}}}},
     {"name": "update_post", "description": "Edit a post already in Buffer: new caption (text), new time (due_at, ISO UTC), or both. This is the same path as dragging a post on the HuhQueue Planner. Sent posts can't change; drafts stay drafts. 'review' and 'draft' tokens may only change drafts.",
@@ -97,7 +105,7 @@ TOOLS: list[dict[str, Any]] = [
          "name": {"type": "string"}, "sample": {"type": "boolean"},
          "upload_id": {"type": "string", "description": "A finished multipart upload of a long video (POST /api/takes/uploads, up to 4 GB when the server has a bucket)"},
          "jev": {"type": "boolean", "description": "Ask TypeSafe Jev for a second opinion on the speaker's face on a few keyframes (paid, HuhQueue's key): answers needs_user_approval until the person approves. Off by default for apps; local face detection always runs."}}}},
-    {"name": "ingest_video_link", "description": "One take from a video LINK: a YouTube, Vimeo or X video post, or a direct https link to an MP4. Use this whenever the person gives you a video link (don't ask them to upload it). HuhQueue's video worker fetches it (the same path Make a post uses: yt-dlp, mp4 up to 1080p, no cookies or accounts; up to 4 GB and 3 h), transcribes it and cuts clips. Rights first: the first call answers needs_user_approval with an approval_id and the rights statement; the person approves it in HuhQueue → Inbox → Approvals (only they can, you can't confirm it for them). Then call again with the same url and approval_id: it returns the take (poll list_clips(take_id)). If the platform refuses (age-restricted, private, a bot check) the take fails with the exact reason; only then does the person need to download and upload the file. licence_hint shows a Creative Commons flag when the platform states one.",
+    {"name": "ingest_video_link", "description": "One take from a video LINK: a YouTube, Vimeo or X video post, or a direct https link to an MP4. Use this whenever the person gives you a video link (don't ask them to upload it). HuhQueue's video worker fetches it (the same path Make a post uses: yt-dlp, mp4 up to 1080p, no cookies or accounts; up to 4 GB and 3 h), transcribes it and cuts clips. Rights first: the first call answers needs_user_approval with an approval_id and the rights statement; the person approves it in HuhQueue → Inbox → Approvals (or, only once the person tells you they own it or have permission to use it and are responsible for rights, call approve_link_ingest with i_own_or_have_rights: true; never confirm it without their word. If they turned on Auto-approve video links for this app, the first call starts the take at once). Then call again with the same url and approval_id: it returns the take (poll list_clips(take_id)). If the platform refuses (age-restricted, private, a bot check) the take fails with the exact reason; only then does the person need to download and upload the file. licence_hint shows a Creative Commons flag when the platform states one.",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"},
          "approval_id": {"type": "integer"}, "channel_ids": {"type": "array", "items": {"type": "string"}},
          "count": {"type": "integer", "minimum": 1, "maximum": 7}, "name": {"type": "string"}, "prompt": {"type": "string"},
@@ -128,7 +136,7 @@ TOOLS: list[dict[str, Any]] = [
 
 # Tools that only read. Every other tool changes something, so the kill switch stops it (SECURITY_RULES 4); the ones
 # that act also count against the token's daily cap where they run.
-READ_ONLY = {"get_activity", "whoami", "list_channels", "preflight_post", "preview_post", "list_rules", "get_inbox", "list_approvals", "list_queue",
+READ_ONLY = {"get_activity", "whoami", "list_channels", "preflight_post", "preview_post", "list_rules", "get_inbox", "list_approvals", "list_pending_approvals", "list_queue",
              "list_stories", "get_run", "brand_check", "get_brand", "list_calendar", "list_clips", "get_limits"}
 
 # Brand studio (templates, example brands, recurring slots) and the Sources agent register their tools here
@@ -283,6 +291,13 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "list_approvals":
         rows = studio.approvals(actor, args.get("status") or "pending")
         return [r for r in rows if actor.agent is None or r["agent_id"] == actor.agent["id"]]
+    if name == "list_pending_approvals":
+        from . import consent
+        return {"pending": consent.pending_links(studio.store, actor)}
+    if name in ("approve_link_ingest", "reject_link_ingest"):
+        from . import consent
+        return consent.app_decide_link(studio.store, actor, args.get("approval_id"), name == "approve_link_ingest",
+                                       args.get("i_own_or_have_rights"))
     if name == "list_queue":
         return studio.queue(actor, args.get("status") or "scheduled")
     if name == "update_post":
@@ -421,8 +436,9 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
                    "instructions": _cb.INSTRUCTIONS + " Also: a video LINK the person gives you (YouTube, Vimeo, X, an MP4): "
                    "call ingest_video_link, ask them to approve the rights in HuhQueue → Inbox → Approvals, wait (list_approvals), "
-                   "then call it again with approval_id; never ask them to upload a video they linked, and never confirm the "
-                   "rights yourself. One take -> a week: clips_from_video -> poll list_clips(take_id) -> "
+                   "then call it again with approval_id; or, only when they tell you they own it or have permission and are "
+                   "responsible for rights, approve_link_ingest with i_own_or_have_rights: true. Never ask them to upload a "
+                   "video they linked, and never confirm the rights yourself without their word. One take -> a week: clips_from_video -> poll list_clips(take_id) -> "
                    "adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Brand "
                    "feedback the person gives ('logo smaller', 'no hype'): remember_rule saves it to the Style Ledger. Leftover "
                    "drafts from earlier sessions: cleanup_agent_drafts lists them first and changes nothing until the person "
