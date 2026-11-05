@@ -181,6 +181,15 @@ USED_IN = ("used", "unused", "draft", "scheduled", "sent")
 DATES = {"1d": 1, "7d": 7, "30d": 30, "90d": 90, "365d": 365}
 GENERIC_NAME = re.compile(r"^(Reel\.mp4|Image\.jpg|Carousel \(\d+ slides\))$")
 
+def _screen_text(run: dict | None, token: str) -> str:
+    """The on-screen text OCR read on a One take clip (its render meta), for search. Empty when none."""
+    for c in ((run or {}).get("_res") or {}).get("clips") or []:
+        if isinstance(c, dict) and c.get("token") == token:
+            o = (c.get("meta") or {}).get("ocr") if isinstance(c.get("meta"), dict) else None
+            return str((o or {}).get("text") or "")[:500] if isinstance(o, dict) else ""
+    return ""
+
+
 
 def _filters(type: str = "", created_by: str = "", used_in: str = "", run="", date: str = "") -> dict:
     """Checks the Library filters and returns them normalised; ``all`` / empty means no filter. A bad value is a 400."""
@@ -776,10 +785,13 @@ class Library:
                 d["meta"] = json.loads(d["meta"] or "{}")
                 it = self._public(d, runs)
                 it["one_take"] = d["source"] == "take" or d.get("run_id") in takes["runs"]
+                own = by_run.get(d.get("run_id"))
                 if d["token"] in takes["clips"]:  # Move to bin goes to the take's Bin (DELETE /api/takes/{take_id}/clips/{clip_id})
                     rid, cid = takes["clips"][d["token"]]
                     it["take_clip"] = {"take_id": rid, "clip_id": cid}
-                own = by_run.get(d.get("run_id"))
+                    st = _screen_text(by_run.get(rid) or own, d["token"])
+                    if st:  # on-screen text (Tesseract OCR on the worker): searchable, and part of the alt text
+                        it["screen_text"] = st
                 if it["kind"] == "video" and own:  # a still for a video card: the run's own picture, else the story's
                     it["thumb"] = own["_thumb"] or ""
                     it["thumb_src"] = own["_thumb_src"]
@@ -797,7 +809,7 @@ class Library:
         if q:
             ql = q.lower().strip()
             items = [i for i in items if ql in i["name"].lower() or ql in (i.get("title") or "").lower() or ql in i["kind"]
-                     or any(ql in u["title"].lower() for u in i.get("used_in") or [])]
+                     or any(ql in u["title"].lower() for u in i.get("used_in") or []) or ql in (i.get("screen_text") or "").lower()]
         types = {t: sum(1 for i in items if i["kind"] == t) for t in TYPES}
         seen: dict = {}
         for i in items:  # the Generation filter offers the runs behind what's listed (newest first, at most 50)

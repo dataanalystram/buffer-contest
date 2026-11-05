@@ -845,6 +845,11 @@ class Takes(TakeBin):
                     continue
                 pf = self.studio._preflight(c, self.caption(a, clip, c["service"], kit, rules), [clip["url"]], "draft",
                                             self._clip_options(c["service"], clip))
+                wm = watermark_finding(clip.get("meta") or {})
+                if wm:  # advisory: a warning on the clip before it's placed, never a block
+                    pf["findings"] = list(pf.get("findings") or []) + [wm]
+                    if pf["status"] == "ok":
+                        pf["status"] = "warning"
                 clip["preflight"][c["id"]] = {k: pf[k] for k in ("status", "chip", "findings", "service", "network")}
                 worst[pf["status"]] += 1
             clip["status"] = "ready"
@@ -879,6 +884,10 @@ class Takes(TakeBin):
             tr = m.get("trim") if isinstance(m.get("trim"), dict) else {}
             d["trimmed_s"] = tr.get("trimmed_s") or 0.0  # pauses + filler cut from this clip (studio/media/cleancut)
             d["trim"] = {k: tr.get(k) for k in ("trimmed_s", "pauses", "fillers", "skipped")} if tr else None
+            o = m.get("ocr") if isinstance(m.get("ocr"), dict) else {}
+            d["screen_text"] = str(o.get("text") or "")[:500]
+            d["watermarks"] = [str(x)[:40] for x in (o.get("watermarks") or [])[:10]]
+            d["alt_text"] = _alt_text(c.get("hook") or "", d["screen_text"])
             d["words"] = clip_words(words, c, c["start"] - 4, c["end"] + 4)
             d["transcript"] = " ".join(w["w"] for w in clip_words(words, c, c["start"], c["end"]))
             d["transcript_edited"] = bool(c.get("words_fix"))
@@ -1232,6 +1241,25 @@ class Takes(TakeBin):
                 else f"{okn} placement{'' if okn == 1 else 's'} submitted under this token's policy."}
 
 
+def _alt_text(hook: str, text: str) -> str:
+    from .media.ocr import alt_text
+    return alt_text(hook, text)
+
+
+WATERMARK_MSG = ("The source video shows {what}. Re-posted videos with another platform's watermark or someone's handle "
+                 "can get less reach, and need the owner's permission. Check the clip before it's published.")
+
+
+def watermark_finding(meta: dict) -> dict | None:
+    """A preflight warning (never an error) when OCR saw a platform watermark or an @handle in the source frames."""
+    o = (meta or {}).get("ocr") if isinstance((meta or {}).get("ocr"), dict) else {}
+    hits = [str(x)[:40] for x in (o.get("watermarks") or [])[:5]]
+    if not hits:
+        return None
+    return {"level": "warning", "rule": "media.watermark", "message": WATERMARK_MSG.format(what=", ".join(hits)),
+            "source": "on-screen text (Tesseract OCR)"}
+
+
 def encode(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
@@ -1267,12 +1295,32 @@ def reuse_captions(path: str, spec: dict) -> dict | None:
     return tr if tr.get("words") else None
 
 
+def ocr_clip(src: str, spec: dict, c: dict) -> dict:
+    """On-screen text in the clip's span (Tesseract, studio/media/ocr), within the take's budget (one Budget per render
+    job: <= 60 frames, <= 30 s). Never raises: OCR is advisory."""
+    from .media import ocr
+    try:
+        budget = spec.setdefault("_ocr_budget", ocr.Budget())
+        st = spec.setdefault("_ocr_status", ocr.status())
+        got = ocr.scan(src, float(c["start"]), float(c["end"]), budget, st)
+        got["watermarks"] = ocr.watermarks(got.get("text") or "", str((spec.get("kit") or {}).get("handle") or ""))
+        return got
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "frames": [], "text": "", "watermarks": [], "skipped": f"ocr failed: {e.__class__.__name__}"}
+
+
 def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
     """Yields (clip_id, mp4, cover_jpg, meta) for one clip of a take_render job: the classic One take render, or for
     Opus-style takes one render per ratio (the first under the clip's id, the others as '<id>@<ratio>')."""
     if spec.get("style") != "opus":
+        c = {k: v for k, v in c.items() if not k.startswith("_")}  # worker-only keys are set here, never by the spec
+        seen = ocr_clip(src, spec, c)
+        if seen.get("frames"):
+            c["_ocr_frames"] = seen["frames"]
         data, cover, meta = take.render_clip(src, c, c["words"], c["faces"], spec.get("scenes") or [], spec["src"],
                                              spec["kit"], spec["params"], logo=logo)
+        meta["ocr"] = {k: seen.get(k) for k in ("ok", "version", "text", "watermarks", "ms", "skipped")}
+        meta["ocr"]["frames"] = len(seen.get("frames") or [])
         yield c["id"], data, cover, meta
         return
     from .media import longform

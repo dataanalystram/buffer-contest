@@ -120,6 +120,9 @@ def band_y(seg: dict, H: int = REF_H) -> int:
     lay = seg.get("layout", "track")
     key = f"screen_{seg.get('style') or 'pip'}" if lay == "screen" else lay
     y = BAND_Y.get(key, BAND_Y["track"])
+    cy = seg.get("caption_y")  # moved off on-screen text (studio/media/ocr.free_caption_y), 1920-tall coordinates
+    if isinstance(cy, int) and not isinstance(cy, bool):
+        y = cy
     y = min(REF_H - SAFE_BOTTOM - 70, max(SAFE_TOP + 70, y))
     return int(round(y * H / REF_H))
 

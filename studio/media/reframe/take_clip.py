@@ -16,6 +16,24 @@ from . import path as path_mod, render as rr
 from .decide import OUT_H, OUT_W
 
 
+def place_captions(sidecar: list[dict], frames, sw: int, sh: int) -> int:
+    """Move each segment's caption line off on-screen text the OCR found (studio/media/ocr). Fail open: any problem keeps
+    the default band. Returns how many segments moved."""
+    if not frames or not isinstance(frames, list):
+        return 0
+    from .. import captions_ass, ocr
+    n = 0
+    for seg in sidecar:
+        try:
+            y = ocr.free_caption_y(frames, seg, captions_ass.band_y(seg, captions_ass.REF_H), sw, sh)
+        except Exception:  # noqa: BLE001 - placement never fails a render
+            y = None
+        if y is not None:
+            seg["caption_y"] = y
+            n += 1
+    return n
+
+
 def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes: list[float], src: dict, kit: dict,
                      p: dict, logo: bytes | None = None) -> tuple[bytes, bytes, dict]:
     from PIL import Image
@@ -31,6 +49,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         pins = rr.pins_from(m.get("layout_overrides"))
         plan = rr.plan_clip(path, start, end, words, scenes, src, faces, pins, m.get("layout_prefs") or {},
                             smart_layout=bool(m.get("smart_layout")))
+        moved = place_captions(plan["sidecar"], m.get("_ocr_frames"), sw, int(src.get("height") or 1080))
         # cover: the sharpest early frame, framed like the shot it falls in
         ct = take.pick_cover_time(path, m, faces, tmp)
         shot = next((s for s in plan["shots"] if s["start"] <= ct - start < s["end"]), plan["shots"][0])
@@ -73,6 +92,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
                 "layout_detector": plan["detector"], "layout_vision": plan.get("vision"), "caption_preset": preset,
                 "face_coverage": plan["face_coverage"], "moment": {k: m.get(k) for k in ("start", "end")},
                 "caption_band": [min(ys) - 60, max(ys) + 60] if ys else None, "probe": pf, "timings": plan["timings"],
+                "captions_moved_for_text": moved,
                 "audio": {"loudnorm": take.LOUDNESS, "fade_in": take.FADE_IN, "fade_out": take.FADE_OUT} if audio else None,
                 "punch_in": plan.get("punch") or {"on": False, "shots": 0},
                 "face_fallback": "no face found, full frame used" if any(s.get("rule") == "R8-noface" for s in plan["shots"]) else None}
