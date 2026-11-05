@@ -29,14 +29,31 @@ def compressible(content_type: str) -> bool:
     return ct.startswith(TEXT_TYPES) and ct != "text/event-stream"
 
 
+def _q(params: str) -> float:
+    for p in params.split(";"):
+        k, _, v = p.strip().partition("=")
+        if k.strip().lower() == "q":
+            try:
+                return max(0.0, min(1.0, float(v.strip())))
+            except ValueError:
+                return 0.0
+    return 1.0
+
+
 def accepts_gzip(scope) -> bool:
+    """RFC 9110 12.5.3: an explicit ``gzip`` entry decides (q=0 refuses it, even with ``*`` allowed); else ``*`` decides."""
     ae = Headers(scope=scope).get("accept-encoding", "")
+    gz = star = None
     for part in ae.split(","):
         name, _, params = part.strip().partition(";")
-        if name.strip().lower() in ("gzip", "*"):
-            q = params.strip().lower()
-            return not (q.startswith("q=") and q[2:].strip() in ("0", "0.0", "0.00", "0.000"))
-    return False
+        name = name.strip().lower()
+        if name == "gzip":
+            gz = _q(params)
+        elif name == "*":
+            star = _q(params)
+    if gz is not None:
+        return gz > 0
+    return bool(star and star > 0)
 
 
 class GzipText:

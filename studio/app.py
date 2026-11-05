@@ -940,7 +940,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         import hashlib
         body = {k: v for k, v in data.items() if k not in ignore} if isinstance(data, dict) else data
         tag = '"' + hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:20] + '"'
-        if request.headers.get("if-none-match") == tag:
+        from .library import not_modified
+        if not_modified(request, tag):  # W/"…" too: a gzipped answer's tag is weakened (studio/gzipmw.py)
             return Response(status_code=304, headers={"ETag": tag})
         return JSONResponse(data, headers={"ETag": tag, "Cache-Control": "private, no-cache"})
 

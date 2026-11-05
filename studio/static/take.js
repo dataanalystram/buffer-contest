@@ -172,19 +172,22 @@ $("#tkSample").onclick = async () => {
 
 function watchTake(id) {
   clearTimeout(T.poll); T.watching = id;
-  let unwake = () => {};
+  if (T.unwake) T.unwake();  // a replaced watcher's wake listener goes with its timer (CodeRabbit, #118)
+  T.unwake = null;
+  const gen = T.gen = (T.gen || 0) + 1, mine = () => T.watching === id && T.gen === gen;  // even for the same take id
   // a hidden tab asks at most every 30 s and catches up the moment it is shown again (loading.js pollMs / wake)
   const later = (ms) => {
-    unwake(); const d = window.HQLoad && HQLoad.pollMs ? HQLoad.pollMs(ms) : ms;
+    if (T.unwake) T.unwake();
+    const d = window.HQLoad && HQLoad.pollMs ? HQLoad.pollMs(ms) : ms;
     T.poll = setTimeout(tick, d);
-    unwake = d > ms ? HQLoad.wake(() => { if (T.watching !== id) return; clearTimeout(T.poll); tick(); }) : () => {};
+    T.unwake = d > ms ? HQLoad.wake(() => { if (!mine()) return; clearTimeout(T.poll); tick(); }) : null;
   };
   const tick = async () => {
-    unwake(); unwake = () => {};
-    if (T.watching !== id) return;  // another take is watched now
+    if (!mine()) return;  // another take is watched now, or this one afresh
+    if (T.unwake) { T.unwake(); T.unwake = null; }
     try {
       const t = await api(`/api/takes/${id}`);
-      if (T.watching !== id) return;
+      if (!mine()) return;
       showTake(t);
       if (["running", "rendering"].includes(t.status)) later(2000);
       else loadTakes();
@@ -309,7 +312,7 @@ async function deleteTake(id) {
   try {
     const r = await api(`/api/takes/${encodeURIComponent(id)}`, { method: "DELETE" });
     tkUndoToast(`Take moved to the Bin for ${(r && r.in_bin_days) || 7} days.`, { take_id: id });
-    if (T.take && String(T.take.id) === String(id)) { clearTimeout(T.poll); T.watching = null; T.take = null; T.plan = null; $("#takeView").hidden = true; }
+    if (T.take && String(T.take.id) === String(id)) { clearTimeout(T.poll); T.watching = null; if (T.unwake) { T.unwake(); T.unwake = null; } T.take = null; T.plan = null; $("#takeView").hidden = true; }
     tkRefresh();
   } catch (e) { toast(e.message, 6000); }
 }

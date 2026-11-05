@@ -168,6 +168,8 @@ def test_gzip_middleware_rules():
     assert not compressible("video/mp4") and not compressible("image/png") and not compressible("text/event-stream")
     sc = lambda v: {"type": "http", "headers": [(b"accept-encoding", v.encode())]}  # noqa: E731
     assert accepts_gzip(sc("br, gzip")) and accepts_gzip(sc("*")) and not accepts_gzip(sc("gzip;q=0")) and not accepts_gzip(sc("br"))
+    assert not accepts_gzip(sc("*;q=1, gzip;q=0.000")) and accepts_gzip(sc("gzip;q=0.5, *;q=0")) and not accepts_gzip(sc("*;q=0"))
+    assert accepts_gzip(sc("deflate, gzip;q=1.0")) and not accepts_gzip(sc("gzip;q=bad"))
     assert gzip.decompress(gzip.compress(b"x", mtime=0)) == b"x"
 
 
@@ -180,3 +182,15 @@ def test_hidden_tabs_poll_slowly_and_catch_up_when_shown():
         assert f"{key}.poll = setTimeout(tick, d);" in js and "HQLoad.pollMs(ms)" in js and "HQLoad.wake(" in js
         assert "later(1400)" in js or "later(2000)" in js
         assert not re.search(rf"{key}\.poll = setTimeout\(tick, (1400|2000)\)", js)
+        # a replaced watcher (even for the same id) drops its wake listener and its loop (CodeRabbit, #118)
+        assert f"if ({key}.unwake) {key}.unwake();" in js and f"const gen = {key}.gen = ({key}.gen || 0) + 1" in js
+        assert f"{key}.watching === id && {key}.gen === gen" in js
+
+
+def test_inbox_etag_matches_a_weakened_tag_from_a_gzipped_answer(human):
+    r = human.get("/api/inbox")
+    tag = r.headers.get("etag")
+    assert r.status_code == 200 and tag
+    strong = tag.removeprefix("W/")
+    assert human.get("/api/inbox", headers={"If-None-Match": "W/" + strong}).status_code == 304
+    assert human.get("/api/inbox", headers={"If-None-Match": strong}).status_code == 304
