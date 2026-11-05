@@ -10,7 +10,8 @@
 * Audio only (16 kHz mono FLAC, chunks of at most 10 minutes, well under the 25 MB free-tier file cap); no video
   frames leave the machine.
 * Usage is counted in a small JSON file (``HQ_ASR_USAGE_FILE``, default in the temp dir) so several jobs on one
-  machine share one budget; a fresh machine starts at zero, which is why the margin exists.
+  machine share one budget, AND on the video worker every request is first reserved on the app's shared ledger
+  (studio/free_quota.py), because each GitHub Actions run is a fresh machine whose own counter starts at zero.
 * The local fallback is faster-whisper ``base.en`` (CPU int8; ``HQ_ASR_LOCAL_MODEL`` picks another, e.g. ``small`` for
   other languages).
 
@@ -137,6 +138,10 @@ def audio_chunks(path: str, tmp: Path, chunk_s: float = CHUNK_S) -> list[tuple[f
 def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> tuple[list[dict], str]:
     """One chunk through Groq (words in chunk seconds, language). Raises GroqUnavailable instead of ever retrying."""
     ok, why = budget.allow(secs)
+    if not ok:
+        raise GroqUnavailable(why)
+    from .. import free_quota  # the app's shared ledger: a fresh worker machine's own counter starts at zero
+    ok, why = free_quota.remote_ok("groq", secs)
     if not ok:
         raise GroqUnavailable(why)
     import httpx

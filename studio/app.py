@@ -1032,6 +1032,21 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "forbidden"}, status_code=403)
         return {"ok": house.job_heartbeat(jid)}
 
+    @app.post("/api/worker/jobs/{jid}/quota", include_in_schema=False)
+    async def worker_quota(jid: int, request: Request):
+        """Reserve one free-tier request (Groq Whisper, the vision layout picker) on the shared ledger, so the free
+        limits hold across worker runs (studio/free_quota.py). The job's token, until the result burns it. Vision is
+        refused unless the take's owner turned on Smart layout for the clips of this job."""
+        if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "beat"):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        body = await reqlimits.read_json(request, 4096)
+        from . import free_quota
+        try:
+            provider, units = free_quota.clean(body.get("provider"), body.get("units"))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return await run_in_threadpool(house.free_quota_reserve, jid, provider, units)
+
     @app.post("/api/worker/jobs/{jid}/clips/{clip_id}", include_in_schema=False)
     async def worker_clip(jid: int, clip_id: str, request: Request):
         """One take: the worker posts each finished clip (mp4 + cover) as soon as it is rendered, once per clip."""

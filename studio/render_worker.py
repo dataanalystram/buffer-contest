@@ -283,6 +283,8 @@ def _main(args, base: str) -> int:
     c = httpx.Client(timeout=300, follow_redirects=False)
     h = {"x-job-token": os.environ.get("JOB_TOKEN") or claim(c, base, args.job)}  # no token: nothing can be reported;
     # the app's watchdog fails the job when no heartbeat arrives
+    from . import free_quota  # every free Groq / vision request is reserved on the app's ledger first
+    free_quota.REMOTE = free_quota.worker_remote(c, base, h, args.job)
     with Heartbeat(base, h, args.job):
         lock = _lock()
         try:
@@ -293,6 +295,7 @@ def _main(args, base: str) -> int:
             report_failure(c, base, h, args.job, e)
             return 1
         finally:
+            free_quota.REMOTE = None
             if lock:
                 lock.close()
 

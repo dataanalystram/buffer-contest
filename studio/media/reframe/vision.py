@@ -15,7 +15,8 @@ Free providers, in order, then the rules alone:
      prototyping and may log prompts.
   2. OpenRouter (``OPENROUTER_API_KEY``), only models whose id ends in ``:free`` (anything else is refused before a
      request); free models may log prompts and are rate limited (about 50 requests a day on a free key).
-Limits enforced here, before each request: a per-provider day counter and a 20-requests-a-minute guard. Every request
+Limits enforced here, before each request: a per-provider day counter and a 20-requests-a-minute guard, on this
+machine and on the app's shared ledger (studio/free_quota.py: a worker run is a fresh machine). Every request
 times out after 20 s; any error, refusal or unreadable answer falls back to the next provider and then to the rules,
 logged at INFO, never raised.
 """
@@ -181,6 +182,9 @@ def pick(frames: list[bytes], limits: Limits | None = None, http=None, env=None)
             log.info("layout vision: %s", e)
             continue
         ok, why = limits.allow(prov)
+        if ok:
+            from ... import free_quota  # the app's shared day/minute ledger (each worker run is a fresh machine)
+            ok, why = free_quota.remote_ok(prov["name"], 1)
         if not ok:
             log.info("layout vision: %s; next", why)
             continue
