@@ -110,7 +110,8 @@ and `Library.blob` read through the same cache, so internal callers no longer re
 
 **HTTP.** `/m/<token>`: `Cache-Control: private, max-age=31536000, immutable` (a token's bytes never change) with a
 strong ETag; `If-None-Match` → 304; `Range` → 206 with `Content-Range` (max 8 MB per answer); `If-Range` applies the
-range only for the current ETag (otherwise the whole file, 200). Library files by id: `private, max-age=604800` + ETag.
+range only for the current ETag (otherwise the whole file, 200). Library files by id: `private, no-cache` + ETag (an id
+can point at new files after a re-render, so the browser revalidates; the 304 costs no bytes).
 
 **Meter and budget** (`studio/egress.py`). Per UTC day: media bytes read from the backend (`db`) and media bytes sent
 (`served`). Budgets `HQ_EGRESS_DB_DAILY_MB` (130) and `HQ_EGRESS_SERVE_DAILY_MB` (150) keep a month under ~4 GB and

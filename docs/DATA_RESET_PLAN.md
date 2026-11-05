@@ -11,12 +11,16 @@ after which requests answer 402. Media bytes live in BYTEA columns (`media.data`
 7.3 MB; `library_chunks.data`: 5 MB; `upload_parts.data`: empty). The Egress guard (docs/STORAGE.md) stops the
 re-reading that produced the egress; this plan is about shrinking what is stored once the demo data is no longer needed.
 
-## Rules (all four, every time)
+## Rules (all five, every time)
 
 1. **A backup first**, taken the same day (below).
 2. **A proven restore** of that backup into a throwaway Postgres, with row counts compared to production.
 3. **Ram's explicit approval** of the exact statements, in writing, after reading 1 and 2.
 4. **No secrets in the repo or in logs**: the connection string is read from the environment, never echoed.
+5. **R2 objects are covered too**: a row with a `storage_key` keeps its bytes in R2, which the dump does not contain,
+   and a purge queues those objects for deletion (`blob_gc` → `blobstore.sweep`). Before any purge, either confirm that
+   no `media` / `library_chunks` row has a `storage_key` (`SELECT count(*) ... WHERE storage_key IS NOT NULL` = 0), or
+   copy every referenced object to a backup bucket/folder and verify each sha256 against the row.
 
 ## 1. Backup
 
@@ -49,12 +53,17 @@ right before the reset.
 
 ```sh
 createdb restore_check
-pg_restore -d restore_check --no-owner --no-privileges hq-full-YYYY-MM-DD.dump
-psql -d restore_check -c "select count(*) from media" -c "select sum(length(data)) from media" \
-     -c "select count(*) from users" -c "select count(*) from agent_runs"
+pg_restore --exit-on-error -d restore_check --no-owner --no-privileges hq-full-YYYY-MM-DD.dump || { echo "restore failed: stop"; exit 1; }
+for t in users agent_runs media library_items library_media library_chunks render_jobs approvals; do
+  psql -d restore_check -tAc "select '$t', count(*) from $t"
+done
+psql -d restore_check -tAc "select 'media_bytes', coalesce(sum(length(data)),0) from media"
+psql -d restore_check -tAc "select 'chunk_bytes', coalesce(sum(length(data)),0) from library_chunks"
 ```
 
-Compare with the same queries against production (read-only). Proceed only when they match.
+Run the same counts and byte sums against production (read-only, `SET default_transaction_read_only = on`). **Every**
+line must match, and `pg_restore` must exit 0 (with `--exit-on-error`; restore into a fresh database so "schema public
+already exists" can't occur, or drop it first). Any mismatch or restore error stops the reset.
 
 ## 3. What to empty vs keep (proposal)
 
@@ -73,6 +82,11 @@ Candidates to empty (content and test artefacts), each listed with its row count
 | `approvals`, `confirms`, `mcp_calls`, `mcp_idem` | finished approvals, smoke-token MCP artefacts | keep pending approvals |
 | `audit` (older than 30 days), `upload_sessions`, `upload_parts`, `send_codes`, `blob_gc` | logs and leftovers | |
 
+**Order matters (scheduled posts).** `Library.purge` protects media a scheduled Buffer post still uses by looking at
+the runs that made it, so: (1) list scheduled posts in Buffer that use `/m/` links and keep their media and runs until
+each one publishes or is unscheduled; (2) purge Library items and media through the app (`Library.purge`, which checks
+scheduled uses) while `agent_runs` still exists; (3) only then delete the run records whose scheduled uses are resolved.
+
 Smoke-test artefacts (the "Smoke test agent" token's runs, e.g. scan run 35 from 4 Nov) can be removed alone, by
 `agent_id`, without touching anyone else's rows. Every delete runs inside one transaction per table group and goes
 through the app's own purge paths where they exist (`Library.purge`, `record_owner_deletes`), so `/healthz` keeps
@@ -86,7 +100,7 @@ equal to the table's live size. Run it in a quiet hour, after the deletes are co
 
 ## 5. Option: move media to R2 instead of deleting
 
-`python -m studio.migrate_media` (docs/STORAGE.md) copies each blob to an R2 bucket and keeps only the key in the row.
+`python -m studio.migrate_media --to r2` (docs/STORAGE.md) copies each blob to an R2 bucket and keeps only the key in the row.
 It needs Ram's card on file for Cloudflare (R2's free tier: 10 GB, no egress fees) and the `R2_*` settings on Render.
 The migration reads every blob once (~0.27 GB of egress) and then the database shrinks after `VACUUM FULL`. The Egress
 guard's disk cache sits above either backend, so nothing else changes.

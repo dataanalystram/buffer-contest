@@ -396,3 +396,18 @@ def test_a_disk_error_or_an_evicted_copy_falls_back_to_the_backend(tmp_path, mon
     for p in c.dir.iterdir():
         p.unlink()  # evicted behind its back
     assert f["read"](5, 9) == b"56789" and b"".join(f["iter"]()) == data
+
+
+def test_erasing_an_account_removes_its_cached_copies(app, client):
+    store = app.state.house.store
+    _put(store, TOK, _blob(5000))
+    assert client.get(f"/m/{TOK}").status_code == 200 and mediacache.of(store).stats()["files"] == 1
+    store.delete_user("acc_1")
+    assert mediacache.of(store).stats()["files"] == 0 and client.get(f"/m/{TOK}").status_code == 404
+
+
+def test_library_file_by_id_revalidates_every_time(app, human):
+    up = human.post("/api/library/upload?name=a.mp4", content=b"\x00\x00\x00\x18ftypmp42" + _blob(3000)[12:]).json()
+    r = human.get(f"/api/library/{up['id']}/file")
+    assert r.headers["cache-control"] == "private, no-cache"
+    assert human.get(f"/api/library/{up['id']}/file", headers={"If-None-Match": r.headers["etag"]}).status_code == 304

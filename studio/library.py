@@ -1402,9 +1402,10 @@ def range_unsatisfiable(header: str, size: int) -> bool:
 
 NO_STORE = "no-store, max-age=0"
 # A /m/ token names one file's bytes for good (a new version is a new token), so a browser keeps it a year and never asks
-# again; "private": no shared cache keeps someone's media. A Library file by id gets a week (+ ETag revalidation).
+# again; "private": no shared cache keeps someone's media. A Library file by id can change (a re-render replaces its
+# files), so the browser revalidates every time: If-None-Match answers 304 before any byte is read (CodeRabbit, PR #119).
 MEDIA_CACHE = "private, max-age=31536000, immutable"
-LIB_FILE_CACHE = "private, max-age=604800"
+LIB_FILE_CACHE = "private, no-cache"  # an item id can point at new files after a re-render: revalidate (304, no bytes)
 SESSION_COOKIE = "hq_sid"  # studio/app.py COOKIE
 
 
