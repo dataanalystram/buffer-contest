@@ -273,7 +273,7 @@ def test_groq_chain_uses_groq_then_falls_back_locally_on_429(chunks):
                          local=lambda f, m: (local_calls.append(m), ([{"w": "loc", "s": 0.0, "e": 0.4, "p": 0.9}], "en"))[1])
     words, lang, label = got
     assert lang == "en" and [w["w"] for w in words] == ["w0", "w1", "loc", "loc"]
-    assert words[2]["s"] == 1200.0                                                    # local chunk 3 keeps its offset
+    assert words[2]["s"] == 600.0 and words[3]["s"] == 1200.0                         # local chunks keep their offsets
     assert len(http.calls) == 2                                                       # the 429 is never retried
     assert http.calls[0][1]["data"]["model"] == "whisper-large-v3-turbo"
     assert "faster-whisper" in label and local_calls == ["base.en", "base.en"]

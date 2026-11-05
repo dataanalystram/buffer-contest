@@ -11,7 +11,6 @@ UI = REST = MCP:
 Scope before existence: someone else's take or clip and a missing one are the same 404. Bad types are 400.
 No FastAPI at import time: the video worker imports takes.py, which imports this module.
 """
-from __future__ import annotations
 
 import json
 import time
