@@ -755,10 +755,12 @@ class Takes:
                 raise ActionError(str(e), 400)
             if pc and run["input"].get("style") == "opus":
                 raise ActionError("The product card overlay works on One take clips in the classic style.", 409)
-            if pc and pc.get("code"):
-                from . import commerce
-                commerce.ensure(self.store)
-                if not self.store.q("SELECT 1 AS ok FROM commerce_links WHERE code=? AND user_id=?", (pc["code"], a.uid)):
+            if pc and pc.get("code"):  # the person's own shop link only (studio/commerce.py's table; no import on the worker)
+                try:
+                    mine = self.store.q("SELECT 1 AS ok FROM commerce_links WHERE code=? AND user_id=?", (pc["code"], a.uid))
+                except Exception:  # noqa: BLE001 - no Commerce table yet: no links at all
+                    mine = []
+                if not mine:
                     raise ActionError("No such product link.", 404)
             if pc != clip.get("product_card"):
                 if pc:

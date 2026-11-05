@@ -188,6 +188,7 @@ from . import commerce as _commerce  # noqa: E402  search_products, get_product,
 
 TOOLS += _commerce.TOOLS
 READ_ONLY |= _commerce.READ_ONLY
+from . import commerce_routes as _commerce_routes  # noqa: E402,F401  registers the Channel3 tools with the consent gate
 from . import consent as _consent  # noqa: E402  approval gate for paid / external APIs (4 Nov 2026)
 
 
