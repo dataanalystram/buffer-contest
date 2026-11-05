@@ -1,0 +1,30 @@
+/* View transitions (viewswap.js, 5 Nov 2026): the screen being opened stays hidden while the HuhQueue mark loader shows in
+   its place. Our own loader after the idea of 21st.dev's Logo Trace Loader (dqnamo, MIT; no code copied, see NOTICE): a
+   short lavender dash loops around the mark's rounded-square outline and the mark breathes. Flat colours, no gradients;
+   static under prefers-reduced-motion. */
+.tab.hq-vt-wait{position:relative;visibility:hidden;min-height:min(60vh,520px)}
+.hq-vt{visibility:visible;position:absolute;left:0;right:0;top:0;z-index:6;display:flex;flex-direction:column;align-items:center;
+  gap:20px;padding:min(16vh,128px) 16px 24px;min-height:min(60vh,520px);background:var(--paper)}
+.hq-vt-in{display:flex;flex-direction:column;align-items:center}
+.hq-vt-mark{position:relative;width:64px;height:64px;display:grid;place-items:center}
+.hq-vt-ring{position:absolute;inset:0;width:64px;height:64px;overflow:visible}
+.hq-vt-ring rect{fill:none;stroke-width:2.5;stroke-linecap:round}
+.hq-vt-track{stroke:color-mix(in oklab,var(--ink) 12%,transparent)}
+.hq-vt-trace{stroke:var(--hc-lav,#C9ACFA);stroke-dasharray:22 78;stroke-dashoffset:0}
+.hq-vt-logo{width:40px;height:40px;border-radius:11px;display:block}
+@media (prefers-reduced-motion:no-preference){
+  .hq-vt-trace{animation:hq-vt-trace 1.2s linear infinite}
+  .hq-vt-logo{animation:hq-vt-breathe 1.6s ease-in-out infinite}
+  .hq-vt{animation:hq-vt-in 120ms ease-out}
+}
+/* reduced motion: the whole outline drawn, still; the mark at rest */
+@media (prefers-reduced-motion:reduce){.hq-vt-trace{stroke-dasharray:none;opacity:.9}}
+@keyframes hq-vt-trace{to{stroke-dashoffset:-100}}
+@keyframes hq-vt-breathe{50%{transform:scale(.92);opacity:.78}}
+@keyframes hq-vt-in{from{opacity:0}}
+.hq-vt-sk{width:min(720px,100%)}
+.hq-vt-err{display:grid;justify-items:center;gap:8px;max-width:440px;text-align:center;padding:20px;border:1px solid var(--line);
+  border-radius:12px;background:var(--raised);color:var(--ink)}
+.hq-vt-err span{color:var(--muted);overflow-wrap:anywhere}
+.hq-vt-acts{display:flex;gap:12px;align-items:center;margin-top:4px}
+@media (forced-colors:active){.hq-vt-trace{forced-color-adjust:none;stroke:CanvasText}}
