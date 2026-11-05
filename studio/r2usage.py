@@ -39,7 +39,6 @@ WARN_AT = 0.70
 HARD_B_MAX = 9_900_000           # the owner's grace never reaches the free tier's 10,000,000 Class B
 _GRACE = contextvars.ContextVar("r2_owner_grace", default=False)
 _WARNED: set = set()             # (month, what) already warned about
-LINK_PUT_S = 6 * 3600 + 600     # a worker's link PUT URL lives 6 h (take_upload.GET_TTL): its row counts that long
 REDIRECT_FRAC = 0.5              # browser redirects stop at this share of the Class B cap
 RESERVE_S = 2 * 60.0             # a reservation outlives two stored-bytes reads, so its row is counted by then
 _RESERVED: list = []             # [at, nbytes] written or about to be written in this process (one uvicorn process)
@@ -47,6 +46,7 @@ _RESERVED: list = []             # [at, nbytes] written or about to be written i
 _LOCK = threading.Lock()
 _RES_LOCK = threading.Lock()
 _PENDING: dict[str, int] = {"A": 0, "B": 0}
+_FLUSHING: dict[str, int] = {"A": 0, "B": 0}   # taken out of _PENDING, not yet saved (still counted by ops())
 _LAST_FLUSH = [time.time()]
 _STORE = [None]
 _CACHE: dict = {}                # what -> (at, value, store), refreshed every READ_S
@@ -130,6 +130,7 @@ def flush(store=None) -> None:
         todo = {k: v for k, v in _PENDING.items() if v}
         for k in todo:
             _PENDING[k] = 0
+            _FLUSHING[k] += todo[k]
         _LAST_FLUSH[0] = time.time()
     if not todo:
         return
@@ -140,10 +141,14 @@ def flush(store=None) -> None:
                  (m, c, int(n)))
         keep = sorted({m, *(r["month"] for r in st.q("SELECT DISTINCT month FROM r2_usage"))}, reverse=True)[:KEEP_MONTHS]
         st.x(f"DELETE FROM r2_usage WHERE month NOT IN ({','.join('?' * len(keep))})", tuple(keep))
-        _CACHE.pop("ops", None)
+        with _LOCK:
+            _CACHE.pop("ops", None)
+            for c, n in todo.items():
+                _FLUSHING[c] -= n
     except Exception as e:  # noqa: BLE001  (the database is down: keep the counts for the next flush)
         with _LOCK:
             for c, n in todo.items():
+                _FLUSHING[c] -= n
                 _PENDING[c] += n
         print(f"r2usage: couldn't save operation counts ({e.__class__.__name__})", flush=True)
 
@@ -168,7 +173,7 @@ def ops(store=None) -> dict:
         except Exception:  # noqa: BLE001
             pass
     with _LOCK:
-        return {c: saved.get(c, 0) + _PENDING[c] for c in ("A", "B")}
+        return {c: saved.get(c, 0) + _PENDING[c] + _FLUSHING[c] for c in ("A", "B")}
 
 
 def stored_bytes(store=None) -> int:
@@ -184,8 +189,7 @@ def stored_bytes(store=None) -> int:
             total += int(st.q("SELECT COALESCE(SUM(nbytes),0) AS b FROM library_chunks WHERE storage_key IS NOT NULL")[0]["b"] or 0)
         if "take_uploads" in have:
             total += int(st.q("SELECT COALESCE(SUM(size),0) AS b FROM take_uploads WHERE object_key IS NOT NULL "
-                              "AND (status IN ('open','joined','ready') OR (status='link_put' AND updated > ?))",
-                              (time.time() - LINK_PUT_S,))[0]["b"] or 0)
+                              "AND status IN ('open','joined','ready','link_put')")[0]["b"] or 0)
         return total
     try:
         return _cached(st, "bytes", load)
@@ -290,6 +294,7 @@ def reset() -> None:
     """Tests: drop pending counts, the bound store and the cache."""
     with _LOCK:
         _PENDING.update({"A": 0, "B": 0})
+        _FLUSHING.update({"A": 0, "B": 0})
     _STORE[0] = None
     _CACHE.clear()
     _WARNED.clear()

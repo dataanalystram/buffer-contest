@@ -385,3 +385,26 @@ def test_admin_reports_writes_blocked_when_storage_is_exactly_full(app, s3, monk
     r2usage.bind(app.state.store)
     monkeypatch.setenv("HQ_R2_MAX_BYTES", "0")
     assert r2usage.snapshot()["write_blocked"]
+
+
+
+def test_counts_being_flushed_still_count_and_unconfirmed_link_puts_stay_counted(app, monkeypatch):
+    store = app.state.store
+    r2usage.bind(store)
+    r2usage.note("PUT", 3)
+    seen = []
+    real_x = store.x
+
+    def spy(sql, args=()):
+        if "r2_usage" in sql and "INSERT" in sql:
+            seen.append(r2usage.ops(store)["A"])              # mid-flush: the 3 are neither pending nor saved
+        return real_x(sql, args)
+    monkeypatch.setattr(store, "x", spy)
+    r2usage.flush(store)
+    assert seen and seen[0] >= 3
+    monkeypatch.setattr(store, "x", real_x)
+    store.x("INSERT INTO take_uploads(id,user_id,name,size,part_size,parts,status,object_key,s3_upload,take_id,created,updated,"
+            "fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("tl_old", "acc_1", "link", 777, 0, 1, "link_put", "takes/x/tl_old.mp4", "", 1, 0.0, 0.0, None))
+    r2usage.forget_cache()
+    assert r2usage.stored_bytes(store) >= 777                # a day-old unconfirmed link PUT still counts
