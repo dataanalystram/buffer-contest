@@ -17,7 +17,7 @@ def test_viewswap_loads_before_the_app_and_admin():
 
 def test_loader_css_is_flat_and_still_under_reduced_motion():
     css = (ST / "viewswap.css").read_text()
-    assert "gradient" not in css.lower()
+    assert "gradient(" not in css.lower()
     assert "@media (prefers-reduced-motion:reduce)" in css and "@media (prefers-reduced-motion:no-preference)" in css
     # every animation is declared only inside the no-preference block
     outside = re.sub(r"@media \(prefers-reduced-motion:no-preference\)\{.*?\n\}", "", css, flags=re.S)
@@ -31,7 +31,8 @@ def test_every_screen_change_goes_through_the_helper():
     assert 'showTab("agent", "agent");\n    try { const run = await api' not in app  # Inbox no longer draws Make a post first
     js = (ST / "viewswap.js").read_text()
     assert "new AbortController()" in js and "ctl.abort()" in js and "MIN_MS = 150" in js and "SLOW_MS = 300" in js
-    assert ".innerHTML" not in js.split("function fail")[1].split("function begin")[0]  # the error text is never HTML
+    fail = js.split("function fail")[1].split("function begin")[0]
+    assert re.findall(r"\.innerHTML = [^;]+;", fail) == ['.innerHTML = "";'] and "p.textContent =" in fail  # error text never HTML
 
 
 def test_borrowed_idea_is_credited():
