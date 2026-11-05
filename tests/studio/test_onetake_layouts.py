@@ -429,11 +429,15 @@ def test_layout_plan_and_override_rest(take_clip, app):
     app.state.store.x("UPDATE agent_runs SET status='ready' WHERE id=?", (rid,))
     r = human.post(f"/api/takes/{rid}/clips/{cid}/layout", json={"scene": 1, "layout": "auto"})
     assert r.status_code == 200 and r.json()["overrides"] == {}
+    app.state.store.x("UPDATE agent_runs SET status='ready' WHERE id=?", (rid,))
+    r = human.post(f"/api/takes/{rid}/clips/{cid}/layout", json={"scenes": {"0": "split", "1": {"layout": "screen", "style": "stack"}}})
+    assert r.status_code == 200 and r.json()["overrides"] == {"0": {"layout": "split"}, "1": {"layout": "screen", "style": "stack"}}
 
 
 @pytest.mark.parametrize("body", [{"layout": "zoom"}, {"layout": 3}, {"scene": "1", "layout": "fit"}, {"scene": True, "layout": "fit"},
                                   {"scene": 7, "layout": "fit"}, {"layout": "fit", "bg": "red"}, {"caption_preset": "comic"}, {},
-                                  {"layout": "screen", "style": ["pip"]}])
+                                  {"layout": "screen", "style": ["pip"]}, {"scenes": []}, {"scenes": {"a": "fit"}},
+                                  {"scenes": {"0": "zoom"}}, {"scenes": {"0": "fit"}, "layout": "fit"}, {"scenes": {"9": "fit"}}])
 def test_layout_override_validation_is_400(take_clip, body):
     human, rid, cid, rendered = take_clip
     r = human.post(f"/api/takes/{rid}/clips/{cid}/layout", json=body)

@@ -34,6 +34,8 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["take_id", "clip_id"], "properties": {
          "take_id": {"type": "integer"}, "clip_id": {"type": "string"},
          "scene": {"type": "integer", "minimum": 0}, "layout": {"type": "string", "enum": list(LAYOUT_CHOICES)},
+         "scenes": {"type": "object", "description": "Several scenes at once: {\"0\": \"track\", \"1\": \"auto\"}",
+                    "additionalProperties": {"type": ["string", "object"]}},
          "bg": {"type": "string", "enum": list(BG_CHOICES)}, "style": {"type": "string", "enum": list(STYLE_CHOICES)},
          "caption_preset": {"type": "string", "enum": ["bold_pop", "lower_third", "two_tone", "typewriter"]}}}},
 ]
@@ -127,6 +129,23 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
     if not isinstance(body, dict):
         raise ActionError("Send a JSON object.")
     lay, scene, bg, style, preset = (body.get(k) for k in ("layout", "scene", "bg", "style", "caption_preset"))
+    scenes = body.get("scenes")
+    batch: dict[int, dict | str] = {}
+    if scenes is not None:  # several scenes at once (the UI's Save): {"0": "track", "1": {"layout": "fit", "bg": "brand"}}
+        if not isinstance(scenes, dict) or not scenes or len(scenes) > MAX_SCENES:
+            raise ActionError("scenes must be an object of {scene index: layout}.")
+        for k, v in scenes.items():
+            if not (isinstance(k, str) and k.isdigit() and int(k) < MAX_SCENES):
+                raise ActionError("scenes keys must be scene indexes (\"0\", \"1\", ...).")
+            if isinstance(v, str) and v in LAYOUT_CHOICES:
+                batch[int(k)] = v
+            elif isinstance(v, dict) and v.get("layout") in LAYOUT_CHOICES and v.get("bg", "blur") in BG_CHOICES \
+                    and v.get("style", "pip") in STYLE_CHOICES:
+                batch[int(k)] = {x: v[x] for x in ("layout", "bg", "style") if x in v}
+            else:
+                raise ActionError(f"Each scene's layout must be one of: {', '.join(LAYOUT_CHOICES)}.")
+        if lay is not None or scene is not None:
+            raise ActionError("Give either scenes, or layout with an optional scene, not both.")
     if lay is not None and (not isinstance(lay, str) or lay not in LAYOUT_CHOICES):
         raise ActionError(f"layout must be one of: {', '.join(LAYOUT_CHOICES)}.")
     if scene is not None and (isinstance(scene, bool) or not isinstance(scene, int) or not 0 <= scene < MAX_SCENES):
@@ -137,7 +156,7 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         raise ActionError("style must be pip or stack.")
     if preset is not None and not captions_ass.clean_preset(preset):
         raise ActionError(f"caption_preset must be one of: {', '.join(captions_ass.PRESETS)}.")
-    if lay is None and preset is None:
+    if lay is None and preset is None and not batch:
         raise ActionError("Nothing to change: give layout (with an optional scene) and/or caption_preset.")
     takes.h.studio._guard_write(a, "adjust_clip")
     rid = _take_id(rid)
@@ -151,9 +170,17 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         if not takes._can_rerender(a, res):
             raise ActionError("Layout and caption changes re-render the clip on the video worker, which this server doesn't have.", 409)
         plan = (clip.get("meta") or {}).get("layout_plan") or []
-        if scene is not None and plan and scene >= len(plan):
-            raise ActionError(f"This clip has {len(plan)} scene(s): scene must be 0 to {len(plan) - 1}.")
+        for i in ([scene] if scene is not None else []) + list(batch):
+            if plan and i >= len(plan):
+                raise ActionError(f"This clip has {len(plan)} scene(s): scene must be 0 to {len(plan) - 1}.")
         ov = dict(clip.get("layout_overrides") or {})
+        for i, v in batch.items():
+            pin = {"layout": v} if isinstance(v, str) else v
+            if pin["layout"] == "auto":
+                ov.pop(str(i), None)
+            else:
+                ov[str(i)] = {k: pin[k] for k in ("layout", "bg", "style") if k in pin and (k == "layout" or
+                              (k == "bg" and pin["layout"] == "fit") or (k == "style" and pin["layout"] == "screen"))}
         if lay is not None:
             targets = [scene] if scene is not None else (list(range(len(plan))) or [0])
             for i in targets:
@@ -186,7 +213,7 @@ def call_tool(studio, actor, name: str, args: dict):
     if name == "get_clip_layout":
         return view(t, actor, args.get("take_id"), args.get("clip_id"))
     return set_layout(t, actor, args.get("take_id"), args.get("clip_id"),
-                      {k: args[k] for k in ("layout", "scene", "bg", "style", "caption_preset") if k in args})
+                      {k: args[k] for k in ("layout", "scene", "scenes", "bg", "style", "caption_preset") if k in args})
 
 
 def add_routes(app, house, actor) -> None:
