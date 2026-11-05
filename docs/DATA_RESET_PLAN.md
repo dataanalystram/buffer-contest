@@ -111,21 +111,26 @@ counting them as "deleted by owner", not missing.
 
 ## 4. After the deletes: check, then reclaim the space
 
-**Step 1, post-delete check (releases the freeze).** Before the deletes, write down for each table in section 3 its
-current row count and the number of rows the approved statements will remove (from the same `WHERE` clauses run as
-`SELECT count(*)`). After the deletes, run read-only:
+**Step 1, post-delete check (releases the freeze).** It runs entirely in SQL, read-only, so it works while the web
+service is suspended. Before the deletes, snapshot every table in the schema (not a hand-picked list, so nothing in
+section 3 is missed) and the scheduled-post media:
 
 ```sh
-for t in users sessions agent_tokens agent_runs media library_items library_media library_chunks render_jobs approvals \
-         confirms mcp_calls mcp_idem audit upload_sessions upload_parts send_codes blob_gc; do
-  psql "$PGURL" -tAc "select '$t', count(*) from $t"
-done
+psql "$PGURL" -tAc "select table_name from information_schema.tables where table_schema='public' order by 1" |
+  while read t; do psql "$PGURL" -tAc "select '$t', count(*) from \"$t\""; done > counts-before.txt
+psql "$PGURL" -tAc "select token from media where token in (<the /m/ tokens of scheduled Buffer posts, from section 3>)" | sort > keep-before.txt
 ```
 
-Each table must equal *before − planned removals* exactly (tables marked keep: unchanged), `media` / `library_chunks`
-rows still referenced by a scheduled Buffer post must still be there, and `/healthz` must show `missing_files` unchanged.
-Any difference: stop, keep the freeze, and restore from the section 1 dump. Only when every line matches, resume the web
-service, then the worker and cron jobs.
+and write next to each table the rows the approved statements remove (the same `WHERE` clauses as `SELECT count(*)`).
+After the deletes, run the same two commands into `counts-after.txt` / `keep-after.txt`. Pass when:
+
+* every table equals *before − planned removals* (tables marked keep: unchanged), except `audit`, which equals
+  *before − planned removals + the audit rows the purge wrote* (`select count(*) from audit where ts >= <freeze start>`:
+  `Library.purge` records each purge);
+* `keep-after.txt` is identical to `keep-before.txt` (no media a scheduled post uses was removed).
+
+Any difference: stop, keep the freeze, and restore from the section 1 dump. Only when everything matches, resume the web
+service, then the worker and cron jobs; `/healthz` (its next media audit) is a later confirmation, not the gate.
 
 **Step 2, reclaim the space.**
 
