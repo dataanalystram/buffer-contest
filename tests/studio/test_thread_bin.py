@@ -321,3 +321,30 @@ def test_asking_again_after_a_purge_opens_a_new_post(human, app):
     res, again = mcp_call(human, tok, "start_post", args)
     assert not res["isError"], again
     assert again["run_id"] != sp["run_id"] and again["thread_id"] != sp["thread_id"]
+
+
+def test_deleted_threads_never_hide_an_older_open_post_and_renders_still_replay(human, app, monkeypatch):
+    """Greptile, 5 Nov 2026: deleted runs are left out before the LIMIT (five newer deleted runs hid the open one), and only
+    start_post / continue_run skip a replay that names a deleted thread; other finished work still replays."""
+    from studio import run_discipline
+    from studio.actions import Actor
+    st = app.state.store
+    tok = agent_token(human, policy="trusted", cap=50)
+    _, sp = mcp_call(human, tok, "start_post", {"title": "The open one", "brief": "b", "user_asked": True, "reason": "asked"})
+    aid = st.q("SELECT agent_id FROM agent_runs WHERE id=?", (sp["run_id"],))[0]["agent_id"]
+    agent = dict(st.q("SELECT * FROM agent_tokens WHERE id=?", (aid,))[0])
+    a = Actor("acc_1", kind="agent", agent=agent)
+    st.x("UPDATE agent_runs SET updated=? WHERE id=?", (time.time() - 60, sp["run_id"]))
+    for i in range(6):
+        rid = st.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated,agent_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                   ("acc_1", "client", json.dumps({"prompt": "The open one", "started_by": "start_post"}), "draft", "[]", "{}",
+                    time.time(), time.time(), aid))
+        thread_bin._ensure(st)
+        st.x("INSERT INTO thread_deleted(run_id,user_id,deleted_at,purged_at) VALUES(?,?,?,NULL)", (rid, "acc_1", time.time()))
+    assert run_discipline.active_run(st, a)["id"] == sp["run_id"]
+    assert run_discipline.same_request(st, a, "The open one")["id"] == sp["run_id"]
+    key = ("k:r1", True)
+    run_discipline.remember(st, a, "render_carousel", {"run_id": rid}, key, {"run_id": rid, "job_id": 5})
+    assert run_discipline.replay(st, a, "render_carousel", {"run_id": rid}, key)["job_id"] == 5    # finished work replays
+    run_discipline.remember(st, a, "start_post", {"title": "x"}, ("k:s1", True), {"run_id": rid})
+    assert run_discipline.replay(st, a, "start_post", {"title": "x"}, ("k:s1", True)) is None      # never a deleted thread

@@ -132,17 +132,25 @@ def _deleted(store, uid: str) -> set[int]:
     return deleted_ids(store, uid)
 
 
+# deleted threads are left out in SQL, before the LIMIT, so they never hide an older open run (Greptile, 5 Nov 2026)
+_NOT_DELETED = "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
+
+
+def _ensure_threads(store) -> None:
+    from .thread_bin import _ensure
+    _ensure(store)
+
+
 def active_run(store, a: Actor) -> dict | None:
     """This token's open run: the newest one it made that is draft/ready, not sent or awaiting approval, touched within
     ACTIVE_S. Never another app's run (agent_id) and never another person's (user_id)."""
     if not is_agent(a):
         return None
+    _ensure_threads(store)  # a thread the person deleted (in the Bin or purged) is never reused
     rows = store.q("SELECT id, kind, status, result, updated FROM agent_runs WHERE user_id=? AND agent_id=? AND status IN ('draft','ready') "
-                   "AND updated>? ORDER BY updated DESC, id DESC LIMIT 5", (a.uid, a.agent["id"], time.time() - ACTIVE_S))
-    gone = _deleted(store, a.uid)
+                   "AND updated>? " + _NOT_DELETED + "ORDER BY updated DESC, id DESC LIMIT 5",
+                   (a.uid, a.agent["id"], time.time() - ACTIVE_S, a.uid))
     for r in rows:
-        if r["id"] in gone:  # a thread the person deleted (in the Bin or purged) is never reused
-            continue
         try:
             res = json.loads(r["result"] or "{}")
         except ValueError:
@@ -180,12 +188,10 @@ def same_request(store, a: Actor, title: str) -> dict | None:
     by the app answers it instead of a second run. A different title is a new request and gets its own run."""
     if not is_agent(a) or not _norm(title):
         return None
+    _ensure_threads(store)  # a deleted thread is not "the same request": asking again opens a new post (Greptile, 5 Nov)
     rows = store.q("SELECT id, input, result FROM agent_runs WHERE user_id=? AND agent_id=? AND status IN ('draft','ready') "
-                   "AND created>? ORDER BY id DESC LIMIT 10", (a.uid, a.agent["id"], time.time() - DEDUPE_S))
-    gone = _deleted(store, a.uid)
+                   "AND created>? " + _NOT_DELETED + "ORDER BY id DESC LIMIT 10", (a.uid, a.agent["id"], time.time() - DEDUPE_S, a.uid))
     for r in rows:
-        if r["id"] in gone:  # a deleted thread is not "the same request": asking again opens a new post (Greptile, 5 Nov)
-            continue
         try:
             inp, res = json.loads(r["input"] or "{}"), json.loads(r["result"] or "{}")
         except ValueError:
@@ -346,8 +352,9 @@ def replay(store, a: Actor, name: str, args: dict, key: tuple[str, bool]) -> Any
         out = json.loads(r["result"])
     except ValueError:
         return None
-    if isinstance(out, dict) and isinstance(out.get("run_id"), int) and out["run_id"] in _deleted(store, a.uid):
-        return None  # the answer named a thread the person deleted since: the call runs again (never a deleted run's id)
+    if name in ("start_post", "continue_run") and isinstance(out, dict) and isinstance(out.get("run_id"), int) \
+            and out["run_id"] in _deleted(store, a.uid):
+        return None  # it would open a deleted thread: ask again (renders and other finished work still replay)
     return {**out, "idempotent_replay": True} if isinstance(out, dict) else out
 
 
