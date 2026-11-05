@@ -356,6 +356,24 @@ REST: `POST /api/images/fetch`, `/api/images/cutout`, `/api/images/edit`, `/api/
 The ML cut-out runs only on the render worker (InstaBox when `HQ_RENDER_BACKEND=instabox`, with GitHub Actions
 `render.yml` as fallback), never on the web instance. rembg's own default model (BRIA RMBG) is never used.
 
+## Commerce on Channel3 (4 Nov 2026)
+
+Free only: Channel3 gives 1,000 free credits a month per key and HuhQueue stops there (a hard stop in code, before the
+request leaves the server). A search costs 1 credit (0 when the same search ran in the last 30 minutes); product detail
+is free. Every answer carries `usage` (credits used and left this month, your searches left, when it resets). See
+docs/COMMERCE.md.
+
+| Tool | What it does |
+|---|---|
+| `search_products` | `query` (personal details are removed), `budget_min`, `budget_max`, `country` (default IE), `currency` (IE -> EUR), `in_stock`, `limit` (1-10). Text cards: id, title, brand, best price and retailer, rating, key features, `affiliate`. `image` is always null: catalogue images aren't licensed for social posts. **Needs the person's approval** (needs_user_approval) every time. At the limit: `ok: false, reason: credit_limit, resets`. |
+| `get_product` | `product_id`: fresh price and every retailer's offer (free). On HuhQueue's key it needs the person's approval; with their own Channel3 key it doesn't. |
+| `attach_product_to_post` | `run_id`, `product_id`, `caption`, `cta`, `link_label`: a stable HuhQueue `/go/<code>` shop link (re-resolved to a fresh offer when the post is published and at every click, always on HuhQueue's key), the text product card for a slide or a One take overlay (`adjust_clip` `product_card`), and the caption with `#Ad` first and the disclosure line. **Needs the person's approval.** |
+
+Preflight blocks a post with a shop link that doesn't start with `#Ad` (Irish CCPC / ASAI rule) or lacks the disclosure
+line, and any Channel3 CDN image as post media. REST: `POST /api/commerce/search`, `GET /api/commerce/products/{id}`,
+`POST /api/commerce/attach`, `POST /api/commerce/caption`, `GET /api/commerce/usage`, `GET|POST|DELETE /api/commerce/key`
+(a person's own Channel3 key; only a signed-in person, never an agent token).
+
 ## Music, Undo, Update draft and brand kits (3 Nov 2026)
 
 - **No music by default.** Renders never add a score: `music: auto` and `none` are both silence for a silent video, and a video's own sound is kept. A score (`cinematic` / `pulse`) is only baked in when it is asked for.

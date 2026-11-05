@@ -44,9 +44,12 @@ _SUMMARY_KEYS = ("query", "url", "media_url", "prompt", "brief", "correction", "
 IGNORED = ("approval_id", "idempotency_key", "server_ai", "user_asked", "reason", "new_post")
 
 
-def register(name: str, provider: str, what: str, estimate: Callable[[dict], dict]) -> None:
-    """A tool that spends credits on an external API (e.g. Channel3 search: 1 credit) goes through the gate."""
-    PAID[name] = {"provider": provider, "what": what, "estimate": estimate}
+def register(name: str, provider: str, what: str, estimate: Callable[[dict], dict],
+             needs: Callable[[Any, Actor, dict], bool] | None = None) -> None:
+    """A tool that spends credits on an external API (e.g. Channel3 search: 1 credit) goes through the gate. ``needs``
+    (studio, actor, args) -> bool narrows it: e.g. Channel3 product detail asks only when it would run on HuhQueue's key,
+    not on the person's own. An error in ``needs`` means ask."""
+    PAID[name] = {"provider": provider, "what": what, "estimate": estimate, "needs": needs}
 
 
 def gated(name: str, args: dict, server_ai_tools: set[str]) -> bool:
@@ -116,6 +119,13 @@ def gate(studio, a: Actor, name: str, args: dict) -> dict | None:
     if getattr(a, "kind", "") != "agent" or not a.agent:
         return None
     store = studio.store
+    need = (PAID.get(name) or {}).get("needs")
+    if need is not None:
+        try:
+            if not need(studio, a, args):
+                return None
+        except Exception:  # noqa: BLE001 - unknown means ask the person
+            pass
     est = estimate(studio, a, name, args)
     if token_allows(a):
         store.audit(a.uid, a.label, "paid_api", "spend", {"tool": name, "by": "token setting", "provider": est.get("provider")})
