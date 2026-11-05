@@ -401,9 +401,10 @@ class House:
         from .library import TRASH_TOKEN
         if not token or token.startswith(TRASH_TOKEN):
             return None
-        rows = self.store.q("SELECT mime, size FROM media WHERE token=?", (token,))
-        if rows and rows[0]["size"]:
-            return {"mime": rows[0]["mime"], "size": int(rows[0]["size"])}
+        # the length from the row (or SQL length() of its bytes), never by loading the blob (Render OOM kills, 5 Nov 2026)
+        rows = self.store.q("SELECT mime, size, length(data) AS n FROM media WHERE token=?", (token,))
+        if rows and (rows[0]["size"] or rows[0]["n"]):
+            return {"mime": rows[0]["mime"], "size": int(rows[0]["size"] or rows[0]["n"])}
         m = self.get_media(token)
         return {"mime": m["mime"], "size": len(m["data"])} if m else None
 

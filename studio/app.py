@@ -22,6 +22,7 @@ import os
 
 from . import activity as activity_mod
 from . import staticver
+from .gzipmw import GzipText
 from . import buffer_api, demo, demo_guard, demo_view, house as house_mod, inbox as inbox_mod, limits as reqlimits, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
 from .buffer_api import BufferClient, BufferError
@@ -777,39 +778,33 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return studio.audit(actor(request), min(limit, 500))
 
     # ------------------------------------------------------------ HuhQueue: media, brand kit, ledger, agent, calendar
-    def _head(mime: str, size: int, cache: str) -> Response:
+    def _head(mime: str, size: int, cache: str, etag: str = "") -> Response:
         """HEAD: the file's type and length, no body. Buffer's fetcher asks with HEAD before it downloads (Render logs,
         2 Nov 2026: HEAD /m/<token>.mp4 from Buffer answered 405, and Buffer said "Video could not be read from its URL")."""
-        return Response(b"", media_type=mime, headers={"Content-Length": str(size), "Accept-Ranges": "bytes", "Cache-Control": cache})
+        h = {"Content-Length": str(size), "Accept-Ranges": "bytes", "Cache-Control": cache}
+        if etag:
+            h["ETag"] = etag
+        return Response(b"", media_type=mime, headers=h)
 
     @app.api_route("/m/{token}", methods=["GET", "HEAD"], include_in_schema=False)
     def media(token: str, request: Request):
         head = request.method == "HEAD"
+        from .library import TRASH_TOKEN, media_file
+        cache = "public, max-age=86400"
         lib_item = house.library.by_token(token)
         if lib_item:  # an uploaded Library file: read only the chunks a range asks for
+            f = house.library._file_of(lib_item)
             if head:
-                return _head(lib_item["mime"], int(lib_item["size"] or 0), "public, max-age=86400")
-            return app.state.library_serve(house.library._file_of(lib_item), request, "public, max-age=86400")
-        if head:
-            info = house.media_head(token)
-            if not info:
-                return JSONResponse({"error": "not found"}, status_code=404)
-            return _head(info["mime"], info["size"], "public, max-age=86400")
-        m = house.get_media(token)
-        if not m:
+                return _head(f["mime"], int(f["size"] or 0), cache, f.get("etag", ""))
+            return app.state.library_serve(f, request, cache)
+        # a rendered file (media table): read by range and streamed, never loaded whole (Render OOM kills, 5 Nov 2026);
+        # an ETag lets a browser or Buffer that already has it get a 304 with no body
+        f = None if token.startswith(TRASH_TOKEN) else media_file(house.store, token)  # a binned file is owner-only
+        if not f:
             return JSONResponse({"error": "not found"}, status_code=404)
-        data, size = m["data"], len(m["data"])
-        headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
-        from .library import parse_range, range_unsatisfiable
-        rng_h = request.headers.get("range", "")
-        rng = parse_range(rng_h, size)
-        if rng is None and range_unsatisfiable(rng_h, size):
-            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
-        if rng:
-            start, end = rng
-            return Response(data[start:end + 1], status_code=206, media_type=m["mime"],
-                            headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
-        return Response(data, media_type=m["mime"], headers=headers)
+        if head:
+            return _head(f["mime"], f["size"], cache, f["etag"])
+        return app.state.library_serve(f, request, cache)
 
     @app.api_route("/ms/{exp}/{sig}/{token}", methods=["GET", "HEAD"], include_in_schema=False)
     def media_signed(exp: str, sig: str, token: str, request: Request):
@@ -963,8 +958,11 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         import hashlib
         body = {k: v for k, v in data.items() if k not in ignore} if isinstance(data, dict) else data
         tag = '"' + hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:20] + '"'
-        if request.headers.get("if-none-match") == tag:
-            return Response(status_code=304, headers={"ETag": tag})
+        from .library import not_modified
+        if not_modified(request, tag):  # W/"…" too: a gzipped answer's tag is weakened (studio/gzipmw.py)
+            inm = request.headers.get("if-none-match") or ""
+            # the 304 carries the validator the cache holds: the weak one when the stored answer was gzipped (RFC 9111 4.3.4)
+            return Response(status_code=304, headers={"ETag": ("W/" + tag) if ("W/" + tag) in inm else tag})
         return JSONResponse(data, headers={"ETag": tag, "Cache-Control": "private, no-cache"})
 
     @app.get("/api/inbox")
@@ -1193,5 +1191,6 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return Response(status_code=405, headers={"Allow": "POST"})
 
     app.add_middleware(reqlimits.BodyCap)  # every request body capped by path before anything parses it (SECURITY_RULES 6)
+    app.add_middleware(GzipText)  # text answers gzipped, media untouched (studio/gzipmw.py; Render bandwidth quota, 5 Nov 2026)
     return app
 
