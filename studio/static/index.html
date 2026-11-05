@@ -738,6 +738,11 @@
             <p class="muted sm">Your posts, renders, brand kit and rules, so the agent can work on them. Activity is kept 90 days. Buffer and AI keys are encrypted and never shown again; secrets are never logged.</p>
             <div class="row tight"><a class="btn2 sm" href="/api/activity/export.csv" download data-testid="settings-export-activity">Export activity (CSV)</a>
             <button class="btn2 sm" type="button" data-go="activity" data-testid="settings-open-activity">Open Activity</button></div></section>
+          <section class="panel set-auto" aria-labelledby="setAutoH" data-testid="settings-link-auto">
+            <div class="set-auto-head"><div><h2 class="card-title" id="setAutoH">Auto-approve video links</h2>
+              <p class="muted sm">Video links your AI apps send start a take without asking you each time. Off by default. It never covers paid features or posting, and every size, length and daily limit still applies.</p></div>
+              <label class="switch"><input type="checkbox" role="switch" id="setAutoToggle" data-testid="link-auto-toggle" aria-label="Auto-approve video links" aria-controls="setAutoBody"><span></span></label></div>
+            <div id="setAutoBody" data-testid="link-auto-body" aria-live="polite"></div></section>
           <section class="panel" aria-labelledby="setPolH"><h2 class="card-title" id="setPolH">Policies</h2>
             <p class="muted sm">How data is used, the terms, and how to report a security issue.</p>
             <div class="row tight"><a class="btn2 sm" href="/privacy" data-testid="settings-privacy-link">Privacy</a><a class="btn2 sm" href="/terms">Terms</a><a class="btn2 sm" href="/security">Security</a></div></section>
@@ -832,6 +837,7 @@
 <script src="/static/onboarding.js"></script>
 <script src="/static/brainswap.js"></script>
 <script src="/static/aiengine.js"></script>
+<script src="/static/linkauto.js"></script>
 <script src="/static/sidebars.js"></script>
 </body>
 </html>
