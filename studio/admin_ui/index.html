@@ -12,6 +12,12 @@
     <div class="adm-overview" id="egressToday" data-testid="admin-egress-today"></div>
     <div class="adm-scroll"><table data-testid="admin-egress-days"><thead><tr><th>Day</th><th>Read from database</th><th>Sent to clients</th><th>Refused</th></tr></thead>
       <tbody id="egressDays"></tbody></table></div></section>
+  <section aria-labelledby="usageH" data-testid="admin-usage"><h2 id="usageH">Credits and free tiers</h2>
+    <div class="adm-overview" id="usage" data-testid="admin-usage-cards"></div></section>
+  <section aria-labelledby="switchH" data-testid="admin-switches"><h2 id="switchH">Kill switches</h2>
+    <p class="adm-msg">Each switch stops new work of its kind for everyone, you included, until you resume it. If the switch state can't be read, every switch reads as paused.</p>
+    <p class="adm-msg" id="swMsg" role="status" aria-live="polite"></p>
+    <div class="adm-switches" id="switches"></div></section>
   <section aria-labelledby="usersH">
     <div class="adm-bar"><h2 id="usersH">Users</h2>
       <label class="adm-search">Search <input id="q" data-testid="admin-search" type="search" placeholder="id, name or email" autocomplete="off"></label>
@@ -39,6 +45,13 @@
   <label>Reason (optional, for the admin log) <input id="blkReason" data-testid="admin-block-reason" maxlength="200" autocomplete="off"></label>
   <div class="adm-actions"><button type="button" id="blkCancel" data-testid="admin-block-cancel">Cancel</button>
     <button class="danger" id="blkOk" data-testid="admin-block-ok" type="submit">Block user</button></div></form></dialog>
+<dialog id="tokDlg" aria-labelledby="tokH" data-testid="admin-tokens-dialog"><form method="dialog" id="tokForm">
+  <h2 id="tokH">Agent and MCP tokens</h2>
+  <p>An hourly cap counts every request on the token, reads included (empty: no cap). The daily cap counts actions (1 to 100). Revoke ends the token for good; to pause a whole account, block it instead.</p>
+  <p class="adm-msg" id="tokMsg" role="status" aria-live="polite"></p>
+  <div class="adm-scroll"><table data-testid="admin-tokens"><thead><tr><th>Token</th><th>Last used</th><th>Requests this hour</th><th>Actions in 24 h</th>
+    <th>Hourly cap</th><th>Daily cap</th><th>Actions</th></tr></thead><tbody id="tokRows"></tbody></table></div>
+  <div class="adm-actions"><button type="button" id="tokClose" data-testid="admin-tokens-close">Close</button></div></form></dialog>
 <script src="/static/viewswap.js"></script>
 <script src="/admin/admin.js"></script>
 </body></html>

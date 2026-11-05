@@ -60,6 +60,90 @@
       <td>${esc((x.refused_budget || 0) + (x.refused_repeat || 0))}</td></tr>`).join("") || `<tr><td colspan="4">No full day yet.</td></tr>`;
   }
 
+  // Credits on HuhQueue's own keys and the free-tier ledgers (studio/admin.py usage): numbers only
+  function usageDraw(d) {
+    const usd = (v) => `$${Number(v || 0).toFixed(2)}`;
+    const cards = [];
+    if (d.claude && !d.claude.error) cards.push(["Claude (our key)", `${usd(d.claude.spent_usd)} of ${usd(d.claude.cap_usd)}`],
+      ["Claude testing pool", `${usd(d.claude.testing_spent_usd)} of ${usd(d.claude.testing_cap_usd)}`]);
+    if (d.oci && !d.oci.error) cards.push(["OCI Gemini (our credit)", `${usd(d.oci.spent_usd)} of ${usd(d.oci.cap_usd)}`]);
+    if (d.channel3 && !d.channel3.error) cards.push([`Channel3 credits ${d.channel3.month}${d.channel3.configured ? "" : " (no key set)"}`,
+      `${(d.channel3.used || 0).toLocaleString()} of ${(d.channel3.cap || 0).toLocaleString()}`]);
+    for (const [p, f] of Object.entries(d.free_tiers || {})) cards.push([`${p} requests (24 h)`, `${f.requests_24h} of ${f.max_requests_day}/day`]);
+    $("usage").innerHTML = cards.map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("") || "No usage yet.";
+  }
+
+  let swBusy = false;
+  function switchesDraw(items) {
+    $("switches").innerHTML = items.map((s) => `<div class="${s.paused ? "paused" : ""}" data-testid="admin-switch">
+      <b>${esc(s.label)}</b><small>${s.unreadable ? "State unreadable: reads as paused" : s.paused ? `Paused ${esc(when(s.at))}${s.reason ? " · " + esc(s.reason) : ""}` : "Running"}</small>
+      <button type="button" data-sw="${esc(s.name)}" data-on="${s.paused ? "0" : "1"}" data-testid="admin-switch-${esc(s.name)}"${s.paused ? "" : ' class="danger"'}>${s.paused ? "Resume" : "Pause"}</button></div>`).join("");
+  }
+  $("switches").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-sw]");
+    if (!b || swBusy) return;
+    swBusy = true; b.disabled = true;
+    try {
+      await api(`/api/admin/switches/${encodeURIComponent(b.dataset.sw)}`, { method: "POST", body: JSON.stringify({ paused: b.dataset.on === "1" }) });
+      $("swMsg").textContent = b.dataset.on === "1" ? "Paused." : "Resumed.";
+    } catch (e) { $("swMsg").textContent = e.message; }
+    swBusy = false;
+    try { switchesDraw((await api("/api/admin/switches")).items); } catch (e) { $("swMsg").textContent = e.message; }
+  });
+
+  // One account's tokens (dialog): a newer open or Close aborts the pending load, so a late answer never fills the wrong account
+  let tokCtl = null, tokUid = "", tokArmed = "";
+  const tokSay = (m) => { $("tokMsg").textContent = m || ""; };
+  function tokRow(t) {
+    const dead = t.revoked || t.expired;
+    return `<tr data-testid="admin-token"><td><b>${esc(t.name || "(no name)")}</b><small>${esc(t.mcp ? "MCP app" : "agent token")}${t.app ? " · " + esc(t.app) : ""} · ${esc(t.policy)}</small>
+      <small>${t.revoked ? "revoked" : t.expired ? "expired" : "active"}</small></td>
+      <td>${esc(when(t.last_used))}</td><td>${esc(t.requests_this_hour)}</td><td>${esc(t.actions_24h)}</td>
+      <td><input type="number" min="1" max="100000" step="1" data-cap="hourly" data-tid="${esc(t.id)}" data-testid="admin-token-hourly" value="${t.hourly_cap ?? ""}" placeholder="none"${dead ? " disabled" : ""} aria-label="Hourly cap"></td>
+      <td><input type="number" min="1" max="100" step="1" data-cap="daily" data-tid="${esc(t.id)}" data-testid="admin-token-daily" value="${esc(t.daily_cap)}"${dead ? " disabled" : ""} aria-label="Daily cap"></td>
+      <td><div class="adm-actions"><button type="button" data-tok="save" data-tid="${esc(t.id)}" data-testid="admin-token-save"${dead ? " disabled" : ""}>Save caps</button>
+      <button type="button" class="danger" data-tok="revoke" data-tid="${esc(t.id)}" data-testid="admin-token-revoke"${t.revoked ? " disabled" : ""}>Revoke</button></div></td></tr>`;
+  }
+  async function loadTokens() {
+    if (tokCtl) tokCtl.abort();
+    const c = new AbortController(); tokCtl = c; tokArmed = "";
+    $("tokRows").innerHTML = `<tr><td colspan="7" class="adm-loading">Loading tokens</td></tr>`;
+    try {
+      const d = await api(`/api/admin/users/${encodeURIComponent(tokUid)}/tokens`, { signal: c.signal });
+      if (c !== tokCtl) return;
+      $("tokRows").innerHTML = d.items.map(tokRow).join("") || `<tr><td colspan="7">No tokens.</td></tr>`;
+    } catch (e) { if (e.name !== "AbortError" && c === tokCtl) $("tokRows").innerHTML = `<tr><td colspan="7" role="alert">${esc(e.message)}</td></tr>`; }
+  }
+  function openTokens(id) {
+    const u = rows.find((x) => x.id === id) || { id };
+    tokUid = id; tokSay("");
+    $("tokH").textContent = `Tokens of ${u.name || u.email || u.id}`;
+    $("tokDlg").showModal(); loadTokens();
+  }
+  function closeTokens() { if (tokCtl) tokCtl.abort(); tokCtl = null; tokArmed = ""; if ($("tokDlg").open) $("tokDlg").close(); }
+  $("tokClose").addEventListener("click", closeTokens);
+  $("tokDlg").addEventListener("cancel", (ev) => { ev.preventDefault(); closeTokens(); });
+  $("tokRows").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-tok]");
+    if (!b || b.disabled) return;
+    const tid = b.dataset.tid, base = `/api/admin/users/${encodeURIComponent(tokUid)}/tokens/${encodeURIComponent(tid)}`;
+    if (b.dataset.tok === "revoke" && tokArmed !== tid) {      // in-app two-step confirm (never window.confirm)
+      tokArmed = tid; b.textContent = "Confirm revoke"; tokSay("Click Confirm revoke to end this token for good."); return;
+    }
+    b.disabled = true;
+    try {
+      if (b.dataset.tok === "revoke") {
+        await api(`${base}/revoke`, { method: "POST", body: "{}" }); tokSay("Revoked.");
+      } else {
+        const tr = b.closest("tr"), h = tr.querySelector("[data-cap=hourly]").value.trim(), dcap = tr.querySelector("[data-cap=daily]").value.trim();
+        const body = { hourly_cap: h === "" ? null : Number(h) };
+        if (dcap !== "") body.daily_cap = Number(dcap);
+        await api(`${base}/limit`, { method: "POST", body: JSON.stringify(body) }); tokSay("Caps saved.");
+      }
+    } catch (e) { tokSay(e.message); }
+    loadTokens();
+  });
+
   function row(u) {
     const self = u.id === me;
     const block = u.status === "blocked"
@@ -70,7 +154,7 @@
       <td>${esc(when(u.last_signin))}<small>${esc(u.last_signin_ip)}${u.last_signin_ua ? " · " + esc(u.last_signin_ua) : ""}</small></td>
       <td>${esc(when(u.last_seen))}</td><td>${esc(u.runs)}</td><td>${esc(u.posts)}</td><td>${esc(size(u.storage_bytes))}</td>
       <td><span class="pill ${esc(u.status)}">${esc(u.status)}</span></td>
-      <td><div class="adm-actions">${block}<button type="button" class="danger" data-act="delete" data-testid="admin-delete" data-id="${esc(u.id)}"${self ? " disabled" : ""}>Delete</button></div></td></tr>`;
+      <td><div class="adm-actions">${block}<button type="button" data-act="tokens" data-testid="admin-tokens-open" data-id="${esc(u.id)}">Tokens</button><button type="button" class="danger" data-act="delete" data-testid="admin-delete" data-id="${esc(u.id)}"${self ? " disabled" : ""}>Delete</button></div></td></tr>`;
   }
 
   // View transitions (5 Nov 2026, studio/static/viewswap.js): a new page or search shows the HuhQueue loader in the table at
@@ -98,6 +182,10 @@
       $("rows").innerHTML = d.users.map(row).join("") || `<tr><td colspan="9">No users.</td></tr>`;
       $("page").textContent = total ? `${offset + 1}–${Math.min(offset + PER, total)} of ${total}` : "";
       $("prev").disabled = offset === 0; $("next").disabled = offset + PER >= total;
+      try { usageDraw(await api("/api/admin/usage", { signal: ctl.signal })); }
+      catch (e) { if (e.name !== "AbortError") $("usage").textContent = `Couldn't load usage: ${e.message}`; }
+      try { switchesDraw((await api("/api/admin/switches", { signal: ctl.signal })).items); }
+      catch (e) { if (e.name !== "AbortError") $("switches").textContent = `Couldn't load the kill switches: ${e.message}`; }
       try { egressDraw(await api("/api/admin/egress", { signal: ctl.signal })); }
       catch (e) { if (e.name !== "AbortError") $("egressToday").textContent = `Couldn't load media bandwidth: ${e.message}`; }
       const a = await api("/api/admin/audit?limit=50", { signal: ctl.signal });
@@ -117,6 +205,8 @@
       } else if (kind === "unblock") {
         await api(`/api/admin/users/${encodeURIComponent(id)}/unblock`, { method: "POST", body: "{}" });
         say("Unblocked.");
+      } else if (kind === "tokens") {
+        openTokens(id); return;
       } else if (kind === "delete") {
         $("delId").textContent = id; $("delInput").value = ""; $("delOk").disabled = true; $("del").dataset.id = id;
         $("del").showModal(); return;
