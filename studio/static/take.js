@@ -171,14 +171,27 @@ $("#tkSample").onclick = async () => {
 };
 
 function watchTake(id) {
-  clearTimeout(T.poll);
+  clearTimeout(T.poll); T.watching = id;
+  if (T.unwake) T.unwake();  // a replaced watcher's wake listener goes with its timer (CodeRabbit, #118)
+  T.unwake = null;
+  const gen = T.gen = (T.gen || 0) + 1, mine = () => T.watching === id && T.gen === gen;  // even for the same take id
+  // a hidden tab asks at most every 30 s and catches up the moment it is shown again (loading.js pollMs / wake)
+  const later = (ms) => {
+    if (T.unwake) T.unwake();
+    const d = window.HQLoad && HQLoad.pollMs ? HQLoad.pollMs(ms) : ms;
+    T.poll = setTimeout(tick, d);
+    T.unwake = d > ms ? HQLoad.wake(() => { if (!mine()) return; clearTimeout(T.poll); tick(); }) : null;
+  };
   const tick = async () => {
+    if (!mine()) return;  // another take is watched now, or this one afresh
+    if (T.unwake) { T.unwake(); T.unwake = null; }
     try {
       const t = await api(`/api/takes/${id}`);
+      if (!mine()) return;
       showTake(t);
-      if (["running", "rendering"].includes(t.status)) T.poll = setTimeout(tick, 2000);
+      if (["running", "rendering"].includes(t.status)) later(2000);
       else loadTakes();
-    } catch (e) { toast(e.message); }
+    } catch (e) { if (mine()) toast(e.message); }
   };
   T.poll = setTimeout(tick, 1200);
 }
@@ -299,7 +312,7 @@ async function deleteTake(id) {
   try {
     const r = await api(`/api/takes/${encodeURIComponent(id)}`, { method: "DELETE" });
     tkUndoToast(`Take moved to the Bin for ${(r && r.in_bin_days) || 7} days.`, { take_id: id });
-    if (T.take && String(T.take.id) === String(id)) { clearTimeout(T.poll); T.take = null; T.plan = null; $("#takeView").hidden = true; }
+    if (T.take && String(T.take.id) === String(id)) { clearTimeout(T.poll); T.watching = null; if (T.unwake) { T.unwake(); T.unwake = null; } T.take = null; T.plan = null; $("#takeView").hidden = true; }
     tkRefresh();
   } catch (e) { toast(e.message, 6000); }
 }

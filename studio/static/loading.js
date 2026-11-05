@@ -15,6 +15,17 @@
     return { signal: c.signal, live: () => live[key] === c && !c.signal.aborted, done: () => { if (live[key] === c) delete live[key]; } };
   }
   const aborted = (e) => !!e && (e.name === "AbortError" || e.code === 20);
+  // A poll's next delay: as asked while the tab is on view, at least HIDDEN_MS while it is hidden (a background tab kept
+  // asking every 1.4 s for nothing; Render bandwidth quota, 5 Nov 2026). wake(fn) runs fn once when the tab is shown again,
+  // so a hidden poll catches up at once instead of waiting out its long delay.
+  const HIDDEN_MS = 30000;
+  const pollMs = (ms) => (document.hidden ? Math.max(ms, HIDDEN_MS) : ms);
+  function wake(fn) {
+    if (!document.hidden) return () => {};
+    const on = () => { if (!document.hidden) { document.removeEventListener("visibilitychange", on); fn(); } };
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }
   const sk = (cls = "") => `<span class="hq-sk${cls ? " " + cls : ""}" aria-hidden="true"></span>`;
   // a status line for screen readers, then the shapes; aria-busy on the container while it shows
   const wrap = (cls, inner, label) => `<div class="hq-skw ${cls}" data-testid="loading-skeleton" aria-busy="true"><span class="hq-vh" role="status">${label || "Loading"}</span>${inner}</div>`;
@@ -31,5 +42,5 @@
     if (on && !b) { b = document.createElement("div"); b.className = "hq-busy"; b.setAttribute("data-testid", "loading-bar"); b.innerHTML = '<span class="hq-busy-fill" aria-hidden="true"></span><span class="hq-vh" role="status"></span>'; el.prepend(b); }
     if (b) { b.hidden = !on; b.lastChild.textContent = on ? label : ""; }
   }
-  window.HQLoad = { start, aborted, sk, rows, cards, tiles, busy };
+  window.HQLoad = { start, aborted, sk, rows, cards, tiles, busy, pollMs, wake, HIDDEN_MS };
 })();
