@@ -615,8 +615,10 @@ class Library:
         out = []
         # the latest 200 runs, and every One take run however old (the One take filter, its clips' delete and the one Bin
         # need them all), in one read
-        for r in self.store.q("SELECT id, kind, input, result, status, created FROM agent_runs WHERE user_id=? AND (kind='take' OR id IN "
-                              "(SELECT id FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT 200)) ORDER BY id DESC", (a.uid, a.uid)):
+        from . import run_text  # the text only when it changed (Supabase egress: md5s on Postgres, a memo on the Store)
+        for r in run_text.attach(self.store, self.store.q(
+                f"SELECT id, kind, {run_text.cols(self.store)}, status, created FROM agent_runs WHERE user_id=? AND (kind='take' OR id IN "
+                "(SELECT id FROM agent_runs WHERE user_id=? ORDER BY id DESC LIMIT 200)) ORDER BY id DESC", (a.uid, a.uid))):
             try:
                 inp, res = json.loads(r["input"] or "{}"), json.loads(r["result"] or "{}")
             except ValueError:

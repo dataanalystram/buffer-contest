@@ -740,9 +740,11 @@ class House:
         gone = _deleted_threads(self.store, a.uid)  # threads deleted from the sidebar (the conversation only; media stays)
         # archived runs (cleanup_agent_drafts tidied them away) are hidden from the threads; deleted threads are left out
         # before the LIMIT, so they never use up the sidebar's slots
-        for r in self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
-                              "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
-                              "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, a.uid, limit)):
+        from . import run_text  # the text only when it changed (Supabase egress, 5 Nov 2026)
+        for r in run_text.attach(self.store, self.store.q(
+                f"SELECT id,kind,{run_text.cols(self.store)},status,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
+                "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
+                "ORDER BY created DESC, id DESC LIMIT ?", (a.uid, a.uid, limit))):
             d = dict(r)
             if d["id"] in gone:
                 continue
@@ -1879,7 +1881,9 @@ class House:
                           "id": ap["id"], "agent": ap["agent_name"], "thumb": media[0] if media else "",
                           "type": "video" if media and media[0].lower().split("?")[0].endswith((".mp4", ".mov", ".webm")) else
                           ("carousel" if len(set(media)) > 1 else "image" if media else "text"), "draggable": True})
-        for r in self.store.q("SELECT id,result,updated FROM agent_runs WHERE user_id=? AND status='ready' ORDER BY id DESC LIMIT 20", (a.uid,)):
+        from . import run_text  # the text only when it changed (Supabase egress, 5 Nov 2026)
+        for r in run_text.attach(self.store, self.store.q(
+                f"SELECT id,{run_text.cols(self.store)},updated FROM agent_runs WHERE user_id=? AND status='ready' ORDER BY id DESC LIMIT 20", (a.uid,))):
             try:
                 res = json.loads(r["result"] or "{}")
             except ValueError:

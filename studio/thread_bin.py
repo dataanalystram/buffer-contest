@@ -214,9 +214,11 @@ class ThreadBin:
         from .chat_context import titles as _titles
         named = _titles(self.store, a.uid)
         gone = deleted_ids(self.store, a.uid)
-        rows = self.store.q("SELECT id,kind,input,status,result,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
-                            "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
-                            "ORDER BY updated DESC, id DESC LIMIT ?", (a.uid, a.uid, SCAN))
+        from . import run_text  # the text only when it changed (Supabase egress, 5 Nov 2026)
+        rows = run_text.attach(self.store, self.store.q(
+            f"SELECT id,kind,{run_text.cols(self.store)},status,created,updated FROM agent_runs WHERE user_id=? AND status NOT IN ('archived','binned') "
+            "AND id NOT IN (SELECT run_id FROM thread_deleted WHERE user_id=?) "
+            "ORDER BY updated DESC, id DESC LIMIT ?", (a.uid, a.uid, SCAN)))
         items = []
         for r in rows:
             inp, res = json.loads(r["input"] or "{}") or {}, json.loads(r["result"] or "{}") or {}

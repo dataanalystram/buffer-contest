@@ -329,3 +329,47 @@ def test_healthz_pings_the_database_at_most_every_15_seconds(app, client, monkey
     for _ in range(5):
         assert client.get("/healthz").json()["db"] is True
     assert n["c"] == 1
+
+
+# ------------------------------------------------------------------ list queries: run text only when it changed
+class _PgLike:
+    """A Postgres-shaped store over SQLite with md5(): exercises run_text's Postgres path without a server."""
+    pg = True
+
+    def __init__(self):
+        import hashlib
+        import sqlite3
+        self.db = sqlite3.connect(":memory:", check_same_thread=False)
+        self.db.row_factory = sqlite3.Row
+        self.db.create_function("md5", 1, lambda s: hashlib.md5((s or "").encode()).hexdigest())
+        self.db.execute("CREATE TABLE agent_runs (id INTEGER PRIMARY KEY, user_id TEXT, input TEXT, result TEXT, updated REAL)")
+        self.sql: list[str] = []
+
+    def q(self, sql, args=()):
+        self.sql.append(sql)
+        return self.db.execute(sql, args).fetchall()
+
+
+def test_run_lists_read_a_runs_text_only_when_it_changed():
+    from studio import run_text
+    st = _PgLike()
+    for i in range(1, 6):
+        st.db.execute("INSERT INTO agent_runs VALUES(?,?,?,?,?)", (i, "u", '{"p":%d}' % i, '{"r":"' + "x" * 5000 + '"}', 1.0))
+
+    def lst():
+        return run_text.attach(st, st.q(f"SELECT id, {run_text.cols(st)}, updated FROM agent_runs WHERE user_id=? ORDER BY id", ("u",)))
+    a = lst()
+    assert [r["input"] for r in a] == ['{"p":%d}' % i for i in range(1, 6)] and all("_hr" not in r for r in a)
+    st.sql.clear()
+    b = lst()
+    assert b == a and len(st.sql) == 1 and "md5(" in st.sql[0] and "input, result" not in st.sql[0]
+    # a writer that changes the text without touching `updated` is still seen at once (content hash, not time)
+    st.db.execute("UPDATE agent_runs SET result=? WHERE id=3", ('{"r":"changed"}',))
+    st.sql.clear()
+    c = lst()
+    assert c[2]["result"] == '{"r":"changed"}' and len(st.sql) == 2 and "id IN (?)" in st.sql[1]
+
+
+def test_run_text_on_sqlite_reads_the_columns_as_before(app):
+    from studio import run_text
+    assert run_text.cols(app.state.house.store) == "input, result"
