@@ -297,7 +297,24 @@ These act on one post run (`run_id`), the same steps HuhQueue's in-app agent tak
 | `post_write_captions` | client brain \* | Write one caption per channel in the brand voice and the ledger's text rules. |
 | `post_x_oembed` | client brain \* | Read an X/Twitter post through the public oEmbed endpoint: author, handle, text, date. |
 
-185 tools in total (from `tools/list`, 5 Nov 2026, after #94, #96, #97, the One take Bin and thread tools of #107 and #108, `ingest_video_link` of #111, the layout tools of #113 and `list_pending_approvals` / `approve_link_ingest` / `reject_link_ingest`; `test_tools_list_parity_and_page_context` checks the count matches). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
+191 tools in total (from `tools/list`, 5 Nov 2026: 188 plus the three registry tools below; after #94, #96, #97, the One take Bin and thread tools of #107 and #108, `ingest_video_link` of #111, the layout tools of #113 and `list_pending_approvals` / `approve_link_ingest` / `reject_link_ingest`; `test_tools_list_parity_and_page_context` checks the count matches). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
+
+## Tool registry: search_tools, describe_tool, call_tool (5 Nov 2026)
+
+With ~190 tools, the full `tools/list` is about 128 KB of JSON (~30,000 tokens, cl100k) before an agent does anything.
+An agent can load three tools instead and look the rest up as it needs them. `tools/list` is unchanged by default (the
+full list); connect to `/mcp?tools=registry` (or send `tools/list` with `_meta: {"huhqueue/tools": "registry"}`) to get
+only these three. Every tool stays callable directly either way.
+
+| Tool | Brain | What it does |
+|---|---|---|
+| `search_tools` | no model | Keyword search over tool names and descriptions: `query` (≤200 characters), `limit` 1-20 (default 8). Returns `name`, a one-line `summary` and the `required` arguments, best match first. Read-only; reads only the static tool list. |
+| `describe_tool` | no model | One tool's full `description`, `inputSchema` and `read_only`, by `name`. Unknown name: 404. |
+| `call_tool` | as the named tool | Runs one tool: `{name, arguments}`. It is unwrapped before every gate, so the named tool meets exactly what a direct `tools/call` meets: kill switch, token policy and channel scope, the paid-API / consent gate (`needs_user_approval`, studio/consent.py), the server-AI gate, run discipline (caps, idempotency), the tool's own rate limits, and the Activity record under the named tool. Arguments are checked against that tool's `inputSchema` first (required, type, enum, range, array items; 400 and nothing runs). Unknown tool: 404. It can't call `search_tools`, `describe_tool` or itself (400), and only `name` and `arguments` are accepted. |
+
+A typical task ("post this to Instagram": registry `tools/list` + `search_tools "preview post"` + `describe_tool
+preview_post` + `describe_tool submit_post`) is ~3.9 KB / ~900 tokens against ~128 KB / ~30,000 tokens for the full list:
+about 97% less context.
 
 ## Runs made from an AI app, previews, draft media and page context (3 Nov 2026)
 

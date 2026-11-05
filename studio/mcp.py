@@ -261,9 +261,22 @@ def _mark_server_ai(tools: list[dict]) -> None:
 
 _mark_server_ai(TOOLS)
 
+from . import mcp_registry as _registry  # noqa: E402  search_tools, describe_tool, call_tool (5 Nov 2026)
+
+TOOLS += _registry.TOOLS
+READ_ONLY |= _registry.READ_ONLY
+TOOLS_BY_NAME: dict[str, dict] = {t["name"]: t for t in TOOLS}
+REGISTRY_TOOLS: list[dict] = [TOOLS_BY_NAME[n] for n in _registry.REGISTRY]
+
 
 def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     args = args or {}
+    if name == "search_tools":
+        return _registry.search(TOOLS, args)
+    if name == "describe_tool":
+        return _registry.describe(TOOLS_BY_NAME, READ_ONLY, args)
+    if name == "call_tool":  # only unwrapped in handle(), before every gate; never dispatched from here (no gate bypass)
+        raise ActionError("call_tool works over MCP tools/call only.", 400)
     if name not in READ_ONLY:
         studio.kill_switch_check(actor, name)
     if name == "whoami":
@@ -414,7 +427,17 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     raise ActionError(f"Unknown tool {name}", 404)
 
 
-def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
+def _registry_only(params: Any) -> bool:
+    """tools/list asked for the registry tools only (_meta huhqueue/tools = registry)."""
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    return isinstance(meta, dict) and meta.get("huhqueue/tools") == "registry"
+
+
+def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False) -> dict | None:
+    """One JSON-RPC message. registry_only (``/mcp?tools=registry``): tools/list answers just search_tools, describe_tool
+    and call_tool; every tool stays callable. Default: the full list, unchanged."""
+    if not isinstance(msg, dict):
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid request"}}
     mid, method = msg.get("id"), msg.get("method", "")
     if mid is None:  # notification (e.g. notifications/initialized)
         return None
@@ -442,10 +465,13 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
                    "adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Brand "
                    "feedback the person gives ('logo smaller', 'no hype'): remember_rule saves it to the Style Ledger. Leftover "
                    "drafts from earlier sessions: cleanup_agent_drafts lists them first and changes nothing until the person "
-                   "confirms." + UNTRUSTED_NOTE})
+                   "confirms. Large tool list: search_tools finds a tool by keyword, describe_tool gives its schema, call_tool runs it "
+                   "(the same rules as a direct call)." + UNTRUSTED_NOTE})
     if method == "ping":
         return ok({})
     if method == "tools/list":
+        if registry_only or _registry_only(msg.get("params")):
+            return ok({"tools": REGISTRY_TOOLS})
         return ok({"tools": TOOLS})
     if method in ("prompts/list", "prompts/get", "resources/list", "resources/read", "resources/templates/list"):
         from . import mcp_prompts
@@ -474,8 +500,18 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
             from . import activity
             activity.note(model_hint=str(meta.get("model") or meta.get("huhqueue/model"))[:80])
         name, args = p.get("name", ""), p.get("arguments") or {}
+        if not isinstance(name, str):
+            name = ""
         if not isinstance(args, dict):
             args = {}
+        if name == "call_tool":
+            # unwrapped BEFORE every gate below, so the named tool meets exactly what a direct call meets (kill switch,
+            # policy and scope, consent / paid-API gate, server-AI gate, run discipline, the activity record)
+            try:
+                name, args = _registry.unwrap(TOOLS_BY_NAME, args)
+            except ActionError as e:
+                return ok({"content": [{"type": "text", "text": str(e)}], "isError": True,
+                           "structuredContent": {"error": str(e), "status": int(getattr(e, "status", 400) or 400)}})
         # make_post with brain="external" only creates the run and the client drives the post_* tools: no HuhQueue model
         # call, so it needs no server_ai (it still runs under the client-brain lock below, so the operator key stays blocked)
         external = name == "make_post" and args.get("brain") == "external"
