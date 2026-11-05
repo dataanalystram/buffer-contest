@@ -65,6 +65,10 @@ offer (never an open redirect), otherwise it shows the "not available" page.
 - Every Channel3 request goes through `studio/netguard.py` (`safe_post` with a host allow-list, `safe_once`): pinned
   IP, no redirects, capped body. Only `api.trychannel3.com`.
 - A missing or another account's `run_id` answers 404; a shop link that isn't the person's stops the send with 404.
+- A shop link is found by parsing each URL with urllib and comparing the exact hostname (any case) with the public
+  host, so `shop.<host>/go/...` is not one. Ports 80/443 are the defaults; any other port on the public host still
+  counts (fail closed), so a port can't slip a link past the #Ad rules.
+- The Product card tab is hidden on the sample take (its renders don't draw the card; the API answers 409).
 - Wrong JSON types answer 400; `limit` is capped at 10, queries at 200 characters, captions at 5,000.
 - Personal details (emails, phone numbers) are removed from queries; Channel3 gets a pseudonymous `x-user-id`.
 - Product text is untrusted: control and bidi characters stripped, lengths capped, rendered with `textContent` in the UI
