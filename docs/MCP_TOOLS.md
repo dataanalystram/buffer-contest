@@ -312,6 +312,7 @@ never ran) and "Worked through 0 steps".
 | `rename_post_thread` | no model | Rename a Make a post thread (blank title = the automatic one). |
 | `get_post_templates` | no model | A run's template, the suggested others, and with `all: true` every built-in and custom template (custom ones show "Yours"). |
 | `resume_post` | no model | Resume a run the server cut off (status `interrupted`) from its last finished step. |
+| `stop_post` | no model | Stop the agent working on a post run after the step it is on; what it made is kept and `resume_post` carries on. Same as the chat's Stop button and `POST /api/agent/runs/{id}/stop`. |
 
 Templates an AI app makes are the person's: `create_template` always makes a NEW template (a name already taken gets a new
 id, never an overwrite), it shows in All templates as **Yours** (`yours: true`, `owner: "yours"`), and `made_by` says
