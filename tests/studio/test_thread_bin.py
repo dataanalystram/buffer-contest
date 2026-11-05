@@ -308,3 +308,16 @@ def test_an_idempotent_replay_of_start_post_carries_thread_id(human, app, monkey
     _, again = mcp_call(human, tok, "start_post", {"title": "Launch post", "brief": "the launch", "user_asked": True,
                                                     "reason": "asked", "idempotency_key": "k-1"})
     assert again["thread_id"] == sp["thread_id"], again
+
+
+def test_asking_again_after_a_purge_opens_a_new_post(human, app):
+    """Greptile, 5 Nov 2026: within the 10-minute dedupe window the same start_post found the purged run and answered 404.
+    A deleted thread (Bin or purged) is never reused or deduped: the same request opens a new post."""
+    tok = agent_token(human, policy="trusted", cap=50)
+    args = {"title": "Launch post", "brief": "the launch", "user_asked": True, "reason": "asked"}
+    _, sp = mcp_call(human, tok, "start_post", args)
+    assert human.delete(f"/api/threads/{sp['thread_id']}").json()["deleted"]
+    human.post("/api/threads/bin/purge", json={"thread_ids": [sp["thread_id"]]})
+    res, again = mcp_call(human, tok, "start_post", args)
+    assert not res["isError"], again
+    assert again["run_id"] != sp["run_id"] and again["thread_id"] != sp["thread_id"]

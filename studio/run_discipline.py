@@ -127,6 +127,11 @@ def closed(res: dict) -> bool:
     return False
 
 
+def _deleted(store, uid: str) -> set[int]:
+    from .thread_bin import deleted_ids
+    return deleted_ids(store, uid)
+
+
 def active_run(store, a: Actor) -> dict | None:
     """This token's open run: the newest one it made that is draft/ready, not sent or awaiting approval, touched within
     ACTIVE_S. Never another app's run (agent_id) and never another person's (user_id)."""
@@ -134,7 +139,10 @@ def active_run(store, a: Actor) -> dict | None:
         return None
     rows = store.q("SELECT id, kind, status, result, updated FROM agent_runs WHERE user_id=? AND agent_id=? AND status IN ('draft','ready') "
                    "AND updated>? ORDER BY updated DESC, id DESC LIMIT 5", (a.uid, a.agent["id"], time.time() - ACTIVE_S))
+    gone = _deleted(store, a.uid)
     for r in rows:
+        if r["id"] in gone:  # a thread the person deleted (in the Bin or purged) is never reused
+            continue
         try:
             res = json.loads(r["result"] or "{}")
         except ValueError:
@@ -174,7 +182,10 @@ def same_request(store, a: Actor, title: str) -> dict | None:
         return None
     rows = store.q("SELECT id, input, result FROM agent_runs WHERE user_id=? AND agent_id=? AND status IN ('draft','ready') "
                    "AND created>? ORDER BY id DESC LIMIT 10", (a.uid, a.agent["id"], time.time() - DEDUPE_S))
+    gone = _deleted(store, a.uid)
     for r in rows:
+        if r["id"] in gone:  # a deleted thread is not "the same request": asking again opens a new post (Greptile, 5 Nov)
+            continue
         try:
             inp, res = json.loads(r["input"] or "{}"), json.loads(r["result"] or "{}")
         except ValueError:
