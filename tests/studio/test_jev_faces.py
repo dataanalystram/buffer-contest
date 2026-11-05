@@ -63,7 +63,7 @@ def test_noul_yes_box_goes_into_the_track_and_the_request_is_right(monkeypatch):
     start = body.index(b'{"model"')
     doc = json.loads(body[start:body.index(b"\r\n", start)])
     ref = doc["state"]["frame"]
-    assert doc["model"] == "jev-latest" and doc["assets"] == {ref: {"type": "image", "part": "frame"}}
+    assert doc["model"] == "jev-1.14.0" and doc["assets"] == {ref: {"type": "image", "part": "frame"}}
     assert doc["questions"]["face_visible"]["type"] == "noul" and doc["questions"]["speaker_face"]["type"] == "box"
     jpg = body[body.index(b"\xff\xd8"):]
     im = Image.open(io.BytesIO(jpg[:jpg.rindex(b"\xff\xd9") + 2]))
@@ -154,6 +154,7 @@ def test_analyze_records_jev_and_never_fails_on_it(monkeypatch):
 
     def boom(*a, **k):
         raise RuntimeError("boom")
+    monkeypatch.setenv("TYPESAFE_API_KEY", KEY)  # a worker with the key asks Jev itself
     monkeypatch.setattr(jev_faces, "second_opinion", boom)
     an = take.analyze("v.mp4", transcript={"words": [{"w": "hi", "s": 0, "e": 1}], "source": "srt"}, jev=True, log=lambda m: None)
     assert an["jev"]["enabled"] is False and "error" in an["jev"]["why"] and an["faces"] == []
@@ -214,3 +215,93 @@ def test_live_one_jev_call_on_the_portrait():
     b = d["box"]
     # the face in the portrait is around x 245-340, y 118-213 of 480x600
     assert 0.4 < (b["left"] + b["right"]) / 2 < 0.8 and 0.12 < (b["top"] + b["bottom"]) / 2 < 0.45
+
+
+
+def test_the_model_is_pinned_to_jev_1_14_and_never_older(monkeypatch):
+    import importlib
+    for env, want in (("", "jev-1.14.0"), ("jev-latest", "jev-latest"), ("jev-preview", "jev-preview"), ("jev-1.13.0", "jev-1.14.0"),
+                      ("jev-1.15.0", "jev-1.15.0"), ("gpt-4o", "jev-1.14.0")):
+        monkeypatch.setenv("HQ_JEV_MODEL", env)
+        assert importlib.reload(jev_faces).MODEL == want, env
+    monkeypatch.delenv("HQ_JEV_MODEL")
+    importlib.reload(jev_faces)
+
+
+def test_a_worker_without_the_key_hands_its_keyframes_to_the_server(monkeypatch):
+    from studio import take
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(take, "probe", lambda p: {"duration": 30.0, "width": 1280, "height": 720, "audio": True, "codec": "h264"})
+    monkeypatch.setattr(take, "detect_silences", lambda p: [])
+    monkeypatch.setattr(take, "detect_scenes", lambda p: ([10.0, 20.0], "test"))
+    monkeypatch.setattr(take, "face_track", lambda p, d: ([], "OpenCV Haar cascade (test)"))
+    monkeypatch.setattr(jev_faces, "frame_image", lambda p, t, width=768: _portrait())
+    import studio.mediasafe as ms
+    monkeypatch.setattr(ms, "check_source", lambda p, *a, **k: {})
+    an = take.analyze("v.mp4", transcript={"words": [{"w": "hi", "s": 0, "e": 1}], "source": "srt"}, jev=True, log=lambda m: None)
+    fr = an["jev_frames"]
+    assert 0 < len(fr) <= jev_faces.cap_from_env() and an["jev"]["pending"] == len(fr) and an["jev"]["calls"] == 0
+    assert all(base64.b64decode(f["jpeg"])[:2] == b"\xff\xd8" for f in fr)
+    an = take.analyze("v.mp4", transcript={"words": [{"w": "hi", "s": 0, "e": 1}], "source": "srt"}, jev=False, log=lambda m: None)
+    assert "jev_frames" not in an                                                         # no consent: nothing leaves the worker
+
+
+def test_the_server_checks_what_a_worker_sent():
+    good = base64.b64encode(jev_faces.prepare(_portrait())[0]).decode()
+    png = io.BytesIO()
+    _portrait().save(png, "PNG")
+    frames = [{"t": 1.0, "why": "scene_start", "jpeg": good}, {"t": True, "why": "scene_start", "jpeg": good},
+              {"t": 2.0, "why": "rm -rf", "jpeg": good}, {"t": 3.0, "why": "no_local_face", "jpeg": "not base64!"},
+              {"t": 4.0, "why": "no_local_face", "jpeg": base64.b64encode(png.getvalue()).decode()}, "junk",
+              {"t": 5.0, "why": "low_confidence", "jpeg": good}]
+    out = jev_faces.clean_frames(frames, 12)
+    assert [f["t"] for f in out] == [1.0, 5.0] and all(f["jpeg"][:2] == b"\xff\xd8" for f in out)
+    assert len(jev_faces.clean_frames([frames[0]] * 20, 3)) == 3 and jev_faces.clean_frames("x", 3) == []
+
+
+def _take_with_job(human, app, monkeypatch, jev=True):
+    house, sent = app.state.house, []
+
+    def dispatch(jid, workflow="", inputs=None, ttl=1800):
+        sent.append(jid)
+        return True, ""
+    monkeypatch.setattr(house, "_dispatch_github", dispatch)
+    monkeypatch.setattr(house.takes, "_mode", lambda: "github")
+    up = human.post("/api/media", json={"name": "talk.mp4", "data": base64.b64encode(b"\x00\x00\x00\x18ftypmp42" + b"0" * 64).decode()}).json()
+    t = human.post("/api/takes", json={"media_token": up["token"], "owns": True, "jev": jev}).json()
+    return t["id"], sent[-1]
+
+
+def test_the_server_asks_jev_for_the_worker_s_keyframes_within_the_caps(human, app, monkeypatch):
+    house = app.state.house
+    rid, jid = _take_with_job(human, app, monkeypatch)
+    api = Api()
+    house.takes._jev_http = httpx.Client(transport=httpx.MockTransport(api))
+    monkeypatch.setenv("TYPESAFE_API_KEY", KEY)
+    monkeypatch.setenv("HQ_JEV_DAILY_CAP", "5")
+    good = base64.b64encode(jev_faces.prepare(_portrait())[0]).decode()
+    frames = [{"t": float(t), "why": "no_local_face", "jpeg": good} for t in (1, 4, 7, 10)]
+    an = house.takes._studio_jev(jid, {"faces": [], "providers": {"faces": "OpenCV"}, "jev_frames": frames})
+    assert "jev_frames" not in an and an["jev"]["where"] == "server" and an["jev"]["calls"] == 4 and an["jev"]["used"] == 4
+    assert any(f.get("src") == "jev" for f in an["faces"]) and "Jev second opinion" in an["providers"]["faces"]
+    assert KEY not in json.dumps(an) and api.seen[0][0].headers["Authorization"] == f"Bearer {KEY}"
+    assert house.takes._jev_used("acc_1") == 4
+    an = house.takes._studio_jev(jid, {"faces": [], "jev_frames": frames})                # 1 left today
+    assert an["jev"]["calls"] == 1 and house.takes._jev_used("acc_1") == 5
+    an = house.takes._studio_jev(jid, {"faces": [], "jev_frames": frames})                # the daily cap: no call, local faces
+    assert an["jev"]["calls"] == 0 and "used up" in an["jev"]["why"] and len(api.seen) == 5
+
+
+def test_the_server_never_asks_jev_without_consent_or_a_key(human, app, monkeypatch):
+    house = app.state.house
+    rid, jid = _take_with_job(human, app, monkeypatch, jev=False)
+    api = Api()
+    house.takes._jev_http = httpx.Client(transport=httpx.MockTransport(api))
+    monkeypatch.setenv("TYPESAFE_API_KEY", KEY)
+    good = base64.b64encode(jev_faces.prepare(_portrait())[0]).decode()
+    an = house.takes._studio_jev(jid, {"faces": [], "jev_frames": [{"t": 1.0, "why": "scene_start", "jpeg": good}]})
+    assert "jev_frames" not in an and an["jev"]["calls"] == 0 and not api.seen and "off for this take" in an["jev"]["why"]
+    rid, jid = _take_with_job(human, app, monkeypatch, jev=True)
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    an = house.takes._studio_jev(jid, {"faces": [], "jev_frames": [{"t": 1.0, "why": "scene_start", "jpeg": good}]})
+    assert an["jev"]["calls"] == 0 and not api.seen and "isn't set on the server" in an["jev"]["why"]
