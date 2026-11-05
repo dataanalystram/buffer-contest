@@ -18,7 +18,9 @@ def test_command_has_no_token_and_quotes():
     cmd = ib.command(42, "https://x.example/app?a=1;rm -rf /", "take_render", "main")
     assert "jt_" not in cmd and "read -r JOB_TOKEN" in cmd
     assert "--job 42" in cmd and "'https://x.example/app?a=1;rm -rf /'" in cmd
-    assert "HQ_LOCK=/data/hq.lock" in cmd and "flock" not in cmd  # the worker locks after its heartbeat starts
+    assert "HQ_LOCK=/data/hq.lock" in cmd and "flock /data/hq.lock" not in cmd  # the worker locks after its heartbeat starts
+    job = cmd[cmd.rindex("(nohup env"):]
+    assert "flock" not in job                       # only the one-time tesseract build runs under a (non-blocking) flock
 
 
 class _House:
