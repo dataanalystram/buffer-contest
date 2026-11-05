@@ -95,7 +95,8 @@ TOOLS: list[dict[str, Any]] = [
          "owns": {"type": "boolean", "description": "Must be true: the user owns this video or has the rights to it"},
          "channel_ids": {"type": "array", "items": {"type": "string"}}, "count": {"type": "integer", "minimum": 1, "maximum": 7},
          "name": {"type": "string"}, "sample": {"type": "boolean"},
-         "upload_id": {"type": "string", "description": "A finished multipart upload of a long video (POST /api/takes/uploads, up to 4 GB when the server has a bucket)"}}}},
+         "upload_id": {"type": "string", "description": "A finished multipart upload of a long video (POST /api/takes/uploads, up to 4 GB when the server has a bucket)"},
+         "jev": {"type": "boolean", "description": "Ask TypeSafe Jev for a second opinion on the speaker's face on a few keyframes (paid, HuhQueue's key): answers needs_user_approval until the person approves. Off by default for apps; local face detection always runs."}}}},
     {"name": "ingest_video_link", "description": "One take from a video LINK: a YouTube, Vimeo or X video post, or a direct https link to an MP4. Use this whenever the person gives you a video link (don't ask them to upload it). HuhQueue's video worker fetches it (the same path Make a post uses: yt-dlp, mp4 up to 1080p, no cookies or accounts; up to 4 GB and 3 h), transcribes it and cuts clips. Rights first: the first call answers needs_user_approval with an approval_id and the rights statement; the person approves it in HuhQueue → Inbox → Approvals (only they can, you can't confirm it for them). Then call again with the same url and approval_id: it returns the take (poll list_clips(take_id)). If the platform refuses (age-restricted, private, a bot check) the take fails with the exact reason; only then does the person need to download and upload the file. licence_hint shows a Creative Commons flag when the platform states one.",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"},
          "approval_id": {"type": "integer"}, "channel_ids": {"type": "array", "items": {"type": "string"}},
@@ -164,6 +165,10 @@ from . import take_bin as _take_bin  # noqa: E402  delete_take, list_take_bin, r
 
 TOOLS += _take_bin.TOOLS
 READ_ONLY |= _take_bin.READ_ONLY
+from . import thread_bin as _thread_bin  # noqa: E402  list_threads, get_thread, delete_thread, restore_thread, list/purge_thread_bin
+
+TOOLS += _thread_bin.TOOLS
+READ_ONLY |= _thread_bin.READ_ONLY
 from . import reel_audio as _reel_audio  # noqa: E402  search_instagram_audio, set_reel_audio
 
 TOOLS += _reel_audio.TOOLS
@@ -305,7 +310,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "clips_from_video":
         if args.get("sample"):
             return h.takes.start_sample(actor, {"channel_ids": args.get("channel_ids")})
-        body = {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "approval_id", "credit")}
+        body = {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "approval_id", "credit", "jev")}
         return h.takes.start(actor, {**body, "_tool": "clips_from_video"})
     if name == "ingest_video_link":
         if not isinstance(args.get("url"), str) or not args["url"].strip():
@@ -366,6 +371,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _take_bin.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _thread_bin.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     for _mod in (_send, _share, _ledger, _parity, _image, _rd):
@@ -469,6 +477,9 @@ def handle(studio: Studio, actor: Actor, msg: dict) -> dict | None:
             replayed = _rd.replay(studio.store, actor, name, clean, key) if key else None
             if replayed is not None:
                 result = replayed
+                if name in ("start_post", "continue_run"):  # a replay carries thread_id like a fresh answer (older rows too)
+                    from .thread_bin import with_thread_id
+                    result = with_thread_id(studio.store, actor, result)
             else:
                 clean, early = _rd.before(studio, actor, name, clean)
                 result = early if early is not None else call_tool(studio, actor, name, _rd.strip_control(clean, name))

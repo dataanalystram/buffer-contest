@@ -32,7 +32,18 @@ def _deletes():
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and \
                         any(k in node.value for k in ("DELETE FROM media ", "DELETE FROM library_items ")):
                     out.add((py.stem, fn.name))
+                if _is_media_release(node):  # studio/blobstore.release(store, "media", ...) deletes media rows too
+                    out.add((py.stem, fn.name))
     return out
+
+
+def _is_media_release(node) -> bool:
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "release" and \
+        len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and node.args[1].value == "media"
+
+
+def _deletes_media(tree) -> bool:
+    return "DELETE FROM media" in ast.unparse(tree) or any(_is_media_release(n) for n in ast.walk(tree))
 
 
 def _src(mod, name):
@@ -49,7 +60,7 @@ def test_every_permanent_media_delete_is_recorded_or_exempt_with_a_reason():
         txt = ast.unparse(fn)
         assert "record_owner_deletes(" in txt, (mod, name)
         withs = [w for w in ast.walk(fn) if isinstance(w, ast.With) and ".tx()" in ast.unparse(w.items[0].context_expr)]
-        assert any("DELETE FROM media" in ast.unparse(w) and "record_owner_deletes(" in ast.unparse(w) for w in withs), (mod, name)
+        assert any(_deletes_media(w) and "record_owner_deletes(" in ast.unparse(w) for w in withs), (mod, name)
 
 
 def test_a_new_brand_preview_notes_the_old_one_as_deleted_by_owner(owner):

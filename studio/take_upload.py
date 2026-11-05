@@ -24,18 +24,16 @@ source is deleted when the take is purged from the Bin. Also add a bucket lifecy
 from __future__ import annotations
 
 import hashlib
-import hmac
 import os
 import re
 import secrets
 import threading
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
-from urllib.parse import quote, urlparse
 
 import httpx
 from .actions import ActionError, Actor
+from .r2 import config, presign  # noqa: F401  the one R2 signer and settings (shared with studio/blobstore.py, PR #110)
 
 MB = 1024 * 1024
 PART = 16 * MB              # every part but the last (S3 / R2 need >= 5 MiB, all the same size)
@@ -61,41 +59,6 @@ LINK_NAME = ":fetched-link"  # take_uploads.name of a source the worker fetched 
 
 def max_bytes() -> int:
     return int(os.environ.get("HQ_TAKE_UPLOAD_MAX_MB", "4096")) * MB
-
-
-def config() -> dict | None:
-    """The bucket, or None (feature off) unless all four settings are there."""
-    acct, key, secret, bucket = (os.environ.get(k, "").strip() for k in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"))
-    if not (acct and key and secret and bucket):
-        return None
-    endpoint = os.environ.get("R2_ENDPOINT", "").strip().rstrip("/") or f"https://{acct}.r2.cloudflarestorage.com"
-    if not endpoint.startswith("https://"):
-        return None
-    return {"endpoint": endpoint, "key": key, "secret": secret, "bucket": bucket, "region": os.environ.get("R2_REGION", "auto")}
-
-
-def presign(cfg: dict, method: str, key: str, params: dict | None = None, expires: int = URL_TTL, now: datetime | None = None,
-            length: int | None = None) -> str:
-    """AWS Signature V4 query-string auth (path-style), UNSIGNED-PAYLOAD. Stdlib only. ``length``: the PUT's
-    Content-Length is signed too, so the URL can't carry a bigger body than the part it was issued for."""
-    t = now or datetime.now(timezone.utc)
-    amz, day = t.strftime("%Y%m%dT%H%M%SZ"), t.strftime("%Y%m%d")
-    host = urlparse(cfg["endpoint"]).netloc
-    uri = "/" + quote(cfg["bucket"], safe="") + "/" + quote(key, safe="/~")
-    scope = f"{day}/{cfg['region']}/s3/aws4_request"
-    hdrs = {**({"content-length": str(int(length))} if length is not None else {}), "host": host}
-    signed = ";".join(sorted(hdrs))
-    q = {**(params or {}), "X-Amz-Algorithm": "AWS4-HMAC-SHA256", "X-Amz-Credential": f"{cfg['key']}/{scope}",
-         "X-Amz-Date": amz, "X-Amz-Expires": str(int(expires)), "X-Amz-SignedHeaders": signed}
-    qs = "&".join(f"{quote(str(k), safe='-_.~')}={quote(str(v), safe='-_.~')}" for k, v in sorted(q.items()))
-    canon = "".join(f"{k}:{hdrs[k]}\n" for k in sorted(hdrs))
-    creq = "\n".join([method, uri, qs, canon, signed, "UNSIGNED-PAYLOAD"])
-    sts = "\n".join(["AWS4-HMAC-SHA256", amz, scope, hashlib.sha256(creq.encode()).hexdigest()])
-    k = ("AWS4" + cfg["secret"]).encode()
-    for part in (day, cfg["region"], "s3", "aws4_request"):
-        k = hmac.new(k, part.encode(), hashlib.sha256).digest()
-    sig = hmac.new(k, sts.encode(), hashlib.sha256).hexdigest()
-    return f"{cfg['endpoint']}{uri}?{qs}&X-Amz-Signature={sig}"
 
 
 def is_video(head: bytes) -> bool:

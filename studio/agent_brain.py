@@ -473,6 +473,9 @@ class Brain:
 
     def reply(self, a: Actor, rid: int, text: str, media_token: str = "") -> dict:
         self.h.studio._guard_write(a, "agent_reply")
+        from .thread_bin import purged
+        if purged(self.store, a.uid, rid):  # REST and MCP alike: no message or agent work on a thread deleted for good
+            raise ActionError("This thread was deleted for good.", 404)
         text = (text or "").strip()[:intake.MAX_PROMPT]
         if media_token:
             return self._reply_upload(a, rid, text, media_token)
