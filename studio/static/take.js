@@ -191,7 +191,7 @@ function watchTake(id) {
       showTake(t);
       if (["running", "rendering"].includes(t.status)) later(2000);
       else loadTakes();
-    } catch (e) { toast(e.message); }
+    } catch (e) { if (mine()) toast(e.message); }
   };
   T.poll = setTimeout(tick, 1200);
 }

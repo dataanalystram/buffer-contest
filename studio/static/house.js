@@ -175,6 +175,7 @@ function watch(id) {
       if (["running", "rendering"].includes(r.status)) later(1400);
       else { loadRuns(); readyBadge(); }
     } catch (e) {
+      if (!mine()) return;  // a newer watcher owns the poll now: a late failure never touches its timer or wake listener
       errs += 1;
       if (errs === 3) toast("Reconnecting to the agent…");
       later(Math.min(15000, 1500 * 2 ** Math.min(errs, 4)));

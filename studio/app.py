@@ -942,7 +942,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         tag = '"' + hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:20] + '"'
         from .library import not_modified
         if not_modified(request, tag):  # W/"…" too: a gzipped answer's tag is weakened (studio/gzipmw.py)
-            return Response(status_code=304, headers={"ETag": tag})
+            inm = request.headers.get("if-none-match") or ""
+            # the 304 carries the validator the cache holds: the weak one when the stored answer was gzipped (RFC 9111 4.3.4)
+            return Response(status_code=304, headers={"ETag": ("W/" + tag) if ("W/" + tag) in inm else tag})
         return JSONResponse(data, headers={"ETag": tag, "Cache-Control": "private, no-cache"})
 
     @app.get("/api/inbox")

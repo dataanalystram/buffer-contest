@@ -185,6 +185,7 @@ def test_hidden_tabs_poll_slowly_and_catch_up_when_shown():
         # a replaced watcher (even for the same id) drops its wake listener and its loop (CodeRabbit, #118)
         assert f"if ({key}.unwake) {key}.unwake();" in js and f"const gen = {key}.gen = ({key}.gen || 0) + 1" in js
         assert f"{key}.watching === id && {key}.gen === gen" in js
+    assert "if (!mine()) return;  // a newer watcher owns the poll now" in (ST / "house.js").read_text()
 
 
 def test_inbox_etag_matches_a_weakened_tag_from_a_gzipped_answer(human):
@@ -192,5 +193,7 @@ def test_inbox_etag_matches_a_weakened_tag_from_a_gzipped_answer(human):
     tag = r.headers.get("etag")
     assert r.status_code == 200 and tag
     strong = tag.removeprefix("W/")
-    assert human.get("/api/inbox", headers={"If-None-Match": "W/" + strong}).status_code == 304
-    assert human.get("/api/inbox", headers={"If-None-Match": strong}).status_code == 304
+    weak = human.get("/api/inbox", headers={"If-None-Match": "W/" + strong})
+    assert weak.status_code == 304 and weak.headers["etag"] == "W/" + strong  # the validator the cache holds
+    same = human.get("/api/inbox", headers={"If-None-Match": strong})
+    assert same.status_code == 304 and same.headers["etag"] == strong
