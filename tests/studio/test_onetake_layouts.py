@@ -498,6 +498,31 @@ def test_mcp_tools_are_documented():
     assert "`set_clip_layout`" in doc and "`get_clip_layout`" in doc
 
 
+# ---------------------------------------------------------------------- cuts and sentence boundaries (pure)
+def test_layouts_change_only_at_cuts_or_sentence_ends():
+    from studio.media.reframe import shots as sh
+    ws = [{"w": w, "s": s, "e": s + 0.3} for w, s in (("Hello", 0.2), ("there.", 0.6), ("This", 1.4), ("is", 1.8), ("long", 2.2),
+                                                       ("enough.", 2.6), ("Next", 3.4), ("one?", 3.8), ("Yes!", 6.5), ("ok", 9.0))]
+    b = sh.sentence_bounds(ws, 0.0)
+    assert b == [1.15, 3.15, 5.3, 7.9]                                   # halfway into the pause after . ? !
+    pieces = sh.split_at_sentences([(0.0, 10.0)], b, decide.MIN_HOLD)
+    assert pieces == [(0.0, 3.15, 0), (3.15, 5.3, 0), (5.3, 7.9, 0), (7.9, 10.0, 0)]  # 1.15 is too close to the start
+    assert sh.split_at_sentences([(0.0, 10.0)], [1.0, 2.5, 8.5], 2.0) == [(0.0, 2.5, 0), (2.5, 10.0, 0)]
+    assert all(p[1] - p[0] >= decide.MIN_HOLD for p in pieces)
+    assert sh.split_at_sentences([(0.0, 3.5), (3.5, 8.0)], [1.0, 5.0], 2.0) == [(0.0, 3.5, 0), (3.5, 8.0, 1)]
+    assert sh.sentence_bounds([{"w": "no", "s": 0, "e": 1}, {"w": "stop", "s": 1, "e": 2}], 0.0) == []
+
+
+def test_sentence_pieces_render_as_one_segment():
+    from studio.media.reframe import render
+    shots = [{"start": 0, "end": 3, "layout": "track", "faces": [0]}, {"start": 3, "end": 6, "layout": "track", "faces": [0]},
+             {"start": 6, "end": 9, "layout": "fit", "bg": "blur"}, {"start": 9, "end": 12, "layout": "fit", "bg": "blur"}]
+    merged, spans = render.merge_pieces(shots, [0, 0, 0, 1])               # the last piece is past a cut: kept apart
+    assert spans == [(0, 6), (6, 9), (9, 12)] and [s["layout"] for s in merged] == ["track", "fit", "fit"]
+    pinned = [dict(shots[0]), {**shots[1], "pinned": True}]
+    assert len(render.merge_pieces(pinned, [0, 0])[0]) == 2
+
+
 # ---------------------------------------------------------------------- licence guard
 BANNED = ("ultralytics", "insightface", "gsap", "remotion")
 
@@ -515,3 +540,16 @@ def test_licence_guard_no_banned_packages():
             if re.search(rf"(^|[^a-z0-9_-]){re.escape(name)}([^a-z0-9_-]|$)", text):
                 hits.append((f.relative_to(ROOT).as_posix(), name))
     assert not hits, f"non-permissive or banned packages found: {hits}"
+
+
+def test_licence_guard_no_agpl_dependency_installed():
+    """No installed distribution (CI installs every requirements file) is under the AGPL."""
+    import importlib.metadata as md
+    hits = []
+    for d in md.distributions():
+        m = d.metadata
+        text = " ".join([m.get("License") or "", m.get("License-Expression") or ""] +
+                        [c for c in (m.get_all("Classifier") or []) if c.startswith("License")]).lower()
+        if "affero" in text or re.search(r"\bagpl", text):
+            hits.append(m.get("Name"))
+    assert not hits, f"AGPL dependencies installed: {hits}"

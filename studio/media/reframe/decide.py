@@ -15,7 +15,8 @@ Rules, per shot, first match wins (a pinned layout from the person or their agen
 Screen content means at least 2 of the 3 screen signals AND edge-dense content spanning at least half the frame
 WIDTH, with no large face in the shot. "Talking" is mouth motion measured only inside the word timestamps.
 
-Stability: a 1-second majority vote inside each shot (one bad sample never flips it), layouts change only at cuts,
+Stability: a 1-second majority vote inside each shot (one bad sample never flips it), layouts change only at cuts or
+at sentence boundaries (render.plan_clip splits a long shot at the sentence ends inside it, every piece >= 2 s),
 every layout holds at least 2.0 s (shorter shots take a neighbour's layout), and a clip of 60 s or less changes layout
 at most 3 times (more, and the whole clip takes its majority layout). Upscale guard: a tracked crop that would be
 scaled up more than 2.5x renders as fit instead (720p is allowed when the face is >= 15% tall).
@@ -235,17 +236,19 @@ def decide(shot_sigs: list[dict], src: tuple[int, int], prefs: dict | None = Non
 
 
 def signals_for(shots: list[tuple[float, float]], samples: list[dict], tracks: list[dict], screen_sig=None,
-                speech: list[tuple[float, float]] | None = None, fps: float = 5.0) -> list[dict]:
-    """Per-shot signals (clip seconds). screen_sig(a, b, faces) -> {screen, content_width}; None = no screen check."""
+                speech: list[tuple[float, float]] | None = None, fps: float = 5.0, shot_dur: list[float] | None = None) -> list[dict]:
+    """Per-shot signals (clip seconds). screen_sig(a, b, faces) -> {screen, content_width}; None = no screen check.
+    shot_dur: for sentence pieces, the length of the whole shot each piece belongs to (the split gate reads it, so a
+    piece of a long two-person shot isn't refused split just for being a piece)."""
     from .faces import mouth_motion
     out = []
-    for a, b in shots:
+    for k, (a, b) in enumerate(shots):
         n = sum(1 for s in samples if a <= s["t"] < b)
         faces = summarize(tracks, a, b, n)
         for t in faces:
             sp = [(max(a, s), min(b, e)) for s, e in speech or [] if e > a and s < b]
             t["motion"] = mouth_motion({"points": t["points"]}, sp if speech is not None else None)
-        sig = {"start": round(a, 3), "end": round(b, 3), "dur": round(b - a, 3), "faces": faces, "screen": False, "content_width": 0.0,
+        sig = {"start": round(a, 3), "end": round(b, 3), "dur": round(shot_dur[k] if shot_dur else b - a, 3), "faces": faces, "screen": False, "content_width": 0.0,
                "low_conf": bool(faces) and min(t["score"] for t in faces) < 0.75 and len(faces) >= 2}
         if screen_sig is not None:
             boxes = [f for s in samples if a <= s["t"] < b for f in s["faces"]]

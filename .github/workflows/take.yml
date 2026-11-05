@@ -30,5 +30,13 @@ jobs:
         if: github.event.inputs.kind == 'take_analyze'
         with: {path: ~/.cache/huggingface, key: whisper-small-v1}
       - name: Job ${{ github.event.inputs.job_id }} (${{ github.event.inputs.kind }})
-        env: {HQ_JOB_ID: "${{ github.event.inputs.job_id }}", HQ_APP: "${{ github.event.inputs.app }}", HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite"}
+        env:
+          HQ_JOB_ID: "${{ github.event.inputs.job_id }}"
+          HQ_APP: "${{ github.event.inputs.app }}"
+          HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite"
+          # Free tiers only (studio/free_quota.py reserves each request on the app's ledger first; unset = local only).
+          GROQ_API_KEY: "${{ secrets.GROQ_API_KEY }}"          # Groq whisper-large-v3-turbo (free plan), else faster-whisper
+          NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}"      # Smart layout (beta), only for owners who turned it on
+          OPENROUTER_API_KEY: "${{ secrets.OPENROUTER_API_KEY }}"  # ':free' models only
+          HQ_LAYOUT_VISION: shadow                             # asks and logs; the rules still decide (off | shadow | on)
         run: python -m studio.render_worker --job "$HQ_JOB_ID" --app "$HQ_APP"

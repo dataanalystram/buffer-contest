@@ -177,7 +177,8 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
         screen_fn = None
     t_faces = time.time() - t0
     tracks = faces_mod.track(smp["samples"])
-    sigs = decide.signals_for(spans, smp["samples"], tracks, screen_fn, _speech(words, start), smp["fps"])
+    sigs = decide.signals_for(spans, smp["samples"], tracks, screen_fn, _speech(words, start), smp["fps"],
+                              [cut_spans[k][1] - cut_spans[k][0] for k in parent])
     shots = decide.decide(sigs, (sw, sh), prefs, pins, smp["fps"])
     vis = None
     from . import vision  # optional free vision picker: off by default, shadow logs only, on applies (never over a pin)

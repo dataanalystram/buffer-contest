@@ -7,7 +7,9 @@
   }
  ],
  "rules": [
+  "R6",
   "R6"
  ],
- "source": "tests/studio/reframe_fixtures.py (duo)"
+ "source": "tests/studio/reframe_fixtures.py (duo)",
+ "note": "rules: one per scene; the fixture's sentence end at 5.9 s splits the shot into two scenes"
 }
