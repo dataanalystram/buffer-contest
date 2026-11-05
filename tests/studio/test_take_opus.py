@@ -37,7 +37,7 @@ def test_a_platform_link_needs_rights_and_gets_a_credit(human, app, monkeypatch)
     sent = _github(app, monkeypatch)
     r = human.post("/api/takes", json={"url": YT})
     assert r.status_code == 400 and "rights_confirmed" in r.json()["error"]
-    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "prompt": "split this into 5 shorts"}).json()
+    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "split this into 5 shorts"}).json()
     assert t["style"] == "opus" and t["input"]["platform_url"] == YT and t["input"]["url"] == ""
     assert t["input"]["credit"] == "Video: Buffer on YouTube" and t["input"]["count"] == 5
     assert t["input"]["ratios"] == ["9:16"]                                     # ch_ig only takes video here -> Reel
@@ -47,18 +47,18 @@ def test_a_platform_link_needs_rights_and_gets_a_credit(human, app, monkeypatch)
     spec = w.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt}).json()
     assert spec["spec"]["platform_url"] == YT and spec["urls"]["source"] == ""   # the worker fetches the post itself
     # a profile page is still refused; a direct file still works for your own video
-    r = human.post("/api/takes", json={"url": "https://www.facebook.com/somebrand", "owns": True})
+    r = human.post("/api/takes", json={"url": "https://www.facebook.com/somebrand", "owns": True, "rights_attested": True})
     assert r.status_code == 400 and "video post itself" in r.json()["error"]
 
 
 def test_uploaded_captions_are_checked_before_parsing(human, app, monkeypatch):
     _hosts(monkeypatch)
     _github(app, monkeypatch)
-    r = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True, "captions": "not captions"})
+    r = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True, "rights_attested": True, "captions": "not captions"})
     assert r.status_code == 400 and "SRT or WebVTT" in r.json()["error"]
-    r = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True, "captions": "x" * (takes.MAX_CAPTION_TEXT + 1)})
+    r = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True, "rights_attested": True, "captions": "x" * (takes.MAX_CAPTION_TEXT + 1)})
     assert r.status_code == 413
-    t = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True, "captions": VTT, "style": "opus"}).json()
+    t = human.post("/api/takes", json={"url": "https://cdn.example.com/talk.mp4", "owns": True, "rights_attested": True, "captions": VTT, "style": "opus"}).json()
     assert t["input"]["captions_given"] is True and t["style"] == "opus"
 
 
@@ -97,7 +97,7 @@ def test_opus_take_renders_every_ratio_and_placement_uses_the_channels_ratio(hum
     house = app.state.house
     monkeypatch.setattr(house.takes, "_channels",
                         lambda a, ids: [c for c in house.studio.channels(a) if c["id"] in ("ch_ig", "ch_li")])
-    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "prompt": "find the best moments"}).json()
+    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "find the best moments"}).json()
     assert t["input"]["ratios"] == ["9:16", "4:5"]
     jid, _, _, jt = sent[0]
     w = TestClient(app, base_url="https://hq.test")
@@ -138,7 +138,7 @@ def test_make_a_post_split_request_becomes_a_take(human, app, monkeypatch):
     r = human.post("/api/agent/runs", json={"prompt": f"split this into 5 shorts {YT}", "channel_ids": ["ch_ig"]})
     assert r.status_code == 409 and r.json()["error"].startswith("Rights:") and "Video: Buffer on YouTube" in r.json()["error"]
     t = human.post("/api/agent/runs", json={"prompt": f"split this into 5 shorts {YT}", "channel_ids": ["ch_ig"],
-                                            "rights_confirmed": True}).json()
+                                            "rights_confirmed": True, "rights_attested": True}).json()
     assert t["kind"] == "take" and t["style"] == "opus" and t["input"]["count"] == 5
     # an ordinary post about a link is still a Make a post run
     run = human.post("/api/agent/runs", json={"prompt": "post about this https://example.com/launch", "channel_ids": ["ch_ig"]}).json()

@@ -121,7 +121,7 @@ def start_media_check(house: "House", every: float | None = None, first_delay: f
             except Exception as e:  # noqa: BLE001
                 print(f"library trash: {e.__class__.__name__}: {e}", flush=True)
             try:  # One take's Bin (takes and clips) after TRASH_DAYS, and bucket uploads nobody finished or used
-                n = house.threads.purge_expired() + house.takes.purge_expired() + house.take_uploads.purge_stale()
+                n = house.threads.purge_expired() + house.takes.purge_expired() + house.take_uploads.purge_stale() + house.take_uploads.purge_link_sources()
                 if n:
                     print(f"take bin: removed {n} item(s) for good", flush=True)
             except Exception as e:  # noqa: BLE001

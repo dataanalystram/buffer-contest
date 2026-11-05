@@ -6,5 +6,5 @@ pillow>=11.3.0
 fonttools>=4.65.0
 cryptography>=44.0.1
 numpy>=2.2.6
-yt-dlp>=2026.10.26
+yt-dlp==2026.10.26  # pinned: video links on the worker (Unlicense, NOTICE)
 opencv-python-headless>=4.10,<5  # One take layouts: YuNet faces + screen signals on the clip span (studio/media/reframe), Apache-2.0. <5 with the other opencv dists

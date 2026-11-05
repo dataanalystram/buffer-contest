@@ -34,6 +34,10 @@ class FallbackError(RuntimeError):
     pass
 
 
+class TooLong(FallbackError):
+    """The video is over the caller's duration cap (read from the instance's metadata before any stream downloads)."""
+
+
 def instances() -> list[str]:
     raw = os.environ.get("HQ_INVIDIOUS_INSTANCES", "")
     return [u.strip().rstrip("/") for u in raw.split(",") if u.strip().startswith("https://")]
@@ -101,7 +105,8 @@ def _download(url: str, size: int, dest: Path, max_bytes: int, http=None) -> Non
                     fh.write(chunk)
 
 
-def fetch(video_id: str, dest: str | Path, *, max_bytes: int = 300 * 1024 * 1024, max_height: int = 720, http=None) -> dict:
+def fetch(video_id: str, dest: str | Path, *, max_bytes: int = 300 * 1024 * 1024, max_height: int = 720, http=None,
+          max_secs: int = 0) -> dict:
     """Download a YouTube video through the configured Invidious instances. Returns {path, instance, itags}."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id or ""):
         raise FallbackError("not a YouTube video id")
@@ -112,6 +117,9 @@ def fetch(video_id: str, dest: str | Path, *, max_bytes: int = 300 * 1024 * 1024
     for base in instances():
         try:
             info = _get_json(f"{base}/api/v1/videos/{video_id}?local=true", http)
+            secs = info.get("lengthSeconds")
+            if max_secs and isinstance(secs, (int, float)) and secs > max_secs:
+                raise TooLong(f"This video is {secs / 3600:.1f} h; links are taken up to {max_secs / 3600:g} h. Trim it and upload the file.")
             v, a = pick_formats(info, max_height)
             if not v or not a:
                 raise FallbackError("no H.264 + AAC streams")
@@ -123,6 +131,8 @@ def fetch(video_id: str, dest: str | Path, *, max_bytes: int = 300 * 1024 * 1024
                 subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(vp), "-i", str(ap), "-c", "copy", "-movflags", "+faststart",
                                 str(dest)], check=True, timeout=600)
             return {"path": str(dest), "instance": base, "itags": [str(v.get("itag")), str(a.get("itag"))]}
+        except TooLong:
+            raise
         except (FallbackError, netguard.FetchError, subprocess.SubprocessError, OSError, ValueError) as e:
             errors.append(f"{base}: {str(e)[:120]}")
         except Exception as e:  # noqa: BLE001 - httpx errors and the like: try the next instance

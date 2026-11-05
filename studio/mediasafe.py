@@ -28,7 +28,8 @@ OWN_FORMATS = ("lavfi", "concat")  # only when WE passed -f for an input we buil
 SOURCE_CONTAINERS = ("mov", "mp4", "m4a", "3gp", "matroska", "webm")  # what an uploaded video may be
 URL_SCHEMES = ("http", "https", "tcp", "udp", "rtp", "rtmp", "rtsp", "ftp", "sftp", "data", "subfile", "crypto", "concat",
                "async", "cache", "tee", "gopher", "smb", "srt", "tls", "unix", "file")
-MAX_INPUT_BYTES = int(os.environ.get("HQ_MAX_MEDIA_INPUT_BYTES", str(2 * 1024 * 1024 * 1024)))
+# 4 GB: a One take source (upload or fetched link, take_upload.max_bytes) must pass ffprobe too (Greptile, PR #111)
+MAX_INPUT_BYTES = int(os.environ.get("HQ_MAX_MEDIA_INPUT_BYTES", str(4 * 1024 * 1024 * 1024)))
 DEFAULT_TIMEOUT = int(os.environ.get("HQ_FFMPEG_TIMEOUT", "1800"))
 
 # OpenCV (PySceneDetect's default backend) opens files with its own FFmpeg: keep it to local files too.

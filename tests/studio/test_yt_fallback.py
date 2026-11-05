@@ -79,7 +79,7 @@ def _bot_blocked_ytdlp(monkeypatch):
 def test_bot_block_without_flag_says_upload_instead(monkeypatch, tmp_path):
     _bot_blocked_ytdlp(monkeypatch)
     monkeypatch.delenv("HQ_YT_FALLBACK", raising=False)
-    with pytest.raises(download.DownloadError, match="Upload the file instead"):
+    with pytest.raises(download.DownloadError, match="blocked our server.*upload the file"):
         download.download_platform("https://youtu.be/QJf0H64BnFo", tmp_path / "v.mp4")
 
 
@@ -106,5 +106,5 @@ def test_fallback_failure_message(monkeypatch, tmp_path):
     def boom(*a, **k):
         raise yt_fallback.FallbackError("https://inv.example: answered 403")
     monkeypatch.setattr(yt_fallback, "fetch", boom)
-    with pytest.raises(download.DownloadError, match="Upload the file instead"):
+    with pytest.raises(download.DownloadError, match="blocked our server.*upload the file"):
         download.download_platform("https://youtu.be/QJf0H64BnFo", tmp_path / "v.mp4")
