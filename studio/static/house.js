@@ -154,19 +154,26 @@ window.hqAddKeyframes = addKeyframes;
 function watch(id) {
   // keeps polling through a failed request (a deploy, a cold start): one error used to stop the UI at "Write captions"
   clearTimeout(H.poll); H.watching = id;
-  let errs = 0;
+  let errs = 0, unwake = () => {};
+  // a hidden tab asks at most every 30 s and catches up the moment it is shown again (loading.js pollMs / wake)
+  const later = (ms) => {
+    unwake(); const d = window.HQLoad && HQLoad.pollMs ? HQLoad.pollMs(ms) : ms;
+    H.poll = setTimeout(tick, d);
+    unwake = d > ms ? HQLoad.wake(() => { if (H.watching !== id) return; clearTimeout(H.poll); tick(); }) : () => {};
+  };
   const tick = async () => {
+    unwake(); unwake = () => {};
     if (H.watching !== id) return;  // another thread was picked since (chat.js stops this poll)
     try {
       const r = await api(`/api/agent/runs/${id}`); errs = 0;
       if (H.watching !== id) return;  // the answer landed after another thread was picked: never drawn over it
       showRun(r);
-      if (["running", "rendering"].includes(r.status)) H.poll = setTimeout(tick, 1400);
+      if (["running", "rendering"].includes(r.status)) later(1400);
       else { loadRuns(); readyBadge(); }
     } catch (e) {
       errs += 1;
       if (errs === 3) toast("Reconnecting to the agent…");
-      H.poll = setTimeout(tick, Math.min(15000, 1500 * 2 ** Math.min(errs, 4)));
+      later(Math.min(15000, 1500 * 2 ** Math.min(errs, 4)));
     }
   };
   H.poll = setTimeout(tick, 900);

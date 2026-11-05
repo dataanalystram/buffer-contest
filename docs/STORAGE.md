@@ -58,3 +58,20 @@ needed for media: the browser never talks to the bucket for it.
 - A whole-file Library download reads its first chunk before the headers go out, so a storage outage is a clean 503.
 - Deletes (Library purge, account deletion, One take Bin purge) note keys in `blob_gc`; the background sweep is scheduled
   for after the transaction commits. A new object whose row's transaction rolls back is discarded.
+
+## Serving media without the whole file in memory (5 Nov 2026)
+
+Render killed the free 512 MB instance twice on 5 Nov 2026 (08:10 and 11:31 GMT) and then suspended the workspace for
+"Monthly Quota Exceeded": the Hobby plan's 5 GB of outbound bandwidth (5.44 GB of HTTP answers, 0.61 GB
+service-initiated, 1-5 Nov). The serving path now:
+
+- `/m/<token>`, `/ms/...` and a rendered Library file (`/api/library/{id}/file` for a post's Reel or carousel) use
+  `library.media_file`: a Range reads only those bytes (`substr(data, …)` for rows kept in the database, a ranged GET for
+  R2 objects), a range answer is capped at 8 MB, and a whole answer streams in 1 MB pieces. HEAD takes the length from the
+  row or SQL `length(data)`. No request loads a video whole.
+- Every media answer carries a strong `ETag` (the row's sha256, else its token and length); `If-None-Match` answers 304
+  with no body, so a browser or Buffer that already has the file downloads nothing.
+- Text answers (HTML, JS, CSS, JSON, SVG) of 1 KB-4 MB with a declared length are gzipped (`studio/gzipmw.py`); media,
+  Range answers, streams and HEAD pass through byte for byte. A gzipped answer's ETag is weakened (`W/`).
+- The run and take polls (`house.js watch`, `take.js watchTake`) wait at least 30 s while the tab is hidden and catch up
+  when it is shown again (`HQLoad.pollMs` / `HQLoad.wake`).

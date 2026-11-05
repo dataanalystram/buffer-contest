@@ -838,15 +838,15 @@ class Library:
 
     def _file_of(self, d: dict, i: int = 0) -> dict:
         if d["storage"] == "chunks":
-            return {"mime": d["mime"], "size": int(d["size"] or 0), "read": lambda s, e: self._read(d["id"], s, e), "name": d["name"],
-                    "iter": lambda: self._iter(d["id"])}
+            size = int(d["size"] or 0)
+            return {"mime": d["mime"], "size": size, "read": lambda s, e: self._read(d["id"], s, e), "name": d["name"],
+                    "iter": lambda: self._iter(d["id"]), "etag": etag_for(d.get("sha256"), str(d.get("token") or ""), size)}
         toks = d["meta"].get("tokens") or [d["token"]]
         tok = toks[max(0, min(int(i or 0), len(toks) - 1))]
-        m = self.store.q("SELECT mime, data, size, storage_key FROM media WHERE token=?", (tok,))
-        if not m:
+        f = media_file(self.store, tok)  # a rendered post's file: read by range, streamed, never loaded whole
+        if not f:
             raise ActionError("This file is gone.", 404)
-        blob = self._chunk(m[0])
-        return {"mime": m[0]["mime"], "size": len(blob), "read": lambda s, e: blob[s:(e + 1) if e is not None else None], "name": d["name"]}
+        return {**f, "name": d["name"]}
 
     # ---------------------------------------------------------------- tokens: library uploads work as media tokens
     def by_token(self, token: str) -> dict | None:
@@ -1314,6 +1314,56 @@ def call_tool(studio, actor, name: str, args: dict):
     return NotImplemented
 
 
+def etag_for(digest: str | None, token: str, size: int) -> str:
+    """A strong validator for a stored file: its sha256 when the row has one, else its token and length (a token's bytes
+    are never replaced by different content of the same length: a rewrite only blanks metadata at upload, before serving)."""
+    raw = digest or f"{token}-{int(size or 0)}"
+    return '"' + hashlib.sha256(raw.encode()).hexdigest()[:32] + '"'
+
+
+def media_file(store, token: str) -> dict | None:
+    """A ``media`` row as a ranged reader: type, length and ETag, with only the asked bytes read (SQL substr for rows kept
+    in the database, a ranged GET for objects in R2) and a whole answer streamed in CHUNK pieces. The blob is never loaded
+    whole: a player's every Range request used to read the full video into memory, which Render killed for exceeding
+    512 MB (5 Nov 2026, 08:10 and 11:31 GMT)."""
+    if not token:
+        return None
+    rows = store.q("SELECT mime, storage_key, sha256, size, length(data) AS n FROM media WHERE token=?", (token,))
+    if not rows:
+        return None
+    r = rows[0]
+    key = r["storage_key"] or None
+    size = int((r["size"] if key else r["n"]) or r["size"] or 0)
+
+    def read(s: int, e: int | None) -> bytes:
+        e = size - 1 if e is None else min(int(e), size - 1)
+        if size <= 0 or s > e:
+            return b""
+        try:
+            if key:
+                return blobstore.read(None, key, s, e)
+            got = store.q("SELECT substr(data, CAST(? AS INTEGER), CAST(? AS INTEGER)) AS d FROM media WHERE token=?", (int(s) + 1, e - int(s) + 1, token))
+        except blobstore.StorageError as ex:
+            raise ActionError(str(ex), 503)
+        return bytes(got[0]["d"] or b"") if got else b""
+
+    def it():
+        for s in range(0, size, CHUNK):
+            yield read(s, min(s + CHUNK, size) - 1)
+    return {"mime": r["mime"], "size": size, "read": read, "iter": it, "etag": etag_for(r["sha256"], token, size)}
+
+
+def not_modified(request, etag: str) -> bool:
+    """If-None-Match matches this ETag (a list, W/ prefixes and * accepted, RFC 9110 13.1.2): answer 304."""
+    inm = (request.headers.get("if-none-match") or "").strip()
+    if not inm or not etag:
+        return False
+    if inm == "*":
+        return True
+    tags = {t.strip().removeprefix("W/") for t in inm.split(",")}
+    return etag in tags
+
+
 def parse_range(header: str, size: int) -> tuple[int, int] | None:
     """'bytes=a-b' | 'bytes=a-' | 'bytes=-n' -> (start, end) inclusive, or None when absent/unsatisfiable."""
     if not header.startswith("bytes=") or "," in header or size <= 0:
@@ -1350,6 +1400,10 @@ def add_routes(app, house, actor) -> None:
     def serve(f: dict, request: Request, cache: str):
         size = f["size"]
         headers = {"Accept-Ranges": "bytes", "Cache-Control": cache, "Content-Disposition": "inline"}
+        if f.get("etag"):
+            headers["ETag"] = f["etag"]
+            if not_modified(request, f["etag"]):  # the browser already holds these bytes: no body (bandwidth, 5 Nov 2026)
+                return Response(status_code=304, headers=headers)
         rng = parse_range(request.headers.get("range", ""), size)
         if rng is None and range_unsatisfiable(request.headers.get("range", ""), size):
             return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
