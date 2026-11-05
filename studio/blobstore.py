@@ -31,6 +31,10 @@ from . import r2
 KINDS = ("media", "lib")
 _HTTP = None            # tests put a stub S3 transport here (an httpx.Client)
 _SWEEP = threading.Lock()
+_THREADS: list = []     # background sweeps still running (join_background: tests and shutdown)
+_THREADS_LOCK = threading.Lock()
+# Every bucket call is bounded: 5 s to connect, 20 s for the rest (a 1 MB chunk), never the old 60 s (Greptile, PR #110).
+CONNECT_S, CALL_S = 5.0, 20.0
 
 
 class StorageError(Exception):
@@ -52,8 +56,13 @@ def _client():
         return _HTTP
     if _SHARED is None:
         import httpx
-        _SHARED = httpx.Client(timeout=60, trust_env=False)
+        _SHARED = httpx.Client(timeout=httpx.Timeout(CALL_S, connect=CONNECT_S), trust_env=False)
     return _SHARED
+
+
+def _bucket(cfg) -> "r2.Bucket":
+    import httpx
+    return r2.Bucket(cfg, http=_client(), timeout=httpx.Timeout(CALL_S, connect=CONNECT_S))
 
 
 def bucket(write: bool = False) -> "r2.Bucket | None":
@@ -62,7 +71,7 @@ def bucket(write: bool = False) -> "r2.Bucket | None":
     if write and os.environ.get("HQ_MEDIA_STORAGE", "auto").strip().lower() == "db":
         return None
     cfg = r2.config()
-    return r2.Bucket(cfg, http=_client()) if cfg else None
+    return _bucket(cfg) if cfg else None
 
 
 def backend_name() -> str:
@@ -150,6 +159,14 @@ def discard(store, key: str | None) -> None:
             print("storage: couldn't queue an unreferenced object for deletion", flush=True)
 
 
+def undo_on_rollback(store, key: str | None) -> None:
+    """The row pointing at this new object was written inside a transaction: if that transaction rolls back, the object
+    has no row and is discarded (Greptile, PR #110). Outside a transaction the row is already committed: nothing to do."""
+    hook = getattr(store, "on_rollback", None)
+    if key and hook:
+        hook(lambda: discard(store, key))
+
+
 def release(store, table: str, where: str, args: tuple = ()) -> None:
     """DELETE FROM table WHERE where, noting every object key those rows had in blob_gc first, in one transaction
     (joins the caller's when there is one)."""
@@ -194,7 +211,7 @@ def sweep(store, limit: int = 500, wait: float = 0) -> dict:
         cfg = r2.config()
         if not cfg:  # keys stay noted until the bucket is configured again
             return {"deleted": 0, "failed": len(rows), "why": "R2 not configured"}
-        b = r2.Bucket(cfg, http=_client())
+        b = _bucket(cfg)
         done = failed = 0
         for r in rows:
             try:
@@ -221,19 +238,48 @@ def sweep(store, limit: int = 500, wait: float = 0) -> dict:
 
 
 def sweep_soon(store) -> None:
-    """sweep() on a background thread when there is anything to delete (a purge never waits on the bucket)."""
+    """sweep() on a background thread when there is anything to delete (a purge never waits on the bucket). Inside a
+    transaction it is scheduled for after the commit (dropped on rollback), so it never runs against uncommitted rows
+    (CodeRabbit, PR #110)."""
+    hook = getattr(store, "after_commit", None)
+    if hook:
+        hook(lambda: _kick(store))
+    else:
+        _kick(store)
+
+
+def _kick(store) -> None:
     try:
         if not pending(store):
             return
     except Exception:  # noqa: BLE001  (no blob_gc yet)
         return
+    _spawn(store)
 
+
+def _spawn(store) -> None:
     def run():
         try:
             sweep(store)
         except Exception as e:  # noqa: BLE001  the periodic sweep retries
             print(f"storage: sweep failed ({e.__class__.__name__})", flush=True)
-    threading.Thread(target=run, name="hq-blob-sweep", daemon=True).start()
+    t = threading.Thread(target=run, name="hq-blob-sweep", daemon=True)
+    with _THREADS_LOCK:
+        _THREADS[:] = [x for x in _THREADS if x.is_alive()]
+        _THREADS.append(t)
+    t.start()
+
+
+def join_background(timeout: float = 10) -> bool:
+    """Wait for every background sweep started so far; True when none is left running (tests' teardown, shutdown)."""
+    end = time.monotonic() + timeout
+    with _THREADS_LOCK:
+        threads = list(_THREADS)
+    for t in threads:
+        t.join(max(0.0, end - time.monotonic()))
+    with _THREADS_LOCK:
+        _THREADS[:] = [x for x in _THREADS if x.is_alive()]
+        return not _THREADS
 
 
 def usage(store, uid: str | None = None) -> dict:

@@ -148,6 +148,14 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
 OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "source_runs", "source_settings",
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem")
 
+def _run_callbacks(fns) -> None:
+    for fn in fns or ():
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001  a callback never turns a committed transaction into an error
+            print(f"store: after-transaction callback failed ({e.__class__.__name__})", flush=True)
+
+
 class Store:
     """SQLite locally; Postgres when the path is a postgres:// URL (production: survives restarts,
     so rotating Buffer refresh tokens are never lost)."""
@@ -155,6 +163,8 @@ class Store:
     def __init__(self, path: str, secret: str, token_key: str = "", token_keys_previous: tuple[str, ...] | list[str] = ()):
         self.path = path
         self._lock = threading.RLock()
+        self._after: list | None = None  # tx(): callbacks for after the outermost commit / rollback
+        self._undo: list | None = None
         self._seen: dict[str, float] = {}  # touch(): when each person's last_seen was last written
         self.pg = path.startswith(("postgres://", "postgresql://"))
         if self.pg:
@@ -198,32 +208,60 @@ class Store:
     def tx(self):
         """One atomic unit (Library purge, 3 Nov 2026): every q/x inside commits together or not at all, and the store's
         lock is held throughout, so a request on another thread reads the state before or after, never half of it.
-        Re-entrant: an inner tx() joins the outer one."""
-        with self._lock:
-            if getattr(self, "_tx_depth", 0):
-                self._tx_depth += 1
-                try:
-                    yield self
-                finally:
-                    self._tx_depth -= 1
-                return
-            self._tx_depth = 1
-            try:
-                if self.pg:
-                    if self._db.closed:
-                        self._db = self._connect()
-                    with self._db.transaction():
-                        yield self
-                else:
-                    self._db.execute("BEGIN IMMEDIATE")
+        Re-entrant: an inner tx() joins the outer one. after_commit() / on_rollback() callbacks registered inside run once
+        the outermost transaction has committed / rolled back, after the lock is released (PR #110)."""
+        after: list = []
+        undo: list = []
+        outer = False
+        try:
+            with self._lock:
+                if getattr(self, "_tx_depth", 0):
+                    self._tx_depth += 1
                     try:
                         yield self
-                    except BaseException:
-                        self._db.execute("ROLLBACK")
-                        raise
-                    self._db.execute("COMMIT")
-            finally:
-                self._tx_depth = 0
+                    finally:
+                        self._tx_depth -= 1
+                    return
+                outer = True
+                self._tx_depth, self._after, self._undo = 1, after, undo
+                try:
+                    if self.pg:
+                        if self._db.closed:
+                            self._db = self._connect()
+                        with self._db.transaction():
+                            yield self
+                    else:
+                        self._db.execute("BEGIN IMMEDIATE")
+                        try:
+                            yield self
+                        except BaseException:
+                            self._db.execute("ROLLBACK")
+                            raise
+                        self._db.execute("COMMIT")
+                finally:
+                    self._tx_depth, self._after, self._undo = 0, None, None
+        except BaseException:
+            if outer:
+                _run_callbacks(undo)
+            raise
+        if outer:
+            _run_callbacks(after)
+
+    def after_commit(self, fn) -> None:
+        """Run fn once the current transaction commits (dropped on rollback); right away when none is open. Waits for
+        another thread's open transaction (the lock), so it never joins someone else's."""
+        with self._lock:
+            if getattr(self, "_tx_depth", 0) and self._after is not None:
+                self._after.append(fn)
+                return
+        _run_callbacks([fn])
+
+    def on_rollback(self, fn) -> None:
+        """Run fn if the current transaction rolls back (e.g. delete an object whose row never committed). No-op outside
+        a transaction: a statement that already ran can't roll back."""
+        with self._lock:
+            if getattr(self, "_tx_depth", 0) and self._undo is not None:
+                self._undo.append(fn)
 
     # ---- low level
     def _pg(self, sql: str, args: tuple, fetch: bool):
