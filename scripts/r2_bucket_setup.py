@@ -62,7 +62,7 @@ def _put(cfg: dict, sub: str, body: str, http=None) -> int:
     url = r2.presign(cfg, "PUT", "", {sub: ""}, 300, length=len(data))
     c = http or httpx.Client(timeout=30, trust_env=False)
     r = c.put(url, content=data, headers={"content-type": "application/xml",
-                                          "content-md5": base64.b64encode(hashlib.md5(data).digest()).decode()})
+                                          "content-md5": base64.b64encode(hashlib.md5(data, usedforsecurity=False).digest()).decode()})
     return r.status_code
 
 

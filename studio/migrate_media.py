@@ -190,13 +190,10 @@ def cleanup(store, bucket: "r2.Bucket", log=print) -> dict:
     stats = {"dropped": 0, "kept": 0, "capped": ""}
     r2usage.bind(store)
     for table, where_cols in (("media", ("token",)), ("library_chunks", ("item_id", "n"))):
-        try:
-            todo = store.q(f"SELECT {', '.join(where_cols)}, storage_key, sha256 FROM {table} "
-                           "WHERE storage_key IS NOT NULL AND data IS NOT NULL")
-        except Exception:  # noqa: BLE001
-            if table == "media":
-                raise  # media always exists: a failed scan must not read as "nothing to clean" (CodeRabbit, PR #120)
-            continue  # no Library tables
+        if table != "media" and table not in store._table_names():
+            continue  # no Library tables; any other failed scan raises, never "nothing to clean" (CodeRabbit, PR #120)
+        todo = store.q(f"SELECT {', '.join(where_cols)}, storage_key, sha256 FROM {table} "
+                       "WHERE storage_key IS NOT NULL AND data IS NOT NULL")
         for r in todo:
             where = " AND ".join(f"{c}=?" for c in where_cols)
             args = tuple(r[c] for c in where_cols)

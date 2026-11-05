@@ -113,6 +113,11 @@ class TakeUploads:
         c = self.http or self.h.http
         if c is None:  # House.http is None unless create_app got a client: keep one of our own (operator's bucket host only)
             c = self.http = httpx.Client(timeout=60, trust_env=False)
+        from . import r2usage
+        cls = r2usage.op_class(method)  # the free-tier caps hold for every call (CodeRabbit, PR #120); DELETE is free
+        why = r2usage.can_read(self.store, grace=False) if cls == "B" else r2usage.can_write(0, self.store) if cls == "A" else None
+        if why:
+            raise ActionError(f"Large uploads are paused: {why}.", 507)
         try:
             r = c.request(method, presign(cfg, method, key, params, 300), content=content, headers=headers or {}, timeout=60)
         except httpx.HTTPError as e:
@@ -294,7 +299,9 @@ class TakeUploads:
         cfg = self._cfg()
         from . import r2usage
         capped = r2usage.can_write(0, self.store)  # this upload's size is already in the stored total (open rows)
-        if capped:  # no new PUT capability once a cap is reached (CodeRabbit, PR #120)
+        if not capped and r2usage.ops(self.store)["A"] + len(nums) > r2usage.caps()["A"]:
+            capped = f"R2 monthly write cap reached ({r2usage.caps()['A']:,} Class A operations, HQ_R2_MAX_CLASS_A)"
+        if capped:  # no new PUT capability once a cap is reached, nor a batch that would cross it (CodeRabbit, PR #120)
             raise ActionError(f"Large uploads are paused: {capped}. Paste a direct link to the file instead.", 507)
         self.store.x("UPDATE take_uploads SET updated=? WHERE id=?", (time.time(), d["id"]))
         return {"upload_id": d["id"], "expires_in": URL_TTL, "urls": [

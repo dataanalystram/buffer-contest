@@ -644,3 +644,16 @@ def test_past_an_r2_cap_no_new_put_capability_is_issued(human, app, s3, monkeypa
     r = human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={})
     assert r.status_code == 507 and r2usage.can_write(0)
     assert tu.link_target("acc_1", 4242) == ""                           # the worker streams the link instead
+
+
+def test_part_urls_never_cross_the_class_a_cap_and_reads_stop_at_the_class_b_cap(human, app, s3, monkeypatch):
+    from studio import r2usage
+    up = human.post("/api/takes/uploads", json={"name": "d.mp4", "size": 7 * 1024 * 1024}).json()
+    used = r2usage.ops()["A"]
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_A", str(used + 1))               # room for one more signature, not two
+    r = human.post(f"/api/takes/uploads/{up['upload_id']}/parts", json={"parts": [1, 2]})
+    assert r.status_code == 507
+    monkeypatch.delenv("HQ_R2_MAX_CLASS_A")
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_B", "0")
+    r = human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={})
+    assert r.status_code == 507                                          # the part-list GET isn't signed

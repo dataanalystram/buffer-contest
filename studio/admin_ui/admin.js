@@ -45,8 +45,8 @@
     $("egressToday").innerHTML = cards.map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
     const hi = Math.max(pct(t.db_bytes, t.db_budget), pct(t.served_bytes, t.served_budget));
     const w = $("egressWarn");
-    const capMsg = [r.write_blocked ? "new files stay in the database" : "",
-      r.read_blocked ? "files with a database copy are served from it; files kept only in R2 answer 503 to everyone but their owner until next month (UTC)" : ""].filter(Boolean).join("; ");
+    const capMsg = [r.write_blocked ? "new files stay in the database and One take large uploads are paused (507)" : "",
+      r.read_blocked ? "files with a database copy are served from it; files kept only in R2 answer 503 until next month (UTC), except to their owner's signed-in browser until the hard ceiling of " + (r.owner_ceiling_class_b || 0).toLocaleString() + " reads" : ""].filter(Boolean).join("; ");
     w.hidden = hi < 80 && !capMsg && !t.degraded;
     w.textContent = [capMsg ? `R2 free-tier cap reached: ${capMsg}.` : "",
       t.degraded ? "Over today's budget: other people's media previews are paused until midnight UTC. Your own files and Buffer are unaffected."
