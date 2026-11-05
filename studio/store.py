@@ -95,11 +95,21 @@ CREATE TABLE IF NOT EXISTS ai_settings (
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, actor TEXT, action TEXT, risk TEXT,
   detail TEXT, ok INTEGER, ts REAL);
+CREATE TABLE IF NOT EXISTS blob_gc (
+  key TEXT PRIMARY KEY, at REAL, tries INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, admin TEXT, action TEXT, subject_hash TEXT, detail TEXT, ok INTEGER);
+CREATE TABLE IF NOT EXISTS user_tombstones (
+  id_hash TEXT PRIMARY KEY, at REAL, via TEXT);
 """
 
 
 # Columns added after the first release: added in place on boot (SQLite and Postgres), never dropped.
 ADDED_COLUMNS = {
+    # admin panel (studio/admin.py, docs/ADMIN.md): a reversible block, and when the person was last active
+    "users": (("blocked", "INTEGER"), ("blocked_at", "REAL"), ("blocked_by", "TEXT"), ("block_reason", "TEXT"), ("last_seen", "REAL")),
+    # media storage backend (studio/blobstore.py, docs/STORAGE.md): the object key when the bytes are in R2, and their hash
+    "media": (("storage_key", "TEXT"), ("sha256", "TEXT")),
     "audit": (("category", "TEXT"), ("surface", "TEXT"), ("app", "TEXT"), ("client_id", "TEXT"), ("token_id", "INTEGER"),
               ("token_label", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"), ("tokens_in", "INTEGER"),
               ("tokens_out", "INTEGER"), ("cost_usd", "REAL"), ("ip", "TEXT"), ("ua", "TEXT")),
@@ -112,7 +122,8 @@ ADDED_COLUMNS = {
     # edit ids a learned rule came from
     "style_rules": (("scope", "TEXT"), ("origin", "TEXT"), ("examples", "TEXT"), ("evidence", "TEXT"), ("updated", "REAL")),  # a transcribe job's transcript (studio.media transcribe on the worker)
 }
-INDEXES = ("CREATE INDEX IF NOT EXISTS audit_user_id ON audit(user_id, id)",
+INDEXES = ("CREATE INDEX IF NOT EXISTS media_storage_key ON media(storage_key)",  # blobstore.sweep's "still referenced?" check
+           "CREATE INDEX IF NOT EXISTS audit_user_id ON audit(user_id, id)",
            "CREATE INDEX IF NOT EXISTS agent_runs_agent ON agent_runs(user_id, agent_id, updated)",
            "CREATE INDEX IF NOT EXISTS audit_user_cat ON audit(user_id, category, id)",
            "CREATE INDEX IF NOT EXISTS audit_ts ON audit(ts)")
@@ -122,12 +133,12 @@ def sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-ID_TABLES = ("agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs",
+ID_TABLES = ("admin_audit", "agent_tokens", "approvals", "audit", "feeds", "style_rules", "agent_runs", "render_jobs",
              "template_slots", "source_runs", "library_items", "brand_kit_library",
              "style_edits", "style_suggestions", "review_links")  # Brand studio slots, Sources runs and brand kits (own schemas in brand_studio.py, sources_agent.py, brand_kits.py)
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
           "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
-          "ai_settings")
+          "ai_settings", "blob_gc", "admin_audit", "user_tombstones")
 
 
 # Per-person tables created by other modules (each on first use). Disconnect and delete removes them too (found in the
@@ -138,6 +149,14 @@ OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "tem
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
                    "thread_ids", "thread_deleted", "jev_usage")
 
+def _run_callbacks(fns) -> None:
+    for fn in fns or ():
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001  a callback never turns a committed transaction into an error
+            print(f"store: after-transaction callback failed ({e.__class__.__name__})", flush=True)
+
+
 class Store:
     """SQLite locally; Postgres when the path is a postgres:// URL (production: survives restarts,
     so rotating Buffer refresh tokens are never lost)."""
@@ -145,6 +164,9 @@ class Store:
     def __init__(self, path: str, secret: str, token_key: str = "", token_keys_previous: tuple[str, ...] | list[str] = ()):
         self.path = path
         self._lock = threading.RLock()
+        self._after: list | None = None  # tx(): callbacks for after the outermost commit / rollback
+        self._undo: list | None = None
+        self._seen: dict[str, float] = {}  # touch(): when each person's last_seen was last written
         self.pg = path.startswith(("postgres://", "postgresql://"))
         if self.pg:
             import psycopg
@@ -187,32 +209,63 @@ class Store:
     def tx(self):
         """One atomic unit (Library purge, 3 Nov 2026): every q/x inside commits together or not at all, and the store's
         lock is held throughout, so a request on another thread reads the state before or after, never half of it.
-        Re-entrant: an inner tx() joins the outer one."""
-        with self._lock:
-            if getattr(self, "_tx_depth", 0):
-                self._tx_depth += 1
-                try:
-                    yield self
-                finally:
-                    self._tx_depth -= 1
-                return
-            self._tx_depth = 1
-            try:
-                if self.pg:
-                    if self._db.closed:
-                        self._db = self._connect()
-                    with self._db.transaction():
-                        yield self
-                else:
-                    self._db.execute("BEGIN IMMEDIATE")
+        Re-entrant: an inner tx() joins the outer one. after_commit() / on_rollback() callbacks registered inside run once
+        the outermost transaction has committed / rolled back, after the lock is released (PR #110)."""
+        after: list = []
+        undo: list = []
+        outer = False
+        try:
+            with self._lock:
+                if getattr(self, "_tx_depth", 0):
+                    self._tx_depth += 1
                     try:
                         yield self
-                    except BaseException:
-                        self._db.execute("ROLLBACK")
-                        raise
-                    self._db.execute("COMMIT")
-            finally:
-                self._tx_depth = 0
+                    finally:
+                        self._tx_depth -= 1
+                    return
+                outer = True
+                self._tx_depth, self._after, self._undo = 1, after, undo
+                try:
+                    if self.pg:
+                        if self._db.closed:
+                            self._db = self._connect()
+                        with self._db.transaction():
+                            yield self
+                    else:
+                        self._db.execute("BEGIN IMMEDIATE")
+                        try:
+                            yield self
+                            self._db.execute("COMMIT")  # a failed COMMIT leaves the transaction open: roll it back too
+                        except BaseException:
+                            try:
+                                self._db.execute("ROLLBACK")
+                            except Exception as rb:  # noqa: BLE001  never mask the original error (already rolled back)
+                                print(f"store: rollback failed ({rb.__class__.__name__})", flush=True)
+                            raise
+                finally:
+                    self._tx_depth, self._after, self._undo = 0, None, None
+        except BaseException:
+            if outer:
+                _run_callbacks(undo)
+            raise
+        if outer:
+            _run_callbacks(after)
+
+    def after_commit(self, fn) -> None:
+        """Run fn once the current transaction commits (dropped on rollback); right away when none is open. Waits for
+        another thread's open transaction (the lock), so it never joins someone else's."""
+        with self._lock:
+            if getattr(self, "_tx_depth", 0) and self._after is not None:
+                self._after.append(fn)
+                return
+        _run_callbacks([fn])
+
+    def on_rollback(self, fn) -> None:
+        """Run fn if the current transaction rolls back (e.g. delete an object whose row never committed). No-op outside
+        a transaction: a statement that already ran can't roll back."""
+        with self._lock:
+            if getattr(self, "_tx_depth", 0) and self._undo is not None:
+                self._undo.append(fn)
 
     # ---- low level
     def _pg(self, sql: str, args: tuple, fetch: bool):
@@ -322,38 +375,62 @@ class Store:
     def save_tokens(self, uid: str, tokens: dict | None) -> None:
         self.x("UPDATE users SET tokens=?, updated=? WHERE id=?", (self.seal(tokens) if tokens else None, time.time(), uid))
 
+    def blocked(self, uid: str) -> bool:
+        rows = self.q("SELECT blocked FROM users WHERE id=?", (uid,)) if uid else []
+        return bool(rows and rows[0]["blocked"])
+
+    def touch(self, uid: str, every: float = 300) -> None:
+        """users.last_seen, written at most once per ``every`` seconds per person (admin panel's "last active")."""
+        now = time.time()
+        if not uid or now - self._seen.get(uid, 0) < every:
+            return
+        self._seen[uid] = now
+        try:
+            self.x("UPDATE users SET last_seen=? WHERE id=?", (now, uid))
+        except Exception:  # noqa: BLE001  (never fails the request it rides on)
+            pass
+
     def set_kill(self, uid: str, on: bool) -> None:
         self.x("UPDATE users SET kill_switch=? WHERE id=?", (1 if on else 0, uid))
 
+    def _table_names(self) -> set[str]:
+        if self.pg:
+            rows = self.q("SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema()")
+        else:
+            rows = self.q("SELECT name FROM sqlite_master WHERE type='table'")
+        return {str(r["name"]) for r in rows}
+
     def delete_user(self, uid: str) -> None:
-        for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
-                  "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs", "ai_settings"):
-            self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
-        for t in ("style_edits", "style_suggestions", "review_links"):  # Style Ledger v2 (studio/ledger.py)
-            try:
+        """Every row the person has, here and in the tables other modules own, in ONE transaction (joins the caller's):
+        a failure part-way erases nothing (CodeRabbit, PR #110). Only tables this store has are touched, so no statement
+        fails (on Postgres a failed statement would abort the transaction). Media objects in R2 are released into blob_gc
+        with their rows (studio/blobstore.py) and deleted by the sweep that follows the commit."""
+        from . import blobstore
+        with self.tx():
+            have = self._table_names()
+            blobstore.release(self, "media", "user_id=?", (uid,))
+            for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
+                      "oauth_refresh", "brand_kits", "style_rules", "agent_runs", "render_jobs", "ai_settings"):
                 self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
-            except Exception:  # noqa: BLE001
-                pass
-        try:  # the Library's own tables (studio/library.py), when this store has them
-            self.x("DELETE FROM library_chunks WHERE item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
-            self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
-            self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
-        except Exception:  # noqa: BLE001
-            pass
-        try:  # One take's multipart uploads (studio/take_upload.py); the bucket objects are removed by /api/disconnect first
-            self.x("DELETE FROM take_uploads WHERE user_id=?", (uid,))
-        except Exception:  # noqa: BLE001  (this store hasn't created the table)
-            pass
-        try:  # the purged-run token list (Bin purge never resurrects) goes with the account too
-            self.x("DELETE FROM library_purged WHERE user_id=?", (uid,))
-        except Exception:  # noqa: BLE001  (this store hasn't created the Library tables)
-            pass
-        for t in OWNED_ELSEWHERE:  # tables other modules create on first use (privacy page: "Disconnect and delete")
-            try:
-                self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
-            except Exception:  # noqa: BLE001  (this store hasn't created that table yet)
-                pass
-        self.x("DELETE FROM users WHERE id=?", (uid,))
+            for t in ("style_edits", "style_suggestions", "review_links"):  # Style Ledger v2 (studio/ledger.py)
+                if t in have:
+                    self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+            if {"library_chunks", "library_items", "library_media"} <= have:  # the Library's own tables (studio/library.py)
+                blobstore.release(self, "library_chunks", "item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
+                self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
+                self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
+            if "take_uploads" in have:  # One take's multipart uploads; the bucket objects are removed by erase_user first
+                self.x("DELETE FROM take_uploads WHERE user_id=?", (uid,))
+            if "library_purged" in have:  # the purged-run token list (Bin purge never resurrects) goes with the account too
+                self.x("DELETE FROM library_purged WHERE user_id=?", (uid,))
+            if {"upload_parts", "upload_sessions"} <= have:
+                # unfinished chunk uploads' bytes (studio/uploads.py): the expiry sweep finds them only through their
+                # session, so they go before the sessions do (CodeRabbit, PR #110)
+                self.x("DELETE FROM upload_parts WHERE upload_id IN (SELECT id FROM upload_sessions WHERE user_id=?)", (uid,))
+            for t in OWNED_ELSEWHERE:  # tables other modules create on first use (privacy page: "Disconnect and delete")
+                if t in have:
+                    self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+            self.x("DELETE FROM users WHERE id=?", (uid,))
 
     # ---- sessions
     def new_session(self, sid: str, csrf: str, ttl: float = 30 * 86400) -> None:
@@ -364,7 +441,9 @@ class Store:
     def session(self, sid: str | None) -> dict | None:
         if not sid:
             return None
-        rows = self.q("SELECT * FROM sessions WHERE id_hash=? AND expires>?", (sha(sid), time.time()))
+        # a blocked account's sessions are deleted when it is blocked; the join is the belt to those braces
+        rows = self.q("SELECT s.* FROM sessions s LEFT JOIN users u ON u.id=s.user_id WHERE s.id_hash=? AND s.expires>? "
+                      "AND COALESCE(u.blocked,0)=0", (sha(sid), time.time()))
         return dict(rows[0]) if rows else None
 
     def update_session(self, sid: str, **fields: Any) -> None:

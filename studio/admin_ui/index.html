@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Admin · HuhQueue</title>
+<link rel="stylesheet" href="/static/fonts.css"><link rel="stylesheet" href="/admin/admin.css">
+</head><body>
+<main class="adm" data-testid="admin">
+  <header class="adm-top"><h1>Admin</h1><a href="/app" data-testid="admin-back">Back to the app</a></header>
+  <section class="adm-overview" aria-label="Storage" id="overview" data-testid="admin-overview"></section>
+  <section aria-labelledby="usersH">
+    <div class="adm-bar"><h2 id="usersH">Users</h2>
+      <label class="adm-search">Search <input id="q" data-testid="admin-search" type="search" placeholder="id, name or email" autocomplete="off"></label>
+      <label><input id="demo" data-testid="admin-show-demo" type="checkbox"> Show sample workspaces</label></div>
+    <p class="adm-msg" id="msg" role="status" aria-live="polite"></p>
+    <div class="adm-scroll"><table data-testid="admin-users"><thead><tr><th>Buffer account</th><th>First sign-in</th><th>Last sign-in</th>
+      <th>Last active</th><th>Runs</th><th>Posts</th><th>Storage</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="rows"></tbody></table></div>
+    <div class="adm-pager"><button id="prev" data-testid="admin-prev" type="button">Previous</button><span id="page"></span><button id="next" data-testid="admin-next" type="button">Next</button></div>
+  </section>
+  <section aria-labelledby="auditH"><h2 id="auditH">Admin actions</h2>
+    <div class="adm-scroll"><table data-testid="admin-audit"><thead><tr><th>When</th><th>Admin</th><th>Action</th><th>User (hashed)</th></tr></thead>
+      <tbody id="audit"></tbody></table></div></section>
+</main>
+<dialog id="del" aria-labelledby="delH"><form method="dialog" id="delForm">
+  <h2 id="delH">Delete this user?</h2>
+  <p>This erases every row, file and token the account has, and can't be undone. Only a hashed id, the time and your id are kept.</p>
+  <label>Type the user's id <code id="delId"></code> to confirm <input id="delInput" data-testid="admin-delete-confirm" autocomplete="off" spellcheck="false"></label>
+  <div class="adm-actions"><button value="cancel" type="button" id="delCancel" data-testid="admin-delete-cancel">Cancel</button>
+    <button value="ok" class="danger" id="delOk" data-testid="admin-delete-ok" type="submit" disabled>Delete user</button></div></form></dialog>
+<dialog id="blk" aria-labelledby="blkH" data-testid="admin-block-dialog"><form method="dialog" id="blkForm">
+  <h2 id="blkH">Block this user?</h2>
+  <p><b id="blkWho" data-testid="admin-block-who"></b></p>
+  <p>Their sessions end now, their agents and MCP apps stop, and they can't sign in until you unblock them. Nothing is deleted.</p>
+  <label>Reason (optional, for the admin log) <input id="blkReason" data-testid="admin-block-reason" maxlength="200" autocomplete="off"></label>
+  <div class="adm-actions"><button type="button" id="blkCancel" data-testid="admin-block-cancel">Cancel</button>
+    <button class="danger" id="blkOk" data-testid="admin-block-ok" type="submit">Block user</button></div></form></dialog>
+<script src="/admin/admin.js"></script>
+</body></html>

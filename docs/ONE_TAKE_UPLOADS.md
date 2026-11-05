@@ -104,3 +104,7 @@ summary, custom title, MCP steps) and the row stays as a tombstone, so the id an
 id is the same 404. REST: `DELETE /api/threads/{thread_id}` (`?takes=delete` is refused: use `delete_take` for a take),
 `POST /api/threads/{thread_id}/restore`, `GET /api/threads/bin`, `POST /api/threads/bin/purge`. MCP: `delete_thread`,
 `restore_thread`, `list_thread_bin`, `purge_thread_bin`.
+
+## Shared with media storage
+The same `R2_*` variables and the same signer (`studio/r2.py`) also move new images and videos out of the database once
+set (docs/STORAGE.md). Keep the `takes/` 7-day lifecycle rule scoped to that prefix: `media/` and `lib/` must never expire.

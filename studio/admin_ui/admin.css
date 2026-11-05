@@ -1,0 +1,29 @@
+:root{--bg:#fff;--fg:#17151c;--muted:#6b6676;--line:#e6e2ee;--accent:#C9ACFA;--danger:#b42318;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#121116;--fg:#f2f0f6;--muted:#a49fb0;--line:#2b2833;--danger:#ff8a80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+.adm{max-width:1200px;margin:0 auto;padding:24px 20px 64px}
+.adm-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+h1{font-size:28px;margin:0 0 16px}h2{font-size:18px;margin:28px 0 10px}
+a{color:inherit}
+.adm-overview{display:flex;flex-wrap:wrap;gap:12px}
+.adm-overview div{border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:150px}
+.adm-overview b{display:block;font-size:20px}.adm-overview span{color:var(--muted);font-size:13px}
+.adm-bar{display:flex;flex-wrap:wrap;align-items:center;gap:16px}.adm-bar h2{margin-right:auto}
+input[type=search],dialog input{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit}
+.adm-scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;white-space:nowrap}
+td small{display:block;color:var(--muted)}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px;white-space:nowrap}
+.pill.blocked{border-color:var(--danger);color:var(--danger)}.pill.active{border-color:var(--accent)}
+button{font:inherit;padding:5px 12px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;cursor:pointer}
+button:hover{border-color:var(--accent)}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.danger{border-color:var(--danger);color:var(--danger)}button:disabled{opacity:.5;cursor:not-allowed}
+td .adm-actions{display:flex;gap:6px;flex-wrap:wrap}
+.adm-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.adm-msg{min-height:1.4em;color:var(--muted)}
+.adm-pager{display:flex;gap:12px;align-items:center;margin-top:10px}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);max-width:460px}
+dialog label{display:block;margin-top:10px}dialog input{display:block;width:100%;margin-top:6px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
