@@ -21,6 +21,10 @@ function lead(t) { return t.style === "opus" || t.sample ? 0 : 0.5; }  // the cl
 function canCut(t) { return !!t.can_rerender; }
 function services(t) { return [...new Set(((t.input || {}).channels || []).map((x) => x.service))]; }
 function igChannel(t) { return ((t.input || {}).channels || []).find((x) => x.service === "instagram"); }
+const IMG = /\.(jpe?g|png|webp|gif|avif)(\?|#|$)/i;
+// a clip with something to trim: a video (an image or a carousel has no In/Out; owner, 5 Nov 2026). A clip still rendering
+// (no url yet), or a media link without an image extension, counts as a video: One take only makes videos.
+function isVideo(c) { const k = c.kind || c.type || (c.meta || {}).type; return k ? k === "video" : !IMG.test(c.url || ""); }
 function range(c) { return { lo: Math.max(c.trim_min ?? 0, c.start - PAD), hi: Math.min(c.trim_max ?? c.end + PAD, c.end + PAD) }; }
 
 window.openClipEditor = function (id) {
@@ -36,8 +40,12 @@ window.openClipEditor = function (id) {
   v.src = c.url ? c.url + (c.rendered_at ? (c.url.includes("?") ? "&" : "?") + "v=" + Math.round(c.rendered_at) : "") : "";
   v.poster = c.cover_url || "";
   v.muted = false;
-  // timing
-  const cut = canCut(t);
+  // timing: only a video has In/Out; anything else hides the Trim tab and its handles
+  const vid = isVideo(c);
+  CE.vid = vid;
+  $c("ceTabTrim").hidden = !vid;
+  ["ceHIn", "ceHOut"].forEach((h) => { $c(h).hidden = !vid; $c(h).toggleAttribute("inert", !vid); });
+  const cut = canCut(t) && vid;
   ["ceHIn", "ceHOut"].forEach((h) => ($c(h).disabled = !cut));
   document.querySelectorAll("#clipDialog [data-nudge]").forEach((b) => (b.disabled = !cut));
   $c("ceText").readOnly = !cut; $c("ceHook").readOnly = !cut;
@@ -67,10 +75,10 @@ window.openClipEditor = function (id) {
   $c("ceProdPos").value = (pc && pc.position) || "bottom";
   $c("ceProdFields").hidden = !pc;
   $c("ceErr").textContent = "";
-  tab("trim");
-  paintTrim(); paintDirty(); frames();
+  tab(vid ? "trim" : "cap");
+  paintTrim(); paintDirty(); if (vid) frames();
   if (!dlg.open) { if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", ""); }
-  $c("ceTabTrim").focus({ preventScroll: true });
+  $c(vid ? "ceTabTrim" : "ceTabCap").focus({ preventScroll: true });
 };
 
 // ------------------------------------------------------------------ tabs
