@@ -18,11 +18,11 @@
 .cm-detail{display:flex;flex-direction:column;gap:6px}
 .cm-detail ul{margin:0;padding-left:18px;font-size:12px}
 .cm-row{display:flex;gap:8px;flex-wrap:wrap}
-.cm-row label{display:flex;flex-direction:column;gap:2px;font-size:12px;flex:1 1 140px}
+.cm-row .cm-f{display:flex;flex-direction:column;gap:2px;font-size:12px;flex:1 1 140px}
 .cm-row input{min-height:40px}
 .cm-card{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;padding:12px;border-radius:12px;border:1px solid var(--line-strong);background:var(--raised)}
 .cm-card b{font-size:14px;overflow-wrap:anywhere}
-.cm-price{font-weight:700;font-variant-numeric:tabular-nums}
+.cm-price{font-weight:600;font-variant-numeric:tabular-nums}
 .cm-card .cm-cta{justify-self:start;background:var(--inv);border-color:var(--inv);color:var(--inv-ink)}
 .cm-disc{margin:0}
 .cm-key summary{min-height:32px;cursor:pointer}

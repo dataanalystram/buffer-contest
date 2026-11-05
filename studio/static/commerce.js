@@ -10,6 +10,7 @@
 "use strict";
 (() => {
 const E = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+let fieldSeq = 0;
 const live = new WeakMap();   // panel element -> AbortController of its request in flight
 
 function card(p, sent) {
@@ -81,11 +82,11 @@ function wire(el, r, pk) {
     pick.hidden = false; pick.innerHTML = `<p class="muted sm"><span class="spin" aria-hidden="true"></span> Checking today's price…</p>`;
     try {
       const d = await api(`/api/commerce/products/${encodeURIComponent(pid)}`, { signal });
-      const p = d.product;
+      const p = d.product, n = ++fieldSeq;  // unique ids, so every <label for> has its input
       pick.innerHTML = `<div class="cm-detail"><b>${E(p.title)}</b><span>${E(p.price_label || "")}${p.retailer ? " at " + E(p.retailer) : ""}</span>
         ${(p.key_features || []).length ? `<ul>${p.key_features.map((f) => `<li>${E(f)}</li>`).join("")}</ul>` : ""}
-        <div class="cm-row"><label>CTA <input data-testid="product-cta" maxlength="40" value="Shop now"></label>
-        <label>Link label <input data-testid="product-label" maxlength="40" value="Link in bio"></label></div>
+        <div class="cm-row"><div class="cm-f"><label for="cmc-${n}">CTA</label><input id="cmc-${n}" data-testid="product-cta" maxlength="40" value="Shop now"></div>
+        <div class="cm-f"><label for="cml-${n}">Link label</label><input id="cml-${n}" data-testid="product-label" maxlength="40" value="Link in bio"></div></div>
         <button type="button" class="btn sm" data-testid="product-attach">Add to post</button></div>`;
       pick.querySelector("[data-testid=product-attach]").onclick = () => attach(pid);
     } catch (e) { if (e.name !== "AbortError") pick.innerHTML = `<p class="st warn">${E(e.message)}</p>`; }
