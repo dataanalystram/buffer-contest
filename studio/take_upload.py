@@ -238,8 +238,14 @@ class TakeUploads:
             raise ActionError(f"Videos up to {max_bytes() // MB:,} MB. This one is {size / MB:,.0f} MB: export a shorter cut "
                               "or a smaller file (1080p H.264 is plenty).", 413)
         self.purge_stale()
-        same = self.store.q("SELECT * FROM take_uploads WHERE user_id=? AND name=? AND size=? AND fingerprint=? "
-                            "AND status IN ('open', 'joined', 'ready') AND take_id IS NULL ORDER BY created DESC", (a.uid, name, size, fp)) if fp else []
+        # Rows from before the hash keep the raw value. One under 120 characters was stored whole, so it still names
+        # the file and resumes (then upgraded to the hash); a 120-character one may have lost its lastModified: never.
+        legacy = raw if len(raw) < 120 else fp
+        same = self.store.q("SELECT * FROM take_uploads WHERE user_id=? AND name=? AND size=? AND fingerprint IN (?, ?) "
+                            "AND status IN ('open', 'joined', 'ready') AND take_id IS NULL ORDER BY created DESC",
+                            (a.uid, name, size, fp, legacy)) if fp else []
+        if same and same[0]["fingerprint"] != fp:
+            self.store.x("UPDATE take_uploads SET fingerprint=? WHERE id=? AND user_id=?", (fp, same[0]["id"], a.uid))
         if same and same[0]["status"] in ("joined", "ready"):
             # its parts were already joined in the store (the multipart id is spent): nothing to upload again. 'joined'
             # finishes with the checks only (complete), 'ready' is ready; a fresh upload would send every byte again.

@@ -197,5 +197,30 @@ def test_a_long_name_with_another_lastmodified_is_a_new_upload(human, app, s3): 
 def test_leaving_one_take_aborts_a_take_still_opening():
     js = TAKE_JS.read_text()
     abort = js[js.index("function tkAbort("):js.index("function tkErr(")]
-    assert 'HQLoad.start("takeopen").done()' in abort
-    assert '!op.live() || $("#tab-take").hidden) return;' in js
+    assert 'if (except !== "takes") HQLoad.start("takeopen").done();' in abort
+    assert '!op.live() || $("#tab-take").hidden || T.view !== "takes") return;' in js
+
+
+def test_switching_to_the_bin_aborts_a_take_still_opening():
+    """tkView("bin") calls tkAbort("bin"): a take opened from the list must not draw over the Bin (CodeRabbit)."""
+    js = TAKE_JS.read_text()
+    abort = js[js.index("function tkAbort("):js.index("function tkErr(")]
+    assert 'if (except !== "takes") HQLoad.start("takeopen").done();' in abort
+    assert 'T.view !== "takes") return;' in js
+
+
+def test_a_legacy_unhashed_fingerprint_still_resumes_and_is_upgraded(human, app, s3):  # noqa: F811
+    st, data = app.state.store, MP4_HEAD + b"v" * 1000
+    up, _ = _upload(human, s3, data, fp=FP)
+    st.x("UPDATE take_uploads SET fingerprint=? WHERE id=?", (FP, up["upload_id"]))   # a row from before the hash
+    again = human.post("/api/takes/uploads", json={"name": "talk.mp4", "size": len(data), "content_type": "video/mp4", "fingerprint": FP}).json()
+    assert again["upload_id"] == up["upload_id"] and again["resumed"], again
+    assert st.q("SELECT fingerprint FROM take_uploads WHERE id=?", (up["upload_id"],))[0]["fingerprint"].startswith("sha256:")
+    # a 120-character legacy value may have lost its lastModified: never a match
+    name = ("b" * 115) + ".mp4"
+    long_fp = f"{name}|{len(data)}|1730750000000"
+    up2, _ = _upload(human, s3, data, fp=long_fp, name=name)
+    st.x("UPDATE take_uploads SET fingerprint=? WHERE id=?", (long_fp[:120], up2["upload_id"]))
+    other = human.post("/api/takes/uploads", json={"name": name, "size": len(data), "content_type": "video/mp4",
+                                                   "fingerprint": f"{name}|{len(data)}|1730750999999"}).json()
+    assert other["upload_id"] != up2["upload_id"] and not other["resumed"], other
