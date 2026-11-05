@@ -122,3 +122,77 @@ def test_mcp_list_library_offers_the_one_take_filter(human, app):
     res, out = mcp_call(human, tok, "list_library", {"created_by": "one_take"})
     assert not res["isError"], out
     assert s["talk"] in {i["id"] for i in out["items"]} and all(i["one_take"] for i in out["items"])
+
+
+def test_binned_takes_are_excluded_before_the_limit_so_a_page_is_never_short(human, app):
+    """Binned take/clip tokens are cut in SQL, before LIMIT: the newest rows being binned never shrinks the page."""
+    st, h = app.state.store, app.state.house
+    old = [h.library.save_bytes(A, jpeg(320 + i, 320), f"old{i}.jpg")["id"] for i in range(3)]
+    toks = [h.put_media(A, MP4 + bytes([i]), f"b{i}.mp4", kind="render", meta={"type": "video"}) for i in range(3)]
+    _take(st, "acc_1", [{"id": f"c{i}", "status": "binned", "token": t} for i, t in enumerate(toks)], name="Binned clips")
+    lib = h.library
+    lib.backfill(A)
+    for t in toks:  # the binned clips' rows are the newest in the Library
+        st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 1000, "acc_1", t))
+    out = lib._list(A, limit=3)
+    got = [i["id"] for i in out["items"]]
+    assert len(got) == 3 and set(got) == set(old), got
+    assert not {i["media_token"] for i in out["items"]} & set(toks)
+
+
+def test_binned_tokens_past_the_sql_cap_widen_the_limit_and_the_page_stays_full(human, app, monkeypatch):
+    st, h = app.state.store, app.state.house
+    old = [h.library.save_bytes(A, jpeg(330 + i, 330), f"keep{i}.jpg")["id"] for i in range(2)]
+    toks = [h.put_media(A, MP4 + b"x" + bytes([i]), f"x{i}.mp4", kind="render", meta={"type": "video"}) for i in range(3)]
+    _take(st, "acc_1", [{"id": f"c{i}", "status": "binned", "token": t} for i, t in enumerate(toks)], name="Many binned")
+    h.library.backfill(A)
+    for t in toks:
+        st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 1000, "acc_1", t))
+    monkeypatch.setattr(library, "BIN_SQL_MAX", 1)   # two of the three binned tokens fall past the bound list
+    got = [i["id"] for i in h.library._list(A, limit=2)["items"]]
+    assert got and set(got) == set(old) and len(got) == 2, got
+
+
+def test_duplicate_rows_of_an_overflow_binned_token_never_shorten_the_page(human, app, monkeypatch):
+    """CodeRabbit (#121): a token can have more than one row; the page refills by rows, not by the overflow token count."""
+    st, h = app.state.store, app.state.house
+    old = [h.library.save_bytes(A, jpeg(340 + i, 340), f"k{i}.jpg")["id"] for i in range(2)]
+    tok = h.put_media(A, MP4 + b"dup", "dup.mp4", kind="render", meta={"type": "video"})
+    _take(st, "acc_1", [{"id": "c0", "status": "binned", "token": tok}], name="Dup binned")
+    h.library.backfill(A)
+    row = dict(st.q("SELECT * FROM library_items WHERE user_id=? AND token=?", ("acc_1", tok))[0])
+    for _ in range(90):  # many more rows for the same binned token (past any fixed number of refills), all newer
+        st.x("INSERT INTO library_items(user_id,name,kind,mime,size,token,storage,source,meta,created) VALUES(?,?,?,?,?,?,?,?,?,?)",
+             ("acc_1", row["name"], row["kind"], row["mime"], row["size"], tok, row["storage"], row["source"], row["meta"] or "{}", time.time() + 2000))
+    st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 2000, "acc_1", tok))
+    monkeypatch.setattr(library, "BIN_SQL_MAX", 0)   # the binned token is past the bound list: skipped as rows are read
+    got = [i["id"] for i in h.library._list(A, limit=2)["items"]]
+    assert set(got) == set(old) and len(got) == 2, got
+
+
+def test_a_row_removed_between_refills_never_skips_a_row(human, app, monkeypatch):
+    """CodeRabbit (#121): refills continue from the last (created, id) read, not an OFFSET, so a row removed (or added)
+    between two reads can't shift the next read past a row that belongs on the page."""
+    st, h = app.state.store, app.state.house
+    old = [h.library.save_bytes(A, jpeg(360 + i, 360), f"r{i}.jpg")["id"] for i in range(2)]
+    tok = h.put_media(A, MP4 + b"gone", "gone.mp4", kind="render", meta={"type": "video"})
+    _take(st, "acc_1", [{"id": "c0", "status": "binned", "token": tok}], name="Gone binned")
+    h.library.backfill(A)
+    row = dict(st.q("SELECT * FROM library_items WHERE user_id=? AND token=?", ("acc_1", tok))[0])
+    for _ in range(2):  # three rows of the binned token: the first read (lim + 1 overflow token) takes exactly them
+        st.x("INSERT INTO library_items(user_id,name,kind,mime,size,token,storage,source,meta,created) VALUES(?,?,?,?,?,?,?,?,?,?)",
+             ("acc_1", row["name"], row["kind"], row["mime"], row["size"], tok, row["storage"], row["source"], row["meta"] or "{}", time.time() + 2000))
+    st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 2000, "acc_1", tok))
+    monkeypatch.setattr(library, "BIN_SQL_MAX", 0)
+    real, reads = st.q, []
+
+    def q(sql, args=()):
+        out = real(sql, args)
+        if "FROM library_items WHERE" in sql and "ORDER BY created DESC, id DESC" in sql:
+            reads.append(len(out))
+            if len(reads) == 1:  # between the first read and the refill, one of the binned rows already read is removed
+                st.x("DELETE FROM library_items WHERE id=?", (out[0]["id"],))
+        return out
+    monkeypatch.setattr(st, "q", q)
+    got = [i["id"] for i in h.library._list(A, limit=2)["items"]]
+    assert len(reads) >= 2 and set(got) == set(old) and len(got) == 2, (got, reads)

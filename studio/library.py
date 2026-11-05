@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS library_purged (token TEXT PRIMARY KEY, user_id TEXT,
 """
 TABLES = ("library_items", "library_chunks", "library_media", "library_purged")
 TRASH_DAYS = 7  # a deleted item stays restorable this long (see Library.delete)
+BIN_SQL_MAX = 900  # binned tokens bound into the Library list's NOT IN (well under SQLite/Postgres parameter caps)
 TRASH_TOKEN = "trash~"  # a trashed item's media rows keep their bytes under this prefix, so /m/<token> no longer serves them
 
 # (mime, extension, kind) from the file's first bytes. Anything else is refused.
@@ -741,14 +742,37 @@ class Library:
             elif flt.get("created_by") == "one_take":  # owner-scoped: only this person's take runs
                 where.append("(source='take' OR run_id IN (SELECT id FROM agent_runs WHERE user_id=? AND kind='take'))")
                 args.append(a.uid)
-            rows = self.store.q(f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY created DESC, id DESC LIMIT ?",
-                                (*args, max(1, min(int(limit or 200), 500))))
+            # binned takes and clips leave in SQL, before LIMIT, so a page never comes back short because the newest
+            # rows were in the Bin. The bound list is capped (BIN_SQL_MAX); binned tokens past it are skipped as rows are
+            # read, and more rows are read until the page is full (CodeRabbit, #121: a token can have several rows).
+            lim = max(1, min(int(limit or 200), 500))
+            binned = sorted(takes["binned"])
+            in_sql, rest = binned[:BIN_SQL_MAX], binned[BIN_SQL_MAX:]
+            if in_sql:
+                where.append(f"token NOT IN ({','.join('?' * len(in_sql))})")
+                args.extend(in_sql)
+            base = " AND ".join(where)
+            sql = f"SELECT * FROM library_items WHERE {base} ORDER BY created DESC, id DESC LIMIT ?"  # noqa: S608  where: fixed clauses, values bound
+            # refills continue from the last (created, id) read (a keyset cursor, not OFFSET), so a row added or removed
+            # between reads can't repeat or skip a row (CodeRabbit, #121)
+            more = f"SELECT * FROM library_items WHERE {base} AND (created < ? OR (created = ? AND id < ?)) ORDER BY created DESC, id DESC LIMIT ?"  # noqa: S608
+            rows, batch = [], lim + len(rest)
+            part = self.store.q(sql, (*args, batch))
+            while True:  # refill by rows (a token can have several) until the page is full or no rows remain
+                rows.extend(r for r in part if r["token"] not in takes["binned"])
+                if len(rows) >= lim or len(part) < batch or not rest:
+                    break
+                last = part[-1]
+                batch = min(batch * 2, 2000)  # skipped rows grow the next read, so a long run of them takes few queries
+                part = self.store.q(more, (*args, last["created"], last["created"], last["id"], batch))
             by_run = {r["run_id"]: r for r in runs}
             items = []
             for r in rows:
                 d = dict(r)
                 if d["token"] in takes["binned"]:  # a take or clip in the Bin: it shows there, never here with a dead file
                     continue
+                if len(items) >= lim:
+                    break
                 d["meta"] = json.loads(d["meta"] or "{}")
                 it = self._public(d, runs)
                 it["one_take"] = d["source"] == "take" or d.get("run_id") in takes["runs"]

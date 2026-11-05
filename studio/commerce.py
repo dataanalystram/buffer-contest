@@ -115,15 +115,6 @@ def ensure(store) -> None:
         store._commerce_ready = True
 
 
-def forget_user(store, uid: str) -> None:
-    """delete_user: the person's links and counters (their key lives in source_settings, deleted there). A key's own
-    meter is a hash of the key and stays, so deleting an account never resets a key's free allowance."""
-    ensure(store)
-    store.x("DELETE FROM commerce_links WHERE user_id=?", (uid,))
-    store.x("DELETE FROM commerce_user_day WHERE user_id=?", (uid,))
-    store.x("DELETE FROM commerce_credits WHERE scope=?", ("u:" + uid,))   # a key's meter stays: it is the key's, not the person's
-
-
 # ================================================================================================ limits (free only)
 def _env_int(name: str, default: int) -> int:
     try:
