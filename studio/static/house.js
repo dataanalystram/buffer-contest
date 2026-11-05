@@ -177,7 +177,7 @@ function watch(id) {
   stopWatch(); H.watching = id;
   const gen = H.gen = (H.gen || 0) + 1, mine = () => H.watching === id && H.gen === gen;  // even for the same run id
   const ac = H.abort = new AbortController();
-  let errs = 0, tag = "", pace = POLL_MIN;
+  let errs = 0, tag = "", pace = POLL_MIN, inflight = false, again = false;
   const wakeUp = () => HQLoad.wake(() => { if (!mine()) return; clearTimeout(H.poll); tick(); });
   // a hidden tab never polls: it waits for the tab to be shown again (loading.js wake), then catches up at once
   const later = (ms) => {
@@ -192,6 +192,9 @@ function watch(id) {
     if (!mine()) return;  // another thread was picked since (chat.js stops this poll), or this run is watched afresh
     if (H.unwake) { H.unwake(); H.unwake = null; }
     if (document.hidden) return later(POLL_MIN);  // no request while hidden
+    // one request at a time (CodeRabbit, #124): a wake while one is in flight runs right after it, never alongside
+    if (inflight) { again = true; return; }
+    inflight = true;
     try {
       const got = await runPoll(id, tag, ac.signal); errs = 0;
       if (!mine()) return;  // the answer landed after another thread was picked: never drawn over it
@@ -206,6 +209,10 @@ function watch(id) {
       errs += 1;
       if (errs === 3) toast("Reconnecting to the agent…");
       later(Math.min(15000, 1500 * 2 ** Math.min(errs, 4)));
+    } finally {
+      inflight = false;
+      if (again && mine()) { again = false; clearTimeout(H.poll); tick(); }  // the one chain continues from here
+      again = false;
     }
   };
   // the tab hidden mid-wait: the pending poll is dropped at once (not sent later while hidden) and the wake catches up

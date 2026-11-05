@@ -85,6 +85,7 @@ def test_the_live_poll_sends_its_tag_backs_off_stops_when_hidden_and_aborts_on_v
     assert "if (document.hidden) return later(POLL_MIN);" in js and "if (document.hidden) { H.unwake = wakeUp(); return; }" in js
     assert "const ac = H.abort = new AbortController();" in js and "H.abort.abort()" in js and "ac.signal" in js
     assert "window.stopWatch = stopWatch; window.resumeWatch = resumeWatch;" in js
+    assert "if (inflight) { again = true; return; }" in js and "inflight = false;" in js   # one poll request at a time
     app = (ST / "app.js").read_text()
     assert 'if (from === "agent" && name !== "agent" && window.stopWatch) window.stopWatch();' in app
     assert "THREAD_PATH = /^\\/threads\\/(thr_[a-z2-7]{26})\\/?$/" in app and "openThreadAt(tm[1])" in app
