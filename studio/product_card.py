@@ -44,10 +44,11 @@ def clean(card: Any) -> dict | None:
     return out
 
 
-def draw_overlay(ov, card: dict, p: dict, kit: dict) -> None:
+def draw_overlay(ov, card: dict, p: dict, kit: dict, avoid: tuple[int, int] | None = None) -> None:
     """Draw the card on the RGBA overlay ``ov`` (the clip's full frame): a rounded panel in the brand's primary colour
     near the bottom (or top), the name and price in the text colour, the CTA as an accent pill, the link label small.
-    A small "Ad" marker sits in the panel's corner when the card carries a shop link."""
+    A small "Ad" marker sits in the panel's corner when the card carries a shop link. ``avoid`` is the (top, bottom)
+    pixel band of the burned-in captions: the "bottom" card sits just above it, so it never hides what was said."""
     from PIL import ImageDraw
 
     from . import render
@@ -68,7 +69,11 @@ def draw_overlay(ov, card: dict, p: dict, kit: dict) -> None:
     cta = render.drawable(card.get("cta") or "", f_small)
     label = render.drawable(card.get("link_label") or "", f_small)
     ph = int(H * 0.15)
-    y0 = int(H * 0.08) if card.get("position") == "top" else int(H * 0.72) - ph
+    if card.get("position") == "top":
+        y0 = int(H * 0.08)
+    else:
+        y0 = (int(avoid[0]) - 24 - ph) if avoid else int(H * 0.54) - ph
+        y0 = max(int(H * 0.08) + ph // 2, y0)
     d.rounded_rectangle((m, y0, m + pw, y0 + ph), radius=max(16, W // 40), fill=prim + (232,))
     pad = 24
     d.text((m + pad, y0 + pad), name, font=f_name, fill=txt + (255,))

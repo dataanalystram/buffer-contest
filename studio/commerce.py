@@ -52,6 +52,7 @@ FREE_CREDITS = 1000           # Channel3's free monthly allowance per key (https
 SEARCH_CREDITS = 1            # POST /v1/search costs 1 credit; GET /v1/products/{id} is free
 MAX_RESULTS = 10              # results per search (Channel3 allows 30; fewer saves bandwidth and keeps cards readable)
 MAX_QUERY = 200
+MAX_LINKS = 20               # shop links in one post: more is refused (never silently unchecked)
 SEARCH_TTL = 30 * 60          # a repeated search inside 30 min is answered from the cache: 0 credits
 DETAIL_TTL = 60               # prices / offers are refreshed at least every minute (Channel3 caching guide)
 CACHE_MAX = 500
@@ -80,7 +81,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS commerce_credits (month TEXT, scope TEXT, credits INTEGER, updated REAL, PRIMARY KEY (month, scope));
 CREATE TABLE IF NOT EXISTS commerce_user_day (day TEXT, user_id TEXT, credits INTEGER, PRIMARY KEY (day, user_id));
 CREATE TABLE IF NOT EXISTS commerce_links (code TEXT PRIMARY KEY, user_id TEXT, run_id INTEGER, product_id TEXT, title TEXT,
-    affiliate INTEGER, created REAL, resolved REAL, offer_domain TEXT, clicks INTEGER)
+    affiliate INTEGER, created REAL, resolved REAL, offer_domain TEXT, clicks INTEGER, country TEXT, currency TEXT)
 """
 
 
@@ -596,22 +597,23 @@ def attach_product_to_post(studio, a: Actor, args: dict) -> dict:
     c = card(raw)
     if not c["in_stock"]:
         raise CommerceError("That product has no offer on sale right now, so it can't go in a post.", 409)
-    rows = store.q("SELECT code FROM commerce_links WHERE user_id=? AND run_id=? AND product_id=?", (a.uid, rid, pid))
+    rows = store.q("SELECT code FROM commerce_links WHERE user_id=? AND run_id=? AND product_id=? AND country=? AND currency=?",
+                   (a.uid, rid, pid, country, currency))
     code = rows[0]["code"] if rows else secrets.token_urlsafe(12)[:16]
     if rows:
         store.x("UPDATE commerce_links SET title=?, affiliate=?, resolved=? WHERE code=? AND user_id=?",
                 (c["title"], int(c["affiliate"]), time.time(), code, a.uid))
-    else:
-        store.x("INSERT INTO commerce_links(code,user_id,run_id,product_id,title,affiliate,created,resolved,offer_domain,clicks) "
-                "VALUES(?,?,?,?,?,?,?,?,?,0)", (code, a.uid, rid, pid, c["title"], int(c["affiliate"]), time.time(), time.time(),
-                                                 c["retailer"]))
+    else:   # the market the person picked is kept, so publish and click resolve the same market's offer
+        store.x("INSERT INTO commerce_links(code,user_id,run_id,product_id,title,affiliate,created,resolved,offer_domain,clicks,"
+                "country,currency) VALUES(?,?,?,?,?,?,?,?,?,0,?,?)",
+                (code, a.uid, rid, pid, c["title"], int(c["affiliate"]), time.time(), time.time(), c["retailer"], country, currency))
     link = link_url(studio, code)
     store.audit(a.uid, a.label, "attach_product_to_post", "read", {"run_id": rid, "affiliate": c["affiliate"]})
     product_card = {"name": c["title"][:80], "price": c["price_label"], "cta": cta, "link_label": label, "code": code,
                     "retailer": c["retailer"], "affiliate": c["affiliate"]}
     return {"run_id": rid, "code": code, "link": link, "product": c, "card": product_card, "image": None,
             "image_rule": IMAGE_RULE, "affiliate": c["affiliate"],
-            "caption": with_disclosure(caption, link, c["affiliate"]), "disclosure": DISCLOSURE if c["affiliate"] else "",
+            "caption": with_disclosure(caption, link, True), "disclosure": DISCLOSURE,
             "credits_spent": 0, "note": "The link resolves a fresh offer when the post is published and again at every click."}
 
 
@@ -636,8 +638,9 @@ def with_disclosure(text: str, link: str = "", affiliate: bool = True) -> str:
 
 
 def go_codes(public_url: str, text: str) -> list[str]:
+    """Every HuhQueue shop link code in the text, all of them (callers refuse more than MAX_LINKS, never skip any)."""
     base = re.escape(public_url.rstrip("/") + "/go/")
-    return list(dict.fromkeys(re.findall(base + r"([A-Za-z0-9_\-]{10,32})", text or "")))[:20]
+    return list(dict.fromkeys(re.findall(base + r"([A-Za-z0-9_\-]{10,32})", text or "")))
 
 
 SOURCE_AD = "https://www.ccpc.ie/business/help-for-business/guidelines-for-business/influencer-advertising-and-marketing"
@@ -657,17 +660,16 @@ def preflight_findings(store, public_url: str, text: str, media_urls: list[str])
     codes = go_codes(public_url, text)
     if not codes:
         return out
-    try:
-        ensure(store)
-        marks = ",".join("?" * len(codes))
-        aff = any(r["affiliate"] for r in store.q(f"SELECT affiliate FROM commerce_links WHERE code IN ({marks})", tuple(codes)))
-    except Exception:  # noqa: BLE001 - unknown means treat it as an affiliate link (the stricter rule)
-        aff = True
-    # a /go link is a commercial link whether or not this offer pays commission today: it is always labelled #Ad (CCPC)
+    if len(codes) > MAX_LINKS:
+        out.append({"level": "error", "rule": "commerce.too_many_links", "source": SOURCE_IMG.replace("#images", ""),
+                    "message": f"A post can carry at most {MAX_LINKS} shop links."})
+    # every shop link is a commercial link, whether or not its offer pays commission today: #Ad first and the
+    # disclosure line, always (CCPC; Channel3 Publisher Terms §9). No per-link lookup, so a commission flag that changes at
+    # publish time can't slip a post through without the line.
     if not starts_with_ad(text):
         out.append({"level": "error", "rule": "commerce.ad_first", "source": SOURCE_AD,
                     "message": "A post with a shop link must start with #Ad (Irish CCPC / ASAI rule). Add #Ad first."})
-    if aff and DISCLOSURE.lower() not in (text or "").lower():
+    if DISCLOSURE.lower() not in (text or "").lower():
         out.append({"level": "error", "rule": "commerce.disclosure", "source": SOURCE_AD,
                     "message": f"Add the disclosure line near the link: \"{DISCLOSURE}\""})
     return out
@@ -679,14 +681,18 @@ def at_publish(studio, a: Actor, text: str) -> list[dict]:
     codes = go_codes(studio.s.public_url, text)
     if not codes:
         return []
+    if len(codes) > MAX_LINKS:
+        raise CommerceError(f"A post can carry at most {MAX_LINKS} shop links.", 400)
     store = studio.store
     ensure(store)
     out = []
     for code in codes:
-        rows = store.q("SELECT code, product_id, user_id FROM commerce_links WHERE code=? AND user_id=?", (code, a.uid))
+        rows = store.q("SELECT code, product_id, user_id, country, currency FROM commerce_links WHERE code=? AND user_id=?",
+                       (code, a.uid))
         if not rows:
             raise CommerceError("This post has a shop link that isn't yours or no longer exists. Attach the product again.", 404)
-        raw = _detail(store, Actor(a.uid), rows[0]["product_id"], "IE", "EUR", operator=True)
+        raw = _detail(store, Actor(a.uid), rows[0]["product_id"], rows[0]["country"] or "IE", rows[0]["currency"] or "EUR",
+                      operator=True)
         c = card(raw)
         if not c["in_stock"]:
             raise CommerceError(f"\"{c['title'][:60]}\" is no longer on sale, so its link would go nowhere. Remove it or pick "
@@ -714,13 +720,14 @@ def resolve_click(studio, code: str) -> tuple[str | None, dict]:
         return None, {}
     store = studio.store
     ensure(store)
-    rows = store.q("SELECT code, user_id, product_id, title FROM commerce_links WHERE code=?", (code,))
+    rows = store.q("SELECT code, user_id, product_id, title, country, currency FROM commerce_links WHERE code=?", (code,))
     if not rows:
         return None, {}
     row = dict(rows[0])
     info = {"title": row["title"] or "This product"}
     try:
-        raw = _detail(store, Actor(row["user_id"]), row["product_id"], "IE", "EUR", operator=True)
+        raw = _detail(store, Actor(row["user_id"]), row["product_id"], row["country"] or "IE", row["currency"] or "EUR",
+                      operator=True)
     except ActionError:
         return None, info
     best = _best(_offers(raw))

@@ -1,7 +1,8 @@
 # Commerce on Channel3
 
 Find a product, check its live price, and put it in a post with an honest shop link. Plan: docs/plans/AGENT_RUNS_EDITING_COMMERCE.md
-Phase 4 (PR #101). Code: `studio/commerce.py`, `studio/product_card.py`.
+Phase 4 (PR #101). Code: `studio/commerce.py` (core, worker-safe), `studio/commerce_routes.py` (REST, /go, BYO key, consent registration),
+`studio/product_card.py`.
 
 ## Free only
 
@@ -47,7 +48,8 @@ grant display inside our app, not republishing). So:
 
 CCPC and ASAI guidance: a post with an affiliate link is advertising and must say so first, with `#Ad` (or `#Fógra`).
 `with_disclosure` (the caption helper, `POST /api/commerce/caption`) puts `#Ad` first, adds the link and the line
-"We may earn a commission when you buy through links in this post." Preflight blocks a shop post without them. The page a
+"We may earn a commission when you buy through links in this post." Every shop link gets both, whether or not its
+offer pays commission today; preflight blocks a shop post without them, and a post with more than 20 shop links. The page a
 dead shop link lands on says it is an ad and carries Channel3's disclosure line.
 https://www.ccpc.ie/business/help-for-business/guidelines-for-business/influencer-advertising-and-marketing
 

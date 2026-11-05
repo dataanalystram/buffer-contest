@@ -487,7 +487,8 @@ class Studio:
     COUNTED = ("submit_post", "create_idea", "update_post", "delete_draft", "agent_run", "clips_from_video", "adjust_clip",
                "remember_rule", "revise", "draft_from_link", "autofix_post", "place_clips_in_week", "save_brand_kit",
                "upload_media", "import_media", "brand_from_website", "follow_feed",
-               "fetch_image", "cutout_product", "edit_image")  # image tools (studio/image_edit.py): compose_product_card is an edit_image
+               "fetch_image", "cutout_product", "edit_image",
+               "search_products", "attach_product_to_post")  # Commerce (studio/commerce.py) counts too; image tools (studio/image_edit.py): compose_product_card is an edit_image
 
     def kill_switch_check(self, a: Actor, action: str) -> None:
         """The kill switch alone (any agent request that changes something, counted or not)."""

@@ -746,7 +746,7 @@ def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes
         render.place_logo(ov, render.load_logo(logo), p, kit)
         if m.get("product_card"):  # Commerce: the text product card on the brand kit (studio/product_card.py)
             from . import product_card
-            product_card.draw_overlay(ov, m["product_card"], p, kit)
+            product_card.draw_overlay(ov, m["product_card"], p, kit, avoid=caption_box(ass, H))  # never over the captions
         ov.save(tmp / "logo.png")
         fonts = str(FONT_DIR).replace("\\", "/").replace(":", "\\:")
         assf = str(tmp / "cap.ass").replace("\\", "/").replace(":", "\\:")

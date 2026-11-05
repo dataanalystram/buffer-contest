@@ -753,8 +753,8 @@ class Takes:
                 pc = _pc.clean(body["product_card"])
             except _pc.CardError as e:
                 raise ActionError(str(e), 400)
-            if pc and run["input"].get("style") == "opus":
-                raise ActionError("The product card overlay works on One take clips in the classic style.", 409)
+            if pc and (run["input"].get("style") == "opus" or res.get("sample")):  # those renders don't draw the card
+                raise ActionError("The product card overlay works on your own One take clips in the classic style.", 409)
             if pc and pc.get("code"):  # the person's own shop link only (studio/commerce.py's table; no import on the worker)
                 try:
                     mine = self.store.q("SELECT 1 AS ok FROM commerce_links WHERE code=? AND user_id=?", (pc["code"], a.uid))

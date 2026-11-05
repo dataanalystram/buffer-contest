@@ -363,7 +363,7 @@ def test_product_card_overlay_validates_and_draws_text_on_the_brand_kit():
     p = {"colors": {"primary": "#18181B", "accent": "#C9ACFA", "text": "#FFFFFF"}, "safe_margin": 40}
     product_card.draw_overlay(ov, {**ok, "code": "abcdefghijkl"}, p, {"name": "HuhByte"})
     box = ov.getbbox()
-    assert box and box[1] > 960 * 0.4                    # the card sits in the lower part of the frame
+    assert box and box[1] > 960 * 0.3                    # the card sits below the top third
     assert ov.getpixel((270, 5))[3] == 0                 # the top of the frame stays clear
 
 
@@ -371,3 +371,50 @@ def test_adjust_clip_schema_takes_a_product_card():
     from studio import mcp
     t = next(t for t in mcp.TOOLS if t["name"] == "adjust_clip")
     assert "product_card" in t["inputSchema"]["properties"]
+
+
+# ------------------------------------------------------------------------------------------------ review fixes (PR #112)
+def test_no_commission_shop_link_still_gets_ad_and_disclosure_and_passes_preflight(human, c3):
+    c3.products["p_free"] = product("p_free", rate=0.0)
+    rid = _run(human)
+    d = human.post("/api/commerce/attach", json={"run_id": rid, "product_id": "p_free", "caption": "Solid pick"}).json()
+    assert d["affiliate"] is False and d["caption"].startswith("#Ad ") and commerce.DISCLOSURE in d["caption"]
+    pf = human.post("/api/preflight", json={"channel_id": "ch_x", "text": d["caption"]}).json()
+    assert not _rules(pf) & {"commerce.ad_first", "commerce.disclosure"}
+    no_line = human.post("/api/preflight", json={"channel_id": "ch_x", "text": f"#Ad Solid pick {d['link']}"}).json()
+    assert "commerce.disclosure" in _rules(no_line)          # every shop link carries the line, commission or not
+
+
+def test_link_keeps_its_market_for_publish_and_click(human, app, c3):
+    rid = _run(human)
+    d = human.post("/api/commerce/attach", json={"run_id": rid, "product_id": "p_jbl730", "country": "GB"}).json()
+    assert c3.calls[-1]["params"] == {"country": "GB", "currency": "GBP"}
+    commerce.clear_cache()
+    _bare(app).get(f"/go/{d['code']}", follow_redirects=False)
+    assert c3.calls[-1]["params"] == {"country": "GB", "currency": "GBP"}
+    commerce.clear_cache()
+    pv = human.post("/api/posts/preview", json={"channel_id": "ch_li", "text": d["caption"], "mode": "draft"}).json()
+    human.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]})
+    assert c3.calls[-1]["params"] == {"country": "GB", "currency": "GBP"}
+
+
+def test_every_shop_link_is_checked_and_more_than_the_cap_is_refused(human):
+    links = " ".join(f"https://hq.test/go/code{i:08d}" for i in range(commerce.MAX_LINKS + 1))
+    pf = human.post("/api/preflight", json={"channel_id": "ch_x", "text": f"#Ad x {links} {commerce.DISCLOSURE}"}).json()
+    assert "commerce.too_many_links" in _rules(pf) and pf["status"] == "error"
+    assert len(commerce.go_codes("https://hq.test", links)) == commerce.MAX_LINKS + 1
+
+
+def test_commerce_actions_count_against_the_token_daily_cap():
+    from studio.actions import Studio
+    assert {"search_products", "attach_product_to_post"} <= set(Studio.COUNTED)
+
+
+def test_product_card_sits_above_the_caption_band():
+    from PIL import Image
+
+    from studio import product_card
+    ov = Image.new("RGBA", (540, 960), (0, 0, 0, 0))
+    p = {"colors": {"primary": "#18181B", "accent": "#C9ACFA", "text": "#FFFFFF"}, "safe_margin": 40}
+    product_card.draw_overlay(ov, product_card.clean({"name": "Lamp", "price": "€20"}), p, {}, avoid=(540, 700))
+    assert ov.getbbox()[3] <= 540                        # clear of the captions (540-700 px)
