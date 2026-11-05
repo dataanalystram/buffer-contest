@@ -967,6 +967,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     from . import take_routes  # before /api/takes/{rid}: /bin and /uploads first
     take_routes.add_upload_routes(app, house, actor)
     take_routes.add_bin_routes(app, house, actor)
+    from . import take_layout_routes  # per-clip layout plan + per-scene overrides, Smart layout setting
+    take_layout_routes.add_routes(app, house, actor)
 
     @app.post("/api/takes")
     def take_start(request: Request, body: dict = Body(...)):
@@ -1046,6 +1048,52 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "beat"):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         return {"ok": house.job_heartbeat(jid)}
+
+    @app.post("/api/worker/jobs/{jid}/quota", include_in_schema=False)
+    async def worker_quota(jid: int, request: Request):
+        """Reserve one free-tier request (Groq Whisper, the vision layout picker) on the shared ledger, so the free
+        limits hold across worker runs (studio/free_quota.py). The job's token, until the result burns it. Vision is
+        refused unless the take's owner turned on Smart layout for the clips of this job."""
+        if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "beat"):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        body = await reqlimits.read_json(request, 4096)
+        from . import free_quota
+        try:
+            provider, units = free_quota.clean(body.get("provider"), body.get("units"))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return await run_in_threadpool(house.free_quota_reserve, jid, provider, units)
+
+    @app.post("/api/worker/jobs/{jid}/asr", include_in_schema=False)
+    async def worker_asr(jid: int, request: Request):
+        """Transcribe one audio chunk with the APP's Groq key (free tier, under the shared ledger), so no key ever
+        reaches a worker (studio/free_proxy.py). The job's token, until the result burns it."""
+        if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "beat"):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        from . import free_proxy, free_quota
+        data = await reqlimits.read_body(request, free_quota.ASR_MAX_BYTES)
+        try:
+            secs = free_proxy.clean_audio(data, request.headers.get("x-audio-seconds"))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return await run_in_threadpool(free_proxy.asr, house, jid, data, secs)
+
+    @app.post("/api/worker/jobs/{jid}/vision", include_in_schema=False)
+    async def worker_vision(jid: int, request: Request):
+        """Smart layout (beta): ask the free vision providers with the APP's keys about a clip's keyframes, only when
+        the take's owner turned it on (studio/free_proxy.py). The job's token, until the result burns it."""
+        if not house.job_token_ok(jid, request.headers.get("x-job-token", ""), "beat"):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        from . import free_proxy
+        body = await reqlimits.read_json(request, free_proxy.VISION_BODY_MAX)
+        ok, why = await run_in_threadpool(house.free_quota_allowed, jid, "nvidia")
+        if not ok:
+            return {"ok": False, "why": why}
+        try:
+            frames = await run_in_threadpool(free_proxy.clean_frames, body.get("frames"))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return await run_in_threadpool(free_proxy.vision, house, jid, frames)
 
     @app.post("/api/worker/jobs/{jid}/clips/{clip_id}", include_in_schema=False)
     async def worker_clip(jid: int, clip_id: str, request: Request):

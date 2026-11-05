@@ -328,6 +328,26 @@ Loading states (studio/static/loading.js, loading.css; 4 Nov 2026)
             associated documentation files, to deal in the Software without restriction, subject to including the
             copyright notice and this permission notice in all copies or substantial portions of the Software.
 
+studio/media/reframe/models/face_detection_yunet_2023mar.onnx  (copied, unmodified; sha256 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4)
+  Source:   YuNet face detector, OpenCV Zoo, https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
+            (Shiqi Yu et al., "YuNet: A Tiny Millisecond-level Face Detector")
+  Licence:  MIT License, Copyright (c) 2020 Shiqi Yu (full text in studio/media/reframe/models/LICENSE-yunet.txt).
+            Run through OpenCV's cv2.FaceDetectorYN (opencv-python-headless, Apache-2.0).
+  What:     faces on each One take clip span for the per-scene layouts (studio/media/reframe/faces.py); the file is
+            checked against its sha256 before it loads.
+
+studio/media/reframe/*, studio/media/captions_ass.py  (our own code)
+  Per-scene layouts (track, fit, split, screen) as FFmpeg filter graphs and animated captions as ASS rendered by libass
+  (ISC) through FFmpeg's ass filter. Shot cuts from PySceneDetect (BSD-3-Clause) when the analysis has none.
+
+studio/fonts/Anton.ttf, Poppins-Bold.ttf, Inter-Bold.ttf, IBMPlexMono-SemiBold.ttf  (caption presets)
+  Licence:  SIL Open Font License 1.1; texts in studio/fonts/OFL-Anton.txt, OFL-Poppins.txt, OFL-Inter.txt (from
+            github.com/google/fonts) and OFL-IBMPlexMono.txt.
+
+tests/studio/fixtures/reframe/mona.jpg, pearl.jpg  (test fixtures, scaled to 320 px)
+  Leonardo da Vinci, "Mona Lisa" and Johannes Vermeer, "Girl with a Pearl Earring": public-domain paintings, from
+  Wikimedia Commons. Used only to build synthetic test clips.
+
 Face detection test fixture (tests/studio/fixtures/media/face_armstrong_pd.jpg; 4 Nov 2026)
   Source:   "Neil Armstrong pose.jpg", official NASA portrait of Neil A. Armstrong (1969, NASA photo S69-31741),
             https://commons.wikimedia.org/wiki/File:Neil_Armstrong_pose.jpg

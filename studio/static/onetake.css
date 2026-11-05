@@ -137,6 +137,27 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .link.danger { color: var(--bad); background: none; border: 0; cursor: pointer; padding: 2px 4px; }
 @media (prefers-reduced-motion: reduce) { .tk-prog progress { transition: none; } }
 
+/* Layout & captions sheet (takelayout.js): lavender accent, no gradients, phone friendly (390 px) */
+.tl-dialog{width:min(640px,calc(100vw - 16px));max-height:calc(100vh - 24px);border:1px solid var(--line-strong);border-radius:16px;padding:0;background:var(--raised);color:var(--ink)}
+.tl-dialog::backdrop{background:rgba(10,10,14,.55)}
+.tl-form{display:flex;flex-direction:column;gap:12px;padding:16px}
+.tl-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tl-head h2{font-size:18px;margin:0}
+.tl-scenes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.tl-scene{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--line);border-radius:12px}
+.tl-when{font-size:13px;color:var(--muted)}
+.tl-seg,.tl-chips{display:flex;flex-wrap:wrap;gap:6px}
+.tl-dialog .chip.sm{height:36px;padding:0 12px 0 8px;font-size:13px;gap:6px}
+.tl-dialog .chip[aria-checked="true"]{border-color:var(--hc-lav);box-shadow:inset 0 0 0 2px var(--hc-lav);color:var(--ink);font-weight:600}
+.tl-dialog .ic{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tl-caps{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.tl-caps legend{display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;margin-bottom:6px}
+.tl-smart{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4}
+.tl-smart input{accent-color:var(--hc-lav);width:18px;height:18px;margin-top:2px}
+.tl-foot{display:flex;justify-content:flex-end}
+@media (max-width:420px){.tl-dialog .chip.sm span{font-size:12px}.tl-form{padding:12px}}
+@media (prefers-reduced-motion:reduce){.tl-dialog .chip{transition:none}}
+
 /* Your takes / Bin (5 Nov 2026): theme tokens only, lavender accent, flat fills; one column of actions at phone width */
 .tk-listhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 48px 0 12px; }
 .tk-listhead .sec { margin: 0; }

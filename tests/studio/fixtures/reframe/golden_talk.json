@@ -1,0 +1,15 @@
+{
+ "sidecar": [
+  {
+   "start": 0.0,
+   "end": 8.0,
+   "layout": "track"
+  }
+ ],
+ "rules": [
+  "R3",
+  "R3"
+ ],
+ "source": "tests/studio/reframe_fixtures.py (talk)",
+ "note": "rules: one per scene; the fixture's sentence end at 5.9 s splits the shot into two scenes"
+}

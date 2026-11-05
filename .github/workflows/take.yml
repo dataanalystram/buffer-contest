@@ -32,5 +32,12 @@ jobs:
       - name: Job ${{ github.event.inputs.job_id }} (${{ github.event.inputs.kind }})
         # Jev: the worker returns a few keyframes (spec.jev only); the server asks Jev with its key within the per-take and
         # per-account daily caps (studio/takes.py _studio_jev). No TYPESAFE_API_KEY here, so no call skips the daily cap.
-        env: {HQ_JOB_ID: "${{ github.event.inputs.job_id }}", HQ_APP: "${{ github.event.inputs.app }}", HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite", HQ_JEV_FACE_CAP: "12"}
+        # No Groq / NVIDIA / OpenRouter keys either (and no repo secrets): the APP makes those free calls with its own keys,
+        # on this job's token, under the free-tier ledger (studio/free_proxy.py, studio/free_quota.py).
+        env:
+          HQ_JOB_ID: "${{ github.event.inputs.job_id }}"
+          HQ_APP: "${{ github.event.inputs.app }}"
+          HQ_FACE_MODEL: "/tmp/blaze_face_short_range.tflite"
+          HQ_JEV_FACE_CAP: "12"
+          HQ_LAYOUT_VISION: shadow                             # asks and logs; the rules still decide (off | shadow | on)
         run: python -m studio.render_worker --job "$HQ_JOB_ID" --app "$HQ_APP"

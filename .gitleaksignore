@@ -16,3 +16,4 @@ tests/test_unsplash.py:generic-api-key:72
 a9b025a3cdda6bd935bf4b4ecb692ba0cef780b5:tests/studio/test_take_delete_upload.py:generic-api-key:245
 tests/studio/test_commerce.py:generic-api-key:17
 4a46251a7ef47f1e67990df8efcf01958e7b5bfb:tests/studio/test_commerce.py:generic-api-key:17
+tests/studio/test_commerce.py:generic-api-key:18

@@ -1464,6 +1464,39 @@ class House:
     # ---- the weekly recap (job kind media_recap): cover + one video slide per story + Follow card (4:5) and one Reel (9:16)
     RECAP_KINDS = {"cover": ("photo", "png"), "follow": ("photo", "png"), "reel": ("video", "mp4")}
 
+    def free_quota_allowed(self, jid: int, provider: str) -> tuple[bool, str]:
+        """Whether this job may use a free provider at all: Groq only for jobs that transcribe; vision only for a One
+        take render whose owner turned on Smart layout (beta)."""
+        from . import free_quota
+        rows = self.store.q("SELECT spec, user_id FROM render_jobs WHERE id=?", (jid,))
+        spec = json.loads(rows[0]["spec"]) if rows else {}
+        kind = str(spec.get("kind", ""))
+        if provider in free_quota.VISION:
+            allowed = kind == "take_render" and any(isinstance(c, dict) and c.get("smart_layout") is True
+                                                    for c in spec.get("clips") or [])
+            if allowed:  # and the owner's setting NOW: turning Smart layout off stops the frames of a job already queued
+                from . import take_layout
+                try:
+                    allowed = take_layout._prefs(self.store, str(rows[0]["user_id"] or "")).get("smart_layout") is True
+                except Exception:  # noqa: BLE001 - any read error means no
+                    allowed = False
+            return (True, "") if allowed else (False, "Smart layout (beta) is off for this take")
+        if kind not in ("take_analyze", "transcribe"):
+            return False, "this job doesn't transcribe"
+        return True, ""
+
+    def free_quota_reserve(self, jid: int, provider: str, units: float) -> dict:
+        """One free-tier reservation for this job (route: /api/worker/jobs/{jid}/quota, token-checked; also the app's
+        own Groq / vision proxy, studio/free_proxy.py)."""
+        from . import free_quota
+        ok, why = self.free_quota_allowed(jid, provider)
+        if not ok:
+            return {"ok": False, "why": why}
+        if not hasattr(self, "_free_ledger"):
+            self._free_ledger = free_quota.Ledger(self.store)
+        ok, why = self._free_ledger.reserve(provider, units)
+        return {"ok": ok, "why": why}
+
     def job_kind(self, jid: int) -> str:
         rows = self.store.q("SELECT spec FROM render_jobs WHERE id=?", (jid,))
         return json.loads(rows[0]["spec"]).get("kind", "") if rows else ""
