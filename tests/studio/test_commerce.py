@@ -344,3 +344,30 @@ def test_tools_listed_and_documented():
     doc = open("docs/MCP_TOOLS.md").read()
     for n in ("search_products", "get_product", "attach_product_to_post"):
         assert f"`{n}`" in doc, n
+
+
+# ------------------------------------------------------------------------------------------------ One take product card
+def test_product_card_overlay_validates_and_draws_text_on_the_brand_kit():
+    from PIL import Image
+
+    from studio import product_card
+    assert product_card.clean(None) is None and product_card.clean({}) is None
+    ok = product_card.clean({"name": "JBL  Tune 730BT", "price": "€49.99", "cta": "Shop now", "link_label": "Link in bio"})
+    assert ok == {"name": "JBL Tune 730BT", "price": "€49.99", "cta": "Shop now", "link_label": "Link in bio", "position": "bottom",
+                  "code": ""}
+    for bad in ("x", [1], {"name": ""}, {"name": 3}, {"name": "a", "cta": "x" * 41}, {"name": "a", "position": "left"},
+                {"name": "a", "code": "../../etc"}):
+        with pytest.raises(product_card.CardError):
+            product_card.clean(bad)
+    ov = Image.new("RGBA", (540, 960), (0, 0, 0, 0))
+    p = {"colors": {"primary": "#18181B", "accent": "#C9ACFA", "text": "#FFFFFF"}, "safe_margin": 40}
+    product_card.draw_overlay(ov, {**ok, "code": "abcdefghijkl"}, p, {"name": "HuhByte"})
+    box = ov.getbbox()
+    assert box and box[1] > 960 * 0.4                    # the card sits in the lower part of the frame
+    assert ov.getpixel((270, 5))[3] == 0                 # the top of the frame stays clear
+
+
+def test_adjust_clip_schema_takes_a_product_card():
+    from studio import mcp
+    t = next(t for t in mcp.TOOLS if t["name"] == "adjust_clip")
+    assert "product_card" in t["inputSchema"]["properties"]
