@@ -42,6 +42,8 @@ from typing import Any, Callable
 from urllib.parse import urlencode, urlparse
 
 import httpx
+from fastapi import Body, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from . import netguard
 from .actions import ActionError, Actor
@@ -95,13 +97,12 @@ class CreditLimit(CommerceError):
 
 
 # ================================================================================================ storage
-_ensured: set[int] = set()
 _elock = threading.Lock()
 
 
 def ensure(store) -> None:
     with _elock:
-        if id(store) in _ensured:
+        if getattr(store, "_commerce_ready", False):
             return
         for stmt in [x.strip() for x in SCHEMA.split(";") if x.strip()]:
             if store.pg:
@@ -111,7 +112,7 @@ def ensure(store) -> None:
         if store.pg:
             for t in ("commerce_credits", "commerce_user_day", "commerce_links"):
                 store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
-        _ensured.add(id(store))
+        store._commerce_ready = True
 
 
 def forget_user(store, uid: str) -> None:
@@ -179,13 +180,13 @@ def spend(store, uid: str, byo: bool, credits: int = SEARCH_CREDITS) -> None:
             per_day, per_month = user_caps()
             checks = [("global", monthly_cap(), "HuhQueue's free Channel3 credits this month (shared by everyone)"),
                       ("u:" + uid, per_month, f"your {per_month} free product searches this month")]
-            if _used_day(store, day, uid) + credits > per_day:
-                raise CreditLimit(f"You've used your {per_day} free product searches today. They reset at midnight UTC. "
-                                  "Or add your own free Channel3 key in the Product panel.", resets)
         for scope, cap, what in checks:
             if _used(store, month, scope) + credits > cap:
                 raise CreditLimit(f"Product search stopped: that would go past {what}. HuhQueue never pays for more. It "
                                   f"resets on {resets[:10]}." + ("" if byo else " Or add your own free Channel3 key."), resets)
+        if not byo and _used_day(store, day, uid) + credits > per_day:
+            raise CreditLimit(f"You've used your {per_day} free product searches today. They reset at midnight UTC. "
+                              "Or add your own free Channel3 key in the Product panel.", resets)
         for scope, _cap, _w in checks:
             store.x("INSERT INTO commerce_credits(month,scope,credits,updated) VALUES(?,?,?,?) ON CONFLICT(month,scope) DO "
                     "UPDATE SET credits=commerce_credits.credits+excluded.credits, updated=excluded.updated",
@@ -851,9 +852,6 @@ def call_tool(studio, actor: Actor, name: str, args: dict):
 
 # ================================================================================================ REST
 def add_routes(app, house, actor) -> None:
-    from fastapi import Body, Request
-    from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-
     from . import consent, demo_guard
     studio = house.studio
     ensure(studio.store)
