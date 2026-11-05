@@ -78,6 +78,11 @@ function tkXhr(method, url, body, headers, onProg) {
 }
 async function tkUploadMultipart(f) {
   const up = await api("/api/takes/uploads", { method: "POST", body: { name: f.name, size: f.size, content_type: f.type || "video/mp4", fingerprint: `${f.name}|${f.size}|${f.lastModified || 0}` } });
+  if (up.status === "joined" || up.status === "ready") {  // the parts were joined before: only the checks are left
+    tkProg(100, "Checking the upload…");
+    await api(`/api/takes/uploads/${up.upload_id}/complete`, { method: "POST", body: {} });
+    return up.upload_id;
+  }
   const done = new Map((up.received || []).map((p) => [p.part_number, { part_number: p.part_number, etag: p.etag, size: p.size }]));
   const ps = up.part_size, todo = [];
   for (let n = 1; n <= up.parts; n++) if (!done.has(n)) todo.push(n);
@@ -93,9 +98,11 @@ async function tkUploadMultipart(f) {
         try {
           const x = await tkXhr("PUT", u.url, blob, {}, (n) => show(n));
           const etag = x.getResponseHeader("ETag");
-          if (!etag) throw new Error("The storage bucket doesn't expose the ETag header (its CORS rules need ExposeHeaders: ETag).");
+          // a hard error, never retried as a dropped connection: no retry can read a header the bucket's CORS hides
+          if (!etag) throw Object.assign(new Error("The storage bucket doesn't let the browser read the ETag header, so the upload can't be finished. Its CORS rules need ExposeHeaders: ETag."), { hard: true });
           done.set(u.part_number, { part_number: u.part_number, etag, size: u.size }); sent += u.size; show(); break;
         } catch (e) {
+          if (e.hard) throw new Error(`Part ${u.part_number} didn't upload: ${e.message}`);
           if (e.status === 403 && !fresh) {  // the signed URL ran out (an hour): ask for a new one and try again
             fresh = true; tries--;
             u = (await api(`/api/takes/uploads/${up.upload_id}/parts`, { method: "POST", body: { parts: [u.part_number] } })).urls[0];
@@ -278,8 +285,8 @@ async function deleteClip(id) {
   try {
     const r = await api(`/api/takes/${encodeURIComponent(rid)}/clips/${encodeURIComponent(id)}`, { method: "DELETE" });
     tkUndoToast(`Clip moved to the Bin for ${(r && r.in_bin_days) || 7} days.`, { take_id: rid, clip_id: id });
-    if (T.take && String(T.take.id) === String(rid)) showTake(await api(`/api/takes/${encodeURIComponent(rid)}`));
-    loadTakes();
+    await tkShowIfOpen(rid);
+    tkRefresh();
   } catch (e) { toast(e.message, 6000); }
 }
 async function deleteTake(id) {
@@ -288,7 +295,7 @@ async function deleteTake(id) {
     const r = await api(`/api/takes/${encodeURIComponent(id)}`, { method: "DELETE" });
     tkUndoToast(`Take moved to the Bin for ${(r && r.in_bin_days) || 7} days.`, { take_id: id });
     if (T.take && String(T.take.id) === String(id)) { clearTimeout(T.poll); T.take = null; T.plan = null; $("#takeView").hidden = true; }
-    loadTakes();
+    tkRefresh();
   } catch (e) { toast(e.message, 6000); }
 }
 // Undo right after a delete: the toast's Undo restores it from the Bin (the same restore the Bin's button calls)
@@ -301,11 +308,18 @@ async function tkRestore(ref) {
     : `/api/takes/${encodeURIComponent(ref.take_id)}/restore`;
   await api(path, { method: "POST", body: {} });
   toast(ref.clip_id ? "Clip restored." : "Take restored.");
-  if (ref.clip_id && T.take && String(T.take.id) === String(ref.take_id)) {
-    try { showTake(await api(`/api/takes/${encodeURIComponent(ref.take_id)}`)); } catch (e) { toast(e.message, 6000); }
-  }
-  T.view === "bin" ? loadTakeBin() : loadTakes();
+  if (ref.clip_id) { try { await tkShowIfOpen(ref.take_id); } catch (e) { toast(e.message, 6000); } }
+  tkRefresh();
 }
+// redraw the open take, only if it is still the one open once its answer is back (the user may have opened another)
+async function tkShowIfOpen(rid) {
+  const open = () => T.take && String(T.take.id) === String(rid);
+  if (!open()) return;
+  const t = await api(`/api/takes/${encodeURIComponent(rid)}`);
+  if (open()) showTake(t);
+}
+// reload whichever of Takes / Bin is showing (the other reloads when its tab is opened)
+function tkRefresh() { T.view === "bin" ? loadTakeBin() : loadTakes(); }
 
 // ---------------------------------------------------------------- The Spread
 $("#spreadGo").onclick = async () => {
@@ -392,11 +406,16 @@ $("#plSpreadCancel").onclick = () => { T.plan = null; PL.extra = []; $("#plSprea
 // A failed load says so with Retry; it never leaves the list silently empty.
 T.view = "takes";
 const TK_KEYS = { takes: "takes", bin: "takebin" };
+const TK_BADGE = "takebadge";
 const TK_IC = {  // Lucide (ISC): rotate-ccw, trash-2
   restore: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>',
   trash: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><path d="M10 11v6M14 11v6"/></svg>',
 };
-function tkAbort(except) { Object.entries(TK_KEYS).forEach(([v, k]) => { if (v !== except) HQLoad.start(k).done(); }); }
+/** Cancel the requests in flight of every view but `except` (and the Bin count when the whole tab is left). */
+function tkAbort(except) {
+  Object.entries(TK_KEYS).forEach(([v, k]) => { if (v !== except) HQLoad.start(k).done(); });
+  if (!except) HQLoad.start(TK_BADGE).done();
+}
 function tkErr(box, msg, retry, id) {
   box.setAttribute("aria-busy", "false");
   box.innerHTML = `<div class="tk-err" role="alert" data-testid="${id}-error"><span>${esc(msg || "Something went wrong.")}</span><button type="button" class="btn2 sm" data-testid="${id}-retry">Retry</button></div>`;
@@ -422,12 +441,21 @@ document.querySelectorAll("[data-tkview]").forEach((b) => {
 // leaving One take (any screen change hides #tab-take) cancels both views' requests
 new MutationObserver(() => { if ($("#tab-take").hidden) tkAbort(); }).observe($("#tab-take"), { attributes: true, attributeFilter: ["hidden"] });
 function tkBinCount(n) { const c = $("#tkBinCount"); c.hidden = !n; c.textContent = n ? String(n) : ""; }
+/** The Bin's count on its tab: its own live request, so a late answer never overwrites a newer count. A hint only: if it
+ *  can't load, the badge keeps its last value (opening the Bin says why). */
+async function tkBadge() {
+  const tk = HQLoad.start(TK_BADGE);
+  try {
+    const b = await api("/api/takes/bin", { signal: tk.signal });
+    if (tk.live()) tkBinCount((b.takes || []).length + (b.clips || []).length);
+  } catch (_) { /* aborted, or the hint failed: the Bin view reports its own errors */ }
+  finally { tk.done(); }
+}
 
 async function loadTakes() {
   const box = $("#takeList"), tk = HQLoad.start(TK_KEYS.takes), sig = { signal: tk.signal };
   if (!box.querySelector(".take-rowwrap, .empty")) { box.innerHTML = HQLoad.rows(3, "Loading your takes"); box.setAttribute("aria-busy", "true"); }
-  // the Bin's count on its tab is a hint: if it can't load, the badge keeps its last value (the Bin view itself says why)
-  api("/api/takes/bin", sig).then((b) => { if (!tk.signal.aborted) tkBinCount((b.takes || []).length + (b.clips || []).length); }).catch(() => {});
+  tkBadge();
   try {
     const rows = await api("/api/takes", sig);
     if (!tk.live()) return;
@@ -458,6 +486,7 @@ function tkBinRow(x) {
 }
 async function loadTakeBin() {
   const box = $("#takeBin"), tk = HQLoad.start(TK_KEYS.bin);
+  HQLoad.start(TK_BADGE).done();  // this load's answer sets the count; an older count request must not land after it
   if (!box.querySelector(".tk-binrow, .empty")) { box.innerHTML = HQLoad.rows(3, "Loading the Bin"); box.setAttribute("aria-busy", "true"); }
   else HQLoad.busy(box, true, "Refreshing the Bin");
   try {

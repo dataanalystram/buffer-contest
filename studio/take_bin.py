@@ -176,8 +176,9 @@ class TakeBin:
         def left(at):
             sec = max(0.0, (at or 0) + TRASH_DAYS * 86400 - now)
             return int(-(-sec // 86400)) if sec else 0
-        for r in self.store.q("SELECT id,status,input,result,created FROM agent_runs WHERE user_id=? AND kind='take' ORDER BY id DESC LIMIT 500",
-                              (a.uid,)):
+        # only the rows with something in the Bin (the same filter as the 7-day sweep), however old or many the takes are
+        for r in self.store.q("SELECT id,status,input,result,created FROM agent_runs WHERE user_id=? AND kind='take' "
+                              "AND (status='binned' OR result LIKE ?) ORDER BY id DESC", (a.uid, '%"binned"%')):
             inp, res = json.loads(r["input"] or "{}"), json.loads(r["result"] or "{}")
             title = inp.get("name") or (res.get("source") or {}).get("title") or "Your take"
             if r["status"] == "binned":

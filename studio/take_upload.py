@@ -102,6 +102,13 @@ def is_video(head: bytes) -> bool:
     return (len(head) >= 12 and head[4:8] in (b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip")) or head[:4] == b"\x1a\x45\xdf\xa3"
 
 
+def _check_answer(r) -> None:
+    """A store answer to a check that isn't a success and isn't a definitive 404 (401 / 403 / 408 / 429 / 5xx and the
+    like) says nothing about the file: the upload stays 'joined' and finishing again re-runs the checks."""
+    if r.status_code >= 300:
+        raise ActionError(f"The upload store didn't answer the check (HTTP {r.status_code}). Your upload is kept: finish again in a minute.", 502)
+
+
 def _etag(v: str) -> str:
     return str(v or "").strip().strip('"').lower()
 
@@ -212,8 +219,14 @@ class TakeUploads:
                 d = dict(rows[0])
                 # Marked for deletion before the lock is let go: claim_for_take only takes a 'ready' row, so no take can
                 # claim it now, and the slow bucket DELETE below runs outside the lock every user's take start needs.
-                d["status"] = "del_open" if d["status"] in ("open", "del_open") and d["s3_upload"] else "del_ready"
-                self.store.x("UPDATE take_uploads SET status=? WHERE id=? AND take_id IS NULL", (d["status"], d["id"]))
+                # The mark is conditional on the status and version (updated) just read, so a row _finish moved on
+                # meanwhile is left alone; _finish changes status under this same lock.
+                new = "del_open" if d["status"] in ("open", "del_open") and d["s3_upload"] else "del_ready"
+                self.store.x("UPDATE take_uploads SET status=? WHERE id=? AND take_id IS NULL AND status=? AND updated=?",
+                             (new, d["id"], d["status"], d["updated"]))
+                if not self.store.q("SELECT 1 FROM take_uploads WHERE id=? AND status=?", (d["id"], new)):
+                    continue
+                d["status"] = new
             n += self._drop(d)
         return n
 
@@ -251,8 +264,12 @@ class TakeUploads:
             raise ActionError(f"Videos up to {max_bytes() // MB:,} MB. This one is {size / MB:,.0f} MB: export a shorter cut "
                               "or a smaller file (1080p H.264 is plenty).", 413)
         self.purge_stale()
-        same = self.store.q("SELECT * FROM take_uploads WHERE user_id=? AND name=? AND size=? AND fingerprint=? AND status='open' "
-                            "AND take_id IS NULL ORDER BY created DESC", (a.uid, name, size, fp)) if fp else []
+        same = self.store.q("SELECT * FROM take_uploads WHERE user_id=? AND name=? AND size=? AND fingerprint=? "
+                            "AND status IN ('open', 'joined', 'ready') AND take_id IS NULL ORDER BY created DESC", (a.uid, name, size, fp)) if fp else []
+        if same and same[0]["status"] in ("joined", "ready"):
+            # its parts were already joined in the store (the multipart id is spent): nothing to upload again. 'joined'
+            # finishes with the checks only (complete), 'ready' is ready; a fresh upload would send every byte again.
+            return {**self._out(dict(same[0])), "resumed": True}
         if same:  # the same file again: resume where it stopped, with what the store already has
             d = dict(same[0])
             try:
@@ -305,18 +322,22 @@ class TakeUploads:
         """After the join: the object's length and its first bytes. A store timeout here leaves the row 'joined', so
         finishing again re-runs only these checks (the multipart upload id is spent once the parts are joined)."""
         h = self._s3("HEAD", d["object_key"])
-        if h.status_code >= 500:
-            raise ActionError(f"The upload store didn't answer the check (HTTP {h.status_code}). Finish again in a minute.", 502)
+        if h.status_code == 404:  # the only definitive answer that the joined file is gone
+            self._drop({**d, "status": "ready"})
+            raise ActionError("The stored file is gone. Upload it again.", 422)
+        _check_answer(h)
         try:
             length = int(h.headers.get("content-length") or -1)
         except ValueError:
             length = -1
-        if h.status_code >= 300 or length != d["size"]:
+        if length != d["size"]:
             self._drop({**d, "status": "ready"})
             raise ActionError("The stored file isn't the size you sent. Upload it again.", 422)
         g = self._s3("GET", d["object_key"], headers={"range": "bytes=0-15"})
-        if g.status_code >= 500:
-            raise ActionError(f"The upload store didn't answer the check (HTTP {g.status_code}). Finish again in a minute.", 502)
+        if g.status_code == 404:
+            self._drop({**d, "status": "ready"})
+            raise ActionError("The stored file is gone. Upload it again.", 422)
+        _check_answer(g)
         if not is_video(g.content[:16]):
             self._drop({**d, "status": "ready"})
             raise ActionError("That file isn't a video One take can read (MP4, MOV or WebM).", 415)
@@ -353,8 +374,18 @@ class TakeUploads:
         return self._finish(a, {**d, "status": "joined"})
 
     def _finish(self, a: Actor, d: dict) -> dict:
+        """The checks after the join, then 'joined' -> 'ready'. Both status changes run under _CLAIM and only from
+        'joined', so the stale sweep (purge_stale) and a finish can't undo each other: a row the sweep marked for
+        deletion is never reset to 'ready', and a finish in progress is fresh (updated), so the sweep leaves it."""
+        with _CLAIM:
+            self.store.x("UPDATE take_uploads SET updated=? WHERE id=? AND status='joined'", (time.time(), d["id"]))
+            if not self.store.q("SELECT 1 FROM take_uploads WHERE id=? AND status='joined'", (d["id"],)):
+                raise ActionError("This upload was cleaned up. Upload the video again.", 410)
         self._check_object(d)
-        self.store.x("UPDATE take_uploads SET status='ready', updated=? WHERE id=?", (time.time(), d["id"]))
+        with _CLAIM:
+            self.store.x("UPDATE take_uploads SET status='ready', updated=? WHERE id=? AND status='joined'", (time.time(), d["id"]))
+            if not self.store.q("SELECT 1 FROM take_uploads WHERE id=? AND status='ready'", (d["id"],)):
+                raise ActionError("This upload was cleaned up while it was checked. Upload the video again.", 410)
         self.store.audit(a.uid, a.label, "upload_take_source", "write", {"bytes": d["size"], "parts": d["parts"]})
         return {**self._out(self._row(a, d["id"])), "next": "Start the take: clips_from_video(upload_id=...), POST /api/takes with upload_id."}
 

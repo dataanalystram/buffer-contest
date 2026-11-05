@@ -141,7 +141,7 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .tk-listhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 48px 0 12px; }
 .tk-listhead .sec { margin: 0; }
 .tk-seg { margin-bottom: 0; }
-.tk-seg button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
+.tk-seg button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
 .tk-seg button:focus-visible { outline: 2px solid var(--hc-lav, #C9ACFA); outline-offset: 2px; }
 .tk-seg button.on { background: var(--hc-lav, #C9ACFA); color: var(--hc-on-lav, #16101f); }
 .tk-bin-n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; border: 1px solid currentColor; }
@@ -157,6 +157,7 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .tk-binacts .btn2:disabled { opacity: .55; cursor: default; }
 .tk-err { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--bad); font-size: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
 .tk-err .btn2 { color: var(--ink); }
+@media (max-width: 1023px) { .tk-binacts .btn2, .tk-err .btn2 { min-height: 44px; } }
 @media (max-width: 480px) {
   .tk-binacts { width: 100%; }
   .tk-binacts .btn2 { flex: 1 1 0; min-width: 0; padding: 0 8px; }
