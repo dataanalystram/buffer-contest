@@ -129,7 +129,14 @@
   $("prev").addEventListener("click", () => { offset = Math.max(0, offset - PER); load(); });
   $("next").addEventListener("click", () => { offset += PER; load(); });
 
-  fetch("/api/session", { credentials: "same-origin" }).then((r) => r.json()).then((s) => {
-    csrf = s.csrf || ""; me = (s.user && (s.user.id || s.user.account_id)) || ""; load();
-  });
+  function start() {                       // the session (CSRF token, who I am), then the list; a failure says so
+    fetch("/api/session", { credentials: "same-origin" })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((s) => { csrf = s.csrf || ""; me = (s.user && (s.user.id || s.user.account_id)) || ""; say(""); load(); })
+      .catch(() => {
+        $("msg").innerHTML = 'Couldn\'t load your session. <button type="button" id="retry" data-testid="admin-retry">Try again</button>';
+        $("retry").addEventListener("click", start);
+      });
+  }
+  start();
 })();

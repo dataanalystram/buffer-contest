@@ -255,7 +255,8 @@ def test_delete_user_erases_rows_media_and_tokens_and_leaves_a_tombstone(app, hu
     assert [(t["id_hash"], t["via"]) for t in tomb] == [(admin.subject_hash("acc_1"), "admin")]
     log = adm.get("/api/admin/audit").json()["items"][0]
     assert log["action"] == "delete" and log["admin"] == "adm_1" and log["subject_hash"] == admin.subject_hash("acc_1")
-    assert "acc_1" not in str(store.q("SELECT * FROM admin_audit")) and "ram@example.com" not in str(store.q("SELECT * FROM admin_audit"))
+    dump = str([dict(r) for r in store.q("SELECT * FROM admin_audit")])   # dicts: str() of sqlite3.Row hides the values
+    assert "acc_1" not in dump and "ram@example.com" not in dump
 
 
 def test_self_service_disconnect_is_the_same_erasure(app, human, s3):
@@ -559,3 +560,74 @@ def test_block_dialog_names_the_account_and_a_stalled_request_never_locks_it():
     assert "new AbortController()" in js and "signal: c.signal" in js and "BLOCK_TIMEOUT_MS" in js
     assert '$("blkCancel").disabled = true' not in js                     # Cancel always works
     assert 'addEventListener("click", closeBlock)' in js and "blkCtl.abort()" in js
+
+
+# ------------------------------------------------------------------ PR #110 CodeRabbit round
+def test_erasure_is_atomic_a_failure_part_way_erases_nothing(app, human, monkeypatch):
+    store, house = app.state.store, app.state.house
+    house.put_media(Actor("acc_1"), image_bytes(16, 16), "a.png")
+    real = store.x
+
+    def boom(sql, args=()):
+        if sql.startswith("INSERT INTO user_tombstones"):
+            raise RuntimeError("database went away")
+        return real(sql, args)
+    monkeypatch.setattr(store, "x", boom)
+    with pytest.raises(RuntimeError):
+        admin.erase_user(store, "acc_1", via="self", house=house)
+    monkeypatch.setattr(store, "x", real)
+    assert store.user("acc_1") and store.q("SELECT COUNT(*) AS n FROM media WHERE user_id='acc_1'")[0]["n"] == 1
+    assert human.get("/api/me").status_code == 200                      # the session survived too
+
+
+def test_erasure_deletes_unfinished_upload_parts(app, human):
+    from studio import uploads
+    store = app.state.store
+    uploads.ensure(store) if hasattr(uploads, "ensure") else None
+    store.x("INSERT INTO upload_sessions(id,token_hash,user_id,created,expires,used) VALUES(?,?,?,?,?,0)",
+            ("up_1", "h", "acc_1", time.time(), time.time() + 900))
+    store.x("INSERT INTO upload_parts(upload_id,n,data) VALUES(?,?,?)", ("up_1", 0, b"private bytes"))
+    assert human.post("/api/disconnect").json()["deleted"] is True
+    assert store.q("SELECT COUNT(*) AS n FROM upload_parts")[0]["n"] == 0
+
+
+def test_an_erased_admins_id_leaves_the_admin_log(app, human, monkeypatch):
+    store = app.state.store
+    adm = other_user(app, "adm_1", "boss@example.com")
+    monkeypatch.setenv("HQ_ADMIN_IDS", "adm_1")
+    assert adm.post("/api/admin/users/acc_1/block", json={"reason": "spam"}).status_code == 200
+    assert adm.post("/api/disconnect").json()["deleted"] is True        # the admin erases their own account
+    dump = str([dict(r) for r in store.q("SELECT * FROM admin_audit")])
+    assert "adm_1" not in dump and admin.subject_hash("adm_1") in dump
+
+
+def test_sqlite_tx_rolls_back_when_commit_fails(tmp_path):
+    import sqlite3
+
+    from studio.store import Store
+    st = Store(str(tmp_path / "c.db"), "s" * 64)
+    real = st._db
+
+    class FailOnce:
+        fail = True
+
+        def execute(self, sql, *a):
+            if sql == "COMMIT" and FailOnce.fail:
+                FailOnce.fail = False
+                raise sqlite3.OperationalError("disk I/O error")
+            return real.execute(sql, *a)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+    st._db = FailOnce()
+    with pytest.raises(sqlite3.OperationalError), st.tx():
+        st.x("INSERT INTO blob_gc(key,at,tries) VALUES('k1',0,0)")
+    with st.tx():                                   # a new transaction starts (no "transaction within a transaction")
+        st.x("INSERT INTO blob_gc(key,at,tries) VALUES('k2',0,0)")
+    assert [r["key"] for r in st.q("SELECT key FROM blob_gc ORDER BY key")] == ["k2"]
+
+
+def test_admin_page_reports_a_failed_session_load():
+    from pathlib import Path
+    js = (Path(admin.__file__).parent / "admin_ui" / "admin.js").read_text()
+    assert ".catch(" in js[js.index('fetch("/api/session"'):] and "admin-retry" in js

@@ -234,10 +234,13 @@ class Store:
                         self._db.execute("BEGIN IMMEDIATE")
                         try:
                             yield self
+                            self._db.execute("COMMIT")  # a failed COMMIT leaves the transaction open: roll it back too
                         except BaseException:
-                            self._db.execute("ROLLBACK")
+                            try:
+                                self._db.execute("ROLLBACK")
+                            except Exception as rb:  # noqa: BLE001  never mask the original error (already rolled back)
+                                print(f"store: rollback failed ({rb.__class__.__name__})", flush=True)
                             raise
-                        self._db.execute("COMMIT")
                 finally:
                     self._tx_depth, self._after, self._undo = 0, None, None
         except BaseException:
@@ -389,39 +392,44 @@ class Store:
     def set_kill(self, uid: str, on: bool) -> None:
         self.x("UPDATE users SET kill_switch=? WHERE id=?", (1 if on else 0, uid))
 
+    def _table_names(self) -> set[str]:
+        if self.pg:
+            rows = self.q("SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema()")
+        else:
+            rows = self.q("SELECT name FROM sqlite_master WHERE type='table'")
+        return {str(r["name"]) for r in rows}
+
     def delete_user(self, uid: str) -> None:
-        """Every row the person has, here and in the tables other modules own. Media objects in R2 are released into
-        blob_gc with their rows (studio/blobstore.py) and deleted by the sweep that follows."""
+        """Every row the person has, here and in the tables other modules own, in ONE transaction (joins the caller's):
+        a failure part-way erases nothing (CodeRabbit, PR #110). Only tables this store has are touched, so no statement
+        fails (on Postgres a failed statement would abort the transaction). Media objects in R2 are released into blob_gc
+        with their rows (studio/blobstore.py) and deleted by the sweep that follows the commit."""
         from . import blobstore
-        blobstore.release(self, "media", "user_id=?", (uid,))
-        for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
-                  "oauth_refresh", "brand_kits", "style_rules", "agent_runs", "render_jobs", "ai_settings"):
-            self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
-        for t in ("style_edits", "style_suggestions", "review_links"):  # Style Ledger v2 (studio/ledger.py)
-            try:
+        with self.tx():
+            have = self._table_names()
+            blobstore.release(self, "media", "user_id=?", (uid,))
+            for t in ("sessions", "agent_tokens", "confirms", "approvals", "audit", "device_links", "feeds", "oauth_codes",
+                      "oauth_refresh", "brand_kits", "style_rules", "agent_runs", "render_jobs", "ai_settings"):
                 self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
-            except Exception:  # noqa: BLE001
-                pass
-        try:  # the Library's own tables (studio/library.py), when this store has them
-            blobstore.release(self, "library_chunks", "item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
-            self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
-            self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
-        except Exception:  # noqa: BLE001
-            pass
-        try:  # One take's multipart uploads (studio/take_upload.py); the bucket objects are removed by /api/disconnect first
-            self.x("DELETE FROM take_uploads WHERE user_id=?", (uid,))
-        except Exception:  # noqa: BLE001  (this store hasn't created the table)
-            pass
-        try:  # the purged-run token list (Bin purge never resurrects) goes with the account too
-            self.x("DELETE FROM library_purged WHERE user_id=?", (uid,))
-        except Exception:  # noqa: BLE001  (this store hasn't created the Library tables)
-            pass
-        for t in OWNED_ELSEWHERE:  # tables other modules create on first use (privacy page: "Disconnect and delete")
-            try:
-                self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
-            except Exception:  # noqa: BLE001  (this store hasn't created that table yet)
-                pass
-        self.x("DELETE FROM users WHERE id=?", (uid,))
+            for t in ("style_edits", "style_suggestions", "review_links"):  # Style Ledger v2 (studio/ledger.py)
+                if t in have:
+                    self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+            if {"library_chunks", "library_items", "library_media"} <= have:  # the Library's own tables (studio/library.py)
+                blobstore.release(self, "library_chunks", "item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
+                self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
+                self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
+            if "take_uploads" in have:  # One take's multipart uploads; the bucket objects are removed by erase_user first
+                self.x("DELETE FROM take_uploads WHERE user_id=?", (uid,))
+            if "library_purged" in have:  # the purged-run token list (Bin purge never resurrects) goes with the account too
+                self.x("DELETE FROM library_purged WHERE user_id=?", (uid,))
+            if {"upload_parts", "upload_sessions"} <= have:
+                # unfinished chunk uploads' bytes (studio/uploads.py): the expiry sweep finds them only through their
+                # session, so they go before the sessions do (CodeRabbit, PR #110)
+                self.x("DELETE FROM upload_parts WHERE upload_id IN (SELECT id FROM upload_sessions WHERE user_id=?)", (uid,))
+            for t in OWNED_ELSEWHERE:  # tables other modules create on first use (privacy page: "Disconnect and delete")
+                if t in have:
+                    self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+            self.x("DELETE FROM users WHERE id=?", (uid,))
 
     # ---- sessions
     def new_session(self, sid: str, csrf: str, ttl: float = 30 * 86400) -> None:

@@ -45,7 +45,11 @@ remove HuhQueue in their Buffer account settings (the privacy page says so).
 
 ## Admin log
 `admin_audit`: time, the admin's account id, action, a hash of the subject's id (`sha256("hq-subject:" + id)`), detail
-(the block reason), ok. A deleted account's id and email never appear in it. The affected account's own activity log
+(the block reason), ok. A deleted account's id and email never appear in it; when an admin's own account is erased,
+their id in these rows is replaced by its hash too. Erasure (rows, tombstone and this log entry) is one transaction.
+
+The admin panel is a deliberate exception to the REST/MCP/⌘K/CLI parity rule (CLAUDE.md): Block, Unblock and Delete are
+browser-session-only, because agent tokens must never administer accounts (`/api/admin/*` answers 404 to them). The affected account's own activity log
 also gets `account_blocked` / `account_unblocked` rows (deleted with the account).
 
 ## REST

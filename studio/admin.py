@@ -214,9 +214,11 @@ def unblock(store, admin_uid: str, uid: str) -> dict:
     return {"id": uid, "status": "active"}
 
 
-def erase_user(store, uid: str, via: str, house=None) -> None:
+def erase_user(store, uid: str, via: str, house=None, admin_uid: str | None = None) -> None:
     """GDPR erasure (self-service Disconnect and delete, or an admin's Delete user): every row, the media objects, One
-    take's uploads in the bucket, the sealed Buffer tokens; a tombstone keeps only the hashed id, the time and how."""
+    take's uploads in the bucket, the sealed Buffer tokens; a tombstone keeps only the hashed id, the time and how.
+    The rows, the tombstone and (for an admin's delete) the admin log entry commit together or not at all; the bucket
+    objects go after the commit (CodeRabbit, PR #110). An erased admin's own id in admin_audit becomes its hash."""
     from . import blobstore
     tu = getattr(house, "take_uploads", None)
     if tu is not None:
@@ -224,10 +226,14 @@ def erase_user(store, uid: str, via: str, house=None) -> None:
             tu.remove_for_user(uid)
         except Exception as e:  # noqa: BLE001 - never blocks deleting the account
             print(f"erase: take uploads not removed ({e.__class__.__name__})", flush=True)
-    store.delete_user(uid)
-    store.x("INSERT INTO user_tombstones(id_hash,at,via) VALUES(?,?,?) ON CONFLICT(id_hash) DO UPDATE SET at=excluded.at, via=excluded.via",
-            (subject_hash(uid), time.time(), via))
-    blobstore.sweep_soon(store)
+    with store.tx():
+        store.delete_user(uid)
+        store.x("UPDATE admin_audit SET admin=? WHERE admin=?", (subject_hash(uid), uid))
+        store.x("INSERT INTO user_tombstones(id_hash,at,via) VALUES(?,?,?) ON CONFLICT(id_hash) DO UPDATE SET at=excluded.at, via=excluded.via",
+                (subject_hash(uid), time.time(), via))
+        if admin_uid:
+            log(store, admin_uid, "delete", uid)
+        blobstore.sweep_soon(store)  # runs once this transaction has committed
 
 
 def delete(store, admin_uid: str, uid: str, confirm, house=None) -> dict:
@@ -236,8 +242,7 @@ def delete(store, admin_uid: str, uid: str, confirm, house=None) -> dict:
         raise AdminError("You can't delete your own account here. Use Disconnect and delete in Settings.", 400)
     if not isinstance(confirm, str) or confirm != uid:
         raise AdminError("Type the user's id exactly to confirm.", 400)
-    erase_user(store, uid, via="admin", house=house)
-    log(store, admin_uid, "delete", uid)
+    erase_user(store, uid, via="admin", house=house, admin_uid=admin_uid)  # the log entry commits with the erasure
     return {"deleted": True, "subject_hash": subject_hash(uid)}
 
 
