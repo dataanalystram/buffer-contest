@@ -150,6 +150,11 @@ cleanup and `VACUUM FULL`. The Egress guard's disk cache sits above either backe
 Bucket `huhqueue-media`, private, **EU jurisdiction**; a bucket-scoped Object Read & Write token. Run from a machine Ram
 controls with the app's `DATABASE_URL`, `SESSION_SECRET` and `TOKEN_KEY` in the environment (never on a logged command line):
 
+Order: **backup → restore proof → dry-run report → copy → verify → only then, with Ram's OK, the optional drop.**
+
+0. Before anything touches the bucket: a full backup (section 1) and a restore of it that exits 0 and matches every
+   table's row count and byte sum (section 2). No proof, no copy.
+
 ```sh
 export R2_ACCOUNT_ID=3a319edacac176a5c9a271bd951a6af8 R2_BUCKET=huhqueue-media R2_JURISDICTION=eu
 # (= https://3a319edacac176a5c9a271bd951a6af8.eu.r2.cloudflarestorage.com; R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY from the vault)
@@ -163,7 +168,9 @@ python -m studio.migrate_media --to r2 --report --real-email <Ram's email>   # 4
    apply at once). Leave `HQ_MEDIA_REDIRECT` off at first.
 6. `python -m studio.migrate_media --to r2 --limit 50`, check a few `/m/` links and Library files, then without
    `--limit`. Copy-only: every row keeps its BYTEA, reads switch to R2, Supabase egress for media stops.
-7. A week later, after a full backup **and** a proven restore (sections 1–2, writes frozen as in section 0):
+   Verify: each row is switched only after its object's sha256 matches (the copy checks it); re-run `--report` and
+   compare counts and bytes with step 4, and check `/healthz` → `r2` stays well under the caps.
+7. Only with Ram's explicit OK, a week later, after a fresh full backup **and** a proven restore (sections 1–2, writes frozen as in section 0):
    `python -m studio.migrate_media --to r2 --cleanup --i-have-a-verified-backup`, then `VACUUM FULL media, library_chunks;`.
 8. Optional: `HQ_MEDIA_REDIRECT=1` so browsers fetch R2 objects directly (15-minute links; Buffer and the worker keep
    using `/m/`).

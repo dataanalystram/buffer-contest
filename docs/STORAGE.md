@@ -76,11 +76,15 @@ month; the code stops 20% short of each:
 |---|---|---|
 | `HQ_R2_MAX_BYTES` | 8 GB stored (rows with a `storage_key`, plus open/ready One take uploads) | new media stays in the database; migration stops; large uploads answer 507 |
 | `HQ_R2_MAX_CLASS_A` | 800,000 a month (UTC) | no new R2 writes (database fallback); a rewrite of an R2 object (GPS blanking) fails closed with 503 |
-| `HQ_R2_MAX_CLASS_B` | 8,000,000 a month (UTC) | reads use the row's database copy when it has one, else a clear 503 until the month turns; no redirects |
+| `HQ_R2_MAX_CLASS_B` | 8,000,000 a month (UTC) | reads use the row's database copy when it has one, else a clear 503 until the month turns (for everyone but the file's owner); no redirects |
+| `HQ_R2_HARD_CLASS_B` | 9,500,000 (clamped to 9,900,000) | the owner's signed-in browser may still read their own R2-only file between the Class B cap and this ceiling; past it, 503 for everyone. Buffer and the worker are not owners |
 
 Every SigV4 signature counts as one operation of its class (deletes are free). Counts sit in the `r2_usage` table (one
 row per month and class, three months kept, row-level security on) and are written in batches, never inside another
 transaction. `/admin` shows stored bytes and both operation counts against their caps, with a warning once a cap is hit.
+A `r2usage: WARNING … at 70%` line is logged once per month and cap. `/healthz` → `r2` carries the same numbers
+(stored bytes, Class A/B counts and caps, blocked flags; `{"on": false}` when R2 isn't configured), as does
+`GET /api/admin/egress` → `r2`.
 
 ## Failure behaviour (PR #110 review)
 - Every bucket call has a 5 s connect and 20 s overall timeout. Streamed Library uploads write chunks from the thread
