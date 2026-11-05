@@ -115,11 +115,12 @@ def ensure(store) -> None:
 
 
 def forget_user(store, uid: str) -> None:
-    """delete_user: the person's links, day counters, BYO meter (their key lives in source_settings, deleted there)."""
+    """delete_user: the person's links and counters (their key lives in source_settings, deleted there). A key's own
+    meter is a hash of the key and stays, so deleting an account never resets a key's free allowance."""
     ensure(store)
     store.x("DELETE FROM commerce_links WHERE user_id=?", (uid,))
     store.x("DELETE FROM commerce_user_day WHERE user_id=?", (uid,))
-    store.x("DELETE FROM commerce_credits WHERE scope=? OR scope=?", ("u:" + uid, "byo:" + uid))
+    store.x("DELETE FROM commerce_credits WHERE scope=?", ("u:" + uid,))   # a key's meter stays: it is the key's, not the person's
 
 
 # ================================================================================================ limits (free only)
@@ -165,7 +166,14 @@ def _used_day(store, day: str, uid: str) -> int:
     return int(rows[0]["credits"]) if rows else 0
 
 
-def spend(store, uid: str, byo: bool, credits: int = SEARCH_CREDITS) -> None:
+def key_scope(key: str) -> str:
+    """The meter for one Channel3 key: a keyed hash of the key itself (never the key), so two accounts that save the same
+    key share ONE free allowance, the way Channel3 counts it."""
+    secret = (os.environ.get("TOKEN_KEY") or os.environ.get("SESSION_SECRET") or "huhqueue").encode()
+    return "key:" + hmac.new(secret, ("c3key|" + key).encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def spend(store, uid: str, byo: bool, credits: int = SEARCH_CREDITS, key: str = "") -> None:
     """Reserve credits BEFORE the request leaves the server; CreditLimit (nothing sent, nothing spent) past any cap.
     Check and increment happen in one transaction under the store's lock, so two parallel searches can't both take the
     last credit."""
@@ -174,7 +182,7 @@ def spend(store, uid: str, byo: bool, credits: int = SEARCH_CREDITS) -> None:
     month, day, resets = _month(now), _day(now), _resets(now)
     with store.tx():
         if byo:
-            checks = [("byo:" + uid, monthly_cap(), "your Channel3 key's free 1,000 credits this month")]
+            checks = [(key_scope(key or byo_key(store, uid)), monthly_cap(), "your Channel3 key's free 1,000 credits this month")]
         else:
             per_day, per_month = user_caps()
             checks = [("global", monthly_cap(), "HuhQueue's free Channel3 credits this month (shared by everyone)"),
@@ -204,7 +212,7 @@ def usage(store, uid: str) -> dict:
     cap = monthly_cap()
     per_day, per_month = user_caps()
     if byo:
-        used = _used(store, month, "byo:" + uid)
+        used = _used(store, month, key_scope(byo_key(store, uid)))
         you = {"month_used": used, "month_limit": cap, "today_used": None, "today_limit": None}
         left = max(0, cap - used)
     else:
@@ -521,7 +529,7 @@ def search_products(studio, a: Actor, args: dict) -> dict:
     hit = _cget(ck)
     if hit is not None:
         return {**hit, "cached": True, "credits_spent": 0, "usage": usage(store, a.uid)}
-    spend(store, a.uid, byo)   # hard stop BEFORE the request leaves the server
+    spend(store, a.uid, byo, key=key)   # hard stop BEFORE the request leaves the server
     data = _request(key, "POST", "/v1/search", uid=a.uid, body=body, byo=byo)
     products = [card(p) for p in (data.get("products") or [])[:lim] if isinstance(p, dict) and p.get("id")]
     out = {"query": query, "country": country, "currency": currency, "products": products, "count": len(products),

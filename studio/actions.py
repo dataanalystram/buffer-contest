@@ -722,12 +722,21 @@ class Studio:
         assets = post.get("assets") or []
         urls = [x.get("source") for x in assets if x.get("source")]
         kinds = ["video" if (x.get("type") or "").lower() == "video" else "image" for x in assets if x.get("source")]
-        pf = preflight.check(ch, inp.get("text", post.get("text") or ""), urls, "draft" if draft else "queue",
+        new_text = inp.get("text", post.get("text") or "")
+        pf = preflight.check(ch, new_text, urls, "draft" if draft else "queue",
                              loader=None, probe_media=False, creating=False, media_kinds=kinds)
+        from . import commerce  # an edit keeps #Ad + the disclosure line, and its shop links are the person's own and live
+        extra = commerce.preflight_findings(self.store, self.s.public_url, new_text, urls)
+        if extra:
+            pf["findings"] = list(pf.get("findings") or []) + extra
+            if any(f["level"] == "error" for f in extra):
+                pf["status"] = "error"
         msg = preflight_error([pf], override_warnings)
         if msg:
             self.store.audit(a.uid, a.label, "update_post", "blocked", {"buffer_post_id": post_id, "preflight": pf["status"]}, ok=False)
             raise ActionError(msg)
+        if "text" in inp:
+            commerce.at_publish(self, a, new_text)
         if due_at is not None:
             inp.update(dueAt=self._due(due_at), mode="customScheduled")
             if draft:

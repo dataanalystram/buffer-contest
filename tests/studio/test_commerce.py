@@ -418,3 +418,23 @@ def test_product_card_sits_above_the_caption_band():
     p = {"colors": {"primary": "#18181B", "accent": "#C9ACFA", "text": "#FFFFFF"}, "safe_margin": 40}
     product_card.draw_overlay(ov, product_card.clean({"name": "Lamp", "price": "€20"}), p, {}, avoid=(540, 700))
     assert ov.getbbox()[3] <= 540                        # clear of the captions (540-700 px)
+
+
+def test_two_accounts_with_the_same_key_share_one_free_allowance(app, c3, monkeypatch):
+    store = app.state.studio.store
+    commerce.ensure(store)
+    monkeypatch.setenv("HQ_C3_MONTHLY_CREDITS", "2")
+    commerce.spend(store, "u1", True, key=BYO)
+    commerce.spend(store, "u2", True, key=BYO)
+    with pytest.raises(commerce.CreditLimit):
+        commerce.spend(store, "u3", True, key=BYO)
+    assert BYO not in commerce.key_scope(BYO)
+
+
+def test_editing_a_shop_post_keeps_the_commerce_checks(human, c3, fake):
+    rid = _run(human)
+    d = human.post("/api/commerce/attach", json={"run_id": rid, "product_id": "p_jbl730"}).json()
+    fake.posts.append({"id": "d9", "text": d["caption"], "status": "draft", "dueAt": None, "channelId": "ch_li"})
+    r = human.patch("/api/posts/d9", json={"text": f"Great buds {d['link']}"})
+    assert r.status_code in (400, 422) and "#Ad" in r.json()["error"], r.text
+    assert not any(e.get("text", "").startswith("Great buds") for e in fake.edits)

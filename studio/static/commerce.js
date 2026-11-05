@@ -14,7 +14,7 @@ const live = new WeakMap();   // panel element -> AbortController of its request
 
 function card(p, sent) {
   if (sent) return "";
-  return `<details class="cm-panel" data-testid="product-panel"><summary class="cm-sum">Product <small class="muted xs">add a product and a shop link</small></summary>
+  return `<details class="cm-panel" data-testid="product-panel"><summary class="cm-sum" data-testid="product-toggle">Product <small class="muted xs">add a product and a shop link</small></summary>
     <div class="cm-body">
       <form class="cm-search" data-testid="product-search" role="search">
         <label class="sr" for="cmq-${E(p.channel_id)}">Search products</label>
@@ -26,7 +26,7 @@ function card(p, sent) {
       <div class="cm-results" data-testid="product-results" aria-live="polite"></div>
       <div class="cm-pick" data-testid="product-pick" hidden></div>
       <p class="muted xs cm-disc" data-testid="product-disclosure">#Ad goes first in a post with a shop link (Irish rule). We may earn a commission when you buy through links in this post. Catalogue photos aren't licensed for social posts: the card is text on your brand kit, or add your own photo.</p>
-      <details class="cm-key" data-testid="product-key"><summary class="muted xs">Use your own Channel3 key</summary>
+      <details class="cm-key" data-testid="product-key"><summary class="muted xs" data-testid="product-key-toggle">Use your own Channel3 key</summary>
         <form class="cm-keyform"><label class="sr" for="cmk-${E(p.channel_id)}">Your Channel3 API key</label>
           <input id="cmk-${E(p.channel_id)}" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your Channel3 key" data-testid="product-key-input">
           <button type="submit" class="btn2 sm" data-testid="product-key-save">Save</button>
