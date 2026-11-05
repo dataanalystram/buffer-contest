@@ -169,6 +169,9 @@ def _sample_items() -> list[dict]:
 # ---------------------------------------------------------------- Library filters (GET /api/library ?type= &created_by= ...)
 TYPES = ("video", "carousel", "image", "audio")
 SOURCES = {"agent": ("generated",), "you": ("upload", "take", "link", "send"), "sample": ("sample",)}
+# "one_take" (owner ask, 5 Nov 2026): what One take made or was given, i.e. the clips its takes rendered (generated items
+# whose run is a take) and the videos uploaded to it (source "take"). Not a source list like the others: matched by run.
+CREATED_BY = (*SOURCES, "one_take")
 USED_IN = ("used", "unused", "draft", "scheduled", "sent")
 DATES = {"1d": 1, "7d": 7, "30d": 30, "90d": 90, "365d": 365}
 GENERIC_NAME = re.compile(r"^(Reel\.mp4|Image\.jpg|Carousel \(\d+ slides\))$")
@@ -183,7 +186,7 @@ def _filters(type: str = "", created_by: str = "", used_in: str = "", run="", da
         if v not in allowed:
             raise ActionError(f"{name} must be one of: all, {', '.join(allowed)}.", 400)
         return v
-    out = {"type": one("type", type, TYPES), "created_by": one("created_by", created_by, tuple(SOURCES)),
+    out = {"type": one("type", type, TYPES), "created_by": one("created_by", created_by, CREATED_BY),
            "used_in": one("used_in", used_in, USED_IN), "date": one("date", date, tuple(DATES)), "run": None}
     r = str(run or "").strip().lower()
     if r not in ("", "all"):
@@ -196,6 +199,8 @@ def _filters(type: str = "", created_by: str = "", used_in: str = "", run="", da
 
 def _keep(i: dict, f: dict) -> bool:
     """One item against every filter but type (the tabs count per type): who made it, date, used in, run."""
+    if f.get("created_by") == "one_take" and not i.get("one_take"):
+        return False
     src = SOURCES.get(f.get("created_by") or "")
     if src and i.get("source") not in src:
         return False
@@ -681,18 +686,21 @@ class Library:
         carries ``bin_count`` so the Library screen shows its Bin badge without a second request.
 
         Server-side filters (Library premium, 3 Nov 2026), all optional and combinable: ``type`` video | carousel | image |
-        audio, ``created_by`` agent | you | sample, ``used_in`` used | unused | draft | scheduled | sent, ``run`` a run id
+        audio, ``created_by`` agent | you | sample | one_take (the clips One take rendered and the videos uploaded to it),
+        ``used_in`` used | unused | draft | scheduled | sent, ``run`` a run id
         (items that run made or that a post of it uses), ``date`` 1d | 7d | 30d | 90d | 365d, and ``q`` (name, title, the
         runs that used it, the type). ``facets`` carries per-type counts (every filter but ``type``) for the tabs and the
         runs to offer in the Generation filter. Unknown filter values are a 400, never a silent "everything"."""
         flt = _filters(type, created_by, used_in, run, date)
         out = self._list(a, q, kind, 500 if per else limit, flt)
+        take_bin_n = out.pop("_take_bin_n", 0)
         out["total"] = len(out["items"])
         if per:
             per, offset = max(1, min(int(per), 200)), max(0, int(offset or 0))
             out["items"], out["offset"], out["per"] = out["items"][offset:offset + per], offset, per
+        # one Bin (owner ask, 5 Nov 2026): the count covers Library items and One take's binned takes and clips
         out["bin_count"] = 0 if demo_guard.is_demo(a.uid) else int(self.store.q(
-            "SELECT COUNT(*) AS n FROM library_items WHERE user_id=? AND storage='trash'", (a.uid,))[0]["n"] or 0)
+            "SELECT COUNT(*) AS n FROM library_items WHERE user_id=? AND storage='trash'", (a.uid,))[0]["n"] or 0) + take_bin_n
         out["bin_days"] = TRASH_DAYS
         return out
 
@@ -703,10 +711,11 @@ class Library:
             for i in items:
                 i.setdefault("title", i["name"])
                 i.setdefault("run_id", None)
-            used = 0
+            used, take_bin_n = 0, 0
         else:
             runs = self._runs(a)  # one query for every run; each item's "used in" is matched in memory (no N+1)
             self.backfill(a, runs)
+            takes = self._take_index(a)
             where, args = ["user_id=?", "storage NOT IN ('pending','trash')"], [a.uid]
             if flt.get("since"):  # the cheap filters go to SQL (date, who made it); type stays in memory for the tab counts
                 where.append("created >= ?")
@@ -715,14 +724,23 @@ class Library:
             if src:
                 where.append(f"source IN ({','.join('?' * len(src))})")
                 args.extend(src)
+            elif flt.get("created_by") == "one_take":  # owner-scoped: only this person's take runs
+                where.append("(source='take' OR run_id IN (SELECT id FROM agent_runs WHERE user_id=? AND kind='take'))")
+                args.append(a.uid)
             rows = self.store.q(f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY created DESC, id DESC LIMIT ?",
                                 (*args, max(1, min(int(limit or 200), 500))))
             by_run = {r["run_id"]: r for r in runs}
             items = []
             for r in rows:
                 d = dict(r)
+                if d["token"] in takes["binned"]:  # a take or clip in the Bin: it shows there, never here with a dead file
+                    continue
                 d["meta"] = json.loads(d["meta"] or "{}")
                 it = self._public(d, runs)
+                it["one_take"] = d["source"] == "take" or d.get("run_id") in takes["runs"]
+                if d["token"] in takes["clips"]:  # Move to bin goes to the take's Bin (DELETE /api/takes/{take_id}/clips/{clip_id})
+                    rid, cid = takes["clips"][d["token"]]
+                    it["take_clip"] = {"take_id": rid, "clip_id": cid}
                 own = by_run.get(d.get("run_id"))
                 if it["kind"] == "video" and own:  # a still for a video card: the run's own picture, else the story's
                     it["thumb"] = own["_thumb"] or ""
@@ -730,7 +748,7 @@ class Library:
                 # a generic generated name ("Reel.mp4", "Carousel (4 slides)") reads as its run's headline on the card
                 it["title"] = own["title"] if own and GENERIC_NAME.match(it["name"]) else it["name"]
                 items.append(it)
-            used = self.used(a.uid)
+            used, take_bin_n = self.used(a.uid), takes["bin_n"]
         if kind in ("video", "image", "carousel"):
             items = [i for i in items if i["kind"] == kind]
         elif kind == "draft":  # Make a post's "Drafts" filter, carried over by "View all"
@@ -753,7 +771,39 @@ class Library:
         facets = {"types": {"all": sum(types.values()), **types},
                   "runs": sorted(seen.values(), key=lambda r: -int(r["run_id"]) if str(r["run_id"]).isdigit() else 0)}
         return {"items": items, "used": used, "quota": QUOTA, "file_max": FILE_MAX, "read_only": demo_guard.is_demo(a.uid),
-                "facets": facets, "filters": {k: v for k, v in flt.items() if k != "since" and v not in ("", None)}}
+                "facets": facets, "filters": {k: v for k, v in flt.items() if k != "since" and v not in ("", None)},
+                "_take_bin_n": take_bin_n}
+
+    def _take_index(self, a: Actor) -> dict:
+        """This person's One take runs in one read: their ids, which media token is which clip (so a Library delete of a clip
+        goes to the take's Bin), the tokens of takes and clips in the Bin (hidden from the Library list) and how many
+        takes and clips the Bin holds (the Library's Bin count). Owner-scoped; a malformed run is skipped."""
+        out: dict = {"runs": set(), "clips": {}, "binned": set(), "bin_n": 0}
+        for r in self.store.q("SELECT id, status, result FROM agent_runs WHERE user_id=? AND kind='take'", (a.uid,)):
+            out["runs"].add(r["id"])
+            try:
+                res = json.loads(r["result"] or "{}") or {}
+            except ValueError:
+                continue
+            if not isinstance(res, dict):
+                continue
+            binned = r["status"] == "binned"
+            if binned:
+                out["bin_n"] += 1
+                out["binned"].update(t for t in ((res.get("bin") or {}).get("tokens") or []) if isinstance(t, str))
+            for c in res.get("clips") or []:
+                if not isinstance(c, dict):
+                    continue
+                variants = [v.get("token") for v in (c.get("variants") or {}).values() if isinstance(v, dict)]
+                toks = [t.removeprefix(TRASH_TOKEN) for t in [c.get("token"), c.get("cover_token"), *variants] if isinstance(t, str) and t]
+                if binned or c.get("status") == "binned":
+                    out["binned"].update(toks)
+                    out["binned"].update(t for t in ((c.get("bin") or {}).get("tokens") or []) if isinstance(t, str))
+                    if not binned:
+                        out["bin_n"] += 1
+                elif toks and isinstance(c.get("token"), str) and c.get("id"):
+                    out["clips"][c["token"].removeprefix(TRASH_TOKEN)] = (r["id"], str(c["id"]))
+        return out
 
     def item(self, a: Actor, iid) -> dict:
         return self._public(self._row(a, iid), self._runs(a))
@@ -1200,11 +1250,11 @@ class Library:
 TOOLS = [
     {"name": "list_library", "description": "The person's Library: every uploaded photo/video and every image, carousel and Reel the agent made, "
                                             "with type, size, date and which posts used each one. q searches names, titles and post titles; kind: video | image | carousel | upload | generated. "
-                                            "Filters: type video|carousel|image|audio, created_by agent|you|sample, used_in used|unused|draft|scheduled|sent, "
+                                            "Filters: type video|carousel|image|audio, created_by agent|you|sample|one_take (what One take made: its clips and the videos uploaded to it), used_in used|unused|draft|scheduled|sent, "
                                             "run <run id>, date 1d|7d|30d|90d|365d; facets has per-type counts and the runs behind the items.",
      "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}, "kind": {"type": "string"},
                                                                     "type": {"type": "string", "enum": ["all", "video", "carousel", "image", "audio"]},
-                                                                    "created_by": {"type": "string", "enum": ["all", "agent", "you", "sample"]},
+                                                                    "created_by": {"type": "string", "enum": ["all", "agent", "you", "sample", "one_take"]},
                                                                     "used_in": {"type": "string", "enum": ["all", "used", "unused", "draft", "scheduled", "sent"]},
                                                                     "run": {"type": "string", "description": "a run id: items it made or that its posts use"},
                                                                     "date": {"type": "string", "enum": ["all", "1d", "7d", "30d", "90d", "365d"]},
