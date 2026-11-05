@@ -25,7 +25,8 @@ def test_a_thread_address_serves_the_app_when_signed_in_and_redirects_otherwise(
     # only a public thread id: a run number or anything else opens Make a post
     for bad in ("12", "thr_short", "thr_" + "A" * 26, "thr_" + "a" * 27):
         r = human.get(f"/threads/{bad}", follow_redirects=False)
-        assert r.status_code in (302, 404) and (r.status_code == 404 or r.headers["location"] == "/?tab=agent"), (bad, r.status_code)
+        assert r.status_code == 302, (bad, r.status_code)
+        assert r.headers["location"] == "/?tab=agent", bad
     anon = TestClient(app, base_url="https://hq.test")
     r = anon.get(f"/threads/{tid}", follow_redirects=False)
     assert r.status_code == 302 and r.headers["location"] == "/"
