@@ -73,7 +73,10 @@ def get(store, a: Actor) -> dict:
                      "without your approval. Netguard, the size and length caps, free-tier quotas and daily caps still apply."}
     if a.kind == "human":
         out["available_apps"] = _tokens(store, a.uid)
-    return out
+        return out
+    # an AI app sees only whether it is covered, never which other apps the person picked
+    return {"on": out["on"], "covers_this_app": covers(store, a) is not None, "attestation": out["attestation"],
+            "attestation_version": out["attestation_version"], "covers": out["covers"]}
 
 
 def put(store, a: Actor, body: Any) -> dict:

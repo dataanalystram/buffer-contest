@@ -219,7 +219,8 @@ def test_auto_approve_is_off_by_default_and_validates_types(human, app):
     bot = TestClient(app, base_url="https://hq.test")
     r = bot.put(URL, headers={"Authorization": f"Bearer {tok}"}, json={"on": True, "rights_attested": True})
     assert r.status_code == 403
-    assert bot.get(URL, headers={"Authorization": f"Bearer {tok}"}).json()["on"] is False
+    seen = bot.get(URL, headers={"Authorization": f"Bearer {tok}"}).json()
+    assert seen["on"] is False and seen["covers_this_app"] is False and "apps" not in seen and "available_apps" not in seen
 
 
 def test_auto_approve_on_for_all_apps_starts_the_take_and_logs_it(human, app, monkeypatch):
