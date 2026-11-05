@@ -1,0 +1,19 @@
+{
+ "sidecar": [
+  {
+   "start": 0.0,
+   "end": 4.0,
+   "layout": "track"
+  },
+  {
+   "start": 4.0,
+   "end": 8.0,
+   "layout": "screen"
+  }
+ ],
+ "rules": [
+  "R3",
+  "R1"
+ ],
+ "source": "tests/studio/reframe_fixtures.py (mixed)"
+}

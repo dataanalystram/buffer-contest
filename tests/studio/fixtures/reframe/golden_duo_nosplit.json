@@ -1,0 +1,13 @@
+{
+ "sidecar": [
+  {
+   "start": 0.0,
+   "end": 8.0,
+   "layout": "fit"
+  }
+ ],
+ "rules": [
+  "R8"
+ ],
+ "source": "tests/studio/reframe_fixtures.py (duo_nosplit)"
+}
