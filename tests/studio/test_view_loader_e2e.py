@@ -151,7 +151,7 @@ def test_boot_never_hides_the_screen_already_on_view(live, chromium, close_conte
     page.goto(live["base"] + "/?tab=agent", wait_until="domcontentloaded")
     q = page.get_by_test_id("agent-query")
     q.fill("Post this on all my channels")         # while boot still waits on /api/channels
-    page.wait_for_function("document.body.dataset.booted === '1'", timeout=30000)
+    page.wait_for_function("() => document.body.dataset.booted === '1'", timeout=30000)
     page.evaluate("() => new Promise((r) => setTimeout(r, 400))")   # past the loader's 150 ms floor
     assert page.evaluate("window.__hqHid") == 0, "boot put Make a post (already on view) under the loader"
     assert q.is_visible() and q.input_value() == "Post this on all my channels"
