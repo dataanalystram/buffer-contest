@@ -69,6 +69,7 @@ def test_tab_switch_never_shows_the_old_view_and_the_loader_comes_and_goes(live,
     _go(page, "library", watch="#tab-library [data-stale], #tab-planner *")
     page.get_by_test_id("library-item").first.wait_for(state="visible")
     _settled(page, "library")
+    page.evaluate("() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))")  # one more sampled frame
     frames = [f for f in page.evaluate("window.__hqStop()") if f["after"]]
     assert frames, "no frame was painted after the click"
     assert not [f for f in frames if f["stale"]], "the previous view's content was on view after the click"

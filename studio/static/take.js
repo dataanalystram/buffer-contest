@@ -484,7 +484,8 @@ window.openTake = async (id) => {
   const hold = window.HQView && cur && cur.id !== "tab-take" ? HQView.hold(cur, "Opening the take") : null;
   try {
     const t = await api(`/api/takes/${encodeURIComponent(id)}`, { signal: op.signal });
-    if (!op.live() || document.querySelector(".tab:not([hidden])") !== cur) return hold?.done();  // moved on: never yank them
+    // moved on (another screen, a sub-tab, another open): never yank them to One take
+    if (!op.live() || document.querySelector(".tab:not([hidden])") !== cur || (hold && !hold.live())) return hold?.done();
     showTab("take"); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
     hold?.done();
   } catch (e) {

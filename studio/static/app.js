@@ -382,6 +382,7 @@ document.addEventListener("click", (e) => {
 });
 function subTab(tab, sub) {
   window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
+  subTab.work = undefined;  // a screen with no sub-tabs never waits on the previous screen's sub-tab request (CodeRabbit, #117)
   const root = document.getElementById("tab-" + tab); if (!root) return "";
   const subs = [...root.querySelectorAll(":scope > .sub[data-sub]")]; if (!subs.length) return "";
   if (SUB_ALIAS[tab]) sub = SUB_ALIAS[tab](sub || "");
@@ -898,7 +899,8 @@ async function loadAppUsage() {
       <span class="ax-um">${g.models.length ? g.models.slice(0, 3).map((m) => `${aiMark(m.model || m.provider, 12)} ${esc(m.model || "unknown model")} ×${m.calls}`).join("<br>") : "model not reported by the app"}</span></button>`).join("")}</div>` : "";
   } catch (_) { box.innerHTML = ""; }
 }
-function loadApps() { loadTokens(); loadAppUsage(); (window.HS_TABS || {}).connect?.(); }
+// its requests' promise: the view transition waits for them (settled, so one failing panel keeps its own message)
+function loadApps() { return Promise.allSettled([loadTokens(), loadAppUsage(), (window.HS_TABS || {}).connect?.()]); }
 $("#tokenForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {

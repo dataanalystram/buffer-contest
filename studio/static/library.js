@@ -294,13 +294,15 @@ const visibleTab = () => (document.querySelector(".tab:not([hidden])") || {}).id
 /** Open a run (View run, Used in, a deep link): fetch it first, then show its own screen once. */
 // The screen still open keeps the HuhQueue logo loader while the run is fetched (viewswap.js hold): its old content is never
 // left on view, and a failure shows Retry / Close in place instead of a toast. Moving on or an abort just drops the loader.
-const NO_HOLD = { done() {}, fail(e) { if (e && e.message) toast(e.message); } };
+const NO_HOLD = { done() {}, live: () => true, fail(e) { if (e && e.message) toast(e.message); } };
 async function openRunById(rid) {
   const tk = HQLoad.start("openrun"), from = visibleTab();
-  const hold = window.HQView ? HQView.hold(document.getElementById(from), "Opening the run") : NO_HOLD;
+  const fromEl = document.getElementById(from);
+  const hold = window.HQView && fromEl ? HQView.hold(fromEl, "Opening the run") : NO_HOLD;
   try {
     const r = await api(`/api/agent/runs/${encodeURIComponent(rid)}`, { signal: tk.signal });
-    if (!tk.live() || visibleTab() !== from) return hold.done();  // the person moved on meanwhile: never yank them to the run
+    // the person moved on meanwhile (another screen, a sub-tab, another open): never yank them to the run
+    if (!tk.live() || visibleTab() !== from || !hold.live()) return hold.done();
     if (r.kind === "take") { await window.openTake(r.id); return hold.done(); }
     showTab("agent"); window.showRunFromLibrary?.(r); hold.done();
   } catch (e) { if (HQLoad.aborted(e) || !tk.live()) hold.done(); else hold.fail(e, () => openRunById(rid)); }
