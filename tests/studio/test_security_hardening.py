@@ -277,6 +277,8 @@ PUBLIC = {  # path -> why it is open to anyone
                            "wrong codes rate-limited per network)",
     "/send/{code}/file": "a file into the code owner's Library (the code is the credential; 10 files, 30 minutes, Library caps)",
     "/api/uploads/limits": "the upload size limits (public numbers, no account data)",
+    "/go/{code}": "a post's shop link (Commerce): redirects only to Channel3's tracked host or the offer's retailer; the code is "
+                  "random, rate-limited per network, no account data",
 }
 
 
