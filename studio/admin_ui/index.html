@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Admin · HuhQueue</title>
-<link rel="stylesheet" href="/static/fonts.css"><link rel="stylesheet" href="/admin/admin.css">
+<link rel="stylesheet" href="/static/fonts.css"><link rel="stylesheet" href="/static/loading.css"><link rel="stylesheet" href="/static/viewswap.css"><link rel="stylesheet" href="/admin/admin.css">
 </head><body>
 <main class="adm" data-testid="admin">
   <header class="adm-top"><h1>Admin</h1><a href="/app" data-testid="admin-back">Back to the app</a></header>
@@ -34,5 +34,6 @@
   <label>Reason (optional, for the admin log) <input id="blkReason" data-testid="admin-block-reason" maxlength="200" autocomplete="off"></label>
   <div class="adm-actions"><button type="button" id="blkCancel" data-testid="admin-block-cancel">Cancel</button>
     <button class="danger" id="blkOk" data-testid="admin-block-ok" type="submit">Block user</button></div></form></dialog>
+<script src="/static/viewswap.js"></script>
 <script src="/admin/admin.js"></script>
 </body></html>

@@ -224,7 +224,7 @@
   function threadLoading(on) {
     let sk = document.getElementById("hcLoading");
     rv.classList.toggle("hc-loading", on);
-    if (on && !sk) { sk = el("div", "hc-loading-sk", { id: "hcLoading" }); sk.innerHTML = HQLoad.rows(4, "Loading the thread"); main.insertBefore(sk, main.children[1] || null); }
+    if (on && !sk) { sk = el("div", "hc-loading-sk", { id: "hcLoading" }); sk.innerHTML = (window.HQView ? `<div class="hq-vt-inline" aria-hidden="true">${HQView.markup("")}</div>` : "") + HQLoad.rows(4, "Loading the thread"); main.insertBefore(sk, main.children[1] || null); }
     if (sk) sk.hidden = !on;
     // the composer and the Ready bar belong to the thread still on screen: inert until the picked one arrives, so nothing
     // typed or approved meanwhile goes to the previous thread

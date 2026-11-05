@@ -62,6 +62,13 @@ Sentence case everywhere. No all-caps labels.
   a 2px length bar that turns amber near the limit and red over it, with "Too long:" in words.
 - **Empty states** (`.empty`): a bold line saying what will appear, then one sentence on how to get there.
 - **Tables** (`table.data`) inside a `.wrap-x` box so they scroll on phones.
+- **Loading** (`studio/static/viewswap.js`, `viewswap.css`; `loading.js` for skeletons and the busy bar). Every screen
+  change (a rail tab, a sub-tab, View run, opening a take or a thread, an Admin page) goes through `HQView`: the screen
+  being opened stays hidden and the HuhQueue mark loader shows in its place at once (a short lavender `#C9ACFA` dash
+  tracing the mark's rounded square, the mark breathing), so the previous screen's content is never on view. The screen
+  is shown once its data is drawn, after at least 150 ms; past 300 ms list skeletons join the mark; a newer change aborts
+  the older one's requests (AbortController); a failure shows an inline error with Retry, never a blank or wrong page.
+  Under `prefers-reduced-motion` the outline is drawn whole and nothing moves. Flat colours only, no gradients.
 
 ## Icons
 
@@ -78,7 +85,8 @@ ease-out, at most 300ms, and switched off under `prefers-reduced-motion`.
 - A sent draft settles and fades back; an approved post slides out of the list.
 - The Inbox badge pops in when something arrives.
 
-Do not add scroll-triggered fades, gradients, glows, confetti or bouncing.
+Do not add scroll-triggered fades, gradients, glows, confetti or bouncing. The only looping motion is a loading
+indicator (the mark loader, skeleton pulse, busy bar), and it stops under `prefers-reduced-motion`.
 
 ## Accessibility (non-negotiable)
 

@@ -14,6 +14,8 @@
     const c = new AbortController(); live[key] = c;
     return { signal: c.signal, live: () => live[key] === c && !c.signal.aborted, done: () => { if (live[key] === c) delete live[key]; } };
   }
+  // a screen being left drops its request (viewswap.js); answers whether one was in flight
+  function cancel(key) { const c = live[key]; if (!c) return false; c.abort(); delete live[key]; return true; }
   const aborted = (e) => !!e && (e.name === "AbortError" || e.code === 20);
   const sk = (cls = "") => `<span class="hq-sk${cls ? " " + cls : ""}" aria-hidden="true"></span>`;
   // a status line for screen readers, then the shapes; aria-busy on the container while it shows
@@ -31,5 +33,5 @@
     if (on && !b) { b = document.createElement("div"); b.className = "hq-busy"; b.setAttribute("data-testid", "loading-bar"); b.innerHTML = '<span class="hq-busy-fill" aria-hidden="true"></span><span class="hq-vh" role="status"></span>'; el.prepend(b); }
     if (b) { b.hidden = !on; b.lastChild.textContent = on ? label : ""; }
   }
-  window.HQLoad = { start, aborted, sk, rows, cards, tiles, busy };
+  window.HQLoad = { start, cancel, aborted, sk, rows, cards, tiles, busy };
 })();
