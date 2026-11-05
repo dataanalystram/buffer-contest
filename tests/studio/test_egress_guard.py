@@ -370,6 +370,29 @@ def test_run_lists_read_a_runs_text_only_when_it_changed():
     assert c[2]["result"] == '{"r":"changed"}' and len(st.sql) == 2 and "id IN (?)" in st.sql[1]
 
 
-def test_run_text_on_sqlite_reads_the_columns_as_before(app):
+def test_run_text_reads_the_columns_on_sqlite_and_md5s_on_postgres(app):
     from studio import run_text
-    assert run_text.cols(app.state.house.store) == "input, result"
+    st = app.state.house.store
+    assert run_text.cols(st) == ("md5(COALESCE(input,'')) AS _hi, md5(COALESCE(result,'')) AS _hr" if st.pg else "input, result")
+
+
+def test_a_disk_error_or_an_evicted_copy_falls_back_to_the_backend(tmp_path, monkeypatch):
+    c = mediacache.MediaCache(str(tmp_path / "c"), cap=10 * MB)
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(mediacache.tempfile, "mkstemp", full)
+    assert c.path_for("t", '"e"', 3, lambda: iter([b"abc"])) is None and c.stats()["bypass"] == 1
+    monkeypatch.undo()
+
+    class S:
+        pass
+    st = S()
+    st._media_cache = c
+    data = b"0123456789"
+    f = mediacache.wrap(st, {"mime": "video/mp4", "size": 10, "etag": '"x"', "read": lambda s, e: data[s:e + 1],
+                             "iter": lambda: iter([data])}, "tok")
+    assert f["read"](2, 4) == b"234"  # fills the copy
+    for p in c.dir.iterdir():
+        p.unlink()  # evicted behind its back
+    assert f["read"](5, 9) == b"56789" and b"".join(f["iter"]()) == data

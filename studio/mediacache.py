@@ -103,9 +103,9 @@ class MediaCache:
                     self.hits += 1
                     return p
                 self.misses += 1
-            fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".fill-")
-            n = 0
+            n, tmp = 0, None
             try:
+                fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".fill-")
                 with os.fdopen(fd, "wb") as fh:
                     for piece in fill():
                         if not piece:
@@ -119,11 +119,14 @@ class MediaCache:
                     print(f"media cache: fill length {n} != {size}; not cached", flush=True)
                     return None
                 os.replace(tmp, p)
-            except BaseException:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
+            except OSError as e:  # the disk (full, gone): serve from the backend instead, never a 500
+                _unlink(tmp)
+                print(f"media cache: disk error ({e.__class__.__name__}); serving without a copy", flush=True)
+                with self._lock:
+                    self.bypass += 1
+                return None
+            except BaseException:  # storage down (ActionError 503) and the like: the caller's error, no partial copy
+                _unlink(tmp)
                 raise
             finally:
                 with self._lock:
@@ -162,6 +165,14 @@ class MediaCache:
                     pass
                 gone += 1
         return gone
+
+
+def _unlink(p) -> None:
+    if p:
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
 
 
 def read_file(p: Path, s: int, e: int) -> bytes:
@@ -215,7 +226,10 @@ def wrap(store, f: dict, token: str, meter_kind: str = "media") -> dict:
             return b""
         p = local()
         if p is not None:
-            return read_file(p, s, e)
+            try:
+                return read_file(p, s, e)
+            except OSError:  # evicted or removed between the lookup and the open: read the backend this once
+                pass
         b = src_read(s, e)
         egress.db_read(len(b), meter_kind)
         return b
@@ -223,8 +237,17 @@ def wrap(store, f: dict, token: str, meter_kind: str = "media") -> dict:
     def it():
         p = local()
         if p is not None:
-            yield from iter_file(p)
-            return
+            try:
+                fh = open(p, "rb")  # opened before the first byte: a later eviction can't cut the answer short
+            except OSError:
+                fh = None
+            if fh is not None:
+                with fh:
+                    while True:
+                        b = fh.read(MB)
+                        if not b:
+                            return
+                        yield b
         yield from metered_iter()
 
     return {**f, "read": read, "iter": it}
