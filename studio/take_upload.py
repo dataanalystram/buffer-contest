@@ -113,6 +113,11 @@ class TakeUploads:
         c = self.http or self.h.http
         if c is None:  # House.http is None unless create_app got a client: keep one of our own (operator's bucket host only)
             c = self.http = httpx.Client(timeout=60, trust_env=False)
+        from . import r2usage
+        cls = r2usage.op_class(method)  # the free-tier caps hold for every call (CodeRabbit, PR #120); DELETE is free
+        why = r2usage.can_read(self.store, grace=False) if cls == "B" else r2usage.can_write(0, self.store) if cls == "A" else None
+        if why:
+            raise ActionError(f"Large uploads are paused: {why}.", 507)
         try:
             r = c.request(method, presign(cfg, method, key, params, 300), content=content, headers=headers or {}, timeout=60)
         except httpx.HTTPError as e:
@@ -258,6 +263,10 @@ class TakeUploads:
                 if e.status != 410:  # a transient store error keeps the upload for the next try (CodeRabbit)
                     raise
                 self._drop(d)
+        from . import r2usage
+        capped = r2usage.reserve(size, self.store)
+        if capped:  # the R2 free tier is never exceeded (studio/r2usage.py)
+            raise ActionError(f"Large uploads are paused: {capped}. Paste a direct link to the file instead.", 507)
         uid_ = "tu_" + secrets.token_urlsafe(18)
         key = f"takes/{hashlib.sha256(a.uid.encode()).hexdigest()[:16]}/{uid_}.{ext}"
         r = self._s3("POST", key, {"uploads": ""}, headers={"content-type": ctype or "video/mp4"})
@@ -273,6 +282,7 @@ class TakeUploads:
         self.store.x("INSERT INTO take_uploads(id,user_id,name,size,part_size,parts,status,object_key,s3_upload,take_id,created,updated,"
                      "fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (uid_, a.uid, name, size, PART, -(-size // PART), "open", key, s3id, None, now, now, fp or None))
+        r2usage.settle(size)  # the open row now carries the size in the stored total
         return {**self._out(self._row(a, uid_), {}), "resumed": False}
 
     def part_urls(self, a: Actor, upload_id, numbers) -> dict:
@@ -288,11 +298,18 @@ class TakeUploads:
         if not nums or nums[0] < 1 or nums[-1] > d["parts"]:
             raise ActionError(f"Part numbers go from 1 to {d['parts']}.")
         cfg = self._cfg()
+        from . import r2usage
+        capped = r2usage.can_write(0, self.store)  # this upload's size is already in the stored total (open rows)
+        urls = None
+        if not capped:  # the batch is checked and signed under one lock: it can't cross the Class A cap (CodeRabbit, PR #120)
+            capped, urls = r2usage.with_ops("A", len(nums), lambda: [
+                {"part_number": n, "size": (ln := min(d["part_size"], d["size"] - (n - 1) * d["part_size"])),
+                 "url": presign(cfg, "PUT", d["object_key"], {"partNumber": str(n), "uploadId": d["s3_upload"]}, URL_TTL, length=ln)}
+                for n in nums], self.store)
+        if capped:  # no new PUT capability once a cap is reached, nor a batch that would cross it
+            raise ActionError(f"Large uploads are paused: {capped}. Paste a direct link to the file instead.", 507)
         self.store.x("UPDATE take_uploads SET updated=? WHERE id=?", (time.time(), d["id"]))
-        return {"upload_id": d["id"], "expires_in": URL_TTL, "urls": [
-            {"part_number": n, "size": (ln := min(d["part_size"], d["size"] - (n - 1) * d["part_size"])),
-             "url": presign(cfg, "PUT", d["object_key"], {"partNumber": str(n), "uploadId": d["s3_upload"]}, URL_TTL, length=ln)}
-            for n in nums]}
+        return {"upload_id": d["id"], "expires_in": URL_TTL, "urls": urls}
 
     def status(self, a: Actor, upload_id) -> dict:
         d = self._row(a, upload_id)
@@ -347,6 +364,10 @@ class TakeUploads:
             raise ActionError(f"Part {bad[0]} doesn't match what the store holds (ETag). Upload it again.", 422)
         xml = "<CompleteMultipartUpload>" + "".join(
             f"<Part><PartNumber>{n}</PartNumber><ETag>\"{have[n][0]}\"</ETag></Part>" for n in range(1, d["parts"] + 1)) + "</CompleteMultipartUpload>"
+        from . import r2usage
+        capped = r2usage.can_write(0, self.store)  # the completion POST is a Class A operation too (CodeRabbit, PR #120)
+        if capped:  # the row stays open: finish again next month, or the stale sweep clears it
+            raise ActionError(f"Large uploads are paused: {capped}.", 507)
         r = self._s3("POST", d["object_key"], {"uploadId": d["s3_upload"]}, content=xml.encode(), headers={"content-type": "application/xml"})
         if r.status_code >= 300 or b"<Error>" in r.content[:200]:
             raise ActionError(f"The upload store couldn't join the parts (HTTP {r.status_code}). Try finishing again.", 502)
@@ -415,15 +436,24 @@ class TakeUploads:
         rows = self.store.q("SELECT * FROM take_uploads WHERE take_id=? AND user_id=? AND name=?", (rid, uid, LINK_NAME))
         if rows and rows[0]["status"] != "link_put":
             return ""
-        if rows:
+        from . import r2usage
+        if rows:  # its row already counts at max_bytes() in the stored total (r2usage.stored_bytes, link_put)
+            if r2usage.can_write(0, self.store):
+                return ""
             key = rows[0]["object_key"]
+            self.store.x("UPDATE take_uploads SET updated=? WHERE id=?", (time.time(), rows[0]["id"]))
         else:
+            # past a cap: no PUT, the worker streams the link instead. Reserved atomically, then the link_put row counts
+            # at the most it may hold until link_stored() records the real size (CodeRabbit, PR #120)
+            if r2usage.reserve(max_bytes(), self.store):
+                return ""
             lid = "tl_" + secrets.token_urlsafe(18)
             key = f"takes/{hashlib.sha256(uid.encode()).hexdigest()[:16]}/{lid}.mp4"
             now = time.time()
             self.store.x("INSERT INTO take_uploads(id,user_id,name,size,part_size,parts,status,object_key,s3_upload,take_id,created,updated,"
                          "fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                         (lid, uid, LINK_NAME, 0, 0, 1, "link_put", key, "", rid, now, now, None))
+                         (lid, uid, LINK_NAME, max_bytes(), 0, 1, "link_put", key, "", rid, now, now, None))
+            r2usage.settle(max_bytes())
         return presign(cfg, "PUT", key, None, GET_TTL)
 
     def link_stored(self, uid: str, rid: int, size: int) -> str:

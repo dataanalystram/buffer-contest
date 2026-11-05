@@ -322,8 +322,10 @@ def add_routes(app, store, studio, cookie: str) -> None:
     def admin_egress(request: Request):
         """Media bandwidth today against the daily budgets, the disk cache and the last 14 daily summaries (numbers only)."""
         gate(request)
-        from . import egress, mediacache
-        return JSONResponse({"today": egress.snapshot(), "days": egress.history(), "cache": mediacache.of(store).stats()},
+        from . import egress, mediacache, r2, r2usage
+        # R2 against its free-tier caps (studio/r2usage.py), only when a bucket is configured: numbers only
+        r2u = {"configured": True, **r2usage.snapshot(store)} if r2.config() else {"configured": False}
+        return JSONResponse({"today": egress.snapshot(), "days": egress.history(), "cache": mediacache.of(store).stats(), "r2": r2u},
                             headers={"Cache-Control": "no-store"})
 
     @app.get("/api/admin/audit", include_in_schema=False)

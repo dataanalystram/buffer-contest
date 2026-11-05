@@ -140,10 +140,42 @@ equal to the table's live size. Run it in a quiet hour, after the deletes are co
 
 ## 5. Option: move media to R2 instead of deleting
 
-`python -m studio.migrate_media --to r2` (docs/STORAGE.md) copies each blob to an R2 bucket and keeps only the key in the row.
-It needs Ram's card on file for Cloudflare (R2's free tier: 10 GB, no egress fees) and the `R2_*` settings on Render.
-The migration reads every blob once (~0.27 GB of egress) and then the database shrinks after `VACUUM FULL`. The Egress
-guard's disk cache sits above either backend, so nothing else changes.
+`python -m studio.migrate_media --to r2` (docs/STORAGE.md) copies each blob to the private R2 bucket. R2 is on the free
+tier and the code caps itself under it (8 GB stored, 800k writes and 8M reads a month: docs/STORAGE.md#r2-free-tier-caps),
+so it can't produce a bill. The migration reads every blob once (~0.27 GB of egress); the database shrinks only after the
+cleanup and `VACUUM FULL`. The Egress guard's disk cache sits above either backend, so nothing else changes.
+
+### R2 plan and commands (nothing here has been run; each step waits for Ram)
+
+Bucket `huhqueue-media`, private, **EU jurisdiction**; a bucket-scoped Object Read & Write token. Run from a machine Ram
+controls with the app's `DATABASE_URL`, `SESSION_SECRET` and `TOKEN_KEY` in the environment (never on a logged command line):
+
+Order: **backup → restore proof → dry-run report → copy → verify → only then, with Ram's OK, the optional drop.**
+
+0. Before anything touches the bucket: a full backup (section 1) and a restore of it that exits 0 and matches every
+   table's row count and byte sum (section 2). No proof, no copy.
+
+```sh
+export R2_ACCOUNT_ID=3a319edacac176a5c9a271bd951a6af8 R2_BUCKET=huhqueue-media R2_JURISDICTION=eu
+# (= https://3a319edacac176a5c9a271bd951a6af8.eu.r2.cloudflarestorage.com; R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY from the vault)
+python scripts/r2_bucket_setup.py                         # 1. dry run: read the CORS + lifecycle documents
+python scripts/r2_bucket_setup.py --apply                 # 2. set them (PUBLIC_URL=https://huhqueue-studio.onrender.com)
+python -m studio.migrate_media --to r2 --dry-run          # 3. counts and bytes, nothing read or written
+python -m studio.migrate_media --to r2 --report --real-email <Ram's email>   # 4. row by row (owner hashes only)
+```
+
+5. Set the same five `R2_*` variables on the Render web service and deploy (new files go to R2 from then on; the caps
+   apply at once). Leave `HQ_MEDIA_REDIRECT` off at first.
+6. `python -m studio.migrate_media --to r2 --limit 50`, check a few `/m/` links and Library files, then without
+   `--limit`. Copy-only: every row keeps its BYTEA, reads switch to R2, Supabase egress for media stops.
+   Verify: each row is switched only after its object's sha256 matches (the copy checks it); re-run `--report` and
+   compare counts and bytes with step 4, and check `/healthz` → `r2` stays well under the caps.
+7. Only with Ram's explicit OK, a week later, after a fresh full backup **and** a proven restore (sections 1–2, writes frozen as in section 0):
+   `python -m studio.migrate_media --to r2 --cleanup --i-have-a-verified-backup`, then `VACUUM FULL media, library_chunks;`.
+8. Optional: `HQ_MEDIA_REDIRECT=1` so browsers fetch R2 objects directly (15-minute links; Buffer and the worker keep
+   using `/m/`).
+
+Rollback before step 7: unset the `R2_*` variables and redeploy; every copied row still has its database copy.
 
 ## 6. Confirming egress is back under quota
 

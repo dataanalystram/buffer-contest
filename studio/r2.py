@@ -4,7 +4,10 @@ Shared by One take's resumable uploads (studio/take_upload.py, PR #107) and the 
 docs/STORAGE.md), so there is a single signer and a single set of settings:
 
 ``R2_ACCOUNT_ID``, ``R2_ACCESS_KEY_ID``, ``R2_SECRET_ACCESS_KEY``, ``R2_BUCKET`` (all four, or the feature is off);
-``R2_ENDPOINT`` for another S3-compatible store (https only); ``R2_REGION`` (default ``auto``).
+``R2_JURISDICTION`` (``eu`` or ``fedramp``) for a bucket created in a jurisdiction: its S3 host is
+``https://<account>.<jurisdiction>.r2.cloudflarestorage.com`` (HuhQueue's bucket is in ``eu``); ``R2_ENDPOINT`` overrides
+the host entirely (https only, e.g. another S3-compatible store); ``R2_REGION`` (default ``auto``).
+Every signature counts toward the free-tier caps (studio/r2usage.py).
 
 The endpoint is the operator's own bucket, never a user URL, so it isn't routed through netguard; it must be https.
 Stdlib only for signing (no boto3 in the 512 MB web instance).
@@ -14,12 +17,15 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 
 import httpx
 
 URL_TTL = 3600
+BROWSER_URL_TTL = 900   # a presigned GET handed to a browser lives at most 15 minutes (studio/app.py r2_redirect)
+JURISDICTIONS = ("eu", "fedramp")
 
 
 def config() -> dict | None:
@@ -27,16 +33,32 @@ def config() -> dict | None:
     acct, key, secret, bucket = (os.environ.get(k, "").strip() for k in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"))
     if not (acct and key and secret and bucket):
         return None
-    endpoint = os.environ.get("R2_ENDPOINT", "").strip().rstrip("/") or f"https://{acct}.r2.cloudflarestorage.com"
-    if not endpoint.startswith("https://"):
+    endpoint = endpoint_for(acct)
+    if not endpoint:
         return None
     return {"endpoint": endpoint, "key": key, "secret": secret, "bucket": bucket, "region": os.environ.get("R2_REGION", "auto")}
+
+
+def endpoint_for(acct: str) -> str | None:
+    """The S3 host: ``R2_ENDPOINT`` when set (https only), else the account's host in ``R2_JURISDICTION`` (eu, fedramp)
+    or the default one. An unknown jurisdiction or a non-https endpoint turns the feature off (None), never a guess."""
+    explicit = os.environ.get("R2_ENDPOINT", "").strip().rstrip("/")
+    if explicit:
+        return explicit if explicit.startswith("https://") and urlparse(explicit).hostname else None
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", acct or ""):
+        return None  # a Cloudflare account id (32 hex characters) is one DNS label: nothing else goes into the host name
+    jur = os.environ.get("R2_JURISDICTION", "").strip().lower()
+    if jur and jur not in JURISDICTIONS:
+        return None
+    return f"https://{acct}.{jur + '.' if jur else ''}r2.cloudflarestorage.com"
 
 
 def presign(cfg: dict, method: str, key: str, params: dict | None = None, expires: int = URL_TTL, now: datetime | None = None,
             length: int | None = None) -> str:
     """AWS Signature V4 query-string auth (path-style), UNSIGNED-PAYLOAD. Stdlib only. ``length``: the PUT's
     Content-Length is signed too, so the URL can't carry a bigger body than the part it was issued for."""
+    from . import r2usage
+    r2usage.note(method)  # free-tier caps: a write is a Class A and a read a Class B operation (deletes are free)
     t = now or datetime.now(timezone.utc)
     amz, day = t.strftime("%Y%m%dT%H%M%SZ"), t.strftime("%Y%m%d")
     host = urlparse(cfg["endpoint"]).netloc
@@ -96,4 +118,8 @@ class Bucket:
 
     def get_url(self, key: str, ttl: int = 900) -> str:
         """A short-lived presigned GET (the worker's download, a redirect for a big file)."""
-        return presign(self.cfg, "GET", key, None, ttl)
+        return presign(self.cfg, "GET", key, None, max(1, int(ttl)))
+
+    def browser_url(self, key: str) -> str:
+        """The presigned GET a browser is redirected to: never longer than BROWSER_URL_TTL (15 minutes)."""
+        return self.get_url(key, BROWSER_URL_TTL)

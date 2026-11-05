@@ -162,6 +162,7 @@ ALLOWED_BLOB_READS = {
     ("studio/library.py", "_read"), ("studio/library.py", "_iter"),  # an item's chunks, behind the disk cache
     ("studio/uploads.py", "parts"),  # one resumable-upload part at a time, while assembling it
     ("studio/migrate_media.py", "one"),  # the one-off DB -> R2 move (not run; needs Ram's OK)
+    ("studio/library.py", "_chunk"),  # one chunk's DB copy, only when R2 is off or past its read cap (behind the disk cache)
 }
 
 

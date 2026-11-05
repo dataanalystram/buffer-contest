@@ -64,6 +64,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         copied = store.copy_from(Store(s.migrate_from, s.session_secret, s.token_key, s.token_keys_previous))
         print(f"migrate: copied {copied or 'nothing (target already has data)'}", flush=True)
     demo_guard.ensure(store)
+    from . import r2usage
+    r2usage.bind(store)  # R2 free-tier operation counts live in this database (studio/r2usage.py)
     # migration: every sealed row moves to the current TOKEN_KEY (the log gets counts only, never values)
     print(f"token keys: {'dedicated TOKEN_KEY' if store.dedicated_key else 'derived from SESSION_SECRET'}; "
           f"{store.rotate_keys()}", flush=True)
@@ -379,15 +381,21 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/healthz")
     def health():
         # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
-        from . import egress, mediacache
+        from . import egress, mediacache, r2, r2usage
         mh = getattr(house, "media_health", None) or {}
         eg, mc = egress.snapshot(), mediacache.of(store).stats()
+        r2s = r2usage.snapshot(store) if r2.config() else None
         return {"ok": True, "configured": s.configured, "db": db_ok(),
                 # media bytes today (numbers only): read from the database, sent to clients, and the disk cache
                 "egress": {"db_bytes_today": eg["db_bytes"], "served_bytes_today": eg["served_bytes"],
                            "db_budget": eg["db_budget"], "served_budget": eg["served_budget"], "degraded": eg["degraded"],
                            "cache_files": mc["files"], "cache_bytes": mc["bytes"], "cache_hits": mc["hits"],
                            "cache_misses": mc["misses"]},
+                # R2 against its free-tier caps (studio/r2usage.py), numbers only; {"on": false} while unconfigured
+                "r2": {"on": True, "stored_bytes": r2s["stored_bytes"], "max_bytes": r2s["max_bytes"],
+                       "class_a": r2s["class_a"], "max_class_a": r2s["max_class_a"], "class_b": r2s["class_b"],
+                       "max_class_b": r2s["max_class_b"], "write_blocked": r2s["write_blocked"],
+                       "read_blocked": r2s["read_blocked"]} if r2s else {"on": False},
                 # headline: distinct files that are gone (a carousel shared by 3 channel packages is 1 file, not 3);
                 # missing_refs counts every package reference to them, one per channel (audit, 4 Nov 2026)
                 "media": {"checked_at": mh.get("checked_at"), "missing_files": mh.get("unique_files_missing", 0),
@@ -828,7 +836,35 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "not found"}, status_code=404)
         if head:
             return _head(f["mime"], f["size"], cache, f["etag"])
+        go = r2_redirect(f, request)
+        if go:
+            return go
         return app.state.library_serve(f, request, cache)
+
+    def r2_redirect(f: dict, request: Request):
+        """HQ_MEDIA_REDIRECT=1 and the file is one object in R2: a browser (Sec-Fetch headers) is sent to a 15-minute
+        presigned GET, so the bytes go bucket -> browser (R2 has no egress fees) instead of through this server, and
+        seeking works natively (Range). Buffer, Instagram and the render worker keep getting the bytes from this URL
+        itself (no redirect): a scheduled post's /m/ link must work whenever Buffer fetches it, and a presigned URL
+        expires. The token check already happened (the row was found); the ETag/304 path still answers first."""
+        from . import blobstore, egress, r2usage
+        from .library import browser_fetch, not_modified
+        if os.environ.get("HQ_MEDIA_REDIRECT", "") != "1" or not f.get("r2_key") or not browser_fetch(request):
+            return None
+        if f.get("etag") and not_modified(request, f["etag"]):
+            return None  # serve() answers the 304
+        if not blobstore.r2_readable() or not r2usage.redirect_ok():
+            # R2 off, or reads past half this month's Class B cap: a presigned URL's later uses (a player's Range
+            # requests, up to 15 min) aren't counted here, so the uncounted half stays as headroom under the free tier
+            return None  # serve() decides
+        client, etag, size = demo_guard.client_ip(request), f.get("etag") or "", int(f.get("size") or 0)
+        if egress.repeat_blocked(client, etag, size):
+            return None  # a page re-fetching the same file in a loop: serve() answers 429 (owner exempt), no new signature
+        # each signature counts as one whole download plus 256 KB for the repeat limit, so even a tiny file re-fetched in a
+        # loop stops being signed after a few rounds (R2 Class B operations are capped, studio/r2usage.py)
+        egress.repeat_count(client, etag, size + 256 * 1024)
+        return RedirectResponse(blobstore.bucket().browser_url(f["r2_key"]), 302,
+                                headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
     @app.api_route("/ms/{exp}/{sig}/{token}", methods=["GET", "HEAD"], include_in_schema=False)
     def media_signed(exp: str, sig: str, token: str, request: Request):

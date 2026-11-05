@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS audit (
   detail TEXT, ok INTEGER, ts REAL);
 CREATE TABLE IF NOT EXISTS blob_gc (
   key TEXT PRIMARY KEY, at REAL, tries INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS r2_usage (
+  month TEXT, cls TEXT, n INTEGER DEFAULT 0, PRIMARY KEY (month, cls));
 CREATE TABLE IF NOT EXISTS admin_audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, admin TEXT, action TEXT, subject_hash TEXT, detail TEXT, ok INTEGER);
 CREATE TABLE IF NOT EXISTS user_tombstones (
@@ -138,7 +140,7 @@ ID_TABLES = ("admin_audit", "agent_tokens", "approvals", "audit", "feeds", "styl
              "style_edits", "style_suggestions", "review_links", "link_consents")  # Brand studio slots, Sources runs and brand kits (own schemas in brand_studio.py, sources_agent.py, brand_kits.py)
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
           "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
-          "ai_settings", "blob_gc", "admin_audit", "user_tombstones")
+          "ai_settings", "blob_gc", "admin_audit", "user_tombstones", "r2_usage")
 
 
 # Per-person tables created by other modules (each on first use). Disconnect and delete removes them too (found in the
