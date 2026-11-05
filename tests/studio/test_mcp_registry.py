@@ -160,6 +160,7 @@ def test_schema_validator_unit():
     assert v(sch, {"n": 3}) is None and v(sch, {"n": 3, "x": None, "other": 1}) is None
     assert "at least" in v(sch, {"n": 0}) and "at most" in v(sch, {"n": 8}) and "integer" in v(sch, {"n": True})
     assert "Missing" in v(sch, {"n": None}) and v(sch, "x") == "arguments must be an object."
+    assert v(sch, {"n": 2, "b": None}) is None   # an optional argument sent as null passes, as on a direct call
     strict = {**sch, "additionalProperties": False}
     assert v(strict, {"n": 1, "other": 1}) == "Unknown argument: other."
     assert v(strict, {"n": 1, "idempotency_key": "k", "user_asked": True, "approval_id": 3, "server_ai": False}) is None

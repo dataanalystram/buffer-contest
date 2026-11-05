@@ -163,6 +163,8 @@ def validate(schema: dict, args: dict) -> str | None:
         if r not in args or args[r] is None:
             return f"Missing required argument: {r}."
     for k, v in args.items():
+        if v is None and k in props:   # an optional argument sent as null = left out, as a direct call reads it (args.get)
+            continue
         if k in props:
             err = _check(k, v, props[k])
             if err:
