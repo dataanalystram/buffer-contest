@@ -4,7 +4,10 @@
 3. _check_object drops a joined upload only on a definitive 404; 401 / 403 / 408 / 429 keep it for a later finish.
 4. The same file again after its parts were joined resumes that upload (the checks only), never a fresh upload, and the
    browser goes straight to finishing it.
-5. purge_stale and _finish can't undo each other: a row the sweep marked for deletion is never reset to 'ready'."""
+5. purge_stale and _finish can't undo each other: a row the sweep marked for deletion is never reset to 'ready'.
+6. (CodeRabbit on the main merge) the whole fingerprint is hashed: a long name's lastModified is never cut off, so
+   two files with that name and size never share an upload; a non-string fingerprint is 400. Leaving One take aborts
+   a take still opening, so a late answer never draws on another screen."""
 import json
 import shutil
 import subprocess
@@ -172,3 +175,27 @@ def test_the_sweep_leaves_a_row_whose_status_changed_since_it_read_it(app, s3, h
     finally:
         st.q = real_q
     assert _status(app, up["upload_id"]) == "joined"
+
+
+# ---------------------------------------------------------------- 6: the whole fingerprint, never truncated
+def test_a_long_name_with_another_lastmodified_is_a_new_upload(human, app, s3):  # noqa: F811
+    data = MP4_HEAD + b"v" * 1000
+    name = ("a" * 115) + ".mp4"  # 119 characters: the old 120-character cut kept only the name
+    up, etags = _upload(human, s3, data, fp=f"{name}|{len(data)}|1730750000000", name=name)
+    assert human.post(f"/api/takes/uploads/{up['upload_id']}/complete", json={"parts": etags}).json()["status"] == "ready"
+    other = human.post("/api/takes/uploads", json={"name": name, "size": len(data), "content_type": "video/mp4",
+                                                   "fingerprint": f"{name}|{len(data)}|1730750999999"}).json()
+    assert other["upload_id"] != up["upload_id"] and not other["resumed"], other     # never the first file's bytes
+    again = human.post("/api/takes/uploads", json={"name": name, "size": len(data), "content_type": "video/mp4",
+                                                   "fingerprint": f"{name}|{len(data)}|1730750000000"}).json()
+    assert again["upload_id"] == up["upload_id"] and again["resumed"]                # the same file still resumes
+    for bad in (7, ["x"], {"a": 1}, "x" * 2049):
+        r = human.post("/api/takes/uploads", json={"name": "a.mp4", "size": 100, "fingerprint": bad})
+        assert r.status_code == 400, (bad, r.text)
+
+
+def test_leaving_one_take_aborts_a_take_still_opening():
+    js = TAKE_JS.read_text()
+    abort = js[js.index("function tkAbort("):js.index("function tkErr(")]
+    assert 'HQLoad.start("takeopen").done()' in abort
+    assert '!op.live() || $("#tab-take").hidden) return;' in js

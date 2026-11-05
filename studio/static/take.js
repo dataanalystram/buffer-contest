@@ -417,7 +417,7 @@ const TK_IC = {  // Lucide (ISC): rotate-ccw, trash-2
 /** Cancel the requests in flight of every view but `except` (and the Bin count when the whole tab is left). */
 function tkAbort(except) {
   Object.entries(TK_KEYS).forEach(([v, k]) => { if (v !== except) HQLoad.start(k).done(); });
-  if (!except) HQLoad.start(TK_BADGE).done();
+  if (!except) { HQLoad.start(TK_BADGE).done(); HQLoad.start("takeopen").done(); }  // and a take still opening
 }
 function tkErr(box, msg, retry, id) {
   box.setAttribute("aria-busy", "false");
@@ -471,9 +471,9 @@ async function loadTakes() {
       const op = HQLoad.start("takeopen");  // opening another take aborts this one: only the latest pick is drawn
       try {
         const t = await api(`/api/takes/${encodeURIComponent(b.dataset.id)}`, { signal: op.signal });
-        if (!op.live()) return;
+        if (!op.live() || $("#tab-take").hidden) return;  // a take opened, then One take was left: never drawn elsewhere
         showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
-      } catch (e) { if (!HQLoad.aborted(e) && op.live()) toast(e.message, 6000); }
+      } catch (e) { if (!HQLoad.aborted(e) && op.live() && !$("#tab-take").hidden) toast(e.message, 6000); }
       finally { op.done(); }
     }));
   } catch (e) {

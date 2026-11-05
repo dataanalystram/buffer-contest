@@ -220,7 +220,15 @@ class TakeUploads:
         size, ctype = body.get("size"), str(body.get("content_type") or "").lower().split(";")[0].strip()
         # The browser's file identity (name, size and lastModified). Without it an upload never resumes: the same name and
         # size alone don't make the same video, and joining parts of two files would be silent corruption (Greptile).
-        fp = str(body.get("fingerprint") or "").strip()[:120]
+        # Hashed whole, never truncated: cutting a long name's fingerprint at 120 characters dropped its lastModified,
+        # so two files with that name and size matched and the second reused the first one's bytes (CodeRabbit).
+        raw = body.get("fingerprint")
+        if raw is not None and not isinstance(raw, str):
+            raise ActionError("fingerprint is a string (the file's name, size and lastModified).")
+        raw = (raw or "").strip()
+        if len(raw) > 2048:
+            raise ActionError("fingerprint is too long (2,048 characters at most).")
+        fp = "sha256:" + hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest() if raw else ""
         if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
             raise ActionError("size is the file's size in bytes (a whole number).")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
