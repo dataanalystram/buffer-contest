@@ -285,7 +285,7 @@ function clipAct(act, id) {
   if (act === "delete") deleteClip(id);
 }
 async function deleteClip(id) {
-  if (!T.take || !(await hqConfirm("Delete this clip? It moves to the Bin for 7 days, then it's removed for good. A Buffer draft already made from it stays in Buffer.", { ok: "Delete clip", danger: true }))) return;
+  if (!T.take || !(await hqConfirm("Delete this clip? It moves to the Bin (Library › Bin) for 7 days, then it's removed for good. A Buffer draft already made from it stays in Buffer.", { ok: "Delete clip", danger: true }))) return;
   const rid = T.take.id;
   try {
     const r = await api(`/api/takes/${encodeURIComponent(rid)}/clips/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -295,7 +295,7 @@ async function deleteClip(id) {
   } catch (e) { toast(e.message, 6000); }
 }
 async function deleteTake(id) {
-  if (!(await hqConfirm("Delete this take and all its clips? It moves to the Bin for 7 days, then it and its files are removed for good. A render still running is stopped.", { ok: "Delete take", danger: true }))) return;
+  if (!(await hqConfirm("Delete this take and all its clips? It moves to the Bin (Library › Bin) for 7 days, then it and its files are removed for good. A render still running is stopped.", { ok: "Delete take", danger: true }))) return;
   try {
     const r = await api(`/api/takes/${encodeURIComponent(id)}`, { method: "DELETE" });
     tkUndoToast(`Take moved to the Bin for ${(r && r.in_bin_days) || 7} days.`, { take_id: id });
@@ -303,7 +303,7 @@ async function deleteTake(id) {
     tkRefresh();
   } catch (e) { toast(e.message, 6000); }
 }
-// Undo right after a delete: the toast's Undo restores it from the Bin (the same restore the Bin's button calls)
+// Undo right after a delete: the toast's Undo restores it from the Bin (the same restore the Library Bin's button calls)
 function tkUndoToast(msg, ref) {
   const undo = () => tkRestore(ref).catch((e) => toast(e.message, 6000));
   if (window.toastUndo) window.toastUndo(msg, undo, 8000); else toast(msg, 6000);
@@ -323,8 +323,8 @@ async function tkShowIfOpen(rid) {
   const t = await api(`/api/takes/${encodeURIComponent(rid)}`);
   if (open()) showTake(t);
 }
-// reload whichever of Takes / Bin is showing (the other reloads when its tab is opened)
-function tkRefresh() { T.view === "bin" ? loadTakeBin() : loadTakes(); }
+// one Bin (owner ask, 5 Nov 2026): deleted takes and clips are listed in the Library's Bin, so only Your takes reloads here
+function tkRefresh() { loadTakes(); }
 
 // ---------------------------------------------------------------- The Spread
 $("#spreadGo").onclick = async () => {
@@ -405,78 +405,59 @@ $("#plSpreadSave").onclick = async () => {
 };
 $("#plSpreadCancel").onclick = () => { T.plan = null; PL.extra = []; $("#plSpread").hidden = true; plDraw(); toast("Plan discarded. Nothing was saved."); };
 
-// ---------------------------------------------------------------- list of takes, and the Bin (5 Nov 2026)
-// Two views under "Your takes": Takes and Bin. Each load is one live request per view (HQLoad.start, an AbortController):
-// switching view, or leaving One take, aborts the request in flight so a late answer never draws over the current view.
-// A failed load says so with Retry; it never leaves the list silently empty.
-T.view = "takes";
-const TK_KEYS = { takes: "takes", bin: "takebin" };
-const TK_BADGE = "takebadge";
-const TK_IC = {  // Lucide (ISC): rotate-ccw, trash-2
-  restore: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>',
+// ---------------------------------------------------------------- Your takes (5 Nov 2026)
+// One Bin (owner ask, 5 Nov 2026): One take has no Bin of its own any more. Deleting a take or a clip moves it to the
+// Library's Bin (Library › Bin lists binned takes and clips with Restore and Delete permanently, the same 7 days), and the
+// toast right after offers Undo. The list is one live request (HQLoad.start, an AbortController): leaving One take aborts
+// it, so a late answer never draws over another screen; a failed load says so with Retry.
+// The cards (owner bug, 5 Nov 2026): the old rows put an absolutely positioned "Delete" on top of the title and long titles
+// pushed the grid items wider than their track, so cards overlapped. Each card now has a fixed track (min-width 0),
+// one-line titles with an ellipsis and a ⋯ menu in its own column (the Library's menus: popover, or a bottom sheet on a phone).
+const TK_KEY = "takes";
+const TK_IC = {  // Lucide (ISC): more-horizontal, trash-2
+  more: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
   trash: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><path d="M10 11v6M14 11v6"/></svg>',
 };
-/** Cancel the requests in flight of every view but `except` (and the Bin count when the whole tab is left). */
-function tkAbort(except) {
-  Object.entries(TK_KEYS).forEach(([v, k]) => { if (v !== except) HQLoad.start(k).done(); });
-  if (except !== "takes") HQLoad.start("takeopen").done();  // a take still opening: the Bin or another screen is up now
-  if (!except) HQLoad.start(TK_BADGE).done();
-}
+/** Cancel the list request in flight and a take still opening (One take was left). */
+function tkAbort() { HQLoad.start(TK_KEY).done(); HQLoad.start("takeopen").done(); }
 function tkErr(box, msg, retry, id) {
   box.setAttribute("aria-busy", "false");
   box.innerHTML = `<div class="tk-err" role="alert" data-testid="${id}-error"><span>${esc(msg || "Something went wrong.")}</span><button type="button" class="btn2 sm" data-testid="${id}-retry">Retry</button></div>`;
   box.querySelector(`[data-testid=${id}-retry]`).onclick = retry;
 }
-function tkView(v) {
-  T.view = v === "bin" ? "bin" : "takes";
-  document.querySelectorAll("[data-tkview]").forEach((b) => {
-    const on = b.dataset.tkview === T.view;
-    b.classList.toggle("on", on); b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1;
-  });
-  $("#takeList").hidden = T.view !== "takes"; $("#takeBin").hidden = T.view !== "bin";
-  tkAbort(T.view);  // the other view's request in flight is cancelled
-  T.view === "bin" ? loadTakeBin() : loadTakes();
+// leaving One take (any screen change hides #tab-take) cancels the list's request and closes an open ⋯ menu
+new MutationObserver(() => { if ($("#tab-take").hidden) { tkAbort(); if (window.hqMenu) window.hqMenu.closeIn($("#takeList")); } })
+  .observe($("#tab-take"), { attributes: true, attributeFilter: ["hidden"] });
+const tkWhen = (ts) => new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+function tkCard(x) {
+  const title = x.title || "Your take";
+  const meta = `${x.status} · ${x.clips} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${tkWhen(x.created)}`;
+  const menu = x.sample ? "" : `<span class="lp-mw tk-mw"><button type="button" class="lp-more tk-more" data-testid="take-more" aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${esc(title)}">${TK_IC.more}</button>
+    <div class="lp-menu r" role="menu" aria-label="${esc(title)}" hidden><button type="button" class="lp-mi danger" role="menuitem" data-testid="take-delete" data-del="${esc(x.id)}">${TK_IC.trash}<span>Delete take…</span></button></div></span>`;
+  return `<article class="tk-card" data-testid="take-card" data-take="${esc(x.id)}">
+    <button type="button" class="tk-open" data-testid="take-row" data-id="${esc(x.id)}" title="${esc(title)}">${x.cover ? `<img src="${esc(x.cover)}" alt="" loading="lazy">` : `<span class="vt" aria-hidden="true">▶</span>`}
+      <span class="rt"><b data-testid="take-title">${esc(title)}</b><small>${esc(meta)}</small></span></button>${menu}
+  </article>`;
 }
-document.querySelectorAll("[data-tkview]").forEach((b) => {
-  b.onclick = () => tkView(b.dataset.tkview);
-  b.onkeydown = (e) => {  // arrow keys move between the two tabs (WAI-ARIA tabs)
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    e.preventDefault(); const o = T.view === "bin" ? "takes" : "bin"; tkView(o); document.querySelector(`[data-tkview=${o}]`).focus();
-  };
-});
-// leaving One take (any screen change hides #tab-take) cancels both views' requests
-new MutationObserver(() => { if ($("#tab-take").hidden) tkAbort(); }).observe($("#tab-take"), { attributes: true, attributeFilter: ["hidden"] });
-function tkBinCount(n) { const c = $("#tkBinCount"); c.hidden = !n; c.textContent = n ? String(n) : ""; }
-/** The Bin's count on its tab: its own live request, so a late answer never overwrites a newer count. A hint only: if it
- *  can't load, the badge keeps its last value (opening the Bin says why). */
-async function tkBadge() {
-  const tk = HQLoad.start(TK_BADGE);
-  try {
-    const b = await api("/api/takes/bin", { signal: tk.signal });
-    if (tk.live()) tkBinCount((b.takes || []).length + (b.clips || []).length);
-  } catch (_) { /* aborted, or the hint failed: the Bin view reports its own errors */ }
-  finally { tk.done(); }
-}
-
 async function loadTakes() {
-  const box = $("#takeList"), tk = HQLoad.start(TK_KEYS.takes), sig = { signal: tk.signal };
-  if (!box.querySelector(".take-rowwrap, .empty")) { box.innerHTML = HQLoad.rows(3, "Loading your takes"); box.setAttribute("aria-busy", "true"); }
-  tkBadge();
+  const box = $("#takeList"), tk = HQLoad.start(TK_KEY), sig = { signal: tk.signal };
+  if (!box.querySelector(".tk-card, .empty")) { box.innerHTML = HQLoad.rows(3, "Loading your takes"); box.setAttribute("aria-busy", "true"); }
   try {
     const rows = await api("/api/takes", sig);
     if (!tk.live()) return;
     box.setAttribute("aria-busy", "false");
-    box.innerHTML = rows.length ? rows.map((x) => `<div class="take-rowwrap">${x.sample ? "" : `<button type="button" class="link xs danger" data-testid="take-delete" data-del="${esc(x.id)}" aria-label="Delete take ${esc(x.title)}">Delete</button>`}<button class="runrow" data-testid="take-row" data-id="${esc(x.id)}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="vt">▶</span>`}
-      <span class="rt"><b>${esc(x.title)}</b><small>${esc(x.status)} · ${esc(x.clips)} clip${x.clips === 1 ? "" : "s"}${x.placed ? ` · ${x.placed} placed` : ""} · ${new Date(x.created * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small></span></button></div>`).join("")
+    if (window.hqMenu) window.hqMenu.closeIn(box);  // the redraw replaces an open ⋯ menu: close it first
+    box.innerHTML = rows.length ? rows.map(tkCard).join("")
       : `<div class="empty"><b>No takes yet</b><span>Drop a talk, a podcast episode or a tutorial you recorded, or try the sample take.</span></div>`;
-    box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); deleteTake(b.dataset.del); }));
-    box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => {
+    box.querySelectorAll("[data-testid=take-more]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); window.hqMenu.toggle(b, b.nextElementSibling); }));
+    box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); window.hqMenu.close(); deleteTake(b.dataset.del); }));
+    box.querySelectorAll("[data-testid=take-row]").forEach((b) => (b.onclick = async () => {
       const op = HQLoad.start("takeopen");  // opening another take aborts this one: only the latest pick is drawn
       try {
         const t = await api(`/api/takes/${encodeURIComponent(b.dataset.id)}`, { signal: op.signal });
-        if (!op.live() || $("#tab-take").hidden || T.view !== "takes") return;  // a take opened, then One take was left: never drawn elsewhere
+        if (!op.live() || $("#tab-take").hidden) return;  // a take opened, then One take was left: never drawn elsewhere
         showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
-      } catch (e) { if (!HQLoad.aborted(e) && op.live() && !$("#tab-take").hidden && T.view === "takes") toast(e.message, 6000); }
+      } catch (e) { if (!HQLoad.aborted(e) && op.live() && !$("#tab-take").hidden) toast(e.message, 6000); }
       finally { op.done(); }
     }));
   } catch (e) {
@@ -484,69 +465,21 @@ async function loadTakes() {
     tkErr(box, `Your takes didn't load: ${e.message}`, () => loadTakes(), "take-list");
   } finally { tk.done(); }
 }
-
-const tkLeft = (d) => (d > 1 ? `${d} days left` : d === 1 ? "1 day left" : "Goes today");
-function tkBinRow(x) {
-  const clip = !!x.clip_id;
-  const title = clip ? (x.hook || "A clip") : x.title;
-  const sub = clip ? `Clip from ${x.take_title || "your take"}` : `Take · ${x.clips} clip${x.clips === 1 ? "" : "s"}`;
-  return `<div class="tk-binrow" data-testid="take-bin-item" data-kind="${clip ? "clip" : "take"}" data-take="${esc(x.take_id)}"${clip ? ` data-clip="${esc(x.clip_id)}"` : ""}>
-    <span class="rt"><b>${esc(title)}</b><small>${esc(sub)} · <span class="tk-left${x.days_left <= 1 ? " soon" : ""}" data-testid="take-bin-days-left">${esc(tkLeft(x.days_left))}</span></small></span>
-    <span class="tk-binacts"><button type="button" class="btn2 sm" data-act="restore" data-testid="take-bin-restore" aria-label="Restore ${esc(title)}">${TK_IC.restore}<span>Restore</span></button><button type="button" class="btn2 sm danger" data-act="purge" data-testid="take-bin-delete-forever" aria-label="Delete ${esc(title)} forever">${TK_IC.trash}<span>Delete forever</span></button></span>
-  </div>`;
-}
-async function loadTakeBin() {
-  const box = $("#takeBin"), tk = HQLoad.start(TK_KEYS.bin);
-  HQLoad.start(TK_BADGE).done();  // this load's answer sets the count; an older count request must not land after it
-  if (!box.querySelector(".tk-binrow, .empty")) { box.innerHTML = HQLoad.rows(3, "Loading the Bin"); box.setAttribute("aria-busy", "true"); }
-  else HQLoad.busy(box, true, "Refreshing the Bin");
-  try {
-    const b = await api("/api/takes/bin", { signal: tk.signal });
-    if (!tk.live()) return;
-    const items = [...(b.takes || []), ...(b.clips || [])].sort((p, q) => (q.deleted_at || 0) - (p.deleted_at || 0));
-    tkBinCount(items.length);
-    HQLoad.busy(box, false);
-    box.setAttribute("aria-busy", "false");
-    box.innerHTML = items.length
-      ? `<p class="muted sm tk-binnote">Deleted takes and clips stay here for ${esc(b.days || 7)} days, then they and their files are removed for good.</p>${items.map(tkBinRow).join("")}`
-      : `<div class="empty" data-testid="take-bin-empty"><b>The Bin is empty</b><span>Deleted takes and clips wait here for ${esc(b.days || 7)} days, so you can bring them back.</span></div>`;
-    box.querySelectorAll(".tk-binrow").forEach((row) => {
-      const ref = { take_id: +row.dataset.take, clip_id: row.dataset.clip };
-      row.querySelector("[data-act=restore]").onclick = () => tkBinAct(row, ref, false);
-      row.querySelector("[data-act=purge]").onclick = () => tkBinAct(row, ref, true);
-    });
-  } catch (e) {
-    if (HQLoad.aborted(e) || !tk.live()) return;
-    HQLoad.busy(box, false);
-    tkErr(box, `The Bin didn't load: ${e.message}`, () => loadTakeBin(), "take-bin");
-  } finally { tk.done(); }
-}
-async function tkBinAct(row, ref, purge) {
-  const name = row.querySelector("b").textContent;
-  if (purge && !(await hqConfirm(`Delete “${name}” forever? ${ref.clip_id ? "The clip and its files are" : "The take, its clips and its files are"} removed now. This can't be undone.`, { ok: "Delete forever", danger: true }))) return;
-  const btns = [...row.querySelectorAll("button")];
-  btns.forEach((b) => (b.disabled = true));
-  try {
-    if (purge) {
-      const out = await api("/api/takes/bin/purge", { method: "POST", body: ref.clip_id ? { clips: [{ take_id: ref.take_id, clip_id: ref.clip_id }] } : { take_ids: [ref.take_id] } });
-      const done = ref.clip_id ? (out.purged_clips || []).length : (out.purged_takes || []).length;
-      if (!done) throw Object.assign(new Error(((out.refused || [])[0] || {}).error || "That isn't in the Bin any more."), { status: 404 });
-      toast(ref.clip_id ? "Clip deleted forever." : "Take deleted forever.");
-      if (T.view === "bin") loadTakeBin();
-    } else {
-      await tkRestore(ref);
-    }
-  } catch (e) {
-    btns.forEach((b) => (b.disabled = false));
-    toast(e.message, 6000);
-    if (e.status === 404 && T.view === "bin") loadTakeBin();  // it already left the Bin (another tab, an agent): redraw
-  }
-}
 async function loadTake() {
-  takeChips(); tkView(T.view);
+  takeChips(); loadTakes();
   $("#tkSample").hidden = false;
   const u = new URLSearchParams(location.search);
   if (u.get("take") && !T.take) { try { const t = await api(`/api/takes/${u.get("take")}`); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); } catch (_) {} }
 }
-window.openTake = async (id) => { showTab("take"); const t = await api(`/api/takes/${id}`); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); };
+// Open a take from anywhere (View run, a thread, Make a post): the take is fetched FIRST and One take is shown once with it,
+// so no other screen (or an older take) flashes in between and Back returns to where the person was (owner bug, 5 Nov 2026).
+window.openTake = async (id) => {
+  const op = HQLoad.start("takeopen");
+  try {
+    const t = await api(`/api/takes/${encodeURIComponent(id)}`, { signal: op.signal });
+    if (!op.live()) return;
+    showTab("take"); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
+  } catch (e) { if (!HQLoad.aborted(e) && op.live()) toast(e.message, 6000); }
+  finally { op.done(); }
+};
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { take: loadTake });

@@ -177,6 +177,9 @@
 .lp-badge.reel{letter-spacing:.04em}
 .lp-dur{position:absolute;left:10px;bottom:10px;z-index:2;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px 0 8px;border-radius:999px;background:rgba(12,12,14,.72);color:#fff;font:600 12px/1 var(--sans);font-variant-numeric:tabular-nums;pointer-events:none}
 .lp-dur .ic{width:12px;height:12px;fill:currentColor;stroke:none}
+/* a One take take or clip in the Bin: its files aren't served while binned, so a quiet placeholder stands in for the still */
+.lp-th.lp-th-ph{display:grid;place-items:center;cursor:default;color:var(--muted)}
+.lp-th.lp-th-ph .ic{width:28px;height:28px}
 .lp-left{position:absolute;left:10px;bottom:10px;z-index:2;height:24px;display:inline-flex;align-items:center;padding:0 9px;border-radius:999px;background:rgba(12,12,14,.72);color:#fff;font-size:12px;font-weight:600}
 .lp-left.soon{background:var(--bad);color:#fff}
 .lp-sel{position:absolute;top:8px;right:8px;z-index:3;width:32px;height:32px;display:grid;place-items:center;border-radius:8px;background:rgba(12,12,14,.6);cursor:pointer;transition:opacity var(--fast) ease-out}
