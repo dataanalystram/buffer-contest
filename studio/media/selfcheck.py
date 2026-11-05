@@ -35,23 +35,36 @@ def _ff(args: list[str]) -> str:
 
 
 def face_detector() -> tuple[bool, str]:
-    """(ok, which): a detector that can actually load here."""
+    """(ok, which): a detector that loads here AND finds the face in the committed public-domain portrait (a loaded but
+    broken detector would otherwise reframe every take as "no face" without a word). studio/media/facedetect.py."""
+    from . import facedetect
     why = []
     try:
         import cv2  # opencv-python-headless (Apache-2.0)
-        casc = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        if not casc.empty():
-            return True, f"OpenCV {cv2.__version__} Haar cascade"
-        why.append("OpenCV's Haar cascade file loaded empty")
-    except Exception as e:  # noqa: BLE001 - AttributeError when OpenCV 5 drops CascadeClassifier
-        why.append(f"OpenCV CascadeClassifier unavailable ({e.__class__.__name__}: {str(e)[:80]})")
-    try:
-        from mediapipe.tasks.python import vision  # Apache-2.0
-        if hasattr(vision, "FaceDetector"):
-            return True, "MediaPipe Face Detector"
-        why.append("MediaPipe has no FaceDetector")
+        casc = facedetect.haar()
+        if facedetect.FIXTURE.exists():
+            rgb = facedetect._load(facedetect.FIXTURE)
+            g = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+            found = facedetect.detect_haar(g, casc)
+            if not found or not facedetect.sane(found[0], g.shape[1], g.shape[0]):
+                raise facedetect.DetectorError("OpenCV's Haar cascade found no face in the test portrait")
+        return True, f"OpenCV {cv2.__version__} Haar cascade"
+    except Exception as e:  # noqa: BLE001 - AttributeError when OpenCV 5 drops CascadeClassifier, DetectorError
+        why.append(str(e)[:120] if isinstance(e, facedetect.DetectorError) else
+                   f"OpenCV CascadeClassifier unavailable ({e.__class__.__name__}: {str(e)[:80]})")
+    try:  # MediaPipe really loads (libEGL, the model) and finds the same face, or it doesn't count
+        det = facedetect.mediapipe_detector()
+        try:
+            if facedetect.FIXTURE.exists():
+                rgb = facedetect._load(facedetect.FIXTURE)
+                found = facedetect.detect_mediapipe(det, rgb)
+                if not found or not facedetect.sane(found[0], rgb.shape[1], rgb.shape[0]):
+                    raise facedetect.DetectorError("MediaPipe found no face in the test portrait")
+        finally:
+            det.close()
+        return True, "MediaPipe Face Detector"
     except Exception as e:  # noqa: BLE001
-        why.append(f"MediaPipe unavailable ({e.__class__.__name__})")
+        why.append(str(e)[:120] if isinstance(e, facedetect.DetectorError) else f"MediaPipe unavailable ({e.__class__.__name__})")
     return False, "; ".join(why)
 
 

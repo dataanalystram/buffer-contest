@@ -1120,6 +1120,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     agent_routes.add_routes(app, house, actor)
     from . import chat_context  # Make a post chat: the context drawer, compaction, thread titles (UI = REST = MCP)
     chat_context.add_routes(app, house, actor)
+    take_routes.add_thread_routes(app, house, actor)  # list/get threads, delete/restore any thread, never its media (studio/thread_bin.py)
     from . import reel_audio  # Instagram music on Reels (search + pick per package; UI = REST = MCP)
     reel_audio.add_routes(app, house, actor)
     from . import post_controls  # Update draft, Undo, Music (None / Instagram), the run's brand kit (UI = REST = MCP)

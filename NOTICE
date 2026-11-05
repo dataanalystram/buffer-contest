@@ -347,6 +347,20 @@ tests/studio/fixtures/reframe/mona.jpg, pearl.jpg  (test fixtures, scaled to 320
   Leonardo da Vinci, "Mona Lisa" and Johannes Vermeer, "Girl with a Pearl Earring": public-domain paintings, from
   Wikimedia Commons. Used only to build synthetic test clips.
 
+Face detection test fixture (tests/studio/fixtures/media/face_armstrong_pd.jpg; 4 Nov 2026)
+  Source:   "Neil Armstrong pose.jpg", official NASA portrait of Neil A. Armstrong (1969, NASA photo S69-31741),
+            https://commons.wikimedia.org/wiki/File:Neil_Armstrong_pose.jpg
+  Licence:  Public domain (a work of NASA, a US federal agency; Wikimedia Commons licence field "Public domain").
+  Changes:  downscaled to 480x600 and re-encoded from raw pixels (no EXIF). Used only by the CI face-detection check
+            (studio/media/facedetect.py, tests/studio/test_face_detect.py, tests/studio/test_jev_faces.py). NASA does not
+            endorse HuhQueue.
+
+TypeSafe Jev (studio/media/jev_faces.py; 4 Nov 2026)
+  A hosted API (https://api.typesafe.ai, model jev-latest), called over HTTPS; no TypeSafe code or SDK is in this repo.
+  Request shapes follow the public docs (https://docs.typesafe.ai/llms.txt); the integration guidance follows
+  typesafe-ai/skills (MIT). Images and Box questions are TypeSafe's "Dreamer-ready" (pre-production) features, sent with
+  the TypeSafe-Danger-Zone-Images header. Paid per input token on HuhQueue's key; off unless TYPESAFE_API_KEY is set.
+
 Lucide icons (https://lucide.dev), ISC License. Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as
 part of Feather (MIT); all other copyright (c) for Lucide are held by Lucide Contributors 2022. The chat's agent and user
 avatars, Stop, Jump to latest, and the model menu's check and key icons (studio/static/chat.js) are Lucide paths inlined

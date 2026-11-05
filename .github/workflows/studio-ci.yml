@@ -72,3 +72,7 @@ jobs:
       - name: Capability self-check (face detector, FFmpeg loudnorm/ass/libx264, faster-whisper) - fails loudly, never degrades
         if: matrix.name != 'media_render'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libegl1 libgles2 >/dev/null && /tmp/w/bin/python -m studio.media.selfcheck --kind ${{ matrix.name }}
+      - name: Real face detection (OpenCV Haar + MediaPipe find the face in a public-domain portrait, none in a blank frame; ms per frame)
+        # an OpenCV / MediaPipe upgrade that breaks detection fails here, never silently on a take (studio/media/facedetect.py)
+        if: matrix.name == 'take_analyze'
+        run: /tmp/w/bin/python -m studio.media.facedetect --check --runs 7

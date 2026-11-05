@@ -41,15 +41,18 @@ QUIET = {"get_run", "render_status", "list_clips", "whoami", "list_channels", "g
          "upload_media_chunk"}
 _SUMMARY_KEYS = ("url", "source_url", "query", "title", "theme", "template", "format", "channel", "service", "due_at", "mode",
                  "post_id", "name", "kit", "engine", "style", "ratio", "seconds", "start_s", "end_s", "cut_first_s", "index")
-_ready: set[int] = set()
 _lock = threading.Lock()
+# Readiness lives on the Store object itself, never in a set of id(store): CPython reuses a freed object's id, so a new
+# Store (a fresh database) could inherit an old one's "ready" and skip CREATE TABLE. record() then failed silently and a
+# run lost its MCP steps and brain (the flaky test_external_make_post_run_gets_the_mcp_brain in CI, 5 Nov 2026).
+_FLAG = "_mcp_calls_ready"
 
 
 def ensure(store) -> None:
-    if id(store) in _ready:
+    if getattr(store, _FLAG, False):
         return
     with _lock:
-        if id(store) in _ready:
+        if getattr(store, _FLAG, False):
             return
         sql = SCHEMA
         if store.pg:
@@ -58,7 +61,7 @@ def ensure(store) -> None:
         store.x(INDEX)
         if store.pg:
             store.x("ALTER TABLE mcp_calls ENABLE ROW LEVEL SECURITY")
-        _ready.add(id(store))
+        setattr(store, _FLAG, True)
 
 
 def _client(agent: dict) -> tuple[str, str]:

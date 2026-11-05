@@ -147,7 +147,7 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
 # a reconnect from resetting an allowance.
 OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "source_runs", "source_settings",
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
-                   "take_prefs")
+                   "thread_ids", "thread_deleted", "jev_usage", "take_prefs")
 
 def _run_callbacks(fns) -> None:
     for fn in fns or ():
