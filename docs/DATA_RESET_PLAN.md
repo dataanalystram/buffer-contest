@@ -29,13 +29,14 @@ re-reading that produced the egress; this plan is about shrinking what is stored
 purged (CodeRabbit, PR #119). For the whole window, from before the dump and any R2 copy until every delete and the
 final counts are done:
 
-1. Suspend the web service in Render (there is no in-app maintenance switch), so no new media, runs or uploads are
-   written. Buffer fetches a scheduled post's `/m/` link when it publishes, so pick a window with no scheduled post in
-   it (check Buffer's queue first) and keep it short.
-2. Stop background work: suspend the render worker and any cron job, and wait until `render_jobs` has no row in
-   `queued`/`running` and `upload_sessions` has none open (read-only counts).
-3. Only then take the dump (step 1) and, if R2 is in use, the object copy (rule 5). Lift the freeze after step 4's counts
-   match what the plan expected.
+1. Stop background work while the web service still answers: suspend any cron job, cancel `queued` render jobs and let
+   `running` ones finish (or cancel them). The worker reports through the web service, so this must happen first. Wait
+   until `render_jobs` has no row in `queued`/`running` and `upload_sessions` has none open (read-only counts).
+2. Suspend the render worker, then the web service in Render (there is no in-app maintenance switch), so no new media,
+   runs or uploads are written. Buffer fetches a scheduled post's `/m/` link when it publishes, so pick a window with no
+   scheduled post in it (check Buffer's queue first) and keep it short. Re-run the counts from item 1.
+3. Only then take the dump (section 1) and, if R2 is in use, the object copy (rule 5). Lift the freeze only after the
+   post-delete check in section 4, step 1 passes.
 
 ## 1. Backup
 
@@ -108,7 +109,25 @@ Smoke-test artefacts (the "Smoke test agent" token's runs, e.g. scan run 35 from
 through the app's own purge paths where they exist (`Library.purge`, `record_owner_deletes`), so `/healthz` keeps
 counting them as "deleted by owner", not missing.
 
-## 4. Reclaiming the space
+## 4. After the deletes: check, then reclaim the space
+
+**Step 1, post-delete check (releases the freeze).** Before the deletes, write down for each table in section 3 its
+current row count and the number of rows the approved statements will remove (from the same `WHERE` clauses run as
+`SELECT count(*)`). After the deletes, run read-only:
+
+```sh
+for t in users sessions agent_tokens agent_runs media library_items library_media library_chunks render_jobs approvals \
+         confirms mcp_calls mcp_idem audit upload_sessions upload_parts send_codes blob_gc; do
+  psql "$PGURL" -tAc "select '$t', count(*) from $t"
+done
+```
+
+Each table must equal *before − planned removals* exactly (tables marked keep: unchanged), `media` / `library_chunks`
+rows still referenced by a scheduled Buffer post must still be there, and `/healthz` must show `missing_files` unchanged.
+Any difference: stop, keep the freeze, and restore from the section 1 dump. Only when every line matches, resume the web
+service, then the worker and cron jobs.
+
+**Step 2, reclaim the space.**
 
 `DELETE` frees space for reuse but doesn't shrink the files. To shrink: `VACUUM (FULL, ANALYZE) media;` (and
 `library_chunks`) — it takes an exclusive lock for the table's duration (seconds at this size) and needs free disk
