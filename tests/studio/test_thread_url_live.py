@@ -105,6 +105,6 @@ def test_the_live_poll_sends_its_tag_backs_off_stops_when_hidden_and_aborts_on_v
 
 def test_the_thread_bar_tracks_the_header_and_post_media_sits_below_the_bar():
     chat = (ST / "chat.js").read_text()
-    assert "new ResizeObserver(top).observe(topEl)" in chat and "new ResizeObserver(barH).observe(bar)" in chat
+    assert 'new ResizeObserver(top).observe(topEl, { box: "border-box" })' in chat and 'new ResizeObserver(barH).observe(bar, { box: "border-box" })' in chat
     assert "top:calc(var(--hc-top,64px) + var(--hc-bar,72px) + 8px)" in (ST / "adaptive.css").read_text()
     assert "92%,transparent" not in (ST / "chat.css").read_text()

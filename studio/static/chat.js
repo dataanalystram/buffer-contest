@@ -51,7 +51,7 @@
   const topEl = document.querySelector("header.top");
   const top = () => document.documentElement.style.setProperty("--hc-top", ((topEl || {}).offsetHeight || 64) + "px");
   top(); window.addEventListener("resize", top);
-  if (topEl && window.ResizeObserver) new ResizeObserver(top).observe(topEl);
+  if (topEl && window.ResizeObserver) new ResizeObserver(top).observe(topEl, { box: "border-box" });  // padding too
 
   // ------------------------------------------------------------ the shell: sidebar | main column | preview panel
   rv.classList.add("hc");
@@ -96,7 +96,7 @@
   // the thread bar's own height (one line or two, with or without the status): anything else sticky in the thread (a post
   // card's media column) sits below it, never under it (it used a fixed 72 px, shorter than the bar in the sidebars layout)
   const barH = () => docEl.style.setProperty("--hc-bar", (bar.offsetHeight || 60) + "px");
-  barH(); if (window.ResizeObserver) new ResizeObserver(barH).observe(bar);
+  barH(); if (window.ResizeObserver) new ResizeObserver(barH).observe(bar, { box: "border-box" });
   // the composer gets a footer with the model; the actions row becomes the Ready to send bar
   // the composer: one prompt box (text on top; attach, the model pill and Send in a row under it), the quick fixes as a
   // compact row above it, and the Ready to send bar above that, all in one sticky dock with a solid backing, so nothing in

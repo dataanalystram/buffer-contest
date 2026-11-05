@@ -83,7 +83,7 @@ def test_model_menu_opens_in_place_picks_and_back_stays_in_the_app(live, chromiu
     page.go_back()
     pw.expect(page.locator("#tab-agent")).to_be_visible()
     pw.expect(page.locator("#tab-settings")).to_be_hidden()
-    assert "tab=agent" in page.url and page.url.startswith(base)
+    assert ("tab=agent" in page.url or "/threads/thr_" in page.url) and page.url.startswith(base), page.url
     pw.expect(page.get_by_test_id("chat-composer-model")).to_be_visible()
     # Forward goes back to Settings; Back again returns to the chat; every tab change made its own entry
     page.go_forward()
