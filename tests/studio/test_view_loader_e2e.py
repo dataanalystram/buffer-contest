@@ -20,7 +20,7 @@ PROBE = """(() => {
     return of(u, o); };
   document.addEventListener("click", () => { window.__hqClicked += 1; }, true);
   const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility === "visible" && !e.closest("[hidden]"); };
-  window.__hqWatch = (stale) => { const F = []; let on = true;
+  window.__hqWatch = (stale) => { const F = []; let on = true; window.__hqClicked = 0;
     window.__hqStop = () => { on = false; return F; };
     const tick = () => { if (!on) return;
       F.push({ after: window.__hqClicked > 0, tabs: [...document.querySelectorAll(".tab")].filter((t) => !t.hidden).map((t) => t.id),
@@ -38,12 +38,15 @@ def _page(chromium, base, w, motion="no-preference"):
     return ctx, page, errors
 
 
-def _go(page, tab):
-    """Click a rail tab like a person (on a phone, through the More sheet), counting only that click."""
+def _go(page, tab, watch=""):
+    """Click a rail tab like a person (on a phone, through the More sheet), counting only that click. `watch` starts the
+    frame sampler (with that stale selector) once the sheet is open, so only frames after the tab click count."""
     b = page.locator(f".rail button[data-tab={tab}]")
     if not b.is_visible():
         page.locator("#moreBtn").click()
         b.wait_for(state="visible")
+    if watch:
+        page.evaluate("(s) => window.__hqWatch(s)", watch)
     page.evaluate("window.__hqClicked = 0")
     b.click()
 
@@ -63,8 +66,7 @@ def test_tab_switch_never_shows_the_old_view_and_the_loader_comes_and_goes(live,
     _go(page, "planner")
     _settled(page, "planner")
     page.evaluate("window.__hqDelay['/api/library'] = 700")
-    page.evaluate("window.__hqWatch('#tab-library [data-stale], #tab-planner *')")
-    _go(page, "library")
+    _go(page, "library", watch="#tab-library [data-stale], #tab-planner *")
     page.get_by_test_id("library-item").first.wait_for(state="visible")
     _settled(page, "library")
     frames = [f for f in page.evaluate("window.__hqStop()") if f["after"]]
