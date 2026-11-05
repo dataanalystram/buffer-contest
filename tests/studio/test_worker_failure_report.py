@@ -22,6 +22,14 @@ def _err(status, url):
     return httpx.HTTPStatusError("x", request=req, response=httpx.Response(status, request=req))
 
 
+
+@pytest.fixture(autouse=True)
+def _capabilities_present(monkeypatch):
+    """These tests pin failure reporting on a box without the worker's ML stack; the self-check has its own test
+    (test_take_delete_upload.test_self_check_fails_loudly_when_a_capability_is_missing)."""
+    from studio.media import selfcheck
+    monkeypatch.setattr(selfcheck, "check", lambda kind="", load_model=False: {})
+
 def test_friendly_messages():
     assert render_worker.friendly(_err(404, BAD), "https://hq.test") == "Couldn't download the video: the link returned 404"
     assert "couldn't talk to HuhQueue (HTTP 403)" in render_worker.friendly(_err(403, "https://hq.test/api/worker/jobs/1"),

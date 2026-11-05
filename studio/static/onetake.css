@@ -127,3 +127,12 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .clip-row .clip-pf{gap:4px}
 /* why this moment was picked: two lines on the compact row, the full reason in the tooltip */
 .clip-row .clip-why { margin: 2px 0 0; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted, #667); }
+
+/* upload progress + delete (4 Nov 2026) */
+.tk-prog { display: grid; gap: 4px; margin-top: 8px; }
+.tk-prog progress { width: 100%; height: 8px; accent-color: var(--hc-lav, #C9ACFA); }
+.tk-prog small { color: var(--muted); }
+.take-rowwrap { position: relative; }
+.take-rowwrap > [data-testid=take-delete] { position: absolute; top: 8px; right: 8px; z-index: 1; }
+.link.danger { color: var(--bad); background: none; border: 0; cursor: pointer; padding: 2px 4px; }
+@media (prefers-reduced-motion: reduce) { .tk-prog progress { transition: none; } }
