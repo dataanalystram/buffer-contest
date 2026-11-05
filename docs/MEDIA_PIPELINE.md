@@ -243,6 +243,22 @@ measures the span first, and the render applies the linear filter for -14 LUFS i
 measurement fails). Each clip reports `trimmed_s` (shown as "trimmed X s" on the clip) and `meta.trim`. FFmpeg only: no
 new dependency, no model, no paid API.
 
+**One take on-screen text (Tesseract OCR)** (`studio/media/ocr.py`, worker only). The `tesseract` program
+(Apache-2.0, **5.5.4 or newer required**; an older or missing binary turns OCR off) runs as a subprocess with fixed
+arguments, a timeout per frame, a minimal environment and no shell; no pytesseract. Frames are sampled with FFmpeg at
+most one per 2 s, at most 60 per take and at most 30 s of OCR per take (one budget shared by every clip of a render
+job), scaled to 960 px wide, and read as TSV word boxes (confidence ≥ 60). Uses:
+- *Caption placement*: when on-screen text sits in a segment's default caption band, the caption line moves to the
+  nearest clear band inside the platform-safe area (track and fit layouts, where the source's vertical position is
+  known; split and screen keep their default). Fail open: any problem keeps the default band.
+- *Watermark warning*: a platform watermark (TikTok, CapCut, Likee, Kwai, Snapchat, …) or an @handle other than the
+  brand's own adds a `media.watermark` **warning** to the clip's preflight before it's placed. Never an error, never a block.
+- *Alt text and Library search*: each clip gets `screen_text` and an `alt_text` ("Video clip: “hook”. On-screen text:
+  …") in `GET /api/takes/{id}`, and the Library's `q` search matches a clip's on-screen text.
+Each clip's `meta.ocr` records the version, frames read, time spent and why OCR was skipped. The worker builds the
+pinned release itself (`scripts/worker_tesseract.sh`, see docs/INSTABOX_WORKER.md); GitHub Actions renders run
+without OCR (Debian's apt package is 5.5.0).
+
 **One take per-scene layouts** (`studio/media/reframe/`, One take style). YuNet faces (`cv2.FaceDetectorYN`, the MIT
 model vendored and sha256-checked at load, OpenCV < 5, no contrib) on each clip span pick a layout per scene: `track`
 (9:16 crop following the face), `fit` (whole frame over a blur or the brand colour), `split` (two people stacked, only
