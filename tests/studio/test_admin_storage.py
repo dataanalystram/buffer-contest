@@ -243,7 +243,7 @@ def test_delete_user_erases_rows_media_and_tokens_and_leaves_a_tombstone(app, hu
     assert _rows_for(store, "acc_1") == {}
     assert store.q("SELECT COUNT(*) AS n FROM library_chunks")[0]["n"] == 0
     assert store.user("acc_1") is None and human.get("/api/me").status_code == 401
-    blobstore.sweep(store)
+    blobstore.sweep(store, wait=10)
     assert s3.objects == {} and blobstore.pending(store) == 0       # the R2 objects went too
     tomb = store.q("SELECT * FROM user_tombstones")
     assert [(t["id_hash"], t["via"]) for t in tomb] == [(admin.subject_hash("acc_1"), "admin")]
@@ -256,7 +256,7 @@ def test_self_service_disconnect_is_the_same_erasure(app, human, s3):
     store, house = app.state.store, app.state.house
     house.put_media(Actor("acc_1"), image_bytes(32, 32), "a.png")
     assert human.post("/api/disconnect").json()["deleted"] is True
-    blobstore.sweep(store)
+    blobstore.sweep(store, wait=10)
     assert s3.objects == {} and _rows_for(store, "acc_1") == {}
     assert store.q("SELECT via FROM user_tombstones")[0]["via"] == "self"
 
@@ -292,7 +292,7 @@ def test_r2_backend_keeps_bytes_out_of_the_database_and_serves_them(app, human, 
     keys = {c["storage_key"] for c in ch}
     human.delete(f"/api/library/{item['id']}?mode=permanent&force=1")
     assert not store.q("SELECT 1 AS x FROM library_chunks WHERE item_id=?", (item["id"],))
-    blobstore.sweep(store)
+    blobstore.sweep(store, wait=10)
     assert not keys & set(s3.objects)
 
 

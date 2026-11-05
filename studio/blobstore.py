@@ -178,13 +178,13 @@ def pending(store) -> int:
     return int(store.q("SELECT COUNT(*) AS n FROM blob_gc WHERE at<=?", (time.time(),))[0]["n"] or 0)
 
 
-def sweep(store, limit: int = 500) -> dict:
+def sweep(store, limit: int = 500, wait: float = 0) -> dict:
     """Delete released objects from the bucket; a key leaves blob_gc only once the bucket confirms. Never inside a
     transaction (it could still roll back), never two at once."""
     # inside a transaction on THIS thread: skip (it could still roll back). Another thread's open transaction holds the
     # store's lock, so a background sweep's first query simply waits for it to commit (CodeRabbit, PR #110).
     in_tx = getattr(store, "_tx_depth", 0) and getattr(store._lock, "_is_owned", lambda: True)()
-    if in_tx or not _SWEEP.acquire(blocking=False):
+    if in_tx or not (_SWEEP.acquire(timeout=wait) if wait else _SWEEP.acquire(blocking=False)):  # wait: tests, for a running sweep
         return {"deleted": 0, "failed": 0, "skipped": True}
     try:
         # at > now: an upload in flight noted ahead of time (migrate_media); it becomes due if nothing ever claims it
