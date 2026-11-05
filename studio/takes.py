@@ -191,6 +191,10 @@ class Takes(TakeBin):
             token, url = url[len(base):], ""
         if not token and not url and not upload_id:
             raise ActionError("Upload a video (media_token), or give a link to the video (a YouTube / Vimeo / X post, or a file).")
+        if url:  # the operator's kill switch (studio/opsctl.py): before any DNS lookup, oEmbed fetch or consent work
+            from . import opsctl
+            if opsctl.paused("link_ingest", self.store):
+                raise ActionError(opsctl.message("link_ingest"), 503)
         platform_url, credit = "", str(body.get("credit") or "").strip()[:160]
         if token:
             meta = self.h.media_meta(a, token)
@@ -243,10 +247,6 @@ class Takes(TakeBin):
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
         consent_id, licence, link = None, "", url or platform_url
-        if link:  # the operator's kill switch (studio/opsctl.py) answers before anything is recorded or fetched
-            from . import opsctl
-            if opsctl.paused("link_ingest", self.store):
-                raise ActionError(opsctl.message("link_ingest"), 503)
         if link:  # rights first, then the fetch (owner ask, 4 Nov 2026): a signed-in person attests; an AI app asks them
             from . import consent, link_ingest
             licence = link_ingest.licence_hint(link, http=self.h.http)

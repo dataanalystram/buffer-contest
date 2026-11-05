@@ -49,6 +49,8 @@ audited actions in the last 24 h, and two caps (never the token or its hash):
 - **Hourly cap** (`agent_tokens.admin_hourly_cap`, 1–100,000, empty = none): every authenticated request on the token
   counts, reads included, on REST and `/mcp`; past it the request answers **429** (`/mcp` with `Retry-After`). A sliding
   one-hour window in memory (one process); a deploy starts it at zero. Use it for a noisy token such as a smoke-test agent.
+  **Requests this hour** is only counted while the token has an hourly cap (an uncapped token shows 0 here; use
+  **Actions in 24 h** and **Last used** for those), and saving either cap starts the hour again.
 - **Daily cap** (1–100): the token's existing daily cap on actions (`Studio._guard_write`).
 - **Revoke** (two clicks): `revoked=1`, for good. Its MCP refresh token is refused too (`mcp_oauth` checks `revoked`).
   To stop a whole account reversibly, Block instead.
@@ -72,8 +74,10 @@ State is cached 5 s per process; a change in /admin applies at once on this inst
 ## Credits and free tiers
 `GET /api/admin/usage`: Claude spend on our key against `AI_BUDGET_TOTAL_USD` (and the testing pool), OCI Gemini against
 `AI_OCI_BUDGET_TOTAL_USD`, Channel3 credits this month on our key against the free 1,000, and the Groq / NVIDIA / OpenRouter
-requests in the last 24 h against each free daily limit. Supabase egress (bytes read from the database) and Render bandwidth
-(bytes sent to clients) are the **Media bandwidth** section (`/api/admin/egress`, studio/egress.py), with R2 against its caps.
+requests in the last 24 h against each free daily limit. The **Media bandwidth** section (`/api/admin/egress`,
+studio/egress.py) counts **media only**: media bytes read from the database (the part of Supabase egress that matters) and
+media bytes sent to clients (the part of Render bandwidth that matters), with R2 against its caps. Other traffic (pages,
+JSON, API calls) is not in these numbers; the provider dashboards have the full totals.
 
 ## Admin log
 `admin_audit`: time, the admin's account id, action, a hash of the subject's id (`sha256("hq-subject:" + id)`), detail

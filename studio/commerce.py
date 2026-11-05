@@ -529,6 +529,9 @@ def search_products(studio, a: Actor, args: dict) -> dict:
     hit = _cget(ck)
     if hit is not None:
         return {**hit, "cached": True, "credits_spent": 0, "usage": usage(store, a.uid)}
+    from . import opsctl
+    if opsctl.paused("channel3", store):  # the operator's kill switch: before any credit is reserved
+        raise CommerceError(opsctl.message("channel3"), 503)
     spend(store, a.uid, byo, key=key)   # hard stop BEFORE the request leaves the server
     data = _request(key, "POST", "/v1/search", uid=a.uid, body=body, byo=byo)
     products = [card(p) for p in (data.get("products") or [])[:lim] if isinstance(p, dict) and p.get("id")]

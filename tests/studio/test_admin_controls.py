@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 from studio import admin, budget, commerce, free_quota, opsctl, r2usage
 
 from .conftest import agent_token
-from .test_admin_storage import not_found_body, other_user
+from .test_admin_storage import not_found_body, other_user, s3  # noqa: F401  (s3 is a fixture)
+from .test_commerce import c3  # noqa: F401  (fixture)
 
 NEW_URLS = [("GET", "/api/admin/switches"), ("POST", "/api/admin/switches/publishing"), ("POST", "/api/admin/switches/nope"),
             ("GET", "/api/admin/usage"), ("GET", "/api/admin/users/acc_1/tokens"), ("GET", "/api/admin/users/x/tokens?bad=%ZZ"),
@@ -215,3 +216,41 @@ def test_admin_page_has_the_new_sections():
     assert 'data-testid="admin-switches"' in html and 'data-testid="admin-usage"' in html and 'id="tokDlg"' in html
     assert "/api/admin/switches" in js and "/api/admin/usage" in js and "/tokens" in js
     assert "prompt(" not in js and "confirm(" not in js and "alert(" not in js
+
+
+# ------------------------------------------------------------------ CodeRabbit round 1 (PR #128)
+def test_publishing_pause_keeps_the_confirm_token_and_holds_still_work(app, human, adm, fake):
+    pv = human.post("/api/posts/preview", json={"channel_id": "ch_x", "text": "keep me", "mode": "queue"}).json()
+    _pause(adm, "publishing")
+    assert human.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]}).status_code == 503
+    tok = agent_token(human)              # a review-policy agent's post is only held: holding works while paused
+    from .conftest import mcp_call
+    _, apv = mcp_call(human, tok, "preview_post", {"channel_id": "ch_x", "text": "held", "mode": "queue"})
+    _, held = mcp_call(human, tok, "submit_post", {"confirm_token": apv["confirm_token"]})
+    assert held["status"] == "pending_approval"
+    r = human.post(f"/api/approvals/{held['approval_id']}/approve", json={})
+    assert r.status_code == 503 and human.get("/api/approvals").json()      # still pending, nothing sent
+    _pause(adm, "publishing", False)
+    assert human.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]}).status_code == 200   # same token
+    assert [p["text"] for p in fake.created] == ["keep me"]
+
+
+def test_paused_channel3_search_reserves_no_credit(app, human, adm, c3):
+    _pause(adm, "channel3")
+    r = human.post("/api/commerce/search", json={"query": "wireless headphones"})
+    assert r.status_code == 503 and "paused" in r.json()["error"]
+    commerce.ensure(app.state.store)
+    assert not app.state.store.q("SELECT 1 AS x FROM commerce_credits") and not app.state.store.q("SELECT 1 AS x FROM commerce_user_day")
+
+
+def test_migration_stops_while_r2_uploads_is_paused(app, human, adm, monkeypatch, s3):
+    from studio import migrate_media, r2
+    from studio.actions import Actor as _A
+    from .conftest import image_bytes
+    monkeypatch.setenv("HQ_MEDIA_STORAGE", "db")
+    app.state.house.put_media(_A("acc_1"), image_bytes(40, 40), "old.png")
+    monkeypatch.delenv("HQ_MEDIA_STORAGE")
+    _pause(adm, "r2_uploads")
+    from studio import blobstore
+    st = migrate_media.migrate(app.state.store, r2.Bucket(r2.config(), http=blobstore._client()), log=lambda *_: None)
+    assert st["moved"] == 0 and "paused" in st.get("capped", "") and not [c for c in s3.calls if c[0] == "PUT"]
