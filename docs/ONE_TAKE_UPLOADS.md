@@ -56,7 +56,7 @@ portrait, none in a blank frame, and agree on where the face is; it prints the m
 MediaPipe upgrade that breaks detection fails CI. (OpenCV stays `<5` on all three opencv-* packages: mediapipe pulls in
 `opencv-contrib-python` 5 otherwise, and 5 drops `CascadeClassifier`.)
 
-**Jev (TypeSafe `jev-latest`) as a second opinion, on a few keyframes only** (`studio/media/jev_faces.py`):
+**Jev (TypeSafe `jev-1.14.0`) as a second opinion, on a few keyframes only** (`studio/media/jev_faces.py`):
 
 * Which frames: the first frame after each scene cut that the local detector didn't cover confidently (`scene_start`),
   then stretches with no local face (`no_local_face`) or only a weak one (`low_confidence`), spread over the take. At
@@ -72,24 +72,34 @@ MediaPipe upgrade that breaks detection fails CI. (OpenCV stays `<5` on all thre
   (centred crop where there are none), logged in the worker output.
 * Recorded on the take: `face_jev` in `GET /api/takes/{id}` / `list_clips`: `enabled`, `why`, `calls`, `used`, `errors`,
   `fallback`, and per frame `t`, `why`, `verdict` (face / no_face / unsettled / error), `face_visible`, `box`, `used`, `ms`.
-* Who pays, who may use it: off unless `TYPESAFE_API_KEY` is set on the worker (take.yml reads the repo secret). It is
-  HuhQueue's key, so it runs for takes a person starts in the app (send `jev: false` to skip it). An MCP app gets it only
-  with `jev: true`, which answers `needs_user_approval` (studio/consent.py) until the person approves, or when the person
-  turned on "Allow paid APIs" for that app.
+* Model: `jev-1.14.0`, pinned (docs.typesafe.ai/models, 4 Nov 2026: the newest release; `jev-latest` and `jev-preview`
+  both point to it, and Box needs Jev 1.14+). `HQ_JEV_MODEL` may name an alias or a newer version; older ones fall back.
+* Where it runs in production: `TYPESAFE_API_KEY` is set on the HuhQueue server (Render), not on the video workers. A
+  worker without the key (InstaBox, or GitHub Actions without the repo secret) picks the keyframes, re-encodes them and
+  returns them with the analysis; the server checks each one (JPEG, size, re-encoded again), asks Jev, merges the boxes and
+  drops the frames before the take is saved. The key never leaves the server and is never logged (errors are scrubbed).
+  A worker that has the key (the optional repo secret) asks Jev itself.
+* Free, capped: at most `HQ_JEV_FACE_CAP` keyframes per take (default 12) and `HQ_JEV_DAILY_CAP` keyframes per account
+  per day on the server's key (default 60, counted in `jev_usage`; 0 turns it off). Past either cap the take keeps the
+  local faces. SubQ is not used for faces (not confirmed free for image questions).
+* Who may use it: HuhQueue's key, so it runs for takes a person starts in the app (send `jev: false` to skip it). An MCP
+  app gets it only with `jev: true`, which answers `needs_user_approval` (studio/consent.py; retry `clips_from_video` with
+  `jev: true` once approved) until the person approves, or when the person turned on "Allow paid APIs" for that app.
 * Measured on the portrait (480x600), 4 Nov 2026: one live Jev call returned the face box in ~1.1 s for ~1,190 input
   tokens; local OpenCV Haar ~45 ms (320 px) to ~110 ms (480 px) per frame on the build sandbox (MediaPipe's is in the CI log).
 
-## Threads: reading earlier ones, and deleting a One take thread (4 Nov 2026)
+## Threads: reading earlier ones, and deleting a thread (4 Nov 2026)
 
 Every thread has a public id (`thr_` + 128 random bits); tools and URLs use it, never the internal run number.
 `list_threads` / `GET /api/threads` and `get_thread` / `GET /api/threads/{thread_id}` let a connected AI app read the
 person's earlier threads (own threads only; a foreign id is a 404). `start_post` and `continue_run` answers carry
 `thread_id`.
 
-Each One take thread in the sidebar has a delete button; the dialog offers **Delete thread only** (the take and its clips
-stay in One take) or **Delete thread and its take** (the take goes to the take Bin: its files stop being served, a render
-still running stops). Both stay in the Bin for 7 days (restore brings the thread back, and its take if it went with it),
-then they are removed for good: the conversation's custom title and MCP steps, and with the take every stored file, noted
-as deleted by its owner so `/healthz` shows no missing files. REST: `DELETE /api/threads/{thread_id}?takes=keep|delete`,
+Deleting a thread is like deleting chat history (owner, 4 Nov 23:45): it removes the conversation only and NEVER deletes
+media. Takes, clips, uploads, posts and Library files stay. Every thread in the sidebar has a delete button: Make a post
+and One take, ready, running, failed or errored. The delete is a row in `thread_deleted`; the run itself is not changed.
+Deleted threads stay in the Bin for 7 days (restore brings them back), then the conversation goes for good (messages,
+summary, custom title, MCP steps) and the row stays as a tombstone, so the id answers 404 for good. A foreign or missing
+id is the same 404. REST: `DELETE /api/threads/{thread_id}` (`?takes=delete` is refused: use `delete_take` for a take),
 `POST /api/threads/{thread_id}/restore`, `GET /api/threads/bin`, `POST /api/threads/bin/purge`. MCP: `delete_thread`,
 `restore_thread`, `list_thread_bin`, `purge_thread_bin`.
