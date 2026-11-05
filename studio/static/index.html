@@ -27,6 +27,7 @@
 <link rel="stylesheet" href="/static/makepost.css">
 <link rel="stylesheet" href="/static/reelmusic.css">
 <link rel="stylesheet" href="/static/pkgcontrols.css">
+<link rel="stylesheet" href="/static/commerce.css">
 <link rel="stylesheet" href="/static/sources.css">
 <link rel="stylesheet" href="/static/brandkit.css">
 <link rel="stylesheet" href="/static/ledger.css">
@@ -372,6 +373,7 @@
                   <button type="button" role="tab" id="ceTabText" data-cetab="text" data-testid="clip-tab-transcript" aria-selected="false" aria-controls="cePaneText">Transcript</button>
                   <button type="button" role="tab" id="ceTabCap" data-cetab="cap" data-testid="clip-tab-caption" aria-selected="false" aria-controls="cePaneCap">Caption</button>
                   <button type="button" role="tab" id="ceTabMusic" data-cetab="music" data-testid="clip-tab-music" aria-selected="false" aria-controls="cePaneMusic" hidden>Music</button>
+                  <button type="button" role="tab" id="ceTabProd" data-cetab="prod" data-testid="clip-tab-product" aria-selected="false" aria-controls="cePaneProd">Product card</button>
                 </div>
                 <section class="ce-pane" id="cePaneTrim" role="tabpanel" aria-labelledby="ceTabTrim">
                   <div class="ce-row"><h3 class="ce-h">Clip timing</h3><span class="muted sm">Total duration <b id="ceLen" data-testid="clip-length"></b></span></div>
@@ -408,6 +410,17 @@
                 </section>
                 <section class="ce-pane" id="cePaneMusic" role="tabpanel" aria-labelledby="ceTabMusic" hidden>
                   <div id="ceMusic" data-testid="clip-music"></div>
+                </section>
+                <section class="ce-pane" id="cePaneProd" role="tabpanel" aria-labelledby="ceTabProd" hidden>
+                  <div class="row ce-prod-on"><input type="checkbox" id="ceProdOn" data-testid="clip-product-on"><label for="ceProdOn">Show a product card on this clip</label></div>
+                  <div class="ce-prod" id="ceProdFields">
+                    <div class="field"><label class="label" for="ceProdName">Product name</label><input id="ceProdName" data-testid="clip-product-name" maxlength="80"></div>
+                    <div class="field"><label class="label" for="ceProdPrice">Price</label><input id="ceProdPrice" data-testid="clip-product-price" maxlength="24" placeholder="€49.99"></div>
+                    <div class="field"><label class="label" for="ceProdCta">Call to action</label><input id="ceProdCta" data-testid="clip-product-cta" maxlength="40" value="Shop now"></div>
+                    <div class="field"><label class="label" for="ceProdLabel">Link label</label><input id="ceProdLabel" data-testid="clip-product-label" maxlength="40" value="Link in bio"></div>
+                    <div class="field"><label class="label" for="ceProdPos">Where</label><select id="ceProdPos" data-testid="clip-product-pos"><option value="bottom">Bottom</option><option value="top">Top</option></select></div>
+                  </div>
+                  <p class="muted xs">Text on your brand kit, no catalogue photo (not licensed for social posts). With a shop link, start the caption with #Ad: add the product in Make a post › Product, or type #Ad yourself. Saving re-renders the clip.</p>
                 </section>
               </div>
             </div>
@@ -802,6 +815,7 @@
 <script src="/static/keyframes.js"></script>
 <script src="/static/reelmusic.js"></script>
 <script src="/static/pkgcontrols.js"></script>
+<script src="/static/commerce.js"></script>
 <script src="/static/house.js"></script>
 <script src="/static/ledger.js"></script>
 <script src="/static/makepost.js"></script>

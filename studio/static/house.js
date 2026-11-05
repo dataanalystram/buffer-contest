@@ -476,6 +476,7 @@ function pkgCard(p) {
     ${sent ? "" : pkgMissing(p)}
     ${pkgCovers(p, sent)}
     ${window.hqPkgControls ? window.hqPkgControls.card(p, sent) : window.pkgMusic ? window.pkgMusic(p, sent) : ""}
+    ${window.hqProduct ? window.hqProduct.card(p, sent) : ""}
     ${sent || H.run && ["media", "news"].includes(H.run.kind) ? "" : `<div class="pm-acts"><button type="button" class="btn2 sm" data-testid="pkg-replace">Replace</button><button type="button" class="btn2 sm" data-testid="pkg-regen">Regenerate</button></div>`}
     ${p.note ? `<small class="muted sm" data-testid="pkg-note">${esc(p.note)}</small>` : ""}
     <label class="sr" for="pt-${esc(p.channel_id)}">Caption for ${esc(p.channel_name)}</label>
@@ -549,6 +550,7 @@ function wirePackages(r) {
         toast("Swapping the cover…"); showRun(n); watch(n.id); }
       catch (e) { toast(e.message, 6000); el.querySelectorAll("[data-cover]").forEach((x) => (x.disabled = false)); b.classList.remove("busy"); }
     }));
+    if (window.hqProduct) window.hqProduct.wire(el, r, pk);  // Product panel: search, price, shop link + #Ad (commerce.js)
     if (window.hqPkgControls) window.hqPkgControls.wire(el, r, pk);  // Update draft, Undo, Music (pkgcontrols.js)
     else if (window.wireMusic) window.wireMusic(el, r, pk);  // Instagram music on the Reel (reelmusic.js)
     const regen = el.querySelector("[data-testid=pkg-regen]");

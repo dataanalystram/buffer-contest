@@ -1089,6 +1089,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     share_mod.add_routes(app, house, actor)
     from . import run_discipline as run_rules_mod  # start_post + cleanup_agent_drafts (UI = REST = MCP, 4 Nov 2026)
     run_rules_mod.add_routes(app, house, actor)
+    from . import commerce_routes as commerce_mod  # Commerce on Channel3: search, detail, attach, meter, BYO key, /go (UI = REST = MCP)
+    commerce_mod.add_routes(app, house, actor)
     from . import integrations as integrations_mod  # Settings -> Integrations: per-user keys + the Product Hunt callback
     integrations_mod.add_routes(app, house, actor, COOKIE, s.public_url, s.secure_cookies)
 
