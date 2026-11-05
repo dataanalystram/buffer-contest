@@ -1,11 +1,12 @@
-"""One take's Bin in the browser UI (owner ask, 5 Nov 2026): the REST answers the Bin view draws from, and the page's
-own wiring. The browser side is tests/studio/test_take_bin_e2e.py (CI ui-smoke).
+"""One take and the one Bin (owner ask, 5 Nov 2026): the REST answers the Library Bin draws One take's rows from, and the
+pages' wiring. The browser side is tests/studio/test_take_bin_e2e.py and test_library_one_take_e2e.py (CI ui-smoke).
 
-Pins: GET /api/takes/bin gives each row what the view shows (title or hook, the take it came from, days left) and only
+Pins: GET /api/takes/bin gives each row what the Bin shows (title or hook, the take it came from, days left) and only
 the caller's own; one clip is purged with {clips: [{take_id, clip_id}]} without touching its take; bad purge entries
-answer 400, never 500; the page has a Takes / Bin tablist, each view loads through its own AbortController
-(HQLoad.start), and a view change or leaving One take aborts the other's request; a failed load shows a message with
-Retry; Delete forever asks first; a delete offers Undo; styles use theme tokens and no gradients."""
+answer 400, never 500; One take has no Takes / Bin toggle any more (its deletes go to Library › Bin, with Undo); the
+Library Bin loads /api/takes/bin with its own list through one AbortController and offers Restore and Delete permanently
+(behind a confirm) for takes and clips; Your takes loads through HQLoad.start and leaving One take aborts it; a failed
+load shows Retry; take cards keep a fixed track with an ellipsis and a ⋯ menu; theme tokens, no gradients."""
 import json
 import re
 import time
@@ -48,30 +49,26 @@ def test_bad_purge_entries_are_400_not_500(human):
         assert r.status_code == 400, (body, r.text)
 
 
-def test_the_page_wires_the_bin_with_abort_retry_and_tokens():
+def test_one_take_has_no_bin_of_its_own_and_the_library_bin_lists_its_takes_and_clips():
     html, js, css = (ST / "index.html").read_text(), (ST / "take.js").read_text(), (ST / "onetake.css").read_text()
-    for tid in ("take-view-takes", "take-view-bin", "take-bin", "take-bin-count", "take-list"):
-        assert f'data-testid="{tid}"' in html
-    assert 'role="tablist"' in html and 'aria-controls="takeBin"' in html
-    # one live request per view, cancelled on a view change and when One take is left
-    assert "HQLoad.start(TK_KEYS.takes)" in js and "HQLoad.start(TK_KEYS.bin)" in js
-    assert re.search(r"function tkView\(v\)[\s\S]*?tkAbort\(T\.view\)", js)
-    assert 'if ($("#tab-take").hidden) tkAbort();' in js
-    assert js.count("HQLoad.aborted(e) || !tk.live()") >= 2                              # a lost race never draws
-    assert 'HQLoad.start("takeopen")' in js and 'if (!op.live() || $("#tab-take").hidden || T.view !== "takes") return;' in js            # nor a take opened before the latest
-    assert "tkRefresh();  // the list refreshes" in js                                   # even when the open take's refresh fails
-    # a failed load says so with Retry, never a silent empty list
-    assert '"take-bin")' in js and '"take-list")' in js and "-retry" in js and 'role="alert"' in js
-    lists = js[js.index("async function loadTakes"):js.index("async function loadTake()")]
-    assert "catch (_) {}" not in lists
-    # Restore, Delete forever behind a confirm, Undo right after a delete
-    assert 'data-testid="take-bin-restore"' in js and 'data-testid="take-bin-delete-forever"' in js
-    act = js[js.index("async function tkBinAct"):]
-    assert "hqConfirm(" in act and "can't be undone" in act
-    assert "window.toastUndo(msg, undo" in js
-    # theme tokens, lavender accent, no gradients
-    bin_css = css[css.index("Your takes / Bin"):]
-    assert "gradient(" not in bin_css and "gradient(" not in js[js.index("list of takes, and the Bin"):]
-    assert "var(--hc-lav" in bin_css and "var(--muted)" in bin_css and "var(--bad)" in bin_css
-    assert "@media (max-width: 480px)" in bin_css
-    assert "outline: 2px solid var(--focus)" in bin_css and "font-weight: 700" not in bin_css  # DESIGN.md focus ring, type scale
+    lib, lcss = (ST / "library.js").read_text(), (ST / "library.css").read_text()
+    # One take: no Takes / Bin toggle, no Bin view, no Bin requests of its own
+    for gone in ('data-testid="take-view-bin"', 'data-testid="take-bin"', 'data-testid="take-bin-count"', 'data-tkview'):
+        assert gone not in html, gone
+    assert "/api/takes/bin" not in js and "loadTakeBin" not in js and "T.view" not in js
+    assert 'data-testid="take-list"' in html and 'data-testid="take-bin-hint"' in html and "Library › Bin" in html
+    # deletes still offer Undo, and say where the Bin is
+    assert "window.toastUndo(msg, undo" in js and js.count("Library › Bin") >= 2
+    # Your takes: one live request, aborted when One take is left; a failed load says so with Retry
+    assert "HQLoad.start(TK_KEY)" in js and 'if ($("#tab-take").hidden) { tkAbort();' in js
+    assert "HQLoad.aborted(e) || !tk.live()" in js and '"take-list")' in js and 'role="alert"' in js
+    # cards: a ⋯ menu (the Library's menus), never a Delete on top of the title
+    assert 'data-testid="take-more"' in js and "window.hqMenu.toggle(b, b.nextElementSibling)" in js
+    assert "take-rowwrap" not in js and "position: absolute" not in css[css.index("/* Your takes (5 Nov 2026)"):]
+    cards = css[css.index("/* Your takes (5 Nov 2026)"):]
+    assert "minmax(min(280px, 100%), 1fr)" in cards and "min-width: 0" in cards and "text-overflow: ellipsis" in cards
+    assert "gradient(" not in cards and "var(--line)" in cards and "outline: 2px solid var(--focus)" in cards
+    # the Library Bin: One take's takes and clips next to Library items, Restore + Delete permanently (confirm first)
+    assert 'api("/api/takes/bin", { signal: tk.signal })' in lib and "takeBinItems(tb)" in lib
+    assert "/api/takes/bin/purge" in lib and "hqConfirm(`Delete “${it.name}” permanently?" in lib
+    assert ".lp-th.lp-th-ph" in lcss

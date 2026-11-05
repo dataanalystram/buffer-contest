@@ -338,13 +338,9 @@
         </section>
         <div class="tk-listhead">
           <h2 class="sec" id="tkListH">Your takes</h2>
-          <div class="seg tk-seg" role="tablist" aria-label="Your takes or the Bin">
-            <button type="button" role="tab" class="on" id="tkTabTakes" data-tkview="takes" data-testid="take-view-takes" aria-selected="true" aria-controls="takeList">Takes</button>
-            <button type="button" role="tab" id="tkTabBin" data-tkview="bin" data-testid="take-view-bin" aria-selected="false" aria-controls="takeBin" tabindex="-1">Bin<span class="tk-bin-n" id="tkBinCount" data-testid="take-bin-count" hidden></span></button>
-          </div>
+          <span class="muted sm" data-testid="take-bin-hint">Deleted takes and clips wait 7 days in Library › Bin.</span>
         </div>
-        <div id="takeList" class="runlist" data-testid="take-list" role="tabpanel" aria-labelledby="tkTabTakes"></div>
-        <div id="takeBin" class="tk-bin" data-testid="take-bin" role="tabpanel" aria-labelledby="tkTabBin" hidden></div>
+        <div id="takeList" class="tk-cards" data-testid="take-list" role="region" aria-labelledby="tkListH"></div>
         <dialog class="ce-dialog" id="clipDialog" data-testid="clip-dialog" aria-labelledby="ceTitle">
           <form id="ceForm" method="dialog" class="ce">
             <header class="ce-head">

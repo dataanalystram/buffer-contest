@@ -32,7 +32,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <div class="dk-table"><table><thead><tr><th>Screen</th><th>What it is for</th></tr></thead><tbody>
 <tr><td><b>Inbox</b></td><td>Your day: posts waiting for your approval, today's queue, what needs attention, agent activity and posts recommended for you</td></tr>
 <tr><td><b>Make a post</b></td><td>With the agent, or <b>Quick text posts</b> from a link</td></tr>
-<tr><td><b>Library</b></td><td>Every file you uploaded or sent from a device and every image, carousel and Reel the agent made; deleted items wait 7 days in the <b>Bin</b></td></tr>
+<tr><td><b>Library</b></td><td>Every file you uploaded or sent from a device and every image, carousel, Reel and One take clip the agent made (filter by <b>Created by</b>: the agent, you, or One take); deleted items, takes and clips wait 7 days in the one <b>Bin</b></td></tr>
 <tr><td><b>One take</b></td><td>One long video into a week of clips</td></tr>
 <tr><td><b>Planner</b></td><td>Week, Month, Day, List, Board and Grid</td></tr>
 <tr><td><b>News</b></td><td><b>For you</b>, <b>Story scan</b> and the <b>Sources</b> you follow</td></tr>
@@ -173,8 +173,10 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="spread">The Spread</h2>
 <p>Choose <b>Spread into my week</b>. The clips appear on the Planner in your open posting times as a plan first; <b>Save as Buffer drafts</b> creates them. You can trim each clip by half a second and edit its hook and caption.</p>
 <p>Try <b>Try the sample take</b> to see it on Buffer's own 89-minute Buffer Commit kickoff Q&amp;A, split into 5 credited clips. Upload a video up to the limit shown on the drop zone (4 GB in parts that resume after a dropped connection when the server has a storage bucket, 100 MB otherwise), or link to a file you host. You confirm you own the video or have the rights to it.</p>
+<h2 id="takes">Your takes</h2>
+<p>Every take is a card under <b>Your takes</b>: open it to see its clips, or use its <b>⋯</b> menu to delete it. Everything One take makes also lands in your <b>Library</b>: choose <b>Created by › One take</b> there to see only its clips and the videos you uploaded to it, with the same actions as any item (open, <b>View run</b>, <b>Move to bin</b>).</p>
 <h2 id="bin">The Bin</h2>
-<p>Deleting a take or one clip moves it to the <b>Bin</b> under <b>Your takes</b> for 7 days; the toast right after has <b>Undo</b>. In the Bin each item shows the days left, with <b>Restore</b> and <b>Delete forever</b> (it asks first, and can't be undone). After 7 days it and its files are removed for good.</p>"""),
+<p>There is one Bin, in the Library. Deleting a take or one clip (on One take, or a clip from the Library) moves it to <b>Library › Bin</b> for 7 days; the toast right after has <b>Undo</b>. In the Bin each take or clip shows the days left, with <b>Restore</b> (it goes back to One take) and <b>Delete permanently</b> (it asks first, and can't be undone). After 7 days it and its files are removed for good. AI apps keep using <code>delete_take</code>, <code>list_take_bin</code>, <code>restore_take</code> and <code>purge_take_bin</code>.</p>"""),
     ("agents", "AI apps, MCP and API", "Use HuhQueue from Claude, ChatGPT, Grok, Claude Code, Codex, Cursor or your own code, on a leash.", "connect", """
 <p>Everything the app can do is also a tool for your AI apps over MCP and an endpoint over REST. Open <b>AI apps</b> in the app for per-app steps, your MCP address and when each app last used it.</p>
 <h2 id="oauth">Apps that sign in (Claude, ChatGPT, Grok on grok.com)</h2>
@@ -357,7 +359,7 @@ _DESC = {
     "GET /api/media/{token}/preview": "get_media_preview: frame stills (JPEG, default at 0, 1 and 2 s) of your own video or image and a 15-minute signed download link",
     "POST /api/buffer/drafts/{post_id}/media": "replace_draft_media: new media on any Buffer draft (edit in place, or a new draft with the same caption; the old one is deleted only with delete_old and confirm)",
     "GET /api/agent/pages": "get_page_context: what each app page shows and which MCP tools do the same things there",
-    "GET /api/library": "List your Library: uploads and generated media, with search and type filters",
+    "GET /api/library": "List your Library: uploads and generated media, with search and filters (type, created_by agent|you|sample|one_take, used_in, run, date)",
     "POST /api/library/upload": "Upload a video or image to your Library (100 MB per file, 200 MB per account)",
     "POST /api/uploads": "create_upload: a one-time upload URL (PUT /u/<token>, 15 minutes, one use) and the curl command",
     "POST /api/uploads/chunk": "upload_media_chunk: one base64 chunk (at most 2 MB decoded) of a file, in order, under an upload_id",
