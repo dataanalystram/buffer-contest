@@ -231,6 +231,23 @@ count (digits or words, "a few" = 3) and the length range (20-60 s by default, c
    card, music under silent stretches. With burned-in subtitles the bottom 16% is cropped before reframing and our
    captions are skipped, so captions never stack. Each render gets a contact sheet for a quick visual check.
 
+**One take per-scene layouts** (`studio/media/reframe/`, One take style). YuNet faces (`cv2.FaceDetectorYN`, the MIT
+model vendored and sha256-checked at load, OpenCV < 5, no contrib) on each clip span pick a layout per scene: `track`
+(9:16 crop following the face), `fit` (whole frame over a blur or the brand colour), `split` (two people stacked, only
+with `HQ_LAYOUT_SPLIT=1`) or `screen` (screen + webcam face, PiP or stacked). A layout changes only at a cut or a
+sentence boundary, holds at least 2 s, follows a 1-second majority vote and changes at most 3 times in a clip of up to
+60 s; the person's or their agent's choice (`set_clip_layout`, owner-scoped, 404 for someone else's take) always wins.
+The plan is written as a layout sidecar that the ASS karaoke captions (4 presets, OFL fonts, ≤ 3 words or 18 characters
+a line) use to find a free band. Speed target ≤ 1.2× realtime on 2 vCPU (`scripts/bench_layouts.py`, run in CI).
+
+**Free tiers only.** Transcripts: Groq `whisper-large-v3-turbo` (free plan; 20 requests/min, 7,200 audio-s/hour,
+28,800/day enforced in code with a 10% margin), then local faster-whisper `base.en`. Smart layout (beta, off unless the
+take's owner turns it on; `HQ_LAYOUT_VISION=off|shadow|on`, shipped as `shadow`): ≤ 12 keyframes at ≤ 1024 px, re-encoded
+without metadata, to NVIDIA NIM `nvidia/nemotron-3.5-super-vl-120b-a12b`, then OpenRouter `:free` models only, then the
+rules; 20 s timeout, any error falls back. Each worker run is a fresh machine, so every free request is reserved first on
+the app's shared ledger (`studio/free_quota.py`, `POST /api/worker/jobs/{id}/quota` with the job's token); a refusal
+or any error means the free call is skipped, never a paid one.
+
 `split_video` writes `manifest.json` (transcript source, burned subs, reframe detector, every clip's score, reason, hook
 and renders). Third-party video needs `rights_confirmed` and a credit line, exactly like `media_render`.
 
