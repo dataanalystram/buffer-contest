@@ -270,3 +270,73 @@ def test_an_approval_asked_under_an_older_statement_is_refused(human, app, monke
     assert ok["status"] == "approved"
     c = _consents(app)
     assert len(c) == 1 and c[0]["attestation_version"] == "2099-01-01.1"
+
+
+def test_an_ai_apps_direct_file_link_reaches_the_person(human, app, monkeypatch):
+    """A direct MP4 link from an AI app, with no owns or credit, asks the person (credited to its host), never errors."""
+    _hosts(monkeypatch)
+    sent = _github(app, monkeypatch)
+    tok = agent_token(human, policy="trusted", cap=50)
+    out = mcp_call(human, tok, "ingest_video_link", {"url": "https://cdn.example.com/talk.mp4"})[1]
+    assert out.get("needs_user_approval") is True and out["fetched"] is False and sent == [] and _consents(app) == []
+
+
+def test_a_failed_consent_write_leaves_the_item_pending(human, app, monkeypatch):
+    """Approve, the consent record and its id on the item commit together: if the record fails nothing is approved."""
+    _hosts(monkeypatch)
+    _github(app, monkeypatch)
+    tok = agent_token(human, policy="trusted", cap=50)
+    aid = mcp_call(human, tok, "ingest_video_link", {"url": YT})[1]["approval_id"]
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(link_ingest, "record", boom)
+    with pytest.raises(RuntimeError):
+        human.post(f"/api/approvals/{aid}/approve", json={"rights_attested": True})
+    st = app.state.store.q("SELECT status, payload FROM approvals WHERE id=?", (aid,))[0]
+    assert st["status"] == "pending" and "consent_id" not in st["payload"]
+
+
+def test_the_upload_store_makes_its_own_client_when_none_is_shared(app, monkeypatch):
+    from studio import take_upload
+    tu = app.state.house.take_uploads
+    monkeypatch.setattr(tu, "http", None)
+    monkeypatch.setattr(app.state.house, "http", None)
+    monkeypatch.setattr(tu, "_cfg", lambda: {"endpoint": "https://bucket.example.com", "bucket": "b", "key": "k", "secret": "s", "region": "auto"})
+    monkeypatch.setattr(take_upload, "presign", lambda *a, **k: "https://bucket.example.com/x")
+    seen = []
+
+    class FakeClient:
+        def __init__(self, **kw):
+            seen.append(kw)
+
+        def request(self, *a, **k):
+            return "ok"
+    monkeypatch.setattr(take_upload.httpx, "Client", FakeClient)
+    assert tu._s3("GET", "x") == "ok" and seen and seen[0]["trust_env"] is False
+
+
+def test_an_approval_older_than_a_day_is_closed_not_approved(human, app, monkeypatch):
+    _hosts(monkeypatch)
+    _github(app, monkeypatch)
+    tok = agent_token(human, policy="trusted", cap=50)
+    aid = mcp_call(human, tok, "ingest_video_link", {"url": YT})[1]["approval_id"]
+    st = app.state.store
+    st.x("UPDATE approvals SET created=? WHERE id=?", (1.0, aid))
+    r = human.post(f"/api/approvals/{aid}/approve", json={"rights_attested": True})
+    assert r.status_code == 410 and _consents(app) == []
+    assert st.q("SELECT status FROM approvals WHERE id=?", (aid,))[0]["status"] == "rejected"
+
+
+def test_account_deletion_keeps_an_unconfirmed_bucket_delete_for_the_sweep(app):
+    from studio import take_upload
+    st = app.state.store
+    take_upload.ensure(st)
+    for i, status in enumerate(("ready", "del_ready", "del_open")):
+        st.x("INSERT INTO take_uploads(id,user_id,name,size,part_size,parts,status,object_key,s3_upload,take_id,created,updated,"
+             "fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             (f"u{i}", "gone-user", "my talk.mp4", 10, 10, 1, status, f"k{i}", "up" if status == "del_open" else "", None, 1.0, 5.0, "fp"))
+    st.delete_user("gone-user")
+    left = {r["id"]: dict(r) for r in st.q("SELECT * FROM take_uploads WHERE id IN ('u0','u1','u2')")}
+    assert set(left) == {"u1", "u2"}                                         # the sweep still deletes these objects
+    assert all(r["user_id"] == "" and r["name"] == "" and r["fingerprint"] is None for r in left.values())

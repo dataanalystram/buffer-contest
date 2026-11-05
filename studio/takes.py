@@ -207,6 +207,8 @@ class Takes(TakeBin):
             elif any(host == d or host.endswith("." + d) for d in SOCIAL_PAGES):
                 raise ActionError("Give a link to the video post itself (YouTube, Vimeo, X, Loom, TikTok) or the video file, "
                                   "not a profile or page.")
+            elif not credit and not owns and a.kind == "agent":  # an AI app's direct file link: credit its host, and the
+                credit = f"Video: {host}"[:160]                  # person still confirms the rights in the Inbox
         if not owns and not credit:
             raise ActionError("Add a credit line for a video you didn't make (credit: 'Video: @handle on YouTube').")
         style = "opus" if (platform_url or str(body.get("style") or "").lower() in ("opus", "opus_clip", "shorts")) else "take"

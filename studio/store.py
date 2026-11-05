@@ -341,7 +341,10 @@ class Store:
         except Exception:  # noqa: BLE001
             pass
         try:  # One take's multipart uploads (studio/take_upload.py); the bucket objects are removed by /api/disconnect first
-            self.x("DELETE FROM take_uploads WHERE user_id=?", (uid,))
+            # a bucket delete that didn't confirm (del_open / del_ready) keeps its row, cut loose from the person (no
+            # name, no fingerprint, no user), so purge_stale still removes the object; every other row goes now
+            self.x("DELETE FROM take_uploads WHERE user_id=? AND status NOT IN ('del_open','del_ready')", (uid,))
+            self.x("UPDATE take_uploads SET user_id='', name='', fingerprint=NULL, take_id=NULL, updated=0 WHERE user_id=?", (uid,))
         except Exception:  # noqa: BLE001  (this store hasn't created the table)
             pass
         try:  # the purged-run token list (Bin purge never resurrects) goes with the account too

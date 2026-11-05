@@ -141,6 +141,8 @@ class TakeUploads:
     def _s3(self, method: str, key: str, params: dict | None = None, content: bytes | None = None, headers: dict | None = None):
         cfg = self._cfg()
         c = self.http or self.h.http
+        if c is None:  # House.http is None unless create_app got a client: keep one of our own (operator's bucket host only)
+            c = self.http = httpx.Client(timeout=60, trust_env=False)
         try:
             r = c.request(method, presign(cfg, method, key, params, 300), content=content, headers=headers or {}, timeout=60)
         except httpx.HTTPError as e:

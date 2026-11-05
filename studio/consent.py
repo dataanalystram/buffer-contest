@@ -280,6 +280,14 @@ def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_
         raise ActionError("attestation_version is the statement version string the page showed.", 400)
     if approve and attested is not True:
         raise ActionError("Tick “" + link_ingest.ATTESTATION + "” to approve (rights_attested: true).", 403)
+    if approve and float(row.get("created") or 0) <= time.time() - APPROVAL_TTL:
+        # link_gate only redeems items younger than APPROVAL_TTL: approving an older one would write a consent nobody uses
+        with store.tx():
+            store.x("UPDATE approvals SET status='rejected', result=?, decided=? WHERE id=? AND user_id=? AND status='pending'",
+                    (json.dumps({"closed": "expired"}), time.time(), aid, a.uid))
+        store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid, "reason": "expired"})
+        raise ActionError("This request is more than a day old, so it was closed and nothing was fetched. Ask the app to "
+                          "send the link again.", 410)
     if approve and p.get("attestation_version") != link_ingest.ATTESTATION_VERSION:
         stale = json.dumps({"closed": "statement_changed", "asked_version": str(p.get("attestation_version") or "")[:40]})
         with store.tx():
@@ -295,14 +303,18 @@ def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_
         store.x("UPDATE approvals SET status=?, result=NULL, decided=? WHERE id=? AND user_id=? AND status='pending'",
                 ("approved" if approve else "rejected", stamp, aid, a.uid))
         now = store.q("SELECT status, decided FROM approvals WHERE id=? AND user_id=?", (aid, a.uid))
-    if not now or now[0]["status"] != ("approved" if approve else "rejected") or now[0]["decided"] != stamp:
-        raise ActionError("No pending approval with that id.", 404)
+        if not now or now[0]["status"] != ("approved" if approve else "rejected") or now[0]["decided"] != stamp:
+            raise ActionError("No pending approval with that id.", 404)
+        cid = None
+        if approve:  # the decision, the consent record and its id on the item commit together (or the item stays pending)
+            cid = link_ingest.record(store, a, p.get("url", ""), licence=p.get("licence", ""), via="mcp_approval",
+                                     approval_id=aid, agent_id=row.get("agent_id"))
+            if not cid:
+                raise ActionError("The consent record didn't save. Nothing was approved; try Approve again.", 500)
+            store.x("UPDATE approvals SET payload=? WHERE id=? AND user_id=?", (json.dumps({**p, "consent_id": cid}), aid, a.uid))
     if not approve:
         store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid})
         return {"status": "rejected", "approval_id": aid, "kind": LINK_KIND}
-    cid = link_ingest.record(store, a, p.get("url", ""), licence=p.get("licence", ""), via="mcp_approval", approval_id=aid,
-                             agent_id=row.get("agent_id"))
-    store.x("UPDATE approvals SET payload=? WHERE id=? AND user_id=?", (json.dumps({**p, "consent_id": cid}), aid, a.uid))
     store.audit(a.uid, a.label, "approve_link_rights", "safety", {"approval_id": aid, "consent_id": cid})
     return {"status": "approved", "approval_id": aid, "kind": LINK_KIND, "consent_id": cid,
             "message": "Approved: the app can fetch this video once for a take."}
