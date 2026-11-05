@@ -572,3 +572,61 @@ def test_cleanup_never_deletes_an_upload_a_take_just_claimed(human, app, s3):
     finally:
         st.q = real_q
     assert s3.objects and st.q("SELECT take_id FROM take_uploads WHERE id=?", (up["upload_id"],))[0]["take_id"] == 7
+
+
+def test_a_malformed_create_answer_from_the_store_is_a_clean_502(human, app, s3):
+    """CodeRabbit, PR #107: CreateMultipartUpload's answer was parsed unguarded, so a non-XML body was a 500."""
+    app.state.house.take_uploads.http = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, content=b"<not xml") if req.method == "POST" else s3(req)))
+    r = human.post("/api/takes/uploads", json={"name": "a.mp4", "size": 100, "fingerprint": "a.mp4|100|1"})
+    assert r.status_code == 502
+    assert not app.state.store.q("SELECT 1 FROM take_uploads")
+
+
+def test_the_cleanup_sweep_lets_go_of_the_claim_lock_before_the_bucket_delete(human, app, s3):
+    """Greptile, PR #107: purge_stale held the one claim lock every user's take start needs while a bucket DELETE ran.
+    The row is marked for deletion under the lock (so no take can claim it), and the DELETE runs outside it."""
+    up = human.post("/api/takes/uploads", json={"name": "a.mp4", "size": 100}).json()
+    st, tu = app.state.store, app.state.house.take_uploads
+    st.x("UPDATE take_uploads SET updated=0 WHERE id=?", (up["upload_id"],))
+    held = []
+
+    def stub(req):
+        if req.method == "DELETE":
+            held.append(take_upload._CLAIM.locked())
+            held.append(st.q("SELECT status FROM take_uploads WHERE id=?", (up["upload_id"],))[0]["status"])
+        return s3(req)
+    tu.http = httpx.Client(transport=httpx.MockTransport(stub))
+    assert tu.purge_stale() == 1
+    assert held == [False, "del_open"]
+    assert not st.q("SELECT 1 FROM take_uploads WHERE id=?", (up["upload_id"],)) and not s3.uploads
+
+
+def test_a_mediapipe_model_that_fails_to_load_falls_back_to_haar(monkeypatch, tmp_path):
+    """CodeRabbit, PR #107: face_track caught only OSError around the MediaPipe detector, so any other load failure
+    escaped instead of falling back to the Haar cascade the self-check vouches for."""
+    import sys
+    import types
+
+    from studio import take
+    model = tmp_path / "m.tflite"
+    model.write_bytes(b"x")
+
+    class Det:
+        @staticmethod
+        def create_from_options(_o):
+            raise RuntimeError("Unable to open the model")
+    vision = types.SimpleNamespace(FaceDetector=Det, FaceDetectorOptions=lambda **k: k)
+    tasks_py = types.ModuleType("mediapipe.tasks.python")
+    tasks_py.BaseOptions, tasks_py.vision = (lambda **k: k), vision
+    for name, mod in {"mediapipe": types.ModuleType("mediapipe"), "mediapipe.tasks": types.ModuleType("mediapipe.tasks"),
+                      "mediapipe.tasks.python": tasks_py}.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        monkeypatch.setitem(sys.modules, "numpy", types.ModuleType("numpy"))
+    seen = []
+    monkeypatch.setattr(take, "_face_track_cv2", lambda path, fps, why: seen.append(why) or ([], why))
+    faces, why = take.face_track("clip.mp4", 3.0, model_path=str(model))
+    assert faces == [] and seen and "couldn't load" in why

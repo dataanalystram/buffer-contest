@@ -540,9 +540,10 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
     try:
         import numpy as np
         det = facedetect.mediapipe_detector(model_path)
-    except (facedetect.DetectorError, ImportError) as e:  # a box without MediaPipe / libEGL reframes with OpenCV instead
-        print(f"face track: {e}; falling back to OpenCV's Haar cascade", flush=True)
-        return _face_track_cv2(path, fps, str(e)[:80])
+    except Exception as e:  # noqa: BLE001 - any failure to load MediaPipe (no libEGL, no model, a bad download) falls back to
+        # the Haar cascade the self-check vouches for, never an escaped error (CodeRabbit, PR #107)
+        print(f"face track: MediaPipe couldn't load ({str(e)[:80]}), falling back to OpenCV's Haar cascade", flush=True)
+        return _face_track_cv2(path, fps, f"MediaPipe couldn't load: {str(e)[:60]}")
     w, h = 320, 180
     info = probe(path)
     if info["width"] and info["height"]:
