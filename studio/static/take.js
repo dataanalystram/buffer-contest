@@ -482,20 +482,36 @@ async function loadTakes() {
   } finally { tk.done(); }
 }
 async function loadTake() {
-  takeChips(); loadTakes();
+  takeChips(); const list = loadTakes();  // the view transition waits on the list, so One take is shown once it is drawn
   $("#tkSample").hidden = false;
   const u = new URLSearchParams(location.search);
   if (u.get("take") && !T.take) { try { const t = await api(`/api/takes/${u.get("take")}`); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); } catch (_) {} }
+  await list;
 }
 // Open a take from anywhere (View run, a thread, Make a post): the take is fetched FIRST and One take is shown once with it,
 // so no other screen (or an older take) flashes in between and Back returns to where the person was (owner bug, 5 Nov 2026).
+// The screen still open (unless it is One take itself) keeps the logo loader while the take is fetched; a failure shows
+// Retry / Close in place (viewswap.js hold), and moving on or an abort just drops the loader.
 window.openTake = async (id) => {
-  const op = HQLoad.start("takeopen");
+  const op = HQLoad.start("takeopen"), cur = document.querySelector(".tab:not([hidden])");
+  const hold = window.HQView && cur && cur.id !== "tab-take" ? HQView.hold(cur, "Opening the take") : null;
+  // bounded (CodeRabbit, #117): a hung request is cancelled after 15 s and the hold offers Retry / Close; a newer
+  // transition cancels it too
+  let late = false;
+  const cap = setTimeout(() => { if (op.live()) { late = true; HQLoad.cancel("takeopen"); } }, 15000);
+  if (hold && hold.signal) hold.signal.addEventListener("abort", () => { if (op.live()) HQLoad.cancel("takeopen"); }, { once: true });
   try {
     const t = await api(`/api/takes/${encodeURIComponent(id)}`, { signal: op.signal });
-    if (!op.live()) return;
+    clearTimeout(cap);
+    // moved on (another screen, a sub-tab, another open): never yank them to One take
+    if (!op.live() || document.querySelector(".tab:not([hidden])") !== cur || (hold && !hold.live())) return hold?.done();
     showTab("take"); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
-  } catch (e) { if (!HQLoad.aborted(e) && op.live()) toast(e.message, 6000); }
-  finally { op.done(); }
+    hold?.done();
+  } catch (e) {
+    const err = late ? new Error("Opening the take is taking too long.") : e;
+    if (!late && (HQLoad.aborted(e) || !op.live())) hold?.done();
+    else if (hold) hold.fail(err, () => window.openTake(id));
+    else toast(err.message, 6000);
+  } finally { clearTimeout(cap); op.done(); }
 };
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { take: loadTake });

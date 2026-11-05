@@ -328,6 +328,12 @@ Loading states (studio/static/loading.js, loading.css; 4 Nov 2026)
             associated documentation files, to deal in the Software without restriction, subject to including the
             copyright notice and this permission notice in all copies or substantial portions of the Software.
 
+View-transition loader (studio/static/viewswap.js, viewswap.css; 5 Nov 2026)
+  Our own code (vanilla JS, SVG and CSS). The idea, a short dash looping around a logo's outline while work runs, comes
+  from the Logo Trace Loader by dqnamo on 21st.dev (https://21st.dev/@dqnamo/components/logo-trace-loader, MIT License).
+  No code was copied from it (its install needs a 21st.dev API key and React); credited here as the inspiration.
+  The mark inside is HuhQueue's own icon (studio/static/brand/hb-mark-96.png).
+
 studio/media/reframe/models/face_detection_yunet_2023mar.onnx  (copied, unmodified; sha256 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4)
   Source:   YuNet face detector, OpenCV Zoo, https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
             (Shiqi Yu et al., "YuNet: A Tiny Millisecond-level Face Detector")

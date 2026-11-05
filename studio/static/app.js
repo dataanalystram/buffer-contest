@@ -382,6 +382,7 @@ document.addEventListener("click", (e) => {
 });
 function subTab(tab, sub) {
   window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
+  subTab.work = undefined;  // a screen with no sub-tabs never waits on the previous screen's sub-tab request (CodeRabbit, #117)
   const root = document.getElementById("tab-" + tab); if (!root) return "";
   const subs = [...root.querySelectorAll(":scope > .sub[data-sub]")]; if (!subs.length) return "";
   if (SUB_ALIAS[tab]) sub = SUB_ALIAS[tab](sub || "");
@@ -389,12 +390,18 @@ function subTab(tab, sub) {
   subs.forEach((x) => (x.hidden = x.dataset.sub !== sub));
   root.querySelectorAll(":scope > .pg-tabs [data-sub]").forEach((b) => { const on = b.dataset.sub === sub; b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
   root.dataset.sub = sub;
-  (window.HS_SUBS || {})[tab + ":" + sub]?.();
+  subTab.work = (window.HS_SUBS || {})[tab + ":" + sub]?.();  // its promise: the view transition waits on it (viewswap.js)
   return sub;
 }
 document.querySelectorAll(".pg-tabs").forEach((seg) => {
   const tab = seg.closest(".tab").id.slice(4);
-  seg.querySelectorAll("[data-sub]").forEach((b) => (b.onclick = () => { const sub = subTab(tab, b.dataset.sub); urlFor(tab, sub); }));
+  seg.querySelectorAll("[data-sub]").forEach((b) => (b.onclick = () => {
+    const root = seg.closest(".tab"), was = root.dataset.sub || "";
+    const sub = subTab(tab, b.dataset.sub); urlFor(tab, sub);
+    // a different sub-tab: its pane shows the loader until its data is drawn (the old pane's content never stays up)
+    const pane = root.querySelector(`:scope > .sub[data-sub="${sub}"]`);
+    if (sub !== was && pane && window.HQView) HQView.swap(pane, [subTab.work], { retry: () => (window.HS_SUBS || {})[tab + ":" + sub]?.() });
+  }));
   seg.addEventListener("keydown", (e) => { // arrow keys move between sub-tabs (WAI-ARIA tabs)
     const fwd = ["ArrowRight", "ArrowDown"].includes(e.key), back = ["ArrowLeft", "ArrowUp"].includes(e.key);  // Down/Up: the vertical Settings nav
     if (!fwd && !back) return;
@@ -430,6 +437,7 @@ window.addEventListener("popstate", (e) => {
 window.HQ_NAV_STATE = NAV;
 function showTab(name, sub = "") {
   window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
+  const fromEl = document.querySelector(".tab:not([hidden])"), from = fromEl ? fromEl.id.slice(4) : "", fromSub = fromEl ? fromEl.dataset.sub || "" : "";
   if (TAB_ALIAS[name]) {
     if (name === "queue") { try { const s = JSON.parse(localStorage.getItem("hq_planner") || "{}"); s.view = "list"; localStorage.setItem("hq_planner", JSON.stringify(s)); } catch (_) {} }
     const [t, sb] = TAB_ALIAS[name]; if (name === "approvals") setTimeout(() => $("#ibApprSec")?.scrollIntoView({ block: "start" }), 300);
@@ -444,7 +452,16 @@ function showTab(name, sub = "") {
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + name));
   sub = subTab(name, sub);
   urlFor(name, sub);
-  tabLoader(name)();
+  // View transitions (owner ask, 5 Nov 2026; viewswap.js): a different screen shows the HuhQueue loader in its place at
+  // once, its loaders run, and it is shown once they have drawn (at least 150 ms, no flicker). The same screen again (a
+  // refresh) just reloads in place. History is untouched: urlFor above already pushed or replaced the entry.
+  const el = document.getElementById("tab-" + name), subWork = subTab.work;
+  // The screen already on view stays on view: the same screen again (a refresh), or boot opening the screen that was
+  // showing before it (Make a post is on view by default, with no sub yet) just reloads in place. Hiding it would take
+  // the composer away from someone typing in it and drop their Enter (#117 smoke: no run ever started).
+  const same = from === name && (fromSub === sub || !fromSub);
+  if (!window.HQView || (same && !el.classList.contains("hq-vt-wait"))) return void tabLoader(name)();
+  HQView.swap(el, [subWork, () => tabLoader(name)()], { leaving: from !== name ? from : "", retry: () => tabLoader(name)() });
 }
 window.showTab = showTab;
 
@@ -561,10 +578,7 @@ async function ibAgents() {
   let r; try { r = await api("/api/activity?tab=agent&limit=100&group=run"); } catch (_) { box.innerHTML = `<li class="ib-none">Agent activity shows here once an app connects.</li>`; return; }
   box.innerHTML = r.items.length ? r.items.slice(0, 6).map((x) => (x.group === "run" ? ibRunRow(x) : ibAgentRow(x))).join("")
     : `<li class="ib-none">No agent has acted yet. <button class="link" type="button" data-go="apps" data-testid="inbox-empty-apps">Connect Claude, ChatGPT or Cursor</button>.</li>`;
-  box.querySelectorAll("[data-open-run]").forEach((b) => (b.onclick = async () => {
-    showTab("agent", "agent");
-    try { const run = await api(`/api/agent/runs/${b.dataset.openRun}`); window.showRun && showRun(run); } catch (e) { toast(e.message); }
-  }));
+  box.querySelectorAll("[data-open-run]").forEach((b) => (b.onclick = () => openRunDeep(b.dataset.openRun)));
 }
 function ibAgentRow(x) {
   const who = x.app_label || x.token_label || "Agent";
@@ -683,10 +697,16 @@ function wireMake(box) {
     if (q) { q.value = ("Post this on all my channels " + (b.dataset.make || "")).trim(); q.dispatchEvent(new Event("input")); q.focus(); }
     toast("Link added. Pick a format and press Make it.");
   }));
-  box.querySelectorAll("[data-run]").forEach((b) => (b.onclick = async () => { showTab("agent", "agent"); try { const r = await api(`/api/agent/runs/${b.dataset.run}`); window.showRun && showRun(r); } catch (e) { toast(e.message); } }));
+  box.querySelectorAll("[data-run]").forEach((b) => (b.onclick = () => openRunDeep(b.dataset.run)));
+}
+// Open a run from the Inbox or the News feed (a thread): fetched first under the loader on the screen still open, then its
+// own screen is shown once (library.js openRunById: one history entry, Back returns here; a failure shows Retry in place)
+function openRunDeep(id) {
+  if (window.hqOpenRun) return window.hqOpenRun(id);
+  showTab("agent", "agent"); return api(`/api/agent/runs/${encodeURIComponent(id)}`).then((r) => window.showRun && showRun(r), (e) => toast(e.message));
 }
 const NF = { stories: [], shown: 12, page: 1 };
-async function loadNews() { if ((document.getElementById("tab-news").dataset.sub || "feed") === "feed") loadFeed(); }
+async function loadNews() { if ((document.getElementById("tab-news").dataset.sub || "feed") === "feed") return loadFeed(); }
 async function loadFeed() {
   const box = $("#stories");
   if (!NF.stories.length) box.innerHTML = `<div class="nf-skel" aria-busy="true"><span></span><span></span><span></span></div>`;
@@ -886,7 +906,8 @@ async function loadAppUsage() {
       <span class="ax-um">${g.models.length ? g.models.slice(0, 3).map((m) => `${aiMark(m.model || m.provider, 12)} ${esc(m.model || "unknown model")} ×${m.calls}`).join("<br>") : "model not reported by the app"}</span></button>`).join("")}</div>` : "";
   } catch (_) { box.innerHTML = ""; }
 }
-function loadApps() { loadTokens(); loadAppUsage(); (window.HS_TABS || {}).connect?.(); }
+// its requests' promise: the view transition waits for them, and a failure shows the transition's Retry in place
+function loadApps() { return Promise.all([loadTokens(), loadAppUsage(), (window.HS_TABS || {}).connect?.()]); }
 $("#tokenForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {

@@ -62,12 +62,27 @@
       <td><div class="adm-actions">${block}<button type="button" class="danger" data-act="delete" data-testid="admin-delete" data-id="${esc(u.id)}"${self ? " disabled" : ""}>Delete</button></div></td></tr>`;
   }
 
+  // View transitions (5 Nov 2026, studio/static/viewswap.js): a new page or search shows the HuhQueue loader in the table at
+  // once, so the rows being left never stay on view as if they were the answer; at least 150 ms so it doesn't flicker
+  const LOAD_MIN_MS = 150;
+  function loadingRows() {
+    $("rows").innerHTML = `<tr data-testid="admin-loading"><td colspan="9" class="adm-loading">${window.HQView ? HQView.markup("Loading users") : "Loading users"}</td></tr>`;
+  }
+  function failedRows(msg) {
+    $("rows").innerHTML = `<tr data-testid="admin-error"><td colspan="9" class="adm-loading"><span role="alert">${esc(msg)}</span>
+      <button type="button" id="admRetry" data-testid="admin-retry">Retry</button></td></tr>`;
+    $("admRetry").onclick = () => load();
+  }
   async function load() {
     if (ctl) ctl.abort();               // a newer search wins: a late answer never overwrites it
     ctl = new AbortController();
+    const mine = ctl, t0 = Date.now();
+    loadingRows();
     const q = new URLSearchParams({ q: $("q").value.trim(), limit: PER, offset, demo: $("demo").checked ? "1" : "0" });
     try {
       const d = await api(`/api/admin/users?${q}`, { signal: ctl.signal });
+      const left = LOAD_MIN_MS - (Date.now() - t0); if (left > 0) await new Promise((r) => setTimeout(r, left));
+      if (mine !== ctl || mine.signal.aborted) return;
       total = d.total; rows = d.users; overview(d.overview);
       $("rows").innerHTML = d.users.map(row).join("") || `<tr><td colspan="9">No users.</td></tr>`;
       $("page").textContent = total ? `${offset + 1}–${Math.min(offset + PER, total)} of ${total}` : "";
@@ -77,7 +92,7 @@
       const a = await api("/api/admin/audit?limit=50", { signal: ctl.signal });
       $("audit").innerHTML = a.items.map((x) => `<tr><td>${esc(when(x.ts))}</td><td><code>${esc(x.admin)}</code></td><td>${esc(x.action)}</td>
         <td><code>${esc((x.subject_hash || "").slice(0, 12))}</code></td></tr>`).join("") || `<tr><td colspan="4">Nothing yet.</td></tr>`;
-    } catch (e) { if (e.name !== "AbortError") say(e.message); }
+    } catch (e) { if (e.name !== "AbortError" && mine === ctl) { say(e.message); if ($("rows").querySelector("[data-testid=admin-loading]")) failedRows(e.message); } }
   }
 
   async function act(kind, id) {
