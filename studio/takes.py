@@ -516,15 +516,12 @@ class Takes(TakeBin):
                 analysis["jev"] = {**base, "why": "off: today's free Jev allowance for this account is used up" if clean
                                    else "on: no usable keyframes"}
                 return analysis
+            rec = None
             try:
                 faces, rec = jev_faces.studio_opinion(analysis.get("faces") or [], clean[:cap], key, cap,
                                                       http=getattr(self, "_jev_http", None), log=lambda m: print(m, flush=True))
             finally:
-                spent = 0
-                try:
-                    spent = int(rec.get("calls") or 0)  # noqa: F821 - rec is unset when studio_opinion raised
-                except NameError:
-                    pass
+                spent = int((rec or {}).get("calls") or 0)
                 if cap - spent > 0:
                     self._jev_used(j["user_id"], -(cap - spent))  # hand back what wasn't used
             analysis["faces"], analysis["jev"] = faces, rec

@@ -247,3 +247,23 @@ def test_mcp_thread_tools_start_post_thread_id_instructions_and_docs(human, app,
     from studio import mcp_parity
     assert {"list_threads", "get_thread", "delete_thread", "restore_thread"} <= set(mcp_parity.PAGES["make_post"]["tools"])
     assert tools <= set(mcp_parity.PAGES["one_take"]["tools"])
+
+
+
+def test_deleted_threads_never_use_up_the_sidebar_s_slots(human, app):
+    st = app.state.store
+    old = _run(st, inp={"prompt": "an older live thread"}, updated=time.time() - 3600)
+    newer = [_run(st) for _ in range(5)]
+    for rid in newer:
+        human.delete(f"/api/threads/{_tid(human, rid)}")
+    assert old in [x["id"] for x in app.state.house.runs(__import__("studio.actions", fromlist=["Actor"]).Actor("acc_1"), limit=3)]
+
+
+def test_the_sweep_clears_a_conversation_a_late_write_brought_back(human, app):
+    st, house = app.state.store, app.state.house
+    rid = _run(st, res={"thread": [{"role": "user", "text": "old", "at": 1}]})
+    human.delete(f"/api/threads/{_tid(human, rid)}")
+    assert house.threads.purge_expired(days=0) == 1
+    st.x("UPDATE agent_runs SET result=? WHERE id=?", (json.dumps({"thread": [{"role": "user", "text": "old", "at": 1}]}), rid))
+    house.threads.purge_expired(days=0)
+    assert json.loads(st.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]["result"])["thread"] == []
