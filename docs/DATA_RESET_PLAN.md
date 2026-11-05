@@ -102,7 +102,8 @@ guard's disk cache sits above either backend, so nothing else changes.
 
 ## 7. A separate demo dataset (instead of touching production)
 
-`scripts/demo_seed.py` already builds the free sample workspace from committed files. Proposal: extend it into a
-`--fresh-db` mode that seeds a clean database (a second free Supabase project, or local Postgres) with a small, fixed
-set of demo channels, runs and images (no videos over 2 MB), so judges' demos and screenshots never depend on the
-production rows above, and a reset never removes what a demo needs.
+`scripts/demo_seed.py` already fills a local data dir with demo data (no network) for the core app's screenshots and
+e2e tests; the Studio's free sample uses committed files (`scripts/build_sample_*.py`). Proposal: a `scripts/studio_seed.py`
+that seeds a clean database (local Postgres, or a second free Supabase project) with a small fixed set of demo
+channels, runs and images (no videos over 2 MB), so demos and screenshots never depend on the production rows above,
+and a reset never removes what a demo needs. Not built in this PR.
