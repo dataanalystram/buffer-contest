@@ -751,15 +751,20 @@ class Library:
             if in_sql:
                 where.append(f"token NOT IN ({','.join('?' * len(in_sql))})")
                 args.extend(in_sql)
-            sql = f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY created DESC, id DESC LIMIT ? OFFSET ?"  # noqa: S608  where: fixed clauses, values bound
-            rows, off, batch = [], 0, lim + len(rest)
+            base = " AND ".join(where)
+            sql = f"SELECT * FROM library_items WHERE {base} ORDER BY created DESC, id DESC LIMIT ?"  # noqa: S608  where: fixed clauses, values bound
+            # refills continue from the last (created, id) read (a keyset cursor, not OFFSET), so a row added or removed
+            # between reads can't repeat or skip a row (CodeRabbit, #121)
+            more = f"SELECT * FROM library_items WHERE {base} AND (created < ? OR (created = ? AND id < ?)) ORDER BY created DESC, id DESC LIMIT ?"  # noqa: S608
+            rows, batch = [], lim + len(rest)
+            part = self.store.q(sql, (*args, batch))
             while True:  # refill by rows (a token can have several) until the page is full or no rows remain
-                part = self.store.q(sql, (*args, batch, off))
                 rows.extend(r for r in part if r["token"] not in takes["binned"])
                 if len(rows) >= lim or len(part) < batch or not rest:
                     break
-                off += len(part)
+                last = part[-1]
                 batch = min(batch * 2, 2000)  # skipped rows grow the next read, so a long run of them takes few queries
+                part = self.store.q(more, (*args, last["created"], last["created"], last["id"], batch))
             by_run = {r["run_id"]: r for r in runs}
             items = []
             for r in rows:

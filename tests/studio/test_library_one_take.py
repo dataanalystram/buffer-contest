@@ -168,3 +168,31 @@ def test_duplicate_rows_of_an_overflow_binned_token_never_shorten_the_page(human
     monkeypatch.setattr(library, "BIN_SQL_MAX", 0)   # the binned token is past the bound list: skipped as rows are read
     got = [i["id"] for i in h.library._list(A, limit=2)["items"]]
     assert set(got) == set(old) and len(got) == 2, got
+
+
+def test_a_row_removed_between_refills_never_skips_a_row(human, app, monkeypatch):
+    """CodeRabbit (#121): refills continue from the last (created, id) read, not an OFFSET, so a row removed (or added)
+    between two reads can't shift the next read past a row that belongs on the page."""
+    st, h = app.state.store, app.state.house
+    old = [h.library.save_bytes(A, jpeg(360 + i, 360), f"r{i}.jpg")["id"] for i in range(2)]
+    tok = h.put_media(A, MP4 + b"gone", "gone.mp4", kind="render", meta={"type": "video"})
+    _take(st, "acc_1", [{"id": "c0", "status": "binned", "token": tok}], name="Gone binned")
+    h.library.backfill(A)
+    row = dict(st.q("SELECT * FROM library_items WHERE user_id=? AND token=?", ("acc_1", tok))[0])
+    for _ in range(2):  # three rows of the binned token: the first read (lim + 1 overflow token) takes exactly them
+        st.x("INSERT INTO library_items(user_id,name,kind,mime,size,token,storage,source,meta,created) VALUES(?,?,?,?,?,?,?,?,?,?)",
+             ("acc_1", row["name"], row["kind"], row["mime"], row["size"], tok, row["storage"], row["source"], row["meta"] or "{}", time.time() + 2000))
+    st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 2000, "acc_1", tok))
+    monkeypatch.setattr(library, "BIN_SQL_MAX", 0)
+    real, reads = st.q, []
+
+    def q(sql, args=()):
+        out = real(sql, args)
+        if "FROM library_items WHERE" in sql and "ORDER BY created DESC, id DESC" in sql:
+            reads.append(len(out))
+            if len(reads) == 1:  # between the first read and the refill, one of the binned rows already read is removed
+                st.x("DELETE FROM library_items WHERE id=?", (out[0]["id"],))
+        return out
+    monkeypatch.setattr(st, "q", q)
+    got = [i["id"] for i in h.library._list(A, limit=2)["items"]]
+    assert len(reads) >= 2 and set(got) == set(old) and len(got) == 2, (got, reads)
