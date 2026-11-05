@@ -257,6 +257,7 @@ PUBLIC = {  # path -> why it is open to anyone
     "/": "landing / app shell", "/privacy": "privacy notice", "/static/{name}": "static assets", "/api/stats": "public counters",
     "/static/examples/{brand}/{name}": "pre-rendered example brand gallery (committed files)",
     "/static/{name:path}": "static assets (nested: fonts, brand, docs shots)", "/app": "app shell; redirects to / when signed out",
+    "/threads/{tid}": "app shell on a thread's address; redirects to / when signed out (the run is read through the owner-scoped API)",
     "/terms": "terms of use", "/security": "security page", "/favicon.ico": "favicon", "/og.png": "social preview image",
     "/robots.txt": "crawl rules", "/sitemap.xml": "sitemap", "/docs": "documentation", "/docs/{slug}": "documentation page",
     "/docs/search.json": "documentation search index",

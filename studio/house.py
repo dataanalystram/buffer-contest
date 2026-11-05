@@ -720,6 +720,35 @@ class House:
         from . import mcp_runs  # what an MCP client (Claude, ChatGPT...) did on this run: its steps and its brain line
         return mcp_runs.merge(self.store, d)
 
+    def run_tag(self, a: Actor, rid: int) -> str | None:
+        """A validator for what ``run()`` would show of a BUSY run, read as md5s on Postgres (~100 bytes, never the run's
+        text) so an open thread's live poll costs no egress while nothing changed (the run-list md5s of #119). ``None``
+        when the full read must run: a missing or foreign run (its 404 comes from ``run()``), a run that is not running,
+        or a stale one (``run()`` reports it stopped). It covers the run's own columns and its MCP steps (insert-only)."""
+        import hashlib
+        self._sweep_quietly()  # the throttled watchdog still runs on a 304 poll, as it does on every run read
+        if self.store.pg:
+            rows = self.store.q("SELECT status, updated, md5(COALESCE(input,'')) AS hi, md5(COALESCE(steps,'')) AS hs, "
+                                "md5(COALESCE(result,'')) AS hr FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
+        else:  # SQLite (local and tests): no egress, the text is hashed here
+            rows = [{"status": r["status"], "updated": r["updated"],
+                     **{k: hashlib.md5((r[c] or "").encode()).hexdigest() for k, c in (("hi", "input"), ("hs", "steps"), ("hr", "result"))}}
+                    for r in self.store.q("SELECT status, updated, input, steps, result FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))]
+        if not rows:
+            return None
+        d = rows[0]
+        if d["status"] not in ("running", "rendering") or (d["updated"] or 0) < _now() - STALE_RUN:
+            return None
+        try:
+            from . import mcp_runs
+            mcp_runs.ensure(self.store)
+            m = self.store.q("SELECT COUNT(*) AS n, MAX(id) AS mx FROM mcp_calls WHERE user_id=? AND run_id=?", (a.uid, rid))[0]
+            mk = f"{m['n'] or 0}.{m['mx'] or 0}"
+        except Exception:  # noqa: BLE001  no validator rather than a wrong one: the poll reads the full run
+            return None
+        raw = "|".join(str(x) for x in (rid, d["status"], d["hi"], d["hs"], d["hr"], mk))
+        return '"r' + hashlib.sha256(raw.encode()).hexdigest()[:24] + '"'
+
     def _sweep_quietly(self) -> None:
         takes_ = getattr(self, "takes", None)
         if takes_ is not None and takes_.holds_take_lock():  # never nested in a take's lock (it takes other takes' locks)

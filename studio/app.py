@@ -12,6 +12,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import Body, FastAPI, Query, Request
+from fastapi.encoders import jsonable_encoder
 from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
@@ -278,6 +279,17 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.get("/app", include_in_schema=False)
     def app_page(request: Request):
         return RedirectResponse("/", 302) if not _connected(request) else HTMLResponse(staticver.page("index.html"))
+
+    # a thread's own address (Make a post): /threads/thr_... (its public id, never the run's number); a reload reopens that
+    # thread (app.js reads the path through GET /api/threads/{tid}: owner-scoped, a foreign or missing id is a 404)
+    @app.get("/threads/{tid}", include_in_schema=False)
+    def thread_page(tid: str, request: Request):
+        from .thread_bin import ID_RE
+        if not _connected(request):
+            return RedirectResponse("/", 302)
+        if not ID_RE.match(tid):  # only a public thread id (thr_ + 26 base32); anything else opens Make a post
+            return RedirectResponse("/?tab=agent", 302)
+        return HTMLResponse(staticver.page("index.html"))
 
     for _path, _file in (("/privacy", "privacy.html"), ("/terms", "terms.html"), ("/security", "security.html")):
         def _legal(_f=_file):
@@ -996,7 +1008,21 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.get("/api/agent/runs/{rid}")
     def run_get(rid: int, request: Request):
-        return house.run(actor(request), rid)
+        # a busy run carries an ETag: an open thread's live poll sends If-None-Match and an unchanged run answers 304 with
+        # no body, read from md5s only (house.run_tag). The tag is taken BEFORE the read, so a change in between is never
+        # hidden (the next poll sees a different tag). A finished, stale, foreign or missing run always takes the full read.
+        a = actor(request)
+        tag = house.run_tag(a, rid)
+        from .library import not_modified
+        if tag and not_modified(request, tag):
+            return Response(status_code=304, headers={"ETag": tag, "Cache-Control": "private, no-cache"})
+        out = house.run(a, rid)
+        try:  # the thread's public id: the page keeps it in the address bar (/threads/thr_...) so a reload stays on it
+            from .thread_bin import public_id
+            out["thread_id"] = public_id(store, a.uid, rid)
+        except Exception:  # noqa: BLE001  an address is a nicety; the run still opens
+            pass
+        return JSONResponse(jsonable_encoder(out), headers={"ETag": tag, "Cache-Control": "private, no-cache"}) if tag else out
 
     @app.post("/api/agent/runs/{rid}/revise")
     def run_revise(rid: int, request: Request, body: dict = Body(...)):

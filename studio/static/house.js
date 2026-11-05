@@ -151,31 +151,57 @@ async function addKeyframes(body) {
 }
 window.hqAddKeyframes = addKeyframes;
 
+// The open thread's live refresh while its run works (owner ask, 5 Nov 2026). Each poll sends the last ETag and an
+// unchanged busy run answers 304 with no body, read from md5s on the server (house.run_tag, no run text: no DB egress).
+// Unchanged answers back off (1.4 s up to 10 s); a change draws at once and resets the pace. A hidden tab asks nothing at
+// all and catches up the moment it is shown (HQLoad.wake). A newer watcher, another thread, leaving the thread or the
+// screen stops it (stopWatch): the request in flight is aborted (AbortController), so a late answer never draws.
+const POLL_MIN = 1400, POLL_MAX = 10000;
+async function runPoll(id, tag, signal) {
+  const o = { headers: { "Content-Type": "application/json" }, credentials: "same-origin", cache: "no-store", signal };
+  if (tag) o.headers["If-None-Match"] = tag;
+  const r = await fetch(`/api/agent/runs/${encodeURIComponent(id)}`, o);
+  if (r.status === 304) return { same: true, tag };
+  let j = null; try { j = await r.json(); } catch (_) { j = {}; }
+  if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; throw e; }
+  return { same: false, run: j, tag: r.headers.get("ETag") || "" };
+}
+function stopWatch() {
+  clearTimeout(H.poll); H.watching = null;
+  if (H.unwake) { H.unwake(); H.unwake = null; }
+  if (H.abort) { H.abort.abort(); H.abort = null; }
+}
 function watch(id) {
   // keeps polling through a failed request (a deploy, a cold start): one error used to stop the UI at "Write captions"
-  clearTimeout(H.poll); H.watching = id;
-  if (H.unwake) H.unwake();  // a replaced watcher's wake listener goes with its timer (CodeRabbit, #118)
-  H.unwake = null;
+  stopWatch(); H.watching = id;
   const gen = H.gen = (H.gen || 0) + 1, mine = () => H.watching === id && H.gen === gen;  // even for the same run id
-  let errs = 0;
-  // a hidden tab asks at most every 30 s and catches up the moment it is shown again (loading.js pollMs / wake)
+  const ac = H.abort = new AbortController();
+  let errs = 0, tag = "", pace = POLL_MIN;
+  const wakeUp = () => HQLoad.wake(() => { if (!mine()) return; clearTimeout(H.poll); tick(); });
+  // a hidden tab never polls: it waits for the tab to be shown again (loading.js wake), then catches up at once
   const later = (ms) => {
     if (H.unwake) H.unwake();
+    H.unwake = null;
+    if (document.hidden) { H.unwake = wakeUp(); return; }
     const d = window.HQLoad && HQLoad.pollMs ? HQLoad.pollMs(ms) : ms;
     H.poll = setTimeout(tick, d);
-    H.unwake = d > ms ? HQLoad.wake(() => { if (!mine()) return; clearTimeout(H.poll); tick(); }) : null;
+    H.unwake = d > ms ? wakeUp() : null;
   };
   const tick = async () => {
     if (!mine()) return;  // another thread was picked since (chat.js stops this poll), or this run is watched afresh
     if (H.unwake) { H.unwake(); H.unwake = null; }
+    if (document.hidden) return later(POLL_MIN);  // no request while hidden
     try {
-      const r = await api(`/api/agent/runs/${id}`); errs = 0;
+      const got = await runPoll(id, tag, ac.signal); errs = 0;
       if (!mine()) return;  // the answer landed after another thread was picked: never drawn over it
+      if (got.same) { pace = Math.min(POLL_MAX, Math.round(pace * 1.6)); return later(pace); }  // unchanged: back off
+      const r = got.run; tag = got.tag; pace = POLL_MIN;
       showRun(r);
       if (["running", "rendering"].includes(r.status)) later(1400);
-      else { loadRuns(); readyBadge(); }
+      else { if (H.watching === id) { H.watching = null; H.abort = null; } loadRuns(); readyBadge(); }
     } catch (e) {
       if (!mine()) return;  // a newer watcher owns the poll now: a late failure never touches its timer or wake listener
+      if (window.HQLoad && HQLoad.aborted(e)) return;
       errs += 1;
       if (errs === 3) toast("Reconnecting to the agent…");
       later(Math.min(15000, 1500 * 2 ** Math.min(errs, 4)));
@@ -183,6 +209,9 @@ function watch(id) {
   };
   H.poll = setTimeout(tick, 900);
 }
+// leaving the thread's screen stops the poll; coming back to a run that is still working starts it again
+function resumeWatch() { if (H.run && H.watching == null && ["running", "rendering"].includes(H.run.status) && !$("#tab-agent").hidden) watch(H.run.id); }
+window.stopWatch = stopWatch; window.resumeWatch = resumeWatch;
 
 // ---------------------------------------------------------------- run view
 function showRun(r) {
