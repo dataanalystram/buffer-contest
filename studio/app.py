@@ -852,7 +852,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         client, etag, size = demo_guard.client_ip(request), f.get("etag") or "", int(f.get("size") or 0)
         if egress.repeat_blocked(client, etag, size):
             return None  # a page re-fetching the same file in a loop: serve() answers 429 (owner exempt), no new signature
-        egress.repeat_count(client, etag, size)  # each redirect counts as one whole download for the repeat limit
+        # each signature counts as one whole download plus 256 KB for the repeat limit, so even a tiny file re-fetched in a
+        # loop stops being signed after a few rounds (R2 Class B operations are capped, studio/r2usage.py)
+        egress.repeat_count(client, etag, size + 256 * 1024)
         return RedirectResponse(blobstore.bucket().browser_url(f["r2_key"]), 302,
                                 headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 

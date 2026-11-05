@@ -1,0 +1,281 @@
+"""R2 media behind flags (off by default): SigV4 signing, the browser redirect, copy-only migration, the cleanup gate,
+the bucket setup script and the free-tier caps (studio/r2.py, studio/r2usage.py, studio/migrate_media.py,
+scripts/r2_bucket_setup.py; docs/STORAGE.md, docs/DATA_RESET_PLAN.md). The bucket is the in-memory stub from
+test_admin_storage behind httpx.MockTransport: nothing here reaches Cloudflare.
+"""
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from studio import blobstore, migrate_media, r2, r2usage
+from studio.actions import Actor
+
+from .conftest import image_bytes
+from .test_admin_storage import StubS3, other_user  # noqa: F401  (the shared stub bucket)
+
+ROOT = Path(__file__).resolve().parents[2]
+BROWSER = {"Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "video"}
+
+
+@pytest.fixture
+def s3(monkeypatch):
+    stub = StubS3()
+    for k, v in {"R2_ACCOUNT_ID": "acct", "R2_ACCESS_KEY_ID": "AKIDTEST", "R2_SECRET_ACCESS_KEY": "dummy-secret-for-tests",
+                 "R2_BUCKET": "hq-media", "R2_ENDPOINT": "https://acct.r2.test"}.items():
+        monkeypatch.setenv(k, v)
+    for k in ("HQ_MEDIA_STORAGE", "R2_JURISDICTION", "HQ_MEDIA_REDIRECT", "HQ_R2_MAX_BYTES", "HQ_R2_MAX_CLASS_A", "HQ_R2_MAX_CLASS_B"):
+        monkeypatch.delenv(k, raising=False)
+    blobstore.set_http(httpx.Client(transport=httpx.MockTransport(stub)))
+    yield stub
+    assert blobstore.join_background(10)
+    blobstore.set_http(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_bucket_by_default(monkeypatch):
+    for k in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "R2_ENDPOINT", "R2_JURISDICTION",
+              "HQ_MEDIA_REDIRECT"):
+        monkeypatch.delenv(k, raising=False)
+    yield
+    blobstore.join_background(10)
+
+
+def _db_media(app, monkeypatch, data: bytes, name: str = "old.png") -> str:
+    """A media row written the old way (bytes in the database)."""
+    monkeypatch.setenv("HQ_MEDIA_STORAGE", "db")
+    tok = app.state.house.put_media(Actor("acc_1"), data, name)
+    monkeypatch.delenv("HQ_MEDIA_STORAGE")
+    return tok
+
+
+def _bucket():
+    return r2.Bucket(r2.config(), http=blobstore._client())
+
+
+# ------------------------------------------------------------------ signing and endpoints
+def test_sigv4_presign_matches_an_independent_signer():
+    """Known vector: botocore's S3SigV4QueryAuth (path-style, UNSIGNED-PAYLOAD) signed this exact request at this time
+    with the AWS documentation's example secret; our stdlib signer must give the same signature."""
+    cfg = {"endpoint": "https://acct.r2.test", "key": "AKIDEXAMPLE", "secret": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+           "bucket": "hq-media", "region": "auto"}
+    url = r2.presign(cfg, "GET", "media/abc/x~y.png", None, 900, now=datetime(2026, 11, 5, 18, 22, 42, tzinfo=timezone.utc))
+    q = parse_qs(urlparse(url).query)
+    assert urlparse(url).path == "/hq-media/media/abc/x~y.png"
+    assert q["X-Amz-Credential"] == ["AKIDEXAMPLE/20261105/auto/s3/aws4_request"] and q["X-Amz-SignedHeaders"] == ["host"]
+    assert q["X-Amz-Signature"] == ["1ada206c6125ee490d3e8a46d48fce209044c2978ce03cac6a97242fa30978ee"]
+
+
+def test_endpoint_follows_the_jurisdiction_and_fails_closed(monkeypatch):
+    acct = "3a319edacac176a5c9a271bd951a6af8"
+    for k, v in {"R2_ACCOUNT_ID": acct, "R2_ACCESS_KEY_ID": "AKIDTEST", "R2_SECRET_ACCESS_KEY": "dummy-secret-for-tests",
+                 "R2_BUCKET": "huhqueue-media"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("R2_ENDPOINT", raising=False)
+    assert r2.config()["endpoint"] == f"https://{acct}.r2.cloudflarestorage.com"
+    monkeypatch.setenv("R2_JURISDICTION", "eu")
+    assert r2.config()["endpoint"] == f"https://{acct}.eu.r2.cloudflarestorage.com"
+    monkeypatch.setenv("R2_JURISDICTION", "mars")
+    assert r2.config() is None                                  # an unknown jurisdiction: off, never a guessed host
+    monkeypatch.delenv("R2_JURISDICTION")
+    monkeypatch.setenv("R2_ENDPOINT", "http://plain.example")
+    assert r2.config() is None                                  # https only
+    monkeypatch.setenv("R2_ENDPOINT", f"https://{acct}.eu.r2.cloudflarestorage.com/")
+    assert r2.config()["endpoint"] == f"https://{acct}.eu.r2.cloudflarestorage.com"
+    monkeypatch.delenv("R2_ENDPOINT")
+    monkeypatch.setenv("R2_ACCOUNT_ID", "evil.example/x")
+    assert r2.config() is None                                  # nothing but one DNS label goes into the host
+
+
+def test_r2_is_off_by_default(app, human):
+    assert r2.config() is None and blobstore.backend_name() == "db"
+    tok = app.state.house.put_media(Actor("acc_1"), image_bytes(20, 20), "a.png")
+    assert app.state.store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"] is None
+
+
+# ------------------------------------------------------------------ /m/ redirect (HQ_MEDIA_REDIRECT=1)
+def test_browser_gets_a_presigned_get_of_at_most_15_minutes(app, human, s3, monkeypatch):
+    monkeypatch.setenv("HQ_MEDIA_REDIRECT", "1")
+    data = image_bytes(64, 64)
+    tok = app.state.house.put_media(Actor("acc_1"), data, "card.png")
+    r = TestClient(app, base_url="https://hq.test").get(f"/m/{tok}", headers=BROWSER, follow_redirects=False)
+    assert r.status_code == 302
+    loc = urlparse(r.headers["location"])
+    q = parse_qs(loc.query)
+    assert loc.hostname == "acct.r2.test" and int(q["X-Amz-Expires"][0]) <= 900
+    assert r.headers["cache-control"] == "no-store" and r.headers["referrer-policy"] == "no-referrer"
+    assert "dummy-secret" not in r.headers["location"]
+
+
+def test_buffer_and_the_worker_get_bytes_from_the_proxy_never_a_redirect(app, human, s3, monkeypatch):
+    monkeypatch.setenv("HQ_MEDIA_REDIRECT", "1")
+    data = image_bytes(64, 48)
+    tok = app.state.house.put_media(Actor("acc_1"), data, "card.png")
+    c = TestClient(app, base_url="https://hq.test")
+    r = c.get(f"/m/{tok}", follow_redirects=False)              # no Sec-Fetch headers: Buffer, Instagram, the worker
+    assert r.status_code == 200 and r.content == data
+    h = c.head(f"/m/{tok}", headers=BROWSER, follow_redirects=False)
+    assert h.status_code == 200 and h.headers["content-length"] == str(len(data))
+
+
+def test_ids_are_checked_before_anything_is_signed(app, human, s3, monkeypatch):
+    monkeypatch.setenv("HQ_MEDIA_REDIRECT", "1")
+    signed = []
+    real = r2.presign
+    monkeypatch.setattr(r2, "presign", lambda *a, **k: signed.append(a[1]) or real(*a, **k))
+    c = TestClient(app, base_url="https://hq.test")
+    assert c.get("/m/doesNotExist123456.png", headers=BROWSER, follow_redirects=False).status_code == 404
+    assert c.get("/m/trash~whatever.png", headers=BROWSER, follow_redirects=False).status_code == 404
+    item = app.state.house.library.save_bytes(Actor("acc_1"), image_bytes(300, 200), "p.png")
+    signed.clear()
+    stranger = other_user(app, "acc_2", "x@example.com")
+    assert stranger.get(f"/api/library/{item['id']}/file", headers=BROWSER, follow_redirects=False).status_code == 404
+    assert stranger.get("/api/library/999999/file", headers=BROWSER, follow_redirects=False).status_code == 404
+    assert signed == []                                         # a foreign or missing id never reaches the signer
+
+
+def test_a_redirect_loop_falls_back_to_the_repeat_limit(app, human, s3, monkeypatch):
+    monkeypatch.setenv("HQ_MEDIA_REDIRECT", "1")
+    tok = app.state.house.put_media(Actor("acc_1"), image_bytes(80, 80), "loop.png")
+    c = TestClient(app, base_url="https://hq.test")
+    codes = [c.get(f"/m/{tok}", headers=BROWSER, follow_redirects=False).status_code for _ in range(8)]
+    assert codes[0] == 302 and codes[-1] == 429                 # an anonymous loop stops being signed
+
+
+# ------------------------------------------------------------------ migration
+def test_copy_only_migration_keeps_the_bytea_and_reads_switch_to_r2(app, human, s3, monkeypatch):
+    store = app.state.store
+    data = image_bytes(50, 40)
+    tok = _db_media(app, monkeypatch, data)
+    st = migrate_media.migrate(store, _bucket(), keep_db_copy=True, log=lambda *_: None)
+    assert st["moved"] == 1 and st["failed"] == 0
+    row = store.q("SELECT data, storage_key, sha256 FROM media WHERE token=?", (tok,))[0]
+    assert bytes(row["data"]) == data and row["storage_key"] and row["sha256"] == hashlib.sha256(data).hexdigest()
+    s3.calls.clear()
+    assert TestClient(app, base_url="https://hq.test").get(f"/m/{tok}").content == data
+    assert ("GET", row["storage_key"]) in s3.calls              # read from R2: the database copy stays put
+    for k in ("R2_ACCOUNT_ID", "R2_BUCKET"):
+        monkeypatch.delenv(k)                                   # R2 switched off again: the kept copy serves
+    from studio import mediacache
+    mediacache.of(store).forget([tok])
+    assert TestClient(app, base_url="https://hq.test").get(f"/m/{tok}").content == data
+
+
+def test_a_copy_that_fails_its_checksum_never_switches_the_row(app, human, s3, monkeypatch):
+    store = app.state.store
+    tok = _db_media(app, monkeypatch, image_bytes(30, 30))
+    s3.corrupt_get = True
+    st = migrate_media.migrate(store, _bucket(), keep_db_copy=True, log=lambda *_: None)
+    assert st["moved"] == 0 and st["failed"] == 1
+    assert store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"] is None
+
+
+def test_dropping_db_copies_refuses_without_a_verified_backup(app, monkeypatch, capsys, s3):
+    monkeypatch.setenv("DATABASE_URL", app.state.settings.db_path)
+    tok = _db_media(app, monkeypatch, image_bytes(20, 20))
+    for flags in (["--drop-db-copy"], ["--cleanup"]):
+        assert migrate_media.main(["--to", "r2", *flags]) == 2
+        assert "--i-have-a-verified-backup" in capsys.readouterr().err
+    assert app.state.store.q("SELECT data FROM media WHERE token=?", (tok,))[0]["data"] is not None and not s3.calls
+
+
+def test_cleanup_drops_only_copies_whose_object_reverifies(app, human, s3, monkeypatch):
+    store = app.state.store
+    a, b = image_bytes(20, 20), image_bytes(21, 21)
+    ta, tb = _db_media(app, monkeypatch, a, "a.png"), _db_media(app, monkeypatch, b, "b.png")
+    migrate_media.migrate(store, _bucket(), keep_db_copy=True, log=lambda *_: None)
+    kb = store.q("SELECT storage_key FROM media WHERE token=?", (tb,))[0]["storage_key"]
+    s3.objects[kb] = b"tampered"
+    st = migrate_media.cleanup(store, _bucket(), log=lambda *_: None)
+    assert st["dropped"] == 1 and st["kept"] == 1
+    assert store.q("SELECT data FROM media WHERE token=?", (ta,))[0]["data"] is None
+    assert bytes(store.q("SELECT data FROM media WHERE token=?", (tb,))[0]["data"]) == b
+
+
+def test_rewrite_of_a_copy_only_row_updates_both_copies(app, s3):
+    store = app.state.store
+    store.x("INSERT INTO media(token,user_id,name,mime,data,size,meta,created,storage_key,sha256) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("rw1", "acc_1", "v.mp4", "video/mp4", b"old-bytes", 9, "{}", time.time(), "media/x/rw1", "0"))
+    s3.objects["media/x/rw1"] = b"old-bytes"
+    blobstore.rewrite(store, "media", "token=?", ("rw1",), b"new-bytes")
+    assert s3.objects["media/x/rw1"] == b"new-bytes"
+    assert bytes(store.q("SELECT data FROM media WHERE token=?", ("rw1",))[0]["data"]) == b"new-bytes"
+
+
+# ------------------------------------------------------------------ bucket setup script
+def _setup_script():
+    spec = importlib.util.spec_from_file_location("r2_bucket_setup", ROOT / "scripts" / "r2_bucket_setup.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_bucket_setup_is_a_dry_run_by_default(monkeypatch, capsys, s3):
+    mod = _setup_script()
+    monkeypatch.setenv("PUBLIC_URL", "https://huhqueue-studio.onrender.com")
+    sent = []
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200)))
+    assert mod.main([], http=http) == 0
+    out = capsys.readouterr().out
+    assert sent == [] and "Dry run" in out and "<AllowedOrigin>https://huhqueue-studio.onrender.com</AllowedOrigin>" in out
+    assert "*" not in mod.cors_xml("https://huhqueue-studio.onrender.com")
+    assert mod.main(["--apply"], http=http) == 0 and sorted(next(p for p in r.url.query.decode().split("&") if p in ("cors=", "lifecycle=")) for r in sent) == ["cors=", "lifecycle="]
+
+
+# ------------------------------------------------------------------ free-tier caps
+def test_storage_cap_keeps_new_media_in_the_database(app, human, s3, monkeypatch, capsys):
+    monkeypatch.setenv("HQ_R2_MAX_BYTES", "100")
+    data = image_bytes(120, 80)
+    assert len(data) > 100
+    tok = app.state.house.put_media(Actor("acc_1"), data, "big.png")
+    row = app.state.store.q("SELECT data, storage_key FROM media WHERE token=?", (tok,))[0]
+    assert row["storage_key"] is None and bytes(row["data"]) == data and not s3.objects
+    assert "R2 storage cap reached" in capsys.readouterr().out
+
+
+def test_class_a_cap_stops_writes_and_the_migration(app, human, s3, monkeypatch):
+    store = app.state.store
+    tok = _db_media(app, monkeypatch, image_bytes(20, 20))
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_A", "0")
+    t2 = app.state.house.put_media(Actor("acc_1"), image_bytes(22, 22), "n.png")
+    assert store.q("SELECT storage_key FROM media WHERE token=?", (t2,))[0]["storage_key"] is None
+    st = migrate_media.migrate(store, _bucket(), keep_db_copy=True, log=lambda *_: None)
+    assert st["moved"] == 0 and "write cap" in st["capped"] and not s3.objects
+    assert store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"] is None
+
+
+def test_class_b_cap_serves_db_copies_and_refuses_r2_only_files(app, human, s3, monkeypatch):
+    store = app.state.store
+    data = image_bytes(40, 40)
+    tok = _db_media(app, monkeypatch, data)
+    migrate_media.migrate(store, _bucket(), keep_db_copy=True, log=lambda *_: None)
+    only = app.state.house.put_media(Actor("acc_1"), image_bytes(41, 41), "r2only.png")
+    monkeypatch.setenv("HQ_R2_MAX_CLASS_B", "0")
+    s3.calls.clear()
+    c = TestClient(app, base_url="https://hq.test")
+    assert c.get(f"/m/{tok}").content == data and not s3.calls   # the kept copy, no R2 read
+    assert c.get(f"/m/{only}").status_code == 503                # clear error, never a paid read
+
+
+def test_operation_counts_persist_prune_and_show_in_admin(app, human, s3, monkeypatch):
+    store = app.state.store
+    for m in ("2025-01", "2025-02", "2025-03", "2025-04"):
+        store.x("INSERT INTO r2_usage(month, cls, n) VALUES(?,?,?)", (m, "A", 5))
+    app.state.house.put_media(Actor("acc_1"), image_bytes(30, 30), "x.png")
+    r2usage.flush(store)
+    months = {r["month"] for r in store.q("SELECT DISTINCT month FROM r2_usage")}
+    assert r2usage.month() in months and len(months) <= r2usage.KEEP_MONTHS and "2025-01" not in months
+    assert r2usage.ops(store)["A"] >= 1
+    monkeypatch.setenv("HQ_ADMIN_IDS", "acc_1")
+    r2usage.forget_cache()                                      # stored bytes are re-read at most once a minute
+    got = human.get("/api/admin/egress").json()["r2"]
+    assert got["configured"] and got["class_a"] >= 1 and got["max_bytes"] == 8 * 1024 ** 3 and got["stored_bytes"] > 0
+    assert set(got) >= {"class_b", "max_class_a", "max_class_b", "write_blocked", "read_blocked"}
