@@ -167,10 +167,13 @@ def _used_day(store, day: str, uid: str) -> int:
 
 
 def key_scope(key: str) -> str:
-    """The meter for one Channel3 key: a keyed hash of the key itself (never the key), so two accounts that save the same
-    key share ONE free allowance, the way Channel3 counts it."""
-    secret = (os.environ.get("TOKEN_KEY") or os.environ.get("SESSION_SECRET") or "huhqueue").encode()
-    return "key:" + hmac.new(secret, ("c3key|" + key).encode(), hashlib.sha256).hexdigest()[:32]
+    """The meter for one Channel3 key: a one-way hash of the key itself (never the key), so two accounts that save the same
+    key share ONE free allowance, the way Channel3 counts it. No server secret in it, so rotating TOKEN_KEY or
+    SESSION_SECRET never resets a key's count (an API key is long and random: its hash can't be reversed)."""
+    return "key:" + hashlib.sha256(("huhqueue-c3-meter|" + key).encode()).hexdigest()[:32]
+
+
+SPEND_LOCK = 7_310_023   # Postgres advisory lock id for the credit meter (one reservation at a time across processes)
 
 
 def spend(store, uid: str, byo: bool, credits: int = SEARCH_CREDITS, key: str = "") -> None:
@@ -181,6 +184,8 @@ def spend(store, uid: str, byo: bool, credits: int = SEARCH_CREDITS, key: str = 
     now = time.time()
     month, day, resets = _month(now), _day(now), _resets(now)
     with store.tx():
+        if store.pg:   # Store.tx() serialises threads of one process; this serialises every process and instance
+            store.q("SELECT pg_advisory_xact_lock(?) AS locked", (SPEND_LOCK,))
         if byo:
             checks = [(key_scope(key or byo_key(store, uid)), monthly_cap(), "your Channel3 key's free 1,000 credits this month")]
         else:
@@ -646,9 +651,12 @@ def with_disclosure(text: str, link: str = "", affiliate: bool = True) -> str:
 
 
 def go_codes(public_url: str, text: str) -> list[str]:
-    """Every HuhQueue shop link code in the text, all of them (callers refuse more than MAX_LINKS, never skip any)."""
-    base = re.escape(public_url.rstrip("/") + "/go/")
-    return list(dict.fromkeys(re.findall(base + r"([A-Za-z0-9_\-]{10,32})", text or "")))
+    """Every HuhQueue shop link code in the text, all of them (callers refuse more than MAX_LINKS, never skip any). The
+    host matches in any letter case and with or without the scheme's s, the way a browser would still open it."""
+    p = urlparse(public_url)
+    host = re.escape((p.hostname or "").lower()) + (f":{p.port}" if p.port else "")
+    rx = re.compile(r"(?:https?://)?" + host + r"/go/([A-Za-z0-9_\-]{10,32})", re.IGNORECASE)
+    return list(dict.fromkeys(rx.findall(text or "")))
 
 
 SOURCE_AD = "https://www.ccpc.ie/business/help-for-business/guidelines-for-business/influencer-advertising-and-marketing"

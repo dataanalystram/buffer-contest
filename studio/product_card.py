@@ -80,11 +80,17 @@ def draw_overlay(ov, card: dict, p: dict, kit: dict, avoid: tuple[int, int] | No
     ny = y0 + pad + int(f_name.size * 1.35)
     if price:
         d.text((m + pad, ny), price, font=f_price, fill=txt + (255,))
+    tw = 0
     if cta:
+        while cta and d.textlength(cta, font=f_small) > pw * 0.45:
+            cta = cta[:-2].rstrip() + "…" if len(cta) > 2 else ""
         tw = int(d.textlength(cta, font=f_small)) + 32
         cx1, cy1 = m + pw - pad, y0 + ph - pad
         d.rounded_rectangle((cx1 - tw, cy1 - int(f_small.size * 1.9), cx1, cy1), radius=999, fill=acc + (255,))
         d.text((cx1 - tw + 16, cy1 - int(f_small.size * 1.55)), cta, font=f_small, fill=prim + (255,))
+    room = pw - 2 * pad - (tw + 16 if tw else 0)   # the label stops before the CTA pill
+    while label and d.textlength(label, font=f_small) > room:
+        label = label[:-2].rstrip() + "…" if len(label) > 2 else ""
     if label:
         d.text((m + pad, y0 + ph - pad - f_small.size), label, font=f_small, fill=txt + (210,))
     if card.get("code"):

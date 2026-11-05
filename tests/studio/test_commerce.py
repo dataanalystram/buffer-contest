@@ -438,3 +438,29 @@ def test_editing_a_shop_post_keeps_the_commerce_checks(human, c3, fake):
     r = human.patch("/api/posts/d9", json={"text": f"Great buds {d['link']}"})
     assert r.status_code in (400, 422) and "#Ad" in r.json()["error"], r.text
     assert not any(e.get("text", "").startswith("Great buds") for e in fake.edits)
+
+
+def test_shop_links_are_found_in_any_letter_case_and_the_key_meter_survives_secret_rotation(monkeypatch):
+    t = "#Ad x HTTPS://HQ.TEST/go/abcdefghijkl and hq.test/go/mnopqrstuvwx"
+    assert commerce.go_codes("https://hq.test", t) == ["abcdefghijkl", "mnopqrstuvwx"]
+    monkeypatch.setenv("TOKEN_KEY", "one")
+    a = commerce.key_scope(BYO)
+    monkeypatch.setenv("TOKEN_KEY", "two")
+    monkeypatch.setenv("SESSION_SECRET", "three")
+    assert commerce.key_scope(BYO) == a
+
+
+def test_upper_case_shop_link_still_needs_ad(human):
+    pf = human.post("/api/preflight", json={"channel_id": "ch_x", "text": "Great buds HTTPS://HQ.TEST/go/abcdefghijkl"}).json()
+    assert "commerce.ad_first" in _rules(pf)
+
+
+def test_long_cta_and_label_never_overlap():
+    from PIL import Image
+
+    from studio import product_card
+    ov = Image.new("RGBA", (540, 960), (0, 0, 0, 0))
+    p = {"colors": {"primary": "#18181B", "accent": "#C9ACFA", "text": "#FFFFFF"}, "safe_margin": 40}
+    card = product_card.clean({"name": "Lamp", "price": "€20", "cta": "W" * 40, "link_label": "W" * 40})
+    product_card.draw_overlay(ov, card, p, {}, avoid=(600, 700))
+    assert ov.getbbox()

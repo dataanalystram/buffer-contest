@@ -63,7 +63,7 @@ window.openClipEditor = function (id) {
   $c("ceTabProd").hidden = t.style === "opus" || !cut;
   $c("ceProdOn").checked = !!pc;
   $c("ceProdName").value = (pc && pc.name) || ""; $c("ceProdPrice").value = (pc && pc.price) || "";
-  $c("ceProdCta").value = (pc && pc.cta) || "Shop now"; $c("ceProdLabel").value = (pc && pc.link_label) || "Link in bio";
+  $c("ceProdCta").value = pc ? pc.cta || "" : "Shop now"; $c("ceProdLabel").value = pc ? pc.link_label || "" : "Link in bio";  // defaults only for a new card
   $c("ceProdPos").value = (pc && pc.position) || "bottom";
   $c("ceProdFields").hidden = !pc;
   $c("ceErr").textContent = "";
