@@ -141,6 +141,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>The Inbox is the first screen after you sign in: a dashboard of your day. From the top:</p>
 <ul><li><b>Stats</b>: posts scheduled, posts awaiting approval, failed posts and the Buffer requests you have left.</li>
 <li><b>Waiting for your approval</b>: posts your agents wrote, as cards with each channel's media and the app that wrote it. Approve and they go to Buffer at their time. This is the only place approvals live.</li>
+<li><b>Video links from your AI apps</b>: a card with the link, a note that nothing was fetched yet, and the rights statement to tick before Approve. Tired of approving every video? Settings → Privacy &amp; data → <b>Auto-approve video links</b> (off by default) approves them for all your apps or the ones you pick, logs each one in Activity as auto-approved, and turns off in one click. It never covers paid features or posting.</li>
 <li><b>Today's queue</b>: what Buffer sends in the next 24 hours, in order (<b>Coming up</b> when nothing is due today).</li>
 <li><b>Needs attention</b>: grouped by urgency, <b>Now</b>, <b>Soon</b> and <b>This week</b>.</li>
 <li><b>Agent activity</b>: what each AI app did, with its logo.</li>
