@@ -915,11 +915,14 @@ class Studio:
         return {"revoked": token_id}
 
     def resolve_agent(self, token: str) -> Actor | None:
-        rows = self.store.q("SELECT * FROM agent_tokens WHERE token_hash=? AND revoked=0 AND expires>?", (sha(token), time.time()))
+        # a blocked account's tokens stop working at once and start again when it is unblocked (studio/admin.py)
+        rows = self.store.q("SELECT t.* FROM agent_tokens t LEFT JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.revoked=0 "
+                            "AND t.expires>? AND COALESCE(u.blocked,0)=0", (sha(token), time.time()))
         if not rows:
             return None
         row = dict(rows[0])
         self.store.x("UPDATE agent_tokens SET last_used=? WHERE id=?", (time.time(), row["id"]))
+        self.store.touch(row["user_id"])
         from . import activity
         activity.note(agent={k: row.get(k) for k in ("id", "name", "client_id", "client_info", "app")})  # every write is attributable
         return Actor(row["user_id"], "agent", row)

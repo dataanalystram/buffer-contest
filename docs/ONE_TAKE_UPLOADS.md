@@ -40,3 +40,7 @@ re-rendered any more; its rendered clips stay.
 {parts:[1,2,...]} · `GET /api/takes/uploads/{id}` · `POST /api/takes/uploads/{id}/complete` {parts:[{part_number, etag}]} ·
 `DELETE /api/takes/uploads/{id}` · then `POST /api/takes` {upload_id, owns: true}. Someone else's upload and a missing one
 are the same 404.
+
+## Shared with media storage
+The same `R2_*` variables and the same signer (`studio/r2.py`) also move new images and videos out of the database once
+set (docs/STORAGE.md). Keep the `takes/` 7-day lifecycle rule scoped to that prefix: `media/` and `lib/` must never expire.
