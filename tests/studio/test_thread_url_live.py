@@ -72,6 +72,25 @@ def test_an_unchanged_busy_run_answers_304_with_no_body_and_a_change_answers_in_
     assert r4.status_code == 200 and "etag" not in r4.headers and r4.json()["status"] == "ready"
 
 
+def test_a_library_file_binned_or_restored_changes_the_busy_runs_tag(app, human):
+    # CodeRabbit (#124): media_state is read live from the Library, so a bin/restore there must not answer 304
+    st = app.state.store
+    rid = _run(st)
+    human.get("/api/library")  # the Library table exists
+    tag = human.get(f"/api/agent/runs/{rid}").headers["etag"]
+    lid = st.x("INSERT INTO library_items(user_id,name,kind,mime,size,token,storage,source,meta,created) VALUES(?,?,?,?,?,?,?,?,?,?)",
+               ("acc_1", "a.jpg", "image", "image/jpeg", 1, "tok_lib_1", "db", "upload", "{}", time.time()))
+    r = human.get(f"/api/agent/runs/{rid}", headers={"If-None-Match": tag})
+    assert r.status_code == 200
+    tag2 = r.headers["etag"]
+    st.x("UPDATE library_items SET storage='trash' WHERE id=?", (lid,))
+    r = human.get(f"/api/agent/runs/{rid}", headers={"If-None-Match": tag2})
+    assert r.status_code == 200 and r.headers["etag"] != tag2
+    assert human.get(f"/api/agent/runs/{rid}", headers={"If-None-Match": r.headers["etag"]}).status_code == 304
+    js = (ST / "app.js").read_text()
+    assert 'if (window.hcCancelThread) window.hcCancelThread();\n      NAV.restoring = "";' in js
+
+
 def test_a_stale_busy_run_takes_the_full_read_so_it_is_reported_stopped(app, human):
     rid = _run(app.state.store, updated=time.time() - 86400)
     r = human.get(f"/api/agent/runs/{rid}", headers={"If-None-Match": "*"})

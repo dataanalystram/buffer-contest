@@ -750,9 +750,15 @@ class House:
             mcp_runs.ensure(self.store)
             m = self.store.q("SELECT COUNT(*) AS n, MAX(id) AS mx FROM mcp_calls WHERE user_id=? AND run_id=?", (a.uid, rid))[0]
             mk = f"{m['n'] or 0}.{m['mx'] or 0}"
+            # the packages' media_state is read live from the Library (annotate_media): a file binned, restored or deleted
+            # there changes this fingerprint, so the poll never answers 304 over a changed media/send state (CodeRabbit,
+            # #124). Indexed on (user_id, id); ids only, no file data.
+            lb = self.store.q("SELECT COUNT(*) AS n, MAX(id) AS mx, SUM(CASE WHEN storage='trash' THEN id ELSE 0 END) AS tb, "
+                              "SUM(CASE WHEN storage='trash' THEN 1 ELSE 0 END) AS tn FROM library_items WHERE user_id=?", (a.uid,))[0]
+            lk = f"{lb['n'] or 0}.{lb['mx'] or 0}.{lb['tb'] or 0}.{lb['tn'] or 0}"
         except Exception:  # noqa: BLE001  no validator rather than a wrong one: the poll reads the full run
             return None
-        raw = "|".join(str(x) for x in (rid, d["status"], d["hi"], d["hs"], d["hr"], mk))
+        raw = "|".join(str(x) for x in (rid, d["status"], d["hi"], d["hs"], d["hr"], mk, lk))
         return '"r' + hashlib.sha256(raw.encode()).hexdigest()[:24] + '"'
 
     def _sweep_quietly(self) -> None:

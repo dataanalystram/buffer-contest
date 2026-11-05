@@ -463,7 +463,12 @@ window.addEventListener("popstate", (e) => {
   const tm = location.pathname.match(THREAD_PATH);
   try {
     if (tm) { const cur = window.H_STATE && H_STATE.run; if (!(threadOpen() && cur && cur.thread_id === tm[1])) openThreadAt(tm[1]); }
-    else { if (st.hq === "agent" && threadOpen() && window.mpLeaveThread) window.mpLeaveThread(true); showTab(st.hq, st.sub || ""); }
+    else {  // a thread load still in flight is dropped too, so its late answer can't reopen it or move the address (CodeRabbit)
+      if (window.hcCancelThread) window.hcCancelThread();
+      NAV.restoring = "";
+      if (st.hq === "agent" && threadOpen() && window.mpLeaveThread) window.mpLeaveThread(true);
+      showTab(st.hq, st.sub || "");
+    }
   } finally { NAV.popping = false; }
 });
 window.HQ_NAV_STATE = NAV;
