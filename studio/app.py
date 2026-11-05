@@ -828,7 +828,27 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             return JSONResponse({"error": "not found"}, status_code=404)
         if head:
             return _head(f["mime"], f["size"], cache, f["etag"])
+        go = r2_redirect(f, request)
+        if go:
+            return go
         return app.state.library_serve(f, request, cache)
+
+    def r2_redirect(f: dict, request: Request):
+        """HQ_MEDIA_REDIRECT=1 and the file is one object in R2: a browser (Sec-Fetch headers) is sent to a 15-minute
+        presigned GET, so the bytes go bucket -> browser (R2 has no egress fees) instead of through this server, and
+        seeking works natively (Range). Buffer, Instagram and the render worker keep getting the bytes from this URL
+        itself (no redirect): a scheduled post's /m/ link must work whenever Buffer fetches it, and a presigned URL
+        expires. The token check already happened (the row was found); the ETag/304 path still answers first."""
+        from . import blobstore
+        from .library import browser_fetch, not_modified
+        if os.environ.get("HQ_MEDIA_REDIRECT", "") != "1" or not f.get("r2_key") or not browser_fetch(request):
+            return None
+        if f.get("etag") and not_modified(request, f["etag"]):
+            return None  # serve() answers the 304
+        b = blobstore.bucket()
+        if not b:
+            return None
+        return RedirectResponse(b.get_url(f["r2_key"], 900), 302, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
     @app.api_route("/ms/{exp}/{sig}/{token}", methods=["GET", "HEAD"], include_in_schema=False)
     def media_signed(exp: str, sig: str, token: str, request: Request):

@@ -107,13 +107,18 @@ def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream"
 
 
 def read(data, key: str | None, start: int | None = None, end: int | None = None) -> bytes:
-    """A row's bytes (all, or [start, end] inclusive) wherever they are."""
-    if data is not None or not key:
+    """A row's bytes (all, or [start, end] inclusive) wherever they are. A row with an object key is read from the
+    bucket whenever the bucket is configured, even if the row still holds a database copy (a copy-only migration keeps
+    the BYTEA until Ram approves the cleanup: reading R2 is what stops the database egress). With the bucket off, the
+    database copy (if any) is used."""
+    b = bucket() if key else None
+    if data is not None and (not key or not b):
         blob = bytes(data or b"")
         if start is None and end is None:
             return blob
         return blob[int(start or 0):(int(end) + 1) if end is not None else None]
-    b = bucket()
+    if not key:
+        return b""
     if not b:
         raise StorageError("This file is in object storage, which isn't configured on this server.")
     try:

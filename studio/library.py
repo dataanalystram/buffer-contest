@@ -35,6 +35,9 @@ from .buffer_api import BufferError
 
 MB = 1024 * 1024
 CHUNK = MB
+# a chunk's database bytes only when it has no object key and R2 is off: a copied chunk is read from R2 and its database
+# copy (kept until Ram approves the cleanup) never leaves Postgres (Supabase egress). With R2 off, the copy is the source.
+CHUNK_DATA = "CASE WHEN storage_key IS NULL THEN data END AS data"
 FILE_MAX = int(os.environ.get("HQ_LIBRARY_FILE_MB", "100")) * MB
 QUOTA = int(os.environ.get("HQ_LIBRARY_QUOTA_MB", "200")) * MB
 
@@ -348,9 +351,13 @@ class Library:
             raise
         blobstore.undo_on_rollback(self.store, key)  # a surrounding transaction that rolls back takes the object with it
 
-    @staticmethod
-    def _chunk(r) -> bytes:
+    def _chunk(self, r, iid: int | None = None, n: int | None = None) -> bytes:
         try:
+            if r["storage_key"] and r["data"] is None and not blobstore.bucket() and iid is not None:
+                # copied to R2 but R2 is switched off here: the database copy (kept until cleanup) is the source
+                got = self.store.q("SELECT data FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
+                if got and got[0]["data"] is not None:
+                    return bytes(got[0]["data"])
             return blobstore.read(r["data"], r["storage_key"])
         except blobstore.StorageError as e:
             raise ActionError(str(e), 503)
@@ -818,9 +825,9 @@ class Library:
         """Bytes [start, end] of an uploaded item, reading only the chunks that hold them."""
         first = start // CHUNK
         last = (end // CHUNK) if end is not None else None
-        sql = "SELECT n, data, storage_key FROM library_chunks WHERE item_id=? AND n>=?" + (" AND n<=?" if last is not None else "") + " ORDER BY n"
+        sql = f"SELECT n, {CHUNK_DATA}, storage_key FROM library_chunks WHERE item_id=? AND n>=?" + (" AND n<=?" if last is not None else "") + " ORDER BY n"
         rows = self.store.q(sql, (iid, first, last) if last is not None else (iid, first))
-        data = b"".join(self._chunk(r) for r in rows)
+        data = b"".join(self._chunk(r, iid, r["n"]) for r in rows)
         off = start - first * CHUNK
         return data[off:(end - first * CHUNK + 1) if end is not None else None]
 
@@ -828,10 +835,10 @@ class Library:
         """Every chunk in order, one database read at a time (a whole-file answer never holds the file in memory)."""
         n = 0
         while True:
-            rows = self.store.q("SELECT data, storage_key FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
+            rows = self.store.q(f"SELECT {CHUNK_DATA}, storage_key FROM library_chunks WHERE item_id=? AND n=?", (iid, n))
             if not rows:
                 return
-            yield self._chunk(rows[0])
+            yield self._chunk(rows[0], iid, n)
             n += 1
 
     def file(self, a: Actor, iid, i: int = 0) -> dict:
@@ -1339,6 +1346,7 @@ def media_file(store, token: str) -> dict | None:
         return None
     r = rows[0]
     key = r["storage_key"] or None
+    has_db_copy = bool(r["n"])
     size = int((r["size"] if key else r["n"]) or r["size"] or 0)
 
     def read(s: int, e: int | None) -> bytes:
@@ -1346,8 +1354,9 @@ def media_file(store, token: str) -> dict | None:
         if size <= 0 or s > e:
             return b""
         try:
-            if key:
+            if key and (blobstore.bucket() or not has_db_copy):
                 return blobstore.read(None, key, s, e)
+            # no key, or a copy-only row read while R2 is switched off: the database copy, by range
             got = store.q("SELECT substr(data, CAST(? AS INTEGER), CAST(? AS INTEGER)) AS d FROM media WHERE token=?", (int(s) + 1, e - int(s) + 1, token))
         except blobstore.StorageError as ex:
             raise ActionError(str(ex), 503)
@@ -1358,7 +1367,7 @@ def media_file(store, token: str) -> dict | None:
             yield read(s, min(s + CHUNK, size) - 1)
     # read through the instance's disk cache: the bytes leave the database once, then every request reads the copy
     # (Supabase egress, 5 Nov 2026: 30 GB against a 5 GB free plan, studio/mediacache.py)
-    return mediacache.wrap(store, {"mime": r["mime"], "size": size, "read": read, "iter": it, "owner": r["user_id"],
+    return mediacache.wrap(store, {"mime": r["mime"], "size": size, "read": read, "iter": it, "owner": r["user_id"], "r2_key": key,
                                    "etag": etag_for(r["sha256"], token, size)}, token, "media")
 
 

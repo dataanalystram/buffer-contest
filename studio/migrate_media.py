@@ -1,8 +1,12 @@
 """Move media bytes out of the database into R2 (docs/STORAGE.md).
 
     python -m studio.migrate_media --to r2 --dry-run      # counts and bytes only: nothing is read from or written to R2
-    python -m studio.migrate_media --to r2                # move (needs R2_* set, and the same database settings as the app)
+    python -m studio.migrate_media --to r2 --report --real-email you@example.com   # row by row: size, owner hash, demo/real/other
+    python -m studio.migrate_media --to r2                # COPY (default): each row gets its R2 key after a verified copy and
+                                                          # keeps its BYTEA; readers switch to R2 (needs R2_* set)
     python -m studio.migrate_media --to r2 --limit 200    # at most 200 rows this run
+    python -m studio.migrate_media --to r2 --cleanup --i-have-a-verified-backup     # later, with Ram's OK: drop DB copies
+                                                          # whose object re-verifies (sha256)
 
 For every ``media`` row and every Library chunk (``library_chunks``) whose bytes are still in the row:
 
@@ -10,7 +14,9 @@ For every ``media`` row and every Library chunk (``library_chunks``) whose bytes
 2. PUT to a fresh random key under the owner's prefix (``media/<owner>/…`` or ``lib/<owner>/…``); a new key every attempt,
    so a failed attempt's queued delete can never hit the copy a later attempt verified (Greptile, PR #110);
 3. GET it back and compare length and sha256;
-4. only then one UPDATE, guarded on the row not having moved meanwhile: ``storage_key`` and ``sha256`` set, ``data`` NULL.
+4. only then one UPDATE, guarded on the row not having moved meanwhile: ``storage_key`` and ``sha256`` set. By default
+   (copy-only, Ram 5 Nov 2026) the BYTEA stays as a second copy until ``--cleanup``; ``--drop-db-copy`` sets it NULL
+   at once. Both need ``--i-have-a-verified-backup`` before any database copy is dropped.
 
 A row whose copy fails the check keeps its bytes (that attempt's object goes to blob_gc). Rows already moved are skipped,
 so running it again is safe and finishes what an interrupted run left. Nothing is deleted before it is verified. Chunks of
@@ -51,8 +57,10 @@ def _verify_put(b: "r2.Bucket", key: str, data: bytes, mime: str) -> bool:
     return len(got) == len(data) and hashlib.sha256(got).hexdigest() == digest
 
 
-def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> dict:
-    """Move rows (see the module docstring). Returns counts; one bad row never stops the rest."""
+def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, keep_db_copy: bool = False) -> dict:
+    """Move rows (see the module docstring). Returns counts; one bad row never stops the rest. ``keep_db_copy``: copy
+    only: the row takes the key and hash but keeps its BYTEA (readers use R2 from then on; ``cleanup`` drops the
+    database copy later, after Ram approves)."""
     stats = {"moved": 0, "bytes": 0, "failed": 0, "skipped": 0}
     left = limit if limit is not None else float("inf")
 
@@ -87,7 +95,8 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
             return
         # the bytes leave the row only once their copy is verified, and only if the row hasn't moved meanwhile
         extra = ", nbytes=?" if table == "library_chunks" else ""
-        store.x(f"UPDATE {table} SET storage_key=?, sha256=?{extra}, data=NULL WHERE {where} AND storage_key IS NULL",
+        drop = "" if keep_db_copy else ", data=NULL"
+        store.x(f"UPDATE {table} SET storage_key=?, sha256=?{extra}{drop} WHERE {where} AND storage_key IS NULL",
                 (key, digest, *((len(data),) if extra else ()), *args))
         now = store.q(f"SELECT storage_key FROM {table} WHERE {where}", args)
         if not now or now[0]["storage_key"] != key:  # renamed or deleted meanwhile: the row didn't take the key
@@ -118,12 +127,91 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print) -> 
     return stats
 
 
+def report(store, real_emails: list[str] | None = None, limit: int = 2000) -> dict:
+    """Dry run, row by row: size, owner (a short hash, never the id or email), whose content it is, and where it lives.
+    ``kind``: ``demo`` (a free-sample workspace), ``real`` (an account whose email is in ``real_emails``, e.g. Ram's
+    own) or ``other``. Tokens are shown by their first 6 characters only (a token is the file's capability URL).
+    Reads metadata only: no bytes leave the database."""
+    from . import demo_guard
+    real = {e.strip().lower() for e in (real_emails or []) if e and e.strip()}
+    emails = {r["id"]: (r["email"] or "").lower() for r in store.q("SELECT id, email FROM users")}
+
+    def kind(uid: str) -> str:
+        if uid and demo_guard.is_demo(uid):
+            return "demo"
+        return "real" if emails.get(uid or "") in real else "other"
+
+    def who(uid: str) -> str:
+        return hashlib.sha256(("owner:" + (uid or "")).encode()).hexdigest()[:10]
+    rows, totals = [], {}
+    for r in store.q("SELECT token, user_id, mime, size, storage_key, CASE WHEN data IS NULL THEN 0 ELSE 1 END AS in_db, "
+                     "created FROM media ORDER BY size DESC LIMIT ?", (int(limit),)):
+        k = kind(r["user_id"])
+        where = ("r2+db" if r["in_db"] else "r2") if r["storage_key"] else ("db" if r["in_db"] else "none")
+        rows.append({"table": "media", "token": str(r["token"])[:6] + "…", "owner": who(r["user_id"]), "kind": k,
+                     "mime": r["mime"], "bytes": int(r["size"] or 0), "where": where})
+        t = totals.setdefault(k, {"rows": 0, "bytes": 0})
+        t["rows"] += 1
+        t["bytes"] += int(r["size"] or 0)
+    try:
+        for r in store.q("SELECT i.id, i.user_id, i.mime, i.size, SUM(CASE WHEN c.storage_key IS NULL THEN 0 ELSE 1 END) AS in_r2, "
+                         "COUNT(c.n) AS chunks FROM library_items i JOIN library_chunks c ON c.item_id=i.id GROUP BY i.id, i.user_id, i.mime, i.size"):
+            k = kind(r["user_id"])
+            rows.append({"table": "library_chunks", "item": int(r["id"]), "owner": who(r["user_id"]), "kind": k, "mime": r["mime"],
+                         "bytes": int(r["size"] or 0), "where": "r2" if int(r["in_r2"] or 0) == int(r["chunks"] or 0) else "db"})
+            t = totals.setdefault(k, {"rows": 0, "bytes": 0})
+            t["rows"] += 1
+            t["bytes"] += int(r["size"] or 0)
+    except Exception:  # noqa: BLE001  (no Library tables)
+        pass
+    return {"rows": rows, "totals": totals}
+
+
+def cleanup(store, bucket: "r2.Bucket", log=print) -> dict:
+    """After a copy-only run and Ram's approval: drop the database copy of every row whose object verifies (same
+    length and sha256 as recorded at copy time). A row that doesn't verify keeps its bytes."""
+    stats = {"dropped": 0, "kept": 0}
+    for table, where_cols in (("media", ("token",)), ("library_chunks", ("item_id", "n"))):
+        try:
+            todo = store.q(f"SELECT {', '.join(where_cols)}, storage_key, sha256 FROM {table} "
+                           "WHERE storage_key IS NOT NULL AND data IS NOT NULL")
+        except Exception:  # noqa: BLE001
+            continue
+        for r in todo:
+            where = " AND ".join(f"{c}=?" for c in where_cols)
+            args = tuple(r[c] for c in where_cols)
+            try:
+                got = bucket.get(r["storage_key"])
+                ok = bool(r["sha256"]) and hashlib.sha256(got).hexdigest() == r["sha256"]
+            except r2.R2Error as e:
+                log(f"{table}: {e}")
+                ok = False
+            if not ok:
+                stats["kept"] += 1
+                continue
+            store.x(f"UPDATE {table} SET data=NULL WHERE {where} AND storage_key=?", (*args, r["storage_key"]))
+            stats["dropped"] += 1
+    return stats
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m studio.migrate_media", description="Move media bytes from the database to R2.")
     ap.add_argument("--to", choices=["r2"], required=True, help="where the bytes go (only r2 for now)")
     ap.add_argument("--dry-run", action="store_true", help="count rows and bytes; read and write nothing in R2")
     ap.add_argument("--limit", type=int, default=None, help="move at most this many rows")
+    ap.add_argument("--report", action="store_true", help="dry run, row by row (size, owner hash, demo/real/other, where)")
+    ap.add_argument("--real-email", action="append", default=[], help="an account email whose rows count as real content")
+    ap.add_argument("--drop-db-copy", action="store_true",
+                    help="move instead of copy: the row's BYTEA is set NULL once its copy verifies (needs --i-have-a-verified-backup)")
+    ap.add_argument("--cleanup", action="store_true",
+                    help="drop the database copy of rows already copied, after re-verifying each object (needs --i-have-a-verified-backup)")
+    ap.add_argument("--i-have-a-verified-backup", dest="backup_ok", action="store_true",
+                    help="confirms a pg_dump was taken and restored (docs/DATA_RESET_PLAN.md) and Ram approved dropping copies")
     a = ap.parse_args(argv)
+    if (a.drop_db_copy or a.cleanup) and not a.backup_ok:
+        print("Dropping the database copy needs a verified backup and Ram's approval: add --i-have-a-verified-backup "
+              "(docs/DATA_RESET_PLAN.md).", file=sys.stderr)
+        return 2
     from . import library
     from .config import load_settings
     from .store import Store
@@ -132,15 +220,23 @@ def main(argv: list[str] | None = None) -> int:
     library.ensure(store)  # the chunk table's storage_key column
     before = plan(store)
     cfg = r2.config()
+    if a.report:
+        print(json.dumps({"dry_run": True, "r2_configured": bool(cfg), **report(store, a.real_email)}, indent=2))
+        return 0
     if a.dry_run:
         print(json.dumps({"dry_run": True, "r2_configured": bool(cfg), "would_move": before}, indent=2))
         return 0
     if not cfg:
         print("R2 is not configured (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET).", file=sys.stderr)
         return 2
-    stats = migrate(store, r2.Bucket(cfg), limit=a.limit)
-    print(json.dumps({"before": before, "result": stats, "after": plan(store),
-                      "next": "VACUUM FULL media, library_chunks; returns the freed space to the database quota"}, indent=2))
+    if a.cleanup:
+        stats = cleanup(store, r2.Bucket(cfg))
+        print(json.dumps({"cleanup": stats, "next": "VACUUM FULL media, library_chunks; returns the freed space"}, indent=2))
+        return 0 if not stats["kept"] else 1
+    stats = migrate(store, r2.Bucket(cfg), limit=a.limit, keep_db_copy=not a.drop_db_copy)
+    print(json.dumps({"before": before, "result": stats, "after": plan(store), "kept_db_copy": not a.drop_db_copy,
+                      "next": ("readers now use R2; the database copies stay until --cleanup (Ram's approval)" if not a.drop_db_copy
+                               else "VACUUM FULL media, library_chunks; returns the freed space to the database quota")}, indent=2))
     return 0 if not stats["failed"] else 1
 
 
