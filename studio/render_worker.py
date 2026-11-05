@@ -30,6 +30,8 @@ MAX_SOURCE = int(os.environ.get("HQ_MAX_TAKE_BYTES") or int(os.environ.get("HQ_T
 
 def _download(c: httpx.Client, url: str, dest: Path) -> None:
     from . import netguard
+    for sig in _SIGS.findall(url):  # a presigned upload URL: the runner masks its signature in the public Actions log
+        print(f"::add-mask::{sig}", flush=True)
     with netguard.safe_stream(url, http=c, https_only=url.startswith("https://"), timeout=300) as r:  # every hop checked
         r.raise_for_status()
         n = 0
@@ -58,7 +60,7 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
             tr = reuse_captions(str(src), spec)  # existing captions first; Whisper only when there are none
             print("captions:", f"reused {tr['source']} ({tr['count']} words)" if tr else "none, transcribing")
             analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=float(os.environ.get("HQ_MAX_TAKE_SECS", "1800")),
-                                    transcript=tr)
+                                    transcript=tr, jev=spec.get("jev") is True)
             r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"analysis": analysis})
             print("analysis posted:", r.status_code, r.text[:200])
             return 0 if r.status_code == 200 else 1
@@ -133,6 +135,9 @@ def claim(c: httpx.Client, base: str, jid: int) -> str:
 # ---- failure reporting + heartbeat (2 Nov 2026: job 15 died on a 404 source link and the app kept showing it running)
 LOG_TAIL = 4000  # characters of the worker's own output sent back with a failure
 _JT = __import__("re").compile(r"jt_[A-Za-z0-9_\-]{8,}")
+_SIG = __import__("re").compile(r"(?i)(X-Amz-Signature=)[0-9A-Za-z%]+")  # a presigned URL's signature (log_tail redacts it)
+_MASK = __import__("re").compile(r"::add-mask::\S+")
+_SIGS = __import__("re").compile(r"(?i)X-Amz-Signature=([0-9A-Za-z%]+)")
 
 
 class _Tail:
@@ -165,7 +170,8 @@ def _install_tail() -> None:
 def log_tail() -> str:
     """The last lines this worker printed (stdout + stderr), job tokens redacted."""
     out = "".join(t.buf for t in _tails)[-LOG_TAIL:]
-    return _JT.sub("jt_[redacted]", out)
+    out = _MASK.sub("::add-mask::[redacted]", out)  # a mask command's own value (the runner hides it; this copy is ours)
+    return _SIG.sub(r"\1[redacted]", _JT.sub("jt_[redacted]", out))
 
 
 def friendly(e: BaseException, base: str = "") -> str:

@@ -33,6 +33,8 @@ _running: set[int] = set()
 KEYFRAMES_MAX = 4
 KEYFRAME_B64_MAX = 400_000  # one 768 px JPEG frame as a data URL is ~60-150 KB
 _rlock = threading.Lock()
+_stop_req: set[int] = set()  # runs the person asked to stop: the next step boundary stops them (Brain.stop)
+STOPPED = "Stopped, as you asked. What's made so far is kept. Press Resume to carry on."
 BOOT = uuid.uuid4().hex[:12]  # this process: a run stamped with another process's id whose heartbeat stopped was cut off
 HEARTBEAT_S = int(os.environ.get("HQ_PROC_HEARTBEAT", "20"))
 ORPHAN_S = int(os.environ.get("HQ_PROC_ORPHAN", "90"))  # no heartbeat this long -> that process is gone (a deploy, a crash)
@@ -102,6 +104,16 @@ using ONLY the tools. Rules:
 - Pass the person's tone words to write_captions (e.g. tone "short punchy explainer"); the tone shapes the hook and rhythm.
 - Captions in tool results and the state are the full saved text unless marked "…[preview]". Never tell the person a caption
   is cut off unless write_captions reports complete=false for that channel."""
+
+
+class StopRun(Exception):
+    """The person pressed Stop: raised at the next step boundary, never caught as a tool error (it is not an ActionError)."""
+
+
+def oops(ref: str) -> str:
+    """What the person reads when something broke on our side: plain words, a reference for the log, what to do next."""
+    return (f"Something went wrong on my side, so I stopped (reference {ref}). What's made so far is kept. "
+            "Press Retry to try again.")
 
 
 def _now() -> float:
@@ -192,6 +204,8 @@ class Brain:
             raise ActionError("This post isn't stopped.", 409)
         res = run["result"]
         res.pop("interrupted", None)
+        res.pop("error", None)
+        res.pop("stopped", None)
         res.setdefault("thread", []).append({"role": "user", "text": "Resume", "at": _now()})
         self.h._save(rid, run["steps"], res, "running")
         if res.get("recap"):
@@ -201,6 +215,26 @@ class Brain:
         else:
             self._spawn(self._go, a, rid, None)
         return self.h.run(a, rid)
+
+    def stop(self, a: Actor, rid: int) -> dict:
+        """The working indicator's Stop: the run stops at its next step (a step in flight finishes first)."""
+        self.h.studio._guard_write(a, "agent_reply")
+        run = self.h.run(a, rid)  # scoped to the caller: someone else's run is a 404
+        if run["kind"] != "agent":
+            raise ActionError("Only posts made by the agent can be stopped.", 409)
+        busy = run["status"] in ("running", "rendering")
+        with _rlock:
+            if busy:  # the worker (running now, or still queued in this process) stops at its next step boundary
+                _stop_req.add(rid)
+        return {**self.h.run(a, rid), "stopping": busy}
+
+    @staticmethod
+    def _stop_pending(rid) -> None:
+        """Stop pressed during the last step: no later step boundary would see it, so the final save checks too."""
+        with _rlock:
+            if rid in _stop_req:
+                _stop_req.discard(rid)
+                raise StopRun(STOPPED)
 
     def _resume_tail(self, a, rid, tools) -> None:
         self._ensure_tail(a, rid, tools)
@@ -367,8 +401,7 @@ class Brain:
         except ActionError as e:
             self._fail(a, rid, str(e))
         except Exception as e:  # never leave a run spinning
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -432,6 +465,9 @@ class Brain:
 
     def reply(self, a: Actor, rid: int, text: str, media_token: str = "") -> dict:
         self.h.studio._guard_write(a, "agent_reply")
+        from .thread_bin import purged
+        if purged(self.store, a.uid, rid):  # REST and MCP alike: no message or agent work on a thread deleted for good
+            raise ActionError("This thread was deleted for good.", 404)
         text = (text or "").strip()[:intake.MAX_PROMPT]
         if media_token:
             return self._reply_upload(a, rid, text, media_token)
@@ -446,6 +482,8 @@ class Brain:
             if rid in _running:
                 raise ActionError("The agent is still working on this post. Your message will fit in once it's done.", 409)
         res = run["result"]
+        res.pop("error", None)
+        res.pop("stopped", None)
         res.setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
         summ = chat_context.summarize(run)
         if summ:
@@ -686,6 +724,7 @@ class Brain:
         tools = Tools(self.h, a, rid)
         try:
             body(a, rid, tools)
+            self._stop_pending(rid)
             run = self.h.run(a, rid)
             self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
         except ActionError as e:
@@ -693,8 +732,7 @@ class Brain:
             run = self.h.run(a, rid)
             self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
         except Exception as e:  # never leave a run spinning
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -881,8 +919,7 @@ class Brain:
             run = self.h.run(a, rid)
             self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
         except Exception as e:  # never leave a run spinning
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -955,8 +992,7 @@ class Brain:
         except ActionError as e:
             self._fail(a, rid, str(e))
         except Exception as e:  # never leave a run spinning
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e)
         finally:
             activity.end(tok)
             with _rlock:
@@ -1051,6 +1087,8 @@ class Brain:
 
     def _spawn(self, fn, *args):
         rid = args[1] if len(args) >= 2 and isinstance(args[1], int) else None
+        with _rlock:
+            _stop_req.discard(rid)  # a new job on the run starts clean
         if rid is not None:  # which process works on it (interrupt_orphans)
             try:
                 r = self.store.q("SELECT steps, result FROM agent_runs WHERE id=?", (rid,))
@@ -1114,12 +1152,12 @@ class Brain:
             status = "ready" if res.get("packages") else "failed"
             if res.get("conflicts"):
                 status = "ready"  # packages are on hold; the question is in the thread
+            self._stop_pending(rid)
             self.h._save(rid, run["steps"], res, status)
         except ActionError as e:
             self._fail(a, rid, str(e))
         except Exception as e:  # never leave a run spinning (the bug the owner hit)
-            traceback.print_exc()
-            self._fail(a, rid, f"Unexpected error: {e.__class__.__name__}")
+            self._crash(a, rid, e, retry_text=message or "")  # a follow-up repeats its words; a first run resumes
         finally:
             activity.end(tok)
             with _rlock:
@@ -1168,6 +1206,28 @@ class Brain:
         run["result"].setdefault("thread", []).append({"role": "agent", "text": text, "at": _now()})
         self.h._save(rid, run["steps"], run["result"])
 
+    def _crash(self, a, rid, e: BaseException, retry_text: str | None = None) -> None:
+        """An unexpected error: the traceback goes to the log with a short reference, the person gets a plain sentence
+        and a Retry button (never a bare exception class such as "Unexpected error: AttributeError")."""
+        if isinstance(e, StopRun):  # a stopped run keeps status "failed" and says so: the chat shows Resume for it
+            try:
+                run = self.h.run(a, rid)
+                run["result"]["stopped"] = {"at": _now()}
+                self.h._save(rid, run["steps"], run["result"])
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+            return self._fail(a, rid, STOPPED)
+        ref = uuid.uuid4().hex[:8]
+        print(f"agent error ref={ref} run={rid}: {e.__class__.__name__}: {str(e)[:300]}", flush=True)
+        traceback.print_exc()
+        try:
+            run = self.h.run(a, rid)
+            run["result"]["error"] = {"ref": ref, "at": _now(), "retry_text": (retry_text or "")[:intake.MAX_PROMPT]}
+            self.h._save(rid, run["steps"], run["result"])
+        except Exception:  # noqa: BLE001  the plain message below still lands
+            traceback.print_exc()
+        self._fail(a, rid, oops(ref))
+
     def _fail(self, a, rid, why):
         run = self.h.run(a, rid)
         for s in run["steps"]:
@@ -1177,6 +1237,11 @@ class Brain:
         self.h._save(rid, run["steps"], run["result"], "failed")
 
     def _step(self, a, rid, tool, args, label=None):
+        with _rlock:
+            stop = rid in _stop_req
+            _stop_req.discard(rid)
+        if stop:
+            raise StopRun(STOPPED)
         run = self.h.run(a, rid)
         n = len(run["steps"]) + 1
         run["steps"].append({"key": f"s{n}", "tool": tool, "label": label or LABELS.get(tool, tool), "status": "running",

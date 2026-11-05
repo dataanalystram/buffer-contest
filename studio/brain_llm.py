@@ -331,13 +331,20 @@ def _log(engine, store, uid, label, model, usage, purpose, latency: float | None
 
 def _short_error(r) -> str:
     """A provider's error in a few words (the JSON message when there is one), never a page of HTML."""
+    # Providers disagree on the shape: Gemini's OpenAI-compatible endpoint answers a LIST ([{"error": {...}}]), others a
+    # dict or a bare string. A list used to raise AttributeError here, which escaped the engine fallback in _go and failed
+    # the follow-up with "Unexpected error: AttributeError" (live, 4 Nov 2026). Any shape now gives a short message.
     try:
         j = r.json()
-        e = j.get("error") if isinstance(j, dict) else None
-        msg = (e.get("message") if isinstance(e, dict) else e) or j.get("detail") or j.get("message") or ""
-        return str(msg)[:200] or r.text[:200]
     except ValueError:
         return "(not JSON)" if r.text.lstrip().startswith("<") else r.text[:200]
+    if isinstance(j, list):
+        j = next((x for x in j if isinstance(x, dict)), {"message": j[0]} if j else {})
+    if not isinstance(j, dict):
+        return str(j)[:200] or r.text[:200]
+    e = j.get("error")
+    msg = (e.get("message") if isinstance(e, dict) else e) or j.get("detail") or j.get("message") or ""
+    return str(msg)[:200] or r.text[:200]
 
 
 _THINK = re.compile(r"<think>.*?</think>\s*", re.S | re.I)

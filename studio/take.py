@@ -534,25 +534,14 @@ def transcribe(path: str, model: str = "small") -> tuple[list[dict], str, str]:
 
 
 def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | None = None) -> tuple[list[dict], str]:
-    """Faces sampled at `fps` with MediaPipe's Face Detector (BlazeFace short range). [] when MediaPipe isn't there."""
+    """Faces sampled at `fps` with MediaPipe's Face Detector (BlazeFace short range), the primary detector on every sampled
+    frame; OpenCV's Haar cascade when MediaPipe can't load here (studio/media/facedetect.py, checked in CI on a real face)."""
+    from .media import facedetect
     try:
-        import mediapipe as mp  # Apache-2.0
         import numpy as np
-        from mediapipe.tasks.python import BaseOptions, vision
-    except Exception:  # noqa: BLE001
-        print("face track: MediaPipe not installed, falling back to OpenCV's Haar cascade", flush=True)
-        return _face_track_cv2(path, fps, "MediaPipe not installed")
-    model_path = model_path or os.environ.get("HQ_FACE_MODEL") or str(Path(tempfile.gettempdir()) / "blaze_face_short_range.tflite")
-    try:  # MediaPipe needs libEGL/libGLES and its model; any failure to load it falls back to the Haar cascade the
-        # self-check vouches for, never an escaped error (CodeRabbit, PR #107: it caught only OSError)
-        if not Path(model_path).exists():
-            import httpx
-            got = httpx.get(FACE_MODEL_URL, timeout=60, follow_redirects=True)
-            got.raise_for_status()
-            Path(model_path).write_bytes(got.content)
-        det = vision.FaceDetector.create_from_options(vision.FaceDetectorOptions(
-            base_options=BaseOptions(model_asset_path=model_path), min_detection_confidence=0.6))
-    except Exception as e:  # noqa: BLE001
+        det = facedetect.mediapipe_detector(model_path)
+    except Exception as e:  # noqa: BLE001 - any failure to load MediaPipe (no libEGL, no model, a bad download) falls back to
+        # the Haar cascade the self-check vouches for, never an escaped error (CodeRabbit, PR #107)
         print(f"face track: MediaPipe couldn't load ({str(e)[:80]}), falling back to OpenCV's Haar cascade", flush=True)
         return _face_track_cv2(path, fps, f"MediaPipe couldn't load: {str(e)[:60]}")
     w, h = 320, 180
@@ -569,13 +558,11 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
             if len(buf) < size:
                 break
             img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 3)
-            res = det.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(img)))
-            if res.detections:
-                d = max(res.detections, key=lambda d: d.bounding_box.width * d.bounding_box.height)
-                bb = d.bounding_box
-                out.append({"t": round(k / fps, 2), "cx": round((bb.origin_x + bb.width / 2) / w, 4),
-                            "cy": round((bb.origin_y + bb.height / 2) / h, 4), "w": round(bb.width / w, 4),
-                            "score": round(d.categories[0].score, 2)})
+            found = facedetect.detect_mediapipe(det, img)
+            if found:
+                x, y, bw, bh, sc = found[0]
+                out.append({"t": round(k / fps, 2), "cx": round((x + bw / 2) / w, 4), "cy": round((y + bh / 2) / h, 4),
+                            "w": round(bw / w, 4), "score": round(sc, 2)})
             k += 1
     finally:
         proc.kill()
@@ -589,14 +576,12 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
 def _face_track_cv2(path: str, fps: float, why: str) -> tuple[list[dict], str]:
     """The same samples with OpenCV's Haar cascade (frontal faces), when MediaPipe can't run here. Says so in the label;
     with neither detector it returns none and the job reports 'no face found, centered crop used'."""
+    from .media import facedetect
     try:
-        import cv2  # opencv-python-headless (Apache-2.0)
         import numpy as np
-        casc = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        if casc.empty():
-            raise RuntimeError("empty cascade")
-    except Exception as e:  # noqa: BLE001
-        print(f"face track: no face detector ({why}; OpenCV: {e.__class__.__name__}): centered crop", flush=True)
+        casc = facedetect.haar()
+    except Exception as e:  # noqa: BLE001 - no usable OpenCV at all: a centred crop, never an escaped error (as main)
+        print(f"face track: no face detector ({why}; {e.__class__.__name__}: {str(e)[:80]}): centered crop", flush=True)
         return [], f"none ({why}; OpenCV unavailable: centre/blur layout)"
     w, h = 320, 180
     info = probe(path)
@@ -612,20 +597,23 @@ def _face_track_cv2(path: str, fps: float, why: str) -> tuple[list[dict], str]:
             if len(buf) < w * h:
                 break
             g = np.frombuffer(buf, dtype=np.uint8).reshape(h, w)
-            found = casc.detectMultiScale(g, scaleFactor=1.1, minNeighbors=5, minSize=(18, 18))
-            if len(found):
-                x, y, fw, fh = max(found, key=lambda b: b[2] * b[3])
+            found = facedetect.detect_haar(g, casc)
+            if found:
+                x, y, fw, fh, sc = found[0]
                 out.append({"t": round(k / fps, 2), "cx": round((x + fw / 2) / w, 4), "cy": round((y + fh / 2) / h, 4),
-                            "w": round(fw / w, 4), "score": 0.8})
+                            "w": round(fw / w, 4), "score": sc})
             k += 1
     finally:
         proc.kill()
     return out, f"OpenCV Haar cascade ({why})"
 
 
-def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, transcript: dict | None = None) -> dict:
+def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, transcript: dict | None = None,
+            jev: bool | None = None) -> dict:
     """transcript: captions that already exist (studio.media.subtitles.resolve_transcript: an uploaded .srt/.vtt, the
-    platform's track, a caption stream in the file). When it has words, Whisper is skipped entirely."""
+    platform's track, a caption stream in the file). When it has words, Whisper is skipped entirely.
+    jev: the job's consent for Jev's second opinion on a few keyframes (studio/media/jev_faces.py). The worker only picks
+    and returns the keyframes; the server asks Jev within its per-take and per-account daily caps. Never fails the analysis."""
     t0 = time.time()
     from . import mediasafe
     try:  # plain video only, before PySceneDetect/MediaPipe (their own decoders) ever open it
@@ -657,6 +645,28 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
     faces, face_how = face_track(path, info["duration"])
     timings["faces"] = round(time.time() - t, 1)
     log(f"scenes: {len(scenes)} ({scene_how}); faces: {len(faces)} samples ({face_how})")
+    t = time.time()
+    jev_frames = None
+    try:
+        from .media import jev_faces
+        # Jev is asked only by the server (takes.py _studio_jev), never here, even when this process has TYPESAFE_API_KEY:
+        # only the server holds the per-account daily allowance (jev_usage), so every paid call is counted (CodeRabbit,
+        # 5 Nov 2026: a worker with the key used to ask Jev itself and skipped the daily cap)
+        if jev is True:
+            jev_frames = jev_faces.keyframe_jpegs(path, faces, scenes, info["duration"], log=log)
+            jev_rec = {"enabled": True, "why": "pending: the server asks Jev for these keyframes (the key stays there)",
+                       "model": jev_faces.MODEL, "cap": jev_faces.cap_from_env(), "frames": [], "calls": 0, "used": 0,
+                       "errors": 0, "pending": len(jev_frames), "fallback": None}
+            log(f"jev: {len(jev_frames)} keyframes for the server")
+        else:
+            jev_rec = {"enabled": False, "why": "off for this take (not started by a person in the app, or not approved)",
+                       "model": jev_faces.MODEL, "cap": jev_faces.cap_from_env(), "frames": [], "calls": 0, "used": 0,
+                       "errors": 0, "fallback": None}
+    except Exception as e:  # noqa: BLE001 - Jev is a second opinion: it never fails the take
+        jev_rec = {"enabled": False, "why": f"error: {e.__class__.__name__}", "frames": [], "fallback": "local faces + centred crop"}
+        log(f"jev: {jev_rec['why']}; local faces + centred crop")
+    timings["faces_jev"] = round(time.time() - t, 1)
+    jev_note = f" + Jev second opinion ({jev_rec.get('used', 0)} of {jev_rec.get('calls', 0)} keyframes used)" if jev_rec.get("calls") else ""
     try:  # subtitles already burned into the picture: renders crop them off instead of stacking a second layer
         from .media.compose import detect_burned_subs
         burned = detect_burned_subs(path, info["duration"])
@@ -664,9 +674,9 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
         burned = False
     return {"probe": {k: info[k] for k in ("duration", "width", "height", "audio", "codec")}, "words": words, "language": lang,
             "transcript_source": (transcript or {}).get("source") if transcript and transcript.get("words") else "whisper",
-            "burned_subs": burned, "face_detector": not face_how.startswith("none"),
-            "silences": silences, "scenes": scenes, "faces": faces,
-            "providers": {"stt": provider, "scenes": scene_how, "faces": face_how, "vad": "Silero VAD (inside faster-whisper)"
+            "burned_subs": burned, "face_detector": not face_how.startswith("none") or bool(jev_rec.get("used")),
+            "silences": silences, "scenes": scenes, "faces": faces, "jev": jev_rec, **({"jev_frames": jev_frames} if jev_frames else {}),
+            "providers": {"stt": provider, "scenes": scene_how, "faces": face_how + jev_note, "vad": "Silero VAD (inside faster-whisper)"
                           if "faster-whisper" in provider else "ffmpeg silencedetect"},
             "timings": {**timings, "total": round(time.time() - t0, 1)}}
 

@@ -279,6 +279,11 @@ PUBLIC = {  # path -> why it is open to anyone
     "/api/uploads/limits": "the upload size limits (public numbers, no account data)",
     "/go/{code}": "a post's shop link (Commerce): redirects only to Channel3's tracked host or the offer's retailer; the code is "
                   "random, rate-limited per network, no account data",
+    # the admin panel answers 404 (not 401/403) to everyone not in HQ_ADMIN_IDS, so it can't be found by probing
+    # (studio/admin.py; tests/studio/test_admin_storage.py checks the 404 for anonymous, signed-in and agent callers)
+    "/admin": "404 unless HQ_ADMIN_IDS", "/admin/{name}": "404 unless HQ_ADMIN_IDS", "/api/admin/users": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/users/{uid}/block": "404 unless HQ_ADMIN_IDS", "/api/admin/users/{uid}/unblock": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/users/{uid}/delete": "404 unless HQ_ADMIN_IDS", "/api/admin/audit": "404 unless HQ_ADMIN_IDS",
 }
 
 

@@ -1,5 +1,5 @@
 # Render Blueprint for HuhQueue: free web service; the database is Supabase Postgres (free, does not expire).
-# Render's free Postgres is only kept while we copy it to Supabase (docs/SUPABASE.md); remove it after the move.
+# The old Render Postgres (huhqueue-studio-db) was deleted on 4 Nov 2026 after the move to Supabase; there is no database here.
 services:
   - type: web
     name: huhqueue-studio
@@ -29,7 +29,11 @@ services:
         sync: false
       - key: CHANNEL3_API_KEY      # Commerce (docs/COMMERCE.md): free tier only, hard stop at 1,000 credits/month in code
         sync: false
-      # One take's long uploads go straight to a Cloudflare R2 bucket (docs/ONE_TAKE_UPLOADS.md); off unless all four are set
+      # who can open /admin: Buffer account ids or Buffer emails, comma-separated (docs/ADMIN.md); empty = nobody
+      - key: HQ_ADMIN_IDS
+        sync: false
+      # Cloudflare R2 bucket: One take's long uploads (docs/ONE_TAKE_UPLOADS.md) and, once set, all new media (docs/STORAGE.md);
+      # off unless all four are set
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID
@@ -38,7 +42,3 @@ services:
         sync: false
       - key: R2_BUCKET
         sync: false
-databases:
-  - name: huhqueue-studio-db
-    plan: free
-    region: frankfurt

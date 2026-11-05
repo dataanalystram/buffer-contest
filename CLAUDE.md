@@ -6,6 +6,8 @@ Brand assets and defaults reference the owner's account **HuhByte** (`@huhbyte`,
 
 Rule of the codebase: **everything the UI can do is also a REST action, an MCP tool, a ⌘K command and a CLI command**,
 all generated from one registry (`huhqueue/actions.py`). Keep that parity when adding features (CI tests enforce it).
+Exception: the operator admin panel (`/admin`, studio/admin.py, docs/ADMIN.md) is browser-session-only on purpose:
+agent tokens must never administer accounts.
 
 ## Layout
 
