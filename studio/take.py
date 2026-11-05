@@ -45,7 +45,8 @@ COVER_SECS = 0.2            # branded cover frame prepended to every clip; thumb
 END_SECS = 2.0
 SMOOTH = 0.45              # crop_plan: EMA weight of a new face sample (lower = steadier pan)
 EASE_S = 0.6               # crop_plan: a pan eases over this long (was 0.4 s, read as a jerk on fast talkers)
-LOUDNESS = "loudnorm=I=-14:TP=-1.5:LRA=11"  # EBU R128, -14 LUFS (what Reels / Shorts / TikTok normalise to)
+LOUDNESS = "loudnorm=I=-14:TP=-1:LRA=11"  # EBU R128, -14 LUFS / -1 dBTP (what Reels / Shorts / TikTok normalise to); two-pass
+                                          # when the span can be measured (studio/media/cleancut.loudnorm_filter)
 FADE_IN, FADE_OUT = 0.08, 0.15              # short audio fades at the clip's cut points: no click at the edges
 SAFE_BOTTOM = 0.20          # bottom 20% stays clear of captions (Instagram/TikTok UI)
 FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
@@ -764,10 +765,12 @@ def cover_image(frame: bytes, plan: dict, src_w: int, hook: str, kit: dict, p: d
     return render._jpeg(canvas)
 
 
-def audio_chain(dur: float) -> str:
-    """The clip's audio: EBU R128 loudness, then a short fade in and out at the cut points."""
+def audio_chain(dur: float, loud: str | None = None) -> str:
+    """The clip's audio: EBU R128 loudness (`loud`, the measured two-pass filter, else one pass), then a short fade in and
+    out at the cut points."""
     out_at = max(0.0, dur - FADE_OUT)
-    return f"{LOUDNESS},afade=t=in:st=0:d={FADE_IN},afade=t=out:st={out_at:.3f}:d={FADE_OUT},aresample=44100"
+    loud = loud if isinstance(loud, str) and loud.startswith("loudnorm=") and "," not in loud and ";" not in loud else LOUDNESS
+    return f"{loud},afade=t=in:st=0:d={FADE_IN},afade=t=out:st={out_at:.3f}:d={FADE_OUT},aresample=44100"
 
 
 def segments(start: float, end: float, scenes: list[float] | None, min_len: float = 1.2) -> list[tuple[float, float]]:
@@ -792,6 +795,38 @@ def _frame_filter(plan: dict, sh: int, W: int, H: int) -> str:
 
 def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes: list[float], src: dict, kit: dict, p: dict,
                 logo: bytes | None = None, W: int | None = None, H: int | None = None, crf: int = 26) -> tuple[bytes, bytes, dict]:
+    """One finished clip. With m["trim_pauses"] the span's long pauses and filler words are cut first
+    (studio/media/cleancut; fail open), and the audio is normalised two-pass to -14 LUFS / -1 dBTP. meta["trim"] says
+    what was cut (trimmed_s); meta["moment"] keeps the span in the source."""
+    m = {k: v for k, v in m.items() if k != "_loud"}  # the loudness filter is measured here, never taken from a job spec
+    from .media import cleancut
+    trim = None
+    orig = {k: m.get(k) for k in ("start", "end")}
+    work = tempfile.mkdtemp(prefix="hq_trim_")
+    try:
+        if m.get("trim_pauses") is True:
+            got = cleancut.prepare(path, m, words, faces, scenes, src, work)
+            trim = got["stats"]
+            if got.get("path"):
+                path, m, words, faces, scenes, src = got["path"], got["m"], got["words"], got["faces"], got["scenes"], got["src"]
+                print(f"render: clip {m.get('id', '')} trimmed {trim['trimmed_s']} s ({trim['pauses']} pauses, "
+                      f"{trim['fillers']} fillers)", flush=True)
+        if src.get("audio", True):
+            m["_loud"] = cleancut.loudnorm_filter(path, float(m["start"]), float(m["end"]) - float(m["start"]))
+        data, cover, meta = _render_clip(path, m, words, faces, scenes, src, kit, p, logo, W, H, crf)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if trim is not None:
+        meta["trim"] = trim
+        if trim.get("trimmed_s"):
+            meta["moment"] = orig  # the span in the source; the video itself is trimmed_s shorter
+    if meta.get("audio") and m.get("_loud"):
+        meta["audio"] = {**meta["audio"], "loudnorm": m["_loud"], "two_pass": "measured_I=" in m["_loud"]}
+    return data, cover, meta
+
+
+def _render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes: list[float], src: dict, kit: dict, p: dict,
+                 logo: bytes | None = None, W: int | None = None, H: int | None = None, crf: int = 26) -> tuple[bytes, bytes, dict]:
     """One finished clip: [cover 0.5 s] + [moment, reframed to 9:16 shot by shot, captions burned in, logo bug] + [end card].
     Returns (mp4, cover_jpg, meta). meta.cover_offset_ms is the frame Buffer's thumbnailOffset should point at.
     With no W/H given, per-shot layouts render it at 1080x1920 (studio/media/reframe; HQ_LAYOUTS=0 keeps this path)."""
@@ -840,7 +875,7 @@ def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes
         vf = f"[0:v]ass=filename='{assf}':fontsdir='{fonts}'[cap];[cap][2:v]overlay=0:0,format=yuv420p[v]"
         amap = ["-map", "1:a?"]
         if src.get("audio", True):  # loudness to -14 LUFS (EBU R128) + short fades at the cuts (4 Nov 2026)
-            vf += f";[1:a]{audio_chain(dur)}[a]"
+            vf += f";[1:a]{audio_chain(dur, m.get('_loud'))}[a]"
             amap = ["-map", "[a]"]
         run(["ffmpeg", "-v", "error", "-y", "-i", str(framed), "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", path,
              "-i", str(tmp / "logo.png"), "-filter_complex", vf, "-map", "[v]", *amap, "-t", f"{dur:.3f}", *venc, *aenc,
