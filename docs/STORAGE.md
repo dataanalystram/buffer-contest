@@ -8,8 +8,11 @@ Cloudflare **R2's free tier holds 10 GB with no egress fees**, so files belong t
 
 ## Backends (`studio/blobstore.py`)
 - **`db`**: bytes stay in the row, as before. The default, and the automatic fallback whenever R2 isn't configured.
-- **`r2`**: on when all four `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` are set (`R2_ENDPOINT`
-  for another S3-compatible store). The **same variables and the same bucket client as One take's uploads**
+- **`r2`**: on when all four `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` are set.
+  HuhQueue's bucket (`huhqueue-media`, private) is in the **EU jurisdiction**, so also set `R2_JURISDICTION=eu`: the S3
+  host is then `https://<R2_ACCOUNT_ID>.eu.r2.cloudflarestorage.com` (the default non-EU host does not serve an EU
+  bucket). `R2_ENDPOINT` overrides the host entirely (https only); an unknown jurisdiction or a plain-http endpoint
+  turns R2 off rather than guessing. The **same variables and the same bucket client as One take's uploads**
   (`studio/r2.py`, docs/ONE_TAKE_UPLOADS.md). `HQ_MEDIA_STORAGE=db` keeps *new* media in the database even then; files
   already in R2 are still read from it while the `R2_*` variables are set (so never remove those while R2 holds files).
 
@@ -32,11 +35,17 @@ for every file the account had (docs/ADMIN.md).
 ## Moving existing files (`python -m studio.migrate_media`)
 ```bash
 python -m studio.migrate_media --to r2 --dry-run   # rows and bytes that would move; touches nothing
-python -m studio.migrate_media --to r2             # move everything (needs R2_* and the app's DATABASE_URL / SESSION_SECRET)
+python -m studio.migrate_media --to r2 --report --real-email you@example.com  # row by row: size, owner hash, demo/real/other
+python -m studio.migrate_media --to r2             # COPY everything: rows take the key, keep their BYTEA (needs R2_*)
 python -m studio.migrate_media --to r2 --limit 200 # in steps
+python -m studio.migrate_media --to r2 --cleanup --i-have-a-verified-backup   # later, with Ram's OK: drop DB copies
 ```
 For each row still holding bytes: sha256, PUT to a fresh random key, **GET it back and compare length and sha256**, and
-only then one guarded UPDATE that sets the key and nulls `data`. A copy that fails the check leaves the row as it was (that
+only then one guarded UPDATE that sets the key (and, only with `--drop-db-copy --i-have-a-verified-backup`, nulls
+`data`). By default the copy is **copy-only**: the BYTEA stays as a second copy, reads switch to R2 (so the database copy
+stops leaving Postgres), and with R2 switched off the database copy serves again. `--cleanup` re-downloads each object
+and drops a row's database copy only when its sha256 still matches; both ways of dropping refuse to run without
+`--i-have-a-verified-backup` (exit 2). A copy that fails the check leaves the row as it was (that
 attempt's object is queued for deletion; the next attempt uses a new key). Rows already moved are skipped, so it's
 idempotent and an interrupted run is finished by the next one. Chunks of an upload still arriving are skipped. Exit code 1
 if any row failed, 2 if R2 isn't configured. The sweep never deletes a key that any row still references.
@@ -47,8 +56,31 @@ because Postgres only reuses freed space and the 500 MB quota counts the table f
 
 ## Bucket settings
 Same bucket as One take is fine (different prefixes: `takes/`, `media/`, `lib/`). Do **not** add a lifecycle rule that
-expires `media/` or `lib/`: those are the person's Library and posts. (The `takes/` 7-day rule stays.) No CORS change is
-needed for media: the browser never talks to the bucket for it.
+expires `media/` or `lib/`: those are the person's Library and posts. `scripts/r2_bucket_setup.py` prints the CORS
+(our `PUBLIC_URL` origin only, no wildcard) and lifecycle (abort incomplete multipart after 1 day, `tmp/` after 7 days)
+documents and sends nothing unless `--apply` is given.
+
+## Browser redirect (`HQ_MEDIA_REDIRECT=1`, off by default)
+With R2 on and this flag set, a browser's own fetch of `/m/<token>` (it sends `Sec-Fetch-*`) for a file in R2 gets a
+302 to a presigned GET that lives **at most 15 minutes**, with `Cache-Control: no-store` and `Referrer-Policy:
+no-referrer`. The token is resolved first (missing, binned or foreign ids answer 404 and nothing is signed), an ETag
+match still answers 304, and the repeat-download limit applies to redirects too. Buffer, Instagram and the render
+worker (no `Sec-Fetch-*`) and every HEAD always get the bytes from `/m/` itself: a scheduled post's link must work
+whenever Buffer fetches it, and a presigned URL expires.
+
+## R2 free-tier caps (`studio/r2usage.py`)
+R2 must never cost money. The free tier is 10 GB-month stored, 1M Class A (writes) and 10M Class B (reads) operations a
+month; the code stops 20% short of each:
+
+| Setting | Default | Past it |
+|---|---|---|
+| `HQ_R2_MAX_BYTES` | 8 GB stored (rows with a `storage_key`, plus open/ready One take uploads) | new media stays in the database; migration stops; large uploads answer 507 |
+| `HQ_R2_MAX_CLASS_A` | 800,000 a month (UTC) | no new R2 writes (database fallback); a rewrite of an R2 object (GPS blanking) fails closed with 503 |
+| `HQ_R2_MAX_CLASS_B` | 8,000,000 a month (UTC) | reads use the row's database copy when it has one, else a clear 503 until the month turns; no redirects |
+
+Every SigV4 signature counts as one operation of its class (deletes are free). Counts sit in the `r2_usage` table (one
+row per month and class, three months kept, row-level security on) and are written in batches, never inside another
+transaction. `/admin` shows stored bytes and both operation counts against their caps, with a warning once a cap is hit.
 
 ## Failure behaviour (PR #110 review)
 - Every bucket call has a 5 s connect and 20 s overall timeout. Streamed Library uploads write chunks from the thread
