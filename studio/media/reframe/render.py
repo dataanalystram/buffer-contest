@@ -156,7 +156,7 @@ def _speech(words: list[dict], start: float) -> list[tuple[float, float]]:
 
 def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: list[float] | None, src: dict,
               fallback_faces: list[dict] | None = None, pins: dict[int, dict] | None = None, prefs: dict | None = None,
-              detect_shots: bool = False) -> dict:
+              detect_shots: bool = False, smart_layout: bool = False) -> dict:
     """{shots: [...with render geometry], sidecar, plan (public), detector, timings} for the clip [start, end]."""
     t0 = time.time()
     sw, sh = int(src.get("width") or 1920), int(src.get("height") or 1080)
@@ -176,6 +176,12 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
     tracks = faces_mod.track(smp["samples"])
     sigs = decide.signals_for(spans, smp["samples"], tracks, screen_fn, _speech(words, start), smp["fps"])
     shots = decide.decide(sigs, (sw, sh), prefs, pins, smp["fps"])
+    vis = None
+    from . import vision  # optional free vision picker: off by default, shadow logs only, on applies (never over a pin)
+    if vision.mode() != "off" and smart_layout:
+        vis = vision.pick_for_clip(path, start, end, sw, sh)
+        if vis and vision.mode() == "on":
+            shots, vis["applied"] = vision.apply(shots, sigs, vis["category"])
     by_id = {t["id"]: t for t in tracks}
     cover = []
     for s, sig in zip(shots, sigs):
@@ -184,7 +190,7 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
             pts = [p for fid in s.get("faces") or [] for p in by_id.get(fid, {"points": []})["points"] if s["start"] <= p[0] < s["end"]]
             cover.append((path_mod.coverage(s["path"], pts, s["start"], sw, sh), s["end"] - s["start"]))
     cov = (sum(c * d for c, d in cover) / sum(d for _, d in cover)) if cover else None
-    return {"shots": shots, "sidecar": decide.sidecar(shots), "plan": decide.public(shots), "detector": smp["detector"],
+    return {"shots": shots, "sidecar": decide.sidecar(shots), "plan": decide.public(shots), "detector": smp["detector"], "vision": vis,
             "face_coverage": round(cov, 3) if cov is not None else None, "timings": {"faces": round(t_faces, 2)},
             "signals": [{k: v for k, v in s.items() if k != "faces"} | {"faces": [{k: t[k] for k in ("id", "cx", "cy", "h", "presence", "motion")
                                                                                    if k in t} for t in s["faces"]]} for s in sigs]}
@@ -216,7 +222,7 @@ def geom(s: dict, sig: dict, by_id: dict, src: tuple[int, int]) -> None:
             s.update(layout="fit", bg="blur")
             return
         t = max(cams, key=lambda t: t["h"])
-        fs = _even(min(sh, sw, max(64, t["h"] * sh * 2.2)))
+        fs = _even(min(sh, sw, max(64, t["h"] * sh * 1.7)))
         fx = int(min(sw - fs, max(0, t["cx"] * sw - fs / 2)))
         fy = int(min(sh - fs, max(0, t["cy"] * sh - fs * 0.45)))
         s["face_box"] = (fx, fy, fs)

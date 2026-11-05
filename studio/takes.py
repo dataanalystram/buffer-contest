@@ -32,6 +32,7 @@ import httpx
 from . import brand, demo, drafter, llm, netguard, sources, take
 from .actions import CONFIRM_TTL, ActionError, Actor
 from .take_bin import TakeBin
+from . import take_layout  # per-clip layout plan, per-scene overrides, Smart layout opt-in (no FastAPI: the worker imports this)
 from .store import sha
 
 MOMENTS_AI = "AI engine"  # placeholder source while the engine order runs; replaced by the engine that answered
@@ -514,6 +515,8 @@ class Takes(TakeBin):
             clips.append({"id": c["id"], "start": c["start"], "end": c["end"], "hook": c["hook"],
                           "words": clip_words(an["words"], c, c["start"], c["end"]),
                           "faces": [f for f in an.get("faces") or [] if c["start"] - 1 <= f["t"] <= c["end"] + 1],
+                          "layout_overrides": c.get("layout_overrides") or {}, "caption_preset": c.get("caption_preset"),
+                          "smart_layout": take_layout.smart_layout_on(self.h, a),
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else []})
         for k in ("reframe", "captions", "covers"):
             self._step(run["steps"], k, "running", f"0 of {len(clips)} clips")
@@ -703,6 +706,7 @@ class Takes(TakeBin):
             m = c.get("meta") or {}
             d["duration"] = m.get("duration") or round((c["end"] - c["start"]) + take.COVER_SECS + take.END_SECS, 2)
             d["layout"], d["face_coverage"] = m.get("layout"), m.get("face_coverage")
+            d["layout_plan"], d["caption_preset"] = m.get("layout_plan"), c.get("caption_preset") or m.get("caption_preset")
             d["cover_offset_ms"] = m.get("cover_offset_ms")
             d["words"] = clip_words(words, c, c["start"] - 4, c["end"] + 4)
             d["transcript"] = " ".join(w["w"] for w in clip_words(words, c, c["start"], c["end"]))

@@ -513,6 +513,11 @@ TRANSCRIBER = None  # tests and self-hosters can plug in their own: fn(path) -> 
 def transcribe(path: str, model: str = "small") -> tuple[list[dict], str, str]:
     if TRANSCRIBER:
         return TRANSCRIBER(path)
+    from .media import asr  # Groq's free tier first (GROQ_API_KEY set, inside the free limits), else faster-whisper here
+    got = asr.free_first(path)
+    if got:
+        return got
+    model = asr.local_model(model)
     try:
         from faster_whisper import WhisperModel  # MIT
     except ImportError:
@@ -776,9 +781,15 @@ def _frame_filter(plan: dict, sh: int, W: int, H: int) -> str:
 
 
 def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes: list[float], src: dict, kit: dict, p: dict,
-                logo: bytes | None = None, W: int = CLIP_W, H: int = CLIP_H, crf: int = 26) -> tuple[bytes, bytes, dict]:
+                logo: bytes | None = None, W: int | None = None, H: int | None = None, crf: int = 26) -> tuple[bytes, bytes, dict]:
     """One finished clip: [cover 0.5 s] + [moment, reframed to 9:16 shot by shot, captions burned in, logo bug] + [end card].
-    Returns (mp4, cover_jpg, meta). meta.cover_offset_ms is the frame Buffer's thumbnailOffset should point at."""
+    Returns (mp4, cover_jpg, meta). meta.cover_offset_ms is the frame Buffer's thumbnailOffset should point at.
+    With no W/H given, per-shot layouts render it at 1080x1920 (studio/media/reframe; HQ_LAYOUTS=0 keeps this path)."""
+    from .media import reframe as _layouts
+    if W is None and H is None and _layouts.enabled():
+        from .media.reframe.take_clip import render_take_clip
+        return render_take_clip(path, m, words, faces, scenes, src, kit, p, logo)
+    W, H = W or CLIP_W, H or CLIP_H
     from PIL import Image
 
     from . import render
