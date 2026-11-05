@@ -580,8 +580,8 @@ def _face_track_cv2(path: str, fps: float, why: str) -> tuple[list[dict], str]:
     try:
         import numpy as np
         casc = facedetect.haar()
-    except (facedetect.DetectorError, ImportError) as e:
-        print(f"face track: no face detector ({why}; {e}): centered crop", flush=True)
+    except Exception as e:  # noqa: BLE001 - no usable OpenCV at all: a centred crop, never an escaped error (as main)
+        print(f"face track: no face detector ({why}; {e.__class__.__name__}: {str(e)[:80]}): centered crop", flush=True)
         return [], f"none ({why}; OpenCV unavailable: centre/blur layout)"
     w, h = 320, 180
     info = probe(path)
