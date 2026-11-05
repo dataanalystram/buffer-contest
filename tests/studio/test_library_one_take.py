@@ -161,7 +161,7 @@ def test_duplicate_rows_of_an_overflow_binned_token_never_shorten_the_page(human
     _take(st, "acc_1", [{"id": "c0", "status": "binned", "token": tok}], name="Dup binned")
     h.library.backfill(A)
     row = dict(st.q("SELECT * FROM library_items WHERE user_id=? AND token=?", ("acc_1", tok))[0])
-    for _ in range(3):  # three more rows for the same binned token, all newer than the kept items
+    for _ in range(90):  # many more rows for the same binned token (past any fixed number of refills), all newer
         st.x("INSERT INTO library_items(user_id,name,kind,mime,size,token,storage,source,meta,created) VALUES(?,?,?,?,?,?,?,?,?,?)",
              ("acc_1", row["name"], row["kind"], row["mime"], row["size"], tok, row["storage"], row["source"], row["meta"] or "{}", time.time() + 2000))
     st.x("UPDATE library_items SET created=? WHERE user_id=? AND token=?", (time.time() + 2000, "acc_1", tok))

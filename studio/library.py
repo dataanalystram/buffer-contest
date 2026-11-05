@@ -753,12 +753,13 @@ class Library:
                 args.extend(in_sql)
             sql = f"SELECT * FROM library_items WHERE {' AND '.join(where)} ORDER BY created DESC, id DESC LIMIT ? OFFSET ?"  # noqa: S608  where: fixed clauses, values bound
             rows, off, batch = [], 0, lim + len(rest)
-            for _ in range(20):  # refill by rows (a token can have more than one row) until the page is full or none remain
+            while True:  # refill by rows (a token can have several) until the page is full or no rows remain
                 part = self.store.q(sql, (*args, batch, off))
                 rows.extend(r for r in part if r["token"] not in takes["binned"])
                 if len(rows) >= lim or len(part) < batch or not rest:
                     break
                 off += len(part)
+                batch = min(batch * 2, 2000)  # skipped rows grow the next read, so a long run of them takes few queries
             by_run = {r["run_id"]: r for r in runs}
             items = []
             for r in rows:
