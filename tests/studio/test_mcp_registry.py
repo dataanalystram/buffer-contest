@@ -92,6 +92,8 @@ def test_registry_reads_are_quiet_and_work_under_the_kill_switch(human):
     human.post("/api/safety/kill", json={"on": True})
     res, out = mcp_call(human, tok, "search_tools", {"query": "queue"})
     assert not res["isError"] and out["count"] >= 1   # a read of the static list, like whoami
+    from studio import mcp_runs
+    mcp_runs.ensure(human.app.state.store)
     assert not human.app.state.store.q("SELECT 1 AS n FROM mcp_calls WHERE tool IN ('search_tools','describe_tool')")
 
 
