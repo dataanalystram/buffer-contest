@@ -382,6 +382,7 @@ def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_
 # link-rights items, only the person's own (a foreign, missing, decided or other-kind id is 404), and the consent record
 # names the app and the time. Paid-API and post approvals are never decided here: those stay in the app.
 def _app_row(store, a: Actor, approval_id: Any) -> dict:
+    """This person's pending link-rights item by id: 400 for a bad id type, else 404 for anything that isn't one."""
     if isinstance(approval_id, bool) or not isinstance(approval_id, int):
         raise ActionError("approval_id is the number ingest_video_link or list_pending_approvals returned.", 400)
     rows = store.q("SELECT * FROM approvals WHERE id=? AND user_id=?", (approval_id, a.uid))
@@ -403,6 +404,7 @@ def app_decide_link(store, a: Actor, approval_id: Any, approve: bool, rights: An
 
 
 def _attestation() -> str:
+    """The current rights statement (imported late: link_ingest imports this module's callers)."""
     from . import link_ingest
     return link_ingest.ATTESTATION
 

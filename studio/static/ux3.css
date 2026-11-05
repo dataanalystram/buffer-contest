@@ -245,10 +245,10 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
 /* Settings → Auto-approve video links */
 .set-auto{display:flex;flex-direction:column;gap:12px}
 .set-auto-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
-.set-auto .switch input:checked+span{background:var(--accent)}
+.set-auto .switch input:checked+span{background:var(--ink)}  /* a setting, not something waiting for a person: no accent (DESIGN.md) */
 .set-auto-form{display:flex;flex-direction:column;gap:12px;padding-top:4px}
 .set-auto-form fieldset{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
 .set-auto-form legend{font-size:13px;font-weight:600;margin-bottom:4px}
 .set-auto-apps{display:flex;flex-direction:column;gap:2px;padding-left:28px}
 .set-auto-sum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}
-.auto-pill{margin-left:6px;color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.auto-pill{margin-left:6px}  /* the neutral .pill: auto-approved needs nobody */

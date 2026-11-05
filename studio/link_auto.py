@@ -28,6 +28,7 @@ _FLAG = "_link_auto_ready"
 
 
 def ensure(store) -> None:
+    """Create the table on first use (row-level security on for Postgres)."""
     if getattr(store, _FLAG, False):
         return
     sql = SCHEMA
@@ -41,12 +42,14 @@ def ensure(store) -> None:
 
 
 def _row(store, uid: str) -> dict | None:
+    """The person's setting row, or None when they never touched it (off)."""
     ensure(store)
     rows = store.q("SELECT * FROM link_auto_approve WHERE user_id=?", (uid,))
     return dict(rows[0]) if rows else None
 
 
 def _apps(raw: Any) -> list[int]:
+    """The stored app ids as ints (anything unreadable counts as none)."""
     try:
         v = json.loads(raw or "[]")
     except (TypeError, ValueError):
@@ -55,6 +58,7 @@ def _apps(raw: Any) -> list[int]:
 
 
 def _tokens(store, uid: str) -> list[dict]:
+    """The person's own AI apps that are not revoked: the only ids scope 'apps' accepts."""
     return [{"id": int(r["id"]), "name": r["name"]} for r in
             store.q("SELECT id, name FROM agent_tokens WHERE user_id=? AND COALESCE(revoked,0)=0 ORDER BY id", (uid,))]
 

@@ -99,6 +99,7 @@ def record_for_app(store, uid: str, url: str, *, app: str, via: str, licence: st
 
 
 def _insert(store, uid: str, url: str, *, licence: str, via: str, approval_id, agent_id, app: str) -> int:
+    """One consent row with who said yes (``app``) and when (``approved_at``)."""
     ensure(store)
     now = time.time()
     return store.x("INSERT INTO link_consents(user_id,url,url_hash,attestation_version,attestation,licence,via,agent_id,"

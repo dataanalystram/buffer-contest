@@ -53,7 +53,7 @@
       </fieldset>
       <p class="st err" data-testid="link-auto-error" role="alert" hidden></p>
       <div class="row tight"><button class="btn2 sm" type="button" data-testid="link-auto-cancel">Cancel</button>
-        <button class="btn accent sm" type="submit" data-testid="link-auto-save" disabled>${editing ? "Save" : "Turn on"}</button></div></form>`;
+        <button class="btn sm" type="submit" data-testid="link-auto-save" disabled>${editing ? "Save" : "Turn on"}</button></div></form>`;
     const f = b.querySelector("form"), save = f.querySelector("[data-testid=link-auto-save]");
     const scope = () => f.querySelector("input[name=laScope]:checked")?.value || "all";
     const chosen = () => [...f.querySelectorAll("[data-testid=link-auto-app]:checked")].map((x) => Number(x.value));
