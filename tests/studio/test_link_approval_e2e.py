@@ -49,7 +49,7 @@ def live(tmp_path, monkeypatch):
 
 
 def _mcp(base, tok, name, args):
-    r = httpx.post(base + "/mcp", headers={"Authorization": f"Bearer {tok}"}, timeout=20,
+    r = httpx.post(base + "/mcp", headers={"Authorization": f"Bearer {tok}"}, timeout=20, trust_env=False,
                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}})
     res = r.json()["result"]
     return res["structuredContent"] if not res["isError"] else {"error": res["content"][0]["text"]}
