@@ -231,6 +231,18 @@ count (digits or words, "a few" = 3) and the length range (20-60 s by default, c
    card, music under silent stretches. With burned-in subtitles the bottom 16% is cropped before reframing and our
    captions are skipped, so captions never stack. Each render gets a contact sheet for a quick visual check.
 
+**One take pause & filler trim + loudness** (`studio/media/cleancut.py`, on by default for One take, `trim_pauses: false`
+to keep every pause; off for the Opus-style render and the sample). Before a clip renders, the worker plans cuts from the
+transcript's own word timestamps: a gap between words longer than 0.6 s shrinks to 80 ms of padding either side (only
+where FFmpeg `silencedetect` agrees there is silence), and filler words go (um / uh / erm / hmm; "like" only when it
+stands between pauses or commas, never "like a ..."). A cut never starts or ends inside a kept word. A plan that would
+remove half the span or more is dropped (music, silent screen work), and any failure renders the span untrimmed (fail
+open). The kept stretches are joined with FFmpeg `trim`/`atrim` + `concat` (10 ms fades at each join), and the captions,
+face samples and scene cuts are remapped onto the trimmed timeline. Audio is then normalised two-pass: `loudnorm`
+measures the span first, and the render applies the linear filter for -14 LUFS integrated / -1 dBTP (one pass when the
+measurement fails). Each clip reports `trimmed_s` (shown as "trimmed X s" on the clip) and `meta.trim`. FFmpeg only: no
+new dependency, no model, no paid API.
+
 **One take per-scene layouts** (`studio/media/reframe/`, One take style). YuNet faces (`cv2.FaceDetectorYN`, the MIT
 model vendored and sha256-checked at load, OpenCV < 5, no contrib) on each clip span pick a layout per scene: `track`
 (9:16 crop following the face), `fit` (whole frame over a blur or the brand colour), `split` (two people stacked, only
