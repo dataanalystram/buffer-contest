@@ -717,6 +717,12 @@ class House:
             self._save(rid, d["steps"], d["result"], "failed")
         if isinstance(d.get("result"), dict):
             self.annotate_media(d["result"])
+        try:  # the thread's public id on EVERY run answer (start, reply, resume, poll...): the page keeps it in the address
+            # bar (/threads/thr_...) so a reload stays on it. A start used to come back without it (only GET added it).
+            from .thread_bin import public_id
+            d["thread_id"] = public_id(self.store, a.uid, rid)
+        except Exception:  # noqa: BLE001  an address is a nicety; the run still opens
+            traceback.print_exc()
         from . import mcp_runs  # what an MCP client (Claude, ChatGPT...) did on this run: its steps and its brain line
         return mcp_runs.merge(self.store, d)
 

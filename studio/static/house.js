@@ -228,6 +228,7 @@ window.stopWatch = stopWatch; window.resumeWatch = resumeWatch;
 // ---------------------------------------------------------------- run view
 function showRun(r) {
   window.HQ_NAV = (window.HQ_NAV || 0) + 1;  // boot() keeps a run the user opened while it loaded (see app.js)
+  if (r && !r.thread_id && H.run && H.run.id === r.id && H.run.thread_id) r.thread_id = H.run.thread_id;  // keep the address
   H.run = r; $("#runView").hidden = false;
   window.mpOnRun && window.mpOnRun(r);
   // a step that ran again with nothing new ("Check everything" x4) is one row with its count (the latest result)

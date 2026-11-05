@@ -37,6 +37,14 @@ def test_a_run_answer_names_its_thread_id_for_the_address_bar(app, human):
     assert d["thread_id"] == thread_bin.public_id(app.state.store, "acc_1", rid)
 
 
+def test_every_run_answer_names_its_thread_id_not_only_the_poll(app, human):
+    # the e2e caught it (#124): a run shown from a POST answer (start, reply, resume) had no thread_id, so no address
+    rid = _run(app.state.store, status="ready")
+    from studio.house import Actor
+    assert app.state.house.run(Actor("acc_1"), rid)["thread_id"] == thread_bin.public_id(app.state.store, "acc_1", rid)
+    assert "H.run.id === r.id && H.run.thread_id) r.thread_id = H.run.thread_id" in (ST / "house.js").read_text()
+
+
 def test_an_unchanged_busy_run_answers_304_with_no_body_and_a_change_answers_in_full(app, human):
     st = app.state.store
     rid = _run(st)

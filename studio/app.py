@@ -1016,12 +1016,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         from .library import not_modified
         if tag and not_modified(request, tag):
             return Response(status_code=304, headers={"ETag": tag, "Cache-Control": "private, no-cache"})
-        out = house.run(a, rid)
-        try:  # the thread's public id: the page keeps it in the address bar (/threads/thr_...) so a reload stays on it
-            from .thread_bin import public_id
-            out["thread_id"] = public_id(store, a.uid, rid)
-        except Exception:  # noqa: BLE001  an address is a nicety; the run still opens
-            pass
+        out = house.run(a, rid)  # carries thread_id (house.run): the address bar's /threads/thr_...
         return JSONResponse(jsonable_encoder(out), headers={"ETag": tag, "Cache-Control": "private, no-cache"}) if tag else out
 
     @app.post("/api/agent/runs/{rid}/revise")
