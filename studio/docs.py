@@ -171,7 +171,9 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <ol><li>Transcribes with word timings.</li><li>Finds moments that end on a sentence.</li><li>Reframes to 9:16 around the speaker.</li><li>Burns captions in your font above the bottom fifth, adds a cover and your end card.</li><li>Checks each clip for every channel.</li></ol>
 <h2 id="spread">The Spread</h2>
 <p>Choose <b>Spread into my week</b>. The clips appear on the Planner in your open posting times as a plan first; <b>Save as Buffer drafts</b> creates them. You can trim each clip by half a second and edit its hook and caption.</p>
-<p>Try <b>Try the sample take</b> to see it on Buffer's own 89-minute Buffer Commit kickoff Q&amp;A, split into 5 credited clips. Upload up to 40 MB, or link to a file you host for longer talks. You confirm you own the video or have the rights to it.</p>"""),
+<p>Try <b>Try the sample take</b> to see it on Buffer's own 89-minute Buffer Commit kickoff Q&amp;A, split into 5 credited clips. Upload a video up to the limit shown on the drop zone (4 GB in parts that resume after a dropped connection when the server has a storage bucket, 100 MB otherwise), or link to a file you host. You confirm you own the video or have the rights to it.</p>
+<h2 id="bin">The Bin</h2>
+<p>Deleting a take or one clip moves it to the <b>Bin</b> under <b>Your takes</b> for 7 days; the toast right after has <b>Undo</b>. In the Bin each item shows the days left, with <b>Restore</b> and <b>Delete forever</b> (it asks first, and can't be undone). After 7 days it and its files are removed for good.</p>"""),
     ("agents", "AI apps, MCP and API", "Use HuhQueue from Claude, ChatGPT, Grok, Claude Code, Codex, Cursor or your own code, on a leash.", "connect", """
 <p>Everything the app can do is also a tool for your AI apps over MCP and an endpoint over REST. Open <b>AI apps</b> in the app for per-app steps, your MCP address and when each app last used it.</p>
 <h2 id="oauth">Apps that sign in (Claude, ChatGPT, Grok on grok.com)</h2>
