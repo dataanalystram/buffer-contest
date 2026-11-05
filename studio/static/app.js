@@ -456,7 +456,11 @@ function showTab(name, sub = "") {
   // once, its loaders run, and it is shown once they have drawn (at least 150 ms, no flicker). The same screen again (a
   // refresh) just reloads in place. History is untouched: urlFor above already pushed or replaced the entry.
   const el = document.getElementById("tab-" + name), subWork = subTab.work;
-  if (!window.HQView || (from === name && fromSub === sub && !el.classList.contains("hq-vt-wait"))) return void tabLoader(name)();
+  // The screen already on view stays on view: the same screen again (a refresh), or boot opening the screen that was
+  // showing before it (Make a post is on view by default, with no sub yet) just reloads in place. Hiding it would take
+  // the composer away from someone typing in it and drop their Enter (#117 smoke: no run ever started).
+  const same = from === name && (fromSub === sub || !fromSub);
+  if (!window.HQView || (same && !el.classList.contains("hq-vt-wait"))) return void tabLoader(name)();
   HQView.swap(el, [subWork, () => tabLoader(name)()], { leaving: from !== name ? from : "", retry: () => tabLoader(name)() });
 }
 window.showTab = showTab;

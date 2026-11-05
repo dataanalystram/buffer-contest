@@ -142,8 +142,8 @@ def test_boot_never_hides_the_screen_already_on_view(live, chromium, close_conte
     Before the fix boot's showTab("agent") swapped it (its sub went from none to "agent") and the composer went
     visibility:hidden mid-typing; the Enter that followed never started a run."""
     ctx, page, errors = _ctx(chromium, live["base"], w)
-    page.add_init_script(PROBE)
-    page.add_init_script("window.__hqDelay['/api/channels'] = 1500")  # a slow boot (PROBE delays it inside the page)
+    # one init script: PROBE creates window.__hqDelay, then a slow boot (/api/channels held 1.5 s inside the page)
+    page.add_init_script(PROBE + "\nwindow.__hqDelay['/api/channels'] = 1500;")
     page.add_init_script("""document.addEventListener('DOMContentLoaded', () => {
         const t = document.getElementById('tab-agent'); window.__hqHid = 0;
         new MutationObserver(() => { if (t.classList.contains('hq-vt-wait')) window.__hqHid += 1; })
