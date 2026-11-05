@@ -28,3 +28,5 @@
 .hq-vt-err span{color:var(--muted);overflow-wrap:anywhere}
 .hq-vt-acts{display:flex;gap:12px;align-items:center;margin-top:4px}
 @media (forced-colors:active){.hq-vt-trace{forced-color-adjust:none;stroke:CanvasText}}
+/* the mark inline above a region's own skeleton (opening a thread) */
+.hq-vt-inline{display:flex;justify-content:center;padding:8px 0 16px}
