@@ -20,6 +20,7 @@ investigations, and offers Zero Data Retention in its data controls (https://con
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -39,6 +40,28 @@ LOCAL_DEFAULT = "base.en"
 LANG = {"english": "en", "spanish": "es", "french": "fr", "german": "de", "italian": "it", "portuguese": "pt", "hindi": "hi",
         "japanese": "ja", "chinese": "zh", "korean": "ko", "dutch": "nl", "russian": "ru", "arabic": "ar", "turkish": "tr"}
 _lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _file_lock(path: Path):
+    """An exclusive lock shared by every process on this machine (check + count is one step, so two jobs can't both
+    take the last free request). No lock available: the in-process lock still serialises this process."""
+    try:
+        import fcntl
+    except ImportError:  # not POSIX
+        fcntl = None
+    f = None
+    try:
+        if fcntl is not None:
+            try:
+                f = open(str(path) + ".lock", "a+")
+                fcntl.flock(f, fcntl.LOCK_EX)
+            except OSError:
+                f = None
+        yield
+    finally:
+        if f is not None:
+            f.close()  # closing releases the flock
 
 
 class GroqUnavailable(RuntimeError):
@@ -99,6 +122,14 @@ class Budget:
             return False, "near Groq's 28,800 audio-seconds/day"
         return True, ""
 
+    def reserve(self, secs: float) -> tuple[bool, str]:
+        """allow + record as ONE step under a machine-wide file lock (concurrent jobs share one budget)."""
+        with _file_lock(self.path):
+            ok, why = self.allow(secs)
+            if ok:
+                self.record(secs)
+            return ok, why
+
     def record(self, secs: float) -> None:
         with _lock:
             d = self._load()
@@ -131,13 +162,15 @@ def audio_chunks(path: str, tmp: Path, chunk_s: float = CHUNK_S) -> list[tuple[f
         out.append((off, n, f))
         off += n
         k += 1
+    if not out:  # no duration in the container (browser WebM): the caller's local path transcribes it
+        raise GroqUnavailable("couldn't determine the audio duration")
     return out
 
 
 # ---------------------------------------------------------------------- Groq
 def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> tuple[list[dict], str]:
     """One chunk through Groq (words in chunk seconds, language). Raises GroqUnavailable instead of ever retrying."""
-    ok, why = budget.allow(secs)
+    ok, why = budget.reserve(secs)  # counted before the call: a timeout still used the request
     if not ok:
         raise GroqUnavailable(why)
     from .. import free_quota  # the app's shared ledger: a fresh worker machine's own counter starts at zero
@@ -147,7 +180,6 @@ def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> 
     import httpx
     client = http or httpx.Client(timeout=TIMEOUT_S, trust_env=False, follow_redirects=False)
     try:
-        budget.record(secs)  # counted before the call: a timeout still used the request
         r = client.post(GROQ_URL, headers={"Authorization": f"Bearer {key}"},
                         data={"model": GROQ_MODEL, "response_format": "verbose_json", "timestamp_granularities[]": "word",
                               "temperature": "0"},

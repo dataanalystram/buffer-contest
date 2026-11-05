@@ -105,21 +105,26 @@ def sample(path: str, start: float, end: float, src_w: int, src_h: int, fps: flo
     """Face samples + grey thumbnails over the clip span. Raises FaceModelError when YuNet can't run here.
     Decodes at 640 wide (fast); when most samples find no face or only a small one, a second 1 fps pass at full
     resolution looks again (a webcam bubble in a screen recording)."""
-    import cv2
+    try:
+        import cv2
+    except Exception as e:  # noqa: BLE001 - no OpenCV here: the caller uses the analysis' face samples
+        raise FaceModelError(f"OpenCV isn't installed ({e.__class__.__name__})")
     W = min(src_w, MAX_W) - min(src_w, MAX_W) % 2
     H = int(round(W * src_h / max(1, src_w) / 2)) * 2
-    dh = int(round(DET_W * H / W / 2)) * 2
-    fast = detector(DET_W, dh)
+    # the fast pass decodes at min(source, 640) wide (frames() never upscales): measure faces on THAT frame
+    fw = min(src_w, DET_W) - min(src_w, DET_W) % 2
+    dh = int(round(fw * src_h / max(1, src_w) / 2)) * 2
+    fast = detector(fw, dh)
     out, thumbs = [], {}
     th = int(round(THUMB_W * H / W / 2)) * 2
     small_or_none = 0
     for t, img in frames(path, start, end, fps, DET_W, src_w, src_h):
-        found = [f for f in _boxes(fast, img, 1.0, 1.0, DET_W, dh) if f["score"] >= MIN_SCORE]
+        found = [f for f in _boxes(fast, img, 1.0, 1.0, fw, dh) if f["score"] >= MIN_SCORE]
         if not found or max(f["h"] for f in found) * dh < SMALL_PX:
             small_or_none += 1
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         for f in found:
-            f["mouth"] = _mouth(gray, f, DET_W, dh)
+            f["mouth"] = _mouth(gray, f, fw, dh)
             f.pop("lm", None)
         out.append({"t": t, "faces": found})
         thumbs[t] = cv2.resize(gray, (THUMB_W, th), interpolation=cv2.INTER_AREA)

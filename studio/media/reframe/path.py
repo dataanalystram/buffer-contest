@@ -57,7 +57,10 @@ def plan(series: list[tuple[float, float, float, float]], a: float, b: float, sr
     hs = [h for _, _, _, h in series] or [0.2]
     z = zoom_for(median(hs), src_h)
     ch = min(src_h, _even(src_h / z))
-    cw = min(src_w - src_w % 2, _even(ch * 9 / 16))
+    cw = _even(ch * 9 / 16)
+    if cw > src_w - src_w % 2:  # a source narrower than 9:16 (1080x2400): keep the crop 9:16, never squash it
+        cw = src_w - src_w % 2
+        ch = min(src_h, _even(cw * 16 / 9))
     max_x, max_y = src_w - cw, src_h - ch
     if not series:
         return {"crop_w": cw, "crop_h": ch, "zoom": z, "keys": [(0.0, max_x // 2, max_y // 2)]}

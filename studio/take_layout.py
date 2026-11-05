@@ -41,15 +41,19 @@ TOOLS = [
 ]
 READ_ONLY = {"get_clip_layout"}
 NAMES = {t["name"] for t in TOOLS}
-_TABLE = False
 
 
 # ---------------------------------------------------------------------- Smart layout (beta) opt-in
 def _table(store) -> None:
-    global _TABLE
-    if not _TABLE:
-        store.x("CREATE TABLE IF NOT EXISTS take_prefs (user_id TEXT PRIMARY KEY, data TEXT, updated REAL)")
-        _TABLE = True
+    """take_prefs on THIS store (each app has its own database), with row-level security on Postgres (Supabase
+    publishes the public schema; RLS with no policies keeps it closed, as for every other table)."""
+    if getattr(store, "_take_prefs_ready", False):
+        return
+    store.x("CREATE TABLE IF NOT EXISTS take_prefs (user_id TEXT PRIMARY KEY, data TEXT, updated "
+            + ("DOUBLE PRECISION)" if getattr(store, "pg", False) else "REAL)"))
+    if getattr(store, "pg", False):
+        store.x("ALTER TABLE take_prefs ENABLE ROW LEVEL SECURITY")
+    store._take_prefs_ready = True
 
 
 def _prefs(store, uid: str) -> dict:
@@ -179,15 +183,16 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
             if pin["layout"] == "auto":
                 ov.pop(str(i), None)
             else:
-                ov[str(i)] = {k: pin[k] for k in ("layout", "bg", "style") if k in pin and (k == "layout" or
-                              (k == "bg" and pin["layout"] == "fit") or (k == "style" and pin["layout"] == "screen"))}
+                ov[str(i)] = {**{k: pin[k] for k in ("layout", "bg", "style") if k in pin and (k == "layout" or
+                              (k == "bg" and pin["layout"] == "fit") or (k == "style" and pin["layout"] == "screen"))},
+                              **_at(plan, i)}
         if lay is not None:
             targets = [scene] if scene is not None else (list(range(len(plan))) or [0])
             for i in targets:
                 if lay == "auto":
                     ov.pop(str(i), None)
                 else:
-                    pin = {"layout": lay}
+                    pin = {"layout": lay, **_at(plan, i)}
                     if lay == "fit" and bg:
                         pin["bg"] = bg
                     if lay == "screen" and style:
@@ -204,6 +209,16 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
     out = view(takes, a, rid, clip_id)
     out["rerendering"] = True
     return out
+
+
+def _at(plan: list[dict], i: int) -> dict:
+    """{"at": the scene's middle, clip seconds}: a pin follows its moment if the scenes change on the next render."""
+    if 0 <= i < len(plan):
+        try:
+            return {"at": round((float(plan[i]["start"]) + float(plan[i]["end"])) / 2, 3)}
+        except (KeyError, TypeError, ValueError):
+            return {}
+    return {}
 
 
 def call_tool(studio, actor, name: str, args: dict):

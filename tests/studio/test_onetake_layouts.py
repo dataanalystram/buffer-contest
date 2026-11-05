@@ -553,3 +553,92 @@ def test_licence_guard_no_agpl_dependency_installed():
         if "affero" in text or re.search(r"\bagpl", text):
             hits.append(m.get("Name"))
     assert not hits, f"AGPL dependencies installed: {hits}"
+
+
+# ---------------------------------------------------------------------- review round 1 (CodeRabbit, Greptile)
+def test_take_prefs_table_is_made_on_every_store(tmp_path):
+    from studio import take_layout
+    from studio.store import Store
+    for k in range(2):  # a second app with a fresh database still gets its table
+        st = Store(str(tmp_path / f"s{k}.db"), "x" * 32)
+        assert take_layout._prefs(st, "u") == {}
+        assert st.q("SELECT COUNT(*) AS n FROM take_prefs")[0]["n"] == 0
+
+
+def test_set_clip_layout_counts_against_the_agent_cap():
+    from studio.actions import Studio
+    assert "set_clip_layout" in Studio.COUNTED
+
+
+def test_no_audio_duration_goes_local(monkeypatch, tmp_path):
+    from studio import take
+    from studio.media import asr
+    monkeypatch.setattr(take, "probe", lambda p: {"duration": 0})
+    with pytest.raises(asr.GroqUnavailable):
+        asr.audio_chunks("x.webm", tmp_path)
+    assert asr.free_first("x.webm", key="gsk_dummy", budget=asr.Budget(str(tmp_path / "u.json"))) is None
+
+
+def test_split_uses_the_two_people_the_rule_chose():
+    from studio.media.reframe import render
+    sig = {"faces": [_face(7, 0.05, 0.12, presence=0.3), _face(1, 0.3, 0.2), _face(2, 0.85, 0.2)]}
+    s = {"start": 0, "end": 4, "layout": "split", "faces": [1, 2]}
+    render.geom(s, sig, {}, (1920, 1080))
+    xs = [p[0] for p in s["panels"]]
+    assert len(xs) == 2 and min(xs) > 0.2 * 1920 - 700                    # the edge face (id 7) isn't a panel
+    pinned = {"start": 0, "end": 4, "layout": "split"}                       # no ids: the two most prominent faces
+    render.geom(pinned, sig, {}, (1920, 1080))
+    assert len(pinned["panels"]) == 2
+
+
+def test_tall_sources_keep_a_9_16_crop():
+    from studio.media.reframe import path
+    p = path.plan([(t / 5, 540.0 / 1080, 0.4, 0.2) for t in range(20)], 0, 4, 1080, 2400)
+    assert abs(p["crop_w"] / p["crop_h"] - 9 / 16) < 0.01 and p["crop_h"] <= 2400
+
+
+def test_the_winning_vote_keeps_its_own_layout(monkeypatch):
+    calls = {"n": 0}
+
+    def fake(sig, src, prefs=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"layout": "fit", "rule": "R8", "bg": "blur"}             # the whole shot (a briefly seen 3rd face)
+        return {"layout": "track", "rule": "R3", "faces": [0]} if calls["n"] <= 5 else {"layout": "fit", "rule": "R8", "bg": "blur"}
+    monkeypatch.setattr(decide, "rule", fake)
+    sig = {"start": 0.0, "end": 6.0, "faces": [{**_face(0, 0.5, 0.3), "points": [(t / 5, {}) for t in range(30)]}]}
+    d = decide.window_votes(sig, (1920, 1080), None, 5.0)
+    assert d["layout"] == "track" and d["faces"] == [0] and d["rule"] == "R3+vote"
+
+
+def test_sidecar_keeps_the_screen_style_apart():
+    side = decide.sidecar([{"start": 0, "end": 3, "layout": "screen", "style": "pip"},
+                           {"start": 3, "end": 6, "layout": "screen", "style": "stack"}])
+    assert [(s["layout"], s.get("style")) for s in side] == [("screen", "pip"), ("screen", "stack")]
+    assert captions_ass.band_y(side[0]) != captions_ass.band_y(side[1])
+
+
+def test_plan_describes_what_renders_and_pins_follow_their_time():
+    from studio.media.reframe import render
+    sigs = [{"faces": [_face(0, 0.5, 0.3)]}, {"faces": []}]
+    shots = [{"start": 0, "end": 3, "layout": "split", "pinned": True, "rule": "pinned"},
+             {"start": 3, "end": 6, "layout": "screen", "style": "pip", "rule": "R1"}]
+    out = render.feasible(shots, sigs)
+    assert [s["layout"] for s in out] == ["fit", "fit"] and out[0]["pinned"] and "style" not in out[1]
+    assert render.remap_pins({0: {"layout": "fit", "at": 4.5}, 3: {"layout": "track"}}, [(0, 3), (3, 6)]) == {1: {"layout": "fit"}}
+    assert render.pins_from({"1": {"layout": "fit", "bg": "brand", "at": 4.5}}) == {1: {"layout": "fit", "bg": "brand", "at": 4.5}}
+
+
+def test_local_free_counters_check_and_count_in_one_step(tmp_path):
+    import threading
+    from studio.media.reframe import vision
+    lim = vision.Limits(str(tmp_path / "v.json"))
+    prov = dict(vision.PROVIDERS[0])
+    got = []
+
+    def go():
+        got.append(lim.reserve(prov)[0])
+    ts = [threading.Thread(target=go) for _ in range(30)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert got.count(True) == vision.RPM and len(lim.stamps(prov["name"])) == vision.RPM

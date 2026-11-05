@@ -125,7 +125,7 @@ def window_votes(sig: dict, src: tuple[int, int], prefs: dict | None, n_per_s: f
     whole = rule(sig, src, prefs)
     a, b = sig["start"], sig["end"]
     secs = max(1, int(math.floor(b - a)))
-    votes = []
+    votes, picks = [], []
     for k in range(secs):
         w0, w1 = a + k, min(b, a + k + 1)
         faces = []
@@ -133,14 +133,20 @@ def window_votes(sig: dict, src: tuple[int, int], prefs: dict | None, n_per_s: f
             pts = [p for p in t["points"] if w0 <= p[0] < w1]
             if pts:
                 faces.append({**t, "presence": len(pts) / max(1.0, (w1 - w0) * n_per_s), "points": pts})
-        votes.append(rule({**sig, "faces": faces}, src, prefs)["layout"])
+        d = rule({**sig, "faces": faces}, src, prefs)
+        votes.append(d["layout"])
+        picks.append(d)
     top = Counter(votes).most_common()
     if top and top[0][0] != whole["layout"] and (len(top) == 1 or top[0][1] > top[1][1]) and top[0][1] > len(votes) / 2:
         # most seconds disagree with the shot-level decision: re-decide with the majority's faces only
         maj = top[0][0]
         if maj == "fit":
             return {"layout": "fit", "rule": whole["rule"] + "+vote", "bg": (prefs or {}).get("bg") or "blur"}
-        return {**whole, "rule": whole["rule"] + "+vote"} if whole["layout"] == maj else whole
+        # the winning layout with the options (faces, style) most of its seconds chose
+        opts = Counter(repr(sorted((k, v) for k, v in p.items() if k != "rule")) for p in picks if p["layout"] == maj)
+        best = next(p for p in picks if p["layout"] == maj and repr(sorted((k, v) for k, v in p.items() if k != "rule"))
+                    == opts.most_common(1)[0][0])
+        return {**best, "rule": best["rule"] + "+vote"}
     return whole
 
 
@@ -183,14 +189,19 @@ def _opts(s: dict) -> dict:
     return {k: v for k, v in s.items() if k not in ("start", "end", "rule", "pinned", "signals")}
 
 
+def _look(s: dict) -> str:
+    """The layout as captions see it: a stacked screen and a PiP screen put the caption band in different places."""
+    return f"screen:{s.get('style') or 'pip'}" if s["layout"] == "screen" else s["layout"]
+
+
 def _runs(seq: list[dict]) -> list[tuple[str, float, float, int, int]]:
     runs = []
     for i, s in enumerate(seq):
-        if runs and runs[-1][0] == s["layout"]:
+        if runs and runs[-1][0] == _look(s):
             lay, a, _, i0, _ = runs[-1]
             runs[-1] = (lay, a, s["end"], i0, i)
         else:
-            runs.append((s["layout"], s["start"], s["end"], i, i))
+            runs.append((_look(s), s["start"], s["end"], i, i))
     return runs
 
 
@@ -204,8 +215,9 @@ def _run_len(seq: list[dict], i: int) -> float:
 def sidecar(shots: list[dict]) -> list[dict]:
     """The layout sidecar: [{start, end, layout}] in clip seconds, consecutive shots of one layout merged."""
     out = []
-    for lay, a, b, _, _ in _runs(shots):
-        out.append({"start": round(a, 3), "end": round(b, 3), "layout": lay})
+    for look, a, b, _, _ in _runs(shots):
+        lay, _, style = look.partition(":")
+        out.append({"start": round(a, 3), "end": round(b, 3), "layout": lay, **({"style": style} if style else {})})
     return out
 
 

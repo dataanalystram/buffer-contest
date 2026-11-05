@@ -72,7 +72,11 @@ class Ledger:
 
     def _table(self) -> None:
         if not self._ready:
-            self.store.x("CREATE TABLE IF NOT EXISTS free_usage (provider TEXT, t REAL, units REAL)")
+            pg = getattr(self.store, "pg", False)
+            real = "DOUBLE PRECISION" if pg else "REAL"  # Postgres REAL is 4 bytes: a Unix time would round by minutes
+            self.store.x(f"CREATE TABLE IF NOT EXISTS free_usage (provider TEXT, t {real}, units {real})")
+            if pg:
+                self.store.x("ALTER TABLE free_usage ENABLE ROW LEVEL SECURITY")
             self._ready = True
 
     def reserve(self, provider, units) -> tuple[bool, str]:

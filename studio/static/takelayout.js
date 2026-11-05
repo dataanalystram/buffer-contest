@@ -64,7 +64,7 @@ window.openClipLayout = async function (id) {
   if (L && L.ctl) L.ctl.abort();
   const d = sheet();
   const list = t.clips || [];
-  L = { id, take: t.id, n: list.findIndex((c) => c.id === id) + 1, ctl: new AbortController(), pick: {}, cap: null, view: null };
+  L = { id, take: t.id, n: list.findIndex((c) => c.id === id) + 1, ctl: new AbortController(), pick: {}, orig: {}, cap: null, view: null };
   const my = L;
   $l("tlErr").textContent = ""; $l("tlScenes").innerHTML = `<li class="muted xs"><span class="spin" aria-hidden="true"></span> Loading…</li>`;
   if (!d.open) d.showModal();
@@ -73,7 +73,7 @@ window.openClipLayout = async function (id) {
       api("/api/takes/settings/smart-layout", { signal: my.ctl.signal })]);
     if (L !== my) return;  // the sheet moved on: drop this late answer
     my.view = v; my.cap = v.caption_preset;
-    Object.entries(v.overrides || {}).forEach(([k, o]) => (my.pick[+k] = o.layout));
+    Object.entries(v.overrides || {}).forEach(([k, o]) => { my.pick[+k] = o.layout; my.orig[+k] = o; });
     $l("tlSmart").checked = !!s.smart_layout;
     draw();
   } catch (e) { if (L === my && e.name !== "AbortError") $l("tlErr").textContent = e.message; }
@@ -84,7 +84,11 @@ async function save() {
   const my = L, b = $l("tlSave");
   const scenes = {};
   const n = Math.max(1, my.view.plan.length);
-  for (let i = 0; i < n; i++) scenes[String(i)] = my.pick[i] || "auto";
+  for (let i = 0; i < n; i++) {
+    const o = my.orig[i], p = my.pick[i] || "auto";
+    // an unchanged scene keeps its saved options (a brand background, a stacked screen) set through REST or MCP
+    scenes[String(i)] = o && o.layout === p ? { layout: o.layout, ...(o.bg ? { bg: o.bg } : {}), ...(o.style ? { style: o.style } : {}) } : p;
+  }
   b.disabled = true;
   try {
     await api(`/api/takes/${my.take}/clips/${encodeURIComponent(my.id)}/layout`, { method: "POST", body: { scenes, caption_preset: my.cap }, signal: my.ctl.signal });

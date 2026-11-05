@@ -23,6 +23,7 @@ logged at INFO, never raised.
 from __future__ import annotations
 
 import base64
+import contextlib
 import io
 import json
 import logging
@@ -49,6 +50,28 @@ QUESTION = ("These are keyframes from one short video clip. Which ONE layout fit
             "two-speaker = two people talking in the same shot; wide = a wide shot, a group, a stage or anything else.\n"
             'Answer with JSON only: {"layout": "talk|screencast|two-speaker|wide"}')
 _lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _file_lock(path: Path):
+    """An exclusive lock shared by every process on this machine (check + count is one step, so two jobs can't both
+    take the last free request). No lock available: the in-process lock still serialises this process."""
+    try:
+        import fcntl
+    except ImportError:  # not POSIX
+        fcntl = None
+    f = None
+    try:
+        if fcntl is not None:
+            try:
+                f = open(str(path) + ".lock", "a+")
+                fcntl.flock(f, fcntl.LOCK_EX)
+            except OSError:
+                f = None
+        yield
+    finally:
+        if f is not None:
+            f.close()  # closing releases the flock
 
 
 class PaidModelRefused(RuntimeError):
@@ -95,6 +118,14 @@ class Limits:
         if sum(1 for x in st if t - x < 60) >= RPM:
             return False, f"{provider['name']}: {RPM} requests/minute guard"
         return True, ""
+
+    def reserve(self, provider: dict) -> tuple[bool, str]:
+        """allow + record as ONE step under a machine-wide file lock (concurrent jobs share one budget)."""
+        with _file_lock(self.path):
+            ok, why = self.allow(provider)
+            if ok:
+                self.record(provider["name"])
+            return ok, why
 
     def record(self, name: str) -> None:
         with _lock:
@@ -181,14 +212,13 @@ def pick(frames: list[bytes], limits: Limits | None = None, http=None, env=None)
         except PaidModelRefused as e:
             log.info("layout vision: %s", e)
             continue
-        ok, why = limits.allow(prov)
+        ok, why = limits.reserve(prov)
         if ok:
             from ... import free_quota  # the app's shared day/minute ledger (each worker run is a fresh machine)
             ok, why = free_quota.remote_ok(prov["name"], 1)
         if not ok:
             log.info("layout vision: %s; next", why)
             continue
-        limits.record(prov["name"])
         try:
             cat = ask(prov, frames, key, http)
         except Exception as e:  # noqa: BLE001 - any failure: the next provider, then the rules

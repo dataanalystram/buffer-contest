@@ -168,6 +168,7 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
     # a layout may change at a cut or at a sentence boundary: long shots are split at the sentence ends inside them
     pieces = shots_mod.split_at_sentences(cut_spans, shots_mod.sentence_bounds(words, start), decide.MIN_HOLD)
     spans, parent = [(a, b) for a, b, _ in pieces], [k for _, _, k in pieces]
+    pins = remap_pins(pins, spans)
     try:
         smp = faces_mod.sample(path, start, end, sw, sh)
         screen_fn = (lambda a, b, boxes: screen_mod.signals(screen_mod.pick_thumbs(smp["thumbs"], a, b), boxes))
@@ -186,6 +187,10 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
         vis = vision.pick_for_clip(path, start, end, sw, sh)
         if vis and vision.mode() == "on":
             shots, vis["applied"] = vision.apply(shots, sigs, vis["category"])
+    # the FINAL choices: a layout a scene can't draw (split without two faces, screen without a face) becomes fit, then
+    # the hold and the change cap run again over what will really render (pins stay pinned), so the plan, the sidecar
+    # and the captions all describe the rendered clip
+    shots = decide.stabilize(feasible(shots, sigs), {i: decide._opts(s) for i, s in enumerate(shots) if s.get("pinned")})
     by_id = {t["id"]: t for t in tracks}
     public, side = decide.public(shots), decide.sidecar(shots)
     # render: sentence pieces of one shot that kept the same layout are drawn as one segment (one crop path, no seam)
@@ -202,6 +207,35 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
             "face_coverage": round(cov, 3) if cov is not None else None, "timings": {"faces": round(t_faces, 2)},
             "signals": [{k: v for k, v in s.items() if k != "faces"} | {"faces": [{k: t[k] for k in ("id", "cx", "cy", "h", "presence", "motion")
                                                                                    if k in t} for t in s["faces"]]} for s in sigs]}
+
+
+def feasible(shots: list[dict], sigs: list[dict]) -> list[dict]:
+    """Each shot's layout downgraded to fit where its faces can't draw it (same tests as ``geom``)."""
+    out = []
+    for s, sig in zip(shots, sigs):
+        s = dict(s)
+        faces = sig["faces"]
+        if (s["layout"] == "split" and len(faces) < 2) or (s["layout"] == "screen" and not faces):
+            s.update(layout="fit", bg=s.get("bg") or "blur")
+            s.pop("style", None)
+        out.append(s)
+    return out
+
+
+def remap_pins(pins: dict[int, dict] | None, spans: list[tuple[float, float]]) -> dict[int, dict]:
+    """Pins saved with the scene's time (``at``, clip seconds) follow that moment even when the scenes change (a
+    caption edit moves a sentence end); a pin without a time keeps its index. A time outside the clip drops the pin."""
+    out: dict[int, dict] = {}
+    for i, pin in (pins or {}).items():
+        pin = dict(pin)
+        at = pin.pop("at", None)
+        if isinstance(at, (int, float)) and not isinstance(at, bool):
+            j = next((k for k, (a, b) in enumerate(spans) if a <= at < b), None)
+            if j is not None:
+                out[j] = pin
+        elif 0 <= i < max(1, len(spans)):
+            out[i] = pin
+    return out
 
 
 def merge_pieces(shots: list[dict], parent: list[int]) -> tuple[list[dict], list[tuple[float, float]]]:
@@ -236,7 +270,10 @@ def geom(s: dict, sig: dict, by_id: dict, src: tuple[int, int]) -> None:
         s["faces"] = ids
         s["path"] = path_mod.plan(series, s["start"], s["end"], sw, sh)
     elif s["layout"] == "split":
-        people = sorted(sig["faces"], key=lambda t: t["cx"])[:2]
+        want = set(s.get("faces") or [])  # the two people the rule chose; else the two most prominent
+        pool = [t for t in sig["faces"] if t["id"] in want] if len(want) == 2 else []
+        pool = pool if len(pool) == 2 else sorted(sig["faces"], key=lambda t: -t["h"] * t["presence"])[:2]
+        people = sorted(pool, key=lambda t: t["cx"])
         if len(people) < 2:
             s.update(layout="fit", bg="blur")
             return
@@ -282,6 +319,9 @@ def pins_from(overrides) -> dict[int, dict]:
             continue
         pin = decide.clean_pin(v)
         if pin and 0 <= i < 500:
+            at = v.get("at") if isinstance(v, dict) else None
+            if isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= at <= 86400:
+                pin["at"] = float(at)  # the scene's time: remap_pins follows it when the scenes change
             out[i] = pin
     return out
 
