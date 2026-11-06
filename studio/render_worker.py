@@ -358,6 +358,12 @@ def _run(c: httpx.Client, base: str, h: dict, args) -> int:
                 return None
             r.raise_for_status()
         return r.content
+    if spec.get("kind") == "link_probe":  # can this worker download the link? (studio/link_probe.py, 6 Nov 2026)
+        from .media.download import probe_link
+        out = probe_link(str(spec.get("url") or ""))
+        r = c.post(f"{base}/api/worker/jobs/{args.job}", headers=h, json={"probe": out})
+        print("probe posted:", out.get("ok"), str(out.get("reason") or "")[:120], r.status_code)
+        return 0 if r.status_code == 200 else 1
     if str(spec.get("kind", "")).startswith("take_"):
         return take_job(c, base, h, args.job, j)
     if spec["kind"] == "transcribe":  # the person's own upload -> words, so the post is about what is said in it

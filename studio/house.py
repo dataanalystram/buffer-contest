@@ -1646,6 +1646,9 @@ class House:
                           json.dumps({"text": str(tr.get("text") or "")[:20000], "language": str(tr.get("language") or "")[:8]}) if ok else None,
                           _now(), jid))
             return {"ok": ok}
+        if kind == "link_probe":  # the worker's answer: can it download this link (studio/link_probe.py)
+            from . import link_probe
+            return link_probe.finish(self.store, job, body, error)
         if kind == "media_recap":  # the files already arrived one by one (on_recap_file); this closes the job
             files = json.loads(job.get("result") or "{}").get("files") or {}
             spec = json.loads(job["spec"])

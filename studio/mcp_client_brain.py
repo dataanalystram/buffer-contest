@@ -489,10 +489,11 @@ def _video_first(studio, a, query: str, name: str = "", website: str = "") -> di
 
 
 def t_find_video(studio, a, args):
+    from . import link_probe
     q = str(args.get("query") or "").strip()
     if not q:
         raise ActionError("Give find_video a product link or name.")
-    return {**_video_first(studio, a, q), "spent_usd": 0}
+    return {**link_probe.apply(studio, a, _video_first(studio, a, q), _run_arg(args)), "spent_usd": 0}
 
 
 def t_research_link(studio, a, args):
@@ -503,8 +504,9 @@ def t_research_link(studio, a, args):
         url = netguard.check_url(intake.clean_url(str(args.get("url") or "")))
     except netguard.FetchError as e:
         raise ActionError(f"That link isn't allowed: {e}")
+    from . import link_probe
     if video_first.is_product_link(url):  # Product Hunt blocks servers: its API + the maker's site instead of the page
-        vf = _video_first(studio, a, url)
+        vf = link_probe.apply(studio, a, _video_first(studio, a, url), _run_arg(args))
         prod = vf.get("product") or {}
         paras = [x for x in [prod.get("tagline"), prod.get("description")] if x]
         if vf.get("website"):
@@ -537,7 +539,7 @@ def t_research_link(studio, a, args):
         out["post"] = {k: p.get(k) for k in ("author_name", "handle", "text", "date") if p.get(k)}
     if not out["videos"] and not media_find.is_video_post(url) and args.get("find_video") is True:
         try:  # a launch / product page: the video-first search, so the client knows whether a Reel is possible
-            out["video"] = _video_first(studio, a, url)
+            out["video"] = link_probe.apply(studio, a, _video_first(studio, a, url), _run_arg(args))
         except Exception:  # noqa: BLE001 - research never fails on the video search
             pass
     return out
@@ -774,9 +776,48 @@ def _video_spec(h, a, args, tok, meta) -> dict:
     return spec
 
 
+def _link_rights(studio, a: Actor, args: dict, tool: str) -> dict | None:
+    """A video LINK an AI app wants fetched (not a HuhQueue upload): the same rights step every tool uses
+    (consent.rights_for_link). None = go ahead (args then carries _rights); a dict = the needs_user_approval answer."""
+    url = str(args.get("url") or "").strip()
+    if a.kind != "agent" or not url or args.get("media_token") or args.get("library_id") not in (None, ""):
+        return None
+    if url.startswith(studio.house.s.public_url.rstrip("/") + "/m/"):
+        return None
+    from . import consent
+    g = consent.rights_for_link(studio, a, url, approval_id=args.get("approval_id"), tool=tool, run_id=_run_arg(args))
+    if g.get("needs_user_approval"):
+        return {**g, **({"run_id": _run_arg(args)} if _run_arg(args) else {})}
+    args["_rights"] = g["rights"]
+    return None
+
+
+def _platform_job(studio, a, args, tool: str) -> dict:
+    """A YouTube / Vimeo / X video post: the worker fetches it itself (single-extractor yt-dlp, the probed path), it is
+    never imported here as if the page were a file."""
+    from .media import find
+    h = studio.house
+    url = str(args["url"]).strip()
+    slot = _slot(args)
+    rg = _rights(args, url)
+    spec = _video_spec(h, a, {**args, "url": url}, "", {"duration": 0})
+    spec.update(source="", candidate={"url": url, "platform": find.platform_of(url), "kind": "video", "credit": rg["credit"],
+                                      "official": rg["rights"] == "own"})
+    if _run_arg(args):
+        spec["for_run"], spec["for_output"] = _run_arg(args), slot
+    return _queue_video(h, a, spec)
+
+
 def t_edit_video(studio, a, args):
+    from .media import find
     h = studio.house
     studio._guard_write(a, "edit_video")
+    held = _link_rights(studio, a, args, "edit_video")
+    if held:
+        return held
+    if args.get("url") and find.platform_of(str(args["url"])) and not args.get("media_token") and args.get("library_id") in (None, ""):
+        out = _platform_job(studio, a, args, "edit_video")
+        return {**out, **({"rights": args["_rights"]} if args.get("_rights") else {})}
     tok, meta = _unfinished(h, a, *_video_source(h, a, args), args)
     if meta.get("type") not in (None, "video"):
         raise ActionError("That media is not a video.")
@@ -789,7 +830,7 @@ def t_edit_video(studio, a, args):
         out = {**out, "note": "That video was already a finished reel, so this edit starts again from its original upload "
                               "(one cover, one end card)."}
     return {**out, "edit": {k: spec.get(k) for k in ("clip", "ratio", "style", "captions", "captions_mode", "music", "covers", "cover_hook")
-                            if spec.get(k) is not None}}
+                            if spec.get(k) is not None}, **({"rights": args["_rights"]} if args.get("_rights") else {})}
 
 
 def t_render_reel(studio, a, args):

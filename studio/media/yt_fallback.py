@@ -87,6 +87,32 @@ def _get_json(url: str, http=None) -> dict:
     return r.json()
 
 
+def probe(url: str, http=None) -> dict:
+    """The fallback route's answer for a probe: the instance lists streams and the first 64 KB of the video stream read."""
+    from .find import youtube_id
+    vid = youtube_id(url) or ""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
+        return {"ok": False, "via": "youtube_fallback", "reason": "not a YouTube video id"}
+    errors = []
+    for base in instances():
+        try:
+            info = _get_json(f"{base}/api/v1/videos/{vid}?local=true", http)
+            v, a = pick_formats(info, 720)
+            if not v or not a:
+                raise FallbackError("no H.264 + AAC streams")
+            vurl = base + v["url"] if v["url"].startswith("/") else v["url"]
+            with netguard.safe_stream(vurl, http=http, https_only=True, timeout=20, headers={**UA, "Range": "bytes=0-65535"}) as r:
+                if r.status_code not in (200, 206):
+                    raise FallbackError(f"stream answered {r.status_code}")
+                n = sum(len(c) for c in r.iter_bytes(65536))
+            return {"ok": True, "via": "youtube_fallback", "bytes_read": n, "title": str(info.get("title") or "")[:200],
+                    "duration": info.get("lengthSeconds")}
+        except Exception as e:  # noqa: BLE001
+            errors.append(str(e)[:80])
+    return {"ok": False, "via": "youtube_fallback", "reason": "YouTube blocked the worker and the fallback route failed ("
+            + "; ".join(errors)[:160] + ")", "code": "bot"}
+
+
 def _download(url: str, size: int, dest: Path, max_bytes: int, http=None) -> None:
     """Ranged GETs (4 MB each) so a slow proxy can't hold one long stream; the byte cap is checked before any write."""
     if size <= 0 or size > max_bytes:

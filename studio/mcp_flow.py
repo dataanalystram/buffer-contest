@@ -212,6 +212,9 @@ DESCRIPTIONS: dict[str, str] = {
 }
 ONE_TAKE_PREFIX = "ONE TAKE ONLY (one long video -> several clips); never for a normal post with a video (see get_started). "
 BEFORE: dict[str, str] = {}
+YOUTUBE_SCHEMA = {"type": "object", "description": "YouTube fields: title (1-100), categoryId (e.g. '28' Science & Technology, "
+                  "the suggested default), madeForKids (true/false; default false)",
+                  "properties": {"title": S, "categoryId": S, "madeForKids": {"type": "boolean"}}}
 
 TOOLS: list[dict[str, Any]] = [
     {"name": "get_started", "description": "READ THIS FIRST. The one recommended path to make a post (any number of channels, "
@@ -252,8 +255,14 @@ def apply(tools: list[dict]) -> None:
                     "output": {"type": "integer", "minimum": 1, "maximum": 10}, "media_urls": {"type": "array", "items": S, "maxItems": 10},
                     "cover": {"type": "object", "properties": {"url": S, "frame_s": {"type": "number", "minimum": 0}}},
                     "format": {"type": "string", "enum": ["carousel", "reel", "photo", "text"]}}}}
+            props["youtube"] = YOUTUBE_SCHEMA
             props["replace_all"] = {"type": "boolean", "description": "true: the channels you don't name are dropped from the post "
                                     "(default false: they keep their packages)"}
+        if n == "autofix_post":
+            t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})["youtube"] = YOUTUBE_SCHEMA
+            if "youtube" not in t["description"]:
+                t["description"] = t["description"].rstrip() + (" youtube: {title, categoryId, madeForKids} sets the YouTube "
+                                                                 "fields preflight asks for (suggested category 28, Science & Technology).")
         if n in ("render_reel", "edit_video"):
             props = t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})
             props.setdefault("approval_id", {"type": "integer", "description": "The approval_id needs_user_approval returned for "
