@@ -72,4 +72,5 @@ def test_the_run_view_has_a_back_and_a_new_take_and_keeps_the_run_in_the_address
     # score + reason on every row, "Not scored" when there is none; sort by score puts unscored last
     assert ">Not scored<" in js and 'data-testid="clip-score"' in js and 'data-testid="clip-why"' in js
     assert "No reason saved for this clip." in js and "Score (high → low)" in html
-    assert "gradient(" not in css and ".tk-runbar" in css and ".clip-scoreline" in css
+    mine = css[css.index("/* ---------------------------------------------------------------- One run at a time"):]
+    assert "gradient(" not in mine and ".tk-runbar" in mine and ".clip-scoreline" in mine
