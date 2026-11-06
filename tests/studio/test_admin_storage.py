@@ -430,11 +430,13 @@ def test_an_interrupted_migration_attempt_is_swept_later_never_orphaned(app, mon
     class Boom(Exception):
         pass
 
-    real = r2.Bucket.get
-    monkeypatch.setattr(r2.Bucket, "get", lambda self, *a, **k: (_ for _ in ()).throw(Boom()))
+    real, real_digest = r2.Bucket.get, r2.Bucket.digest
+    for name in ("get", "digest"):  # the read-back check streams (digest) since the in-process migration
+        monkeypatch.setattr(r2.Bucket, name, lambda self, *a, **k: (_ for _ in ()).throw(Boom()))
     with pytest.raises(Boom):                                   # the process "dies" after the PUT, before the UPDATE
         migrate_media.migrate(store, r2.Bucket(r2.config(), http=blobstore._client()))
     monkeypatch.setattr(r2.Bucket, "get", real)
+    monkeypatch.setattr(r2.Bucket, "digest", real_digest)
     orphan = next(iter(s3.objects))
     assert blobstore.sweep(store)["deleted"] == 0 and orphan in s3.objects    # not due yet (a run may still be going)
     store.x("UPDATE blob_gc SET at=?", (time.time() - 1,))                     # a day later

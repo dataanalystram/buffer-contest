@@ -111,6 +111,23 @@ class Bucket:
             raise R2Error(f"storage refused the read (HTTP {r.status_code})")
         return r.content
 
+    def digest(self, key: str) -> tuple[int, str]:
+        """(length, sha256) of the object, streamed in 1 MB pieces: a read-back check never holds a second copy of the
+        file in memory (in-process migration, docs/STORAGE.md)."""
+        h, n = hashlib.sha256(), 0
+        try:
+            with self.http.stream("GET", presign(self.cfg, "GET", key, None, 300), timeout=self.timeout) as r:
+                if r.status_code == 404:
+                    raise R2Error("storage has no such object (HTTP 404)")
+                if r.status_code >= 300:
+                    raise R2Error(f"storage refused the read (HTTP {r.status_code})")
+                for piece in r.iter_bytes(1024 * 1024):
+                    h.update(piece)
+                    n += len(piece)
+        except httpx.HTTPError as e:
+            raise R2Error(f"storage unreachable ({e.__class__.__name__})") from None
+        return n, h.hexdigest()
+
     def delete(self, key: str) -> bool:
         """True once the object is gone (404 counts: already deleted)."""
         r = self._call("DELETE", key)
