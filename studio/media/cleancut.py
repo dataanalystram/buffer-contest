@@ -204,6 +204,17 @@ def remap_points(items: list, keep: list[list[float]], key: str | None = None) -
     return out
 
 
+def punch_emphasis(words: list[dict], keep: list[list[float]]) -> list[float]:
+    """Punch-in emphasis times found on the untrimmed words (pauses still full length), on the trimmed timeline. An
+    emphasised word that was cut drops out."""
+    from .reframe import punch
+    try:
+        times = punch.emphasis(words, 0.0)
+    except (KeyError, TypeError, ValueError):
+        return []
+    return [nt for nt in (remap(t, keep) for t in times) if nt is not None]
+
+
 def _filter_graph(keep: list[list[float]], offset: float, audio: bool) -> str:
     """The ffmpeg filter graph that keeps only `keep` (times relative to `offset`), joined with short audio fades."""
     parts, labels = [], []
@@ -293,6 +304,8 @@ def prepare(path: str, m: dict, words: list[dict], faces: list[dict], scenes: li
     new_dur = round(sum(b - a for a, b in keep), 3)
     m2 = {k: v for k, v in m.items() if k != "silences"}
     m2.update(start=0.0, end=new_dur)
+    if m.get("punch_in", True) is not False:  # punch-in emphasis (studio/media/reframe/punch.py) from the untrimmed words:
+        m2["_punch_emph"] = punch_emphasis(words, keep)  # a pause the trim shortened still marks the word after it
     return {"path": out, "m": m2, "words": remap_words(words, keep), "faces": remap_points(faces, keep, "t"),
             "scenes": remap_points(scenes, keep), "src": {**src, "duration": new_dur}, "keep": keep,
             "stats": {**stats, "trimmed_s": plan["removed"], "pauses": plan["pauses"], "fillers": plan["fillers"]}}

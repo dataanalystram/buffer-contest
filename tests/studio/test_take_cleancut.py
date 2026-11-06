@@ -192,3 +192,37 @@ def test_mcp_clips_from_video_forwards_trim_pauses_false(human, app, monkeypatch
         res, _ = mcp_call(human, tok, "clips_from_video", args)
         assert not res["isError"]
     assert [b["trim_pauses"] for b in got] == [False, True, None]   # an explicit false reaches Takes.start
+
+
+def test_punch_in_emphasis_survives_the_trim_and_follows_it(monkeypatch, tmp_path):
+    from studio.media.reframe import punch, render as rr
+    # "big" comes after a 1.0 s pause the trim shortens to 0.16 s: still emphasis, at its trimmed time
+    words = [W("so", 10.0, 10.3), W("this", 10.3, 10.6), W("big", 11.6, 11.9), W("um", 12.0, 12.3), W("win!", 12.4, 12.8)]
+    keep = [[10.0, 10.68], [11.52, 11.9], [12.32, 12.8]]
+    emph = cleancut.punch_emphasis(words, keep)
+    assert emph == [cleancut.remap(11.6, keep), cleancut.remap(12.4, keep)]
+    assert punch.emphasis(cleancut.remap_words(words, keep), 0.0)[:1] != emph[:1]  # the trimmed words alone lose "big"
+    monkeypatch.setattr(cleancut, "plan_cuts", lambda *a, **k: {"keep": keep, "removed": 1.2, "pauses": 1, "fillers": 1,
+                                                                "skipped": ""})
+    monkeypatch.setattr(cleancut, "cut", lambda *a, **k: None)
+    got = cleancut.prepare("s.mp4", {"start": 10.0, "end": 12.8, "punch_in": True}, words, [], [], {"audio": False},
+                           str(tmp_path))
+    assert got["m"]["_punch_emph"] == emph and got["m"]["punch_in"] is True
+    off = cleancut.prepare("s.mp4", {"start": 10.0, "end": 12.8, "punch_in": False}, words, [], [], {"audio": False},
+                           str(tmp_path))
+    assert "_punch_emph" not in off["m"]
+    # the render uses the given times over the words, and only when punch-in is on
+    seen = []
+    monkeypatch.setattr(punch, "plan_shot", lambda s, e, *a: seen.append(list(e)) or None)
+    plan = {"shots": [{"start": 0.0, "end": 2.0, "layout": "track"}]}
+    rr.apply_punch(plan, [], 0.0, {}, True, emph)
+    rr.apply_punch(plan, [], 0.0, {}, True, ["x", 1.0])
+    rr.apply_punch(plan, [], 0.0, {}, False, emph)
+    assert seen == [sorted(emph), [1.0]] and plan["punch"] == {"on": False, "shots": 0}
+
+
+def test_render_clip_never_takes_punch_times_from_the_job_spec(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(take, "_render_clip", lambda path, m, *a, **k: (seen.update(m=m), (b"", b"", {}))[1])
+    take.render_clip("x.mp4", {"start": 0, "end": 3, "_punch_emph": [0.1]}, [], [], [], {"audio": False}, {}, {})
+    assert "_punch_emph" not in seen["m"]

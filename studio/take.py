@@ -798,7 +798,8 @@ def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes
     """One finished clip. With m["trim_pauses"] the span's long pauses and filler words are cut first
     (studio/media/cleancut; fail open), and the audio is normalised two-pass to -14 LUFS / -1 dBTP. meta["trim"] says
     what was cut (trimmed_s); meta["moment"] keeps the span in the source."""
-    m = {k: v for k, v in m.items() if k != "_loud"}  # the loudness filter is measured here, never taken from a job spec
+    m = {k: v for k, v in m.items() if k not in ("_loud", "_punch_emph")}  # made here (loudness, trimmed punch-in times),
+    # never taken from a job spec
     from .media import cleancut
     trim = None
     orig = {k: m.get(k) for k in ("start", "end")}

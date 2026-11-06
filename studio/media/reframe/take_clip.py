@@ -55,7 +55,8 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         audio = take.audio_chain(dur, m.get("_loud")) if src.get("audio", True) else None
         plan = rr.render(path, start, end, words, src, str(out), kit=kit, p=p, preset=preset, logo_png=str(tmp / "logo.png"),
                          plan=plan, audio=audio, cover=str(tmp / "cover.jpg"), cover_s=take.COVER_SECS, end_card=end_jpg,
-                         end_s=take.END_SECS if has_end else 0.0, punch_in=m.get("punch_in", True) is not False)
+                         end_s=take.END_SECS if has_end else 0.0, punch_in=m.get("punch_in", True) is not False,
+                         punch_emph=m.get("_punch_emph"))
         data = out.read_bytes()
         info = take.probe(str(out))
         from ...preflight import parse_ffprobe
