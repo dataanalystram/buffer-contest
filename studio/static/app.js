@@ -982,7 +982,7 @@ const POL_SAY = { draft: "It can only save Buffer drafts. Nothing is scheduled o
 async function loadTokens() {
   const r = await api("/api/safety"); setKill(r.kill_switch);
   const box = $("#tokens"), toks = r.tokens.filter((t) => !t.revoked);
-  box.innerHTML = toks.length ? `<ul class="ax-list">${toks.map((t) => `<li class="ax-row" data-testid="token-row">${aiMark(t.name, 32)}<span class="ax-name"><b>${esc(t.name)}</b><small>${esc(POL[t.policy] || t.policy)} · ${t.daily_cap} posts a day</small></span>
+  box.innerHTML = toks.length ? `<ul class="ax-list">${toks.map((t) => `<li class="ax-row" data-testid="token-row">${aiMark(t.name, 32)}<span class="ax-name"><b>${esc(t.name)}</b><small>${esc(POL[t.policy] || t.policy)} · ${t.daily_cap} Buffer posts a day at most</small></span>
       <span class="ax-acts" data-testid="token-actions"><span class="ax-used ${t.last_used ? "on" : ""}">${t.last_used ? "Last used " + esc(timeAgo(t.last_used * 1000)) : "Not used yet"}</span>
       <label class="ax-pol">Policy <select data-testid="token-policy" data-id="${t.id}" data-was="${esc(t.policy)}" aria-label="Policy for ${esc(t.name)}">${Object.entries(POL).map(([k, v]) => `<option value="${k}"${k === t.policy ? " selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
       <button class="link" type="button" data-testid="token-cap-edit" data-id="${t.id}" data-cap="${t.daily_cap}">Change limit</button>
@@ -1003,7 +1003,7 @@ async function loadTokens() {
     loadTokens();
   }));
   box.querySelectorAll("[data-testid=token-cap-edit]").forEach((b) => (b.onclick = async () => {
-    const v = await hqAsk("Actions a day for this app (1 to 100)", b.dataset.cap, { type: "number", min: 1, max: 100, ok: "Save limit" }); if (v === null) return;
+    const v = await hqAsk("Buffer posts per day at most for this app (1 to 500). Renders and previews don't count.", b.dataset.cap, { type: "number", min: 1, max: 500, ok: "Save limit" }); if (v === null) return;
     try { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "PATCH", body: { daily_cap: +v } }); toast("Daily limit changed"); } catch (e) { toast(e.message, 5000); }
     loadTokens();
   }));
@@ -1022,7 +1022,7 @@ function loadApps() { return Promise.all([loadTokens(), loadAppUsage(), (window.
 $("#tokenForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {
-    const t = await api("/api/agent-tokens", { method: "POST", body: { name: $("#tokName").value, policy: $("#tokPolicy").value, daily_cap: +$("#tokCap").value } });
+    const t = await api("/api/agent-tokens", { method: "POST", body: { name: $("#tokName").value, policy: $("#tokPolicy").value, daily_cap: +$("#tokCap").value || 50 } });
     const rv = $("#tokenReveal"); rv.hidden = false;
     rv.innerHTML = `<b>Copy this token now. It is shown once.</b>${t.sample ? `<span class="sample-note" data-testid="token-sample">Sample token</span><span class="muted sm">${esc(t.note)}</span>` : ""}<code data-testid="token-value">${esc(t.token)}</code><span><button class="btn2 sm" data-testid="copy-token">Copy token</button></span>`;
     $("[data-testid=copy-token]", rv).onclick = () => navigator.clipboard.writeText(t.token).then(() => toast("Copied"));

@@ -204,8 +204,9 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
 <form method="post" action="/oauth/authorize" class="stack" data-testid="oauth-consent">
 <input type="hidden" name="csrf" value="{html.escape(sess['csrf'])}">{hidden}
 <fieldset class="stack"><legend>What it may do</legend>{radios}</fieldset>
-<label class="field">Posts per day at most
-<input type="number" name="daily_cap" value="10" min="1" max="100" data-testid="oauth-cap" aria-label="Posts per day at most"></label>
+<label class="field">Buffer posts per day at most
+<input type="number" name="daily_cap" value="50" min="1" max="500" data-testid="oauth-cap" aria-label="Buffer posts per day at most"></label>
+<p class="hint">Only Buffer posts, drafts and ideas count. Renders and previews don't.</p>
 <p class="hint">You can revoke it any time under Agents. The kill switch stops it at once.</p>
 <div class="row"><button class="btn" name="decision" value="allow" data-testid="oauth-allow">Allow</button>
 <button class="btn2" name="decision" value="deny" data-testid="oauth-deny">Cancel</button></div>
@@ -231,9 +232,9 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         if policy == "trusted" and not verified_host(redirect_host(f["redirect_uri"])):
             policy = "review"  # never trusted for an unverified client, whatever the form says (SECURITY_RULES 5)
         try:
-            cap = max(1, min(int(f.get("daily_cap") or 10), 100))
+            cap = max(1, min(int(f.get("daily_cap") or 50), 500))
         except ValueError:
-            cap = 10
+            cap = 50
         code = secrets.token_urlsafe(32)
         store.x("INSERT INTO oauth_codes(code_hash,client_id,user_id,redirect_uri,challenge,policy,daily_cap,expires,used) "
                 "VALUES(?,?,?,?,?,?,?,?,0)", (sha(code), c["client_id"], sess["user_id"], f["redirect_uri"],

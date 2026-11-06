@@ -10,7 +10,8 @@ used by:
 * **MCP**: `post_{name}` with `run_id` plus the same arguments (`studio/agent_brain.tool_specs_for_mcp`, listed by
   `tools/list` on `/mcp`). `make_post` with `brain: "external"` creates the run.
 
-Every call goes through the same guard: the kill switch and the token's daily cap cover every write (SECURITY_RULES 4),
+Every call goes through the same guard: the kill switch covers every write and the token's daily cap counts Buffer writes
+only, 50 a day by default, up to 500 (SECURITY_RULES 4),
 every fetch goes through `studio/netguard.py` (SECURITY_RULES 1), and the free sample is capped (`demo_guard`, rule 3).
 Nothing is published: Buffer drafts at most, and only when asked.
 

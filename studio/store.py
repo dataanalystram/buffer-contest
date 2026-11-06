@@ -208,6 +208,18 @@ class Store:
                         self.x(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
         for ix in INDEXES:
             self.x(ix)
+        self._data_migrations()
+
+    def _data_migrations(self) -> None:
+        """One-time data fixes, each run once per database (a marker row in data_migrations, inserted first: only the process
+        that inserted it runs the fix, so a second boot or a second instance never repeats it)."""
+        self.x("CREATE TABLE IF NOT EXISTS data_migrations(name TEXT PRIMARY KEY, ran REAL)")
+        # 6 Nov 2026: the daily cap counts Buffer writes only, default 50 (was 10 actions of any kind). Old real-account
+        # tokens at 20 or less move to 50; sample tokens (user ids demo_...) stay at their 10.
+        if self.xn("INSERT INTO data_migrations(name, ran) VALUES(?, ?) ON CONFLICT (name) DO NOTHING",
+                   ("agent_cap_50_buffer_writes", time.time())):
+            for table in ("agent_tokens", "oauth_refresh"):
+                self.x(f"UPDATE {table} SET daily_cap=50 WHERE daily_cap<=20 AND user_id NOT LIKE 'demo\\_%' ESCAPE '\\'")
 
     def _connect(self):
         # prepare_threshold=None: PgBouncer-style poolers (Supabase) can't keep server-side prepared statements.

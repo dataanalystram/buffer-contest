@@ -190,7 +190,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
   --bearer-token-env-var HUHQUEUE_TOKEN</pre>
 <p>The xAI API: add <code>{"type": "mcp", "server_url": "https://huhqueue-studio.onrender.com/mcp", "server_label": "huhqueue", "headers": {"Authorization": "Bearer hq_YOUR_TOKEN"}}</code> to the request's <code>tools</code>.</p>
 <h2 id="leash">The leash</h2>
-<ul><li><b>Policy:</b> needs my approval (default), Buffer drafts only, or schedule without asking.</li><li><b>Daily cap</b> per token.</li><li><b>Kill switch:</b> <b>Pause all agents</b> on AI apps stops every agent at once. You can still post yourself.</li><li><b>Activity:</b> every action by you or an agent is logged.</li></ul>
+<ul><li><b>Policy:</b> needs my approval (default), Buffer drafts only, or schedule without asking.</li><li><b>Buffer posts per day at most</b> per token (50 by default, up to 500). Only Buffer posts, drafts and ideas count; renders and previews don't.</li><li><b>Kill switch:</b> <b>Pause all agents</b> on AI apps stops every agent at once. You can still post yourself.</li><li><b>Activity:</b> every action by you or an agent is logged.</li></ul>
 <h2 id="files">Getting a video in from a chat app</h2>
 <p>Claude.ai and ChatGPT run their code in a sandbox that can't reach outside hosts, so they can't upload a file to HuhQueue themselves. Two ways that work:</p>
 <ul><li><b>Send a file:</b> the app calls <code>create_send_code</code> and gives you a short code and a link. Open <a href="/send">/send</a> on any device (your phone works: scan the QR code), drop the file in, and the app finds it with <code>list_recent_uploads</code>. In HuhQueue: Library, <b>Send from a device</b>.</li>
@@ -489,7 +489,7 @@ _DESC = {
     "GET /api/ai/keys": "Your own AI keys per provider (masked)", "POST /api/ai/keys/{provider}": "Test and save your own key for one provider (people only)",
     "DELETE /api/ai/keys/{provider}": "Delete your own key for one provider (people only)",
     "POST /api/agent-tokens": "Create an agent token (shown once)", "DELETE /api/agent-tokens/{token_id}": "Revoke an agent token",
-    "PATCH /api/agent-tokens/{token_id}": "Change a token's daily limit (1-100) or its Allow paid APIs switch (humans only)",
+    "PATCH /api/agent-tokens/{token_id}": "Change a token's daily limit (1-500 Buffer posts) or its Allow paid APIs switch (humans only)",
     "POST /api/agent/start-post": "start_post: open one post for a request and get its run_id (every follow-up updates it)",
     "POST /api/agent/continue-run": "continue_run: join an existing run for a follow-up about the same content (run_id, thread_url)",
     "POST /api/agent/cleanup": "cleanup_agent_drafts: list what AI apps left (dry run), then archive those runs and move those Library items to the Bin",
@@ -547,7 +547,7 @@ def api_page(schema: dict, tools: list[dict]) -> str:
     body = f"""
 <h2 id="auth">Authentication</h2>
 <p>Two ways in, and every endpoint below accepts both unless it says <i>None</i>.</p>
-<ul><li><b>From a script or agent:</b> create a token on <b>AI apps</b> in the app and send <code>Authorization: Bearer hq_…</code>. Tokens are shown once and stored only as a hash. Each token has a policy (needs approval, Buffer drafts only, or schedule), a daily cap, and obeys the kill switch.</li>
+<ul><li><b>From a script or agent:</b> create a token on <b>AI apps</b> in the app and send <code>Authorization: Bearer hq_…</code>. Tokens are shown once and stored only as a hash. Each token has a policy (needs approval, Buffer drafts only, or schedule), a cap on Buffer posts per day (50 by default, up to 500; renders and previews don't count), and obeys the kill switch.</li>
 <li><b>From the browser:</b> the session cookie set when you connect Buffer. Writes (POST) also need the <code>X-HQ-CSRF</code> header, whose value comes from <code>GET /api/session</code>.</li></ul>
 <pre class="code">export HUHQUEUE_TOKEN=hq_…   # from AI apps
 curl -H "Authorization: Bearer $HUHQUEUE_TOKEN" {BASE}/api/channels</pre>
