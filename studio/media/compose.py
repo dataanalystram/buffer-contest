@@ -1148,6 +1148,6 @@ def _mux_audio(video: str, speech_src: str | None, c0: float, D: float, cover_s:
     else:
         args += ["-f", "lavfi", "-t", f"{total:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
         parts.append(f"[{n}:a]anull[a]")
-    # AAC at 128 kbps: Instagram's Reels spec (160k measured 142-153 kbps and every Instagram chip warned, take #91)
+    # ff.AAC_KBPS, under Instagram's 128 kbps Reels spec (160k measured 142-153 kbps and every Instagram chip warned, take #91)
     ff.run([*args, "-filter_complex", ";".join(parts), "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
-            "-b:a", "128k", "-ar", "44100", "-t", f"{total:.3f}", "-movflags", "+faststart", out], timeout=900)
+            "-b:a", f"{ff.AAC_KBPS}k", "-ar", "44100", "-t", f"{total:.3f}", "-movflags", "+faststart", out], timeout=900)

@@ -138,7 +138,7 @@ def cover_swap(video: bytes, cover: bytes, secs: float | None = None, replace: f
         elif pr.get("has_audio"):  # the picture got longer or shorter: shift the sound by the same amount
             d_ms = int(max(0.0, secs - rep) * 1000)
             fc += f";[1:a]atrim=start={max(0.0, rep - secs):.3f},asetpts=PTS-STARTPTS,adelay={d_ms}|{d_ms}[a]"
-            amap = ["-map", "[a]", "-c:a", "aac", "-b:a", "160k"]
+            amap = ["-map", "[a]", "-c:a", "aac", "-b:a", f"{ff.AAC_KBPS}k"]
         else:
             amap = []
         ff.run(["-y", "-v", "error", "-loop", "1", "-framerate", "30", "-t", f"{secs:.3f}", "-i", str(tmp / "cover.jpg"), "-i",
@@ -148,6 +148,26 @@ def cover_swap(video: bytes, cover: bytes, secs: float | None = None, replace: f
         return (tmp / "out.mp4").read_bytes(), {"type": "video", "width": got["width"], "height": got["height"],
                                                 "duration": round(got["duration"], 2), "cover_frame_secs": secs,
                                                 "thumbnail_offset_ms": cover_thumb_ms(secs)}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def fix_audio(video: bytes) -> tuple[bytes, dict]:
+    """The same video with its sound re-encoded to AAC at ff.AAC_KBPS (Instagram's Reels spec is 128 kbps): the picture is
+    copied, never re-encoded, so it takes about a second. Job kind audio_fix (preflight fix "audio:<i>", autofix_post)."""
+    from .. import preflight
+    from . import ff
+    tmp = Path(tempfile.mkdtemp(prefix="hq_afix_"))
+    try:
+        (tmp / "in.mp4").write_bytes(video)
+        ff.run(["-y", "-v", "error", "-i", str(tmp / "in.mp4"), "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy", *ff.AENC,
+                "-movflags", "+faststart", str(tmp / "out.mp4")], timeout=600)
+        pr = preflight.ffprobe_path(str(tmp / "out.mp4"))
+        meta = {"type": "video", "audio_fixed": True}
+        if pr.get("probed"):  # the facts preflight reads back for our own media (actions._known_probe): no second probe
+            meta.update(width=pr.get("width"), height=pr.get("height"), duration=round(pr.get("duration") or 0, 2),
+                        probe={**pr, "kind": "video", "bytes": (tmp / "out.mp4").stat().st_size})
+        return (tmp / "out.mp4").read_bytes(), meta
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

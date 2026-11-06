@@ -157,6 +157,11 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
         t_r = time.time()
         if k > 1 and len(spec["clips"]) > 1:
             from concurrent.futures import ThreadPoolExecutor
+            try:  # OpenCV (YuNet face sampling + render QA) uses every core per call by default: with k clips at once beside
+                import cv2  # their FFmpeg encodes they'd fight for the same cores, so each gets its share
+                cv2.setNumThreads(max(1, (os.cpu_count() or 2) // k))
+            except Exception:  # noqa: BLE001 - no OpenCV here: the face steps fall back on their own and say so
+                pass
             with ThreadPoolExecutor(max_workers=k, thread_name_prefix="hq_clip") as ex:
                 list(ex.map(one, spec["clips"]))  # the first failure is raised (and reported) once every clip stopped
         else:
@@ -453,6 +458,9 @@ def _run(c: httpx.Client, base: str, h: dict, args) -> int:
     if spec["kind"] == "cover_swap":  # another cover variant as the Reel's opening frames (studio.media.worker.cover_swap)
         from .media.worker import cover_swap
         data, meta = cover_swap(get(urls["source"]), get(urls["cover"]), spec.get("secs") or None, spec.get("replace"))
+    elif spec["kind"] == "audio_fix":  # only the sound re-encoded to Instagram's spec; the picture is copied (preflight audio fix)
+        from .media.worker import fix_audio
+        data, meta = fix_audio(get(urls["source"]))
     elif spec["kind"] == "media_render":  # studio.media: find/fetch, transcribe, styled edit (opus/news/minimal/hype)
         from .media.worker import render_job
         data, meta = render_job(spec, get, urls=urls, logo=logo)

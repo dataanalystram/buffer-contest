@@ -17,6 +17,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+from .media.ff import AAC_KBPS  # every finished video: under Instagram's 128 kbps audio spec
+
 from .brand import BODY_FONTS, FONTS, hex_to_rgb
 
 FONT_DIR = Path(__file__).parent / "fonts"
@@ -348,7 +350,7 @@ def brand_video(video: bytes, kit: dict, p: dict, *, logo: bytes | None = None, 
             vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30[b];"
                   f"[b][1:v]overlay=0:0,format=yuv420p[v]")
         body = tmp / "body.mp4"
-        amap = ["-map", "0:a?", "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"] if info["audio"] else []
+        amap = ["-map", "0:a?", "-c:a", "aac", "-b:a", f"{AAC_KBPS}k", "-ar", "44100", "-ac", "2"] if info["audio"] else []
         _run(["ffmpeg", "-y", "-t", f"{dur:.2f}", "-i", str(src), "-loop", "1", "-t", f"{dur:.2f}", "-i", str(tmp / "ov.png"),
               "-filter_complex", vf, "-map", "[v]", *amap, "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-threads", "2",
               "-movflags", "+faststart", str(body)])
@@ -359,16 +361,16 @@ def brand_video(video: bytes, kit: dict, p: dict, *, logo: bytes | None = None, 
             endv = tmp / "end.mp4"
             _run(["ffmpeg", "-y", "-loop", "1", "-t", "2.6", "-i", str(ec), "-f", "lavfi", "-t", "2.6", "-i", "anullsrc=r=44100:cl=stereo",
                   "-vf", f"scale={W}:{H},setsar=1,fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-                  "-c:a", "aac", "-b:a", "128k", "-shortest", str(endv)])
+                  "-c:a", "aac", "-b:a", f"{AAC_KBPS}k", "-shortest", str(endv)])
             if not info["audio"]:
                 b2 = tmp / "body_a.mp4"
                 _run(["ffmpeg", "-y", "-i", str(body), "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-map", "0:v", "-map", "1:a",
-                      "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", str(b2)])
+                      "-c:v", "copy", "-c:a", "aac", "-b:a", f"{AAC_KBPS}k", "-shortest", str(b2)])
                 body = b2
             final = tmp / "final.mp4"
             _run(["ffmpeg", "-y", "-i", str(body), "-i", str(endv), "-filter_complex",
                   "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]", "-map", "[v]", "-map", "[a]", "-c:v", "libx264",
-                  "-preset", "veryfast", "-crf", "22", "-threads", "2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+                  "-preset", "veryfast", "-crf", "22", "-threads", "2", "-c:a", "aac", "-b:a", f"{AAC_KBPS}k", "-movflags", "+faststart",
                   str(final)])
         out = probe(str(final))
         return final.read_bytes(), {"type": "video", "width": W, "height": H, "duration": round(out["duration"], 2),

@@ -1316,6 +1316,9 @@ class House:
             from .media.worker import cover_swap
             return cover_swap(self.get_media(spec["source"])["data"], self.get_media(spec["cover"])["data"], spec.get("secs") or 0.6,
                               spec.get("replace"))
+        if spec["kind"] == "audio_fix":
+            from .media.worker import fix_audio
+            return fix_audio(self.get_media(spec["source"])["data"])
         if spec["kind"] == "brand_video":
             return render.brand_video(self.get_media(spec["source"])["data"], spec["kit"], spec["params"], logo=logo,
                                       hook=spec.get("hook", ""), ratio=spec.get("ratio", "9:16"))
@@ -1642,6 +1645,46 @@ class House:
     def _job_media(self, jid: int) -> dict:
         tok = self.store.q("SELECT media_token FROM render_jobs WHERE id=?", (jid,))[0]["media_token"]
         return {"token": tok, "url": self.media_url(tok), "type": "video", "name": "reel.mp4"}
+
+    def fix_audio(self, a: Actor, url: str, data: bytes | None = None) -> tuple[str | None, str]:
+        """(new media URL, '') with the video's sound re-encoded to Instagram's spec, or (None, why). The picture is copied,
+        never re-encoded. Runs where video runs (job kind audio_fix): the InstaBox / GitHub worker on the hosted app (its
+        web dyno never runs FFmpeg), FFmpeg here off it. A video that isn't ours yet (an outside link) is stored first."""
+        if demo_guard.is_demo(a.uid):
+            return None, "the free sample doesn't run the video worker"
+        mode = self.video_mode()
+        if mode == "none":
+            return None, "no video worker here"
+        base = self.s.public_url.rstrip("/") + "/m/"
+        tok = url[len(base):].split("?")[0] if url.startswith(base) else ""
+        if not tok or not self.get_media(tok):
+            if not data:
+                return None, "couldn't read the video to fix its sound"
+            tok = self.put_media(a, data, "video.mp4", kind="autofix", meta={"type": "video", "from": url[:300]})
+        jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
+                           (a.uid, None, json.dumps({"kind": "audio_fix", "source": tok}), "queued", _now(), _now()))
+        if mode == "local":
+            try:
+                out, meta = self.render_job_local({"kind": "audio_fix", "source": tok})
+                self.finish_video(jid, out, meta, run_inline=False)
+                return self._job_media(jid)["url"], ""
+            except Exception as e:  # noqa: BLE001 - said to the caller; the warning stays
+                self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (str(e)[:500], _now(), jid))
+                return None, str(e)[:120]
+        ok, why = self._dispatch_github(jid)
+        if not ok:
+            self.store.x("UPDATE render_jobs SET status='failed', error=?, updated=? WHERE id=?", (why, _now(), jid))
+            return None, why
+        t0, wait = _now(), float(os.environ.get("HQ_AUDIO_FIX_WAIT", "150"))
+        while _now() - t0 < wait:
+            time.sleep(0.05 if self.sync else 2)
+            row = self.store.q("SELECT status, error FROM render_jobs WHERE id=?", (jid,))[0]
+            if row["status"] == "done":
+                return self._job_media(jid)["url"], ""
+            if row["status"] == "failed":
+                return None, (row["error"] or "failed")[:120]
+        # still queued behind another job: the send stops on the warning (saying why) instead of waiting any longer
+        return None, f"the video worker is busy (likely a One take render); still waiting after {int(wait)} s"
 
     def finish_video(self, jid: int, data: bytes | None, meta: dict | None, error: str = "", run_inline: bool = True,
                      body: dict | None = None) -> dict:

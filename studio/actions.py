@@ -286,6 +286,30 @@ class Studio:
         return preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating,
                                known=self._known_probe, path_loader=self._media_path)
 
+    def _fix_audio(self, a: Actor, ch: dict, text: str, urls: list[str], mode: str, options: dict | None,
+                   pf: dict) -> tuple[list[str], dict, list[str]]:
+        """Instagram's 128 kbps audio warning is fixed here, never handed to the person or the agent to override: each video
+        whose finding is fix "audio:<i>" gets its sound re-encoded on the video worker (picture copied, house.fix_audio),
+        then preflight runs again. Returns (urls, preflight, notes); unchanged when nothing needed it or the fix couldn't run
+        (the warning then stays, with the reason in notes)."""
+        idx = [i for i in preflight.audio_fix_ids([pf]) if i < len(urls)]
+        if not idx or not self.house:
+            return urls, pf, []
+        new, notes = list(urls), []
+        for i in idx:
+            got, why = self.house.fix_audio(a, urls[i], None if urls[i].startswith(self.s.public_url.rstrip("/") + "/m/")
+                                            else self._load_media(urls[i]))
+            if got:
+                new[i] = got
+            else:
+                notes.append(f"Couldn't fix the sound of media {i + 1} yet ({why}).")
+        if new == urls:
+            return urls, pf, notes
+        pf2 = self._preflight(ch, text, new, mode, options)
+        self.store.audit(a.uid, a.label, "fix_audio", "read", {"channel": ch["service"], "media": idx, "after": pf2["status"]})
+        return new, pf2, notes + [f"Re-encoded the sound of {len(idx)} video(s) to {preflight.AUDIO_FIX_KBPS} kbps for "
+                                  "Instagram (the picture is unchanged)."]
+
     def _known_probe(self, url: str) -> dict | None:
         """Facts the video worker already measured with ffprobe for media HuhQueue rendered (the web dyno has no ffprobe)."""
         base = self.s.public_url.rstrip("/")
@@ -343,6 +367,8 @@ class Studio:
         want = p.get("fixes") or "all"
         ids = [f["id"] for f in before["fixes"]] if want == "all" else [str(x) for x in want]
         ids = [i for i in ids if i != "reencode"]
+        if "audio" in ids:  # fixes=['audio']: every video whose sound is over Instagram's spec
+            ids = [i for i in ids if i != "audio"] + [f["id"] for f in before["fixes"] if f["id"].startswith("audio:")]
         has_video = any(m.get("kind") == "video" for m in before["media"])
         text2, opts2, applied = preflight.apply_text_fixes(ch, text, opts, ids, has_video)
         urls2 = list(urls)
@@ -368,13 +394,23 @@ class Studio:
             tok = self.house.put_media(a, out, f"fit-{ch['service']}.{ext}", kind="autofix", meta={"type": "photo", "from": urls2[i]})
             urls2[i] = self.house.media_url(tok)
             applied.append(fid)
+        aud, fix_notes = [fid for fid in ids if fid.startswith("audio:")], []
         after = self._preflight(ch, text2, urls2, mode, opts2)
+        if aud:  # the sound only, on the video worker (picture copied)
+            want_idx = {int(f[6:]) for f in aud if f[6:].isdigit()}
+            keep_pf = {**after, "findings": [f for f in after["findings"] if str(f.get("fix") or "") in {f"audio:{i}" for i in want_idx}]}
+            urls3, after, fix_notes = self._fix_audio(a, ch, text2, urls2, mode, opts2, keep_pf)
+            if urls3 != urls2:
+                urls2 = urls3
+                applied += [f"audio:{i}" for i in sorted(want_idx)]
+            else:
+                after = self._preflight(ch, text2, urls2, mode, opts2)
         self.store.audit(a.uid, a.label, "autofix_post", "read", {"channel": ch["service"], "applied": applied,
                                                                    "before": before["status"], "after": after["status"]})
         return {"channel_id": ch["id"], "service": ch["service"], "text": text2, "media_urls": urls2,
                 "media_url": urls2[0] if urls2 else "", "options": opts2, "applied": applied,
                 "before": {"text": text, "media_urls": urls, "status": before["status"]}, "preflight": after,
-                "needs_reencode": any(f.get("fix") == "reencode" for f in after["findings"])}
+                "needs_reencode": any(f.get("fix") == "reencode" for f in after["findings"]), "notes": fix_notes}
 
     def preflight_rules(self, a: Actor, service: str | None = None) -> dict:
         rules = [r for r in preflight.RULES if not service or r["service"] in (service, "*")]
@@ -630,10 +666,17 @@ class Studio:
             if not any(u.lower().split("?")[0].endswith(VIDEO_EXT) for u in ([media] if media else []) + media_urls):
                 raise ActionError("Music goes on a Reel: this Instagram post has no video, so remove the music or add a video.")
         override = bool(p.get("override_warnings"))
-        pf = self._preflight(ch, text, media_urls or ([media] if media else []), mode, opts)
+        urls0 = media_urls or ([media] if media else [])
+        pf = self._preflight(ch, text, urls0, mode, opts)
+        urls1, pf, notes = self._fix_audio(a, ch, text, urls0, mode, opts, pf)
+        warnings += notes
+        if urls1 != urls0:
+            if media_urls:
+                media_urls = urls1
+            media = urls1[0] if urls1 else media
         msg = preflight_error([pf], override)
         if msg:
-            raise ActionError(msg)
+            raise ActionError(" ".join([msg, *notes]))
         clean = {"channel_id": ch["id"], "text": text, "media_url": media, "mode": mode, "due_at": due}
         if len(media_urls) > 1:
             clean["media_urls"] = media_urls
@@ -707,10 +750,16 @@ class Studio:
             raise ActionError("That channel is no longer in your Buffer organization.", 404)
         urls = clean.get("media_urls") or ([clean["media_url"]] if clean["media_url"] else [])
         pf = self._preflight(ch, clean["text"], urls, clean["mode"], clean.get("options"))  # re-check right before createPost
+        urls2, pf, _notes = self._fix_audio(a, ch, clean["text"], urls, clean["mode"], clean.get("options"), pf)
+        if urls2 != urls:  # a post that skipped preview (an approval, a placed clip): its sound is fixed here
+            urls = urls2
+            clean = {**clean, "media_url": urls2[0]}
+            if clean.get("media_urls"):
+                clean["media_urls"] = urls2
         msg = preflight_error([pf], bool(clean.get("override_warnings")))
         if msg:
             self.store.audit(a.uid, a.label, action, "blocked", {"channel": ch["service"], "preflight": pf["status"]}, ok=False)
-            raise ActionError(msg)
+            raise ActionError(" ".join([msg, *_notes]))
         risk = "draft" if clean["mode"] == "draft" else "public"
         if urls and not demo_guard.is_demo(a.uid):  # Buffer downloads each link while it creates the post: check them first
             problems = self._reach(urls)

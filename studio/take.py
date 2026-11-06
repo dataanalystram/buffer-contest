@@ -894,7 +894,8 @@ def _render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scene
         sw, sh = src["width"], src["height"]
         venc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-maxrate", "5M", "-bufsize", "10M", "-r", "30",
                 "-pix_fmt", "yuv420p"]
-        aenc = ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
+        from .media.ff import AENC as _AENC
+        aenc = list(_AENC)
         # 1) reframe shot by shot
         shots, plans = segments(start, end, scenes), []
         lst = tmp / "shots.txt"

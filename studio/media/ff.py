@@ -22,6 +22,12 @@ from pathlib import Path
 from .. import mediasafe
 
 
+# AAC bitrate of every finished video HuhQueue encodes. Instagram's Reels spec is 128 kbps and preflight warns above it;
+# an encode asked for 128k can measure 128.1-129 (a warning), so 124k leaves a margin (owner, 6 Nov 2026).
+AAC_KBPS = 124
+AENC = ["-c:a", "aac", "-b:a", f"{AAC_KBPS}k", "-ar", "44100", "-ac", "2"]
+
+
 class MediaError(RuntimeError):
     """A media step failed; the message is safe to show (no paths with secrets, no tokens)."""
 

@@ -115,8 +115,11 @@ def test_a_flagged_4x5_version_flags_the_clip(human, app, fake, monkeypatch):
 
 def test_instagram_audio_is_encoded_at_its_128_kbps_spec():
     from pathlib import Path
+
+    from studio.media import ff
     src = (Path(__file__).resolve().parents[2] / "studio" / "media" / "compose.py").read_text()
-    assert '"-b:a", "128k"' in src and '"-b:a", "160k"' not in src  # 160k measured 142-153 kbps: Instagram warned on every clip
+    # 160k measured 142-153 kbps: Instagram warned on every clip; the shared setting sits under 128 (test_instagram_audio)
+    assert '"-b:a", f"{ff.AAC_KBPS}k"' in src and '"-b:a", "160k"' not in src and ff.AAC_KBPS <= 124
 
 
 def test_the_clip_card_offers_layout_on_link_takes_and_the_sheet_never_shows_a_bare_error():

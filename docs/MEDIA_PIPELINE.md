@@ -422,7 +422,12 @@ render, and rendered the clips one at a time: ~19 min from the pasted link to re
   stays one at a time.
 * **Analysis overlap.** The face track and scene cuts run beside the silences + transcript, and the fetched link is
   kept in storage while the analysis reads it.
-* **Audio.** AAC at 128 kbps, Instagram's Reels spec (160k measured 142-153 kbps, a warning on every Instagram chip).
+* **Audio.** Every finished video encodes AAC at `ff.AAC_KBPS` (124k, under Instagram's 128 kbps Reels spec; 160k measured
+  142-153 kbps and every Instagram chip warned; a 128k encode can measure 128.1-129). A video already over it (an import,
+  an older render) is not handed back to the person or the agent: preflight's finding carries fix `audio:<i>`, and
+  preview / submit / approve (`actions._fix_audio`) re-encode only its sound on the video worker (job `audio_fix`,
+  `media.worker.fix_audio`: picture stream-copied, about a second), then check again. `autofix_post(fixes=['audio'])` does
+  the same on request. The web dyno never runs it (`house.fix_audio` uses the worker there; `HQ_AUDIO_FIX_WAIT`, 150 s).
 * **Timings.** `GET /api/takes/{id}` → `timings`: `download`, `store_source`, `silences`, `transcribe`, `scenes`,
   `faces`, `faces_jev`, `total` (analysis wall clock), `moments`, `clips.{id or id@ratio}` (`face_sampling`, `render`,
   `qa`, `renders`, `captions`, `encode`, `cards`, `audio_mux`, `cover`, `clip_total`, `source_download`,

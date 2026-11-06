@@ -405,7 +405,8 @@ def _venc() -> list[str]:
 
 
 def _aenc() -> list[str]:
-    return ["-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2"]
+    from .ff import AENC
+    return list(AENC)
 
 
 def _card(png: str, secs: float, out: str) -> str:
