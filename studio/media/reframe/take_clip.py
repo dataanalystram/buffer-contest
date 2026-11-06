@@ -28,6 +28,18 @@ def crop_at_fn(shots: list[dict] | None):
     return at
 
 
+def crop_x_fn(shots: list[dict] | None):
+    """t (clip seconds) -> the tracked crop's (left, width) in source pixels, or None outside a tracked shot."""
+    def at(t: float):
+        for s in shots or []:
+            p = s.get("path") if s.get("layout") == "track" else None
+            if p and s["start"] - 1e-6 <= t < s["end"] and p.get("crop_w"):
+                x, _ = path_mod.at(p, t - s["start"])
+                return float(x), float(p["crop_w"])
+        return None
+    return at
+
+
 def place_captions(sidecar: list[dict], frames, sw: int, sh: int, shots: list[dict] | None = None) -> int:
     """Move each segment's caption line off on-screen text the OCR found (studio/media/ocr). Fail open: any problem keeps
     the default band. Returns how many segments moved."""
@@ -61,7 +73,13 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         pins = rr.pins_from(m.get("layout_overrides"))
         plan = rr.plan_clip(path, start, end, words, scenes, src, faces, pins, m.get("layout_prefs") or {},
                             smart_layout=bool(m.get("smart_layout")))
-        moved = place_captions(plan["sidecar"], m.get("_ocr_frames"), sw, int(src.get("height") or 1080), plan["shots"])
+        sh = int(src.get("height") or 1080)
+        # captions clear of the face AFTER the punch-in (the same punch plan rr.render applies), and of on-screen text
+        from .. import facesafe
+        rr.apply_punch(plan, words, start, src, m.get("punch_in", True) is not False, m.get("_punch_emph"))
+        fs_place = facesafe.place_track_captions(plan["sidecar"], plan["shots"], sw, sh, m.get("_ocr_frames"),
+                                                 crop_at=crop_at_fn(plan["shots"]), crop_x=crop_x_fn(plan["shots"]))
+        moved = fs_place["moved_for_text"]
         # cover: the sharpest early frame, framed like the shot it falls in
         ct = take.pick_cover_time(path, m, faces, tmp)
         shot = next((s for s in plan["shots"] if s["start"] <= ct - start < s["end"]), plan["shots"][0])
@@ -88,6 +106,10 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
                          plan=plan, audio=audio, cover=str(tmp / "cover.jpg"), cover_s=take.COVER_SECS, end_card=end_jpg,
                          end_s=take.END_SECS if has_end else 0.0, punch_in=m.get("punch_in", True) is not False,
                          punch_emph=m.get("_punch_emph"))
+        fs_qa = facesafe.main_qa(str(out), plan["sidecar"], fs_place, offset=take.COVER_SECS)
+        fs_qa.update(placement={k: fs_place[k] for k in ("moved_for_text", "moved_for_face")}, blocked=fs_place["blocked"][:10])
+        if fs_qa["status"] != "ok":
+            print(f"face-safe: clip {m.get('id', '')}: {fs_qa.get('reason')}", flush=True)
         data = out.read_bytes()
         info = take.probe(str(out))
         from ...preflight import parse_ffprobe
@@ -104,7 +126,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
                 "layout_detector": plan["detector"], "layout_vision": plan.get("vision"), "caption_preset": preset,
                 "face_coverage": plan["face_coverage"], "moment": {k: m.get(k) for k in ("start", "end")},
                 "caption_band": [min(ys) - 60, max(ys) + 60] if ys else None, "probe": pf, "timings": plan["timings"],
-                "captions_moved_for_text": moved,
+                "captions_moved_for_text": moved, "face_safe": fs_qa,
                 "audio": {"loudnorm": take.LOUDNESS, "fade_in": take.FADE_IN, "fade_out": take.FADE_OUT} if audio else None,
                 "punch_in": plan.get("punch") or {"on": False, "shots": 0},
                 "face_fallback": "no face found, full frame used" if any(s.get("rule") == "R8-noface" for s in plan["shots"]) else None}

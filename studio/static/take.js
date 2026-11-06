@@ -300,7 +300,7 @@ const SCISSORS = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle
 function clipRow(c, n, k) {
   const placed = (c.placements || []).filter((p) => ["draft", "pending_approval"].includes(p.status));
   const failed = (c.placements || []).filter((p) => p.status === "failed");
-  const st = c.status === "ready" ? "" : c.status === "failed" ? `<span class="st err" data-testid="clip-error">${esc(c.error || "Render failed")}</span>` : `<span class="muted xs" data-testid="clip-rendering"><span class="spin" aria-hidden="true"></span> Rendering…</span>`;
+  const st = c.status === "ready" ? "" : c.status === "needs_review" ? `<span class="st queued" data-testid="clip-needs-review" title="${esc(c.review_reason || "")}">Needs review</span> <span class="muted xs" data-testid="clip-review-reason">${esc(c.review_reason || "Text may cover the speaker's face.")}</span>` : c.status === "failed" ? `<span class="st err" data-testid="clip-error">${esc(c.error || "Render failed")}</span>` : `<span class="muted xs" data-testid="clip-rendering"><span class="spin" aria-hidden="true"></span> Rendering…</span>`;
   return `<li class="clip-row deal" style="--i:${k}" data-testid="clip-card" data-clip="${esc(c.id)}" data-status="${esc(c.status)}">
     <button type="button" class="clip-thumb" data-act="edit" data-clip="${esc(c.id)}" aria-label="Open clip ${n} in Trim and caption" ${c.url ? "" : "disabled"}>${c.cover_url ? `<img src="${esc(c.cover_url)}${c.rendered_at ? "?v=" + Math.round(c.rendered_at) : ""}" alt="" loading="lazy">` : `<span class="spin" aria-hidden="true"></span>`}</button>
     <span class="clip-n" aria-hidden="true">${n}</span>

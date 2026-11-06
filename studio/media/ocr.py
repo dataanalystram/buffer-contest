@@ -219,6 +219,23 @@ def watermarks(text: str, own_handle: str = "") -> list[str]:
     return hits[:10]
 
 
+CAPTION_CONF = 75.0        # caption placement only trusts a box this confident (alt text / search keep MIN_CONF)
+
+
+def usable(b: dict, min_conf: float = CAPTION_CONF) -> bool:
+    """A box that is real on-screen text, not a shirt pattern, a logo stroke or a texture Tesseract read as letters:
+    confident, two or more letters / digits, a word-like shape and size (fractions of the source frame)."""
+    try:
+        conf, w, h = float(b.get("conf", 0)), float(b["w"]), float(b["h"])
+        text = str(b.get("text") or "")
+    except (KeyError, TypeError, ValueError):
+        return False
+    alnum = sum(ch.isalnum() for ch in text)
+    if conf < min_conf or alnum < 2 or alnum < len(text.strip()) * 0.6:
+        return False
+    return 0.008 <= h <= 0.25 and 0 < w <= 1.0 and w / h <= 60
+
+
 def _to_out_y(b: dict, layout: str, src_w: int, src_h: int, H: int, W: int,
               crop: tuple[float, float] | None = None) -> tuple[float, float] | None:
     """A source box's vertical extent on the WxH clip, for layouts whose vertical mapping is known. crop: the tracked
@@ -234,30 +251,45 @@ def _to_out_y(b: dict, layout: str, src_w: int, src_h: int, H: int, W: int,
 
 
 def free_caption_y(frames: list[dict], seg: dict, default_y: int, src_w: int, src_h: int, W: int = 1080, H: int = 1920,
-                   line_h: int = 170, safe_top: int = 290, safe_bottom: int = 1470, crop_at=None) -> int | None:
-    """A caption y for the sidecar segment `seg` ({start, end, layout} in clip seconds) that stays off on-screen text,
-    or None to keep the default (no text in the band, an unmapped layout, or no free band). crop_at(t) gives a tracked
-    crop's (top, height) in source pixels at clip time t, or None for the full frame."""
+                   line_h: int = 170, safe_top: int = 290, safe_bottom: int = 1470, crop_at=None, crop_x=None,
+                   avoid: list[tuple[int, int]] | None = None) -> int | None:
+    """A caption y for the sidecar segment `seg` ({start, end, layout} in clip seconds) that stays off on-screen text
+    and off the ``avoid`` spans (the face, studio/media/facesafe.track_face_spans: (y0, y1) on the clip), or None to keep
+    the default (nothing in the band, an unmapped layout, or no free band). crop_at(t) gives a tracked crop's (top,
+    height) in source pixels at clip time t, or None for the full frame; crop_x(t) its (left, width): text outside the
+    visible crop is never on screen and never moves the captions. Only ``usable`` boxes count (bug 3, 6 Nov 2026: a
+    shirt pattern read as text pushed the captions onto the face)."""
     lay = seg.get("layout", "track")
     spans = []
     for f in frames or []:
-        if not (seg.get("start", 0) - 1e-6 <= f.get("t", -1) < seg.get("end", 0) + 1e-6):
+        if not isinstance(f, dict) or not (seg.get("start", 0) - 1e-6 <= f.get("t", -1) < seg.get("end", 0) + 1e-6):
             continue
-        boxes = [b for b in f.get("boxes") or [] if isinstance(b, dict)]
+        boxes = [b for b in f.get("boxes") or [] if isinstance(b, dict) and usable(b)]
         for b in boxes:
+            if lay == "track" and crop_x:
+                cx = crop_x(f["t"])
+                if cx and (float(b["x"] + b["w"]) * src_w <= cx[0] or float(b["x"]) * src_w >= cx[0] + cx[1]):
+                    continue  # outside the crop: not on screen
             y = _to_out_y(b, lay, src_w, src_h, H, W, crop_at(f["t"]) if crop_at and lay == "track" else None)
             if y is None:
                 return None
+            if y[1] <= 0 or y[0] >= H:
+                continue  # above or below the crop window
             spans.append((y[0] - 12, y[1] + 12))
-    if not spans:
+    face = [(float(a), float(b)) for a, b in (avoid or []) if b > a] if lay == "track" else []
+    if not spans and not face:
         return None
+    spans = spans + face
 
     def clear(y):
         return all(y + line_h / 2 <= a or y - line_h / 2 >= b for a, b in spans)
     if clear(default_y):
         return None
     lo, hi = safe_top + line_h // 2, safe_bottom - line_h // 2
-    cands = sorted(range(lo, hi + 1, 20), key=lambda y: (abs(y - default_y), y < default_y))  # nearest, lower first
+    edges = {int(b + line_h / 2 + 0.999) for _, b in spans} | {int(a - line_h / 2) for a, _ in spans}  # snug spots too
+    grid = sorted(set(range(lo, hi + 1, 20)) | {y for y in edges if lo <= y <= hi})
+    # nearest first, lower first; with a face to avoid, under the chin before above the head
+    cands = sorted(grid, key=lambda y: (bool(face) and y < default_y, abs(y - default_y), y < default_y))
     for y in cands:
         if clear(y):
             return int(y)

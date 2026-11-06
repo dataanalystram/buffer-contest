@@ -371,6 +371,31 @@ The look sits behind `RecapLayout` (`cover`, `story_overlay`, `plate`, `follow`)
 ...)` swaps in the hq-themes template when it lands; until then the minimal layout renders the same structure, with
 the story headline and source pill filling the bottom of the 4:5 slide.
 
+## 10. Face-safe overlays (`studio/media/facesafe.py`, `studio/face_qa.py`)
+
+Owner bug, 6 Nov 2026: on a One take Opus-style clip the hook box covered the speaker's eyes and the captions sat on his
+chin (fixed layout positions; the faces only steered the crop). Now no overlay is placed on a face:
+
+- **Opus style** (`longform.render_moment`): YuNet samples the clip span (2 fps) plus the take's Jev-verified boxes,
+  mapped through the reframe crop into output pixels. A clip-wide keep-out guides the hook box and credit chip, a
+  per-segment keep-out (every scene cut, at most 4 s) guides the captions: under the chin, else above the head, else the
+  safest band (flagged). The hook shrinks, shortens, and is dropped when no spot clear of the face exists.
+- **Main One take path** (`reframe/take_clip.py`): each tracked segment's caption line is placed clear of the head
+  *after* the reframe crop and the punch-in zoom (the peak, up to 1.12), and clear of on-screen text. A segment with no
+  clear line keeps the nearest safe line and the clip is flagged.
+- **OCR boxes** count for caption placement only when they are on screen (inside the tracked crop) and look like text
+  (confidence >= 75, two or more letters or digits, a word-like size), so a shirt pattern can't push captions onto a face.
+- **Render QA (worker)**: finished frames are diffed against the clean reframed frames and YuNet measures how much of
+  each face our pixels cover (limit 2 %). Over the limit the Opus path re-places once and re-renders; still over, the
+  clip is `needs_review` with the reason.
+- **Final look (server)**: the two worst QA frames (540 px JPEGs, rebuilt from raw pixels, never stored) go to Jev
+  (`jev-latest`, one Noul question), with SubQ (`subq-snap-1.1`) as the tie-break when Jev is unsettled or errors,
+  within the account's daily Jev allowance (`HQ_JEV_DAILY_CAP`, reserved then refunded) and cached by frame hash. Only
+  for takes that allow Jev. With no model answer the worker's YuNet measure stands, logged. A clear "covered" adds the
+  flag; the models can never clear a flag the worker measured.
+- A `needs_review` clip shows **Needs review** with the reason on the take page, is never spread to Buffer, and
+  preflight never flips it back to ready. A re-render clears it when the new render passes.
+
 ## Credits
 
 Layouts, safe-area numbers and the cinematic score are adapted from the owner's own HuhByte pipeline

@@ -297,7 +297,8 @@ def merge(faces: list[dict], results: list[dict], fps: float = 2.0) -> list[dict
             continue
         b = r["box"]
         s = {"cx": round((b["left"] + b["right"]) / 2, 4), "cy": round((b["top"] + b["bottom"]) / 2, 4),
-             "w": round(b["right"] - b["left"], 4), "score": round(max(LOW_CONF, min(0.95, r["face_visible"])), 2), "src": "jev"}
+             "w": round(b["right"] - b["left"], 4),
+             "h": round(b["bottom"] - b["top"], 4), "score": round(max(LOW_CONF, min(0.95, r["face_visible"])), 2), "src": "jev"}
         k0 = round(r["t"] * fps)
         span = int(HOLD_S * fps)
         for k in range(k0 - span, k0 + span + 1):
