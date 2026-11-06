@@ -508,3 +508,13 @@ def test_banned_phrases_ending_in_punctuation_are_removed_and_flagged():
     assert "gamechanger-ish" in out
     assert not brand.brand_check("Ship it. Thoughts?", None, rules, {})["pass"]
     assert brand.brand_check("Ship it. What would you change?", None, rules, {})["pass"]
+
+
+def test_punctuation_ending_phrase_matches_right_before_a_new_word():
+    # CodeRabbit #134: "thoughts?" was missed in "Thoughts?Yes"; a word-ending phrase still never matches inside a word
+    rules = [{"kind": "text", "check": {"type": "banned_words", "words": ["thoughts?", "game"]}, "rule": "x", "scope": [],
+              "active": True}]
+    assert "thoughts?" not in brand.apply_text_rules("Ship it. Thoughts?Yes, it ships.", rules).lower()
+    assert not brand.brand_check("Ship it. Thoughts?Yes", None, rules, {})["pass"]
+    assert brand.brand_check("A gamechanger, not a banned word.", None, rules, {})["pass"]
+    assert "gamechanger" in brand.apply_text_rules("A gamechanger.", rules)

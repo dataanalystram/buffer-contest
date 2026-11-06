@@ -307,6 +307,15 @@ def visual_params(kit: dict, rules: list[dict]) -> dict:
     return p
 
 
+def _phrase(w: str) -> str:
+    """A banned phrase as a regex at word edges. The no-word-after check applies only when the phrase ends in a word
+    character, so "agree?" / "thoughts?" also match right before a new word ("Thoughts?Yes"), while "game" never matches
+    inside "gamechanger". The phrase is re.escape'd (no user regex, no ReDoS)."""
+    head = r"\b" if w[:1].isalnum() or w[:1] == "_" else ""
+    tail = r"(?!\w)" if w[-1:].isalnum() or w[-1:] == "_" else ""
+    return head + re.escape(w) + tail
+
+
 def apply_text_rules(text: str, rules: list[dict], trace: list | None = None) -> str:
     """Fix what can be fixed mechanically (banned words, emoji, hashtags, case, sign-off) before checking. With ``trace``,
     every rule that changed the text appends {rule_id, before, after}: the Style Ledger keeps them as the rule's examples."""
@@ -319,7 +328,7 @@ def apply_text_rules(text: str, rules: list[dict], trace: list | None = None) ->
         was = out
         if ty == "banned_words":
             for w in c.get("words", []):
-                out = re.sub(rf"\s*\b{re.escape(w)}(?!\w)", "", out, flags=re.I)  # (?!\w), not \b: "agree?" ends in punctuation
+                out = re.sub(rf"\s*{_phrase(w)}", "", out, flags=re.I)
         elif ty == "no_emoji":
             out = EMOJI_RE.sub("", out)
         elif ty == "max_hashtags":
@@ -356,7 +365,7 @@ def brand_check(text: str, render_meta: dict | None, rules: list[dict], kit: dic
             continue
         c, ty = r["check"], r["check"]["type"]
         if ty == "banned_words":
-            hit = [w for w in c.get("words", []) if re.search(rf"\b{re.escape(w)}(?!\w)", text, re.I)]
+            hit = [w for w in c.get("words", []) if re.search(_phrase(w), text, re.I)]
             add(r, not hit, f"uses {', '.join(hit)}" if hit else "")
         elif ty == "prefer_words":
             hit = [w for w in c.get("from", []) if re.search(rf"\b{re.escape(w)}\b", text, re.I)]
