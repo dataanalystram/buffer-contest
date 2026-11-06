@@ -20,7 +20,8 @@ function goConnect() {
 // fresh sign-in (new signed_in_at from /api/session) shows it again. localStorage key per user id; a stale mark is removed.
 const DISMISS = "hq_meter_dismissed:";
 function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
-function who() { const s = window.S && S.session; const u = s && s.user && s.user.id; return u ? { key: DISMISS + u, mark: `${today()}|${s.signed_in_at || ""}` } : null; }
+function who() { const s = typeof S !== "undefined" && S ? S.session : null;  // app.js: a top-level const, not window.S
+  const u = s && s.user && s.user.id; return u ? { key: DISMISS + u, mark: `${today()}|${s.signed_in_at || ""}` } : null; }
 function dismissed() {
   const w = who(); if (!w) return false;
   try {
