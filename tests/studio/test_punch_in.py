@@ -87,6 +87,20 @@ def test_apply_punch_on_and_off():
     assert plan["punch"] == {"on": False, "shots": 0} and all("punch" not in s for s in plan["shots"])
 
 
+
+def test_gap_holds_across_shot_boundaries():
+    """CodeRabbit (#131): two face-tracked shots that start 1.5 s apart must not both punch at their start."""
+    assert punch.events(1.6, 6.0, [3.5], last=0.0) == [(1.9, 3.9)]  # the shot start is too soon after 0.0; the word at 3.5 isn't
+    assert punch.events(1.6, 6.0, [], last=0.0) == []
+    assert punch.events(5.0, 15.0, [9.2], last=None) == punch.events(5.0, 15.0, [9.2])  # within one shot: unchanged
+    face = {"w": 0.08, "h": 0.15, "cy": 0.4}
+    plan = {"shots": [{**_track(0.0, 1.6), "face_med": face}, {**_track(1.6, 6.0), "face_med": face}]}
+    rr.apply_punch(plan, [W("so", 1.7, 1.9), W("big!", 3.5, 3.8)], 0.0, {"width": 1920, "height": 1080}, True)
+    starts = sorted(s["start"] + t0 for s in plan["shots"] if "punch" in s for t0, _ in s["punch"]["windows"])
+    assert starts == [0.0, 3.5], starts
+    assert all(b - a >= punch.GAP for a, b in zip(starts, starts[1:]))
+
+
 # ------------------------------------------------------------------ ffmpeg on a short fixture
 def _fixture(tmp: Path) -> str:
     """3 s, 960x540, grey with a white 60x60 'face' centred at (480, 216): where the tracked crop keeps the face."""

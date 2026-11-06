@@ -4,7 +4,7 @@ What it does, all in ffmpeg (``zoompan``, no extra model, no paid service):
 
 * Events: the start of every face-tracked shot (a scene start) and moments of speech emphasis: the first word after a
   pause of ``PAUSE`` s or more, or a word that is a number or ends in "!". Events closer than ``GAP`` s to the previous
-  one are dropped, so the camera never pumps.
+  one are dropped (across cuts too), so the camera never pumps.
 * Each event eases from 1.0 to at most ``ZMAX`` (1.12) over ``RAMP`` (0.4 s, cosine ease), holds, and eases back out
   over ``RAMP`` before the next event or the shot end. Nothing jumps: the zoom is continuous and starts at 1.0.
 * Faces are never cropped out: the zoom is centred on the point the tracked crop keeps the face at (horizontal centre,
@@ -59,15 +59,16 @@ def safe_peak(face_w: float, face_h: float, cy: float) -> float:
     return round(z, 3) if z >= 1.02 else 1.0
 
 
-def events(shot_start: float, shot_end: float, emph: list[float]) -> list[tuple[float, float]]:
-    """[(t0, t1)] punch windows in shot time: in at t0, back to 1.0 by t1."""
+def events(shot_start: float, shot_end: float, emph: list[float], last: float | None = None) -> list[tuple[float, float]]:
+    """[(t0, t1)] punch windows in shot time: in at t0, back to 1.0 by t1. ``last`` is the clip time of the previous
+    shot's last punch: GAP holds across cuts too, so two shots that start 1.5 s apart don't both punch at their start."""
     dur = shot_end - shot_start
     if dur < MIN_SHOT:
         return []
     starts = [0.0] + [round(t - shot_start, 3) for t in emph if shot_start + 0.2 <= t < shot_end - 2 * RAMP]
     picked: list[float] = []
     for t in sorted(starts):
-        if not picked or t - picked[-1] >= GAP:
+        if (not picked or t - picked[-1] >= GAP) and (last is None or shot_start + t - last >= GAP - 1e-9):
             picked.append(t)
     out = []
     for i, t0 in enumerate(picked):
@@ -89,8 +90,9 @@ def z_expr(windows: list[tuple[float, float]], peak: float) -> str:
     return f"1+{peak - 1:.4f}*({'+'.join(bumps)})"
 
 
-def plan_shot(s: dict, emph: list[float], face: dict | None, src: tuple[int, int]) -> dict | None:
-    """{windows, peak, cy} for one track shot, or None (not a track shot, too short, no room, nothing to do)."""
+def plan_shot(s: dict, emph: list[float], face: dict | None, src: tuple[int, int], last: float | None = None) -> dict | None:
+    """{windows, peak, cy} for one track shot, or None (not a track shot, too short, no room, nothing to do). ``last``:
+    the clip time of the previous punch in this clip (see events)."""
     p = s.get("path")
     if s.get("layout") != "track" or not p:
         return None
@@ -104,7 +106,7 @@ def plan_shot(s: dict, emph: list[float], face: dict | None, src: tuple[int, int
     peak = min(peak, UPSCALE_MAX * ch / OUT_H)  # never past the upscale guard (OUT_H / (ch / peak) <= UPSCALE_MAX)
     if peak < 1.02:
         return None
-    wins = events(float(s["start"]), float(s["end"]), emph)
+    wins = events(float(s["start"]), float(s["end"]), emph, last)
     if not wins:
         return None
     return {"windows": wins, "peak": round(peak, 3), "cy": round(min(max(cy, 0.0), 1.0), 3)}

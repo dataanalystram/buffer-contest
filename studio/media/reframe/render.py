@@ -424,14 +424,15 @@ def apply_punch(plan: dict, words: list[dict] | None, start: float, src: dict, o
     """Set (or clear) each shot's punch-in plan in place, and plan['punch'] = {on, shots} for the clip's meta."""
     sw, sh = int(src.get("width") or 1920), int(src.get("height") or 1080)
     emph = punch_mod.emphasis(words, start) if on else []
-    n = 0
+    n, last = 0, None  # last: clip time of the latest punch, so GAP holds across shot boundaries
     for s in plan["shots"]:
         s.pop("punch", None)
         if on:
-            pp = punch_mod.plan_shot(s, emph, s.get("face_med"), (sw, sh))
+            pp = punch_mod.plan_shot(s, emph, s.get("face_med"), (sw, sh), last)
             if pp:
                 s["punch"] = pp
                 n += 1
+                last = float(s["start"]) + pp["windows"][-1][0]
     plan["punch"] = {"on": bool(on), "shots": n}
 
 
