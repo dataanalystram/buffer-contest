@@ -255,9 +255,9 @@ class BufferClient:
             except BufferBusy as e:  # tokens stay: the refresh token was not spent
                 self._busy[uid] = time.time() + (e.retry_after or BUSY_RETRY)
                 raise BufferBusy(BUSY_MSG, retry_after=e.retry_after or BUSY_RETRY) from e
-            except BufferError:
+            except BufferError as e:
                 self.store.save_tokens(uid, None)
-                raise NotConnected("Your Buffer session expired. Connect again to continue.")
+                raise NotConnected("Your Buffer session expired. Connect again to continue.") from e
             self._busy.pop(uid, None)
             if not new.get("refresh_token"):
                 self.store.save_tokens(uid, None)
