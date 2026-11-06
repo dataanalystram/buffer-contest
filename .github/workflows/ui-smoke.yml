@@ -9,7 +9,7 @@ permissions: {contents: read}
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45   # tests take ~10 min; apt on a slow mirror took up to 31 min (6 Nov 2026)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
