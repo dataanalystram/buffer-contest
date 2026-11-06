@@ -151,7 +151,9 @@ TOOLS: list[dict[str, Any]] = [
      "body, footnote, optional image). The Follow card is added last. template: editorial (the HuhByte 'ernd' editorial carousel, "
      "default) or text_slides. Pass run_id (start_post): the slides become that post's carousel, and rendering again with the same "
      "run_id REPLACES them (one Library item per post, never a new one per render). Returns media_urls to pass to "
-     "create_package(run_id) and fit_problems to fix by writing shorter text. No HuhQueue AI is used.",
+     "create_package(run_id), fit_problems to fix by writing shorter text, and image_problems: each slide image that could "
+     "not be used, with the reason (e.g. forbidden = the site answered 403; pass another image URL). Every content slide "
+     "shows its own image. No HuhQueue AI is used.",
      "inputSchema": {"type": "object", "required": ["slides"], "properties": {
          "slides": {"type": "array", "minItems": 2, "maxItems": 9, "items": SLIDE},
          "template": {"type": "string", "enum": ["editorial", "editorial_story", "text_slides"]},

@@ -139,7 +139,7 @@ TOOLS: list[dict[str, Any]] = [
 
 
 # Tools that only read. Every other tool changes something, so the kill switch stops it (SECURITY_RULES 4); the ones
-# that act also count against the token's daily cap where they run.
+# that write to Buffer (Studio.BUFFER_WRITES) also count against the token's daily cap.
 READ_ONLY = {"get_activity", "whoami", "list_channels", "preflight_post", "preview_post", "list_rules", "get_inbox", "list_approvals", "list_pending_approvals", "list_queue",
              "list_stories", "get_run", "brand_check", "get_brand", "list_calendar", "list_clips", "get_limits"}
 
