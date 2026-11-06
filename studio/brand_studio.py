@@ -25,7 +25,16 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS brand_studio (user_id TEXT PRIMARY KEY, data TEXT, updated REAL);
 CREATE TABLE IF NOT EXISTS template_slots (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, template TEXT, channels TEXT,
   weekday TEXT, at TEXT, tz TEXT, active INTEGER DEFAULT 1, last_fire REAL, next_fire REAL, last_result TEXT, created REAL);
+CREATE TABLE IF NOT EXISTS template_slot_runs (slot_id INTEGER, occurrence BIGINT, channel_id TEXT, user_id TEXT, status TEXT,
+  post_id TEXT, error TEXT, created REAL, updated REAL, PRIMARY KEY (slot_id, occurrence, channel_id));
 """
+# One row per (slot, occurrence, channel) is claimed BEFORE the Buffer draft is made, so a retry, a restart or a second
+# instance during a deploy (two tickers for a minute) can never make the same draft twice (6 Nov 2026).
+SLOT_LEAD_S = max(0, int(os.environ.get("HQ_SLOT_LEAD_MIN", "60") or 60)) * 60  # drafts are made this long before the slot time
+SLOT_LATE_MAX_S = 12 * 3600  # a slot missed by more than this (server down all evening) is skipped, never drafted a day late
+# the ticker's heartbeat (numbers only; /healthz "slots"): proves on the hosted app that the loop is alive
+TICK: dict = {"on": False, "every_s": None, "started": None, "last_tick": None, "ticks": 0, "fired": 0, "errors": 0,
+              "last_error": ""}
 EXTRA_KEYS = ("head_font", "body_font", "headline_case", "secondary", "front_card", "end_style", "end_image", "hashtags", "label",
               "example", "channels")
 MAX_SLOTS = 12
@@ -37,13 +46,18 @@ class StudioError(ValueError):
     pass
 
 
+class SlotNotFound(StudioError):
+    """A slot that doesn't exist and someone else's slot answer the same 404 (nobody can probe another account's ids)."""
+    status = 404
+
+
 def ensure(store) -> None:
     for stmt in [x.strip() for x in SCHEMA.split(";") if x.strip()]:
         if store.pg:
             stmt = stmt.replace(" REAL", " DOUBLE PRECISION").replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
         store.x(stmt)
     if store.pg:
-        for t in ("brand_studio", "template_slots"):
+        for t in ("brand_studio", "template_slots", "template_slot_runs"):
             store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
 
 
@@ -212,7 +226,8 @@ class BrandStudio:
     # ================================================================ templates
     def list_templates(self, a=None) -> dict:
         """Built-in templates, then this workspace's custom ones (id custom:<slug>, custom: true) when an actor is given."""
-        out = [{"id": k, **v} for k, v in templates.TEMPLATES.items()]
+        from . import provenance
+        out = [{"id": k, **v, "provenance": provenance.BUILTIN} for k, v in templates.TEMPLATES.items()]
         if a is not None:
             from . import custom_templates
             out += custom_templates.attach(self.house).list(a)
@@ -323,7 +338,7 @@ class BrandStudio:
         stories = templates.stories_from_posts(posts, start, end, 7 if template == "weekly_recap" else 3)
         return {"stories": stories, "from_posts": len(posts), "window": [start.isoformat(), end.isoformat()]}
 
-    def render(self, a, body: dict) -> dict:
+    def render(self, a, body: dict, now: datetime | None = None) -> dict:
         """Render a template for each chosen channel (frame and slide count per channel) and store it as HuhQueue media.
         `data` gives the content; recaps without data are built from the week's posts. video: true adds an MP4 (where
         FFmpeg runs; the free sample shows the pre-rendered example Reels instead)."""
@@ -339,7 +354,7 @@ class BrandStudio:
         data = body.get("data") if isinstance(body.get("data"), dict) else None
         src = "your data"
         if data is None and tpl in ("weekly_recap", "midweek_recap"):
-            rd = self.recap_data(a, tpl)
+            rd = self.recap_data(a, tpl, now)
             if rd["stories"]:
                 data, src = {"stories": rd["stories"]}, f"{len(rd['stories'])} stories from this week's sent and scheduled posts"
             else:
@@ -451,24 +466,55 @@ class BrandStudio:
             d["last_result"] = json.loads(d["last_result"] or "null")
             d["name"] = templates.TEMPLATES.get(d["template"], {}).get("name", d["template"])
             d["next_fire_iso"] = datetime.fromtimestamp(d["next_fire"], timezone.utc).isoformat() if d.get("next_fire") else None
+            from . import provenance
+            d["provenance"] = provenance.BUILTIN  # slots run built-in templates only
             out.append(d)
         return out
 
+    @staticmethod
+    def _slot_fields(body) -> None:
+        """400 on a wrong type (never a 500): strings for template/weekday/time/tz, a list of ids, a true/false active."""
+        if not isinstance(body, dict):
+            raise StudioError("Send a JSON object.")
+        for k in ("template", "weekday", "time", "tz"):
+            if body.get(k) is not None and not isinstance(body[k], str):
+                raise StudioError(f"{k} is a string.")
+        ids = body.get("channel_ids")
+        if ids is not None and (not isinstance(ids, list) or len(ids) > 500 or not all(isinstance(i, str) for i in ids)):
+            raise StudioError("channel_ids is a list of channel ids (at most 500).")
+        if "active" in body and not isinstance(body["active"], bool):
+            raise StudioError("active is true or false.")
+
+    @staticmethod
+    def _slot_when(wd: str, at: str, tz: str) -> tuple[str, str, str]:
+        wd = wd.lower()[:3]
+        if wd not in templates.DAYS or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
+            raise StudioError("weekday is mon..sun and time is HH:MM (24 h).")
+        tz = tz[:64]
+        try:  # an unknown zone used to fall back to UTC silently: a Dublin slot would fire an hour off in summer
+            from zoneinfo import ZoneInfo
+            ZoneInfo(tz)
+        except Exception:  # noqa: BLE001  (ZoneInfoNotFoundError, ValueError on a malformed key)
+            raise StudioError("tz is an IANA time zone, e.g. Europe/Dublin.")
+        return wd, at, tz
+
+    def _slot_channels(self, a, wanted: list | None) -> list[str]:
+        chans = {c["id"]: c for c in self.studio.channels(a) if not c.get("isDisconnected")}
+        ids = [i for i in (wanted or list(chans)) if i in chans][:8]
+        if not ids:
+            raise StudioError("Pick at least one connected channel.")
+        return ids
+
     def add_slot(self, a, body: dict) -> dict:
         self.studio._guard_write(a, "add_template_slot")
+        self._slot_fields(body)
         tpl = body.get("template") or "weekly_recap"
         if tpl not in templates.TEMPLATES:
             raise StudioError("Unknown template.")
         dflt = templates.TEMPLATES[tpl].get("slot") or {"weekday": "mon", "time": "20:00"}
-        wd = (body.get("weekday") or dflt["weekday"]).lower()[:3]
-        at = body.get("time") or dflt["time"]
-        if wd not in templates.DAYS or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
-            raise StudioError("weekday is mon..sun and time is HH:MM (24 h).")
-        tz = (body.get("tz") or "Europe/Dublin")[:64]
-        chans = {c["id"]: c for c in self.studio.channels(a) if not c.get("isDisconnected")}
-        ids = [i for i in (body.get("channel_ids") or list(chans)) if i in chans][:8]
-        if not ids:
-            raise StudioError("Pick at least one connected channel.")
+        wd, at, tz = self._slot_when(body.get("weekday") or dflt["weekday"], body.get("time") or dflt["time"],
+                                     body.get("tz") or "Europe/Dublin")
+        ids = self._slot_channels(a, body.get("channel_ids"))
         if len(self.slots(a)) >= MAX_SLOTS:
             raise StudioError(f"Up to {MAX_SLOTS} recurring slots.")
         nf = templates.next_fire(wd, at, tz, datetime.now(timezone.utc)).timestamp()
@@ -477,30 +523,107 @@ class BrandStudio:
         self.store.audit(a.uid, a.label, "add_template_slot", "read", {"slot": sid, "template": tpl, "weekday": wd, "time": at})
         return next(s for s in self.slots(a) if s["id"] == sid)
 
+    def update_slot(self, a, sid: int, body: dict) -> dict:
+        """Edit a slot: its day, time, time zone, channels, template, or switch it off/on. The next time is worked out again
+        from now in the slot's time zone, so the next draft lands at the new time (claims for the old time stay, so an
+        occurrence already drafted is never drafted twice)."""
+        self.studio._guard_write(a, "update_template_slot")
+        self._slot_fields(body)
+        unknown = sorted(set(body) - {"template", "weekday", "time", "tz", "channel_ids", "active"})
+        if unknown:
+            raise StudioError("Unknown field: " + ", ".join(re.sub(r"[^\w-]", "", str(k))[:30] for k in unknown[:5]) + ".")
+        rows = self.store.q("SELECT * FROM template_slots WHERE id=? AND user_id=?", (int(sid), a.uid))
+        if not rows:
+            raise SlotNotFound("No such slot.")
+        s = dict(rows[0])
+        tpl = body.get("template") or s["template"]
+        if tpl not in templates.TEMPLATES:
+            raise StudioError("Unknown template.")
+        wd, at, tz = self._slot_when(body.get("weekday") or s["weekday"], body.get("time") or s["at"], body.get("tz") or s["tz"])
+        ids = self._slot_channels(a, body["channel_ids"]) if body.get("channel_ids") is not None else json.loads(s["channels"] or "[]")
+        active = 1 if body.get("active", bool(s["active"])) else 0
+        nf = templates.next_fire(wd, at, tz, datetime.now(timezone.utc)).timestamp()
+        self.store.x("UPDATE template_slots SET template=?, channels=?, weekday=?, at=?, tz=?, active=?, next_fire=? WHERE id=? AND user_id=?",
+                     (tpl, json.dumps(ids), wd, at, tz, active, nf, s["id"], a.uid))
+        self.store.audit(a.uid, a.label, "update_template_slot", "read", {"slot": s["id"], "template": tpl, "weekday": wd, "time": at,
+                                                                          "active": bool(active)})
+        return next(x for x in self.slots(a) if x["id"] == s["id"])
+
     def delete_slot(self, a, sid: int) -> dict:
         self.studio._guard_write(a, "delete_template_slot")
-        self.store.x("DELETE FROM template_slots WHERE id=? AND user_id=?", (int(sid), a.uid))
+        n = self.store.xn("DELETE FROM template_slots WHERE id=? AND user_id=?", (int(sid), a.uid))
+        if not n:
+            raise SlotNotFound("No such slot.")
+        self.store.x("DELETE FROM template_slot_runs WHERE slot_id=? AND user_id=?", (int(sid), a.uid))
         self.store.audit(a.uid, a.label, "delete_template_slot", "read", {"slot": sid})
         return {"deleted": int(sid)}
 
-    def run_slot(self, a, sid: int, now: datetime | None = None) -> dict:
-        """Render the slot's template now (recaps from the week's posts) and put one Buffer DRAFT per channel at the slot's
-        next time. A person reviews it in Buffer (or in Approvals for an agent) before it is scheduled."""
+    def run_slot(self, a, sid: int, now: datetime | None = None, by_ticker: bool = False) -> dict:
+        """Render the slot's template (recaps from the week's posts) and put one Buffer DRAFT per channel at the slot's time.
+        A person reviews it in Buffer (or in Approvals for an agent) before it is scheduled.
+
+        "Run now" (a person or an agent) drafts the slot's NEXT time. The ticker drafts the occurrence that is due, up to
+        SLOT_LEAD_S before it, so the draft is waiting in Buffer at the time. Each (slot, occurrence, channel) is claimed in
+        template_slot_runs before Buffer is called: a second run of the same occurrence (retry, restart, a second instance)
+        reports the draft already made instead of making another. A person's "Run now" may retry a channel that failed; the
+        ticker never retries (a timeout might still have created the draft)."""
         rows = self.store.q("SELECT * FROM template_slots WHERE id=? AND user_id=?", (int(sid), a.uid))
         if not rows:
-            raise StudioError("No such slot.")
+            raise SlotNotFound("No such slot.")
         s = dict(rows[0])
         now = now or datetime.now(timezone.utc)
-        due = datetime.fromtimestamp(s["next_fire"], timezone.utc) if s.get("next_fire") and s["next_fire"] > now.timestamp() + 120 \
-            else templates.next_fire(s["weekday"], s["at"], s["tz"], now)
+        ts = now.timestamp()
+        if by_ticker:
+            if not s.get("active") or not s.get("next_fire") or s["next_fire"] - SLOT_LEAD_S > ts:
+                return {"slot": s["id"], "skipped": "not due"}
+            occ_ts = float(s["next_fire"])
+        else:
+            occ_ts = (float(s["next_fire"]) if s.get("next_fire") and s["next_fire"] > ts + 120
+                      else templates.next_fire(s["weekday"], s["at"], s["tz"], now).timestamp())
+        occ = int(round(occ_ts))
+        occ_dt = datetime.fromtimestamp(occ, timezone.utc)
+        nf = templates.next_fire(s["weekday"], s["at"], s["tz"], occ_dt + timedelta(minutes=1)).timestamp()
+        if ts - occ > SLOT_LATE_MAX_S:  # the server was down through the slot: skip it, never a recap a day late
+            res = {"due": occ_dt.isoformat(), "results": [], "content": "", "missed": True}
+            self.store.x("UPDATE template_slots SET next_fire=?, last_result=? WHERE id=? AND user_id=?",
+                         (nf, json.dumps(res), s["id"], a.uid))
+            return {"slot": s["id"], "due": occ_dt.isoformat(), "missed": True, "drafts": []}
+        # Buffer needs a time in the future: a late fire (the server woke after the slot) lands ten minutes out
+        due = occ_dt if occ > ts + 300 else (now + timedelta(minutes=10)).replace(second=0, microsecond=0)
         chans = {c["id"]: c for c in self.studio.channels(a)}
         ids = [i for i in json.loads(s["channels"] or "[]") if i in chans]
-        services = sorted({chans[i]["service"] for i in ids if chans[i]["service"] in templates.CHANNELS})
-        r = self.render(a, {"template": s["template"], "services": services})
-        by_svc = {c["service"]: c for c in r["channels"]}
-        kit = self.kit(a)
-        results = []
+        results, todo = [], []
         for cid in ids:
+            claimed = self.store.xn("INSERT INTO template_slot_runs(slot_id,occurrence,channel_id,user_id,status,created,updated) "
+                                    "VALUES(?,?,?,?,'pending',?,?) ON CONFLICT DO NOTHING", (s["id"], occ, cid, a.uid, time.time(), time.time()))
+            if not claimed:
+                prev = self.store.q("SELECT status, post_id, error FROM template_slot_runs WHERE slot_id=? AND occurrence=? AND channel_id=?",
+                                    (s["id"], occ, cid))
+                prev = dict(prev[0]) if prev else {"status": "pending", "post_id": None, "error": None}
+                if (not by_ticker and prev["status"] == "failed"
+                        and self.store.xn("UPDATE template_slot_runs SET status='pending', updated=? WHERE slot_id=? AND occurrence=? "
+                                          "AND channel_id=? AND status='failed'", (time.time(), s["id"], occ, cid))):
+                    claimed = 1
+                else:
+                    results.append({"channel_id": cid, "service": chans[cid]["service"],
+                                    "status": "already_drafted" if prev["status"] not in ("pending", "failed") else
+                                    ("in_progress" if prev["status"] == "pending" else "failed"),
+                                    "post_id": prev.get("post_id"), **({"error": prev["error"]} if prev.get("error") else {})})
+                    continue
+            todo.append(cid)
+        r = {"content": "", "channels": []}
+        if todo:
+            services = sorted({chans[i]["service"] for i in todo if chans[i]["service"] in templates.CHANNELS})
+            try:
+                r = self.render(a, {"template": s["template"], "services": services}, now=now)
+            except Exception as e:  # the claim goes back to failed, so a person's "Run now" can try again
+                for cid in todo:
+                    self.store.x("UPDATE template_slot_runs SET status='failed', error=?, updated=? WHERE slot_id=? AND occurrence=? "
+                                 "AND channel_id=?", (f"render: {str(e)[:160]}", time.time(), s["id"], occ, cid))
+                raise
+        by_svc = {c["service"]: c for c in r["channels"]}
+        kit = self.kit(a) if todo else {}
+        for cid in todo:
             svc = chans[cid]["service"]
             slides = (by_svc.get(svc) or {}).get("slides") or []
             text = self._slot_caption(s["template"], kit, svc)
@@ -510,14 +633,19 @@ class BrandStudio:
             try:
                 pv = self.studio.preview_post(a, p)
                 res = self.studio.submit_post(a, pv["confirm_token"])
-                results.append({"channel_id": cid, "service": svc, "status": res.get("status"), "post_id": (res.get("post") or {}).get("id")})
+                st, pid = res.get("status"), (res.get("post") or {}).get("id")
+                self.store.x("UPDATE template_slot_runs SET status=?, post_id=?, error=NULL, updated=? WHERE slot_id=? AND occurrence=? "
+                             "AND channel_id=?", (str(st or "sent_to_buffer")[:40], pid or res.get("approval_id"), time.time(), s["id"], occ, cid))
+                results.append({"channel_id": cid, "service": svc, "status": st, "post_id": pid})
             except Exception as e:  # one channel failing never stops the rest
+                self.store.x("UPDATE template_slot_runs SET status='failed', error=?, updated=? WHERE slot_id=? AND occurrence=? "
+                             "AND channel_id=?", (str(e)[:200], time.time(), s["id"], occ, cid))
                 results.append({"channel_id": cid, "service": svc, "status": "failed", "error": str(e)[:200]})
-        nf = templates.next_fire(s["weekday"], s["at"], s["tz"], due + timedelta(minutes=1)).timestamp()
-        self.store.x("UPDATE template_slots SET last_fire=?, next_fire=?, last_result=? WHERE id=?",
-                     (time.time(), nf, json.dumps({"due": due.isoformat(), "results": results, "content": r["content"]}), s["id"]))
-        self.store.audit(a.uid, a.label, "run_template_slot", "draft", {"slot": s["id"], "drafts": len(results)})
-        return {"slot": s["id"], "due": due.isoformat(), "content": r["content"], "drafts": results}
+        self.store.x("UPDATE template_slots SET last_fire=?, next_fire=?, last_result=? WHERE id=? AND user_id=?",
+                     (time.time(), nf, json.dumps({"due": due.isoformat(), "occurrence": occ_dt.isoformat(), "results": results,
+                                                   "content": r["content"]}), s["id"], a.uid))
+        self.store.audit(a.uid, a.label, "run_template_slot", "draft", {"slot": s["id"], "drafts": len(todo), "by": "ticker" if by_ticker else "run"})
+        return {"slot": s["id"], "due": due.isoformat(), "occurrence": occ_dt.isoformat(), "content": r["content"], "drafts": results}
 
     def _slot_caption(self, tpl: str, kit: dict, svc: str) -> str:
         tags = " ".join((kit.get("hashtags") or [])[: {"twitter": 1, "bluesky": 0, "linkedin": 3, "instagram": 5}.get(svc, 2)])
@@ -528,28 +656,77 @@ class BrandStudio:
         return f"{name}\n\n{lead}" + (f"\n\n{tags}" if tags else "")
 
     def due_slots(self, now: float | None = None) -> list[tuple[str, int]]:
+        """Slots whose next time is within SLOT_LEAD_S (so the draft is in Buffer before the time)."""
         now = now or time.time()
         # never the sample, and never an account whose kill switch is on: the ticker acts without a person (SECURITY_RULES 4)
         return [(r["user_id"], r["id"]) for r in self.store.q(
                     "SELECT s.user_id, s.id FROM template_slots s JOIN users u ON u.id = s.user_id "
-                    "WHERE s.active=1 AND s.next_fire<=? AND COALESCE(u.kill_switch, 0) = 0", (now,))
+                    "WHERE s.active=1 AND s.next_fire<=? AND COALESCE(u.kill_switch, 0) = 0", (now + SLOT_LEAD_S,))
                 if not demo_guard.is_demo(r["user_id"])]
 
 
-def start_ticker(bs: BrandStudio, every: int = 600) -> threading.Thread | None:
-    """Fire due slots for real accounts (never the sample) every `every` seconds. Opt-in: HQ_SLOT_TICK=1."""
+def tick_once(bs: BrandStudio, now: datetime | None = None) -> int:
+    """One pass of the ticker: run every due slot. Nothing it meets (a database blip, one slot's error) stops the next pass."""
+    from .actions import Actor
+    TICK["last_tick"] = time.time()
+    TICK["ticks"] += 1
+    fired = 0
+    for uid, sid in bs.due_slots(now.timestamp() if now else None):
+        try:
+            out = bs.run_slot(Actor(uid), sid, now=now, by_ticker=True)
+            fired += 0 if out.get("skipped") else 1
+        except Exception as e:  # noqa: BLE001  keep ticking
+            TICK["errors"] += 1
+            TICK["last_error"] = e.__class__.__name__
+            print(f"slot {sid}: {e.__class__.__name__}: {str(e)[:200]}", flush=True)
+    TICK["fired"] += fired
+    return fired
+
+
+_ticker: dict = {}
+
+
+def start_ticker(bs: BrandStudio, every: int | None = None) -> threading.Thread | None:
+    """Fire due slots for real accounts (never the sample) every `every` seconds (HQ_SLOT_TICK_S, default 300). Opt-in:
+    HQ_SLOT_TICK=1. One ticker per process. Bug fixed 6 Nov 2026: due_slots() ran outside the try, so one database error
+    ended the thread for good and every slot silently stopped until the next deploy."""
     if os.environ.get("HQ_SLOT_TICK") != "1":
         return None
-    from .actions import Actor
+    if _ticker.get("t") and _ticker["t"].is_alive():
+        return _ticker["t"]
+    _ticker["stop"] = False
+    every = float(every or os.environ.get("HQ_SLOT_TICK_S", "300") or 300)
+    TICK.update(on=True, every_s=every, started=time.time())
 
     def loop():
-        while True:
+        time.sleep(min(60, every))  # first pass soon after a deploy, not a whole interval later
+        while not _ticker.get("stop"):
+            try:
+                tick_once(bs)
+            except Exception as e:  # noqa: BLE001  (due_slots itself: the database was away)
+                TICK["errors"] += 1
+                TICK["last_error"] = e.__class__.__name__
+                print(f"slot ticker: {e.__class__.__name__}: {str(e)[:200]}", flush=True)
             time.sleep(every)
-            for uid, sid in bs.due_slots():
-                try:
-                    bs.run_slot(Actor(uid), sid)
-                except Exception as e:  # keep ticking
-                    print(f"slot {sid}: {e.__class__.__name__}: {e}", flush=True)
     t = threading.Thread(target=loop, daemon=True, name="template-slots")
     t.start()
+    _ticker["t"] = t
     return t
+
+
+def stop_ticker(wait: float = 5.0) -> None:
+    """Stop this process's ticker (tests; a deploy just ends the process)."""
+    _ticker["stop"] = True
+    t = _ticker.get("t")
+    if t and t.is_alive():
+        t.join(wait)
+    _ticker.pop("t", None)
+    TICK["on"] = False
+
+
+def tick_snapshot() -> dict:
+    """/healthz: whether the ticker runs on this instance and when it last ran (numbers only, no account data)."""
+    last = TICK.get("last_tick")
+    return {"on": bool(TICK.get("on")), "every_s": TICK.get("every_s"), "lead_s": SLOT_LEAD_S,
+            "last_tick_age_s": round(time.time() - last) if last else None, "ticks": TICK["ticks"], "fired": TICK["fired"],
+            "errors": TICK["errors"]}

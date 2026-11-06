@@ -103,7 +103,7 @@ def test_style_ledger_teach_learn_accept_and_review(live, chromium, width):
         page.wait_for_selector("[data-testid=rule-row][data-group=words]", timeout=20000)
         row = page.locator("[data-testid=rule-row][data-group=words]").first
         assert "synergy" in row.inner_text().lower()
-        assert row.locator("[data-testid=rule-origin]").inner_text() == "Taught by you"
+        assert row.locator("[data-testid=rule-origin]").inner_text() == "Created by you"  # provenance label (6 Nov 2026)
         assert row.locator("[data-testid=rule-scope]").inner_text() == "LinkedIn only"
         page.click("[data-testid=ledger-filter] [data-f=channel]")
         assert page.locator("[data-testid=ledger-group][data-group=channel] [data-testid=rule-row]").count() == 1

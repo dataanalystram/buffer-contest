@@ -209,6 +209,123 @@ def rule_draft(service: str, article: dict) -> str:
     return fit(service, text, min(limit_for(service), TARGET.get(service, limit_for(service))))
 
 
+def rule_limit(service: str, rules: list[dict]) -> int:
+    """The tightest of the network's hard limit and any active max_length rule for it (a preset's per-network length)."""
+    lim = limit_for(service)
+    for r in rules or []:
+        c = r.get("check") or {}
+        if r.get("active", True) and c.get("type") == "max_length" and int(c.get("n") or 0) > 40:
+            lim = min(lim, int(c["n"]))
+    return lim
+
+
+_NUM = re.compile(r"(?<![\w.])(?:[$€£]\s?)?\d[\d,.]*\s?(?:%|percent|x|times|billion|million|bn|m|k|seconds|hours|days|GB|TB)?(?![\w])", re.I)
+
+
+def _sentences(article: dict) -> list[str]:
+    out = []
+    for p in [article.get("description") or ""] + list(article.get("paragraphs") or []):
+        for s in re.split(r"(?<=[.!?])\s+", p or ""):
+            s = s.strip()
+            if 30 <= len(s) <= 240 and s not in out:
+                out.append(s)
+    return out
+
+
+def _short(s: str, n: int) -> str:
+    s = re.sub(r"\s+", " ", s or "").strip()
+    if len(s) <= n:
+        return s
+    cut = s[:n].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return cut + "…"
+
+
+_SOFT = {"the", "a", "an", "this", "that", "it", "its", "they", "we", "our", "their", "in", "on", "at", "for", "after", "now"}
+
+
+def _soft(s: str) -> str:
+    """Casual voice: lower-case a plain first word ("The cut" -> "the cut"), never a name ("Google", "OpenAI" stay)."""
+    w = s.split(" ", 1)[0]
+    return s[:1].lower() + s[1:] if w.lower() in _SOFT else s
+
+
+def styled_draft(service: str, article: dict, style: dict) -> str:
+    """The free drafter's caption in a preset's shape (studio/style_presets.py): hook first line (< 125 characters), one
+    idea, the payoff, one CTA, hashtags within the preset's cap for this network. Deterministic: same input, same caption."""
+    t, u, site = (article.get("title") or "").strip(), article.get("url") or "", article.get("site") or ""
+    sents = _sentences(article)
+    idea = _key_point(article) or (sents[0] if sents else article.get("description") or "")
+    shape = style.get("shape") or "hook_idea_payoff"
+    link = "" if service in ("instagram", "tiktok") else u
+    if shape == "steps":
+        steps = [s for s in sents if s != t][:3]
+        hook = _short(f"{t}, in {len(steps)} points" if len(steps) >= 2 else t, 120)
+        body = "\n".join(f"{i + 1}. {_short(s, 160)}" for i, s in enumerate(steps)) or idea
+        lines = [hook, body]
+    elif shape == "build":
+        num = next((x for x in sents if _NUM.search(x) and x != idea), "")
+        nxt = next((x for x in sents if x not in (idea, num)), "")
+        lines = [_short(t, 120), f"What happened: {_short(idea, 200)}" if idea else "",
+                 f"The number to watch: {_short(num, 180)}" if num else (f"What's next: {_short(nxt, 180)}" if nxt else "")]
+    elif shape == "news":
+        first = next((s for s in sents if _NUM.search(s)), sents[0] if sents else t)
+        hook = _short(f"{site}: {first}" if site and site.lower() not in first.lower() else first, 120)
+        why = next((s for s in sents if s != first), "")
+        lines = [hook, f"Why it matters: {_short(why, 200)}" if why else "", f"Source: {site}" if site else ""]
+    elif shape == "quote":
+        quoted = next((m.group(1) for x in sents for m in [re.search(r"[\"“]([^\"“”]{12,}?)[\"”]", x)] if m), "")
+        q = (quoted or idea or t).strip("\"“” ").rstrip(",")
+        lines = [_short(f"“{q}”", 120), f"From {site}: {_short(t, 140)}" if site else _short(t, 140)]
+    elif shape == "data":
+        num = t if _NUM.search(t) else next((x for x in sents if _NUM.search(x)), "")
+        ctx = next((x for x in sents if _NUM.search(x) and x not in (num, t)), "")
+        # what it changes: an interpretive line (no figure of its own) reads best after the numbers
+        means = next((x for x in sents if x not in (num, ctx) and not _NUM.search(x)), "") or \
+            next((x for x in sents if x not in (num, ctx)), "")
+        lines = [_short(num or t, 120), f"For scale: {_short(ctx, 180)}" if ctx else "",
+                 f"What it changes: {_short(means, 180)}" if means else "", f"Source: {site}" if site else ""]
+    elif shape == "thread":
+        pts = [s for s in sents if s != t][:4]
+        hook = _short(t, 120)
+        body = "\n\n".join(f"\u2192 {_short(s, 170)}" for s in pts) or idea
+        lines = [hook, body, f"The takeaway: {_short(idea, 160)}" if idea and idea not in pts else ""]
+    elif shape == "casual":
+        hook = _short(f"ok so {t.rstrip('.')}", 120)  # names keep their capitals (OpenAI, Meta): casual, never inaccurate
+        basic = sents[0] if sents else idea  # the plain one-line version first, then why it matters
+        care = next((s for s in sents if s not in (basic, idea) and not _NUM.search(s)), "") or next((s for s in sents if s != basic), "")
+        lines = [hook, f"basically: {_soft(_short(basic, 150))}" if basic else "",
+                 f"why you should care: {_soft(_short(care, 150))}" if care else ""]
+    else:  # hook_idea_payoff
+        # the most surprising number first: the title when it carries one, else the first sentence that does
+        num = t if _NUM.search(t) else next((x for x in sents if _NUM.search(x)), "")
+        hook = _short(num if num and len(num) <= 120 else t, 120)
+        payoff = next((s for s in sents if s not in (num, idea)), "")
+        lines = [hook, _short(idea, 200) if idea and idea != hook else "", f"Why it matters: {_short(payoff, 180)}" if payoff else ""]
+    lim = min(limit_for(service), int((style.get("length") or {}).get(service) or TARGET.get(service, limit_for(service))))
+    n = max(0, min(int((style.get("hashtags") or {}).get(service, 3)), 5))
+    tags = " ".join(_hashtags(article, n)) if n else ""  # a zero cap means none (they'd only cost room before being removed)
+    # the hook and the one CTA always stay: the middle lines give way first, then the hashtags
+    tail = [x for x in (link, style.get("cta") or "", tags) if x]
+    head, middle = lines[0], [x for x in lines[1:] if x]
+    while True:
+        text = "\n\n".join([head] + middle + tail)
+        if count(service, text) <= lim:
+            return text
+        if middle:
+            room = lim - count(service, "\n\n".join([head] + tail)) - 4
+            if len(middle) > 1:
+                middle = middle[:-1]
+            elif room >= 40 and count(service, middle[0]) > room:
+                middle = [fit(service, middle[0], room)]
+            else:
+                middle = []
+            continue
+        if tags and tags in tail:
+            tail = [x for x in tail if x != tags]
+            continue
+        return fit(service, text, lim)
+
+
 def thread_draft(service: str, article: dict, max_parts: int = 5) -> str:
     """Hook, then one key sentence per post from the article body, then the link."""
     lim = min(limit_for(service), TARGET.get(service, limit_for(service)))
@@ -253,7 +370,9 @@ def ai_draft(services: list[str], article: dict, base_url: str, api_key: str, mo
 
 
 def draft(channels: list[dict], article: dict, *, ai: dict | None = None, http: httpx.Client | None = None,
-          tone: str = "", thread: bool = False) -> list[dict]:
+          tone: str = "", thread: bool = False, style: dict | None = None) -> list[dict]:
+    """One caption per channel. style (a chosen Style Ledger preset, studio/style_presets.style_from_rules) shapes the
+    free built-in drafter's captions; the AI drafter gets the preset's rules in its prompt through tone."""
     services = sorted({c["service"] for c in channels})
     threads = {s: thread_draft(s, article) for s in services if thread and s in THREAD_SERVICES}
     services = [s for s in services if s not in threads]
@@ -267,7 +386,8 @@ def draft(channels: list[dict], article: dict, *, ai: dict | None = None, http: 
     out = []
     for c in channels:
         svc = c["service"]
-        text = threads.get(svc) or fit(svc, written.get(svc) or rule_draft(svc, article))
+        local = (styled_draft(svc, article, style) if style else rule_draft(svc, article)) if svc not in written else ""
+        text = threads.get(svc) or fit(svc, written.get(svc) or local)
         parts = split_thread(svc, text)
         out.append({"channel_id": c["id"], "service": svc, "channel_name": c.get("displayName") or c.get("name"),
                     "text": text, "length": max(count(svc, t) for t in parts), "limit": limit_for(svc),

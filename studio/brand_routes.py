@@ -134,6 +134,10 @@ def add_routes(app: FastAPI, house, actor) -> None:
     def slot_add(request: Request, body: dict = Body(...)):
         return call(bs.add_slot, actor(request, write=True), body)
 
+    @app.patch("/api/templates/slots/{sid}")
+    def slot_edit(sid: int, request: Request, body=Body(...)):  # untyped: a non-object body answers 400, not 422
+        return call(bs.update_slot, actor(request, write=True), sid, body)
+
     @app.delete("/api/templates/slots/{sid}")
     def slot_del(sid: int, request: Request):
         return call(bs.delete_slot, actor(request, write=True), sid)

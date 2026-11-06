@@ -80,7 +80,7 @@
       <section class="panel" aria-labelledby="bsSlotH"><h2 id="bsSlotH" class="h2">Recurring slots</h2>
         <p class="muted sm">A slot renders the template from that week's posts and puts a Buffer <b>draft</b> on each channel at the time. You approve it in Buffer.</p>
         <form class="row bs-slotform" id="bsSlotForm"><select id="bsSlotTpl" aria-label="Template"></select><select id="bsSlotDay" aria-label="Day">${DAYS.map((d) => `<option>${d}</option>`).join("")}</select>
-          <input id="bsSlotTime" type="time" value="20:00" aria-label="Time"><button class="btn2 sm" data-testid="bs-slot-add" type="submit">Add slot</button></form>
+          <input id="bsSlotTime" type="time" value="20:00" aria-label="Time"><button class="btn2 sm" data-testid="bs-slot-add" id="bsSlotSave" type="submit">Add slot</button><button class="link" type="button" id="bsSlotCancel" data-testid="bs-slot-cancel" hidden>Cancel</button></form>
         <ul class="bs-slots" id="bsSlots" data-testid="bs-slots"></ul>
         <div class="muted sm bs-cost" id="bsSlotCost" hidden></div></section>
     </div>`;
@@ -119,10 +119,11 @@
     try {
       const d = await api("/api/brand-studio");
       B.tpls = d.templates; B.styles = d.styles; B.examples = d.examples; B.slots = d.slots; B.channels = d.channels;
-      // custom templates (create_template over MCP / REST / the agent) carry custom: true and show with a "Custom" mark
-      $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}${t.custom ? " · Custom" : ""}</option>`).join("");
+      // every template says who made it: Built-in, Created via MCP by <app> · <model>, or Created by you (studio/provenance.py)
+      const prov = (t) => (t.provenance && t.provenance.label) || (t.custom ? "Created by you" : "Built-in");
+      $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${esc(t.id)}" title="${esc(prov(t))}">${esc(t.name)} · ${esc(prov(t))}</option>`).join("");
       $("#bsTplR").innerHTML = $("#bsTpl").innerHTML;
-      $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single" && !t.custom).map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+      $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single" && !t.custom).map((t) => `<option value="${esc(t.id)}">${esc(t.name)} · ${esc(prov(t))}</option>`).join("");
       $("#bsSvc").innerHTML = Object.entries(d.channels).filter(([, c]) => !c.video_only).map(([k, c]) => `<option value="${k}">${esc(c.label)} (${c.ratio})</option>`).join("");
       $("#bsTpl").value = B.tpl; $("#bsSvc").value = B.svc;
       fillKit(d.kit); examples(d.active); slots();
@@ -322,19 +323,37 @@
     const data = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
     return api("/api/media", { method: "POST", body: { name: file.name, data } });
   }
+  function slotEdit(s) {  // fill the slot form with a slot to edit it (null: back to adding)
+    B.editSlot = s ? s.id : null;
+    $("#bsSlotSave").textContent = s ? "Save changes" : "Add slot";
+    $("#bsSlotCancel").hidden = !s;
+    if (s) { $("#bsSlotTpl").value = s.template; $("#bsSlotDay").value = s.weekday; $("#bsSlotTime").value = s.at; $("#bsSlotTime").focus(); }
+  }
   function slots() {
-    $("#bsSlots").innerHTML = B.slots.length ? B.slots.map((s) => `<li data-testid="bs-slot"><b>${esc(s.name)}</b> every ${esc(s.weekday)} ${esc(s.at)} <span class="muted sm">${esc(s.tz)}</span>
+    const when = (iso) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    $("#bsSlots").innerHTML = B.slots.length ? B.slots.map((s) => `<li data-testid="bs-slot"><b>${esc(s.name)}</b> <span class="muted sm">${esc((s.provenance && s.provenance.label) || "Built-in")}</span> every ${esc(s.weekday)} ${esc(s.at)} <span class="muted sm">${esc(s.tz)}</span>
+      ${s.next_fire_iso ? `<span class="muted sm" data-testid="bs-slot-next">next draft for ${esc(when(s.next_fire_iso))}</span>` : ""}
       ${s.last_result ? `<span class="muted sm">last: ${s.last_result.results.length} drafts</span>` : ""}
-      <button class="link" type="button" data-run="${s.id}" data-testid="bs-slot-run">Run now</button><button class="link danger" type="button" data-del="${s.id}">Remove</button></li>`).join("")
+      <button class="link" type="button" data-run="${s.id}" data-testid="bs-slot-run">Run now</button><button class="link" type="button" data-edit="${s.id}" data-testid="bs-slot-edit">Edit</button><button class="link danger" type="button" data-del="${s.id}" data-testid="bs-slot-del">Remove</button></li>`).join("")
       : `<li class="muted sm">No slots yet. Try the weekly recap on Monday at 20:00.</li>`;
     document.querySelectorAll("#bsSlots [data-run]").forEach((b) => (b.onclick = async () => {
       b.disabled = true;
       try { const r = await api(`/api/templates/slots/${b.dataset.run}/run`, { method: "POST" }); showCost("#bsSlotCost", r);
-            toast(`${r.drafts.filter((d) => d.status === "sent_to_buffer" || d.status === "pending_approval").length} Buffer drafts for ${new Date(r.due).toLocaleString()}`);
+            const made = r.drafts.filter((d) => d.status === "sent_to_buffer" || d.status === "pending_approval").length;
+            const had = r.drafts.filter((d) => d.status === "already_drafted").length;
+            const bad = r.drafts.filter((d) => d.status === "failed" || d.status === "in_progress").length;
+            toast(r.missed ? "That slot was missed by more than 12 hours, so it was skipped"
+              : `${made} Buffer draft${made === 1 ? "" : "s"} for ${new Date(r.due).toLocaleString()}${had ? ` (${had} already there, not made twice)` : ""}${bad ? ` (${bad} failed or still running)` : ""}`);
             B.slots = await api("/api/templates/slots"); slots(); }
       catch (e) { toast(e.message); } finally { b.disabled = false; }
     }));
-    document.querySelectorAll("#bsSlots [data-del]").forEach((b) => (b.onclick = async () => { await api(`/api/templates/slots/${b.dataset.del}`, { method: "DELETE" }); B.slots = await api("/api/templates/slots"); slots(); }));
+    document.querySelectorAll("#bsSlots [data-del]").forEach((b) => (b.onclick = async () => {
+      b.disabled = true;
+      try { await api(`/api/templates/slots/${b.dataset.del}`, { method: "DELETE" }); if (String(B.editSlot) === b.dataset.del) slotEdit(null);
+            B.slots = await api("/api/templates/slots"); slots(); toast("Slot removed"); }
+      catch (e) { toast(e.message); b.disabled = false; }
+    }));
+    document.querySelectorAll("#bsSlots [data-edit]").forEach((b) => (b.onclick = () => slotEdit(B.slots.find((s) => String(s.id) === b.dataset.edit))));
   }
   function wireBrand() {
     document.querySelectorAll("#tab-brand input, #tab-brand select").forEach((i) => {
@@ -378,10 +397,19 @@
     $("#bsSvc").onchange = () => { B.svc = $("#bsSvc").value; preview(); };
     $("#bsSlotForm").onsubmit = async (ev) => {
       ev.preventDefault();
-      try { await api("/api/templates/slots", { method: "POST", body: { template: $("#bsSlotTpl").value, weekday: $("#bsSlotDay").value, time: $("#bsSlotTime").value,
-              tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Dublin" } });
-            B.slots = await api("/api/templates/slots"); slots(); toast("Slot added"); } catch (e) { toast(e.message); }
+      const btn = $("#bsSlotSave"); btn.disabled = true;
+      const body = { template: $("#bsSlotTpl").value, weekday: $("#bsSlotDay").value, time: $("#bsSlotTime").value };
+      try {
+        if (B.editSlot) {  // an edit keeps the slot's own time zone and channels
+          await api(`/api/templates/slots/${B.editSlot}`, { method: "PATCH", body }); slotEdit(null); toast("Slot updated");
+        } else {
+          await api("/api/templates/slots", { method: "POST", body: { ...body, tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Dublin" } });
+          toast("Slot added");
+        }
+        B.slots = await api("/api/templates/slots"); slots();
+      } catch (e) { toast(e.message); } finally { btn.disabled = false; }
     };
+    $("#bsSlotCancel").onclick = () => slotEdit(null);
   }
 
   // ============================================================ Sources agent

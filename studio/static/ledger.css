@@ -114,3 +114,16 @@ body.rv{--paper:#fff;--raised:#fff;--sunken:#f1f2f2;--ink:#1a1c1e;--muted:#585d6
 .rv-err{color:var(--bad);margin:0}
 .rv-done{margin-top:32px;padding:16px;border-radius:10px;background:var(--sunken);font-weight:600}
 @media (max-width:640px){.rv-main{padding:32px 16px 64px}.rv h1{font-size:28px}}
+
+/* Style Ledger presets (studio/style_presets.py) */
+.lg-presets { margin: 0 0 18px; }
+.lg-pre-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.lg-pre { border: 1px solid var(--line, #2c2c31); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.lg-pre.on { border-color: #C9ACFA; }
+.lg-pre p { margin: 0; }
+.lg-pre:has(.lg-pre-form) { grid-column: 1 / -1; }
+.lg-pre-rules { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 420px; overflow: auto; }
+.lg-pre-rules li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.lg-pre-in { flex: 1; min-width: 0; }
+.lg-pre-n { width: 72px; }
+.lg-src.preset { color: #C9ACFA; }

@@ -64,6 +64,18 @@ def ensure(store) -> None:
         store.x("ALTER TABLE custom_templates ADD COLUMN IF NOT EXISTS created_by TEXT")
     elif "created_by" not in {r["name"] for r in store.q("PRAGMA table_info(custom_templates)")}:
         store.x("ALTER TABLE custom_templates ADD COLUMN created_by TEXT")
+    # provenance (6 Nov 2026, studio/provenance.py): Built-in / Created via MCP by <app> · <model> / Created by you. Older
+    # rows: an AI app's ("agent:<id>:<name>") -> mcp with that name and no model; the rest -> the person's own.
+    from . import provenance
+    provenance.add_columns(store, "custom_templates")
+    for r in store.q("SELECT id, created_by FROM custom_templates WHERE created_by_source IS NULL"):
+        cb = str(r["created_by"] or "")
+        if cb.startswith("agent:"):
+            parts = cb.split(":", 2)
+            store.x("UPDATE custom_templates SET created_by_source='mcp', client_name=? WHERE id=?",
+                    ((parts[2] if len(parts) == 3 else "")[:60], r["id"]))
+        else:
+            store.x("UPDATE custom_templates SET created_by_source='user' WHERE id=?", (r["id"],))
 
 
 def maker(a) -> str:
@@ -223,6 +235,11 @@ def render_slides(spec: dict, data: dict | None, b: templates.Brand, ratio: str 
     return out
 
 
+def _prov(row: dict) -> dict:
+    from . import provenance
+    return provenance.of_row(row)
+
+
 class CustomTemplates:
     def __init__(self, house):
         self.house, self.studio, self.store = house, house.studio, house.store
@@ -249,7 +266,8 @@ class CustomTemplates:
                 "custom": True, "about": k.get("about") or f"Custom template ({len(k.get('slides') or [])} slides, layout {k.get('layout')})",
                 "layout": k.get("layout"), "fields": k.get("fields") or [], "slides": k.get("slides") or [], "updated": row["updated"],
                 # every custom template is the user's own ("Yours" in All templates), whoever drew it up
-                "owner": "yours", "yours": True, "made_by": made_by_label(row.get("created_by"))}
+                "owner": "yours", "yours": True, "made_by": made_by_label(row.get("created_by")),
+                "provenance": _prov(row)}
 
     def _ledger(self, a, verb: str, row: dict, spec: dict) -> None:
         """One Style Ledger entry per change (kind template). The newest entry for a template is its active one."""
@@ -258,9 +276,13 @@ class CustomTemplates:
                 f"({', '.join(s['type'] for s in spec.get('slides') or [])}) + end card, layout {spec.get('layout')}")[:300]
         self.store.x("UPDATE style_rules SET active=0 WHERE user_id=? AND kind='template' AND spec LIKE ?",
                      (a.uid, f'%"template": "{tid}"%'))
-        self.store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created) VALUES(?,?,?,?,?,?,?)",
+        from . import provenance
+        pv = provenance.stamp(a)
+        self.store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created,created_by_source,client_name,model) "
+                     "VALUES(?,?,?,?,?,?,?,?,?,?)",
                      (a.uid, "template", json.dumps({"type": "template", "template": tid, "action": verb}), rule,
-                      f"{getattr(a, 'kind', '')}:{getattr(a, 'label', '')}"[:120], 0 if verb == "deleted" else 1, time.time()))
+                      f"{getattr(a, 'kind', '')}:{getattr(a, 'label', '')}"[:120], 0 if verb == "deleted" else 1, time.time(),
+                      pv["created_by_source"], pv["client_name"], pv["model"]))
 
     @staticmethod
     def _own(a, row: dict, verb: str) -> None:
@@ -297,8 +319,12 @@ class CustomTemplates:
             while slug in taken:
                 slug, i = f"{base}-{i}", i + 1
             now = time.time()
-            tid = self.store.x("INSERT INTO custom_templates(user_id,slug,name,data,created,updated,created_by) VALUES(?,?,?,?,?,?,?)",
-                               (a.uid, slug, spec["name"], json.dumps(spec), now, now, maker(a)))
+            from . import provenance
+            pv = provenance.stamp(a)  # the calling token's app and the model it reported (never guessed)
+            tid = self.store.x("INSERT INTO custom_templates(user_id,slug,name,data,created,updated,created_by,created_by_source,"
+                               "client_name,model) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                               (a.uid, slug, spec["name"], json.dumps(spec), now, now, maker(a), pv["created_by_source"],
+                                pv["client_name"], pv["model"]))
             row = dict(self.store.q("SELECT * FROM custom_templates WHERE user_id=? AND slug=?", (a.uid, slug))[0])
         self._ledger(a, "created", row, spec)
         self.store.audit(a.uid, a.label, "create_template", "read", {"template": PREFIX + slug, "slides": len(spec["slides"]), "id": tid})
@@ -408,7 +434,8 @@ def get_template(studio, actor, ct: CustomTemplates, ref: str) -> dict:
             return t
     for k, v in templates.TEMPLATES.items():
         if k == ref or str(v.get("name") or "").strip().casefold() == ref.casefold():
-            return {"id": k, **v, "custom": False, "built_in": True,
+            from . import provenance
+            return {"id": k, **v, "custom": False, "built_in": True, "provenance": provenance.BUILTIN,
                     "note": "Built-in: render it with render_template; to change it, create_template a new one of your own."}
     raise ActionError(f"No template called {ref!r}. list_templates lists every built-in and custom one.", 404)
 

@@ -7,8 +7,34 @@
     tiktok: "TikTok", youtube: "YouTube", mastodon: "Mastodon", pinterest: "Pinterest", googlebusiness: "Google Business" };
   const net = (s) => NET[s] || s;
   const scopeText = (sc) => (sc && sc.length ? sc.map(net).join(", ") + " only" : "All channels");
+  // where a rule came from: learned / your kit, else its provenance (Built-in preset, Created via MCP by <app> · <model>,
+  // Created by you; studio/provenance.py)
   const origin = (r) => r.origin === "learned" ? `Learned from ${r.learned_from || "your"} edit${r.learned_from === 1 ? "" : "s"}`
-    : r.origin === "agent" ? "Added by an AI app" : r.origin === "kit" ? "From your brand kit" : "Taught by you";
+    : r.origin === "kit" ? "From your brand kit"
+    : r.provenance && r.provenance.label ? (r.origin === "preset" ? r.provenance.label.replace(/^Built-in/, "Built-in preset") : r.provenance.label)
+    : r.origin === "agent" ? "Added by an AI app" : "Created by you";
+  L.pre = null; L.preOpen = null; L.preSeq = 0;
+  function presetCard(p) {
+    const open = L.preOpen === p.id;
+    const full = open && L.pre ? L.pre.find((x) => x.id === p.id) : null;
+    const rows = full ? full.rules.map((r, i) => {
+      const c = r.check || {};
+      const num = c.type === "max_hashtags" || c.type === "max_length";
+      const field = c.type === "guideline" ? `<input class="lg-pre-in" data-testid="preset-rule-text" data-i="${i}" data-k="text" value="${esc(r.rule)}" aria-label="Rule ${i + 1}">`
+        : num ? `<span>${esc(r.rule.replace(/\d+/, "#"))}</span> <input class="lg-pre-n" data-testid="preset-rule-n" type="number" min="0" max="${c.type === "max_hashtags" ? (r.scope[0] === "instagram" ? 5 : 30) : 5000}" data-i="${i}" data-k="n" value="${esc(c.n)}" aria-label="${esc(r.rule)}">`
+        : `<span>${esc(r.rule)}</span>`;
+      return `<li data-testid="preset-rule"><label class="chk"><input type="checkbox" data-testid="preset-rule-keep" data-keep="${i}" checked aria-label="Keep rule ${i + 1}"></label>${field}</li>`;
+    }).join("") : "";
+    return `<li class="lg-pre${p.active ? " on" : ""}" data-testid="preset-card" data-preset="${esc(p.id)}">
+      <div class="lg-txt"><b>${esc(p.name)}</b>${p.active ? ` <span class="lg-src preset" data-testid="preset-active">In use</span>` : ""}
+        <span class="lg-meta"><span>${esc(p.for)}</span><span class="lg-src preset">Built-in</span></span></div>
+      <p class="sm">${esc(p.summary)}</p>
+      ${open ? (full ? `<form class="lg-pre-form" data-pre-form="${esc(p.id)}"><p class="muted sm">Untick a rule to leave it out, or change its words or number. Everything stays editable afterwards.</p>
+          <ul class="lg-pre-rules">${rows}</ul>
+          <div class="row tight"><button class="btn sm" type="submit" data-testid="preset-apply">Add these rules</button><button class="btn2 sm" type="button" data-testid="preset-cancel" data-pre-close>Cancel</button></div></form>`
+        : `<small class="muted">Loading…</small>`)
+        : `<button type="button" class="btn2 sm" data-pre="${esc(p.id)}" data-testid="preset-preview">Preview and edit</button>`}</li>`;
+  }
 
   window.loadLedger = async function () {
     const box = $("#ledger");
@@ -114,7 +140,11 @@
         <p class="muted sm">${esc(g.hint)}</p><ul class="lg-rules">${rs.map(ruleRow).join("")}</ul></section>`;
     };
     const body = groups.map(section).join("");
+    const pres = d.presets || [];
     box.innerHTML = `
+      ${pres.length ? `<section class="lg-presets" data-testid="ledger-presets" aria-labelledby="lgPreH"><h3 class="lg-h" id="lgPreH">Start from a preset</h3>
+        <p class="muted sm">Ready-made rules for hooks, retention and calls to action, for when your AI doesn't know them yet. Preview and edit before you add them.</p>
+        <ul class="lg-pre-list">${pres.map(presetCard).join("")}</ul></section>` : ""}
       <div class="lg-stats" data-testid="ledger-stats" aria-live="polite">
         <span><b>${sm.active || 0}</b> rule${sm.active === 1 ? "" : "s"} on</span>
         <span><b>${sm.learned || 0}</b> learned from your edits</span>
@@ -131,6 +161,33 @@
 
   function wire(box) {
     box.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { L.filter = b.dataset.f; draw(); }));
+    box.querySelectorAll("[data-pre]").forEach((b) => (b.onclick = async () => {
+      L.preOpen = b.dataset.pre; draw();
+      if (L.pre) return;
+      const seq = ++L.preSeq;
+      try { const r = await api("/api/ledger/presets"); if (seq !== L.preSeq) return; L.pre = r.presets; draw(); }
+      catch (e) { if (seq === L.preSeq) { L.preOpen = null; toast(e.message); draw(); } }
+    }));
+    box.querySelectorAll("[data-pre-close]").forEach((b) => (b.onclick = () => { L.preSeq++; L.preOpen = null; draw(); }));
+    box.querySelectorAll("[data-pre-form]").forEach((f) => (f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const pid = f.dataset.preForm, full = (L.pre || []).find((x) => x.id === pid);
+      if (!full) return;
+      const edits = {};
+      f.querySelectorAll("[data-keep]").forEach((c) => { if (!c.checked) edits[c.dataset.keep] = { drop: true }; });
+      f.querySelectorAll("[data-k]").forEach((i) => {
+        const k = i.dataset.i, r = full.rules[+k];
+        if (edits[k]) return;
+        if (i.dataset.k === "text" && i.value.trim() && i.value.trim() !== r.rule) edits[k] = { text: i.value.trim() };
+        if (i.dataset.k === "n" && i.value !== "" && +i.value !== +r.check.n) edits[k] = { n: +i.value };
+      });
+      const btn = f.querySelector("[type=submit]"); btn.disabled = true;
+      try {
+        const r = await api(`/api/ledger/presets/${encodeURIComponent(pid)}/apply`, { method: "POST", body: { edits } });
+        toast(`${r.preset.name}: ${r.added} rules added${r.switched_off.length ? `, ${r.switched_off.length} switched off` : ""}`, 5000);
+        L.preOpen = null; loadLedger();
+      } catch (e) { toast(e.message, 5000); btn.disabled = false; }
+    }));
     box.querySelectorAll("[data-act]").forEach((c) => (c.onchange = async () => {
       try { await api(`/api/ledger/rules/${c.dataset.act}`, { method: "PATCH", body: { active: c.checked } }); loadLedger(); } catch (e) { toast(e.message); c.checked = !c.checked; } }));
     box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
