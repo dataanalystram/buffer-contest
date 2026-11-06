@@ -12,7 +12,7 @@ from .test_new_thread_entry_e2e import _fresh, _open_thread
 
 pw = pytest.importorskip("playwright.sync_api")
 STARTER = "Make posts from these stories:"
-WRITES = re.compile(r"/api/(sources/draft|agent/|link/preview|preview|submit|posts|house|run|takes|templates/render|media)")
+DRAFT = re.compile(r"/api/(sources/draft|link/preview|preview|submit)\b")
 
 
 def _story_scan(page):
@@ -28,8 +28,9 @@ def _watch(page):
 
 
 def _writes(seen):
-    """Every request that could write or generate: any non-GET, and GETs on the agent / draft / Buffer endpoints."""
-    return [(m, u) for m, u in seen if m != "GET" or WRITES.search(u)]
+    """Every request that could write, generate or reach Buffer: any non-GET (a run, a draft, a preview, a submit), and any
+    request at all to the draft / preview / submit endpoints. Reads (the Make a post screen loading its lists) are fine."""
+    return [(m, u) for m, u in seen if m not in ("GET", "HEAD") or DRAFT.search(u)]
 
 
 def _links(text):
