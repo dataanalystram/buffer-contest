@@ -566,9 +566,9 @@ def test_take_prefs_table_is_made_on_every_store(tmp_path):
         assert st.q("SELECT COUNT(*) AS n FROM take_prefs")[0]["n"] == 0
 
 
-def test_set_clip_layout_counts_against_the_agent_cap():
+def test_set_clip_layout_is_activity_not_a_buffer_write():
     from studio.actions import Studio
-    assert "set_clip_layout" in Studio.COUNTED
+    assert "set_clip_layout" in Studio.COUNTED and "set_clip_layout" not in Studio.BUFFER_WRITES
 
 
 def test_no_audio_duration_goes_local(monkeypatch, tmp_path):

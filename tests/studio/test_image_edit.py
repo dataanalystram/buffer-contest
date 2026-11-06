@@ -473,9 +473,10 @@ def test_png_exif_orientation_is_applied_before_metadata_is_stripped():
     assert ext == "png" and back.size == (100, 200) and not back.getexif().get(0x0112)
 
 
-def test_image_calls_count_against_the_agent_tokens_daily_cap(human, web):
+def test_image_calls_never_use_up_the_agent_tokens_daily_cap(human, web):
+    """6 Nov 2026: the daily cap counts Buffer writes only, so image edits past it still run."""
     up = human.post("/api/media", json={"name": "hp.png", "data": base64.b64encode(_png(headphones())).decode()}).json()
-    tok = agent_token(human, cap=2)
+    tok = agent_token(human, cap=1)
     for ratio in ("1:1", "4:5"):  # two different edits
         res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": ratio}]})
         assert not res["isError"] and out["ok"], out
@@ -483,7 +484,7 @@ def test_image_calls_count_against_the_agent_tokens_daily_cap(human, web):
     res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "4:5"}]})
     assert not res["isError"] and out["idempotent_replay"] is True, out
     res, out = mcp_call(human, tok, "edit_image", {"image": up["token"], "ops": [{"op": "fit", "ratio": "16:9"}]})
-    assert res["isError"] and "daily cap" in str(out)
+    assert not res["isError"] and out["ok"], out
 
 
 def test_reencoded_webp_carries_no_location_data():

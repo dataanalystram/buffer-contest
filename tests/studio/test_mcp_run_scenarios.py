@@ -191,14 +191,15 @@ def test_d_new_chats_and_new_requests_make_new_runs_and_are_never_blocked(human,
 
 
 def test_d2_a_token_past_its_daily_action_cap_can_still_open_a_new_run(human, page):  # noqa: F811
-    """No per-day limit on new runs: the token's daily action cap (writes to Buffer, uploads, ...) never blocks start_post;
-    the kill switch still does."""
+    """No per-day limit on new runs: the token's daily cap (Buffer writes only, 6 Nov 2026) never blocks start_post or a
+    render; a Buffer write past it is refused; the kill switch still stops everything."""
     tok = agent_token(human, policy="trusted", cap=1)
     store = human.app.state.store
     label = store.q("SELECT name FROM agent_tokens ORDER BY id DESC LIMIT 1")[0]["name"]
-    for _ in range(3):  # the token's counted actions for today are used up
-        store.audit(_uid(human), f"agent:{label}", "upload_media", "write", {}, ok=True)
-    assert "daily cap" in _err(human, tok, "render_carousel", {"slides": _slides()})  # a counted write is refused
+    for _ in range(3):  # the token's Buffer writes for today are used up
+        store.audit(_uid(human), f"agent:{label}", "create_idea", "private", {}, ok=True)
+    assert "daily cap" in _err(human, tok, "create_idea", {"title": "x", "text": "y"})  # a Buffer write is refused
+    assert _call(human, tok, "render_carousel", {"slides": _slides()})["slides"] >= 3  # a render is not
     ids = {_call(human, tok, "start_post", {"title": f"Request {i}", "user_asked": True, "reason": "asked"})["run_id"] for i in range(3)}
     assert len(ids) == 3
     human.post("/api/safety/kill", json={"on": True})

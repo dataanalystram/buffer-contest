@@ -226,14 +226,24 @@ def test_5_kill_switch_stops_every_agent_action_and_rule_toggles_are_human_only(
     assert any(r["id"] == rid and r["active"] for r in human.get("/api/brand").json()["rules"])
 
 
-def test_5_daily_cap_counts_runs_takes_and_rules(human):
+def test_5_daily_cap_counts_buffer_writes_only_kill_switch_still_stops_everything(human):
+    """6 Nov 2026: the daily cap counts Buffer writes only; rules, runs and takes never use it up. The kill switch still
+    stops every agent action (finding 5)."""
     tok = agent_token(human, "review", cap=1)
-    res, msg = mcp_call(human, tok, "remember_rule", {"correction": "no emojis"})
+    for rule in ("no emojis", "max 2 hashtags", "no hype"):
+        res, msg = mcp_call(human, tok, "remember_rule", {"correction": rule})
+        assert not res["isError"], msg
+    res, msg = mcp_call(human, tok, "create_idea", {"title": "One", "text": "first idea"})
     assert not res["isError"], msg
-    res, msg = mcp_call(human, tok, "remember_rule", {"correction": "max 2 hashtags"})
-    assert res["isError"] and "daily cap" in msg
+    res, msg = mcp_call(human, tok, "create_idea", {"title": "Two", "text": "second idea"})
+    assert res["isError"] and "daily cap" in msg and "1 Buffer posts per day" in msg and "UTC" in msg
+    res, msg = mcp_call(human, tok, "remember_rule", {"correction": "short lines"})  # not a Buffer write: still allowed
+    assert not res["isError"], msg
+    human.post("/api/safety/kill", json={"on": True})
+    res, msg = mcp_call(human, tok, "remember_rule", {"correction": "no caps"})
+    assert res["isError"] and "kill switch" in msg
     res, msg = mcp_call(human, tok, "clips_from_video", {"sample": True})
-    assert res["isError"] and "daily cap" in msg
+    assert res["isError"] and "kill switch" in msg
 
 
 # ------------------------------------------------------------------ 6. anonymous /demo cost (HQ-DEMO-UNAUTH-COST)
