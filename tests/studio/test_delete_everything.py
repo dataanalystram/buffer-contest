@@ -13,8 +13,10 @@ def test_delete_user_clears_tables_other_modules_own(app):
         except Exception:  # noqa: BLE001  (a table this build creates lazily and hasn't yet)
             continue
         cols = [c for c in ("id",) if t in ("send_codes", "upload_sessions")]
-        names = ", ".join(cols + ["user_id"])
-        vals = [f"x{i}" for _ in cols] + [uid]
+        # a composite primary key is NOT NULL on Postgres: give those tables their key columns
+        keys = {"template_slot_runs": {"slot_id": i + 1, "occurrence": 0, "channel_id": "c"}}.get(t, {})
+        names = ", ".join(cols + list(keys) + ["user_id"])
+        vals = [f"x{i}" for _ in cols] + list(keys.values()) + [uid]
         st.x(f"INSERT INTO {t}({names}) VALUES({', '.join('?' * len(vals))})", tuple(vals))
         seeded.append(t)
     assert {"brand_kit_library", "custom_templates", "source_runs"} & set(seeded), seeded
