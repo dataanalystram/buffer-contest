@@ -15,6 +15,8 @@
 .pc-ask .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .pc-ask .btn,.pc-ask .btn2{min-height:44px}
 dialog.pc-tpl-dialog{width:min(920px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto}
+.tpl-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.tpl-list li{padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper);line-height:1.4}
 .pc-tpl-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}
 .pc-tpl-head h2{margin:0 0 4px;font-size:20px}
 .pc-tpl-head p{margin:0}
