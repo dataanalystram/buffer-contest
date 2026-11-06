@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: {python-version: "3.12", cache: pip, cache-dependency-path: requirements-media.txt}
       - if: ${{ github.event.inputs.kind != 'image_matte' }}
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+        run: bash scripts/ci_apt_install.sh ffmpeg
       # studio.media (docs/MEDIA_PIPELINE.md): yt-dlp, faster-whisper, numpy. Video runs here, never on the 512 MB web dyno.
       - if: ${{ github.event.inputs.kind != 'image_matte' }}
         run: pip install -q -r requirements-worker-core.txt -r requirements-media.txt
