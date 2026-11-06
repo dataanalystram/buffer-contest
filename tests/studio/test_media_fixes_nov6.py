@@ -155,10 +155,11 @@ def test_energy_check_and_prepare_cut_a_silence_the_asr_put_inside_a_word(tmp_pa
 
 
 # ---------------------------------------------------------------- 11. the provider string
-def test_face_track_names_the_mediapipe_failure_once(monkeypatch):
+def test_face_track_names_the_mediapipe_failure_once(monkeypatch, capsys):
     def fail(*a, **k):
         raise facedetect.DetectorError("MediaPipe couldn't load: libEGL.so.1: cannot open shared object file")
     monkeypatch.setattr(facedetect, "mediapipe_detector", fail)
     monkeypatch.setattr(take, "_face_track_cv2", lambda path, fps, why: ([], f"OpenCV Haar cascade ({why})"))
     _, how = take.face_track("x.mp4", 10.0)
     assert how.count("MediaPipe couldn't load") == 1 and "libEGL" in how
+    assert capsys.readouterr().out.count("MediaPipe couldn't load") == 1

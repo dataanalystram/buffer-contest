@@ -585,8 +585,8 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
         det = facedetect.mediapipe_detector(model_path)
     except Exception as e:  # noqa: BLE001 - any failure to load MediaPipe (no libEGL, no model, a bad download) falls back to
         # the Haar cascade the self-check vouches for, never an escaped error (CodeRabbit, PR #107)
-        print(f"face track: MediaPipe couldn't load ({str(e)[:80]}), falling back to OpenCV's Haar cascade", flush=True)
         why = re.sub(r"^MediaPipe couldn't load:\s*", "", str(e))[:60]  # DetectorError already carries the prefix
+        print(f"face track: MediaPipe couldn't load ({why}), falling back to OpenCV's Haar cascade", flush=True)
         return _face_track_cv2(path, fps, f"MediaPipe couldn't load: {why}")
     w, h = 320, 180
     info = probe(path)
