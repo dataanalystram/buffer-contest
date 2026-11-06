@@ -43,7 +43,8 @@ def test_rejected_refresh_clears_tokens(human, app, fake, status, body):
     assert app.state.store.tokens("acc_1") is None
 
 
-@pytest.mark.parametrize("status,body", [(400, "<html>Bad Request</html>"), (401, ""), (400, {"message": "no code"})])
+@pytest.mark.parametrize("status,body", [(400, "<html>Bad Request</html>"), (401, ""), (400, {"message": "no code"}),
+                                         (503, {"error": "invalid_grant"}), (429, {"error": "invalid_grant"})])
 def test_garbled_400_401_keeps_tokens(human, app, fake, status, body):
     _expire(app)
     fake.token_fail = (status, body)
