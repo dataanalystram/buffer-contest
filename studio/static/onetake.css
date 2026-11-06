@@ -194,15 +194,14 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .tk-run-st.s-running,.tk-run-st.s-rendering{border-color:#C9ACFA}
 #tkRunErr{margin:0 0 16px}
 .clip-ld{list-style:none}
-.clip-scoreline{display:flex;gap:10px;align-items:flex-start;margin-top:4px;min-width:0}
+.clip-scoreline{display:flex;flex-direction:column;gap:4px;align-items:flex-start;margin-top:4px;min-width:0}
 .clip-scoreline .clip-score{flex:none;color:var(--ink);background:var(--sunken);border-color:var(--line-strong);font-size:12px;height:22px}
 .clip-scoreline .clip-score.none{color:var(--muted);background:transparent;font-weight:500}
-.clip-row .clip-scoreline .clip-why{margin:0;min-width:0;color:var(--ink);font-size:13px;line-height:1.4}
+.clip-row .clip-scoreline .clip-why{margin:0;min-width:0;max-width:100%;color:var(--ink);font-size:13px;line-height:1.4;-webkit-line-clamp:3;line-clamp:3}
 .clip-row .clip-scoreline .clip-why.none{color:var(--muted)}
 .clip-why .ic{width:14px;height:14px;vertical-align:-2px;margin-right:4px;color:var(--muted)}
 @media (max-width:600px){
   .tk-runbar{grid-template-columns:1fr auto;gap:10px;padding:10px 12px}
   .tk-run-id{grid-column:1 / -1;grid-row:2}
   .tk-run-t{font-size:16px}
-  .clip-scoreline{flex-direction:column;gap:4px}
 }
