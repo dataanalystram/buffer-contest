@@ -540,7 +540,7 @@ class Studio:
             reset = float(row["t"] or time.time()) + 86400  # rolling 24 h: the oldest counted write drops out then
             at = time.strftime("%H:%M UTC on %d %b", time.gmtime(reset))
             self.store.audit(a.uid, a.label, action, "blocked", {"reason": "daily cap", "cap": cap, "resets": int(reset)}, ok=False)
-            raise ActionError(f"This agent token reached its limit of {cap} Buffer posts per day. Only Buffer writes count "
+            raise ActionError(f"This agent token reached its daily cap: {cap} Buffer posts per day at most. Only Buffer writes count "
                               "(posts, drafts, draft edits and deletes, ideas); renders, previews and image edits don't. "
                               f"The next one frees up at {at} (24 hours after the oldest counted write).", 429)
 
