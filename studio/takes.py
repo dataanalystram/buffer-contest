@@ -666,7 +666,7 @@ class Takes(TakeBin):
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
                           "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else [],
-                          "product_card": c.get("product_card"), **self._trim_spec(run, an, c)})
+                          **self._trim_spec(run, an, c)})
         for k in ("reframe", "captions", "covers"):
             self._step(run["steps"], k, "running", f"0 of {len(clips)} clips")
         self._save(rid, run["steps"], res, "rendering")
@@ -1040,30 +1040,8 @@ class Takes(TakeBin):
                 clip["hook"] = hook
                 rerender = True
                 changed.append("hook")
-        if "product_card" in body:  # Commerce: the text product card overlay (name, price, CTA, link label; brand kit)
-            from . import product_card as _pc
-            try:
-                pc = _pc.clean(body["product_card"])
-            except _pc.CardError as e:
-                raise ActionError(str(e), 400)
-            if pc and (run["input"].get("style") == "opus" or res.get("sample")):  # those renders don't draw the card
-                raise ActionError("The product card overlay works on your own One take clips in the classic style.", 409)
-            if pc and pc.get("code"):  # the person's own shop link only (studio/commerce.py's table; no import on the worker)
-                try:
-                    mine = self.store.q("SELECT 1 AS ok FROM commerce_links WHERE code=? AND user_id=?", (pc["code"], a.uid))
-                except Exception:  # noqa: BLE001 - no Commerce table yet: no links at all
-                    mine = []
-                if not mine:
-                    raise ActionError("No such product link.", 404)
-            if pc != clip.get("product_card"):
-                if pc:
-                    clip["product_card"] = pc
-                else:
-                    clip.pop("product_card", None)
-                rerender = True
-                changed.append("product card")
         if not changed:
-            raise ActionError("Nothing to change: give start_ms/end_ms, transcript, hook, caption(s), music or product_card.")
+            raise ActionError("Nothing to change: give start_ms/end_ms, transcript, hook, caption(s) or music.")
         if rerender and not self._can_rerender(a, res):
             from . import demo_guard
             why = ("the view-only sample workspace doesn't run. Sign in to trim the sample, or edit its captions here."
