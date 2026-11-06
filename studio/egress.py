@@ -7,6 +7,14 @@ Two numbers per UTC day, counted in this process:
 * ``served``: media bytes this server sent to clients (/m/, /ms/, Library files). Render bills outbound bandwidth over
   the workspace allowance ($0.15/GB).
 
+Bytes that came from R2 are not database egress, so they never count toward ``db`` (6 Nov 2026: once every file moved
+to R2, cache fills from the bucket were still filling the 130 MB ``db`` budget and could 429 other people's browsers).
+They are kept apart, numbers only and with no budget (R2 has no egress fees; its operations are capped in
+studio/r2usage.py): ``r2`` counts bytes this server read from the bucket (a disk-cache fill, a range read), measured
+where the read actually happens (``blobstore.read`` reports into ``r2_tally()``), so a row that falls back to its
+database copy still counts as ``db``; ``r2_redirected`` counts the size of files a browser was sent straight to the
+bucket for (HQ_MEDIA_REDIRECT=1: those bytes never pass through this server or the database).
+
 Each has a daily budget (``HQ_EGRESS_DB_DAILY_MB``, default 130; ``HQ_EGRESS_SERVE_DAILY_MB``, default 150: a 30-day
 month stays under ~4 GB and ~4.5 GB). At 80% a warning is logged once that day; past 100% previews degrade: a browser
 fetch of someone else's media (or an anonymous one) answers 429 with Retry-After until the UTC day turns. The owner's
@@ -23,6 +31,8 @@ only: no token, IP or user id is ever written there or to /healthz.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import os
@@ -36,6 +46,7 @@ _LOCK = threading.Lock()
 _S: dict = {}
 _REPEAT: dict[tuple[str, str], list] = {}
 _SAVE_EVERY = 30.0
+_R2_TALLY: contextvars.ContextVar = contextvars.ContextVar("egress_r2_tally", default=None)
 
 
 def _env_mb(name: str, default: float) -> int:
@@ -59,7 +70,7 @@ def _today() -> str:
 
 def _fresh(day: str) -> dict:
     return {"day": day, "db": 0, "served": 0, "db_media": 0, "db_library": 0, "refused_budget": 0, "refused_repeat": 0,
-            "db_migration": 0, "warned": []}
+            "db_migration": 0, "r2": 0, "r2_redirected": 0, "warned": []}
 
 
 def _load() -> None:
@@ -88,7 +99,8 @@ def _summary(cur: dict) -> dict:
     b = budgets()
     return {"day": str(cur.get("day", "")), "db_bytes": int(cur.get("db", 0)), "served_bytes": int(cur.get("served", 0)),
             "db_budget": b["db"], "served_budget": b["served"], "refused_budget": int(cur.get("refused_budget", 0)),
-            "refused_repeat": int(cur.get("refused_repeat", 0))}
+            "refused_repeat": int(cur.get("refused_repeat", 0)), "r2_bytes": int(cur.get("r2", 0)),
+            "r2_redirected_bytes": int(cur.get("r2_redirected", 0))}
 
 
 def _roll() -> None:
@@ -140,6 +152,50 @@ def db_read(n: int, kind: str = "media") -> None:
         k = "db_library" if kind == "library" else "db_media"
         _S["cur"][k] += int(n)
         _warn("db")
+        _save()
+
+
+@contextlib.contextmanager
+def r2_tally():
+    """Measure how many of the bytes read inside this block came from R2: ``blobstore.read`` adds every successful
+    bucket read to the innermost open tally (per thread / task: a context variable). Yields a one-item list."""
+    t = [0]
+    tok = _R2_TALLY.set(t)
+    try:
+        yield t
+    finally:
+        _R2_TALLY.reset(tok)
+
+
+def note_r2_read(n: int) -> None:
+    """Called by ``blobstore.read`` after a bucket read: credited to the open ``r2_tally`` (if any)."""
+    t = _R2_TALLY.get()
+    if t is not None and n > 0:
+        t[0] += int(n)
+
+
+def backend_read(n: int, kind: str = "media", r2_n: int = 0) -> None:
+    """``n`` bytes read from the storage backend, ``r2_n`` of them from R2: only the rest is database egress (``db``)."""
+    if n <= 0:
+        return
+    r2_n = max(0, min(int(r2_n or 0), int(n)))
+    if r2_n:
+        with _LOCK:
+            _load()
+            _roll()
+            _S["cur"]["r2"] = int(_S["cur"].get("r2", 0)) + r2_n
+            _save()
+    db_read(int(n) - r2_n, kind)
+
+
+def r2_redirected(n: int) -> None:
+    """A browser was sent to a presigned R2 URL for a file of ``n`` bytes: no database or server bytes (numbers only)."""
+    if n <= 0:
+        return
+    with _LOCK:
+        _load()
+        _roll()
+        _S["cur"]["r2_redirected"] = int(_S["cur"].get("r2_redirected", 0)) + int(n)
         _save()
 
 
@@ -235,7 +291,8 @@ def snapshot() -> dict:
                 "served_pct": round(100 * cur["served"] / b["served"], 1) if b["served"] else 0.0,
                 "degraded": bool((b["db"] and cur["db"] >= b["db"]) or (b["served"] and cur["served"] >= b["served"])),
                 "refused_budget": cur["refused_budget"], "refused_repeat": cur["refused_repeat"],
-                "db_migration_bytes": int(cur.get("db_migration", 0))}
+                "db_migration_bytes": int(cur.get("db_migration", 0)), "r2_bytes": int(cur.get("r2", 0)),
+                "r2_redirected_bytes": int(cur.get("r2_redirected", 0))}
 
 
 def history() -> list[dict]:
