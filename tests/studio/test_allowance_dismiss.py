@@ -15,10 +15,12 @@ from .conftest import FakeBuffer
 NO_TOUR = "localStorage.setItem('hq_tour_done', '1'); localStorage.setItem('hq_onb_seen', '1')"
 
 
-def test_session_says_when_this_sign_in_began(app, human, client):
+def test_session_says_when_this_sign_in_began(app, human):
+    from fastapi.testclient import TestClient
     s = human.get("/api/session").json()
     assert s["connected"] and isinstance(s["signed_in_at"], int) and s["signed_in_at"] > 1_600_000_000_000
-    assert client.get("/api/session").json()["signed_in_at"] is None   # signed out: nothing
+    with TestClient(app) as anon:   # no session cookie: signed out, nothing to report
+        assert anon.get("/api/session").json()["signed_in_at"] is None
 
 
 @pytest.fixture
