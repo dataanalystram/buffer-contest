@@ -7,7 +7,6 @@ the operator included, at the single place that work starts:
 * ``ai``: no AI call on HuhQueue's own keys: Claude and OCI (studio/budget.py checks), the free engines and the free
   starter model, the Groq / NVIDIA / OpenRouter free ledger (studio/free_quota.py), the link drafter. The brain falls back
   to the rule writer; the video worker to local Whisper and the layout rules. A person's own key (BYO) keeps working.
-* ``channel3``: no request leaves for api.trychannel3.com (search, detail, /go link resolution).
 * ``r2_uploads``: no new write to the R2 bucket (``r2usage.can_write`` answers the reason): new media stays in the
   database, One take large uploads answer 507. Reads and deletes go on.
 * ``link_ingest``: no new video link is accepted (One take, ``ingest_video_link``, ``clips_from_video``, the agent's
@@ -32,14 +31,12 @@ from collections import deque
 SWITCHES = {
     "publishing": "Publishing to Buffer",
     "ai": "AI calls on HuhQueue's keys",
-    "channel3": "Channel3 product search",
     "r2_uploads": "New uploads to R2",
     "link_ingest": "Video link ingest",
 }
 MESSAGES = {
     "publishing": "Publishing is paused by the HuhQueue operator right now. Nothing was sent to Buffer. Try again later.",
     "ai": "AI calls on HuhQueue's keys are paused by the operator right now.",
-    "channel3": "Product search is paused by the HuhQueue operator right now. Nothing was spent.",
     "r2_uploads": "New uploads to the media bucket are paused by the HuhQueue operator",
     "link_ingest": "Video links are paused by the HuhQueue operator right now. Upload the file instead, or try again later.",
 }

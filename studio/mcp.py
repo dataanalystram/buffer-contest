@@ -124,8 +124,7 @@ TOOLS: list[dict[str, Any]] = [
          "caption": {"type": "string"}, "service": {"type": "string", "description": "Network the caption is for (instagram, tiktok, youtube, ...); omit for all"},
          "captions": {"type": "object", "additionalProperties": {"type": "string"}, "description": "{service: caption} for several networks at once"},
          "music": {"type": ["object", "null"], "description": "Instagram Reel music: a track from search_instagram_audio (audio_id, title, type, duration_ms), or null to remove"},
-         "music_volume": {"type": "integer", "minimum": 0, "maximum": 100}, "original_volume": {"type": "integer", "minimum": 0, "maximum": 100},
-         "product_card": {"type": ["object", "null"], "description": "A text product card burned over the clip (brand kit; no catalogue image): {name, price, cta, link_label, position: bottom|top, code} from attach_product_to_post's card; null removes it. Re-renders the clip."}}}},
+         "music_volume": {"type": "integer", "minimum": 0, "maximum": 100}, "original_volume": {"type": "integer", "minimum": 0, "maximum": 100}}}},
     {"name": "rewrite_clip_caption", "description": "An AI rewrite of one clip's post caption for one of the take's networks, using only what was said in the clip. Returns the suggestion with its character count and the network limit; nothing is saved until you pass it to adjust_clip.",
      "inputSchema": {"type": "object", "required": ["take_id", "clip_id", "service"], "properties": {"take_id": {"type": "integer"}, "clip_id": {"type": "string"},
          "service": {"type": "string"}, "text": {"type": "string", "description": "The caption to improve (default: the current one)"}}}},
@@ -219,11 +218,6 @@ READ_ONLY |= _image.READ_ONLY
 from . import run_discipline as _rd  # noqa: E402  start_post, cleanup_agent_drafts: one request = one run (4 Nov 2026)
 
 TOOLS += _rd.TOOLS
-from . import commerce as _commerce  # noqa: E402  search_products, get_product, attach_product_to_post (Channel3, Phase 4)
-
-TOOLS += _commerce.TOOLS
-READ_ONLY |= _commerce.READ_ONLY
-from . import commerce_routes as _commerce_routes  # noqa: E402,F401  registers the Channel3 tools with the consent gate
 from . import consent as _consent  # noqa: E402  approval gate for paid / external APIs (4 Nov 2026)
 
 
@@ -392,7 +386,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "adjust_clip":
         t = h.takes.adjust(actor, int(args.get("take_id") or 0), args.get("clip_id", ""),
                            {k: args[k] for k in ("start_ms", "end_ms", "hook", "caption", "service", "captions", "transcript", "music",
-                                                 "music_volume", "original_volume", "product_card") if k in args})
+                                                 "music_volume", "original_volume") if k in args})
         for c in t["clips"]:
             c.pop("words", None)
         return t
@@ -444,7 +438,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _thread_bin.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
-    for _mod in (_send, _share, _ledger, _parity, _image, _rd, _commerce, _flow, _drafts):
+    for _mod in (_send, _share, _ledger, _parity, _image, _rd, _flow, _drafts):
         extra = _mod.call_tool(studio, actor, name, args)
         if extra is not NotImplemented:
             return extra
@@ -557,7 +551,7 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
             hint = _cb.server_ai_hint(name)  # no model call: the client is the brain unless the person chose server AI
             return ok({"content": [{"type": "text", "text": json.dumps(hint, indent=1)}], "structuredContent": hint, "isError": False})
         if not external and _consent.gated(name, args, _cb.SERVER_AI_TOOLS):
-            # paid or credit-spending (server AI, later Channel3): only after the person approves it in HuhQueue (owner, 4 Nov 2026)
+            # paid or credit-spending (server AI): only after the person approves it in HuhQueue (owner, 4 Nov 2026)
             try:
                 studio.kill_switch_check(actor, name)
                 wait = _consent.gate(studio, actor, name, args)

@@ -915,7 +915,7 @@ async function loadApprovals() {
   }
 }
 
-// An AI app asking to use something that costs money or credits (HuhQueue's server AI; later Commerce). Nothing ran yet:
+// An AI app asking to use something that costs money or credits (HuhQueue's server AI). Nothing ran yet:
 // approving lets that one request run once (studio/consent.py). Rejecting tells the app no.
 function paidCost(est) {
   if (est && est.usd_max != null) return `up to $${Number(est.usd_max).toFixed(2)}`;
@@ -992,7 +992,7 @@ async function loadTokens() {
   box.querySelectorAll("[data-testid=revoke-token]").forEach((b) => (b.onclick = async () => { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "DELETE" }); loadTokens(); }));
   box.querySelectorAll("[data-testid=token-paid]").forEach((b) => (b.onclick = async () => {
     const on = b.dataset.on !== "1";
-    if (on && !(await hqConfirm("Let this app use paid APIs without asking? It can then spend your HuhQueue AI allowance (and, later, product search credits) on its own. Each use is in Activity.", { ok: "Allow paid APIs" }))) return;
+    if (on && !(await hqConfirm("Let this app use paid APIs without asking? It can then spend your HuhQueue AI allowance on its own. Each use is in Activity.", { ok: "Allow paid APIs" }))) return;
     try { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "PATCH", body: { allow_paid_apis: on } }); toast(on ? "Paid APIs allowed for this app" : "This app asks you before using paid APIs"); } catch (e) { toast(e.message, 5000); }
     loadTokens();
   }));

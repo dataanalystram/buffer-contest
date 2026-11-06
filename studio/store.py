@@ -446,12 +446,12 @@ class Store:
                 blobstore.release(self, "library_chunks", "item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
                 self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
                 self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
-            # Commerce (studio/commerce.py): the person's shop links and counters. A key's own meter is a hash of the key and
-            # stays, so deleting an account never resets a key's free allowance; the person's own meter goes.
+            # retired tables (the product feature removed on 6 Nov 2026, see CHANGELOG.md): no code writes them any more, but
+            # they still hold old rows, so deleting an account still erases that person's rows. Nothing else reads them.
             for t in ("commerce_links", "commerce_user_day"):
                 if t in have:
                     self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
-            if "commerce_credits" in have:
+            if "commerce_credits" in have:  # the person's own monthly meter row; shared ("global") rows stay
                 self.x("DELETE FROM commerce_credits WHERE scope=?", ("u:" + uid,))
             if "take_uploads" in have:  # One take's multipart uploads; the bucket objects are removed by erase_user first
                 # a bucket delete that didn't confirm (del_open / del_ready) keeps its row, cut loose from the person (no

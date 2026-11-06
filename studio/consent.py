@@ -1,10 +1,10 @@
 """Approval gate for paid or external APIs (owner decision, 4 Nov 2026).
 
 An AI app connected over MCP must NOT spend anything on the person's (or the operator's) behalf until the person says
-yes: no HuhQueue server AI (it counts against the person's HuhQueue AI allowance and costs the operator real money) and,
-from Phase 4, no Channel3 credits or any other credit-spending external API.
+yes: no HuhQueue server AI (it counts against the person's HuhQueue AI allowance and costs the operator real money) and
+no other credit-spending external API.
 
-How it works (one generic mechanism; Commerce tools plug in with ``register``):
+How it works (one generic mechanism; a paid external tool plugs in with ``register``):
 
 1. A gated tool called by an agent token answers ``needs_user_approval: true`` with a cost estimate and an
    ``approval_id``. Nothing runs and nothing is spent. The same request asked again while it waits gets the same
@@ -35,7 +35,7 @@ MAX_PENDING = 10  # paid-API asks one token may have waiting at once (they never
 SERVER_AI_EST_USD = float(os.environ.get("HQ_SERVER_AI_EST_USD", "0.15"))  # worst case for one server-AI run
 KIND = "paid_api"
 
-# name -> {"provider", "what", "estimate": fn(args) -> dict}. Phase 4 (Channel3) registers its tools here.
+# name -> {"provider", "what", "estimate": fn(args) -> dict}. A paid external API registers its tools here.
 PAID: dict[str, dict] = {}
 SERVER_AI_LABELS = {"run_agent": "HuhQueue's research agent writes and renders a post", "make_post": "HuhQueue's agent makes a post",
                     "reply_post": "HuhQueue's agent revises a post", "revise": "HuhQueue's agent re-renders a post with a correction",
@@ -44,12 +44,9 @@ _SUMMARY_KEYS = ("query", "url", "media_url", "prompt", "brief", "correction", "
 IGNORED = ("approval_id", "idempotency_key", "server_ai", "user_asked", "reason", "new_post")
 
 
-def register(name: str, provider: str, what: str, estimate: Callable[[dict], dict],
-             needs: Callable[[Any, Actor, dict], bool] | None = None) -> None:
-    """A tool that spends credits on an external API (e.g. Channel3 search: 1 credit) goes through the gate. ``needs``
-    (studio, actor, args) -> bool narrows it: e.g. Channel3 product detail asks only when it would run on HuhQueue's key,
-    not on the person's own. An error in ``needs`` means ask."""
-    PAID[name] = {"provider": provider, "what": what, "estimate": estimate, "needs": needs}
+def register(name: str, provider: str, what: str, estimate: Callable[[dict], dict]) -> None:
+    """A tool that spends credits on an external API (e.g. a search that costs 1 credit) goes through the gate."""
+    PAID[name] = {"provider": provider, "what": what, "estimate": estimate}
 
 
 def gated(name: str, args: dict, server_ai_tools: set[str]) -> bool:
@@ -119,13 +116,6 @@ def gate(studio, a: Actor, name: str, args: dict) -> dict | None:
     if getattr(a, "kind", "") != "agent" or not a.agent:
         return None
     store = studio.store
-    need = (PAID.get(name) or {}).get("needs")
-    if need is not None:
-        try:
-            if not need(studio, a, args):
-                return None
-        except Exception:  # noqa: BLE001 - unknown means ask the person
-            pass
     est = estimate(studio, a, name, args)
     if token_allows(a):
         store.audit(a.uid, a.label, "paid_api", "spend", {"tool": name, "by": "token setting", "provider": est.get("provider")})

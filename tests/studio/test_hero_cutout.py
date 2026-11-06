@@ -1,4 +1,4 @@
-"""The fast cut-out (studio/hero_edit.py), docs/plans/AGENT_RUNS_EDITING_COMMERCE.md 2.1-2.2 and 2.7.
+"""The fast cut-out (studio/hero_edit.py), docs/plans/AGENT_RUNS_EDITING.md 2.1-2.2 and 2.7.
 
 Regression (owner report, 4 Nov 2026, the CMF / Soundcore case): off-white earcups on a white stage came out torn (the
 near-white key at threshold 70 erased them), only one cushion was kept and the hero zoomed into it."""

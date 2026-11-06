@@ -1,4 +1,4 @@
-"""Phase 1 of docs/plans/AGENT_RUNS_EDITING_COMMERCE.md (owner decisions, 4 Nov 2026): one user request = one run over MCP.
+"""Phase 1 of docs/plans/AGENT_RUNS_EDITING.md (owner decisions, 4 Nov 2026): one user request = one run over MCP.
 
 One prompt in Claude ("find the best headphones under EUR 150, make a carousel with images, edit the images nicely") left
 several Make a post threads and many Library items. These tests replay that flow and every rule that stops it: run reuse,
@@ -375,11 +375,11 @@ def test_the_kill_switch_answers_before_the_gate(human, fake_server_run):
 
 
 def test_registered_external_tools_go_through_the_same_gate(human, monkeypatch):
-    """Phase 4 (Channel3) plugs in with consent.register: the generic gate holds any tool registered there."""
-    monkeypatch.setitem(consent.PAID, "get_limits", {"provider": "Channel3", "what": "product search", "estimate": lambda a: {"credits": 1}})
+    """A paid external API plugs in with consent.register: the generic gate holds any tool registered there."""
+    monkeypatch.setitem(consent.PAID, "get_limits", {"provider": "ExampleAPI", "what": "a paid lookup", "estimate": lambda a: {"credits": 1}})
     tok = agent_token(human, policy="trusted", cap=100)
     err, wait = _call(human, tok, "get_limits", {})
-    assert not err and wait["needs_user_approval"] is True and wait["estimate"] == {"provider": "Channel3", "what": "product search", "credits": 1}
+    assert not err and wait["needs_user_approval"] is True and wait["estimate"] == {"provider": "ExampleAPI", "what": "a paid lookup", "credits": 1}
     human.post(f"/api/approvals/{wait['approval_id']}/approve", json={})
     err, out = _call(human, tok, "get_limits", {})
     assert not err and "needs_user_approval" not in out

@@ -643,7 +643,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         connected = bool(sess["user_id"] and store.user(sess["user_id"]) and store.tokens(sess["user_id"]))
         body = {"configured": s.configured, "connected": connected, "csrf": sess["csrf"],
                 "user": studio.me(Actor(sess["user_id"])) if connected else None, "mcp_url": s.public_url + "/mcp",
-                "repo": s.repo_url, "demo": connected and demo.is_demo(sess["user_id"])}
+                "repo": s.repo_url, "demo": connected and demo.is_demo(sess["user_id"]),
+                # ms since the epoch when this sign-in began (the session id rotates at every sign-in): the client keeps a
+                # dismissed notice hidden only for the same sign-in and day
+                "signed_in_at": int(float(sess.get("created") or 0) * 1000) if connected else None}
         if body["demo"]:
             body["view_only"] = demo_view.view_only()  # the client answers view-only actions at once
             body["demo_left"] = demo_guard.left(store, sess["user_id"])  # what the free sample may still spend today
@@ -938,7 +941,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         studio._guard_write(a, "replace_draft_media")
         return mcp_parity.replace_draft_media(studio, a, {**(body or {}), "post_id": post_id})
 
-    # image editing (docs/plans/AGENT_RUNS_EDITING_COMMERCE.md Phase 2): the same functions as the MCP tools
+    # image editing (docs/plans/AGENT_RUNS_EDITING.md Phase 2): the same functions as the MCP tools
     def _image_tool(name: str, request: Request, body: dict):
         from . import image_edit
         try:
@@ -1268,8 +1271,6 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     share_mod.add_routes(app, house, actor)
     from . import run_discipline as run_rules_mod  # start_post + cleanup_agent_drafts (UI = REST = MCP, 4 Nov 2026)
     run_rules_mod.add_routes(app, house, actor)
-    from . import commerce_routes as commerce_mod  # Commerce on Channel3: search, detail, attach, meter, BYO key, /go (UI = REST = MCP)
-    commerce_mod.add_routes(app, house, actor)
     from . import integrations as integrations_mod  # Settings -> Integrations: per-user keys + the Product Hunt callback
     integrations_mod.add_routes(app, house, actor, COOKIE, s.public_url, s.secure_cookies)
 

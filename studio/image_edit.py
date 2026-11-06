@@ -1,4 +1,4 @@
-"""Image editing on HuhQueue's side (docs/plans/AGENT_RUNS_EDITING_COMMERCE.md Phase 2): MCP tools + the REST routes.
+"""Image editing on HuhQueue's side (docs/plans/AGENT_RUNS_EDITING.md Phase 2): MCP tools + the REST routes.
 
     fetch_image(url, run_id)                       the server fetches the picture (netguard: every hop vetted, https only,
                                                    15 MB, image formats only, ~40 MP cap, EXIF/GPS stripped) and keeps it

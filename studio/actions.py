@@ -283,15 +283,8 @@ class Studio:
 
     def _preflight(self, ch: dict, text: str, media_urls: list[str], mode: str, options: dict | None = None,
                    probe: bool = True, creating: bool = True) -> dict:
-        res = preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating,
-                              known=self._known_probe, path_loader=self._media_path)
-        from . import commerce  # #Ad + disclosure for shop links, no Channel3 catalogue images (docs/COMMERCE.md)
-        extra = commerce.preflight_findings(self.store, self.s.public_url, text, media_urls)
-        if extra:
-            res["findings"] = list(res.get("findings") or []) + extra
-            if any(f["level"] == "error" for f in extra):
-                res["status"] = "error"
-        return res
+        return preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating,
+                               known=self._known_probe, path_loader=self._media_path)
 
     def _known_probe(self, url: str) -> dict | None:
         """Facts the video worker already measured with ffprobe for media HuhQueue rendered (the web dyno has no ffprobe)."""
@@ -515,8 +508,7 @@ class Studio:
                "remember_rule", "revise", "draft_from_link", "autofix_post", "place_clips_in_week", "save_brand_kit",
                "upload_media", "import_media", "brand_from_website", "follow_feed",
                "fetch_image", "cutout_product", "edit_image",
-               "search_products", "attach_product_to_post",
-               "set_clip_layout")  # One take per-scene layouts (studio/take_layout.py): each re-renders a clip; Commerce (studio/commerce.py) counts too; image tools (studio/image_edit.py): compose_product_card is an edit_image
+               "set_clip_layout")  # One take per-scene layouts (studio/take_layout.py): each re-renders a clip; image tools (studio/image_edit.py): compose_product_card is an edit_image
 
     def kill_switch_check(self, a: Actor, action: str) -> None:
         """The kill switch alone (any agent request that changes something, counted or not)."""
@@ -715,13 +707,6 @@ class Studio:
                 self.store.audit(a.uid, a.label, action, risk, {"channel": ch["service"], "mode": clean["mode"],
                                                                  "error": msg[:600], "stage": "media check"}, ok=False)
                 raise ActionError(msg, 422)
-        from . import commerce  # offer links are short-lived: every shop link is re-resolved right before Buffer gets the post
-        try:
-            commerce.at_publish(self, a, clean["text"])
-        except ActionError as e:
-            self.store.audit(a.uid, a.label, action, risk, {"channel": ch["service"], "stage": "shop links", "error": str(e)[:300]},
-                             ok=False)
-            raise
         inp = build_post_input(ch, clean["text"], clean["media_url"], clean["mode"], clean.get("due_at"), clean.get("media_urls"),
                                clean.get("options"))
         try:
@@ -789,21 +774,12 @@ class Studio:
         assets = post.get("assets") or []
         urls = [x.get("source") for x in assets if x.get("source")]
         kinds = ["video" if (x.get("type") or "").lower() == "video" else "image" for x in assets if x.get("source")]
-        new_text = inp.get("text", post.get("text") or "")
-        pf = preflight.check(ch, new_text, urls, "draft" if draft else "queue",
+        pf = preflight.check(ch, inp.get("text", post.get("text") or ""), urls, "draft" if draft else "queue",
                              loader=None, probe_media=False, creating=False, media_kinds=kinds)
-        from . import commerce  # an edit keeps #Ad + the disclosure line, and its shop links are the person's own and live
-        extra = commerce.preflight_findings(self.store, self.s.public_url, new_text, urls)
-        if extra:
-            pf["findings"] = list(pf.get("findings") or []) + extra
-            if any(f["level"] == "error" for f in extra):
-                pf["status"] = "error"
         msg = preflight_error([pf], override_warnings)
         if msg:
             self.store.audit(a.uid, a.label, "update_post", "blocked", {"buffer_post_id": post_id, "preflight": pf["status"]}, ok=False)
             raise ActionError(msg)
-        if "text" in inp:
-            commerce.at_publish(self, a, new_text)
         if due_at is not None:
             inp.update(dueAt=self._due(due_at), mode="customScheduled")
             if draft:

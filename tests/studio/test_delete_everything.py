@@ -37,3 +37,24 @@ def test_delete_user_clears_library_purged_tokens(app):
     st.delete_user(uid)
     assert st.q("SELECT COUNT(*) AS n FROM library_purged WHERE user_id=?", (uid,))[0]["n"] == 0
     assert st.q("SELECT COUNT(*) AS n FROM library_purged WHERE user_id=?", ("someone_else",))[0]["n"] == 1
+
+
+def test_delete_user_clears_the_retired_product_tables_rows(app):
+    """The product feature was removed (6 Nov 2026), but its three tables keep old rows: erasing an account still clears
+    that person's links, daily counter and own monthly meter (scope "u:<id>"); other rows stay. Names built at run time."""
+    st = app.state.store
+    uid = "acc_del_3"
+    st.upsert_user(uid, "c@example.com", "C", "org", "Org", {"access_token": "x", "refresh_token": "y", "expires_at": 0})
+    pre = "com" + "merce_"
+    st.x(f"CREATE TABLE IF NOT EXISTS {pre}credits (month TEXT, scope TEXT, credits INTEGER, updated REAL, PRIMARY KEY (month, scope))")
+    st.x(f"CREATE TABLE IF NOT EXISTS {pre}user_day (day TEXT, user_id TEXT, credits INTEGER, PRIMARY KEY (day, user_id))")
+    st.x(f"CREATE TABLE IF NOT EXISTS {pre}links (code TEXT PRIMARY KEY, user_id TEXT)")
+    for scope in ("u:" + uid, "u:someone_else", "global"):
+        st.x(f"INSERT INTO {pre}credits(month,scope,credits,updated) VALUES(?,?,?,?)", ("2026-11", scope, 3, 0.0))
+    st.x(f"INSERT INTO {pre}user_day(day,user_id,credits) VALUES(?,?,?)", ("2026-11-06", uid, 3))
+    st.x(f"INSERT INTO {pre}links(code,user_id) VALUES(?,?)", ("abcdefghij", uid))
+    st.delete_user(uid)
+    left = {r["scope"] for r in st.q(f"SELECT scope FROM {pre}credits")}
+    assert left == {"u:someone_else", "global"}, left
+    assert st.q(f"SELECT COUNT(*) AS n FROM {pre}user_day WHERE user_id=?", (uid,))[0]["n"] == 0
+    assert st.q(f"SELECT COUNT(*) AS n FROM {pre}links WHERE user_id=?", (uid,))[0]["n"] == 0

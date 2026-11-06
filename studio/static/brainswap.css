@@ -22,3 +22,9 @@
 .bsw-steps li{overflow-wrap:anywhere}
 @media (max-width:860px){.bsw-addr .btn{width:100%}}
 .bsw-card .bsw-link{font-size:inherit;padding:0 2px;text-decoration:underline;text-underline-offset:2px}
+.bsw-x{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;margin-top:-8px;margin-right:-8px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer}
+.bsw-x:hover{background:var(--line);color:var(--ink)}
+.bsw-x:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+#agMeter .bsw-row{flex-wrap:nowrap}
+#agMeter .bsw-left{margin-left:auto}
+#agMeter .bsw-left + .bsw-x{margin-left:4px}

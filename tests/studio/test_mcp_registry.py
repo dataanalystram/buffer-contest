@@ -8,11 +8,10 @@ import json
 
 import pytest
 
-from studio import commerce, mcp, mcp_registry
+from studio import mcp, mcp_registry
 from studio.actions import ActionError, Actor
 
 from .conftest import agent_token, mcp_call
-from .test_commerce import c3  # noqa: F401  (fixture: mocked Channel3)
 from .test_mcp_run_discipline import fake_server_run  # noqa: F401  (fixture: server-AI run without a model)
 from .test_mcp_templates_locks import rpc
 
@@ -61,8 +60,6 @@ def test_search_tools_finds_by_keyword_capped(human):
     assert all(r["name"] not in mcp_registry.REGISTRY for r in out["results"])
     _, out = mcp_call(human, tok, "search_tools", {"query": "post", "limit": 500})
     assert out["count"] == mcp_registry.MAX_RESULTS
-    _, out = mcp_call(human, tok, "search_tools", {"query": "product search"})
-    assert "search_products" in [r["name"] for r in out["results"][:3]]
     _, out = mcp_call(human, tok, "search_tools", {"query": "zzzqqq"})
     assert out["results"] == []
 
@@ -201,29 +198,6 @@ def test_call_tool_paid_server_ai_needs_the_same_approval(human, fake_server_run
     assert ran.get("id") == 4242 and len(fake_server_run) == 1
     _, again = _via(human, tok, "run_agent", args)   # used up: asks again, never runs twice on one yes
     assert again["needs_user_approval"] is True and len(fake_server_run) == 1
-
-
-def test_call_tool_channel3_search_needs_the_persons_approval(human, c3):  # noqa: F811
-    tok = agent_token(human, policy="trusted", cap=50)
-    _, wait = _via(human, tok, "search_products", {"query": "headphones"})
-    assert wait["needs_user_approval"] is True and wait["estimate"]["provider"] == "Channel3" and c3.calls == []
-    assert human.post(f"/api/approvals/{wait['approval_id']}/approve", json={}).status_code == 200
-    res, out = _via(human, tok, "search_products", {"query": "headphones", "approval_id": wait["approval_id"]})
-    assert not res["isError"] and out["credits_spent"] == 1 and len(c3.calls) == 1
-    _, again = _via(human, tok, "search_products", {"query": "headphones"})
-    assert again["needs_user_approval"] is True and len(c3.calls) == 1
-
-
-def test_call_tool_hits_the_same_rate_limit(human, c3, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(commerce, "USER_PER_MIN", 1)
-    monkeypatch.setattr(commerce, "_hits", {})
-    tok = agent_token(human, policy="trusted", cap=50)
-    h = [x for x in human.get("/api/safety").json()["tokens"] if x["name"] == "Claude"][0]
-    human.patch(f"/api/agent-tokens/{h['id']}", json={"allow_paid_apis": True})   # the person's own standing yes
-    res, _ = _via(human, tok, "search_products", {"query": "kettle"})
-    assert not res["isError"]
-    res, msg = _via(human, tok, "search_products", {"query": "toaster"})
-    assert res["isError"] and "Too many" in msg and len(c3.calls) == 1
 
 
 def test_call_tool_respects_token_channel_scope(human):

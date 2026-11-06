@@ -90,7 +90,6 @@ def test_trim_and_caption_rerenders_the_sample_clip(live, chromium, close_contex
     page.locator("[data-testid=clip-card][data-clip=c5] [data-testid=clip-edit]").click()
     dlg = page.get_by_test_id("clip-dialog")
     dlg.wait_for()
-    assert page.get_by_test_id("clip-tab-product").is_hidden()  # the sample's renders never draw a product card
     before = app.state.store.q("SELECT result FROM agent_runs WHERE kind='take'")[0]["result"]
     old_url = next(c for c in json.loads(before)["clips"] if c["id"] == "c5")["url"]
     first_in = page.get_by_test_id("clip-in").inner_text()

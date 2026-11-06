@@ -67,8 +67,6 @@
     if (d.claude && !d.claude.error) cards.push(["Claude (our key)", `${usd(d.claude.spent_usd)} of ${usd(d.claude.cap_usd)}`],
       ["Claude testing pool", `${usd(d.claude.testing_spent_usd)} of ${usd(d.claude.testing_cap_usd)}`]);
     if (d.oci && !d.oci.error) cards.push(["OCI Gemini (our credit)", `${usd(d.oci.spent_usd)} of ${usd(d.oci.cap_usd)}`]);
-    if (d.channel3 && !d.channel3.error) cards.push([`Channel3 credits ${d.channel3.month}${d.channel3.configured ? "" : " (no key set)"}`,
-      `${(d.channel3.used || 0).toLocaleString()} of ${(d.channel3.cap || 0).toLocaleString()}`]);
     for (const [p, f] of Object.entries(d.free_tiers || {})) cards.push([`${p} requests (24 h)`, `${f.requests_24h} of ${f.max_requests_day}/day`]);
     $("usage").innerHTML = cards.map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("") || "No usage yet.";
   }
