@@ -64,6 +64,13 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
     from .media import selfcheck
     spec, urls = j["spec"], j["urls"]
     print("self-check:", selfcheck.check(spec["kind"]))  # fails loudly (a clear job error) before any work, never degrades silently
+    if spec["kind"] == "take_render":  # advisory only: OCR off (fail open) when tesseract >= 5.5.4 isn't installed yet
+        try:
+            from .media import ocr
+            st = ocr.status()
+            print("ocr:", f"tesseract {st['version']} ok" if st["ok"] else f"off ({st['why']})")
+        except Exception as e:  # noqa: BLE001 - OCR is advisory: the render goes on without it
+            print("ocr: off (status failed:", e.__class__.__name__ + ")")
     tmp = Path(tempfile.mkdtemp(prefix="hq_worker_"))
     src = tmp / "source.mp4"
     try:

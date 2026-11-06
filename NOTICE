@@ -388,3 +388,16 @@ Lucide's rotate-ccw and trash-2 the same way.
   following conditions: The above copyright notice and this permission notice shall be included in all copies or
   substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
   IMPLIED.
+
+--------------------------------------------------------------------------------------------------------------
+studio/media/ocr.py, scripts/worker_tesseract.sh  (separate program, not linked; no code copied)
+  Source:   Tesseract OCR 5.5.4  https://github.com/tesseract-ocr/tesseract  (tag 5.5.4, commit
+            7e548e6eff172f38f97664afe7f7ce40db36c8d6), built on the video worker from that tag
+  Licence:  Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+  Data:     tessdata_fast eng.traineddata  https://github.com/tesseract-ocr/tessdata_fast  (commit
+            87416418657359cb625c412a48b6e1d6d41c29bd, SHA-256 checked), Apache License 2.0
+  Library:  Leptonica (BSD-2-Clause), from the worker's Debian packages
+  What:     the tesseract program is run as a subprocess with fixed arguments (TSV word boxes) on frames FFmpeg
+            samples from One take clips: caption placement off on-screen text, a watermark warning, alt text and the
+            Library search index. No pytesseract or other Python binding is used.
+

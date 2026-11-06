@@ -215,6 +215,23 @@ def punch_emphasis(words: list[dict], keep: list[list[float]]) -> list[float]:
     return [nt for nt in (remap(t, keep) for t in times) if nt is not None]
 
 
+def remap_frames(frames: list | None, keep: list[list[float]], start: float) -> list[dict]:
+    """OCR frames ({t: clip seconds from the span's start, boxes}, studio/media/ocr.scan) on the trimmed timeline. A frame
+    sampled inside a removed stretch is dropped: that picture is no longer in the clip."""
+    out = []
+    for f in frames or []:
+        if not isinstance(f, dict):
+            continue
+        try:
+            t = float(f["t"]) + float(start)
+        except (KeyError, TypeError, ValueError):
+            continue
+        nt = remap(t, keep)
+        if nt is not None:
+            out.append({**f, "t": nt})
+    return out
+
+
 def _filter_graph(keep: list[list[float]], offset: float, audio: bool) -> str:
     """The ffmpeg filter graph that keeps only `keep` (times relative to `offset`), joined with short audio fades."""
     parts, labels = [], []
@@ -306,6 +323,8 @@ def prepare(path: str, m: dict, words: list[dict], faces: list[dict], scenes: li
     m2.update(start=0.0, end=new_dur)
     if m.get("punch_in", True) is not False:  # punch-in emphasis (studio/media/reframe/punch.py) from the untrimmed words:
         m2["_punch_emph"] = punch_emphasis(words, keep)  # a pause the trim shortened still marks the word after it
+    if m.get("_ocr_frames"):  # on-screen text boxes for caption placement follow the cut (studio/media/ocr)
+        m2["_ocr_frames"] = remap_frames(m["_ocr_frames"], keep, start)
     return {"path": out, "m": m2, "words": remap_words(words, keep), "faces": remap_points(faces, keep, "t"),
             "scenes": remap_points(scenes, keep), "src": {**src, "duration": new_dur}, "keep": keep,
             "stats": {**stats, "trimmed_s": plan["removed"], "pauses": plan["pauses"], "fillers": plan["fillers"]}}

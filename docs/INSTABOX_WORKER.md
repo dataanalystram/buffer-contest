@@ -64,6 +64,15 @@ python3 -m venv /data/venv && /data/venv/bin/pip install -r /data/hq/requirement
 /data/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
 ```
 Jobs log to `/data/logs/job-<id>.log` on the box.
+
+**Tesseract OCR (5 Nov 2026).** Debian 13's `tesseract-ocr` is 5.5.0, below the 5.5.4 HuhQueue requires, so the box
+builds the pinned upstream tag once: every job's exec command checks `/data/tesseract/bin/tesseract --version` and, when
+it isn't `tesseract 5.5.4`, starts `scripts/worker_tesseract.sh` in the background (copied to `/data` first, `flock -n`,
+`nice -n 19`, log `/data/logs/tesseract-setup.log`). The script apt-installs the build tools and `libleptonica-dev`,
+clones tag 5.5.4 and refuses to build unless it is commit `7e548e6e…`, builds a static binary into `/data/tesseract`
+(persistent disk), and fetches `eng.traineddata` from tessdata_fast with a SHA-256 check. Jobs keep running meanwhile;
+OCR is off (fail open) until the binary is there. Read-only check: `/data/venv/bin/python -m studio.media.ocr` prints
+`{"ok": true, "version": "5.5.4", ...}`; each take_render job log has an `ocr:` line.
 App env on Render: `HQ_RENDER_BACKEND=instabox`, `INSTABOX_API_KEY` (secret), `HQ_INSTABOX_MACHINE`, `HQ_INSTABOX_REF`.
 No provider key is ever put on the box: Groq ASR and the Smart layout vision picker are called by the app with its own
 `GROQ_API_KEY` / `NVIDIA_API_KEY` / `OPENROUTER_API_KEY`, on the job's token, under the free-tier ledger

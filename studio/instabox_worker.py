@@ -70,6 +70,10 @@ def wake(http: httpx.Client, mid: str) -> tuple[bool, str]:
     return False, f"machine not ready in {wait} s"
 
 
+TESSERACT_TAG = "5.5.4"               # scripts/worker_tesseract.sh builds this tag (kept equal by a test)
+TESSERACT_PREFIX = "/data/tesseract"
+
+
 def layout_vision() -> str:
     """The Smart layout mode the box runs (the app's HQ_LAYOUT_VISION, default shadow like take.yml). Frames only ever
     leave when the take's owner turned Smart layout on, and then through the app (studio/free_proxy.py)."""
@@ -86,7 +90,13 @@ def command(jid: int, app_url: str, kind: str = "", ref: str = "main") -> str:
         env += f" HQ_KIND={shlex.quote(kind)}"
     head = ("set -e; IFS= read -r JOB_TOKEN; export JOB_TOKEN; cd /data/hq; "
             f"git fetch -q --depth 1 origin {shlex.quote(ref)} && git checkout -q -f FETCH_HEAD; "
-            "mkdir -p /data/logs; ")
+            "mkdir -p /data/logs; "
+            # Tesseract OCR >= 5.5.4 (One take on-screen text): built once from the pinned tag in the background, at nice 19,
+            # under a non-blocking lock; OCR stays off (fail open) until it's there (scripts/worker_tesseract.sh)
+            f"{{ {TESSERACT_PREFIX}/bin/tesseract --version 2>&1 | head -1 | grep -qx 'tesseract {TESSERACT_TAG}' && "
+            f"[ -s {TESSERACT_PREFIX}/share/tessdata/eng.traineddata ]; }} || "
+            "(cp scripts/worker_tesseract.sh /data/tesseract-setup.sh && nohup flock -n /data/tesseract.lock nice -n 19 "
+            "sh /data/tesseract-setup.sh > /data/logs/tesseract-setup.log 2>&1 &); ")
     log = f"/data/logs/job-{int(jid)}.log"
     worker = f"-m studio.render_worker --job {int(jid)} --app {shlex.quote(app_url)}"
     if kind == "image_matte":
