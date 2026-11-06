@@ -28,6 +28,7 @@ CASES = [  # service, ratio, options, duration, expected
     ("youtube", "abc", {}, 30, "Video"),  # a ratio we can't read is not called a Short
     ("youtube", "0:0", {}, 30, "Video"),
     ("youtube", "9:16", {}, "181", "Video"),
+    ("youtube", "9:16", {}, "n/a", "Short"),  # a garbled length never raises (ValueError) on a package build
     ("linkedin", "4:5", {}, 30, "Video"),
     ("linkedin", "9:16", {}, 30, "Video"),
     ("tiktok", "9:16", {}, 30, "Video"),

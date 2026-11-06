@@ -35,7 +35,11 @@ def video_name(service: str, ratio: str = "", options: dict | None = None, durat
         t = o.get("fb_type")  # what build_post_input sends: no fb_type = a feed video (type post)
         return {"story": "Story", "reel": "Reel"}.get(t, "Video")
     if svc == "youtube":
-        short = (_vertical(ratio) if ratio else True) and (not duration or float(duration) <= SHORT_MAX_S)
+        try:
+            secs = float(duration) if duration else 0.0
+        except (TypeError, ValueError):
+            secs = 0.0  # an unreadable length doesn't decide it; the ratio does
+        short = (_vertical(ratio) if ratio else True) and (not secs or secs <= SHORT_MAX_S)
         return "Short" if short else "Video"
     return VIDEO_NAMES.get(svc, "Video")
 
