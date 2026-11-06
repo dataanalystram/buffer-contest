@@ -21,6 +21,7 @@ LAYOUT_CHOICES = ("auto", "track", "fit", "split", "screen")
 OPUS_LAYOUTS = ("auto", "track", "fit")  # a shorts-style clip (a pasted link) has one framing for the whole clip
 BG_CHOICES = ("blur", "brand")
 STYLE_CHOICES = ("pip", "stack")
+HOOK_MODES = ("opener", "keep")  # clips from a link: the hook + credit as a 3 s opener (default) or on screen all clip long
 MAX_SCENES = 200
 TOOLS = [
     {"name": "get_clip_layout", "description": "One take: a clip's layout plan, scene by scene ({scene, start, end, layout: "
@@ -32,14 +33,17 @@ TOOLS = [
      "clip only, track or fit). layout: track (follow the "
      "face), fit (whole frame over a blurred or brand-colour background, bg: blur | brand), split (two people stacked), "
      "screen (screen with the face, style: pip | stack) or auto (back to the automatic choice). caption_preset: "
-     "bold_pop | lower_third | two_tone | typewriter. The clip re-renders on the video worker (poll list_clips).",
+     "bold_pop | lower_third | two_tone | typewriter. hook_mode (clips from a link): opener (the hook box and credit pop in "
+     "for the first 3 s, the credit is on the end card too; the default) or keep (both stay on screen for the whole clip). "
+     "The clip re-renders on the video worker (poll list_clips).",
      "inputSchema": {"type": "object", "required": ["take_id", "clip_id"], "properties": {
          "take_id": {"type": "integer"}, "clip_id": {"type": "string"},
          "scene": {"type": "integer", "minimum": 0}, "layout": {"type": "string", "enum": list(LAYOUT_CHOICES)},
          "scenes": {"type": "object", "description": "Several scenes at once: {\"0\": \"track\", \"1\": \"auto\"}",
                     "additionalProperties": {"type": ["string", "object"]}},
          "bg": {"type": "string", "enum": list(BG_CHOICES)}, "style": {"type": "string", "enum": list(STYLE_CHOICES)},
-         "caption_preset": {"type": "string", "enum": ["bold_pop", "lower_third", "two_tone", "typewriter"]}}}},
+         "caption_preset": {"type": "string", "enum": ["bold_pop", "lower_third", "two_tone", "typewriter"]},
+         "hook_mode": {"type": "string", "enum": list(HOOK_MODES)}}}},
 ]
 READ_ONLY = {"get_clip_layout"}
 NAMES = {t["name"] for t in TOOLS}
@@ -128,7 +132,9 @@ def view(takes, a: Actor, rid, clip_id) -> dict:
             "overrides": clip.get("layout_overrides") or {}, "caption_preset": clip.get("caption_preset") or m.get("caption_preset")
             or captions_ass.DEFAULT_PRESET, "caption_presets": captions_ass.presets(),
             "layouts": list(OPUS_LAYOUTS if run["input"].get("style") == "opus" else LAYOUT_CHOICES),
-            "style": run["input"].get("style") or "take"}
+            "style": run["input"].get("style") or "take",
+            **({"hook_mode": "keep" if clip.get("hook_mode") == "keep" else "opener", "hook_modes": list(HOOK_MODES)}
+               if run["input"].get("style") == "opus" else {})}
 
 
 def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
@@ -136,6 +142,7 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
     if not isinstance(body, dict):
         raise ActionError("Send a JSON object.")
     lay, scene, bg, style, preset = (body.get(k) for k in ("layout", "scene", "bg", "style", "caption_preset"))
+    hook_mode = body.get("hook_mode")
     scenes = body.get("scenes")
     batch: dict[int, dict | str] = {}
     if scenes is not None:  # several scenes at once (the UI's Save): {"0": "track", "1": {"layout": "fit", "bg": "brand"}}
@@ -163,8 +170,10 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         raise ActionError("style must be pip or stack.")
     if preset is not None and not captions_ass.clean_preset(preset):
         raise ActionError(f"caption_preset must be one of: {', '.join(captions_ass.PRESETS)}.")
-    if lay is None and preset is None and not batch:
-        raise ActionError("Nothing to change: give layout (with an optional scene) and/or caption_preset.")
+    if hook_mode is not None and hook_mode not in HOOK_MODES:
+        raise ActionError("hook_mode must be opener or keep.")
+    if lay is None and preset is None and not batch and hook_mode is None:
+        raise ActionError("Nothing to change: give layout (with an optional scene), caption_preset and/or hook_mode.")
     takes.h.studio._guard_write(a, "adjust_clip")
     rid = _take_id(rid)
     with takes._take_lock(rid):
@@ -176,6 +185,8 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
             raise ActionError("The sample take can't be re-rendered: start a take from your own video to change a layout.", 409)
         if style not in ("take", "opus"):
             raise ActionError(f"This take's style ({str(style)[:20]}) has no layout choices.", 409)
+        if hook_mode is not None and style != "opus":
+            raise ActionError("hook_mode is for clips from a link (the hook box); a One take clip from your upload has none.", 409)
         if style == "opus":  # a pasted link: one framing for the whole clip, Follow face or Full frame
             if any(i != 0 for i in ([scene] if scene is not None else []) + list(batch)):
                 raise ActionError("Clips from a link have one layout for the whole clip: use scene 0, or no scene.")
@@ -213,10 +224,12 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         clip["layout_overrides"] = ov
         if preset is not None:
             clip["caption_preset"] = preset
+        if hook_mode is not None:
+            clip["hook_mode"] = hook_mode
         clip["status"] = "rendering"
         takes._save(rid, run["steps"], res, "rendering")
         takes.store.audit(a.uid, a.label, "set_clip_layout", "write", {"take": rid, "clip": clip_id, "layout": lay, "scene": scene,
-                                                                       "caption_preset": preset})
+                                                                       "caption_preset": preset, "hook_mode": hook_mode})
     takes._render(a, rid, [clip_id])
     out = view(takes, a, rid, clip_id)
     out["rerendering"] = True
@@ -240,4 +253,4 @@ def call_tool(studio, actor, name: str, args: dict):
     if name == "get_clip_layout":
         return view(t, actor, args.get("take_id"), args.get("clip_id"))
     return set_layout(t, actor, args.get("take_id"), args.get("clip_id"),
-                      {k: args[k] for k in ("layout", "scene", "scenes", "bg", "style", "caption_preset") if k in args})
+                      {k: args[k] for k in ("layout", "scene", "scenes", "bg", "style", "caption_preset", "hook_mode") if k in args})

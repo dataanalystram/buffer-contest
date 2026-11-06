@@ -703,6 +703,7 @@ class Takes(TakeBin, TakeControl):
                           "words": clip_words(an["words"], c, c["start"], c["end"]),
                           "faces": [f for f in an.get("faces") or [] if c["start"] - 1 <= f["t"] <= c["end"] + 1],
                           "layout_overrides": c.get("layout_overrides") or {}, "caption_preset": c.get("caption_preset"),
+                          "hook_mode": c.get("hook_mode"),
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
                           "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else [],
@@ -1442,6 +1443,12 @@ def opus_choices(c: dict) -> tuple[str | None, str | None]:
     return framing, OPUS_CAPTION_STYLE.get(preset) if isinstance(preset, str) else None
 
 
+def opus_hook_mode(c: dict) -> str:
+    """A shorts-style clip's hook: "opener" (default: the hook box and credit pop in for the first 3 s, the credit is on
+    the end card too) or "keep" (both on screen all clip long), from Layout & captions > Hook."""
+    return "keep" if c.get("hook_mode") == "keep" else "opener"
+
+
 def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
     """Yields (clip_id, mp4, cover_jpg, meta) for one clip of a take_render job: the classic One take render, or for
     Opus-style takes one render per ratio (the first under the clip's id, the others as '<id>@<ratio>')."""
@@ -1467,16 +1474,17 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
         b = brand_from_kit(spec.get("kit"), logo_path)
         sz = (int(spec["src"].get("width") or 1920), int(spec["src"].get("height") or 1080))
         framing, cap_style = opus_choices(c)
+        hook_mode = opus_hook_mode(c)
         for i, r in enumerate(spec.get("ratios") or ["9:16"]):
             out = tmp / f"{c['id']}_{r.replace(':', 'x')}.mp4"
             t0 = time.time()
             got = longform.render_moment(src, c, c["words"], ratio=r, brand=b, credit=spec.get("credit") or "", out=str(out),
                                          faces=c.get("faces"), scenes=spec.get("scenes"), detector=spec.get("face_detector", True),
                                          burned_subs=bool(spec.get("burned_subs")), src_size=sz, framing=framing,
-                                         captions_style=cap_style)
+                                         captions_style=cap_style, hook_mode=hook_mode)
             t1 = time.time()
             cover = tmp / f"{c['id']}_{i}.jpg"
-            take.frame_at(str(out), 0.4, str(cover))  # the hook is on screen from frame 0
+            take.frame_at(str(out), 0.4, str(cover))  # the hook opener is fully in from 0.3 s
             tms = {k: v for k, v in (got.get("timings") or {}).items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
             tms.update(cover=round(time.time() - t1, 2), clip_total=round(time.time() - t0, 2))
             rf = got["reframe"]
@@ -1484,7 +1492,8 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
                     "height": got["height"], "layout": {"track": "track", "pad": "pad", "fit": "fit"}.get(rf["mode"], "center"),  # fit: a vertical source, no fallback
                     "face_coverage": rf.get("face_coverage"), "captions": got["captions"], "burned_subs": got["burned_subs"],
                     "caption_problems": got["caption_problems"], "cover_offset_ms": 400, "credit": spec.get("credit") or "",
-                    "face_safe": got.get("face_safe"), "timings": tms, "framing": framing or "auto", "caption_style": cap_style}
+                    "face_safe": got.get("face_safe"), "timings": tms, "framing": framing or "auto", "caption_style": cap_style,
+                    "hook_mode": got.get("hook_mode") or hook_mode, "hook_secs": got.get("hook_secs")}
             yield (c["id"] if i == 0 else f"{c['id']}@{r}"), out.read_bytes(), cover.read_bytes(), meta
     finally:
         import shutil

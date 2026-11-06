@@ -227,8 +227,10 @@ count (digits or words, "a few" = 3) and the length range (20-60 s by default, c
 4. **Reframing** (`reframe_plan`): a MediaPipe face track on the worker drives `take.crop_plan` per clip and per ratio
    (dead zone, smoothing, hard cut on scene changes). No face model on the box keeps a centre crop rather than guessing;
    no face on screen (slides, screen recordings) shows the whole frame over a blurred copy of itself.
-5. **Render** (`render_moment`): opus style per ratio: hook from frame 0, word captions, the credit chip, Follow end
-   card, music under silent stretches. With burned-in subtitles the bottom 16% is cropped before reframing and our
+5. **Render** (`render_moment`): opus style per ratio: the hook as an opener (the brand's card, popping in at frame 0
+   and fading out by `compose.HOOK_OPENER_SECS` = 3 s, with the credit chip), word captions, the Follow end card (with the
+   credit line), music under silent stretches. Layout & captions > Hook "Keep on screen" (`hook_mode: "keep"`) keeps
+   both for the whole clip. With burned-in subtitles the bottom 16% is cropped before reframing and our
    captions are skipped, so captions never stack. Each render gets a contact sheet for a quick visual check.
 
 **One take pause & filler trim + loudness** (`studio/media/cleancut.py`, on by default for One take, `trim_pauses: false`
@@ -377,7 +379,9 @@ Owner bug, 6 Nov 2026: on a One take Opus-style clip the hook box covered the sp
 chin (fixed layout positions; the faces only steered the crop). Now no overlay is placed on a face:
 
 - **Opus style** (`longform.render_moment`): YuNet samples the clip span (2 fps) plus the take's Jev-verified boxes,
-  mapped through the reframe crop into output pixels. A clip-wide keep-out guides the hook box and credit chip, a
+  mapped through the reframe crop into output pixels. The keep-out of the first 3 s (`zones_for(opener_s=...)`) guides
+  the opener's hook box and credit chip (the clip-wide one when the hook is kept on screen; the credit never lands on the
+  hook box, and an opener's credit with no free spot shows on the end card only), a
   per-segment keep-out (every scene cut, at most 4 s) guides the captions: under the chin, else above the head, else the
   safest band (flagged). The hook shrinks, shortens, and is dropped when no spot clear of the face exists.
 - **Main One take path** (`reframe/take_clip.py`): each tracked segment's caption line is placed clear of the head
