@@ -379,7 +379,7 @@ def set_switch(store, admin_uid: str, name, body: dict) -> dict:
 # ------------------------------------------------------------------ usage meters (numbers only)
 def usage(store) -> dict:
     """What the service spends on its own keys and free tiers, against the caps enforced in code."""
-    from . import budget, commerce, free_quota
+    from . import budget, free_quota
     out: dict = {}
     def spent(scope: str) -> float:
         try:
@@ -390,13 +390,6 @@ def usage(store) -> dict:
     out["claude"] = {"spent_usd": spent("global"), "cap_usd": c["global"], "testing_spent_usd": spent("testing"),
                      "testing_cap_usd": c["testing"]}
     out["oci"] = {"spent_usd": spent(budget.OCI_GLOBAL), "cap_usd": oc["global"]}
-    try:
-        commerce.ensure(store)
-        m = commerce._month()
-        out["channel3"] = {"month": m, "used": commerce._used(store, m, "global"), "cap": commerce.monthly_cap(),
-                           "configured": bool(commerce.operator_key())}
-    except Exception as e:  # noqa: BLE001
-        out["channel3"] = {"error": e.__class__.__name__}
     free: dict = {}
     since = time.time() - 86400
     for prov, lim in free_quota.LIMITS.items():

@@ -1,6 +1,6 @@
 """image_ops: the ordered, validated edit list behind ``edit_image`` (MCP + REST), pure Pillow, web-safe.
 
-docs/plans/AGENT_RUNS_EDITING_COMMERCE.md 2.5. Every op is checked before any pixel moves (unknown op, too many ops,
+docs/plans/AGENT_RUNS_EDITING.md 2.5. Every op is checked before any pixel moves (unknown op, too many ops,
 out-of-range values answer a plain error), then applied in order to one image. No model, no network: ``cutout`` here is
 the fast cut-out (studio/hero_edit.py); the ML cut-out is a worker job (studio/image_matte.py, cutout_product engine=hq).
 

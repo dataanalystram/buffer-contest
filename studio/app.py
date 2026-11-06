@@ -935,7 +935,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         studio._guard_write(a, "replace_draft_media")
         return mcp_parity.replace_draft_media(studio, a, {**(body or {}), "post_id": post_id})
 
-    # image editing (docs/plans/AGENT_RUNS_EDITING_COMMERCE.md Phase 2): the same functions as the MCP tools
+    # image editing (docs/plans/AGENT_RUNS_EDITING.md Phase 2): the same functions as the MCP tools
     def _image_tool(name: str, request: Request, body: dict):
         from . import image_edit
         try:

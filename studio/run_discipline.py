@@ -1,4 +1,4 @@
-"""Run discipline for AI apps over MCP (Phase 1 of docs/plans/AGENT_RUNS_EDITING_COMMERCE.md, owner decisions 4 Nov 2026).
+"""Run discipline for AI apps over MCP (Phase 1 of docs/plans/AGENT_RUNS_EDITING.md, owner decisions 4 Nov 2026).
 
 One prompt in Claude ("find the best headphones under EUR 150, make a carousel, edit the images nicely") left several
 Make a post threads and many Library items: every ``create_package`` inserted a new run, every ``render_carousel`` added

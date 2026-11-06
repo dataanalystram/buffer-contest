@@ -1,4 +1,4 @@
-"""Phase 2 image editing (docs/plans/AGENT_RUNS_EDITING_COMMERCE.md 2.3-2.8): fetch_image through netguard, the edit
+"""Phase 2 image editing (docs/plans/AGENT_RUNS_EDITING.md 2.3-2.8): fetch_image through netguard, the edit
 tools over MCP and REST (run media, never extra Library items), the image_matte worker job, its models and licences."""
 import base64
 import io

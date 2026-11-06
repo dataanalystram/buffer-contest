@@ -114,7 +114,7 @@ def vignette(im: Image.Image, ground=BLACK, edge: float = 0.55, fade_from: float
 
 # ---------------------------------------------------------------------------------------------------- 4. product
 # The fast cut-out (no model, web-safe: Pillow + plain Python on a small working copy). Rewritten 4 Nov 2026
-# (docs/plans/AGENT_RUNS_EDITING_COMMERCE.md 2.1-2.2): the old near-white key (inner threshold 70) erased off-white
+# (docs/plans/AGENT_RUNS_EDITING.md 2.1-2.2): the old near-white key (inner threshold 70) erased off-white
 # earcups, kept one blob and zoomed into it. Now the background is only what is connected to the border AND looks like
 # the stage (close in Lab, or a little further but flat), so a light part of the product survives when its outline
 # stops the flood; every significant piece is kept; holes inside the object are filled; low confidence says so instead

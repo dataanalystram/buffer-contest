@@ -1,6 +1,6 @@
 """image_matte: the ML product cut-out, run on the render worker (job kind ``image_matte``), never on the web dyno.
 
-docs/plans/AGENT_RUNS_EDITING_COMMERCE.md 2.3. The fast cut-out (studio/hero_edit.py, no model) runs on the web
+docs/plans/AGENT_RUNS_EDITING.md 2.3. The fast cut-out (studio/hero_edit.py, no model) runs on the web
 instance; when it isn't confident, or the person asks for high quality, the app queues this job on the free worker
 (the InstaBox box when HQ_RENDER_BACKEND=instabox, GitHub Actions render.yml otherwise or as its fallback).
 

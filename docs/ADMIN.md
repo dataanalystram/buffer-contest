@@ -1,7 +1,7 @@
 # Admin panel (`/admin`)
 
 The operator's view of who uses this HuhQueue and what it spends, and what only the operator can do: block, unblock and
-delete an account, cap or revoke one of its tokens, and pause publishing, AI, Channel3, R2 uploads or video links for everyone. Code: `studio/admin.py` (routes + actions), `studio/admin_ui/` (the page). Tests: `tests/studio/test_admin_storage.py`, `tests/studio/test_admin_controls.py`.
+delete an account, cap or revoke one of its tokens, and pause publishing, AI, R2 uploads or video links for everyone. Code: `studio/admin.py` (routes + actions), `studio/admin_ui/` (the page). Tests: `tests/studio/test_admin_storage.py`, `tests/studio/test_admin_controls.py`.
 
 ## Who can open it
 - Set `HQ_ADMIN_IDS` on the web service: comma-separated **Buffer account ids** and/or **Buffer emails** (case-insensitive),
@@ -66,7 +66,6 @@ the admin included, at the one place that work starts; work already running fini
 |---|---|---|
 | `publishing` | anything sent to Buffer (create and edit post); 503 with a plain message. Delete still works. | `BufferClient.create_post` / `edit_post` |
 | `ai` | AI on HuhQueue's own keys: Claude and OCI (`budget.check` / `oci_check`), the free engines (`free_check`), the free starter model, the Groq / NVIDIA / OpenRouter ledger (`free_quota.Ledger.reserve`), the link drafter. The brain falls back to the rule writer, the worker to local Whisper and the layout rules. A person's own key keeps working. | `studio/budget.py`, `studio/free_quota.py`, `House._ai_reserve`, `Studio.draft_from_link` |
-| `channel3` | every request to api.trychannel3.com (search, detail, `/go` resolution); nothing is spent | `commerce._request` |
 | `r2_uploads` | new writes to the bucket: new media stays in the database, One take large uploads answer 507; reads and deletes go on | `r2usage.can_write` |
 | `link_ingest` | new video links (One take, `ingest_video_link`, `clips_from_video`, the agent's Opus path), before any consent is recorded; uploads still work | `Takes.start` |
 
@@ -76,7 +75,7 @@ State is cached 5 s per process; a change in /admin applies at once on this inst
 
 ## Credits and free tiers
 `GET /api/admin/usage`: Claude spend on our key against `AI_BUDGET_TOTAL_USD` (and the testing pool), OCI Gemini against
-`AI_OCI_BUDGET_TOTAL_USD`, Channel3 credits this month on our key against the free 1,000, and the Groq / NVIDIA / OpenRouter
+`AI_OCI_BUDGET_TOTAL_USD`, and the Groq / NVIDIA / OpenRouter
 requests in the last 24 h against each free daily limit. The **Media bandwidth** section (`/api/admin/egress`,
 studio/egress.py) counts **media only**: media bytes read from the database (the part of Supabase egress that matters) and
 media bytes sent to clients (the part of Render bandwidth that matters), with R2 against its caps. Other traffic (pages,

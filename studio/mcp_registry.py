@@ -34,7 +34,7 @@ TOOLS: list[dict[str, Any]] = [
      "and descriptions and returns the best matches (name, one-line summary, required arguments). Then describe_tool for "
      "the full schema and call_tool to run it. Read-only.",
      "inputSchema": {"type": "object", "required": ["query"], "properties": {
-         "query": {"type": "string", "description": "Words for what you want to do, e.g. 'schedule post' or 'product search'"},
+         "query": {"type": "string", "description": "Words for what you want to do, e.g. 'schedule post' or 'make a carousel'"},
          "limit": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS, "description": f"Default {DEFAULT_RESULTS}"}}}},
     {"name": "describe_tool", "description": "One HuhQueue tool's full description and input schema, by name (from "
      "search_tools). Read-only. An unknown name answers 404.",

@@ -94,7 +94,7 @@ several Make a post threads and a Library item per render. The server now enforc
 ## Paid and external APIs need the person's approval
 
 An MCP agent never spends money or credits on its own (owner, 4 Nov 2026; `studio/consent.py`). A gated call (server AI with
-`server_ai: true` today; Channel3 and any credit-spending external API from Phase 4) answers:
+`server_ai: true` today, and any credit-spending external API added later) answers:
 
 ```json
 {"needs_user_approval": true, "approval_id": 41, "tool": "run_agent", "spent_usd": 0,

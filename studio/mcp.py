@@ -522,7 +522,7 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
             hint = _cb.server_ai_hint(name)  # no model call: the client is the brain unless the person chose server AI
             return ok({"content": [{"type": "text", "text": json.dumps(hint, indent=1)}], "structuredContent": hint, "isError": False})
         if not external and _consent.gated(name, args, _cb.SERVER_AI_TOOLS):
-            # paid or credit-spending (server AI, later Channel3): only after the person approves it in HuhQueue (owner, 4 Nov 2026)
+            # paid or credit-spending (server AI): only after the person approves it in HuhQueue (owner, 4 Nov 2026)
             try:
                 studio.kill_switch_check(actor, name)
                 wait = _consent.gate(studio, actor, name, args)

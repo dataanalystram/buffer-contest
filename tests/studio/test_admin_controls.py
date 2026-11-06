@@ -8,11 +8,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import admin, budget, commerce, free_quota, opsctl, r2usage
+from studio import admin, budget, free_quota, opsctl, r2usage
 
 from .conftest import agent_token
 from .test_admin_storage import not_found_body, other_user, s3  # noqa: F401  (s3 is a fixture)
-from .test_commerce import c3  # noqa: F401  (fixture)
 
 NEW_URLS = [("GET", "/api/admin/switches"), ("POST", "/api/admin/switches/publishing"), ("POST", "/api/admin/switches/nope"),
             ("GET", "/api/admin/usage"), ("GET", "/api/admin/users/acc_1/tokens"), ("GET", "/api/admin/users/x/tokens?bad=%ZZ"),
@@ -129,15 +128,6 @@ def test_ai_switch_refuses_every_operator_key_path(app, adm):
     assert free_quota.Ledger(store).reserve("groq", 10)[0] is True
 
 
-def test_channel3_switch_sends_nothing(app, adm, monkeypatch):
-    calls = []
-    monkeypatch.setattr(commerce, "HTTP", httpx.Client(transport=httpx.MockTransport(lambda r: calls.append(r) or httpx.Response(200, json={}))))
-    _pause(adm, "channel3")
-    with pytest.raises(commerce.CommerceError) as e:
-        commerce._request("dummy-key-for-tests", "GET", "/v0/products/x", uid="acc_1")
-    assert e.value.status == 503 and calls == []
-
-
 def test_r2_uploads_switch_refuses_writes(app, adm):
     store = app.state.store
     assert r2usage.can_write(0, store) is None
@@ -201,12 +191,9 @@ def test_token_hit_window():
 
 # ------------------------------------------------------------------ usage
 def test_usage_meters_are_numbers_only(app, adm, monkeypatch):
-    monkeypatch.setenv("CHANNEL3_API_KEY", "dummy-key-for-tests")
     d = adm.get("/api/admin/usage").json()
-    assert {"claude", "oci", "channel3", "free_tiers"} <= set(d)
-    assert d["channel3"]["cap"] <= commerce.FREE_CREDITS and d["channel3"]["configured"] is True
+    assert {"claude", "oci", "free_tiers"} <= set(d) and ("chan" "nel3") not in d
     assert set(d["free_tiers"]) == set(free_quota.LIMITS)
-    assert "dummy-key-for-tests" not in adm.get("/api/admin/usage").text
 
 
 def test_admin_page_has_the_new_sections():
@@ -233,14 +220,6 @@ def test_publishing_pause_keeps_the_confirm_token_and_holds_still_work(app, huma
     _pause(adm, "publishing", False)
     assert human.post("/api/posts/submit", json={"confirm_token": pv["confirm_token"]}).status_code == 200   # same token
     assert [p["text"] for p in fake.created] == ["keep me"]
-
-
-def test_paused_channel3_search_reserves_no_credit(app, human, adm, c3):
-    _pause(adm, "channel3")
-    r = human.post("/api/commerce/search", json={"query": "wireless headphones"})
-    assert r.status_code == 503 and "paused" in r.json()["error"]
-    commerce.ensure(app.state.store)
-    assert not app.state.store.q("SELECT 1 AS x FROM commerce_credits") and not app.state.store.q("SELECT 1 AS x FROM commerce_user_day")
 
 
 def test_migration_stops_while_r2_uploads_is_paused(app, human, adm, monkeypatch, s3):
