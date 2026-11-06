@@ -212,7 +212,8 @@ class BrandStudio:
     # ================================================================ templates
     def list_templates(self, a=None) -> dict:
         """Built-in templates, then this workspace's custom ones (id custom:<slug>, custom: true) when an actor is given."""
-        out = [{"id": k, **v} for k, v in templates.TEMPLATES.items()]
+        from . import provenance
+        out = [{"id": k, **v, "provenance": provenance.BUILTIN} for k, v in templates.TEMPLATES.items()]
         if a is not None:
             from . import custom_templates
             out += custom_templates.attach(self.house).list(a)
