@@ -208,6 +208,27 @@ def test_every_r2_read_is_counted_once_inside_or_outside_the_cache(app, s3):
         assert len(blobstore.read(None, key, 0, 4)) == 5
     assert t[0] == 5 and egress.snapshot()["r2_bytes"] == base + 10
 
+
+def test_a_library_range_across_an_r2_chunk_and_a_db_chunk_meters_each_part(app, s3, monkeypatch):
+    """Cache off, a Library range spanning a chunk in R2 and a chunk kept in the database: only the R2 chunk's share of
+    the answer is ``r2``; the database chunk's share still fills ``db`` (CodeRabbit, PR #133)."""
+    from studio import egress, library, mediacache
+    store = app.state.store
+    monkeypatch.setattr(library, "CHUNK", 64)
+    item = app.state.house.library.save_bytes(Actor("acc_1"), image_bytes(40, 30), "mixed.png")
+    iid = item["id"]
+    rows = store.q("SELECT n, storage_key FROM library_chunks WHERE item_id=? ORDER BY n", (iid,))
+    assert len(rows) >= 3 and all(r["storage_key"] for r in rows)
+    whole = b"".join(blobstore.read(None, r["storage_key"]) for r in rows)
+    store.x("UPDATE library_chunks SET data=?, storage_key=NULL WHERE item_id=? AND n=2", (whole[128:192], iid))
+    store._media_cache = mediacache.MediaCache(cap=0)
+    f = app.state.house.library.file(Actor("acc_1"), iid)
+    before = egress.snapshot()
+    assert f["read"](100, 160) == whole[100:161]
+    after = egress.snapshot()
+    assert after["r2_bytes"] - before["r2_bytes"] == 28          # 100..127 from the R2 chunk
+    assert after["db_bytes"] - before["db_bytes"] == 33          # 128..160 from the database chunk
+
 # ------------------------------------------------------------------ migration
 def test_copy_only_migration_keeps_the_bytea_and_reads_switch_to_r2(app, human, s3, monkeypatch):
     store = app.state.store
