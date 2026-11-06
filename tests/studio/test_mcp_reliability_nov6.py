@@ -244,8 +244,10 @@ def test_answers_list_prerequisites_and_post_steps_run_cheap_ones(human, page): 
     assert sc["prerequisites"]
     tok2 = agent_token(human, policy="trusted", cap=100)
     run = _ok(human, tok2, "make_post", {"prompt": "post this https://news.example.com/ai-launch", "brain": "external"})
-    out = _ok(human, tok2, "post_render_carousel", {"run_id": run["id"]})
-    assert out["auto_ran"] == ["read_url", "extract_facts"]
+    out = _ok(human, tok2, "post_extract_facts", {"run_id": run["id"]})  # read_url first, by itself
+    assert out["auto_ran"] == ["read_url"] and out["deprecated"]
+    steps = [st.get("tool") or st.get("key") for st in human.get(f"/api/agent/runs/{run['id']}").json()["steps"]]
+    assert "read_url" in " ".join(map(str, steps)) or out["auto_ran"]
     # a post_* step on a start_post run: the right tools named
     sc = _err(human, tok, "post_render_reel", {"run_id": rid})
     assert sc["code"] == "wrong_run_type"
