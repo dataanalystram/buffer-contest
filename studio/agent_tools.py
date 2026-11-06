@@ -13,7 +13,7 @@ import re
 import time
 from urllib.parse import urlparse
 
-from . import brand, demo_guard, demo_view, drafter, factcheck, hbstyle, intake, llm, netguard, reader, render, sources, template_pick, untrusted, vision
+from . import brand, demo_guard, demo_view, drafter, factcheck, hbstyle, intake, intent, llm, netguard, reader, render, sources, template_pick, untrusted, vision
 from .media import styles as media_styles
 from .actions import ActionError
 from .headline import cover_hook
@@ -579,6 +579,17 @@ class Tools(EditorialTools):
 
     def t_search_news(self, query: str) -> dict:
         run = self.state()
+        inp = run.get("input") or {}
+        # server-side guard (owner bug, 6 Nov 2026), whoever the brain is: the person's link or upload is the source, and
+        # a query made only of instruction words ("exact only, do not change single character") is never searched
+        if inp.get("source_url") or (run["result"].get("upload") and not (inp.get("intake") or {}).get("research")):
+            raise ActionError("No search needed: your link (or upload) is the source.")
+        if inp.get("verbatim") or (inp.get("intent") or {}).get("kind") in ("chat", "ask", "verbatim"):
+            raise ActionError("No search needed for this request.")
+        clean = intent.search_query(str(query or ""))
+        if not clean:
+            raise ActionError("Tell me the topic in a few words (or paste a link), and I'll look for recent stories.")
+        query = clean
         if self._sample_research():
             from . import demo as demo_mod
             art = demo_mod.SAMPLE_ARTICLE
@@ -590,7 +601,8 @@ class Tools(EditorialTools):
         run["result"]["leads"] = leads[:6]
         self.save(run)
         if not leads:
-            raise ActionError(f"No recent stories found for “{query}”. Try a broader topic or paste a link.")
+            raise ActionError(f"I couldn't find recent stories about “{query[:80]}” right now, so I haven't made a post. Paste "
+                              "a link to the story, or give me the topic in a few more words, and I'll try again.")
         return {"leads": [{"title": l["title"], "url": l["url"], "source": l.get("source")} for l in leads[:6]]}
 
     def t_find_media(self, query: str = "") -> dict:
@@ -1037,8 +1049,30 @@ class Tools(EditorialTools):
                 bad.append(m["url"])
         return bad
 
+    OVERLAY_ASK = re.compile(r"\b(?:overlay|headline|text on (?:it|the (?:image|photo|picture))|add (?:a |the )?(?:title|text|"
+                             r"headline)|carousel|slides?|branded|brand ?kit|template|edit (?:it|the (?:image|photo))|"
+                             r"design|cover card|news card)\b", re.I)
+
+    def _photo_as_is(self, run: dict) -> bool:
+        """Their own photo is posted as uploaded (owner bug B2, 6 Nov 2026: the request was burned onto it as a headline,
+        over a dark gradient) unless they asked for an overlay, slides, a template or the brand look."""
+        up = (run.get("result") or {}).get("upload") or {}
+        return up.get("type") == "photo" and bool(up.get("token")) and \
+            not self.OVERLAY_ASK.search((run.get("input") or {}).get("prompt", "")) and \
+            ((run.get("input") or {}).get("intake") or {}).get("format") in (None, "auto", "photo")
+
+    def _set_photo_as_is(self, run: dict, ids: list[str]) -> dict:
+        up = run["result"]["upload"]
+        ids = [i for i in ids if next((c["service"] for c in run["input"]["channels"] if c["id"] == i), "") not in VIDEO_ONLY]
+        media = [{"token": up["token"], "url": up["url"], "type": "photo", "role": "original", "name": up.get("name") or "photo"}]
+        self._set_media(run, ids, media, "photo", {"note": "Your photo, as uploaded (no overlay)."})
+        self.save(run)
+        return {"channels": ids, "format": "photo", "media": [up["url"]], "clipped": [], "as_uploaded": True}
+
     def t_render_cover(self, channel_ids: list | None = None) -> dict:
         run = self.state()
+        if self._photo_as_is(run):
+            return self._set_photo_as_is(run, [c["id"] for c in self.channels(run, channel_ids)])
         ids = [c["id"] for c in self.channels(run, channel_ids)]
         media = self._slides_45(run, carousel=False)
         self._set_media(run, ids, media, "photo")
@@ -1047,6 +1081,8 @@ class Tools(EditorialTools):
 
     def t_render_carousel(self, channel_ids: list | None = None) -> dict:
         run = self.state()
+        if self._photo_as_is(run):
+            return self._set_photo_as_is(run, [c["id"] for c in self.channels(run, channel_ids)])
         ids = [c["id"] for c in self.channels(run, channel_ids) if c["service"] not in VIDEO_ONLY]
         rec = self._template_choice(run)
         tid = self._drawable(rec["id"])
@@ -2101,6 +2137,9 @@ class Tools(EditorialTools):
                                                                        if any(r.get("scope") and c["service"] in r["scope"] for r in rules) else {})}
                                                      for c in chans},
                                         **({"keyword": keyword} if keyword else {}),
+                                        **({"constraints": "Honour exactly: " + ", ".join(k.replace("_", " ") for k, v in
+                                                           intent.constraints(prompt).items() if v)}
+                                           if any(intent.constraints(prompt).values()) else {}),
                                         "format": "Return JSON {network: caption}. Every caption opens with a hook line, never a plain "
                                                   "restatement of the headline. The first line is keyword-first: it starts with the "
                                                   "key search term (the keyword when given, else the company, product or topic). At "
@@ -2118,10 +2157,14 @@ class Tools(EditorialTools):
             self.h._ai_audit(self.a, eng, "captions")
         caps = res.setdefault("captions", {})
         trace: list = []
+        cons = (((run.get("input") or {}).get("intent") or {}).get("constraints") or
+                intent.constraints((run.get("input") or {}).get("prompt", "")))
         for d in drafts:
             raw = brand.apply_text_rules(cap_hashtags(keyword_first(tidy(d["text"], st), keyword)), brand.for_channel(rules, d["service"]), trace)
             if d["service"] == "youtube":
                 raw = dedupe_youtube(raw, st["headline"])
+            if cons.get("no_hashtags") or cons.get("no_link"):
+                raw = intent.apply_constraints(raw, cons)  # "no hashtags" / "don't add a link": honoured, never a suggestion
             text = drafter.fit(d["service"], raw)
             caps[d["channel_id"]] = {"text": text, "engine": d["engine"], "tone": tones.get(d["channel_id"], "") or default_tone,
                                      "trimmed": text != raw}
@@ -2158,6 +2201,12 @@ class Tools(EditorialTools):
             main = next((m for m in media if m["type"] == "video"), None) or (media[0] if media else None)
             meta = self.h.media_meta(self.a, main["token"]) if main and main.get("token") else None
             chk = brand.brand_check(cap["text"], meta, brand.for_channel(rules, c["service"]), kit)
+            chk = brand.content_check(chk, cap["text"], [(meta or {}).get("headline") or "", st.get("headline") or ""]
+                                      if not cap.get("exact") else [(meta or {}).get("headline") or ""], meta,
+                                      (run.get("input") or {}).get("prompt", ""), exact=bool(cap.get("exact")))
+            if not chk.get("pass", True):
+                problems += [f"{c['service']}: {r['rule'].lower()}" for r in chk.get("results") or []
+                             if r.get("kind") == "content" and not r.get("pass")]
             clipped = self._clipped(media)
             if clipped:
                 problems.append(f"{c['service']}: text clipped on {len(clipped)} image(s)")
@@ -2265,6 +2314,39 @@ class Tools(EditorialTools):
         if svc in TEXT_FIRST:
             return imgs[:4]
         return imgs[:1]
+
+    def exact_caption(self, run: dict, ids: list[str], text: str) -> list[str]:
+        """The person's exact caption on these channels, byte for byte (never tidied, fitted, hashtagged or linked). A
+        channel with no media yet becomes a text post, or their own upload as uploaded; one that already has media keeps
+        it. Video-only channels with no video are skipped. -> the channel names it went on."""
+        res = run["result"]
+        up = res.get("upload") or {}
+        cm = res.get("channel_media") or {}
+        caps = res.setdefault("captions", {})
+        names = []
+        for c in run["input"]["channels"]:
+            if c["id"] not in ids:
+                continue
+            if c["id"] not in cm:
+                if up.get("type") == "video":
+                    self._set_media(run, [c["id"]], [{"token": up["token"], "url": up["url"], "type": "video", "role": "original",
+                                                      "name": up.get("name") or "video"}], "reel", {"note": "Your video, as uploaded.", "exact": True})
+                elif c["service"] in VIDEO_ONLY:
+                    self._set_media(run, [c["id"]], [], "skipped", {"note": f"{c['service'].title()} needs a video, so it's skipped."})
+                    continue
+                elif up.get("type") == "photo":
+                    self._set_media(run, [c["id"]], [{"token": up["token"], "url": up["url"], "type": "photo", "role": "original",
+                                                      "name": up.get("name") or "photo"}], "photo", {"note": "Your photo, as uploaded.", "exact": True})
+                else:
+                    self._set_media(run, [c["id"]], [], "text", {"note": "Text only: your exact caption.", "exact": True})
+            elif (cm.get(c["id"]) or {}).get("format") == "skipped":
+                continue
+            caps[c["id"]] = {"text": text, "engine": "exact", "tone": "", "trimmed": False, "exact": True}
+            names.append(c.get("name") and f"{c['service'].title()}" or c["service"].title())
+        if not res.get("story"):
+            res["story"] = {"headline": "", "facts": [], "why": "", "source": "your text", "url": "", "label": "", "exact": True}
+        self.save(run)
+        return list(dict.fromkeys(names))
 
     def t_save_buffer_drafts(self, channel_ids: list | None = None) -> dict:
         run = self.state()

@@ -176,7 +176,7 @@ function libDraw(d) {
   grid.querySelectorAll("[data-empty-act]").forEach((b) => (b.onclick = () => {
     const a = b.dataset.emptyAct;
     if (a === "clear") libClearFilters(); else if (a === "upload") $("#libFile").click(); else if (a === "link") $("#libLinkBtn").click();
-    else if (a === "make") showTab("agent");
+    else if (a === "make") { if (window.hqNewPost) window.hqNewPost(""); else showTab("agent"); }  // a NEW thread
   }));
   LIB.pageIds = d.items.filter((x) => !x.read_only).map((x) => String(x.id));
   $("#libSelAllWrap").hidden = !LIB.pageIds.length && !LIB.sel.size;

@@ -218,7 +218,13 @@
     box.querySelectorAll("[data-id]").forEach((b) => (b.onclick = async () => {
       if (b.dataset.kind === "take") return window.openTake(b.dataset.id);
       if (window.hcCancelThread) window.hcCancelThread();  // a thread still loading never lands over this post
-      const r = await api(`/api/agent/runs/${b.dataset.id}`); showRun(r); if (["running", "rendering"].includes(r.status)) watchRun(r.id); window.scrollTo({ top: 0, behavior: "smooth" });
+      // this open is cancellable too: a quicker second click (or New post) aborts it, so it never lands late
+      const tk = HQLoad.start("thread");
+      try {
+        const r = await api(`/api/agent/runs/${b.dataset.id}`, { signal: tk.signal }); if (!tk.live()) return;
+        showRun(r); if (["running", "rendering"].includes(r.status)) watchRun(r.id); window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (e) { if (!HQLoad.aborted(e) && tk.live()) toast(e.message, 5000); }
+      finally { if (tk.live()) tk.done(); }
     }));
     window.hqPager($("#mpRecentPager"), { total: rows.length, page: MP.page, per, label: "Recent content pages", onPage: (n) => { MP.page = n; drawRecent(); } });
   }
@@ -237,6 +243,18 @@
     if (window.hqThreadUrlOff) window.hqThreadUrlOff(!!replace);
   }
   window.mpLeaveThread = leaveThread;
+  // Every "Make a post" entry point on another screen (News / Discover "Make post", the Inbox and Library empty states,
+  // Sources, Brand studio) opens a NEW thread (owner bug, 6 Nov 2026: Discover's Make post reopened the previous thread).
+  // The open thread's request and poll are aborted (AbortController via HQLoad / stopWatch) so a late answer can't redraw
+  // it, its address is left, and the composer starts empty or with the story prefilled. Back returns to the screen the
+  // click came from (showTab pushes one entry).
+  window.hqNewPost = (text) => {
+    if (window.hcCancelThread) window.hcCancelThread();
+    leaveThread();
+    showTab("agent", "agent");
+    if (text) fill(text);
+    else { const t = q(); t.value = ""; t.dispatchEvent(new Event("input")); t.focus(); }
+  };
   $("#mpNew").onclick = () => { leaveThread(); q().focus(); };
   const hostIcon = (u) => { const h = hostOf(u); return h ? `<a class="mp-src" href="${escUrl(u)}" target="_blank" rel="noopener" data-testid="mp-source">${fav(h)}<span>${esc(h)}</span></a>` : ""; };
   function sources(r) {

@@ -22,7 +22,7 @@ import uuid
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, brain_llm, budget, chat_context, demo_guard, demo_view, editorial_tools, intake, llm, template_pick, untrusted
+from . import activity, brain_llm, budget, chat_context, demo_guard, demo_view, editorial_tools, intake, intent, llm, template_pick, untrusted
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -43,6 +43,13 @@ INTERRUPTED = ("The server restarted while I was working on this post{at}, so I 
 
 SYSTEM = """You are HuhQueue's post editor. You turn the person's request into on-brand social posts for their Buffer channels,
 using ONLY the tools. Rules:
+- Understand the request before any tool. Context.intent says what the app read: a greeting or a test message never
+  reaches you; quoted text with exact / verbatim / "don't change" wording is posted byte for byte by the app itself.
+- search_news is for current information only (today's news, a launch, "what did X announce"), and only when the
+  person gave no link and no upload. Never search with the request's own instruction words; Context.intent.query is
+  the only query to use. When search_news returns nothing, finish and ask for a link or a clearer topic.
+- Honour Context.intent.constraints exactly: no_hashtags -> no hashtags at all; no_link -> no URL in the caption;
+  no_extra -> nothing beyond what they asked. "only <channel>" means that channel and no other.
 - A link the person pasted is THE source. Read it with read_url. Never search instead of reading their link.
 - Words that say what to DO ("search it", "research", "post on all channels", "make a reel", "you can do that") are
   instructions, never the topic. The topic comes from the link, the research and the upload's own content.
@@ -100,7 +107,7 @@ using ONLY the tools. Rules:
 - Always call write_captions, then check (it builds the packages), then finish with one or two sentences.
 - Weekly recap ("7 days what happened in AI", "weekly recap", "AI round-up of the week"): recap_plan, then (if it returns a
   question) finish and ask it; with the answer call render_recap(rights_confirmed), then write_captions and check.
-- save_buffer_drafts only when the person asked for drafts or to put it in Buffer.
+- Never save anything to Buffer: the person reviews each post and presses Save draft / Add to queue on its card.
 - Pass the person's tone words to write_captions (e.g. tone "short punchy explainer"); the tone shapes the hook and rhythm.
 - Captions in tool results and the state are the full saved text unless marked "…[preview]". Never tell the person a caption
   is cut off unless write_captions reports complete=false for that channel."""
@@ -114,6 +121,14 @@ def oops(ref: str) -> str:
     """What the person reads when something broke on our side: plain words, a reference for the log, what to do next."""
     return (f"Something went wrong on my side, so I stopped (reference {ref}). What's made so far is kept. "
             "Press Retry to try again.")
+
+
+def calm(why: str) -> str:
+    """A tool's refusal as the person reads it: their next step, never an exception text or a stack of tool words."""
+    w = re.sub(r"\s+", " ", str(why or "")).strip()
+    if not w or re.match(r"^[A-Z]\w*(?:Error|Exception)\b", w) or "Traceback" in w:
+        return "I couldn't finish that, so I stopped before making anything. Press Retry, or paste a link and I'll start from it."
+    return w[:400]
 
 
 def _now() -> float:
@@ -259,6 +274,11 @@ class Brain:
         said_all = "you said all" in parsed["channels_why"] or parsed["channels_why"].startswith("the channels you named")
         ids = parsed["channel_ids"] if said_all or not body.get("channel_ids") else body["channel_ids"]  # the prompt wins over the chips
         chans = [c for c in chans if c["id"] in ids]
+        # intent first (owner bug, 6 Nov 2026): "test" / "hi" get a short reply with no tools; a request with nothing to
+        # post about gets one specific question; quoted exact text is the caption, byte for byte (studio/intent.py)
+        it = intent.classify(prompt, has_url=bool(parsed["urls"]), has_upload=bool(body.get("media_token")))
+        if it["kind"] in ("chat", "ask") and body.get("brain") != "external":
+            return self._chat_run(a, prompt, parsed, chans, it)
         if not chans:
             raise ActionError("Pick at least one connected channel.")
         if body.get("format") and body["format"] != "auto":
@@ -267,18 +287,21 @@ class Brain:
         meta = self.h.media_meta(a, tok) if tok else None
         if tok and meta is None:
             raise ActionError("Unknown media token. Upload the file first.", 404)
-        split = self._split_request(a, body, prompt, parsed, chans, tok, meta)
-        if split is not None:
-            return split
-        rec = self._recap_request(a, body, prompt, parsed, chans, tok)
-        if rec is not None:
-            return rec
+        if it["kind"] != "verbatim":
+            split = self._split_request(a, body, prompt, parsed, chans, tok, meta)
+            if split is not None:
+                return split
+            rec = self._recap_request(a, body, prompt, parsed, chans, tok)
+            if rec is not None:
+                return rec
         from .media import styles as media_styles
         theme = media_styles.resolve(str(body.get("theme") or "auto"))
         theme = theme if theme == "auto" or media_styles.known(theme) else "auto"
         inp = {"prompt": prompt, "intake": parsed, "source_url": parsed["source_url"], "media_token": tok,
                "theme": theme, "brand_colors": bool(body.get("brand_colors")), "add_logo": body.get("add_logo", True) is not False,
                "brief": str(body.get("brief") or "")[:1000],  # theme: validated above (unknown -> auto); a gallery pick wins
+               "intent": {k: it.get(k) for k in ("kind", "query", "needs_search", "constraints")},
+               **({"verbatim": it["text"]} if it["kind"] == "verbatim" else {}),
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
         res = {"thread": [{"role": "user", "text": prompt or "(your file)", "at": _now()}], "plan": [], "brain": {}}
         if tok:
@@ -296,11 +319,108 @@ class Brain:
         rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
                            (a.uid, "agent", json.dumps(inp), "running", json.dumps([]), json.dumps(res), _now(), _now()))
         self.store.audit(a.uid, a.label, "agent_run", "read", {"run": rid, "kind": "agent", "source": "link" if parsed["source_url"] else "topic"})
-        if body.get("brain") != "external":  # external: the person's own assistant drives the tools over MCP
+        if body.get("brain") != "external" and it["kind"] == "verbatim":
+            self._spawn(self._exact_go, a, rid, None, None)  # their exact words: no research, no rewriting
+        elif body.get("brain") != "external":  # external: the person's own assistant drives the tools over MCP
             self._spawn(self._go, a, rid, None)
         else:
             self.h._save(rid, [], res, "ready")
         return self.h.run(a, rid)
+
+    def _chat_run(self, a: Actor, prompt: str, parsed: dict, chans: list[dict], it: dict) -> dict:
+        """A thread whose first message needs no tools (a greeting, "test", or nothing to post about yet): the reply is
+        written at once, nothing is searched, rendered or saved. A real request sent next in the same thread starts the
+        post there (reply -> _restart_from_chat)."""
+        inp = {"prompt": prompt, "intake": parsed, "source_url": "", "media_token": "", "theme": "auto", "brand_colors": False,
+               "add_logo": True, "brief": "", "intent": {k: it.get(k) for k in ("kind", "query", "needs_search", "constraints")},
+               "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
+        res = {"thread": [{"role": "user", "text": prompt, "at": _now()}, {"role": "agent", "text": it["reply"], "at": _now()}],
+               "plan": [], "brain": {"mode": "chat", "provider": "rules", "model": "built-in", "source": "intent"},
+               "chat": {"kind": it["kind"]}}
+        rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
+                           (a.uid, "agent", json.dumps(inp), "ready", json.dumps([]), json.dumps(res), _now(), _now()))
+        self.store.audit(a.uid, a.label, "agent_run", "read", {"run": rid, "kind": "agent", "source": "chat"})
+        return self.h.run(a, rid)
+
+    def _restart_from_chat(self, a: Actor, rid: int, run: dict, text: str) -> dict:
+        """The thread started with small talk (or a search that found nothing): this message is the real request, so the
+        run is planned from it, in the same thread."""
+        res = run["result"]
+        connected = [c for c in self.h.studio.channels(a) if not c.get("isDisconnected")]
+        parsed = intake.parse(text, connected)
+        it = intent.classify(text, has_url=bool(parsed["urls"]), has_upload=bool(res.get("upload")))
+        if it["kind"] in ("chat", "ask"):
+            res["chat"] = {"kind": it["kind"]}
+            return self._answer(a, rid, run, it["reply"] if it["kind"] == "ask" or not res.get("plan") else intent.CHAT_REPLY)
+        named = parsed["channels_why"] == "the channels you named" or "you said all" in parsed["channels_why"]
+        prev = [c["id"] for c in run["input"].get("channels") or []]
+        ids = parsed["channel_ids"] if named or not prev else prev
+        chans = [c for c in connected if c["id"] in ids]
+        if not chans:
+            return self._answer(a, rid, run, "Pick at least one connected channel below, then send that again.")
+        inp = {**run["input"], "prompt": text, "intake": parsed, "source_url": parsed["source_url"],
+               "intent": {k: it.get(k) for k in ("kind", "query", "needs_search", "constraints")},
+               "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
+        inp.pop("verbatim", None)
+        if it["kind"] == "verbatim":
+            inp["verbatim"] = it["text"]
+        res.pop("chat", None)
+        res.pop("error", None)
+        self.store.x("UPDATE agent_runs SET input=? WHERE id=?", (json.dumps(inp), rid))
+        self.h._save(rid, run["steps"], res, "running")
+        if it["kind"] == "verbatim":
+            self._spawn(self._exact_go, a, rid, None, None)
+        else:
+            self._spawn(self._go, a, rid, None)
+        return self.h.run(a, rid)
+
+    def _exact_go(self, a: Actor, rid: int, text: str | None, channel_ids: list | None) -> None:
+        """The person's exact caption, byte for byte, on the channels they named (owner bug, 6 Nov 2026). No search, no
+        facts, no rewriting, no hashtags, links or brand voice added. A first run posts it as a text post (or with their
+        own upload, as uploaded); a reply in a thread changes only the caption and keeps each channel's media."""
+        with _rlock:
+            _running.add(rid)
+        tools = Tools(self.h, a, rid)
+        try:
+            run = self.h.run(a, rid)
+            text = run["input"].get("verbatim", "") if text is None else text
+            ids = [c["id"] for c in run["input"]["channels"] if not channel_ids or c["id"] in channel_ids]
+            if not text or not ids:
+                raise ActionError("Tell me the exact caption in quotes, and which channel it's for.")
+            if not run["result"].get("packages"):
+                self._plan(a, rid, ["Use your exact caption, character for character",
+                                    "No research, rewriting, hashtags or links added", "Check it and show it for your review"],
+                           {"mode": "exact", "provider": "rules", "model": "built-in", "source": "your exact text"})
+            key = self._step(a, rid, "exact_caption", {}, label="Use your exact caption")
+            run = self.h.run(a, rid)
+            names = tools.exact_caption(run, ids, text)
+            self._done(a, rid, key, "done", f"{len(text)} characters, unchanged · {', '.join(names)}")
+            self.call(a, rid, tools, "check", {})
+            self._say(a, rid, f"Done: your exact caption is on {', '.join(names)}, character for character (nothing added). "
+                              "Review it below. Nothing goes to Buffer until you press the button on the post.")
+            self._stop_pending(rid)
+            run = self.h.run(a, rid)
+            self.h._save(rid, run["steps"], run["result"], "ready" if run["result"].get("packages") else "failed")
+        except ActionError as e:
+            self._calm_fail(a, rid, str(e), text or "")
+        except Exception as e:  # noqa: BLE001  never leave a run spinning
+            self._crash(a, rid, e, retry_text=text or "")
+        finally:
+            with _rlock:
+                _running.discard(rid)
+
+    def _calm_fail(self, a, rid, why: str, retry_text: str = "") -> None:
+        """A tool said no (nothing found, a page that won't open): one calm sentence and a Retry button, never a raw
+        error. Retry sends the same words again (house.js chat-retry-run)."""
+        try:
+            run = self.h.run(a, rid)
+            run["result"]["error"] = {"ref": "", "at": _now(), "calm": True,
+                                      "retry_text": (retry_text or run["input"].get("prompt") or "")[:intake.MAX_PROMPT]}
+            run["result"]["chat"] = {"kind": "fallback"}  # the next message in this thread can start the post afresh
+            self.h._save(rid, run["steps"], run["result"])
+        except Exception:  # noqa: BLE001  the sentence below still lands
+            traceback.print_exc()
+        self._fail(a, rid, calm(why))
 
     def _split_request(self, a: Actor, body: dict, prompt: str, parsed: dict, chans: list[dict], tok: str, meta: dict | None):
         """"split this into 5 shorts <link>" / "find the best moments of this video": a long video becomes several
@@ -496,6 +616,27 @@ class Brain:
         summ = chat_context.summarize(run)
         if summ:
             res["thread_summary"] = summ
+        # intent first in a thread too (owner bug, 6 Nov 2026): "replace / set / edit the LinkedIn caption to <text>",
+        # "use exactly ...", "verbatim", quoted text -> that caption, byte for byte; small talk -> a short answer
+        exact = intent.caption_edit(text)
+        if exact and run["result"].get("packages"):
+            low = text.lower()
+            svcs = [s for s, pat in intake.SERVICE_WORDS.items() if re.search(pat, low.replace(exact.lower(), " "))]
+            ids = [c["id"] for c in run["input"]["channels"] if not svcs or c["service"] in svcs]
+            if not ids:
+                on = ", ".join(dict.fromkeys(c["service"].title() for c in run["input"]["channels"]))
+                return self._answer(a, rid, run, f"This post isn't on {', '.join(s.title() for s in svcs)}; it's on {on}. "
+                                                 "Which of those should get the new caption?")
+            self.h._save(rid, run["steps"], res, "running")
+            self._spawn(self._exact_go, a, rid, exact, ids)
+            return self.h.run(a, rid)
+        if res.get("chat") and not res.get("packages"):
+            return self._restart_from_chat(a, rid, run, text)
+        pending = bool(res.get("ask") or res.get("conflicts") or (res.get("recap") or {}).get("awaiting_rights") or
+                       (res.get("rights_question") and not (res.get("rights") or {}).get("mode")))
+        if intent.small_talk(text) and not pending:
+            return self._answer(a, rid, run, "I'm here. Tell me what to change on the post, for example “make the hook "
+                                             "stronger”, or set an exact caption: set the LinkedIn caption to “your text”.")
         routed = self._route_reply(a, rid, run, text)
         if routed is not None:
             return routed
@@ -1157,13 +1298,18 @@ class Brain:
             res = run["result"]
             if res.get("packages"):
                 tools._no_video_plan_note(run)  # a plan rewritten after check still says it (deduped)
-            status = "ready" if res.get("packages") else "failed"
+            status = "ready" if res.get("packages") or (res.get("chat") or {}).get("kind") == "ask" else "failed"
             if res.get("conflicts"):
                 status = "ready"  # packages are on hold; the question is in the thread
+            if status == "failed" and not res.get("error"):
+                # the brain stopped without a post (a tool failed and it gave up): a calm line and Retry, not a dead end
+                fails = [s.get("detail") for s in run["steps"] if s.get("status") == "failed"]
+                self._stop_pending(rid)
+                return self._calm_fail(a, rid, fails[-1] if fails else "I stopped before making a post.", message or "")
             self._stop_pending(rid)
             self.h._save(rid, run["steps"], res, status)
         except ActionError as e:
-            self._fail(a, rid, str(e))
+            self._calm_fail(a, rid, str(e), message or "")
         except Exception as e:  # never leave a run spinning (the bug the owner hit)
             self._crash(a, rid, e, retry_text=message or "")  # a follow-up repeats its words; a first run resumes
         finally:
@@ -1335,6 +1481,7 @@ class Brain:
                              "shows": untrusted.wrap(((up.get("seen") or {}).get("summary") or ""), "upload frames"),
                              "is_source": (res.get("source") or {}).get("via") == "upload"}
         ctx["intake"]["research_asked"] = bool(inp["intake"].get("research"))
+        ctx["intent"] = inp.get("intent") or {}
         if res.get("video_research"):
             vr = res["video_research"]
             ctx["video"] = {"status": vr.get("status"), "credit": vr.get("credit"), "maker": vr.get("maker"),
@@ -1373,10 +1520,12 @@ class Brain:
         # once outside content has entered the run, the model can't save, send or change settings on its own.
         own_words = inp["prompt"] if message is None else message
         tainted = bool(res.get("source") or res.get("upload"))
+        specs = self._specs_for(run, message)
+        allowed = {s["name"] for s in specs} | {"check", "finish"}
         for turn in range(MAX_TURNS):
             if turn > chat_context.TOOL_KEEP_TURNS:  # old tool results -> short stubs (each call re-sends the history)
                 messages = chat_context.shrink_tool_results(messages)
-            out = brain_llm.call(eng, self.store, a.uid, label, system=SYSTEM, messages=messages, tools=SPECS + [_CHECK_SPEC],
+            out = brain_llm.call(eng, self.store, a.uid, label, system=SYSTEM, messages=messages, tools=specs + [_CHECK_SPEC],
                                  max_tokens=2000, http=self.h.http)
             if turn == 0 and out["text"]:
                 plan = [re.sub(r"^\s*\d+[.)]\s*", "", ln).strip() for ln in out["text"].splitlines() if re.match(r"^\s*\d+[.)]", ln)]
@@ -1394,6 +1543,11 @@ class Brain:
                     self._say(a, rid, tc["input"].get("message") or "Done.")
                     finished = True
                     results.append(brain_llm.tool_result(eng, tc["id"], tc["name"], {"ok": True}))
+                    continue
+                if tc["name"] not in allowed:  # server-side guard: a tool this request doesn't need never runs
+                    why = ("The person saves to Buffer with the button on each post." if tc["name"] == "save_buffer_drafts" else
+                           "Not needed for this request: use the person's link / upload, or finish and ask them.")
+                    results.append(brain_llm.tool_result(eng, tc["id"], tc["name"], {"error": why, "skipped": True}))
                     continue
                 if tainted and tc["name"] in untrusted.SENSITIVE and not untrusted.asks_for(tc["name"], own_words):
                     r = self._hold(a, rid, tc["name"], tc["input"])
@@ -1417,6 +1571,20 @@ class Brain:
         if not finished:
             self._ensure_tail(a, rid, tools)
         return True
+
+    @staticmethod
+    def _specs_for(run: dict, message: str | None) -> list[dict]:
+        """The tools the in-app brain may call for this request. Never save_buffer_drafts (the person presses the button
+        on the review card); search_news only with no link and no upload and a real topic (or, on a reply, a request
+        for current information)."""
+        inp, res = run["input"], run["result"]
+        no_search = bool(inp.get("source_url") or res.get("upload") or (res.get("source") or {}).get("via") == "upload")
+        if message is None:
+            no_search = no_search or (inp.get("intent") or {}).get("needs_search") is False
+        else:
+            no_search = no_search or not (intent.CURRENT.search(message) and intent.search_query(message))
+        drop = {"save_buffer_drafts"} | ({"search_news"} if no_search else set())
+        return [s for s in SPECS if s["name"] not in drop]
 
     def _ensure_tail(self, a, rid, tools):
         """Whatever the model did, captions exist for every channel and the check ran last."""
@@ -1529,9 +1697,16 @@ class Brain:
                  ("Use your upload as the story" if from_upload else f"Search the news for “{(it['topic'] or inp['prompt'])[:60]}”"),
                  "Pull out the facts and cross-check the numbers", "Render each channel in its format", "Write one caption per channel",
                  "Check brand rules, clipping and the source"]
-        wants_drafts = bool(re.search(r"\bdrafts?\b|\bput (?:it|them) in buffer\b|\bsave (?:it|them) to buffer\b", inp["prompt"], re.I))
-        if wants_drafts:
-            plan.append("Save them as Buffer drafts")
+        # nothing goes to Buffer from the agent (owner, 6 Nov 2026): the person presses the button on the review card
+        query = ""
+        if not it["source_url"] and not from_upload:
+            query = ((inp.get("intent") or {}).get("query") if inp.get("intent") and not up else "") or \
+                intent.search_query(it["topic"] or ("" if up else inp["prompt"]))
+            if not query and not up:  # only instruction words: never searched (live bug: "exact only, do not change ...")
+                run["result"]["chat"] = {"kind": "ask"}
+                self.h._save(rid, run["steps"], run["result"])
+                return self._say(a, rid, intent.ASK_REPLY)
+            plan = [p if not p.startswith("Search the news for") else f"Search the news for “{query[:60]}”" for p in plan]
         self._plan(a, rid, plan, brain)
         for r in it["rules"]:
             self.call(a, rid, tools, "remember_rule", {"correction": r})
@@ -1542,7 +1717,7 @@ class Brain:
         elif up and not (it["research"] and it["topic"]):
             raise ActionError(f"Tell me what your {up['type']} is about (one line), or paste the link it comes from.")
         else:
-            out = self.call(a, rid, tools, "search_news", {"query": it["topic"] or inp["prompt"][:200]})
+            out = self.call(a, rid, tools, "search_news", {"query": query[:200]})
             opened = False
             for ld in out["leads"][:4]:
                 try:
@@ -1552,7 +1727,8 @@ class Brain:
                 except ActionError:
                     continue
             if not opened:
-                raise ActionError("None of the top stories opened (paywalls or blocked pages). Paste a link you can read.")
+                raise ActionError(f"I found stories about “{query[:60]}”, but none of them would open (paywalls or blocked "
+                                  "pages), so I stopped before making a post. Paste a link you can read and I'll use it.")
         self.call(a, rid, tools, "extract_facts", {})
         run = self.h.run(a, rid)
         note = (run["result"].get("source") or {}).get("media_note")
@@ -1562,17 +1738,13 @@ class Brain:
         tone = it.get("tone") or ""
         self.call(a, rid, tools, "write_captions", {"tone": tone} if tone else {})
         self.call(a, rid, tools, "check", {})
-        if wants_drafts:
-            try:
-                self.call(a, rid, tools, "save_buffer_drafts", {})
-            except ActionError as e:
-                self._say(a, rid, str(e))
         run = self.h.run(a, rid)
         res = run["result"]
         if not res.get("conflicts"):
             n = len(res.get("packages") or [])
             self._say(a, rid, f"{n} post{'s' if n != 1 else ''} ready: " + ", ".join(f"{p['service']} ({p['format']})" for p in res.get("packages") or [])
-                      + ". Reply here to change anything, e.g. “make the hook stronger” or “redo YouTube at 30s”.")
+                      + ". Review each one below: nothing goes to Buffer until you press its button. Reply here to change anything, e.g. "
+                      "“make the hook stronger” or “set the LinkedIn caption to …”.")
 
     def _company_plan(self, a, rid, tools: Tools, company: str, brain: dict):
         """A post about one company / launch (the fixed plan; the tool-use brain follows the same order from SYSTEM):
@@ -1680,7 +1852,7 @@ class Brain:
                 did.append("rerender")
         if "brand" in did or ("rule" in did and not set(did) - {"rule"}):
             self._renders(a, rid, tools, self.h.run(a, rid))  # brand and visual rules show on every channel at once
-        if not did:
+        if not did and not intent.caption_edit(message):
             learned = tools.run_tool("remember_rule", {"correction": message})
             if learned.get("rules"):
                 self._renders(a, rid, tools, self.h.run(a, rid))
@@ -1693,8 +1865,10 @@ class Brain:
                                                                    "hook": "stronger hook", "rerender": "re-rendered",
                                                                    "theme": "video theme changed"}[d] for d in did)) + ".")
         else:
-            self._say(a, rid, "I couldn't tell what to change. Try “make the hook stronger”, “redo YouTube at 30s”, “LinkedIn more formal”, "
-                               "“logo smaller” or “use #FF5A1F”.")
+            on = ", ".join(dict.fromkeys(c["service"].title() for c in run["input"]["channels"]))
+            self._say(a, rid, f"I'm not sure what to change from “{message[:80]}”. Is it the caption, the picture or video, or the "
+                              f"format, and on which channel ({on})? For an exact caption, say: set the LinkedIn caption to "
+                              "“your text”.")
 
     def _resolve(self, a, rid, value: str):
         run = self.h.run(a, rid)

@@ -77,7 +77,10 @@ def test_a_malicious_page_cannot_make_the_agent_send_or_change_settings(owner, m
     r = owner.post("/api/agent/runs", json={"prompt": QA_PROMPT}).json()
     run = owner.get(f"/api/agent/runs/{r['id']}").json()
     held = {h["tool"] for h in run["result"].get("held_actions") or []}
-    assert held == {"save_buffer_drafts", "remember_rule", "edit_brand", "add_end_card"}
+    # save_buffer_drafts is never offered to the in-app brain now (6 Nov 2026: only the card's button saves), so it is
+    # refused outright rather than held; the settings tools are held as before
+    assert held == {"remember_rule", "edit_brand", "add_end_card"}
+    assert "save_buffer_drafts" not in [s["tool"] for s in run["steps"]]
     assert owner.fake.created == []  # nothing reached Buffer
     assert owner.get("/api/brand").json() == kit_before
     if rules_before is not None:

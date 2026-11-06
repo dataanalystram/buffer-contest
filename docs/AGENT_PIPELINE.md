@@ -117,3 +117,6 @@ Make a post. Cached for an hour per account.
 | GitHub | `GH_DISPATCH_TOKEN`, `GH_REPO` | starting the render worker |
 
 `python scripts/provider_check.py` makes one tiny call to each and prints only provider, HTTP status and ok.
+
+
+Intent first (6 Nov 2026): every message is classified before any tool runs (chat / ask / exact caption / post); see docs/AGENT_INTENT.md for the guards and why the over-acting bugs recurred.
