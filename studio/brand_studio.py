@@ -46,6 +46,11 @@ class StudioError(ValueError):
     pass
 
 
+class SlotNotFound(StudioError):
+    """A slot that doesn't exist and someone else's slot answer the same 404 (nobody can probe another account's ids)."""
+    status = 404
+
+
 def ensure(store) -> None:
     for stmt in [x.strip() for x in SCHEMA.split(";") if x.strip()]:
         if store.pg:
@@ -466,26 +471,50 @@ class BrandStudio:
             out.append(d)
         return out
 
-    def add_slot(self, a, body: dict) -> dict:
-        self.studio._guard_write(a, "add_template_slot")
-        tpl = body.get("template") or "weekly_recap"
-        if tpl not in templates.TEMPLATES:
-            raise StudioError("Unknown template.")
-        dflt = templates.TEMPLATES[tpl].get("slot") or {"weekday": "mon", "time": "20:00"}
-        wd = (body.get("weekday") or dflt["weekday"]).lower()[:3]
-        at = body.get("time") or dflt["time"]
+    @staticmethod
+    def _slot_fields(body) -> None:
+        """400 on a wrong type (never a 500): strings for template/weekday/time/tz, a list of ids, a true/false active."""
+        if not isinstance(body, dict):
+            raise StudioError("Send a JSON object.")
+        for k in ("template", "weekday", "time", "tz"):
+            if body.get(k) is not None and not isinstance(body[k], str):
+                raise StudioError(f"{k} is a string.")
+        ids = body.get("channel_ids")
+        if ids is not None and (not isinstance(ids, list) or len(ids) > 500 or not all(isinstance(i, str) for i in ids)):
+            raise StudioError("channel_ids is a list of channel ids (at most 500).")
+        if "active" in body and not isinstance(body["active"], bool):
+            raise StudioError("active is true or false.")
+
+    @staticmethod
+    def _slot_when(wd: str, at: str, tz: str) -> tuple[str, str, str]:
+        wd = wd.lower()[:3]
         if wd not in templates.DAYS or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
             raise StudioError("weekday is mon..sun and time is HH:MM (24 h).")
-        tz = str(body.get("tz") or "Europe/Dublin")[:64]
+        tz = tz[:64]
         try:  # an unknown zone used to fall back to UTC silently: a Dublin slot would fire an hour off in summer
             from zoneinfo import ZoneInfo
             ZoneInfo(tz)
         except Exception:  # noqa: BLE001  (ZoneInfoNotFoundError, ValueError on a malformed key)
             raise StudioError("tz is an IANA time zone, e.g. Europe/Dublin.")
+        return wd, at, tz
+
+    def _slot_channels(self, a, wanted: list | None) -> list[str]:
         chans = {c["id"]: c for c in self.studio.channels(a) if not c.get("isDisconnected")}
-        ids = [i for i in (body.get("channel_ids") or list(chans)) if i in chans][:8]
+        ids = [i for i in (wanted or list(chans)) if i in chans][:8]
         if not ids:
             raise StudioError("Pick at least one connected channel.")
+        return ids
+
+    def add_slot(self, a, body: dict) -> dict:
+        self.studio._guard_write(a, "add_template_slot")
+        self._slot_fields(body)
+        tpl = body.get("template") or "weekly_recap"
+        if tpl not in templates.TEMPLATES:
+            raise StudioError("Unknown template.")
+        dflt = templates.TEMPLATES[tpl].get("slot") or {"weekday": "mon", "time": "20:00"}
+        wd, at, tz = self._slot_when(body.get("weekday") or dflt["weekday"], body.get("time") or dflt["time"],
+                                     body.get("tz") or "Europe/Dublin")
+        ids = self._slot_channels(a, body.get("channel_ids"))
         if len(self.slots(a)) >= MAX_SLOTS:
             raise StudioError(f"Up to {MAX_SLOTS} recurring slots.")
         nf = templates.next_fire(wd, at, tz, datetime.now(timezone.utc)).timestamp()
@@ -494,11 +523,38 @@ class BrandStudio:
         self.store.audit(a.uid, a.label, "add_template_slot", "read", {"slot": sid, "template": tpl, "weekday": wd, "time": at})
         return next(s for s in self.slots(a) if s["id"] == sid)
 
+    def update_slot(self, a, sid: int, body: dict) -> dict:
+        """Edit a slot: its day, time, time zone, channels, template, or switch it off/on. The next time is worked out again
+        from now in the slot's time zone, so the next draft lands at the new time (claims for the old time stay, so an
+        occurrence already drafted is never drafted twice)."""
+        self.studio._guard_write(a, "update_template_slot")
+        self._slot_fields(body)
+        unknown = sorted(set(body) - {"template", "weekday", "time", "tz", "channel_ids", "active"})
+        if unknown:
+            raise StudioError("Unknown field: " + ", ".join(re.sub(r"[^\w-]", "", str(k))[:30] for k in unknown[:5]) + ".")
+        rows = self.store.q("SELECT * FROM template_slots WHERE id=? AND user_id=?", (int(sid), a.uid))
+        if not rows:
+            raise SlotNotFound("No such slot.")
+        s = dict(rows[0])
+        tpl = body.get("template") or s["template"]
+        if tpl not in templates.TEMPLATES:
+            raise StudioError("Unknown template.")
+        wd, at, tz = self._slot_when(body.get("weekday") or s["weekday"], body.get("time") or s["at"], body.get("tz") or s["tz"])
+        ids = self._slot_channels(a, body["channel_ids"]) if body.get("channel_ids") is not None else json.loads(s["channels"] or "[]")
+        active = 1 if body.get("active", bool(s["active"])) else 0
+        nf = templates.next_fire(wd, at, tz, datetime.now(timezone.utc)).timestamp()
+        self.store.x("UPDATE template_slots SET template=?, channels=?, weekday=?, at=?, tz=?, active=?, next_fire=? WHERE id=? AND user_id=?",
+                     (tpl, json.dumps(ids), wd, at, tz, active, nf, s["id"], a.uid))
+        self.store.audit(a.uid, a.label, "update_template_slot", "read", {"slot": s["id"], "template": tpl, "weekday": wd, "time": at,
+                                                                          "active": bool(active)})
+        return next(x for x in self.slots(a) if x["id"] == s["id"])
+
     def delete_slot(self, a, sid: int) -> dict:
         self.studio._guard_write(a, "delete_template_slot")
         n = self.store.xn("DELETE FROM template_slots WHERE id=? AND user_id=?", (int(sid), a.uid))
-        if n:
-            self.store.x("DELETE FROM template_slot_runs WHERE slot_id=? AND user_id=?", (int(sid), a.uid))
+        if not n:
+            raise SlotNotFound("No such slot.")
+        self.store.x("DELETE FROM template_slot_runs WHERE slot_id=? AND user_id=?", (int(sid), a.uid))
         self.store.audit(a.uid, a.label, "delete_template_slot", "read", {"slot": sid})
         return {"deleted": int(sid)}
 
@@ -513,7 +569,7 @@ class BrandStudio:
         ticker never retries (a timeout might still have created the draft)."""
         rows = self.store.q("SELECT * FROM template_slots WHERE id=? AND user_id=?", (int(sid), a.uid))
         if not rows:
-            raise StudioError("No such slot.")
+            raise SlotNotFound("No such slot.")
         s = dict(rows[0])
         now = now or datetime.now(timezone.utc)
         ts = now.timestamp()

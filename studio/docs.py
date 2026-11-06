@@ -96,7 +96,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <tr><td>Live preview</td><td><code>POST /api/brand-studio/preview</code></td><td>-</td></tr>
 <tr><td>Use an example brand</td><td><code>POST /api/brand-studio/examples/{huhbyte,buffer}</code></td><td><code>apply_brand_example</code></td></tr>
 <tr><td>Render for my channels</td><td><code>POST /api/templates/render</code></td><td><code>render_template</code></td></tr>
-<tr><td>Recurring slots</td><td><code>GET/POST /api/templates/slots</code>, <code>POST /api/templates/slots/{id}/run</code></td><td><code>schedule_template_slot</code>, <code>templates_slot_run</code></td></tr></tbody></table></div>
+<tr><td>Recurring slots</td><td><code>GET/POST /api/templates/slots</code>, <code>PATCH/DELETE /api/templates/slots/{id}</code>, <code>POST /api/templates/slots/{id}/run</code></td><td><code>schedule_template_slot</code>, <code>templates_slot_run</code></td></tr></tbody></table></div>
 <p>Every write reports its <code>buffer_cost</code>: the real Buffer requests it made on a connected account. The sample has no Buffer behind it, so it is always 0.</p>
 <h2 id="limits">Limits</h2>
 <p>Slides render in the app with Pillow. Video needs FFmpeg, which the hosted app does not have, so the hosted app renders slides live and shows the pre-rendered example Reels; self-hosted installs render video. The sample's renders count against its daily cap, and it never renders video live.</p>"""),
@@ -485,7 +485,7 @@ _DESC = {
     "DELETE /api/review-links/{lid}": "Turn a review link off",
     "POST /api/ledger/{rule_id}": "Turn a Style Ledger rule on or off (people only)", "GET /api/templates": "The templates you can render",
     "GET /api/templates/recap": "This week's recap stories from your posts", "POST /api/templates/render": "Render a template for your channels",
-    "GET /api/templates/slots": "Recurring template slots", "POST /api/templates/slots": "Add a recurring slot", "DELETE /api/templates/slots/{sid}": "Delete a recurring slot",
+    "GET /api/templates/slots": "Recurring template slots", "POST /api/templates/slots": "Add a recurring slot", "PATCH /api/templates/slots/{sid}": "Edit a recurring slot (day, time, time zone, channels, on/off)", "DELETE /api/templates/slots/{sid}": "Delete a recurring slot",
     "POST /api/templates/slots/{sid}/run": "Run a recurring slot now", "GET /api/templates/video/{jid}": "Status of a template video render",
     "GET /api/templates/custom": "Your custom post templates, the slide types and base layouts",
     "POST /api/templates/custom": "Build a new custom template (MCP create_template)",

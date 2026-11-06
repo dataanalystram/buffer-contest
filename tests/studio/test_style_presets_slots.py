@@ -362,3 +362,131 @@ def test_render_for_my_channels_and_reel_too(human, fake):
     assert r["video"] and r["video"]["url"]  # the person's Reel, or the labelled example where no video worker runs
     if r["video"].get("example"):
         assert "EXAMPLE" in r["video"]["note"]
+
+
+# ------------------------------------------------------------------------------------------------ C2) edit, repeat, time zone
+def _local(iso, zone):
+    return datetime.fromisoformat(iso).astimezone(ZoneInfo(zone))
+
+
+def test_slot_repeats_weekly_on_its_day_and_local_time_for_a_year_in_dublin_and_new_york():
+    """52 fires in a row, through both daylight-saving changes, always the slot's weekday and wall-clock time."""
+    for wd, at, zone in (("wed", "08:30", "Europe/Dublin"), ("fri", "17:45", "America/New_York"), ("sun", "00:15", "Asia/Kolkata")):
+        t = datetime(2026, 11, 6, 12, 0, tzinfo=UTC)
+        seen = []
+        for _ in range(60):
+            t = T.next_fire(wd, at, zone, t + timedelta(minutes=1))
+            loc = t.astimezone(ZoneInfo(zone))
+            assert T.DAYS[loc.weekday()] == wd and loc.strftime("%H:%M") == at, (zone, loc)
+            seen.append(t)
+        gaps = {round((b - a).total_seconds() / 3600) for a, b in zip(seen, seen[1:])}
+        assert gaps <= {167, 168, 169}, gaps  # a week, give or take the clock change
+        if zone != "Asia/Kolkata":
+            assert {167, 169} <= gaps  # both changes were crossed (Kolkata has none)
+
+
+def test_edit_slot_moves_the_next_draft_and_switching_off_stops_it(app, human, fake):
+    c, store, bs = human, app.state.store, app.state.house.brand_studio
+    s = _slot(c)
+    assert _local(s["next_fire_iso"], "Europe/Dublin").strftime("%a %H:%M") == "Mon 20:00"
+    r = c.patch(f"/api/templates/slots/{s['id']}", json={"weekday": "wed", "time": "08:30"})
+    assert r.status_code == 200, r.text
+    e = r.json()
+    assert (e["weekday"], e["at"], e["tz"], e["channels"]) == ("wed", "08:30", "Europe/Dublin", ["ch_x", "ch_li"])
+    occ = datetime.fromisoformat(e["next_fire_iso"])
+    assert _local(e["next_fire_iso"], "Europe/Dublin").strftime("%a %H:%M") == "Wed 08:30"
+    assert occ > datetime.now(UTC)
+    # the ticker drafts the NEW time: one Buffer draft per channel, due at Wednesday 08:30 Dublin
+    assert BS.tick_once(bs, now=occ - timedelta(minutes=90)) == 0 and fake.created == []
+    assert BS.tick_once(bs, now=occ - timedelta(minutes=55)) == 1
+    assert len(fake.created) == 2 and all(i["saveToDraft"] and i["dueAt"][:19] == occ.isoformat()[:19] for i in fake.created)
+    row = dict(store.q("SELECT next_fire FROM template_slots WHERE id=?", (s["id"],))[0])
+    nxt = datetime.fromtimestamp(row["next_fire"], UTC)
+    assert _local(nxt.isoformat(), "Europe/Dublin").strftime("%a %H:%M") == "Wed 08:30" and 6 <= (nxt - occ).days <= 7
+    # channels and on/off
+    r = c.patch(f"/api/templates/slots/{s['id']}", json={"channel_ids": ["ch_li"], "active": False}).json()
+    assert r["channels"] == ["ch_li"] and r["active"] == 0
+    assert BS.tick_once(bs, now=datetime.fromisoformat(r["next_fire_iso"]) - timedelta(minutes=30)) == 0 and len(fake.created) == 2
+    r = c.patch(f"/api/templates/slots/{s['id']}", json={"active": True}).json()
+    assert r["active"] == 1
+    assert BS.tick_once(bs, now=datetime.fromisoformat(r["next_fire_iso"]) - timedelta(minutes=30)) == 1
+    assert len(fake.created) == 3 and fake.created[-1]["channelId"] == "ch_li"
+
+
+def test_slot_in_the_accounts_time_zone_new_york(app, human, fake):
+    s = _slot(human, weekday="fri", time="09:00", tz="America/New_York")
+    loc = _local(s["next_fire_iso"], "America/New_York")
+    assert loc.strftime("%a %H:%M") == "Fri 09:00"
+    utc = datetime.fromisoformat(s["next_fire_iso"]).astimezone(UTC)
+    assert utc.hour in (13, 14) and utc.hour == int(9 - loc.utcoffset().total_seconds() / 3600)  # EDT 13:00 UTC, EST 14:00 UTC
+
+
+@pytest.mark.parametrize("body", [
+    {"weekday": 5}, {"time": "25:00"}, {"weekday": "someday"}, {"active": "yes"}, {"channel_ids": "ch_x"}, {"channel_ids": [1]},
+    {"channel_ids": ["x"] * 501}, {"tz": "Mars/Base"}, {"template": "nope"}, {"surprise": 1}, {"channel_ids": ["not_mine"]},
+])
+def test_edit_slot_refuses_bad_input_with_400(human, body):
+    s = _slot(human)
+    r = human.patch(f"/api/templates/slots/{s['id']}", json=body)
+    assert r.status_code == 400, (body, r.status_code, r.text)
+    after = [x for x in human.get("/api/templates/slots").json() if x["id"] == s["id"]][0]
+    assert (after["weekday"], after["at"], after["channels"]) == ("mon", "20:00", ["ch_x", "ch_li"])  # unchanged
+
+
+def test_edit_slot_refuses_a_non_object_body(human):
+    s = _slot(human)
+    assert human.patch(f"/api/templates/slots/{s['id']}", json=["wed"]).status_code == 400
+
+
+def test_someone_elses_slot_and_a_missing_one_both_answer_404(app, human):
+    store = app.state.store
+    theirs = store.x("INSERT INTO template_slots(user_id,template,channels,weekday,at,tz,active,next_fire,created) "
+                     "VALUES(?,?,?,?,?,?,1,?,?)", ("someone_else", "weekly_recap", '["ch_z"]', "mon", "20:00", "Europe/Dublin",
+                                                  time.time() + 86400, time.time()))
+    for sid in (theirs, 999999):
+        assert human.patch(f"/api/templates/slots/{sid}", json={"weekday": "tue"}).status_code == 404
+        assert human.delete(f"/api/templates/slots/{sid}").status_code == 404
+        assert human.post(f"/api/templates/slots/{sid}/run").status_code == 404
+    row = dict(store.q("SELECT weekday, user_id FROM template_slots WHERE id=?", (theirs,))[0])
+    assert row == {"weekday": "mon", "user_id": "someone_else"}  # untouched
+
+
+def test_cta_edit_after_applying_reaches_the_free_drafter(human):
+    c = human
+    rules = c.post("/api/ledger/presets/genz_casual/apply", json={}).json()["rules"]
+    cta = next(r for r in rules if (r.get("check") or {}).get("area") == "cta" and "line" in r["check"])
+    r = c.patch(f"/api/ledger/rules/{cta['id']}", json={"rule": "Sign off with: tap follow, it's free"})
+    assert r.status_code == 200, r.text
+    rules = [{**x, "active": True} for x in rules if x["id"] != cta["id"]] + [{**r.json(), "active": True}]
+    st = style_presets.style_from_rules(rules)
+    assert st["cta"] == "tap follow, it's free"
+
+
+def test_zero_hashtag_cap_writes_no_hashtags():
+    st = {"shape": "hook_idea_payoff", "cta": "Follow.", "hashtags": {"instagram": 0}, "length": {}}
+    text = drafter.styled_draft("instagram", TOPICS[0], st)
+    assert "#" not in text and "Follow." in text
+
+
+def test_a_failed_preset_insert_leaves_the_ledger_as_it_was(app, human, monkeypatch):
+    """Delete, switch-off and insert are one transaction: a failure part way keeps the earlier preset's rules on."""
+    c, store = human, app.state.store
+    c.post("/api/ledger/presets/hook_first/apply", json={})
+    snap = lambda: [tuple(r.values()) for r in store.q("SELECT id, active, rule FROM style_rules ORDER BY id")]  # noqa: E731
+    before = snap()
+    real = store.x
+    calls = {"n": 0}
+
+    def flaky(sql, args=()):
+        if sql.lstrip().upper().startswith("INSERT INTO STYLE_RULES"):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise RuntimeError("database went away")
+        return real(sql, args)
+    monkeypatch.setattr(store, "x", flaky)
+    try:
+        assert c.post("/api/ledger/presets/data_led/apply", json={}).status_code >= 500
+    except RuntimeError:
+        pass  # the test client re-raises the server's exception
+    monkeypatch.setattr(store, "x", real)
+    assert calls["n"] == 3 and snap() == before  # hook_first's rules still on, none of data_led's half-written
