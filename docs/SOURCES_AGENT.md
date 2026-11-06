@@ -41,17 +41,31 @@ cap, without keys, or in the sample, the deterministic **rules** answer (each ca
 * rank: relevance, freshness over 7 days, engagement, and how many sources carry it; made-up sample posts never outrank
   recorded real stories.
 
-## Writing and drafting
+## Making posts from stories (the app)
 
-**Write posts** (dry run) returns one package per chosen channel: the caption in the channel's shape (X: headline, one line,
-link, one tag; LinkedIn: hook, arrows, why it matters, source; Instagram: headline, bullets, "link in bio", up to 5 tags;
-YouTube/TikTok: title-first with the source; Bluesky: no tags), the brand's Style Ledger text rules applied, fitted to Buffer's
-character count, and a breaking cover in the brand at the channel's frame. The writer is the person's **own AI key** when set
-(OpenRouter, Anthropic, OpenAI and other presets in AI engine; sealed with the keyring), else the app's capped starter model,
-else the built-in writer. **Save as Buffer drafts** sends exactly what was previewed (plus any edits) through
-`preview_post → submit_post` with `mode: draft`, so an agent token's policy still holds (`review` waits in Approvals).
+Scan now only reads the sources. Nothing goes to Buffer from News. Tick up to 10 stories and **Make a post (N)** opens a NEW
+Make a post thread (the old thread's loads are aborted) with the stories' titles and links under a short starter prompt:
 
-![Per-channel posts, editable, then saved as Buffer drafts](screenshots/brand/sources-packages.png)
+```
+Make posts from these stories:
+<title> — <link>
+<title> — <link>
+```
+
+A card's own **Make post** does the same with one story. Nothing runs until the person edits the prompt and presses send;
+the agent then reads each link through netguard, and nothing goes to Buffer until the person presses the button on a post
+they reviewed. The app no longer writes packages inline on News (owner bug, 6 Nov 2026).
+
+## Writing and drafting (API and MCP)
+
+`POST /api/sources/draft` / `sources_draft` (dry run by default) returns one package per chosen channel: the caption in the
+channel's shape (X: headline, one line, link, one tag; LinkedIn: hook, arrows, why it matters, source; Instagram: headline,
+bullets, "link in bio", up to 5 tags; YouTube/TikTok: title-first with the source; Bluesky: no tags), the brand's Style Ledger
+text rules applied, fitted to Buffer's character count, and a breaking cover in the brand at the channel's frame. The writer is
+the person's **own AI key** when set (OpenRouter, Anthropic, OpenAI and other presets in AI engine; sealed with the keyring),
+else the app's capped starter model, else the built-in writer. `dry_run: false` sends exactly what was previewed (plus any
+`texts` edits) through `preview_post → submit_post` with `mode: draft`, so an agent token's policy still holds (`review`
+waits in Approvals). The app's UI does not call it.
 
 Each action reports its **Buffer request cost** (`buffer_cost.requests`): the real GraphQL requests made on a connected
 account. The sample makes none and says so.
@@ -69,7 +83,7 @@ clusters, drafts go to the sample's in-memory Buffer.
 | Settings | `GET /api/sources`, `POST /api/sources/settings` | `sources_settings` |
 | Scan now | `POST /api/sources/scan` | `sources_scan` |
 | A past scan | `GET /api/sources/runs/{id}` | — |
-| Write posts / Save as Buffer drafts | `POST /api/sources/draft` (`dry_run`, `cluster_ids`, `channel_ids`, `texts`) | `sources_draft` |
+| — (API and MCP only; the app opens Make a post) | `POST /api/sources/draft` (`dry_run`, `cluster_ids`, `channel_ids`, `texts`) | `sources_draft` |
 
 ## Keys: Settings → Integrations
 

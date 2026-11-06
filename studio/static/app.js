@@ -703,7 +703,7 @@ function recCard(x) {
   const host = hostOf(x.url);
   return `<article class="rec${x.branded ? " branded" : ""}" data-testid="rec-card">${x.image ? `<img class="rec-img" src="${esc(x.image)}" alt="${x.branded ? "Cover rendered in your brand" : ""}" loading="lazy">` : ""}
     <div class="rec-b"><span class="nf-src">${fav(host)}${esc(host || x.source)}</span><b class="rec-t">${esc(x.title)}</b>${x.why ? `<span class="rec-why">${esc(x.why)}</span>` : ""}
-    <span class="row tight">${x.run_id ? `<button class="btn sm" type="button" data-run="${esc(x.run_id)}" data-testid="rec-review">Review</button>` : `<button class="btn sm" type="button" data-make="${esc(x.url)}" data-testid="rec-make">Make post</button>`}</span></div></article>`;
+    <span class="row tight">${x.run_id ? `<button class="btn sm" type="button" data-run="${esc(x.run_id)}" data-testid="rec-review">Review</button>` : `<button class="btn sm" type="button" data-make="${esc(x.url)}" data-title="${esc(x.title || "")}" data-testid="rec-make">Make post</button>`}</span></div></article>`;
 }
 function ibBadge(n) { const b = $("#inboxBadge"); b.textContent = n; b.hidden = !n; }
 $("#inboxRefresh").onclick = () => loadInbox();
@@ -756,7 +756,7 @@ function storyItem(st) {
     <div class="nf-b"><div class="nf-meta">${fav(host)}<span class="nf-src" title="via ${esc(st.source || "")}">${esc(host || st.source)}</span>${ago ? `<time>${esc(ago)}</time>` : ""}</div>
       <a class="nf-t" href="${escUrl(st.url)}" target="_blank" rel="noopener">${esc(st.title)}</a>
       ${why ? `<p class="nf-why">${esc(why)}</p>` : ""}${st.why_for_you ? `<span class="muted xs" data-testid="story-for-you">${esc(st.why_for_you)}</span>` : ""}
-      <div class="nf-act"><button class="btn sm" type="button" data-make="${esc(st.url)}" data-testid="story-write">Make post</button></div></div></article>`;
+      <div class="nf-act"><button class="btn sm" type="button" data-make="${esc(st.url)}" data-title="${esc(st.title || "")}" data-testid="story-write">Make post</button></div></div></article>`;
 }
 function timeAgo(ms) {
   const m = Math.round((Date.now() - ms) / 60000);
@@ -764,11 +764,22 @@ function timeAgo(ms) {
   const h = Math.round(m / 60); if (h < 24) return `${h} h ago`;
   return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
 }
-// "Make post" opens Make a post with the story's link in the one prompt box (Prompt or link); the person picks the
-// format and presses Make it.
+// Every story card's "Make post" and News › Story scan's "Make a post (N)" open a NEW Make a post thread with the stories'
+// titles and links in the composer under a short starter the person edits (owner bug, 6 Nov 2026: "Write posts" generated
+// every carousel inline on News). Nothing runs until they press send: no generation, no Buffer call. Only http(s) links
+// pass, at most MAX_STORIES of them; the agent reads each link later through netguard (reader.read_url).
+const MAX_STORIES = 10;
+window.hqStoryPrompt = (stories) => {
+  const rows = (Array.isArray(stories) ? stories : [])
+    .map((s) => ({ t: String((s && s.title) || "").replace(/\s+/g, " ").trim().slice(0, 140), u: String((s && s.url) || "").trim() }))
+    .filter((s) => s.u.length <= 600 && /^https?:\/\/[^\s/$.?#][^\s]*$/i.test(s.u))
+    .slice(0, MAX_STORIES);
+  if (!rows.length) return "";
+  return "Make posts from these stories:\n" + rows.map((s) => (s.t ? `${s.t} — ${s.u}` : s.u)).join("\n");
+};
 function wireMake(box) {
   box.querySelectorAll("[data-make]").forEach((b) => (b.onclick = () => {
-    const text = ("Post this on all my channels " + (b.dataset.make || "")).trim();
+    const text = window.hqStoryPrompt([{ title: b.dataset.title || "", url: b.dataset.make || "" }]);
     if (window.hqNewPost) window.hqNewPost(text);  // always a NEW thread, never the one left open (makepost.js)
     else {
       showTab("agent", "agent");
@@ -776,7 +787,7 @@ function wireMake(box) {
       if (q) { q.value = text; q.dispatchEvent(new Event("input")); q.focus(); }
     }
     document.querySelector("#agentCompose [data-src=topic]")?.click();
-    toast("Link added. Pick a format and press Make it.");
+    toast(text ? "Story added. Edit the prompt, then press send." : "That story has no link to post from.");
   }));
   box.querySelectorAll("[data-run]").forEach((b) => (b.onclick = () => openRunDeep(b.dataset.run)));
 }

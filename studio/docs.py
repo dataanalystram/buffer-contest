@@ -100,13 +100,12 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>Every write reports its <code>buffer_cost</code>: the real Buffer requests it made on a connected account. The sample has no Buffer behind it, so it is always 0.</p>
 <h2 id="limits">Limits</h2>
 <p>Slides render in the app with Pillow. Video needs FFmpeg, which the hosted app does not have, so the hosted app renders slides live and shows the pre-rendered example Reels; self-hosted installs render video. The sample's renders count against its daily cap, and it never renders video live.</p>"""),
-    ("sources-agent", "News: For you, Story scan and Sources", "Scan YC, Hacker News, lab blogs, Product Hunt and X; cluster the news; write it per channel; save Buffer drafts a person approves.", "sources", """
-<p><b>News</b> is where stories come from. <b>For you</b> is a card feed from the feeds you follow; <b>Story scan</b> finds news across many sources at once, writes it in your brand for each channel and saves it to Buffer as <b>drafts</b> a person approves. Nothing it does publishes.</p>
-<h2 id="flow">Scan, pick, write, save</h2>
+    ("sources-agent", "News: For you, Story scan and Sources", "Scan YC, Hacker News, lab blogs, Product Hunt and X; cluster the news; pick stories and open a new post with their links.", "sources", """
+<p><b>News</b> is where stories come from. <b>For you</b> is a card feed from the feeds you follow; <b>Story scan</b> finds news across many sources at once. Scanning only reads the sources: nothing goes to Buffer from News.</p>
+<h2 id="flow">Scan, pick, make a post</h2>
 <ol><li><b>Scan now</b> reads every source you turned on, removes duplicates (same link or same title) and groups the same story from several sources into one card that says where else it ran.</li>
-<li>Tick the stories you want and the channels to write for.</li>
-<li><b>Write posts</b> shows one post per channel, in that channel's shape, with a breaking cover in your brand. Edit any of them.</li>
-<li><b>Save as Buffer drafts</b> sends exactly what you previewed, with your edits. Each result shows the Buffer request it made.</li></ol>
+<li>Tick up to 10 stories. <b>Make a post (N)</b> opens a new Make a post thread with their titles and links under a short starter prompt (a card's own <b>Make post</b> does the same with one story).</li>
+<li>Edit the prompt and press send. Nothing is written before that, and nothing goes to Buffer until you press the button on a post you reviewed.</li></ol>
 <h2 id="sources">Sources (no paid keys)</h2>
 <div class="dk-table"><table><thead><tr><th>Source</th><th>How it reads</th><th>Key</th></tr></thead><tbody>
 <tr><td>YC Launches</td><td>The public launches page</td><td>None</td></tr>
@@ -136,7 +135,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <tr><td>Scan now</td><td><code>POST /api/sources/scan</code></td><td><code>sources_scan</code></td></tr>
 <tr><td>Source library (News › Sources)</td><td><code>GET /api/sources/library</code>, <code>POST /api/sources/refresh</code>, <code>POST /api/sources/enabled</code></td><td><code>list_sources</code>, <code>refresh_sources</code>, <code>set_source_enabled</code></td></tr>
 <tr><td>A past scan</td><td><code>GET /api/sources/runs/{id}</code></td><td>-</td></tr>
-<tr><td>Write posts, save as Buffer drafts</td><td><code>POST /api/sources/draft</code> (<code>dry_run</code>, <code>cluster_ids</code>, <code>channel_ids</code>, <code>texts</code>)</td><td><code>sources_draft</code></td></tr></tbody></table></div>"""),
+<tr><td>API and MCP only (the app opens Make a post instead): per-channel packages, Buffer drafts with <code>dry_run</code> false</td><td><code>POST /api/sources/draft</code> (<code>dry_run</code>, <code>cluster_ids</code>, <code>channel_ids</code>, <code>texts</code>)</td><td><code>sources_draft</code></td></tr></tbody></table></div>"""),
     ("inbox", "Inbox", "Your day on one screen: posts to approve, today's queue, what needs attention, agent activity and posts recommended for you.", "inbox", """
 <p>The Inbox is the first screen after you sign in: a dashboard of your day. From the top:</p>
 <ul><li><b>Stats</b>: posts scheduled, posts awaiting approval, failed posts and the Buffer requests you have left.</li>
@@ -453,7 +452,7 @@ _DESC = {
     "POST /api/takes/uploads/{upload_id}/complete": "Join and verify the parts (sizes, ETags, video container)",
     "DELETE /api/takes/uploads/{upload_id}": "Abort an upload and remove its parts",
     "GET /api/thumb": "A story picture (og:image read and re-encoded server-side, cached); 204 means no picture, use the favicon", "GET /api/radar": "The For you news feed", "POST /api/radar/feeds": "Follow a feed", "DELETE /api/radar/feeds/{feed_id}": "Unfollow a feed",
-    "GET /api/sources": "Story scan sources and settings", "POST /api/sources/draft": "Write posts for the picked stories",
+    "GET /api/sources": "Story scan sources and settings", "POST /api/sources/draft": "Per-channel packages for picked stories (API and MCP; the app opens Make a post instead)",
     "GET /api/sources/runs/{rid}": "One story scan run", "POST /api/sources/scan": "Scan every source you turned on",
     "POST /api/sources/settings": "Turn sources on or off", "GET /api/sources/library": "The source library: every source with its status and the fresh items",
     "POST /api/sources/refresh": "Re-read the source library now (once a minute)", "POST /api/sources/enabled": "Turn one library source on or off", "GET /api/brand": "Your brand kit and Style Ledger rules", "POST /api/brand": "Save your brand kit",
