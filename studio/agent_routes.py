@@ -414,6 +414,8 @@ def post_step(studio, a, rid: int, tool: str, args: dict) -> dict:
         h.brain.tool(a, rid, "extract_facts", {})
         auto.append("extract_facts")
     approval_id = args.pop("approval_id", None)
+    if tool == "save_buffer_drafts":
+        return _save_drafts(studio, a, rid, args)
     if tool in VIDEO_STEPS:
         args.pop("rights_confirmed", None)  # an app's own say-so is not the rights step for a link (consent.link_gate is)
         run = h.run(a, rid)
@@ -442,3 +444,51 @@ def post_step(studio, a, rid: int, tool: str, args: dict) -> dict:
     if isinstance(out, dict):
         out = {**out, "deprecated": DEPRECATED_NOTE, **({"auto_ran": auto} if auto else {})}
     return out
+
+
+def _save_drafts(studio, a, rid: int, args: dict) -> dict:
+    """post_save_buffer_drafts from an AI app: the same duplicate-draft guard as schedule_package (agent_drafts). A channel
+    whose story an earlier run of this app already saved as a Buffer draft answers duplicate_draft and nothing is created;
+    on_duplicate 'update' edits that draft (editPost), 'new' saves a second one."""
+    from . import agent_drafts
+    from .mcp_flow import DEPRECATED_NOTE, StepError
+    h = studio.house
+    choice = args.pop("on_duplicate", None)
+    if choice not in (None, "", "update", "new"):
+        raise ActionError("on_duplicate is 'update' (edit the earlier run's Buffer draft) or 'new' (a second draft).", 400)
+    want = args.get("channel_ids")
+    if want is not None and (not isinstance(want, list) or len(want) > 50 or not all(isinstance(c, str) for c in want)):
+        raise ActionError("channel_ids is a list of channel ids or services (up to 50).", 400)
+    res = h.run(a, rid)["result"] or {}
+    dups = []
+    if choice != "new" and not res.get("conflicts"):  # an open fact conflict: the tool itself refuses and saves nothing
+        todo = [pk for pk in res.get("packages") or [] if (not want or pk.get("channel_id") in want or pk.get("service") in want)
+                and not pk.get("sent") and pk.get("status") == "ready" and not (pk.get("buffer_draft") or {}).get("buffer_post_id")]
+        if todo:
+            row = h.store.q("SELECT id, input, result FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
+            me = agent_drafts._story(dict(row[0])) if row else {}
+            earlier = agent_drafts.app_drafts(h.store, a, exclude_run=rid) if me else []
+            for pk in todo:
+                d = next((d for d in earlier if d["channel_id"] == pk["channel_id"] and agent_drafts.same_story(me, d)), None)
+                if d:
+                    dups.append((pk, d))
+    if dups and choice != "update":
+        first = dups[0][1]
+        raise StepError(f"Run {first['run_id']} of this app already saved a Buffer draft of this story on "
+                        f"{', '.join(str(pk.get('service') or pk['channel_id']) for pk, _ in dups)}. Nothing was created. Ask the "
+                        "person: update those drafts with this post, or make second ones?", 409, code="duplicate_draft",
+                        duplicate_of=first, duplicates=[d for _, d in dups], choices=["update", "new"],
+                        next_steps=[f"post_save_buffer_drafts(run_id={rid}, on_duplicate='update') edits the earlier drafts "
+                                    "(editPost), never second ones", "on_duplicate='new' only if the person wants two drafts"])
+    drafts = []
+    dup_ch = {pk["channel_id"] for pk, _ in dups}
+    rest = [pk["channel_id"] for pk in res.get("packages") or [] if pk["channel_id"] not in dup_ch
+            and (not want or pk.get("channel_id") in want or pk.get("service") in want)]
+    if not dups or rest:
+        out = h.brain.tool(a, rid, "save_buffer_drafts", {**args, **({"channel_ids": rest} if dups else {})})
+        drafts = list((out or {}).get("drafts") or [])
+    for pk, d in dups:
+        u = agent_drafts.guard_duplicate(h, a, rid, pk["channel_id"], pk, "update") or {}
+        drafts.append({"service": pk.get("service", ""), "status": u.get("status", "updated"),
+                       "buffer_post_id": d["buffer_post_id"], "replaced_run_id": d["run_id"]})
+    return {"drafts": drafts, "deprecated": DEPRECATED_NOTE}

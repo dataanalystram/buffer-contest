@@ -231,8 +231,13 @@ TOOLS: list[dict[str, Any]] = [
      "limit): adds it to the user's Library (the same file twice is kept once: deduped: true) and returns media_token and "
      "library_id for edit_video / split_video / render_carousel. Pass run_id to keep it with that post. Don't upload throwaway "
      "copies of web images: give their URL straight to hero_edit or render_carousel. For a file on the user's computer or in "
-     "your sandbox, use create_upload; if your sandbox can't reach its URL, create_send_code (the user drags the file in on any device).",
-     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "run_id": RUN_ID, "idempotency_key": IDEM}}},
+     "your sandbox, use create_upload; if your sandbox can't reach its URL, create_send_code (the user drags the file in on any device). "
+     "A VIDEO link that isn't the person's own HuhQueue file goes through the same rights step as every tool, before anything is "
+     "fetched or saved: needs_user_approval with approval_id; call again with approval_id once the person approved it. A "
+     "YouTube / Vimeo / X post page is not a file: use render_reel(run_id, url) or edit_video(run_id, url).",
+     "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": S, "run_id": RUN_ID, "idempotency_key": IDEM,
+                     "approval_id": {"type": "integer", "description": "The approval_id needs_user_approval returned for this "
+                                     "video link, once the person approved it"}}}},
     {"name": "integrations_status", "description": "Which integrations are connected for this user (Product Hunt, X reader key, "
      "image models...) and whether each key last tested OK. Never returns a key.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -1257,22 +1262,67 @@ def t_update_brand_kit(studio, a, args):
     return {"kit": studio.house.save_kit(a, patch), "spent_usd": 0}
 
 
+VIDEO_EXTS = ("mp4", "mov", "m4v", "webm")
+
+
+def _url_ext(url: str) -> str:
+    from urllib.parse import urlparse
+    try:
+        path = urlparse(url).path
+    except ValueError:
+        return ""
+    return path.rsplit(".", 1)[-1].lower() if "." in path.rsplit("/", 1)[-1] else ""
+
+
 def t_library_upload_url(studio, a, args):
     from . import share_import
-    url = str(args.get("url") or "")
+    from .mcp_flow import StepError
+    url = str(args.get("url") or "").strip()
     rid = _run_arg(args)
+    rights = None
+    if a.kind == "agent" and url and not share_import.provider(url):
+        from .media import find
+        if find.platform_of(url):  # a YouTube / Vimeo / X post is a page, not a file: the worker fetches it (rights step first)
+            raise StepError("library_upload_url takes a file link, and that is a video post page. Nothing was fetched.", 400,
+                            code="wrong_tool", next_steps=[f"render_reel(run_id={rid or 'run_id'}, url) or edit_video(run_id, url): the "
+                                                           "worker fetches it after the rights step",
+                                                           "ingest_video_link only for One take (one long video -> clips)"])
+        lk = {"url": url, "approval_id": args.get("approval_id"), "run_id": rid}
+        if _url_ext(url) in VIDEO_EXTS:  # a third-party video link: the same rights step as every tool, BEFORE the fetch
+            held = _link_rights(studio, a, lk, "library_upload_url")
+            if held:
+                return held
+            rights = lk.get("_rights")
+        else:  # no video extension: a link that turns out to be a video is held before anything is saved
+            def gate():
+                held = _link_rights(studio, a, lk, "library_upload_url")
+                if held:
+                    held = {**held, "fetched": False, "saved": False,
+                            "message": str(held.get("message") or "").replace("nothing was fetched", "nothing was saved"),
+                            "note": "The link only showed it was a video once it was read; those bytes were discarded and "
+                                    "nothing was saved."}
+                return held
+            up = studio.house.import_url(a, url, video_gate=gate)
+            if up.get("_held"):
+                return up["_held"]
+            return _library_out(studio, a, up, rid, lk.get("_rights"))
     if share_import.provider(url):  # a cloud-drive share page: convert it and stream it in (Drive's confirm page included)
         out = share_import.item_out(studio.house, studio.house.share_import.import_link(a, url), share_import.provider(url))
         if rid and out.get("library_id"):
             studio.house.library.attach_run(a, out["library_id"], rid)
         return {**out, "token": out["media_token"]}
-    up = studio.house.import_url(a, url)
+    return _library_out(studio, a, studio.house.import_url(a, url), rid, rights)
+
+
+def _library_out(studio, a, up: dict, rid, rights: dict | None) -> dict:
     out = {"media_token": up["token"], "url": up["url"], "type": up["type"], "library_id": up.get("library_id"), "bytes": up.get("bytes")}
     if up.get("deduped"):
         out["deduped"] = True
     if rid and up.get("library_id"):
         studio.house.library.attach_run(a, up["library_id"], rid)
         out["run_id"] = rid
+    if rights:
+        out["rights"] = rights
     return out
 
 

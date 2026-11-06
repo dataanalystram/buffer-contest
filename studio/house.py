@@ -464,8 +464,10 @@ class House:
         self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
         return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
 
-    def import_url(self, a: Actor, url: str) -> dict:
-        """For agents: fetch a photo or video the user owns from a public URL into HuhQueue."""
+    def import_url(self, a: Actor, url: str, video_gate=None) -> dict:
+        """For agents: fetch a photo or video the user owns from a public URL into HuhQueue. ``video_gate`` (MCP
+        library_upload_url): called when the bytes turn out to be a video; a dict back = the rights step's answer, returned
+        as {"_held": ...} and nothing is saved."""
         self.studio._guard_write(a, "import_media")
         ext = urlparse(url).path.rsplit(".", 1)[-1].lower() if "." in urlparse(url).path else ""
         _FETCH_WHY.v = "unreachable"
@@ -487,6 +489,10 @@ class House:
                 raise ActionError(f"That link returned JSON text (probably an error), not a {word}. Use create_upload instead.", 415)
             raise ActionError(f"That link didn't return a JPG, PNG, WebP or GIF image or an MP4, MOV or WebM video. "
                               "Use create_upload to upload the file itself.", 415)
+        if video_gate is not None and (sniff(data[:32]) or ("", "", ""))[2] == "video":
+            held = video_gate()
+            if held:
+                return {"_held": held}
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             ext = "mp4" if data[4:8] == b"ftyp" else ("png" if data[:4] == b"\x89PNG" else "jpg")
         return self.upload(a, "import." + ext, base64.b64encode(data).decode())

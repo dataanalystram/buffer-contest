@@ -49,7 +49,9 @@ WORKFLOW = {
         "every call below. Several channels, a different video or cover per channel: still ONE run.",
         "2. Source: research_link(url) for an article / launch page (facts, figures, images); find_video(url or product name) "
         "for its launch video. Only video.status 'found' (the worker probed it just now) can be fetched. "
-        "'found_not_downloadable': ask the person for the file: create_send_code(run_id), then list_recent_uploads.",
+        "'found_not_downloadable' with probe.status 'failed': ask the person for the file: create_send_code(run_id), then "
+        "list_recent_uploads. With probe.status 'pending' (a cold worker still checking, after ~20 s): poll "
+        "render_status(probe.job_id) or call find_video again with the same url in ~30 s before asking for the file.",
         "3. Media, one output per different video or slide set: render_reel(run_id, url or media_token, rights, credit, "
         "output: 1) / render_carousel(run_id, slides, output: 2) / hero_edit(run_id, image_url) for a cover. Poll "
         "render_status(job_id) every 10-20 s. A failed video is an error with next steps, never slides in its place.",
@@ -123,6 +125,7 @@ def _needs(name: str) -> str:
 
 
 S = {"type": "string"}
+PENDING = ("probe.status 'pending' = the video worker was starting cold and hadn't answered within about 20 s: the answer still says found_not_downloadable, but don't ask the person for the file yet. Poll render_status(probe.job_id) every 10-20 s (or call find_video again with the same url after ~30 s: it reuses the same check) and use the video once it is done / found. Only probe.status 'failed' means the worker can't fetch it.")
 DESCRIPTIONS: dict[str, str] = {
     "start_post": (
         "STEP 1 of the recommended path for ANY post (get_started). Open ONE post for the person's request and get its run_id "
@@ -141,7 +144,7 @@ DESCRIPTIONS: dict[str, str] = {
         "paragraphs, figures found in the text (each with the source URL), the page's images and videos, and for a product / "
         "launch link the video-first result (video.status found | found_not_downloadable | none). 'found' means the worker "
         "probed the video just now and can fetch it; found_not_downloadable says why it can't (probe.reason) and how to get "
-        "the file from the person (create_send_code). You write the facts, slides and captions from this."),
+        "the file from the person (create_send_code). " + PENDING + " You write the facts, slides and captions from this."),
     "find_video": (
         "Client brain (no HuhQueue AI). VIDEO FIRST for a product or launch link (Product Hunt, YC launch, the maker's site, "
         "a name): Product Hunt's API -> the maker's site (og:video, <video>, YouTube/Vimeo/Loom embeds, press kit) -> the "
@@ -150,7 +153,7 @@ DESCRIPTIONS: dict[str, str] = {
         "render_reel(run_id, url, rights, credit) and the credit 'Video: <maker>' on screen and in the caption. "
         "found_not_downloadable = the video exists but the worker can't fetch it (probe.reason: removed, private, region, bot "
         "check, or no worker answered): ask the person for the file with create_send_code(run_id) (ask has the words and "
-        "upload_limit_mb). none = no video: make a carousel and offer the upload."),
+        "upload_limit_mb). " + PENDING + " none = no video: make a carousel and offer the upload."),
     "render_reel": (
         "Make a branded 9:16 Reel (no HuhQueue AI): from a video (same options as edit_video: media_token / library_id for "
         "the person's file, or url) or from slides (images: image URLs, e.g. render_carousel's media_urls) as a slideshow "
@@ -169,8 +172,9 @@ DESCRIPTIONS: dict[str, str] = {
         "a job id at once; poll render_status(job_id) every 10-20 s until status is done, then pass the output to "
         "create_package(run_id, channel_media={channel: {output: n}})."),
     "render_status": (
-        "Status of a video job: job_id (edit_video / render_reel / render_template video / a link probe) or take_id "
-        "(split_video). status queued | running | done | failed, with download_url(s) when done; failed answers carry the "
+        "Status of a video job: job_id (edit_video / render_reel / render_template video / a link probe: find_video's "
+        "probe.job_id while probe.status is 'pending') or take_id (split_video). status queued | running | done | failed, with "
+        "download_url(s) when done (a link probe: done = the worker can fetch it, call find_video again for status found); failed answers carry the "
         "reason and next_steps (the person uploads the file through create_send_code). A failed video is never replaced by "
         "slides."),
     "create_package": (
@@ -262,6 +266,13 @@ def apply(tools: list[dict], server_ai_note: str = "") -> None:
             props["youtube"] = YOUTUBE_SCHEMA
             props["replace_all"] = {"type": "boolean", "description": "true: the channels you don't name are dropped from the post "
                                     "(default false: they keep their packages)"}
+        if n == "post_save_buffer_drafts":
+            t["description"] += (" A channel whose story an earlier run of this app already saved as a Buffer draft answers "
+                                 "duplicate_draft and nothing is created: on_duplicate 'update' edits that draft (editPost), "
+                                 "'new' saves a second one only when the person asked.")
+            t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})["on_duplicate"] = {
+                "type": "string", "enum": ["update", "new"], "description": "Only after a duplicate_draft answer: 'update' "
+                "edits the earlier run's draft (editPost), 'new' makes a second draft (only if the person asked)"}
         if n in ("render_reel", "edit_video"):
             props = t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})
             props.setdefault("approval_id", {"type": "integer", "description": "The approval_id needs_user_approval returned for "

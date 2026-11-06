@@ -155,6 +155,13 @@ def _verdict(studio, a: Actor, vf: dict, run_id: Any = None) -> dict:
     ask = (f"I found the launch video ({vf['video'].get('url')}), but HuhQueue's video worker can't download it right now "
            f"({p.get('reason') or 'unknown reason'}). Could you send me the file? Open the link I'll give you and drop the "
            f"video (MP4 or MOV, up to {limit} MB).")
+    if p.get("status") == "pending":  # a cold worker: not a verdict yet, so the upload is the fallback, not the first step
+        jid = p.get("job_id")
+        return {**vf, "status": "found_not_downloadable", "video": {**vf["video"], "downloadable": False, "probed": False},
+                "probe": slim, "ask": ask, "plan_line": "Launch video found; the video worker is still checking it",
+                "next_steps": [f"render_status(job_id={jid}) every 10-20 s (the worker was starting cold)",
+                               f"find_video again with the same url in ~30 s (it reuses check {jid}); use the video if status found",
+                               "only if the check fails: ask the person for the file"] + upload_steps(run_id)}
     return {**vf, "status": "found_not_downloadable", "video": {**vf["video"], "downloadable": False, "probed": True},
             "probe": slim, "ask": ask, "plan_line": "Launch video found but the worker can't fetch it: asking you to upload it",
             "next_steps": upload_steps(run_id)}
