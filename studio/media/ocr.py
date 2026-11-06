@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import os
 import re
+from functools import lru_cache
+import gzip
 import shutil
 import subprocess
 import tempfile
@@ -203,19 +205,45 @@ def scan(path: str, start: float, end: float, budget: Budget | None = None, st: 
                     words.append(b["text"])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    res.update(ok=True, text=" ".join(words)[:MAX_TEXT], ms=int((time.monotonic() - t0) * 1000))
+    res.update(ok=True, text=" ".join(words)[:MAX_TEXT], readable=readable_from_frames(res["frames"]),
+               ms=int((time.monotonic() - t0) * 1000))
     return res
 
 
+HANDLE_MIN = 3      # a handle read shorter than this is a fragment ("@s" while the watermark slides in)
+_HANDLE_TOK = re.compile(r"(?<![\w@.])([A-Za-z0-9_][A-Za-z0-9_.]{2,28}[A-Za-z0-9_])(?![\w@])")
+
+
+def _complete_handle(h: str, text: str) -> str | None:
+    """A short handle fragment completed from the other frames' reads ("@s" + "scrollclips" -> "scrollclips"): the most
+    frequent (then longest) non-dictionary token that starts with it. None when nothing completes a < HANDLE_MIN read."""
+    if len(h) >= 4:
+        return h
+    hl = h.lower()
+    toks = [t for t in _HANDLE_TOK.findall(text or "") if t.lower().startswith(hl) and len(t) > len(h)
+            and not _in_dict(t.rstrip("."))]
+    if toks:
+        return max(sorted(set(toks)), key=lambda t: (toks.count(t), len(t)))
+    return h if len(h) >= HANDLE_MIN else None
+
+
 def watermarks(text: str, own_handle: str = "") -> list[str]:
-    """Platform watermarks and @handles in on-screen text, the brand's own handle left out. Lower-case, deduplicated."""
+    """Platform watermarks and @handles in on-screen text, the brand's own handle left out. Lower-case, deduplicated.
+    OCR of a moving watermark reads pieces of the handle: a short fragment is completed from the other reads, a fragment
+    nothing completes is dropped, and a handle that is the start of a longer one found too is folded into it."""
     low = (text or "").lower()
     own = (own_handle or "").lower().lstrip("@").strip()
     hits = [m for m in PLATFORM_MARKS if re.search(rf"(?<![a-z]){m}(?![a-z])", low)]
+    handles: list[str] = []
     for h in HANDLE_RX.findall(text or ""):
-        hl = h.lower()
-        if hl != own and f"@{hl}" not in hits:
-            hits.append(f"@{hl}")
+        full = _complete_handle(h, text)
+        if not full:
+            continue
+        hl = full.lower()
+        if hl != own and hl not in handles:
+            handles.append(hl)
+    handles = [h for h in handles if not any(o != h and o.startswith(h) for o in handles)]
+    hits += [f"@{h}" for h in handles if f"@{h}" not in hits]
     return hits[:10]
 
 
@@ -273,13 +301,105 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if st["ok"] or "--soft" in (argv if argv is not None else sys.argv[1:]) else 1
 
 
-def alt_text(hook: str, text: str, limit: int = 420) -> str:
-    """A plain description of a clip: what is said (the hook) and the text on screen."""
-    hook = (hook or "").strip().rstrip("…")
+# ---------------------------------------------------------------------- readable on-screen text (alt text)
+WORDS_FILE = Path(__file__).resolve().parent / "data" / "words_en.txt.gz"  # SCOWL (en_US + en_GB size 50), see NOTICE
+ALT_MIN_CONF = 60.0     # a dictionary word needs at least this confidence
+ALT_SEEN_CONF = 65.0    # a word not in the dictionary needs this mean confidence over 2+ frames ...
+ALT_SURE_CONF = 90.0    # ... or this in one frame
+SHORT_OK = frozenset({"a", "i", "an", "to", "of", "in", "on", "at", "by", "be", "is", "it", "or", "as", "we", "us", "my",
+                      "no", "do", "go", "so", "up", "if", "me", "he", "ai", "tv", "uk", "eu", "vs", "ok"})
+_EDGE = "\"'“”‘’«»()[]{}<>.,;:!?…*_|~`^"
+_VOWEL = re.compile(r"[aeiouyàáâäãåèéêëìíîïòóôöõùúûüýæœ]", re.I)
+
+
+@lru_cache(maxsize=1)
+def _words() -> frozenset:
+    """The bundled English word list (lower case). Empty when the file is missing: then only repeated, confident reads
+    pass, never noise."""
+    try:
+        with gzip.open(WORDS_FILE, "rt", encoding="utf-8") as fh:
+            return frozenset(w.strip() for w in fh if w.strip())
+    except OSError:
+        return frozenset()
+
+
+def _kind(core: str) -> str:
+    if re.fullmatch(r"\d[\d.,:%+/-]*", core):
+        return "num"
+    if re.fullmatch(r"[^\W\d_]+(?:['’.-][^\W\d_]+)*", core):
+        return "word"
+    if re.fullmatch(r"[^\W_]+", core) and re.search(r"\d", core) and re.search(r"[^\W\d_]", core):
+        return "mixed"  # v2, 4K, iOS17
+    return "junk"
+
+
+def _in_dict(core: str) -> bool:
+    w, d = core.lower().replace("’", "'"), _words()
+    return w in d or (w.endswith("s") and w[:-1] in d) or (w.endswith("'s") and w[:-2] in d)
+
+
+def readable_text(seq: list[list[tuple[str, float]]], limit: int = 500) -> str:
+    """On-screen text fit to read aloud: from OCR reads in order (one list of (text, conf) per frame), only real words
+    (in the dictionary at >= ALT_MIN_CONF, or seen in 2+ frames at >= ALT_SEEN_CONF mean, or one read at >=
+    ALT_SURE_CONF; letters with a vowel, 3+ long, 4+ outside the dictionary), with 1-2 letter words, numbers and short
+    codes (v2) kept only next to such a word. Single letters, shirt patterns and torn pieces of a moving watermark
+    ("CGC", "liclip", "GS G YY") are dropped. Deduplicated, in reading order."""
+    stats: dict[str, list[float]] = {}
+    for frame in seq:
+        best: dict[str, float] = {}
+        for t, c in frame:
+            k = t.strip(_EDGE).lower()
+            best[k] = max(best.get(k, 0.0), float(c))
+        for k, c in best.items():
+            stats.setdefault(k, []).append(c)
+
+    def strong(core: str, conf: float) -> bool:
+        if _kind(core) != "word" or len(core) < 3 or not _VOWEL.search(core):
+            return False
+        if _in_dict(core):
+            return conf >= ALT_MIN_CONF
+        seen = stats.get(core.lower(), [])
+        return len(core) >= 4 and ((len(seen) >= 2 and sum(seen) / len(seen) >= ALT_SEEN_CONF) or conf >= ALT_SURE_CONF)
+
+    out, seen_out = [], set()
+    for frame in seq:
+        cores = [(t.strip(_EDGE), float(c)) for t, c in frame]
+        good = [strong(core, c) for core, c in cores]
+        for i, (core, c) in enumerate(cores):
+            if not core:
+                continue
+            near = (i > 0 and good[i - 1]) or (i + 1 < len(good) and good[i + 1])
+            k = _kind(core)
+            keep = good[i] or (near and c >= ALT_MIN_CONF and (
+                (k == "word" and core.lower() in SHORT_OK) or k == "num" or (k == "mixed" and len(core) >= 2)))
+            if keep and core.lower() not in seen_out:
+                seen_out.add(core.lower())
+                out.append(core)
+    return " ".join(out)[:limit]
+
+
+def readable_from_frames(frames: list[dict] | None, limit: int = 500) -> str:
+    """readable_text over scan()'s frames (boxes in Tesseract's reading order, with their confidence)."""
+    seq = []
+    for f in frames or []:
+        if isinstance(f, dict):
+            seq.append([(str(b.get("text") or ""), float(b.get("conf") or 0.0)) for b in f.get("boxes") or []
+                        if isinstance(b, dict)])
+    return readable_text(seq, limit)
+
+
+def alt_text(hook: str, text: str, limit: int = 420, cleaned: bool = False) -> str:
+    """A plain description of a clip: what is said (the hook) and the readable text on screen. ``text`` is OCR output;
+    unless ``cleaned`` (already readable_text), it is filtered here (no confidence known, so dictionary words only)."""
+    hook = re.sub(r"\s+", " ", (hook or "").strip().rstrip("…").strip())
     text = re.sub(r"\s+", " ", text or "").strip()
+    if text and not cleaned:
+        text = readable_text([[(t, ALT_MIN_CONF) for t in text.split(" ")]])
     out = f"Video clip: “{hook}”" if hook else "Video clip"
     if text:
-        out += f". On-screen text: {text}"
+        # one sentence end, never two: “time.” On-screen text ... (not “time.”. On-screen text)
+        out += (" " if re.search(r"[.?!]$", hook) else ". ") + f"On-screen text: {text}"
+    out = re.sub(r"([.?!])(”?)\s*\.", r"\1\2", out)
     return out[:limit]
 
 

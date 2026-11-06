@@ -67,8 +67,8 @@ def test_plan_shot_only_for_track_shots_and_inside_the_upscale_guard():
     assert OUT_H / (1080 / pp["peak"]) <= UPSCALE_MAX + 1e-9
     for lay in ("fit", "split", "screen"):
         assert punch.plan_shot({**_track(), "layout": lay}, [2.0], face, (1920, 1080)) is None
-    # a crop already at the upscale limit (a small source) can't zoom further
-    small = _track(crop_h=int(OUT_H / UPSCALE_MAX), crop_w=432)
+    # a crop already at the punch's total upscale cap (a small source) can't zoom further
+    small = _track(crop_h=int(OUT_H / punch.PUNCH_UPSCALE_MAX), crop_w=360)
     assert punch.plan_shot(small, [2.0], face, (768, 768)) is None
 
 

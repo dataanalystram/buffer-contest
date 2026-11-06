@@ -9,8 +9,11 @@ What it does, all in ffmpeg (``zoompan``, no extra model, no paid service):
   over ``RAMP`` before the next event or the shot end. Nothing jumps: the zoom is continuous and starts at 1.0.
 * Faces are never cropped out: the zoom is centred on the point the tracked crop keeps the face at (horizontal centre,
   ``path.FACE_Y`` down), and the peak is lowered until the face box, wherever the dead zone lets it drift, still fits
-  inside the frame with a margin. A shot whose face can't fit gets no punch at all. The upscale guard
-  (``decide.UPSCALE_MAX``) holds too.
+  inside the frame with a margin. The dead zone counts only on an axis the crop can drift on: a full-height crop
+  never moves vertically, so there only the face's own measured vertical spread counts. A shot whose face can't fit
+  gets no punch at all.
+* Upscale: the punch may take the total scale of the source up to ``PUNCH_UPSCALE_MAX`` (3.0x), so a 720p source
+  (already scaled 2.67x by the tracked crop) still gets a ~12 % punch, and anything under ~640 px tall gets none.
 * Reduced motion: the effect is small and slow by design (12 % at most, 0.4 s eases, one move per ``GAP``), it is a
   per-take switch (``punch_in``, on by default), and the app defaults that switch to off for a person whose device asks
   for reduced motion (take.js). Turning it off renders the shot exactly as before.
@@ -31,6 +34,7 @@ GAP = 3.0          # at least this many seconds between two punches
 PAUSE = 0.45       # a pause before a word this long marks emphasis
 MARGIN = 0.03      # the face box keeps this much of the frame clear at each edge, at the peak
 MIN_SHOT = 1.5     # a shot shorter than this gets no punch
+PUNCH_UPSCALE_MAX = 3.0  # the total source -> 1920 scale a punch may reach (720p: 2.67x crop, room for 1.125x)
 
 
 def emphasis(words: list[dict] | None, start: float) -> list[float]:
@@ -46,12 +50,13 @@ def emphasis(words: list[dict] | None, start: float) -> list[float]:
     return out
 
 
-def safe_peak(face_w: float, face_h: float, cy: float) -> float:
+def safe_peak(face_w: float, face_h: float, cy: float, dead_x: float = DEAD, dead_y: float = DEAD) -> float:
     """The largest zoom (<= ZMAX) that keeps a face box (fractions of the output frame) inside the frame with MARGIN,
-    with its centre anywhere the tracker's dead zone allows (DEAD either side of the zoom centre)."""
+    with its centre anywhere it can drift: dead_x across (the tracker's dead zone), dead_y down (the dead zone only when
+    the crop can move vertically; a full-height crop passes the face's own vertical spread instead)."""
     z = ZMAX
-    # a point at offset d from the zoom centre lands at d * z: the far edge of the face is DEAD + half its size away
-    half_x, half_y = DEAD + face_w / 2, DEAD + face_h / 2
+    # a point at offset d from the zoom centre lands at d * z: the far edge of the face is its drift + half its size away
+    half_x, half_y = max(0.0, dead_x) + face_w / 2, max(0.0, dead_y) + face_h / 2
     for room, half in ((0.5 - MARGIN, half_x), (min(cy, 1 - cy) - MARGIN, half_y)):
         if half <= 0:
             continue
@@ -102,8 +107,12 @@ def plan_shot(s: dict, emph: list[float], face: dict | None, src: tuple[int, int
     cy = FACE_Y if ch < sh else float((face or {}).get("cy", FACE_Y))
     fw = float((face or {}).get("w", 0.0)) * sw / cw
     fh = float((face or {}).get("h", 0.0)) * sh / ch
-    peak = safe_peak(fw, fh, cy)
-    peak = min(peak, UPSCALE_MAX * ch / OUT_H)  # never past the upscale guard (OUT_H / (ch / peak) <= UPSCALE_MAX)
+    # the vertical drift: the dead zone when the crop follows the face up and down, else only the face's own spread
+    # (half its p10-p90 range of centre heights), never more than the dead zone
+    dead_y = DEAD if ch < sh else min(DEAD, max(0.0, float((face or {}).get("dy", 0.0))) * sh / ch)
+    peak = safe_peak(fw, fh, cy, DEAD, dead_y)
+    # quality cap: the punch may take the total source scale to PUNCH_UPSCALE_MAX (OUT_H / (ch / peak) <= 3.0)
+    peak = min(peak, max(UPSCALE_MAX, PUNCH_UPSCALE_MAX) * ch / OUT_H)
     if peak < 1.02:
         return None
     wins = events(float(s["start"]), float(s["end"]), emph, last)
@@ -113,11 +122,14 @@ def plan_shot(s: dict, emph: list[float], face: dict | None, src: tuple[int, int
 
 
 def face_size(points: list[tuple[float, dict]]) -> dict | None:
-    """Median face box (fractions of the source) over a shot's samples: {w, h, cy}."""
+    """Median face box (fractions of the source) over a shot's samples: {w, h, cy, dy}; dy is half the p10-p90 range
+    of the face centre's height (how far it moves up and down)."""
     if not points:
         return None
+    cys = sorted(f["y"] + f["h"] / 2 for _, f in points)
+    lo, hi = cys[int(0.1 * (len(cys) - 1))], cys[int(round(0.9 * (len(cys) - 1)))]
     return {"w": median(f["w"] for _, f in points), "h": median(f["h"] for _, f in points),
-            "cy": median(f["y"] + f["h"] / 2 for _, f in points)}
+            "cy": median(cys), "dy": round((hi - lo) / 2, 4)}
 
 
 def filter_for(pp: dict | None, w: int, h: int) -> str:

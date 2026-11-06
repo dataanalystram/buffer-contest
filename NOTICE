@@ -401,3 +401,6 @@ studio/media/ocr.py, scripts/worker_tesseract.sh  (separate program, not linked;
             samples from One take clips: caption placement off on-screen text, a watermark warning, alt text and the
             Library search index. No pytesseract or other Python binding is used.
 
+
+SCOWL word lists (studio/media/data/words_en.txt.gz): Copyright 2000-2011 Kevin Atkinson and others, a permissive
+licence (full text in studio/media/data/SCOWL-LICENSE.txt). Used only to keep OCR noise out of clip alt text.

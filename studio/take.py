@@ -66,19 +66,56 @@ def norm(s: str) -> str:
     return re.sub(r"[^a-z0-9']+", " ", (s or "").lower()).strip()
 
 
+SENT_MAX = 40       # a run-on with no full stop is split near this many words, at its best soft break
+SENT_MIN = 4        # a piece shorter than this left by such a split joins its neighbour (never a 1-word fragment)
+_SOFT = (",", ";", ":", "\u2014", "-")
+
+
+def _soft_break(cur: list[dict]) -> int:
+    """Where to split a run-on (index of the last word of the first part): the last comma / semicolon in its second
+    half, else the longest pause between two words there. Both parts keep at least SENT_MIN words."""
+    lo, hi = max(SENT_MIN - 1, len(cur) // 2), len(cur) - SENT_MIN
+    best, gap = hi, -1.0
+    for k in range(hi, lo - 1, -1):
+        if str(cur[k]["w"]).strip().endswith(_SOFT):
+            return k
+        try:
+            g = float(cur[k + 1]["s"]) - float(cur[k]["e"])
+        except (KeyError, TypeError, ValueError):
+            g = 0.0
+        if g > gap + 1e-9:
+            best, gap = k, g
+    return best
+
+
 def sentences(words: list[dict]) -> list[dict]:
-    """Group timed words into sentences. Each sentence: {i, s, e, text, words:[...]} (times in seconds)."""
-    out, cur = [], []
+    """Group timed words into sentences. Each sentence: {i, s, e, text, words:[...]} (times in seconds).
+    A run-on without a full stop is split at a soft break (comma, then the longest pause) once it passes SENT_MAX
+    words, so no sentence (and no moment or hook mined from it) starts or ends on a fragment of a few words."""
+    out, cur, forced = [], [], []
     for w in words:
         if not str(w.get("w", "")).strip():
             continue
         cur.append(w)
         t = str(w["w"]).strip()
-        if t.endswith((".", "?", "!")) or len(cur) >= 40:
-            out.append(cur)
+        if t.endswith((".", "?", "!")):
+            if out and forced[-1] and len(cur) < SENT_MIN:  # the tail of a split run-on: back onto its sentence
+                out[-1] = out[-1] + cur
+                forced[-1] = False
+            else:
+                out.append(cur)
+                forced.append(False)
             cur = []
+        elif len(cur) >= SENT_MAX + SENT_MIN:
+            k = _soft_break(cur)
+            out.append(cur[:k + 1])
+            forced.append(True)
+            cur = cur[k + 1:]
     if cur:
-        out.append(cur)
+        if out and forced[-1] and len(cur) < SENT_MIN:
+            out[-1] = out[-1] + cur
+        else:
+            out.append(cur)
     res = []
     for i, ws in enumerate(out):
         res.append({"i": i, "s": float(ws[0]["s"]), "e": float(ws[-1]["e"]), "text": " ".join(str(w["w"]).strip() for w in ws),
@@ -549,7 +586,8 @@ def face_track(path: str, duration: float, fps: float = 2.0, model_path: str | N
     except Exception as e:  # noqa: BLE001 - any failure to load MediaPipe (no libEGL, no model, a bad download) falls back to
         # the Haar cascade the self-check vouches for, never an escaped error (CodeRabbit, PR #107)
         print(f"face track: MediaPipe couldn't load ({str(e)[:80]}), falling back to OpenCV's Haar cascade", flush=True)
-        return _face_track_cv2(path, fps, f"MediaPipe couldn't load: {str(e)[:60]}")
+        why = re.sub(r"^MediaPipe couldn't load:\s*", "", str(e))[:60]  # DetectorError already carries the prefix
+        return _face_track_cv2(path, fps, f"MediaPipe couldn't load: {why}")
     w, h = 320, 180
     info = probe(path)
     if info["width"] and info["height"]:
