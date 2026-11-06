@@ -219,7 +219,7 @@ class Store:
         if self.xn("INSERT INTO data_migrations(name, ran) VALUES(?, ?) ON CONFLICT (name) DO NOTHING",
                    ("agent_cap_50_buffer_writes", time.time())):
             for table in ("agent_tokens", "oauth_refresh"):
-                self.x(f"UPDATE {table} SET daily_cap=50 WHERE daily_cap<=20 AND user_id NOT LIKE 'demo\\_%' ESCAPE '\\'")
+                self.x(f"UPDATE {table} SET daily_cap=50 WHERE daily_cap<=20 AND user_id NOT LIKE ? ESCAPE '!'", ("demo!_%",))
 
     def _connect(self):
         # prepare_threshold=None: PgBouncer-style poolers (Supabase) can't keep server-side prepared statements.
