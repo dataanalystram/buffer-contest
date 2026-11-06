@@ -43,6 +43,15 @@ def test_rejected_refresh_clears_tokens(human, app, fake, status, body):
     assert app.state.store.tokens("acc_1") is None
 
 
+@pytest.mark.parametrize("status,body", [(400, "<html>Bad Request</html>"), (401, ""), (400, {"message": "no code"})])
+def test_garbled_400_401_keeps_tokens(human, app, fake, status, body):
+    _expire(app)
+    fake.token_fail = (status, body)
+    r = human.get("/api/channels?refresh=1")
+    assert r.status_code == 503 and r.json()["code"] == "buffer_busy"
+    assert app.state.store.tokens("acc_1")["refresh_token"] == "rt_1"
+
+
 def test_insufficient_scope_asks_to_reconnect(human, fake):
     fake.gql_error = {"message": "Missing required scope: posts:read", "extensions": {"code": "INSUFFICIENT_SCOPE"}}
     r = human.get("/api/channels?refresh=1")

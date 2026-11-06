@@ -148,7 +148,10 @@ def _token_request(s: Settings, http: httpx.Client, params: dict, previous: dict
     if not isinstance(j, dict):
         j = {}
     err = str(j.get("error") or "")
-    if r.status_code in (400, 401) or err == "invalid_grant":  # the grant itself is bad: only this signs anyone out
+    # The grant itself is bad: only this signs anyone out. Buffer answers token errors as JSON with an OAuth error code
+    # (developers.buffer.com/guides/authentication.html#errors); a 400/401 without one (an HTML page from an edge proxy,
+    # an empty body) says nothing about the grant, so it is retried like a 5xx.
+    if err == "invalid_grant" or (r.status_code in (400, 401) and err):
         raise BufferError(f"Buffer sign-in failed: {j.get('error_description') or err or r.status_code}", 401)
     if r.status_code >= 400 or err or not j.get("access_token"):  # 5xx, 429 or a garbled answer: retry later
         raise BufferBusy("Buffer's sign-in service is busy. Try again in a moment.", retry_after=_retry_after(r))

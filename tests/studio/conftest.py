@@ -78,8 +78,9 @@ class FakeBuffer:
                                                  "scope": "account:read posts:write offline_access"})
             if self.token_fail == "timeout":
                 raise httpx.ConnectTimeout("timed out", request=request)
-            if isinstance(self.token_fail, tuple):  # (status, json): Buffer's answer to the refresh grant
-                return httpx.Response(self.token_fail[0], json=self.token_fail[1])
+            if isinstance(self.token_fail, tuple):  # (status, json or raw text): Buffer's answer to the refresh grant
+                st, bd = self.token_fail
+                return httpx.Response(st, text=bd) if isinstance(bd, str) else httpx.Response(st, json=bd)
             if self.token_fail:
                 return httpx.Response(self.token_fail, headers={"Retry-After": "7"}, json={"error": "temporarily_unavailable"})
             rt = form["refresh_token"][0]
