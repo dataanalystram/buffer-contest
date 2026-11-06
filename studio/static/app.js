@@ -956,11 +956,15 @@ function paidApproval(r) {
 
 // ---------------------------------------------------------------- AI apps: who has access, what they did, connect more
 const POL = { review: "Needs my approval", draft: "Buffer drafts only", trusted: "Can schedule" };
+const POL_SAY = { draft: "It can only save Buffer drafts. Nothing is scheduled or published.",
+  review: "Everything it sends waits in your Approvals inbox until you approve it.",
+  trusted: "It can schedule posts in Buffer on its own (still capped per day and stopped by the kill switch)." };
 async function loadTokens() {
   const r = await api("/api/safety"); setKill(r.kill_switch);
   const box = $("#tokens"), toks = r.tokens.filter((t) => !t.revoked);
   box.innerHTML = toks.length ? `<ul class="ax-list">${toks.map((t) => `<li class="ax-row" data-testid="token-row">${aiMark(t.name, 32)}<span class="ax-name"><b>${esc(t.name)}</b><small>${esc(POL[t.policy] || t.policy)} · ${t.daily_cap} posts a day</small></span>
       <span class="ax-acts" data-testid="token-actions"><span class="ax-used ${t.last_used ? "on" : ""}">${t.last_used ? "Last used " + esc(timeAgo(t.last_used * 1000)) : "Not used yet"}</span>
+      <label class="ax-pol">Policy <select data-testid="token-policy" data-id="${t.id}" data-was="${esc(t.policy)}" aria-label="Policy for ${esc(t.name)}">${Object.entries(POL).map(([k, v]) => `<option value="${k}"${k === t.policy ? " selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
       <button class="link" type="button" data-testid="token-cap-edit" data-id="${t.id}" data-cap="${t.daily_cap}">Change limit</button>
       <button class="link" type="button" data-testid="token-paid" data-id="${t.id}" data-on="${t.allow_paid_apis ? 1 : 0}" aria-pressed="${t.allow_paid_apis ? "true" : "false"}" title="Paid APIs: HuhQueue's server AI and, later, product search credits">Paid APIs: ${t.allow_paid_apis ? "allowed" : "ask me"}</button>
       <button class="link danger ax-revoke" type="button" data-testid="revoke-token" data-id="${t.id}">Revoke</button></span></li>`).join("")}</ul>`
@@ -970,6 +974,12 @@ async function loadTokens() {
     const on = b.dataset.on !== "1";
     if (on && !(await hqConfirm("Let this app use paid APIs without asking? It can then spend your HuhQueue AI allowance (and, later, product search credits) on its own. Each use is in Activity.", { ok: "Allow paid APIs" }))) return;
     try { await api(`/api/agent-tokens/${b.dataset.id}`, { method: "PATCH", body: { allow_paid_apis: on } }); toast(on ? "Paid APIs allowed for this app" : "This app asks you before using paid APIs"); } catch (e) { toast(e.message, 5000); }
+    loadTokens();
+  }));
+  box.querySelectorAll("[data-testid=token-policy]").forEach((sel) => (sel.onchange = async () => {
+    const to = sel.value, was = sel.dataset.was;
+    if (!(await hqConfirm(`Change this app from “${POL[was] || was}” to “${POL[to]}”? ${POL_SAY[to]}`, { ok: "Change policy" }))) { sel.value = was; return; }
+    try { await api(`/api/agent-tokens/${sel.dataset.id}`, { method: "PATCH", body: { policy: to, confirm: true } }); toast(`Policy: ${POL[to]}`); } catch (e) { toast(e.message, 5000); }
     loadTokens();
   }));
   box.querySelectorAll("[data-testid=token-cap-edit]").forEach((b) => (b.onclick = async () => {

@@ -462,9 +462,10 @@ def check(channel: dict, text: str, media_urls: list[str] | None = None, mode: s
             findings.append(_f("error", "field.youtube.title", f"YouTube title is {utf16(title)}/100 characters.", "youtube_title"))
         cat = str(options.get("category_id") or "")
         if not cat:
-            fixes["youtube_category"] = "Use category People & Blogs (22)"
-            findings.append(_f(lvl, "field.youtube.category", "YouTube needs a category (categoryId) before Buffer will create it.",
-                               "youtube_category"))
+            fixes["youtube_category"] = "Use category Science & Technology (28)"
+            findings.append(_f(lvl, "field.youtube.category", "YouTube needs a category (categoryId) before Buffer will create it. "
+                               "Suggested: 28 (Science & Technology): autofix_post(fixes=['youtube_category']), or "
+                               "youtube: {categoryId: '28'} on create_package / autofix_post.", "youtube_category"))
         elif cat not in YT_CATEGORIES:
             findings.append(_f("error", "field.youtube.category", f"YouTube category {cat} isn't one Buffer accepts."))
     if svc == "pinterest" and creating:
@@ -806,7 +807,7 @@ def apply_text_fixes(channel: dict, text: str, options: dict, fix_ids: list[str]
         options["title"] = fit_text("youtube", (options.get("title") or text.split("\n")[0]).strip(), 100)
         applied.append("youtube_title")
     if "youtube_category" in fix_ids:
-        options["category_id"] = "22"
+        options["category_id"] = "28"  # Science & Technology: the default suggested for an AI / tech channel
         applied.append("youtube_category")
     return text, options, applied
 

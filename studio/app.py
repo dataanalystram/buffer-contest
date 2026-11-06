@@ -803,12 +803,15 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.patch("/api/agent-tokens/{token_id}")
     def token_cap(token_id: int, request: Request, body: dict = Body(...)):
-        """{"daily_cap": 1-100} and/or {"allow_paid_apis": true|false} (humans only)."""
+        """{"daily_cap": 1-100}, {"allow_paid_apis": true|false} and/or {"policy": review|draft|trusted, "confirm": true}
+        (humans only)."""
         a = actor(request, write=True)
         out: dict = {"id": token_id}
+        if "policy" in body:
+            out.update(studio.set_agent_policy(a, token_id, body.get("policy"), body.get("confirm")))
         if "allow_paid_apis" in body:
             out.update(studio.set_agent_paid(a, token_id, body.get("allow_paid_apis")))
-        if "daily_cap" in body or "allow_paid_apis" not in body:
+        if "daily_cap" in body or not ({"allow_paid_apis", "policy"} & set(body)):
             out.update(studio.set_agent_cap(a, token_id, body.get("daily_cap")))
         return out
 
