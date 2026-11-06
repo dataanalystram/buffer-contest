@@ -1124,7 +1124,8 @@ class House:
         if eng and eng["style"] == "openai":
             eng = self._ai_reserve(a, eng)
         ai = {"base_url": eng["base_url"], "api_key": eng["api_key"], "model": eng["model"]} if eng and eng["style"] == "openai" else None
-        drafts = drafter.draft(chans, article, ai=ai, http=self.http, tone=tone)
+        from .style_presets import style_from_rules  # a chosen preset shapes the free drafter's captions too (no model)
+        drafts = drafter.draft(chans, article, ai=ai, http=self.http, tone=tone, style=style_from_rules(rules))
         if ai:
             self._ai_audit(a, eng, "captions")
         self._step(steps, "caption", "done", f"{len(drafts)} captions ({drafts[0]['engine'] if drafts else '-'})")
@@ -1139,7 +1140,7 @@ class House:
         for d in drafts:
             svc = d["service"]
             scoped = brand.for_channel(rules, svc)
-            text = drafter.fit(svc, brand.apply_text_rules(d["text"], scoped, trace))
+            text = drafter.fit(svc, brand.apply_text_rules(d["text"], scoped, trace), drafter.rule_limit(svc, scoped))
             meta = self.media_meta(a, main["token"]) if main and main.get("token") else None  # the sample clip has no token
             chk = brand.brand_check(text, meta, scoped, kit)
             fails += len(chk["failed"])

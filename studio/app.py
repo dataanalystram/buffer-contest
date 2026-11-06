@@ -404,6 +404,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         ping_memo.update(at=now, ok=bool(ok))
         return ok
 
+    def _slot_tick() -> dict:
+        from .brand_studio import tick_snapshot
+        return tick_snapshot()
+
     @app.get("/healthz")
     def health():
         # Touches the database so uptime pings also keep a free Postgres (Supabase) from pausing for inactivity.
@@ -421,6 +425,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                            "r2_bytes_today": eg.get("r2_bytes", 0), "r2_redirected_bytes_today": eg.get("r2_redirected_bytes", 0)},
                 # the in-process R2 migration (studio/r2_migrate_bg.py): mode, state and counts only
                 "r2_migrate": r2_migrate_bg.snapshot(),
+                # the recurring-slot ticker on this instance (studio/brand_studio.py): on, last pass, counts only
+                "slots": _slot_tick(),
                 # R2 against its free-tier caps (studio/r2usage.py), numbers only; {"on": false} while unconfigured
                 "r2": {"on": True, "stored_bytes": r2s["stored_bytes"], "max_bytes": r2s["max_bytes"],
                        "class_a": r2s["class_a"], "max_class_a": r2s["max_class_a"], "class_b": r2s["class_b"],

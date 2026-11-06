@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS review_links (id INTEGER PRIMARY KEY AUTOINCREMENT, u
 TABLES = ("style_edits", "style_suggestions", "review_links")
 
 GROUPS = [
+    {"id": "hooks", "label": "Hooks and structure", "hint": "How a post opens, flows and ends: hook formulas, the first line, on-screen text."},
     {"id": "voice", "label": "Voice and tone", "hint": "How captions sound: punctuation, case, length."},
     {"id": "words", "label": "Words to avoid or use", "hint": "Phrases that never appear, and the words you prefer."},
     {"id": "hashtags", "label": "Hashtags", "hint": "How many, and which ones always go in."},
@@ -89,6 +90,15 @@ def ensure(store) -> None:
     if store.pg:
         for t in TABLES:
             store.x(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
+    # who made each rule (studio/provenance.py); rows from before 6 Nov 2026: an AI app's -> mcp (model unknown), presets ->
+    # builtin, the rest -> the person's own
+    from . import provenance
+    provenance.add_columns(store, "style_rules")
+    # LIKE patterns are bound: psycopg reads a literal % in the SQL as a placeholder
+    store.x("UPDATE style_rules SET created_by_source = CASE WHEN origin='agent' OR source LIKE ? THEN 'mcp' "
+            "WHEN origin='preset' THEN 'builtin' ELSE 'user' END WHERE created_by_source IS NULL", ("agent:%",))
+    store.x("UPDATE style_rules SET client_name = substr(source, 13) WHERE created_by_source='mcp' AND client_name IS NULL "
+            "AND source LIKE ?", ("agent:agent:%",))
     store.x("CREATE INDEX IF NOT EXISTS style_edits_user ON style_edits(user_id, id)")
     store.x("CREATE INDEX IF NOT EXISTS review_links_hash ON review_links(token_hash)")
 
@@ -98,6 +108,8 @@ def group_of(r: dict) -> str:
         return "cta" if (r.get("check") or {}).get("type") == "end_card" else "visual"
     c = r.get("check") or {}
     ty = c.get("type", "")
+    if ty == "guideline":  # a preset's guidance (studio/style_presets.py): the drafter's prompt, never auto-applied
+        return "cta" if c.get("area") == "cta" else "hooks"
     if ty == "require_text":
         return "hashtags" if str(c.get("text", "")).startswith("#") else "cta"
     return TYPE_GROUP.get(ty, "voice")
@@ -303,6 +315,8 @@ class Ledger:
         r["examples"] = r.get("examples") or []
         r["evidence"] = r.get("evidence") or []
         r["learned_from"] = len(r["evidence"])
+        from . import provenance
+        r["provenance"] = provenance.of_row(r)
         return r
 
     def kit_rules(self, a: Actor) -> list[dict]:
@@ -335,7 +349,13 @@ class Ledger:
         counts = {g: 0 for g in GROUP_IDS}
         for r in rules + kit:
             counts[r["group"]] = counts.get(r["group"], 0) + 1
+        from . import provenance, style_presets
+        for k in kit:
+            k["provenance"] = {"source": "user", "client": "", "model": "", "label": "From your brand kit"}
+        active = sorted({style_presets.preset_of(r) for r in rules if r["active"] and style_presets.preset_of(r)})
         return {"groups": [{**g, "count": counts.get(g["id"], 0)} for g in GROUPS], "rules": rules, "kit_rules": kit,
+                "presets": [{"id": p["id"], "name": p["name"], "for": p["for"], "summary": p["summary"], "active": p["id"] in active,
+                             "provenance": provenance.BUILTIN} for p in style_presets.PRESETS],
                 "suggestions": sugg, "suggest_after": SUGGEST_AFTER, "services": list(SERVICES),
                 "summary": {"active": sum(1 for r in rules if r["active"]), "learned": sum(1 for r in rules if r["origin"] == "learned"),
                             "suggested": len(sugg), "scoped": sum(1 for r in rules if r["scope"])}}
@@ -349,13 +369,16 @@ class Ledger:
         return out
 
     def stamp(self, a: Actor, added: list[dict], scope=None, origin: str | None = None) -> None:
+        from . import provenance
         sc = norm_scope(scope)
         org = origin or ("taught" if a.kind == "human" else "agent")
+        pv = provenance.stamp(a)
         for r in added or []:
             s = sc if r.get("kind") == "text" else []
-            self.store.x("UPDATE style_rules SET scope=?, origin=?, updated=? WHERE id=? AND user_id=?",
-                         (json.dumps(s), org, _now(), r["id"], a.uid))
-            r.update(scope=s, origin=org)
+            self.store.x("UPDATE style_rules SET scope=?, origin=?, updated=?, created_by_source=?, client_name=?, model=? "
+                         "WHERE id=? AND user_id=?", (json.dumps(s), org, _now(), pv["created_by_source"], pv["client_name"],
+                                                      pv["model"], r["id"], a.uid))
+            r.update(scope=s, origin=org, **pv)
 
     def add(self, a: Actor, correction: str, scope=None, origin: str | None = None) -> dict:
         res = self.h.remember(a, correction, scope=scope, origin=origin)
@@ -396,11 +419,21 @@ class Ledger:
                 raise ActionError("Visual rules apply to every channel (the render is shared); scope a text rule instead.")
             changes["scope"] = sc
         text = str(body.get("rule") or body.get("correction") or "").strip()[:500]
+        if text and (r.get("check") or {}).get("type") == "guideline":  # a preset's guidance: new wording, same kind of rule
+            text = re.sub(r"[\x00-\x1f<>]", "", text)[:300]
+            chk = {**r["check"], "text": text}
+            if chk.get("area") == "cta" and "line" in chk:  # the sign-off the free drafter writes follows the new wording
+                chk["line"] = text.removeprefix("Sign off with:").strip()[:120] or chk["line"]
+            changes.update(check=chk, rule=text, kind="text", source=r.get("source") or "")
+            text = ""
         if text:
             found = brand.parse_correction(text)
             if len(found) != 1:
                 raise ActionError("Say the rule in one plain sentence, e.g. “never say game-changer or synergy”, “max 2 hashtags”.")
-            changes.update(check=found[0]["check"], rule=found[0]["rule"], kind=found[0]["kind"], source=text)
+            chk = found[0]["check"]
+            if (r.get("check") or {}).get("preset"):  # still that preset's rule: re-applying it replaces, never duplicates
+                chk = {**chk, "preset": r["check"]["preset"]}
+            changes.update(check=chk, rule=found[0]["rule"], kind=found[0]["kind"], source=text)
         if not changes:
             raise ActionError("Nothing to change: give rule (plain words), scope or active.")
         held = self._confirm(a, "update", {"rule_id": int(rule_id), **{k: v for k, v in changes.items() if k != "check"}},
@@ -558,13 +591,39 @@ class Ledger:
             for old in self.h.rules(a):
                 if old["check"]["type"] == check["type"] and (old.get("scope") or []) == sc:
                     self.store.x("UPDATE style_rules SET active=0 WHERE id=?", (old["id"],))
-        rid = self.store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created,scope,origin,examples,evidence,updated) "
-                           "VALUES(?,?,?,?,?,1,?,?,?,?,?,?)",
+        rid = self.store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created,scope,origin,examples,evidence,updated,"
+                           "created_by_source,client_name,model) VALUES(?,?,?,?,?,1,?,?,?,?,?,?,'user','','')",
                            (a.uid, r["kind"], json.dumps(check), r["rule"], f"Learned from {len(ids)} of your edits", _now(), json.dumps(sc),
                             "learned", json.dumps(examples), json.dumps(ids), _now()))
         self.store.x("UPDATE style_suggestions SET status='accepted', decided=?, rule_id=? WHERE id=?", (_now(), rid, r["id"]))
         self.store.audit(a.uid, a.label, "rule_suggestion_accepted", "write", {"rule": r["rule"], "edits": len(ids)})
         return {"accepted": r["id"], "rule": self.get_rule(a, rid), "suggestions": self.suggestions(a)}
+
+    # ---- built-in presets (studio/style_presets.py)
+    def presets(self, a: Actor) -> dict:
+        from . import provenance, style_presets
+        active = {style_presets.preset_of(r) for r in self.h.rules(a)}
+        return {"presets": [{**p, "active": p["id"] in active, "provenance": provenance.BUILTIN} for p in style_presets.listing()],
+                "how": "Pick one to add its rules to your Style Ledger. Edit any rule first (edits: {index: {drop|text|n|words}}), "
+                       "or afterwards like any other rule."}
+
+    def apply_preset(self, a: Actor, preset_id: str, edits=None, confirm_token: str | None = None) -> dict:
+        """People: one step. AI apps: preview + confirm_token (it can switch rules off), then the same call with the token."""
+        from . import style_presets
+        pid = str(preset_id or "")[:40]
+        if pid not in style_presets.BY_ID:
+            raise ActionError(f"No preset called {pid!r}. Presets: {', '.join(style_presets.BY_ID)}.", 404)
+        if edits is not None and not isinstance(edits, dict):
+            raise ActionError("edits is an object mapping a rule's index to {drop: true} | {text} | {n} | {words}.", 400)
+        try:  # bad edits answer 400 before any confirm token is made
+            planned = style_presets.plan(style_presets.BY_ID[pid], edits)
+        except ValueError as e:
+            raise ActionError(str(e), 400)
+        held = self._confirm(a, "apply_preset", {"preset": pid, "edits": edits or {}}, confirm_token)
+        if held:
+            held["preview"]["rules"] = [r["rule"] for r in planned]
+            return held
+        return style_presets.apply(self.h, a, pid, edits)
 
     # ---- a draft against the ledger
     @staticmethod
@@ -767,8 +826,25 @@ TOOLS = [
     {"name": "list_review_links", "description": "Review links made for a run and what each reviewer decided (approved / changes_requested with their note).",
      "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
 ]
+TOOLS += [
+    {"name": "list_style_presets", "description": "Built-in Style Ledger presets for people whose captions need structure: Hook-first short-form "
+     "(hook in 1-2 s, pattern interrupts, one idea, payoff, one CTA), Plain explainer, Founder story, Punchy news hook, Data-led, "
+     "Thread-style LinkedIn, Gen Z casual, "
+     "Podcast clip. Each lists its hook formulas, first-line rules, caption length and hashtag cap per network, on-screen "
+     "text rules, CTA and banned phrases, and the exact ledger rules applying it would add (with their index for edits). Read-only.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "apply_style_preset", "description": "Add a built-in preset's rules to the person's Style Ledger (only when they chose it). "
+     "Two steps: the first call returns a preview of the rules and a confirm_token; show it to the person, then call again with the "
+     "same arguments and confirm_token. edits (optional) changes rules before they are written: {\"<index>\": {\"drop\": true} | "
+     "{\"text\": \"new wording\"} | {\"n\": 3} | {\"words\": [...]}} (indexes from list_style_presets). Re-applying a preset replaces "
+     "its own earlier rules; another preset's rules are switched off; the person's own rules stay, except a single-valued rule on the "
+     "same networks that the preset replaces. Every rule stays editable in Brand > Style Ledger.",
+     "inputSchema": {"type": "object", "required": ["preset"], "properties": {
+         "preset": {"type": "string", "enum": ["hook_first", "educator", "build_in_public", "news_fast", "podcast_clip"]},
+         "edits": {"type": "object"}, "confirm_token": {"type": "string"}}}},
+]
 NAMES = {t["name"] for t in TOOLS}
-READ_ONLY = {"list_style_rules", "list_rule_suggestions", "check_draft", "list_review_links"}
+READ_ONLY = {"list_style_rules", "list_rule_suggestions", "check_draft", "list_review_links", "list_style_presets"}
 
 
 def call_tool(studio, actor, name: str, args: dict):
@@ -801,6 +877,10 @@ def call_tool(studio, actor, name: str, args: dict):
         return L.create_review(actor, int(args.get("run_id") or 0), str(args.get("channel_id") or ""), args.get("hours") or REVIEW_HOURS)
     if name == "list_review_links":
         return {"reviews": L.reviews(actor, int(args.get("run_id") or 0))}
+    if name == "list_style_presets":
+        return L.presets(actor)
+    if name == "apply_style_preset":
+        return L.apply_preset(actor, str(args.get("preset") or ""), args.get("edits"), args.get("confirm_token"))
     return NotImplemented
 
 
@@ -818,6 +898,15 @@ def add_routes(app, house, actor) -> None:
     @app.patch("/api/ledger/rules/{rule_id}")
     def ledger_rule_update(rule_id: int, request: Request, body: dict = Body(default={})):
         return L.update(actor(request, write=True), rule_id, body or {})
+
+    @app.get("/api/ledger/presets")
+    def ledger_presets(request: Request):
+        return L.presets(actor(request))
+
+    @app.post("/api/ledger/presets/{preset_id}/apply")
+    def ledger_preset_apply(preset_id: str, request: Request, body: dict = Body(default={})):
+        b = body if isinstance(body, dict) else {}
+        return L.apply_preset(actor(request, write=True), preset_id, b.get("edits"), b.get("confirm_token"))
 
     @app.get("/api/ledger/suggestions")
     def ledger_suggestions(request: Request):
