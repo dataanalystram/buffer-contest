@@ -138,7 +138,7 @@ that app's paid calls run without asking and each one is written to Activity.
 | `list_recent_uploads` | client brain | The newest files the user uploaded, sent from a device or imported from a link (`minutes`, `limit`): `library_id`, `media_token`, `name`, `kind`, `bytes`, `from`, `when`. |
 | `import_from_link` | client brain | A Google Drive, Dropbox, OneDrive / SharePoint or iCloud Drive share link ("anyone with the link"), or any direct https link, streamed into the Library up to the per-file limit. Drive's large-file "Download anyway" page is followed; a sign-in page says how to share the file publicly; folders are refused. |
 | `finish_upload` | client brain | Join the chunks into one Library item: `library_id`, `media_token`, `url`, `kind`, `bytes`. |
-| `library_upload_url` | client brain | Only for a file that is already at a public https URL (up to 40 MB). A cloud-drive share link goes through `import_from_link` (up to the per-file limit). A link that answers with a web page (a sign-in or preview page) is refused with "That link returned a web page … Use create_upload instead …". |
+| `library_upload_url` | client brain | Only for a file that is already at a public https URL (up to 40 MB). A cloud-drive share link goes through `import_from_link` (up to the per-file limit). A link that answers with a web page (a sign-in or preview page) is refused with "That link returned a web page … Use create_upload instead …". A video link that isn't the person's own HuhQueue file takes the rights step first (`needs_user_approval` -> call again with `approval_id`); a link with no video extension that turns out to be a video is held the same way and nothing is saved. A YouTube / Vimeo / X post page answers `wrong_tool` (use `render_reel` / `edit_video` with the url). |
 | `integrations_status` | client brain | Which integrations are connected for this user (Product Hunt, X reader key, image models...) and whether each key last tested OK. |
 
 ### Server AI: HuhQueue's own agent (needs server_ai: true, spends the user's allowance)
@@ -329,7 +329,7 @@ tests in `tests/studio/test_mcp_reliability_nov6.py` and the end-to-end pass `te
 6. **`replace_channel_media` on every run type**: start_post / create_package runs take `media_token` in place (only that
    channel; versions kept for Undo); make_post runs as before; One take runs answer `wrong_run_type` (use `adjust_clip`).
 7. **One rights step for every video link.** `render_reel` / `edit_video` with a link, the `post_*` video steps and One take
-   all go through `consent.rights_for_link` (the same `needs_user_approval` -> `approval_id`); an app's own
+   and `library_upload_url` with a video link all go through `consent.rights_for_link` (the same `needs_user_approval` -> `approval_id`); an app's own
    `rights_confirmed` doesn't count for a link. Answers carry `rights.basis` (approved, app_relayed, auto_approved). An
    approval stays usable for a day from the person's DECISION (approval 136 was approved 23 h after the ask and expired 70
    minutes later); `list_pending_approvals` also returns `approved_waiting`, and approving says so in the post's thread.
@@ -344,7 +344,8 @@ tests in `tests/studio/test_mcp_reliability_nov6.py` and the end-to-end pass `te
    humans only).
 10. **No duplicate drafts.** `schedule_package(mode=draft)` from an app finds an earlier run of the same app with a Buffer
    draft of the same story on that channel and answers `duplicate_draft`; `on_duplicate: 'update'` edits that draft
-   (editPost), `'new'` makes a second one. `delete_drafts` removes only this app's drafts.
+   (editPost), `'new'` makes a second one. `post_save_buffer_drafts` (the deprecated family) runs the same guard per
+   channel (`on_duplicate` on that tool too). `delete_drafts` removes only this app's drafts.
 11. **Never a past dueAt**: `due_at_past` on preview, and again right before Buffer for a confirm that aged past its time.
 
 ## Tool registry: search_tools, describe_tool, call_tool (5 Nov 2026)
