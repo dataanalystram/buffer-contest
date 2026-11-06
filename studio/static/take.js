@@ -289,7 +289,7 @@ function tkScoreOf(c) {
 function tkScoreLine(c) {
   const s = tkScoreOf(c), why = String(c.why || (c.reasons || []).join("; ") || "").trim();
   const pill = s == null ? `<span class="pill sm clip-score none" data-testid="clip-score" data-score="">Not scored</span>`
-    : `<span class="pill sm clip-score" data-testid="clip-score" data-score="${s}" title="${s.toFixed(1)} out of 100"><span class="sr">Score ${(s / 10).toFixed(1)} out of 10</span><span aria-hidden="true">Score ${(s / 10).toFixed(1)}</span></span>`;
+    : `<span class="pill sm clip-score" data-testid="clip-score" data-score="${s}" title="Score ${(s / 10).toFixed(1)} out of 10 (${s.toFixed(1)} out of 100)">Score ${(s / 10).toFixed(1)}</span>`;
   const rank = c.rank ? `<b>#${esc(String(c.rank))}</b> · ` : "";
   const line = why ? `<p class="xs clip-why" data-testid="clip-why" title="${esc(why)}">${SPARK}<span><span class="sr">Why this moment: </span>${rank}${esc(why)}</span></p>`
     : `<p class="xs clip-why none" data-testid="clip-why">${SPARK}<span>${s == null ? "Not scored: this take was saved before clips kept their scorer's reason." : "No reason saved for this clip."}</span></p>`;
