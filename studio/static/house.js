@@ -517,6 +517,15 @@ function pkgCovers(p, sent) {
     ${yt ? `<a class="link sm" href="${escUrl(p.thumbnail)}" target="_blank" rel="noopener" download data-testid="pkg-yt-thumb">Download the 1280×720 thumbnail</a>` : ""}</div>`;
 }
 
+// what a saved post says, once, on its card (owner, 6 Nov 2026, B3/B7): "Saved to Buffer as draft · <id>" with a link to
+// the channel in Buffer; nothing reaches Buffer before the person presses the button on this card
+function sentLine(p) {
+  if (p.status === "pending_approval") return "Waiting in Approvals";
+  const s = p.sent || {}, id = s.buffer_post_id ? String(s.buffer_post_id) : "";
+  const href = `https://publish.buffer.com/channels/${encodeURIComponent(p.channel_id || "")}/schedule`;
+  return `${s.mode === "draft" ? "Saved to Buffer as draft (not posted)" : "In Buffer"}${id ? ` · <code data-testid="pkg-buffer-id">${esc(id)}</code>` : ""}`
+    + `${s.due_at ? " · " + esc(fmtWhen(s.due_at)) : ""} · <a class="link sm" href="${escUrl(href)}" target="_blank" rel="noopener" data-testid="pkg-buffer-link">Open in Buffer</a>`;
+}
 function pkgCard(p) {
   const ch = chOf(p.channel_id), sent = ["sent_to_buffer", "pending_approval"].includes(p.status);
   const help = PKG_MODES[0][2];
@@ -537,7 +546,7 @@ function pkgCard(p) {
     <textarea id="pt-${esc(p.channel_id)}" data-testid="pkg-text" rows="5" ${sent ? "disabled" : ""}>${esc(p.text)}</textarea>
     ${checkList(p.check)}
     ${window.ledgerDraft ? window.ledgerDraft(p) : ""}
-    ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${p.status === "pending_approval" ? "Waiting in Approvals" : "In Buffer"}${p.sent && p.sent.mode === "draft" ? " as a draft (not posted)" : ""}${p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : ""}</div>`
+    ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${sentLine(p)}</div>`
       : `<div class="pkg-act"><select data-testid="pkg-mode" aria-label="What to do with this post">${PKG_MODES.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
         <button class="btn sm" data-testid="pkg-send"${p.media_state && p.media_state !== "ok" ? ` disabled title="${esc(MEDIA_GONE)}"` : ""}>${PKG_MODES[0][3]}</button></div><small class="muted sm pkg-help" data-testid="pkg-help">${esc(help)}</small>`}
     </div>

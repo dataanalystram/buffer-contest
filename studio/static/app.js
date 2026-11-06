@@ -409,7 +409,9 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#rail
 // one generic "go to" for links between screens: a button with data-go="planner" or data-go="brand:ledger"
 document.addEventListener("click", (e) => {
   const g = e.target.closest("[data-go]"); if (!g || g.dataset.act || !g.dataset.go) return;
-  e.preventDefault(); ibGo(g.dataset.go);
+  e.preventDefault();
+  if (g.dataset.go === "agent" && g.hasAttribute("data-new") && window.hqNewPost) return void window.hqNewPost("");  // a NEW post
+  ibGo(g.dataset.go);
 });
 function subTab(tab, sub) {
   window.HQ_NAV++; if (!S.bootData) S.navEarly = true;
@@ -624,7 +626,7 @@ async function loadInbox() {
   const soon = next.length ? next : sched.filter((p) => p.dueAt).sort((a, b) => a.dueAt.localeCompare(b.dueAt)).slice(0, 4);
   $("#ibTodayH").textContent = next.length ? "Today's queue" : "Coming up";
   $("#ibToday").innerHTML = soon.length ? soon.slice(0, 6).map(todayRow).join("")
-    : `<li class="ib-none">Nothing scheduled. <button class="link" type="button" data-go="agent" data-testid="inbox-empty-make">Make a post</button> or <button class="link" type="button" data-go="take" data-testid="inbox-empty-take">turn one video into a week</button>.</li>`;
+    : `<li class="ib-none">Nothing scheduled. <button class="link" type="button" data-go="agent" data-new data-testid="inbox-empty-make">Make a post</button> or <button class="link" type="button" data-go="take" data-testid="inbox-empty-take">turn one video into a week</button>.</li>`;
   // needs attention
   $("#inboxJump").innerHTML = live.length > 2 ? live.map((g) => `<a class="ib-chip u-${g.urgency}" href="#ib-${g.key}" data-testid="inbox-jump-chip" data-group="${g.key}"><span>${esc(g.title)}</span><b>${g.count}</b></a>`).join("") : "";
   box.innerHTML = (live.length ? live.map(ibGroup).join("") : "")
@@ -766,10 +768,14 @@ function timeAgo(ms) {
 // format and presses Make it.
 function wireMake(box) {
   box.querySelectorAll("[data-make]").forEach((b) => (b.onclick = () => {
-    showTab("agent", "agent");
+    const text = ("Post this on all my channels " + (b.dataset.make || "")).trim();
+    if (window.hqNewPost) window.hqNewPost(text);  // always a NEW thread, never the one left open (makepost.js)
+    else {
+      showTab("agent", "agent");
+      const q = $("#agQuery");
+      if (q) { q.value = text; q.dispatchEvent(new Event("input")); q.focus(); }
+    }
     document.querySelector("#agentCompose [data-src=topic]")?.click();
-    const q = $("#agQuery");
-    if (q) { q.value = ("Post this on all my channels " + (b.dataset.make || "")).trim(); q.dispatchEvent(new Event("input")); q.focus(); }
     toast("Link added. Pick a format and press Make it.");
   }));
   box.querySelectorAll("[data-run]").forEach((b) => (b.onclick = () => openRunDeep(b.dataset.run)));
