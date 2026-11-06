@@ -334,6 +334,8 @@ def idem_key(name: str, args: dict, meta: dict | None) -> tuple[str, bool] | Non
     if name in DERIVED:
         if args.get("new_request") is True or args.get("new_post") is True:
             return None  # a deliberate new post is never answered from an earlier call's replay (an explicit key still is)
+        if args.get("approval_id") not in (None, ""):
+            return None  # the call after the person approved: never answered by the replay of the "needs approval" one
         if name == "create_package" and not args.get("media_urls"):
             return None  # stages the output's CURRENT media: a re-render in between must not be answered by a replay
         if name in ("start_post", "continue_run") and args.get("format"):

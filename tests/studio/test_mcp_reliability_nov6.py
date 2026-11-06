@@ -289,7 +289,8 @@ def test_an_approval_counts_a_day_from_the_decision_and_the_app_can_find_it(huma
     thread = human.get(f"/api/agent/runs/{rid}").json()["result"]["thread"]
     assert any("Approved the video link" in t["text"] for t in thread)
     got = _ok(human, tok, "edit_video", {"url": YT, "run_id": rid, "rights": "news_credit", "credit": "Video: Taan AI", "approval_id": aid})
-    assert got["job_id"] and got["rights"]["basis"] == "approved" and got["rights"]["approval_id"] == aid
+    assert got.get("job_id"), got
+    assert got["rights"]["basis"] == "approved" and got["rights"]["approval_id"] == aid
     spec = json.loads(store.q("SELECT spec FROM render_jobs WHERE id=?", (got["job_id"],))[0]["spec"])
     assert spec["candidate"]["url"] == YT and spec["source"] == ""  # the worker fetches the post itself, nothing imported here
 
