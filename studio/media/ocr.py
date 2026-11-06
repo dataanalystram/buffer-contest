@@ -302,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 # ---------------------------------------------------------------------- readable on-screen text (alt text)
-WORDS_FILE = Path(__file__).resolve().parent / "data" / "words_en.txt.gz"  # SCOWL (en_US + en_GB size 50), see NOTICE
+WORDS_FILE = Path(__file__).resolve().parent / "lexicon" / "words_en.txt.gz"  # SCOWL (en_US + en_GB size 50), see NOTICE
 ALT_MIN_CONF = 60.0     # a dictionary word needs at least this confidence
 ALT_SEEN_CONF = 65.0    # a word not in the dictionary needs this mean confidence over 2+ frames ...
 ALT_SURE_CONF = 90.0    # ... or this in one frame
