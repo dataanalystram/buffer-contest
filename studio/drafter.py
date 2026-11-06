@@ -254,20 +254,22 @@ def styled_draft(service: str, article: dict, style: dict) -> str:
         body = "\n".join(f"{i + 1}. {_short(s, 160)}" for i, s in enumerate(steps)) or idea
         lines = [hook, body]
     elif shape == "build":
-        hook = _short(f"I dug into this so you don't have to: {t}", 120)
-        lines = [hook, f"What happened: {_short(idea, 200)}" if idea else "",
-                 f"My take: {_short(sents[1], 180)}" if len(sents) > 1 else ""]
+        num = next((x for x in sents if _NUM.search(x) and x != idea), "")
+        nxt = next((x for x in sents if x not in (idea, num)), "")
+        lines = [_short(t, 120), f"What happened: {_short(idea, 200)}" if idea else "",
+                 f"The number to watch: {_short(num, 180)}" if num else (f"What's next: {_short(nxt, 180)}" if nxt else "")]
     elif shape == "news":
         first = next((s for s in sents if _NUM.search(s)), sents[0] if sents else t)
         hook = _short(f"{site}: {first}" if site and site.lower() not in first.lower() else first, 120)
         why = next((s for s in sents if s != first), "")
         lines = [hook, f"Why it matters: {_short(why, 200)}" if why else "", f"Source: {site}" if site else ""]
     elif shape == "quote":
-        q = next((s for s in sents if re.search(r"[\"“”]", s)), idea or t)
-        q = q.strip("\"“” ")
+        quoted = next((m.group(1) for x in sents for m in [re.search(r"[\"“]([^\"“”]{12,}?)[\"”]", x)] if m), "")
+        q = (quoted or idea or t).strip("\"“” ").rstrip(",")
         lines = [_short(f"“{q}”", 120), f"From {site}: {_short(t, 140)}" if site else _short(t, 140)]
     else:  # hook_idea_payoff
-        num = next((s for s in sents if _NUM.search(s)), "")
+        # the most surprising number first: the title when it carries one, else the first sentence that does
+        num = t if _NUM.search(t) else next((x for x in sents if _NUM.search(x)), "")
         hook = _short(num if num and len(num) <= 120 else t, 120)
         payoff = next((s for s in sents if s not in (num, idea)), "")
         lines = [hook, _short(idea, 200) if idea and idea != hook else "", f"Why it matters: {_short(payoff, 180)}" if payoff else ""]
