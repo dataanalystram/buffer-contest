@@ -47,11 +47,11 @@ def test_only_unpinned_r2_screen_shots_get_a_focus_and_the_graph_crops_it(monkey
     x, y, w, h = shots[0]["focus"]
     monkeypatch.setattr(rr, "mask", lambda kind, w_, h_, r=40, color=None: f"/tmp/{kind}_{w_}x{h_}.png")  # graph text only
     chain = rr.seg_graph(rr.Graph(), 0, shots[0], (1376, 744), 3, None, "#C9ACFA", "#0B0B12")
-    assert f"crop={w}:{h}:{x}:{y}," in chain and f"overlay=(W-w)/2:{rr.FOCUS_TOP}" in chain
+    assert f"[f0]crop={w}:{h}:{x}:{y}," in chain and f"overlay=(W-w)/2:{rr.FOCUS_TOP}" in chain
     plain = rr.seg_graph(rr.Graph(), 1, shots[2], (1376, 744), 3, None, "#C9ACFA", "#0B0B12")
-    assert "crop=" not in plain and "overlay=(W-w)/2:(H-h)/2" in plain
+    assert "[f1]crop=" not in plain and "overlay=(W-w)/2:(H-h)/2" in plain
     for bad in ([0, 0, 5000, 10], "x", [1.5, 0, 100, 100], [-2, 0, 100, 100]):  # a bad focus is ignored, never rendered
-        assert "crop=" not in rr.seg_graph(rr.Graph(), 2, {**shots[2], "focus": bad}, (1376, 744), 3, None, "#C9ACFA", "#0B0B12")
+        assert "[f2]crop=" not in rr.seg_graph(rr.Graph(), 2, {**shots[2], "focus": bad}, (1376, 744), 3, None, "#C9ACFA", "#0B0B12")
 
 
 # ---------------------------------------------------------------- 10. caption contrast
