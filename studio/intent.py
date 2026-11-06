@@ -140,9 +140,7 @@ def caption_edit(text: str) -> str:
 
 def search_query(text: str) -> str:
     """The words a news search may use: the topic with links, quotes, instructions and constraints taken out."""
-    q = quoted(text)
-    t = (text or "").replace(q, " ") if q else (text or "")
-    t = intake.topic_of(t)
+    t = intake.topic_of(text or "")  # a quoted name ("Project Atlas") is part of the topic; an exact caption never gets here
     t = CONSTRAINT_WORDS.sub(" ", t)
     t = re.sub(r"\bwhat (?:did|has|have|is|are)\b|\bwhat'?s\b|\btell me\b|\bany\b", " ", t, flags=re.I)
     t = re.sub(r"[\s,.;:!?-]+", " ", t).strip(" ,.;:-")
