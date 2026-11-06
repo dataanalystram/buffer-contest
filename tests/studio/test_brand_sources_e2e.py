@@ -72,8 +72,10 @@ def test_brand_studio_first_run_preview_examples_and_slot(demo_live, chromium, m
         ctx.close()
 
 
-def test_sources_agent_scan_to_buffer_drafts(demo_live, chromium, monkeypatch):
-    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")  # real writes on the sample workspace: the capped demo (the default view-only demo refuses them, 2 Nov 2026)
+def test_sources_agent_scan_then_make_a_post_opens_the_composer(demo_live, chromium, monkeypatch):
+    """Scan now reads; ticking stories and pressing Make a post (N) opens Make a post with their links. Nothing is written on
+    News and the sample never calls Buffer (owner bug, 6 Nov 2026: Write posts generated every post inline)."""
+    monkeypatch.setenv("HQ_DEMO_VIEW_ONLY", "0")
     base, buffer_calls = demo_live
     ctx, page = _page(chromium, base)
     try:
@@ -85,16 +87,13 @@ def test_sources_agent_scan_to_buffer_drafts(demo_live, chromium, monkeypatch):
         assert page.locator("[data-testid=sa-src-status]").count() == 5
         page.locator("[data-testid=sa-cluster] input[type=checkbox]").first.check()
         _shot(page, "sources-scan.png")
-        page.click("[data-testid=sa-draft]")
-        page.wait_for_selector("[data-testid=sa-package]")
-        assert page.locator("[data-testid=sa-package]").count() == 5  # one per sample channel
-        page.locator("[data-testid=sa-package] textarea").first.fill("Edited by a person before it goes to Buffer.")
-        _shot(page, "sources-packages.png")
-        page.click("[data-testid=sa-send]")
-        page.wait_for_selector("[data-testid=sa-result]")
-        assert page.locator("[data-testid=sa-result]").first.inner_text().startswith("Buffer draft")
-        assert "0 Buffer requests" in page.inner_text("[data-testid=sa-cost]")
-        assert "Edited by a person" in page.locator("[data-testid=sa-package] textarea").first.input_value()
+        seen = []
+        page.on("request", lambda r: seen.append(r.url))
+        page.click("[data-testid=sa-make-picked]")
+        page.wait_for_selector("#tab-agent", state="visible")
+        assert page.input_value("[data-testid=agent-query]").startswith("Make posts from these stories:")
+        assert not page.locator("[data-testid=sa-package]").count()
+        assert not any("/api/sources/draft" in u for u in seen)
         assert not buffer_calls
     finally:
         ctx.close()

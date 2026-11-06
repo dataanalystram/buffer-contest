@@ -317,6 +317,25 @@ def version_label(cm: dict, template: dict | None = None) -> str:
     return "Undo"
 
 
+
+_OVERLAY_WORDS = re.compile(r"\b(?:overlay|headline|text on (?:it|the (?:image|photo|picture))|add (?:a |the )?(?:title|text|"
+                            r"headline)|carousel|slides?|branded|brand ?kit|template|edit (?:it|the (?:image|photo))|"
+                            r"design|cover card|news card)\b", re.I)
+# a negation just before the words: "without an overlay", "no headline", "don't add a title", "no overlay or branding"
+_OVERLAY_NEG = re.compile(r"\b(?:without|no|not|never|skip|don'?t|do not)\b(?:\s+(?:add|use|put|any|an?|the|or|and|"
+                          r"overlay|headline|text|titles?|branding|branded|design|edits?|on|it|image|photo|picture|,)){0,4}\s*$", re.I)
+
+
+def overlay_asked(prompt: str) -> bool:
+    """Did the person ask for a designed photo (an overlay, a headline, slides, a template, the brand look)? Negated
+    mentions ("without an overlay", "no headline", "don't add a title") don't count (CodeRabbit #137)."""
+    t = prompt or ""
+    for m in _OVERLAY_WORDS.finditer(t):
+        if not _OVERLAY_NEG.search(t[max(0, m.start() - 40):m.start()]):
+            return True
+    return False
+
+
 class Tools(EditorialTools):
     def __init__(self, house, actor, rid: int):
         self.h, self.a, self.rid = house, actor, rid
@@ -1058,7 +1077,7 @@ class Tools(EditorialTools):
         over a dark gradient) unless they asked for an overlay, slides, a template or the brand look."""
         up = (run.get("result") or {}).get("upload") or {}
         return up.get("type") == "photo" and bool(up.get("token")) and \
-            not self.OVERLAY_ASK.search((run.get("input") or {}).get("prompt", "")) and \
+            not overlay_asked((run.get("input") or {}).get("prompt", "")) and \
             ((run.get("input") or {}).get("intake") or {}).get("format") in (None, "auto", "photo")
 
     def _set_photo_as_is(self, run: dict, ids: list[str]) -> dict:
