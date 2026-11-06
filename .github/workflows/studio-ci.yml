@@ -5,7 +5,21 @@ on:
   pull_request:
 permissions: {contents: read}
 jobs:
-  test:
+  # The studio suite runs twice: SQLite (local / self-hosted installs) and Postgres (the live site's store, Supabase).
+  # They run as parallel jobs (6 Nov 2026: one after the other took ~35 min); `test` below is the required check and
+  # passes only when both do.
+  test-sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: {python-version: "3.12"}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null   # One take render tests use the real FFmpeg
+      - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0" "opencv-python-headless>=4.10,<5"   # numpy: studio.media music + render tests; OpenCV: the One take layout golden plans (YuNet)
+      - name: Studio tests on SQLite
+        run: python -m pytest tests/studio -q
+  test-postgres:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -19,17 +33,35 @@ jobs:
         with: {persist-credentials: false}
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: {python-version: "3.12"}
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null   # One take render tests use the real FFmpeg
-      - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0" "opencv-python-headless>=4.10,<5"   # numpy: studio.media music + render tests; OpenCV: the One take layout golden plans (YuNet)
-      - name: Studio tests on SQLite
-        run: python -m pytest tests/studio -q
-      - name: One take layout speed on 2 cores (informative, target <= 1.2x realtime)
-        continue-on-error: true
-        timeout-minutes: 8
-        run: taskset -c 0,1 python scripts/bench_layouts.py 30 | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0" "opencv-python-headless>=4.10,<5"
       - name: Studio tests on Postgres (production store)
         env: {STUDIO_TEST_PG: "postgresql://postgres:test@localhost:5432/studio"}
-        run: python -m pytest tests/studio -q --ignore-glob="tests/studio/test_media_*"   # media tests use no store; run once above
+        run: python -m pytest tests/studio -q --ignore-glob="tests/studio/test_media_*"   # media tests use no store; they run on SQLite
+  layout-bench:
+    # informative only: never fails the build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: {python-version: "3.12"}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0" "opencv-python-headless>=4.10,<5"
+      - name: One take layout speed on 2 cores (informative, target <= 1.2x realtime)
+        timeout-minutes: 8
+        run: taskset -c 0,1 python scripts/bench_layouts.py 30 | tee -a "$GITHUB_STEP_SUMMARY"
+  test:
+    # the required status check (branch protection names "test"): green only when both stores passed
+    needs: [test-sqlite, test-postgres]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "sqlite: ${{ needs.test-sqlite.result }}, postgres: ${{ needs.test-postgres.result }}"
+          test "${{ needs.test-sqlite.result }}" = success && test "${{ needs.test-postgres.result }}" = success
   core-tests:
     # The root tests/ suite (HuhQueue core: API, connectors, scheduling, scope, MCP/CLI parity, and the Playwright UI
     # tests in tests/e2e). tests/studio runs in the job above. Added 4 Nov 2026: nothing in CI ran these before.
