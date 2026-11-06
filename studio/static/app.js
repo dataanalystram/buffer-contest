@@ -768,18 +768,27 @@ function timeAgo(ms) {
 // titles and links in the composer under a short starter the person edits (owner bug, 6 Nov 2026: "Write posts" generated
 // every carousel inline on News). Nothing runs until they press send: no generation, no Buffer call. Only http(s) links
 // pass, at most MAX_STORIES of them; the agent reads each link later through netguard (reader.read_url).
-const MAX_STORIES = 10;
+const MAX_STORIES = 10, PROMPT_BUDGET = 3200;
 window.hqStoryPrompt = (stories) => {
   const rows = (Array.isArray(stories) ? stories : [])
     .map((s) => ({ t: String((s && s.title) || "").replace(/\s+/g, " ").trim().slice(0, 140), u: String((s && s.url) || "").trim() }))
     .filter((s) => s.u.length <= 600 && /^https?:\/\/[^\s/$.?#][^\s]*$/i.test(s.u))
     .slice(0, MAX_STORIES);
-  if (!rows.length) return "";
-  return "Make posts from these stories:\n" + rows.map((s) => (s.t ? `${s.t} — ${s.u}` : s.u)).join("\n");
+  // the whole prompt stays well inside the composer's 4,000 characters, with room left for the person's own words
+  // (CodeRabbit #140): stories that don't fit are left out and hqStoryPrompt.last says how many made it
+  let out = "Make posts from these stories:", n = 0;
+  for (const s of rows) {
+    const ln = "\n" + (s.t ? `${s.t} — ${s.u}` : s.u);
+    if (out.length + ln.length > PROMPT_BUDGET) break;
+    out += ln; n += 1;
+  }
+  window.hqStoryPrompt.last = { used: n, asked: rows.length };
+  return n ? out : "";
 };
 function wireMake(box) {
   box.querySelectorAll("[data-make]").forEach((b) => (b.onclick = () => {
     const text = window.hqStoryPrompt([{ title: b.dataset.title || "", url: b.dataset.make || "" }]);
+    if (!text) { toast("That story has no link to post from."); return; }  // stay on the story (CodeRabbit #140)
     if (window.hqNewPost) window.hqNewPost(text);  // always a NEW thread, never the one left open (makepost.js)
     else {
       showTab("agent", "agent");
@@ -787,7 +796,7 @@ function wireMake(box) {
       if (q) { q.value = text; q.dispatchEvent(new Event("input")); q.focus(); }
     }
     document.querySelector("#agentCompose [data-src=topic]")?.click();
-    toast(text ? "Story added. Edit the prompt, then press send." : "That story has no link to post from.");
+    toast("Story added. Edit the prompt, then press send.");
   }));
   box.querySelectorAll("[data-run]").forEach((b) => (b.onclick = () => openRunDeep(b.dataset.run)));
 }

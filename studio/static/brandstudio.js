@@ -517,7 +517,8 @@
       const text = window.hqStoryPrompt ? window.hqStoryPrompt(picked()) : "";
       if (!text) { toast("Those stories have no link to post from."); return; }
       if (window.hqNewPost) window.hqNewPost(text); else showTab("agent", "agent");
-      toast("Stories added. Edit the prompt, then press send.");
+      const got = window.hqStoryPrompt.last || {};
+      toast(got.used < got.asked ? `${got.used} of ${got.asked} stories fit in one prompt. Edit it, then press send.` : "Stories added. Edit the prompt, then press send.");
     };
     $("#saSaveSet").onclick = async () => {
       const on = {}; document.querySelectorAll("#saSrcs [data-src]").forEach((i) => (on[i.dataset.src] = i.checked));

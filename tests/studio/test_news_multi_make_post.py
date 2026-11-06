@@ -52,3 +52,11 @@ def test_scan_reads_only_no_generation_no_buffer(live_sources, fake, monkeypatch
     assert len(fake.calls) == before  # not a single Buffer request from a scan
     run = c.get(f"/api/sources/runs/{d['run_id']}").json()
     assert not run.get("drafts")
+
+
+def test_story_prompt_fits_the_composer_and_a_bad_link_stays_put():
+    app = _js("app.js")
+    assert "PROMPT_BUDGET = 3200" in app and "out.length + ln.length > PROMPT_BUDGET" in app  # < maxlength 4000
+    wm = app[app.index("function wireMake"):]
+    wm = wm[:wm.index("hqNewPost")]
+    assert "if (!text)" in wm and "return;" in wm  # no link: no new thread, the person stays on the story
