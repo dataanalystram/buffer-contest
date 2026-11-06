@@ -55,6 +55,8 @@ class FakeBuffer:
         self.n = 0
         self.refresh_tokens = {"rt_1"}
         self.fail_429 = 0
+        self.token_fail = None  # refresh grant: an HTTP status (e.g. 503) or "timeout"; tokens must survive both
+        self.gql_error = None   # e.g. {"message": ..., "extensions": {"code": "INSUFFICIENT_SCOPE"}}
         self.daily = None  # e.g. {"limit": 3, "scheduled": 3, "sent": 0, "isAtLimit": True}
         self.plan = None   # e.g. {"scheduledPosts": 10, "channels": 3}
         # media the preflight "downloads" (url -> bytes); anything else counts as unreachable
@@ -74,6 +76,13 @@ class FakeBuffer:
                 assert form["code_verifier"][0] and form["client_secret"] == ["sec"]
                 return httpx.Response(200, json={"access_token": "at_1", "refresh_token": "rt_1", "expires_in": 3600,
                                                  "scope": "account:read posts:write offline_access"})
+            if self.token_fail == "timeout":
+                raise httpx.ConnectTimeout("timed out", request=request)
+            if isinstance(self.token_fail, tuple):  # (status, json or raw text): Buffer's answer to the refresh grant
+                st, bd = self.token_fail
+                return httpx.Response(st, text=bd) if isinstance(bd, str) else httpx.Response(st, json=bd)
+            if self.token_fail:
+                return httpx.Response(self.token_fail, headers={"Retry-After": "7"}, json={"error": "temporarily_unavailable"})
             rt = form["refresh_token"][0]
             if rt not in self.refresh_tokens:
                 return httpx.Response(400, json={"error": "invalid_grant"})
@@ -85,6 +94,8 @@ class FakeBuffer:
         body = json.loads(request.content)
         q, v = body["query"], body.get("variables") or {}
         self.calls.append((q, v, request.headers.get("authorization")))
+        if self.gql_error:
+            return httpx.Response(200, headers=h, json={"errors": [self.gql_error]})
         if self.fail_429:
             self.fail_429 -= 1
             return httpx.Response(429, headers={**h, "Retry-After": "120"}, json={})

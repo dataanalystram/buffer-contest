@@ -74,6 +74,50 @@ class NotConnected(BufferError):
     status = 401
 
 
+class BufferBusy(BufferError):
+    """Buffer's token endpoint failed in a way that says nothing about the grant (5xx, 429, timeout, network). The stored
+    tokens stay; the caller gets a retryable 503. Only invalid_grant / 400 / 401 from the token endpoint signs anyone out."""
+    status = 503
+
+
+class ScopeMissing(BufferError):
+    """Buffer refused a call because the user's grant lacks a scope (INSUFFICIENT_SCOPE): they reconnect to allow it."""
+    status = 403
+
+    def __init__(self, message: str, scope: str = ""):
+        super().__init__(message, 403)
+        self.scope = scope
+
+
+BUSY_MSG = "Buffer is busy, retrying. You're still connected."
+BUSY_RETRY = 10  # seconds, when Buffer's token endpoint sends no Retry-After
+SCOPE_WORDS = {"account:read": "reading your account", "account:write": "updating your account settings",
+               "posts:read": "reading your posts and queue", "posts:write": "creating and managing posts",
+               "ideas:read": "reading your ideas", "ideas:write": "saving ideas", "notes:read": "reading notes",
+               "notes:write": "writing notes", "snippets:read": "reading snippets", "snippets:write": "saving snippets"}
+_SCOPE_RE = re.compile(r"\b(?:account|posts|ideas|notes|snippets):(?:read|write)\b")
+
+
+def scope_message(text: str) -> tuple[str, str]:
+    """A friendly "Reconnect Buffer to allow X" for a scope refusal. Only a known scope name is ever echoed back."""
+    m = _SCOPE_RE.search(text or "")
+    scope = m.group(0) if m and m.group(0) in SCOPE_WORDS else ""
+    return f"Reconnect Buffer to allow {SCOPE_WORDS.get(scope, 'the access this needs')}.", scope
+
+
+def _is_scope_error(code: str, message: str) -> bool:
+    low = f"{code} {message}".lower()
+    return "insufficient_scope" in low or "invalid_scope" in low
+
+
+def _retry_after(r: httpx.Response) -> int:
+    try:
+        ra = int(float(r.headers.get("retry-after") or 0))
+    except ValueError:
+        ra = 0
+    return min(300, ra) if ra > 0 else BUSY_RETRY
+
+
 # ---------------------------------------------------------------- OAuth
 def pkce_pair() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(48)
@@ -93,13 +137,26 @@ def _token_request(s: Settings, http: httpx.Client, params: dict, previous: dict
     body = {"client_id": s.client_id, **params}
     if s.client_secret:
         body["client_secret"] = s.client_secret  # client_secret_post; never HTTP Basic
-    r = http.post(TOKEN_URL, data=body, timeout=20)
+    try:
+        r = http.post(TOKEN_URL, data=body, timeout=20)
+    except httpx.HTTPError as e:  # timeout, DNS, reset: a network blip says nothing about the grant
+        raise BufferBusy("Buffer's sign-in service didn't answer. Try again in a moment.", retry_after=BUSY_RETRY) from e
     try:
         j = r.json()
     except ValueError:
         j = {}
-    if r.status_code >= 400 or j.get("error"):
-        raise BufferError(f"Buffer sign-in failed: {j.get('error_description') or j.get('error') or r.status_code}", 401)
+    if not isinstance(j, dict):
+        j = {}
+    err = str(j.get("error") or "")
+    # The grant itself is bad: only this signs anyone out. Buffer answers token errors as JSON with an OAuth error code
+    # (developers.buffer.com/guides/authentication.html#errors); a 400/401 without one (an HTML page from an edge proxy,
+    # an empty body) says nothing about the grant, so it is retried like a 5xx.
+    # A 5xx or 429 is retried whatever its body says: the status is checked before the OAuth error code.
+    retryable = r.status_code >= 500 or r.status_code == 429
+    if not retryable and (err == "invalid_grant" or (r.status_code in (400, 401) and err)):
+        raise BufferError(f"Buffer sign-in failed: {j.get('error_description') or err or r.status_code}", 401)
+    if r.status_code >= 400 or err or not j.get("access_token"):  # 5xx, 429 or a garbled answer: retry later
+        raise BufferBusy("Buffer's sign-in service is busy. Try again in a moment.", retry_after=_retry_after(r))
     return {
         "access_token": j["access_token"],
         "refresh_token": j.get("refresh_token"),
@@ -178,6 +235,7 @@ class BufferClient:
         self.http = http or httpx.Client(timeout=30, headers={"User-Agent": "HuhQueue-Studio/1.0 (+built on the Buffer API)"})
         self.budget = RateBudget()
         self._locks: dict[str, threading.Lock] = {}
+        self._busy: dict[str, float] = {}  # uid -> until when a busy token endpoint isn't asked again for that account
         self._cache: dict[tuple, tuple[float, Any]] = {}
 
     def _lock(self, uid: str) -> threading.Lock:
@@ -193,12 +251,19 @@ class BufferClient:
             if not tok.get("refresh_token"):
                 self.store.save_tokens(uid, None)
                 raise NotConnected("Your Buffer session expired. Connect again to continue.")
+            wait = self._busy.get(uid, 0) - time.time()
+            if wait > 0:  # Buffer just said it's busy: don't spend another refresh attempt yet
+                raise BufferBusy(BUSY_MSG, retry_after=int(wait) + 1)
             try:
                 new = _token_request(self.s, self.http, {"grant_type": "refresh_token",
                                                          "refresh_token": tok["refresh_token"]}, tok)
-            except BufferError:
+            except BufferBusy as e:  # tokens stay: the refresh token was not spent
+                self._busy[uid] = time.time() + (e.retry_after or BUSY_RETRY)
+                raise BufferBusy(BUSY_MSG, retry_after=e.retry_after or BUSY_RETRY) from e
+            except BufferError as e:
                 self.store.save_tokens(uid, None)
-                raise NotConnected("Your Buffer session expired. Connect again to continue.")
+                raise NotConnected("Your Buffer session expired. Connect again to continue.") from e
+            self._busy.pop(uid, None)
             if not new.get("refresh_token"):
                 self.store.save_tokens(uid, None)
                 raise NotConnected("Buffer did not return a replacement refresh token. Connect again.")
@@ -227,6 +292,8 @@ class BufferClient:
                 self.store.save_tokens(uid, tok if tok.get("refresh_token") else None)
                 return self.gql(query, variables, uid=uid, _retried=True)
             raise NotConnected("Buffer rejected the access token. Connect again.")
+        if r.status_code == 403 and "insufficient_scope" in (r.headers.get("www-authenticate") or "").lower():
+            raise ScopeMissing(*scope_message(r.headers.get("www-authenticate") or ""))
         if r.status_code == 429:
             try:
                 ra = int(float(r.headers.get("retry-after") or 0))
@@ -246,6 +313,8 @@ class BufferClient:
         if r.status_code >= 400 or j.get("errors"):
             e = (j.get("errors") or [{}])[0]
             code = (e.get("extensions") or {}).get("code", "")
+            if _is_scope_error(str(code), str(e.get("message", ""))):
+                raise ScopeMissing(*scope_message(f"{e.get('message', '')} {e.get('extensions') or ''}"))
             raise BufferError(f"Buffer could not complete the request ({code or r.status_code}: {e.get('message', '')})".strip())
         return j["data"]
 
@@ -277,7 +346,7 @@ class BufferClient:
         """Ask for the richer field set; if Buffer refuses it (schema change, plan), fall back instead of breaking."""
         try:
             return self.gql(rich, variables, uid=uid)
-        except NotConnected:
+        except (NotConnected, BufferBusy):
             raise
         except BufferError as e:
             if e.status == 429 or plain is None:
@@ -299,7 +368,7 @@ class BufferClient:
         def fetch():
             try:
                 orgs = self.gql(q, uid=uid)["account"]["organizations"]
-            except NotConnected:
+            except (NotConnected, BufferBusy):
                 raise
             except BufferError as e:
                 if e.status == 429:
@@ -315,7 +384,7 @@ class BufferClient:
         i = {"channelIds": channel_ids, **({"date": date} if date else {})}
         try:
             return self.gql(q, {"i": i}, uid=uid)["dailyPostingLimits"]
-        except NotConnected:
+        except (NotConnected, BufferBusy):
             raise
         except BufferError as e:
             if e.status == 429:
@@ -354,7 +423,7 @@ class BufferClient:
             return
         try:
             nodes = self._read_posts(uid, org_id, stale)
-        except NotConnected:
+        except (NotConnected, BufferBusy):
             raise
         except BufferError as e:
             if e.status == 429:
@@ -490,7 +559,7 @@ class BufferClient:
         def fetch():
             try:
                 return self.gql(q, {"o": org_id}, uid=uid)["channels"]
-            except NotConnected:
+            except (NotConnected, BufferBusy):
                 raise
             except BufferError as e:
                 if e.status == 429:

@@ -32,6 +32,9 @@ def test_login_uses_pkce_s256_state_and_offline_access(client):
     assert "offline_access" in q["scope"][0].split() and "posts:write" in q["scope"][0].split()
     assert q["redirect_uri"] == ["https://hq.test/callback"] and q["state"][0]
     assert "client_secret" not in r.headers["location"]
+    # Buffer's documented authorize request (developers.buffer.com/guides/authentication.html, Step 2)
+    assert q["prompt"] == ["consent"] and q["response_type"] == ["code"]
+    assert q["scope"] == ["account:read posts:read posts:write ideas:read ideas:write offline_access"]
 
 
 def test_callback_rejects_wrong_state(client):

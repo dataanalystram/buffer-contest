@@ -12,6 +12,12 @@ captions, splits) at $0 AI spend. See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
 
 **Live:** https://huhqueue-studio.onrender.com · **Buffer Commit entry:** see [CONTEST.md](CONTEST.md) and [SUBMISSION.md](SUBMISSION.md)
 
+> **The contest entry is Studio (`studio/`).** It signs users in with Buffer OAuth only (Authorization Code + PKCE S256,
+> `prompt=consent`, rotating `offline_access` refresh tokens) and never asks for a Buffer API key. The separate core app in
+> `huhqueue/` has paste-a-token options; those are for connecting LinkedIn and Instagram directly, not Buffer.
+> **Buffer scopes:** enable a new scope on the Buffer app client *before* deploying code that requests it, or every sign-in
+> fails with `invalid_scope`. Users who signed in earlier see "Reconnect Buffer to allow …" until they consent again.
+
 > HuhQueue is an independent open-source project built on the [Buffer API](https://developers.buffer.com). It is not made, endorsed or operated by Buffer.
 > The Nothing, Linear and Notion kits in the sample workspace are labelled sample brands, not affiliated with those companies (see [NOTICE](NOTICE)).
 
