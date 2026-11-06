@@ -50,7 +50,7 @@ def test_apply_preset_writes_rules_once_and_a_second_preset_switches_the_first_o
     mine = c.post("/api/ledger", json={"correction": "never say synergy"}).json()
     assert mine["added"]
     lst = c.get("/api/ledger/presets").json()["presets"]
-    assert len(lst) == 5 and all(p["provenance"]["label"] == "Built-in" for p in lst)
+    assert len(lst) == 8 and all(p["provenance"]["label"] == "Built-in" for p in lst)
     r1 = c.post("/api/ledger/presets/hook_first/apply", json={}).json()
     n = r1["added"]
     assert n >= 20 and r1["replaced"] == 0
