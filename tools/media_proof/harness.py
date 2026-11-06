@@ -75,8 +75,8 @@ def render(name: str) -> None:
     def spy(*a, **kw):
         out = orig(*a, **kw)
         captured["shots"] = [{k: s.get(k) for k in ("start", "end", "layout", "rule", "punch", "face_med")}
-                             for s in out["plan"]["shots"]]
-        captured["sidecar"] = out["plan"].get("sidecar")
+                             for s in out["shots"]]
+        captured["sidecar"] = out.get("sidecar")
         return out
     rr.render = spy
     run = {"input": {"style": "take", "trim_pauses": True}}

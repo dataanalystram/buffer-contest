@@ -25,8 +25,8 @@ jobs:
       - name: Run the take pipeline + measure
         env: {HQ_REPO: "${{ github.workspace }}", HQ_TESSERACT: /tmp/tess/bin/tesseract, HQ_FACE_MODEL: /tmp/blaze_face_short_range.tflite}
         run: |
-          cd tools/media_proof
           python -m studio.media.ocr || true
+          cd tools/media_proof
           for st in analyze render measure; do python harness.py $st all; done
           for f in runs/*/measure.json; do echo "== $f"; cat "$f"; done
           for f in runs/*/meta.json; do echo "== $f"; python -c "import json,sys;m=json.load(open(sys.argv[1]));print(json.dumps({k:m.get(k) for k in ('duration','layout','shots','face_coverage','trim','punch_in','captions_moved_for_text','ocr','preflight_watermark','alt_text','audio','_moment','_shots_plan','face_fallback','layout_detector')},default=str))" "$f"; done
