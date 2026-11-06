@@ -955,7 +955,7 @@ function paidApproval(r) {
 }
 
 // ---------------------------------------------------------------- AI apps: who has access, what they did, connect more
-const POL = { review: "Needs my approval", draft: "Buffer drafts only", trusted: "Can schedule or publish now" };
+const POL = { review: "Needs my approval", draft: "Buffer drafts only", trusted: "Can publish now" };
 const POL_SAY = { draft: "It can only save Buffer drafts. Nothing is scheduled or published.",
   review: "Everything it sends waits in your Approvals inbox until you approve it.",
   trusted: "It can schedule posts in Buffer AND publish them immediately, without your approval (still capped per day and stopped by the kill switch)." };
