@@ -15,6 +15,14 @@ ROOT = Path(__file__).resolve().parent.parent
 GH = "https://github.com/dataanalystram/buffer-contest/blob/main/"
 
 PROMPTS: list[dict[str, Any]] = [
+    {"name": "make_a_post", "title": "Make a post (the recommended path)",
+     "description": "One post for one request, on any number of channels (a different video or cover per channel allowed): "
+                    "start_post -> research_link / find_video -> render_reel / render_carousel (one output each) -> "
+                    "create_package(channel_media) -> drafts after the user says yes.",
+     "arguments": [{"name": "request", "description": "What the user asked for, in their words", "required": True},
+                   {"name": "link", "description": "The article, launch page or video link, if any", "required": False},
+                   {"name": "channels", "description": "Channel ids or services, comma separated (default: the ones the user named)",
+                    "required": False}]},
     {"name": "launch_video_in_my_brand", "title": "Edit a launch video in my brand",
      "description": "Find a product's real launch video, cut it into a 30-45 s 9:16 Reel in the active brand kit with captions, a "
                     "credit line, a cover and the Follow end card, and save it as a Buffer DRAFT.",
@@ -57,6 +65,11 @@ def _start(title: str) -> str:
 
 def _text(name: str, args: dict) -> str:
     a = {k: str(v or "").strip() for k, v in (args or {}).items()}
+    if name == "make_a_post":
+        from . import mcp_flow
+        head = (f"The user asked: {a.get('request', '<request>')}\n" + (f"Link: {a['link']}\n" if a.get("link") else "")
+                + (f"Channels: {a['channels']}\n" if a.get("channels") else ""))
+        return head + "\n".join(mcp_flow.WORKFLOW["steps"]) + "\nRules:\n- " + "\n- ".join(mcp_flow.WORKFLOW["rules"]) + "\n"
     if name == "launch_video_in_my_brand":
         secs = a.get("seconds") or "40"
         end = min(45, int(secs)) if secs.isdigit() else 40
@@ -116,6 +129,9 @@ def get_prompt(name: str, args: dict) -> dict:
 
 
 RESOURCES: list[dict[str, Any]] = [
+    {"uri": "huhqueue://workflow/make-a-post", "name": "make_a_post_workflow", "title": "Make a post: the recommended path",
+     "description": "Read first: the steps for one post on several channels, which tools are not for a post, the rights step "
+                    "for video links and each flow tool's prerequisites.", "mimeType": "text/markdown"},
     {"uri": "huhqueue://brand-kit/active", "name": "active_brand_kit", "title": "Active brand kit",
      "description": "The brand kit every render uses now: name, handle, colours, fonts, logo, end card, theme, plus the kit list.",
      "mimeType": "application/json"},
@@ -136,6 +152,9 @@ DOCS = {"MCP_TOOLS.md": "docs/MCP_TOOLS.md", "DESIGN.md": "DESIGN.md"}
 
 def read_resource(studio, actor, uri: str) -> dict:
     from . import brand_kits, brand_routes
+    if uri == "huhqueue://workflow/make-a-post":
+        from . import mcp_flow
+        return {"contents": [{"uri": uri, "mimeType": "text/markdown", "text": mcp_flow.workflow_markdown()}]}
     if uri == "huhqueue://brand-kit/active":
         bk = brand_kits.attach(studio.house)
         lst = bk.list(actor)

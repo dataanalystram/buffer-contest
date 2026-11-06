@@ -47,6 +47,7 @@ ACTIVE_S = int(os.environ.get("HQ_MCP_ACTIVE_RUN_S", str(2 * 3600)))
 # burst guard only (a runaway loop), never an hourly or daily limit on new runs (owner, 4 Nov 2026 15:07)
 PER_MINUTE = int(os.environ.get("HQ_MCP_NEW_RUNS_PER_MINUTE", "30"))
 DEDUPE_S = 10 * 60
+RECENT_S = 5 * 60  # a second start_post this soon after the app's open run gets the one-request-one-run warning
 IDEM_TTL = 24 * 3600
 DERIVED_TTL = 120
 
@@ -69,10 +70,13 @@ DERIVED = {"start_post", "continue_run", "create_package", "render_carousel", "h
 # never stored: answers that carry a single-use secret (a confirm token, an upload URL, a send code) or are part of a
 # chunked upload
 NO_IDEM = {"create_send_code", "create_upload", "upload_media_chunk", "finish_upload", "place_clips_in_week", "cleanup_agent_drafts",
+           "delete_drafts",
            "submit_post", "preview_post"}
 # arguments that steer this layer and never reach a tool's own logic or its idempotency hash
 CONTROL = ("idempotency_key", "user_asked", "new_post", "new_request", "reason", "approval_id")
-KEEP_APPROVAL_ID = {"approve_link_ingest", "reject_link_ingest"}  # approval_id is what these tools act on (5 Nov 2026)
+KEEP_APPROVAL_ID = {"approve_link_ingest", "reject_link_ingest",
+                    # a video link's rights step: the approval_id comes back on the call that fetches the link (6 Nov 2026)
+                    "render_reel", "edit_video", "post_render_reel", "post_edit_video", "post_set_theme", "post_edit_channel_media"}  # approval_id is what these tools act on (5 Nov 2026)
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS mcp_idem (user_id TEXT, agent_id INTEGER, ikey TEXT, tool TEXT, args_hash TEXT, result TEXT, "
           "at REAL, PRIMARY KEY (user_id, agent_id, ikey))")
@@ -284,6 +288,8 @@ def after(studio, a: Actor, name: str, args: dict, result: Any) -> Any:
                 mark_agent(studio.store, a, int(rid))
         except (TypeError, ValueError):
             pass
+    if name == "start_post" and (args.get("new_post") is True or args.get("new_request") is True) and "warning" in result:
+        result = {k: v for k, v in result.items() if k != "warning"}  # the person's new request: no "one run" warning
     if args.get("_deduped") and rid:
         result = {**result, "reused": True, "deduped": True, "note": DEDUPED_NOTE.format(rid=rid)}
     elif args.get("_reused") and rid:
@@ -328,6 +334,8 @@ def idem_key(name: str, args: dict, meta: dict | None) -> tuple[str, bool] | Non
     if name in DERIVED:
         if args.get("new_request") is True or args.get("new_post") is True:
             return None  # a deliberate new post is never answered from an earlier call's replay (an explicit key still is)
+        if args.get("approval_id") not in (None, ""):
+            return None  # the call after the person approved: never answered by the replay of the "needs approval" one
         if name == "create_package" and not args.get("media_urls"):
             return None  # stages the output's CURRENT media: a re-render in between must not be answered by a replay
         if name in ("start_post", "continue_run") and args.get("format"):
@@ -494,6 +502,13 @@ def start_post(studio, a: Actor, args: dict) -> dict:
     if prev:
         out.update(previous_run_id=prev, note=f"New post (run {rid}) for a new request. If the person meant to change run "
                    f"{prev} instead, ask them and use continue_run(run_id={prev}).")
+        age = time.time() - float(prev_run.get("updated") or 0)
+        if age < RECENT_S and not args.get("new_request"):
+            # owner report 6 Nov 2026: one request for three channels became three runs in 3 seconds. Never refused (a new
+            # request is always allowed), but the app is told plainly that one request is one run.
+            out["warning"] = (f"This app opened run {prev} {int(age)} s ago. One user request = one run: if this is the same "
+                              f"request (another channel, another video or cover), use run {prev} (continue_run) and stage each "
+                              "channel there with create_package(channel_media). Don't open extra runs without asking the person.")
     return out
 
 

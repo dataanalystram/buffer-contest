@@ -228,11 +228,12 @@ def fit_chunk(text: str, st: CapStyle, W: int, H: int) -> tuple[int, list[str]]:
 def build_ass(words: list[dict], style: str = "opus", *, W: int = 1080, H: int = 1920, accent: str = "#C9ACFA",
               text: str = "#FFFFFF", outline: str = "#0E0E10", offset: float = 0.0, center_y: float | None = None,
               band: tuple[int, int] | None = None, end: float | None = None, palette: dict | None = None,
-              left: int | None = None) -> str:
+              left: int | None = None, center_y_at=None) -> str:
     """ASS document for ``words`` (times in source seconds; ``offset`` is added, e.g. a cover card before the video).
     band=(top, bottom) pins the caption block's centre inside a pixel band (the news style puts it under the video).
     palette: the theme's colour roles (text / accent / bg / on_accent / muted) for the theme caption styles; left: the
-    x of flush-left styles (defaults to the safe margin)."""
+    x of flush-left styles (defaults to the safe margin). center_y_at(t) -> a pixel centre or None: the caption block of
+    the chunk starting at t (caption time, offset included) moves there (studio/media/facesafe: clear of the face)."""
     st = STYLES[style]
     pal = {"text": text, "accent": accent, "bg": outline, "on_accent": outline, "muted": "#A0A0A8", **(palette or {})}
     text, accent, outline = _role(st.text_role, pal), _role(st.accent_role, pal), _role(st.outline_role, pal)
@@ -270,7 +271,9 @@ def build_ass(words: list[dict], style: str = "opus", *, W: int = 1080, H: int =
                 used = cand
             line_of.append(li)
         glow = f"\\blur{st.blur:g}" if st.blur else ""
-        pos = (f"\\an4\\pos({lx},{cy})\\fs{fs}{glow}" if st.align == "left" else f"\\an5\\pos({W // 2},{cy})\\fs{fs}{glow}")
+        ccy = center_y_at(ch[0]["s"] + offset) if center_y_at else None
+        ccy = int(ccy) if isinstance(ccy, (int, float)) and not isinstance(ccy, bool) else cy
+        pos = (f"\\an4\\pos({lx},{ccy})\\fs{fs}{glow}" if st.align == "left" else f"\\an5\\pos({W // 2},{ccy})\\fs{fs}{glow}")
         bb = block_border(st, fs)
         nxt_start = chunks[ci + 1][0]["s"] if ci + 1 < len(chunks) else None
         for i, w in enumerate(ch):

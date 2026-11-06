@@ -516,15 +516,18 @@ def _overlay(style: str, W: int, H: int, brand: dict, hook: str, credit: str, L:
             boxes["pill"] = _pill(d, "Follow " + brand["handle"], W // 2, L["pill_y"], brand, size=32, maxw=r - l)
     elif style in ("opus", "hype"):
         hb = L["hook"]
-        if style == "opus":
+        if style == "opus" and hb and hook.strip():
             d.rounded_rectangle((hb[0] - 10, hb[1] - 10, hb[2] + 10, hb[3] + 10), 28, fill=(255, 255, 255, 236))
             bb, _ = _text_block(d, hook, brand["bold_font"], (hb[0] + 18, hb[1] + 4, hb[2] - 18, hb[3] - 4), max_size=64,
                                 min_size=24, max_lines=3, fill="#111114")
             boxes["hook"] = (hb[0] - 10, hb[1] - 10, hb[2] + 10, hb[3] + 10)
             boxes["hook_text"] = bb
         if credit:
-            y0 = (hb[3] + 24) if style == "opus" else t
-            boxes["credit"] = _credit_chip(d, credit, l, y0, r - l)
+            if L.get("credit_xy"):  # face-safe spot (studio/media/facesafe.place_opus)
+                cx, y0 = L["credit_xy"]
+            else:
+                cx, y0 = l, ((hb[3] + 24) if (style == "opus" and hb) else t)
+            boxes["credit"] = _credit_chip(d, credit, cx, y0, r - l)
     elif style == "minimal":
         bb, _ = _text_block(d, hook, "Inter-SemiBold.ttf", L["hook"], max_size=64, min_size=28, max_lines=3, align="left",
                             valign="bottom")
@@ -580,6 +583,41 @@ def picked_music(music_mood: str | None) -> str:
     return m if m in MUSIC_MOODS else "none"
 
 
+CREDIT_CHIP_H = 46  # _credit_chip at its 24 px maximum: 24 px Inter ascent + descent + 16 px padding
+
+
+def _cy_at(caption_cy):
+    """[(start, end, centre y)] -> t -> centre y (None outside every segment)."""
+    if not caption_cy:
+        return None
+    segs = sorted(caption_cy)
+
+    def at(t: float):
+        for a, b, cy in segs:
+            if a - 1e-6 <= t < b:
+                return cy
+        return segs[-1][2] if t >= segs[-1][1] else segs[0][2]
+    return at
+
+
+def _face_safe_layout(L: dict, W: int, H: int, brand: dict, hook: str, credit: str, caps_on: bool, cfg: dict,
+                      face_safe: dict) -> tuple[dict, dict]:
+    """The Opus-style layout placed clear of the faces (studio/media/facesafe.place_opus)."""
+    from . import facesafe
+    st = captions.STYLES[cfg["captions"]]
+    cap_h = int(H * st.size_frac * 1.25 * st.max_lines * (1.08 if st.pop else 1.0))
+
+    def hook_fit(text: str, w: int, h: int):
+        r = textfit.fit(text, brand["bold_font"], w - 36, max(8, h - 8), max_size=64, min_size=30, max_lines=3)
+        return bool(r.ok), int(r.height)
+    L = dict(L)
+    L, rec = facesafe.place_opus(L, W, H, static=face_safe.get("static"), segments=face_safe.get("segments") or [],
+                                 cap_h=cap_h, hook=hook, hook_fit=hook_fit, credit_h=CREDIT_CHIP_H if credit else 0,
+                                 captions_on=caps_on)
+    rec["cap_h"] = cap_h
+    return L, rec
+
+
 def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16", hook: str = "", facts: list[str] | None = None,
                  brand: dict | None = None, words: list[dict] | None = None, credit: str = "", clip: tuple | None = None,
                  images: list[str] | None = None, music_mood: str = "auto", names: list[str] | None = None,
@@ -587,7 +625,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
                  brand_colors: bool = False, reframe: dict | None = None, lower_third_mode="auto",
                  detect_own_captions: bool = False, brand_pass: bool | dict = False, cover_png: str | None = None,
-                 cover_secs: float = COVER_FRAME_SECS, logo: bool = True) -> dict:
+                 cover_secs: float = COVER_FRAME_SECS, logo: bool = True, face_safe: dict | None = None) -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     ``style`` is a base style or a theme (styles.THEMES: its grade, effects, captions, cards and chrome on a base
@@ -603,6 +641,9 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
     cover_png: the chosen cover (studio/media/covers.py) held for ``cover_secs`` as the very first frames, so Instagram /
     TikTok can use it as the Reel cover (Buffer only takes a frame offset, thumbnailOffset, never a separate image).
     style "none": the video as it is (``render_plain``): trimmed / fitted, ``logo`` bug when True, the end card.
+    face_safe: {"static": keep-out (x0, y0, x1, y1), "segments": [{start, end, keepout}]} in output pixels / clip
+    seconds (studio/media/facesafe): the Opus-style hook box, credit chip and captions are placed clear of the faces
+    there (the hook shrinks, shortens or drops when nothing fits). The result's ``face_safe`` says what moved.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from . import theme_cards
     from .styles import ALL_IDS, NONE, apply_palette, config, resolve
@@ -701,6 +742,15 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                 lower_third = {**lower_third, "out_top": y_band}
         # "own video" is not a source to credit on screen: no chip; the brand pass lower-third shows the handle instead
         chip_credit = "" if (credit or "").strip().lower() in ("own video", "your video") else credit
+        fs_rec = None
+        if face_safe is not None and cfg["layout"] == "opus":  # never on the face (owner bug 6 Nov 2026)
+            safe0 = L["safe"]
+            if lower_third and lower_third.get("out_top"):  # and never on the source's name strap: place above it
+                l_, t_, r_, b_ = safe0
+                L = {**L, "safe": (l_, t_, r_, max(t_ + 1, min(b_, int(lower_third["out_top"]) - int(H * 0.02))))}
+            L, fs_rec = _face_safe_layout(L, W, H, brand, hook, chip_credit, caps_on, cfg, face_safe)
+            L["safe"] = safe0
+            hook = L.get("hook_text", hook) if L.get("hook") else ""
         if cfg.get("chrome"):
             ov, boxes = theme_cards.overlay(cfg, W, H, brand, hook, chip_credit, L, acc)
         else:
@@ -749,7 +799,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                                      outline=brand["bg"], band=(L["cap_band"][1], L["cap_band"][3]) if "cap_band" in L else None,
                                      center_y=(L["captions_center"] / H) if "captions_center" in L else None, end=D,
                                      palette={k: brand[k] for k in ("text", "accent", "bg", "muted", "on_accent") if brand.get(k)},
-                                     left=L.get("cap_left", L["safe"][0]))
+                                     left=L.get("cap_left", L["safe"][0]), center_y_at=_cy_at(L.get("caption_cy")))
             cap_problems = captions.check_ass_fits(ass, W, H)
             ass_path = wd / "caps.ass"
             ass_path.write_text(ass)
@@ -791,7 +841,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                 "captions_center": L.get("captions_center"), "music": mood if wav else "none", "source_silent": silent,
                 "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit, "cover_frame_secs": pre_s,
                 "thumbnail_offset_ms": cover_thumb_ms(pre_s) if pre_s else None,
-                "brand_pass": sorted((boxes.get("brand_pass") or {}).keys()) if brand_pass else []}
+                "brand_pass": sorted((boxes.get("brand_pass") or {}).keys()) if brand_pass else [],
+                "face_safe": fs_rec, "hook_shown": hook}
     finally:
         if own:
             shutil.rmtree(wd, ignore_errors=True)

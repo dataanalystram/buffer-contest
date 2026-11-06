@@ -11,6 +11,9 @@
   face, between the screen card and the face circle of a PiP, under the frame of a fit; always clear of the top
   ~220 px and the bottom ~380 px of a 1920-tall frame (platform UI).
 * Fonts: bundled OFL fonts only (studio/fonts, each with its OFL text).
+* Contrast: when the background under the captions is light (``bg_luma``, from the clip's frames), and the text or
+  the accent (lavender #C9ACFA by default, kept) would read below MIN_CONTRAST against it, the line gets a heavier
+  near-black stroke and a firmer drop shadow (solid colours only, no gradients).
 """
 from __future__ import annotations
 
@@ -41,6 +44,10 @@ DEFAULT_PRESET = "bold_pop"
 STOP = {"the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "at", "for", "is", "it", "that", "this", "with", "as",
         "be", "are", "was", "so", "we", "i", "you", "they", "he", "she", "my", "your", "our", "its", "by", "from", "do", "just"}
 
+MIN_CONTRAST = 3.0     # WCAG ratio for large text: below this the captions get the heavy stroke
+STROKE_MIN, SHADOW_MIN = 9, 4   # the heavy stroke and shadow (px at 1920 tall)
+STROKE_COLOR = "#0E0E10"
+
 # caption centre line (y at 1920 tall) for each layout
 BAND_Y = {"split": 960, "screen_stack": 960, "screen_pip": 1030, "track": 1330, "fit": 1400}
 
@@ -59,6 +66,33 @@ def _color(hex_: str, alpha: int = 0) -> str:
     if not re.fullmatch(r"[0-9a-fA-F]{6}", h):
         h = "FFFFFF"
     return f"&H{alpha:02X}{h[4:6]}{h[2:4]}{h[0:2]}".upper()
+
+
+def _lin(c: float) -> float:
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def luminance(hex_: str) -> float:
+    """WCAG relative luminance of a #RRGGBB colour (white for anything malformed)."""
+    h = (hex_ or "").lstrip("#")
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", h):
+        h = "FFFFFF"
+    r, g, b = (_lin(int(h[i:i + 2], 16) / 255.0) for i in (0, 2, 4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(hex_: str, bg_luma: float) -> float:
+    """WCAG contrast ratio of a colour over a grey background of luma bg_luma (0-1, gamma-encoded)."""
+    a, b = luminance(hex_), _lin(min(1.0, max(0.0, float(bg_luma))))
+    hi, lo = max(a, b), min(a, b)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def needs_stroke(colors: list[str], bg_luma: float | None) -> bool:
+    """True when any caption colour reads below MIN_CONTRAST on the background (None: unknown, keep the default)."""
+    if not isinstance(bg_luma, (int, float)) or isinstance(bg_luma, bool):
+        return False
+    return min(contrast(c, bg_luma) for c in colors) < MIN_CONTRAST
 
 
 def _time(t: float) -> str:
@@ -134,8 +168,10 @@ def _keyword(t: str) -> bool:
 
 # ---------------------------------------------------------------------- the ASS file
 def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict | None = None, preset: str | None = None,
-          sidecar: list[dict] | None = None, W: int = REF_W, H: int = REF_H, offset: float = 0.0) -> str:
-    """ASS for the clip's words (source seconds; the clip's first frame is clip_start - offset)."""
+          sidecar: list[dict] | None = None, W: int = REF_W, H: int = REF_H, offset: float = 0.0,
+          bg_luma: float | None = None) -> str:
+    """ASS for the clip's words (source seconds; the clip's first frame is clip_start - offset). bg_luma: the lightest
+    background under the captions (0-1); a light one gets the heavy stroke and shadow (see the contrast note above)."""
     kit, p = kit or {}, p or {}
     pid = clean_preset(preset) or DEFAULT_PRESET
     pr = PRESETS[pid]
@@ -154,6 +190,13 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
         primary, secondary = _color(acc), _color(txt)              # said words take the accent
     back = _color("#000000", 0x99) if pr["box"] else _color("#000000", 0x80)
     out_c = _color("#000000", 0x99) if pr["box"] else _color("#000000")
+    if needs_stroke([txt, acc], bg_luma):  # light background: a heavier solid stroke and a firmer shadow
+        if pr["box"]:
+            out_c, back = _color(STROKE_COLOR, 0x22), _color(STROKE_COLOR, 0x22)
+        else:
+            outline = max(outline, int(round(STROKE_MIN * k)))
+            shadow = max(shadow, int(round(SHADOW_MIN * k)))
+            out_c, back = _color(STROKE_COLOR), _color(STROKE_COLOR, 0x30)
     style = (f"Style: Cap,{pr['family']},{size},{primary},{secondary},{out_c},{back},{-1 if pr['bold'] else 0},0,0,0,100,100,0,0,"
              f"{3 if pr['box'] else 1},{outline},{shadow},5,{int(SIDE * W / REF_W)},{int(SIDE * W / REF_W)},0,1")
     head = (f"[Script Info]\nScriptType: v4.00+\nPlayResX: {W}\nPlayResY: {H}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n"

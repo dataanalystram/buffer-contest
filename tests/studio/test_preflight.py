@@ -116,7 +116,7 @@ def test_youtube_needs_title_and_category_on_create():
     assert "field.youtube.category" in codes(check(CH["youtube"], "x", options={"category_id": "99"}), "error")
     assert check(CH["youtube"], "x", creating=False)["status"] == "ok"   # optional on edit
     _, opts, _ = pf.apply_text_fixes(CH["youtube"], "T" * 150, {}, ["youtube_title", "youtube_category"])
-    assert opts["category_id"] == "22" and len(opts["title"]) <= 100
+    assert opts["category_id"] == "28" and len(opts["title"]) <= 100
 
 
 def test_pinterest_board_and_threads_topic():

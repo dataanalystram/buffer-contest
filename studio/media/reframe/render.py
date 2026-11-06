@@ -4,7 +4,9 @@ Filter graphs, all at 1080x1920 (H.264 veryfast, CRF 20, yuv420p, +faststart, AA
 
   track   sendcmd-driven crop following the face, lanczos up to 1080x1920
   fit     the whole frame, rounded corners, over a darkened, saturated blur of itself (blurred small at 270x480 and
-          scaled up, so it's cheap) or over the brand colour, with a vignette on the background
+          scaled up, so it's cheap) or over the brand colour, with a vignette on the background. A screen recording
+          with no face (rule R2) shows a readable crop of its active region instead (``focus``: the UI at ~1.6x,
+          screen.focus_box) as a square card near the top, the caption band free below it
   split   two 9:8 face crops stacked (the left person on top), a brand-accent divider on the seam
   screen  PiP: the screen as a rounded card over the blur, the webcam face as a circle with an accent ring under it;
           stacked: the screen fitted into the top half, the face crop below, accent divider on the seam
@@ -27,6 +29,8 @@ from .decide import OUT_H, OUT_W
 ACCENT = "#C9ACFA"
 GUTTER = 8
 RADIUS = 40
+FOCUS_TOP = 220        # the focus card's top edge (below the platform's top UI)
+FOCUS_MAX_H = 1064     # and its height at most: it ends above the fit caption band (y 1400)
 VENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", "30"]
 AENC = ["-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2"]
 MASK_DIR = Path(os.environ.get("HQ_MASK_DIR") or (Path(tempfile.gettempdir()) / "hq_layout_masks"))
@@ -106,17 +110,24 @@ def seg_graph(g: Graph, k: int, seg: dict, src: tuple[int, int], base: int, tmp:
         return (f"[s{k}]sendcmd=f='{_esc_path(cmd)}',crop@c{k}=w={p['crop_w']}:h={p['crop_h']}:x={x0}:y={y0},"
                 f"scale={OUT_W}:{OUT_H}:flags=lanczos{punch_mod.filter_for(seg.get('punch'), OUT_W, OUT_H)},setsar=1[o{k}]")
     if lay == "fit":
-        fw, fh = _fit(sw, sh, OUT_W - 2 * GUTTER, OUT_H - 2 * GUTTER)
+        foc = _focus(seg.get("focus"), sw, sh)
+        if foc:  # a screen recording: the active region, readable, as a card near the top
+            fx, fy, fcw, fch = foc
+            fw, fh = _fit(fcw, fch, OUT_W - 2 * GUTTER, FOCUS_MAX_H)
+            crop, ypos = f"crop={fcw}:{fch}:{fx}:{fy},", str(FOCUS_TOP)
+        else:
+            fw, fh = _fit(sw, sh, OUT_W - 2 * GUTTER, OUT_H - 2 * GUTTER)
+            crop, ypos = "", "(H-h)/2"
         m = g.inp(mask("round", fw, fh), base)
         if seg.get("bg") == "brand":
             bg = f"color=c=0x{_hex(brand_bg)}:s={OUT_W}x{OUT_H}:r=30,format=yuv420p[bg{k}];"
             pre = f"[s{k}]copy[f{k}];"
-            over = f"[bg{k}][fr{k}]overlay=(W-w)/2:(H-h)/2:shortest=1"
+            over = f"[bg{k}][fr{k}]overlay=(W-w)/2:{ypos}:shortest=1"
         else:
             bg = ""
             pre = f"[s{k}]split[b{k}][f{k}];" + blur_bg(f"[b{k}]", f"[bg{k}]") + ";"
-            over = f"[bg{k}][fr{k}]overlay=(W-w)/2:(H-h)/2"
-        return (bg + pre + f"[f{k}]scale={fw}:{fh}:flags=lanczos,format=yuva420p[fa{k}];[fa{k}]{m}alphamerge[fr{k}];"
+            over = f"[bg{k}][fr{k}]overlay=(W-w)/2:{ypos}"
+        return (bg + pre + f"[f{k}]{crop}scale={fw}:{fh}:flags=lanczos,format=yuva420p[fa{k}];[fa{k}]{m}alphamerge[fr{k}];"
                 + over + f",setsar=1[o{k}]")
     if lay == "split":
         (t1, t2) = seg["panels"]
@@ -143,6 +154,61 @@ def seg_graph(g: Graph, k: int, seg: dict, src: tuple[int, int], base: int, tmp:
             f"[c{k}]crop={fs}:{fs}:{fx}:{fy},scale=420:420:flags=lanczos,format=yuva420p[fc{k}];[fc{k}]{cm}alphamerge[fr{k}];"
             f"[bg{k}][sr{k}]overlay=(W-w)/2:{card_y}[l1{k}];[l1{k}]{ring}overlay=(W-w)/2:1198[l2{k}];"
             f"[l2{k}][fr{k}]overlay=(W-w)/2:1206,setsar=1[o{k}]")
+
+
+def _focus(v, sw: int, sh: int) -> tuple[int, int, int, int] | None:
+    """A shot's focus crop (x, y, w, h), validated against the source size; None for anything else."""
+    if not (isinstance(v, (list, tuple)) and len(v) == 4 and all(isinstance(n, int) and not isinstance(n, bool) for n in v)):
+        return None
+    x, y, w, h = v
+    if w < 16 or h < 16 or x < 0 or y < 0 or x + w > sw or y + h > sh:
+        return None
+    return x, y, w, h
+
+
+def apply_focus(shots: list[dict], thumbs: dict | None, sw: int, sh: int) -> int:
+    """Give each screen-recording shot (fit by rule R2: screen content, no face, not pinned) a readable crop of its
+    active region (screen.focus_box), in place. Returns how many shots got one. Never raises: the plain fit stays."""
+    n = 0
+    for s in shots:
+        s.pop("focus", None)
+        if s.get("layout") != "fit" or s.get("rule") != "R2" or s.get("pinned") or not thumbs:
+            continue
+        try:
+            box = screen_mod.focus_box(screen_mod.pick_thumbs(thumbs, s["start"], s["end"]), sw, sh)
+        except Exception:  # noqa: BLE001 - a focus is an improvement, never a failure
+            box = None
+        if box:
+            s["focus"] = box
+            n += 1
+    return n
+
+
+def caption_bg_luma(shots: list[dict], thumbs: dict | None, sw: int, sh: int) -> float | None:
+    """The lightest background (0-1 luma) the captions sit on across the clip, from the grey thumbnails: under the
+    caption band of a tracked crop, else the frame's mean (the blurred, slightly darkened background of fit / split /
+    screen layouts). None without thumbnails."""
+    import numpy as np
+    from .. import captions_ass
+    if not thumbs:
+        return None
+    best = None
+    for s in shots:
+        for g in screen_mod.pick_thumbs(thumbs, s["start"], s["end"]):
+            th, tw = g.shape[:2]
+            p = s.get("path") if s.get("layout") == "track" else None
+            if p and p.get("crop_w") and p.get("crop_h") and p.get("keys"):
+                x0, y0 = p["keys"][0][1], p["keys"][0][2]
+                band = captions_ass.BAND_Y["track"] / captions_ass.REF_H
+                r0 = int((y0 + (band - 0.05) * p["crop_h"]) / sh * th)
+                r1 = int((y0 + (band + 0.05) * p["crop_h"]) / sh * th)
+                c0, c1 = int(x0 / sw * tw), int((x0 + p["crop_w"]) / sw * tw)
+                region = g[max(0, r0):max(r0 + 1, r1), max(0, c0):max(c0 + 1, c1)]
+                v = float(region.mean()) / 255.0 if region.size else float(g.mean()) / 255.0
+            else:
+                v = max(0.0, float(np.mean(g)) / 255.0 - 0.08)  # blur_bg darkens by 0.08
+            best = v if best is None else max(best, v)
+    return None if best is None else round(best, 3)
 
 
 def _esc_path(p: Path | str) -> str:
@@ -205,7 +271,9 @@ def plan_clip(path: str, start: float, end: float, words: list[dict], scenes: li
             if len(s.get("faces") or []) == 1:  # one tracked face: its median box, for the punch-in's face-safe peak
                 s["face_med"] = punch_mod.face_size(pts)
     cov = (sum(c * d for c, d in cover) / sum(d for _, d in cover)) if cover else None
+    apply_focus(rshots, smp.get("thumbs"), sw, sh)  # screen recordings: a readable crop of the active region
     return {"shots": rshots, "sidecar": side, "plan": public, "detector": smp["detector"], "vision": vis,
+            "caption_bg": caption_bg_luma(rshots, smp.get("thumbs"), sw, sh),
             "face_coverage": round(cov, 3) if cov is not None else None, "timings": {"faces": round(t_faces, 2)},
             "signals": [{k: v for k, v in s.items() if k != "faces"} | {"faces": [{k: t[k] for k in ("id", "cx", "cy", "h", "presence", "motion")
                                                                                    if k in t} for t in s["faces"]]} for s in sigs]}
@@ -406,7 +474,7 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         colors = (p or {}).get("colors") or (kit or {}).get("colors") or {}
         accent = colors.get("accent") or ACCENT
         brand_bg = colors.get("primary") or "#0B0B12"
-        ass = captions_ass.build(words, start, kit, p, preset, plan["sidecar"]) if words else ""
+        ass = captions_ass.build(words, start, kit, p, preset, plan["sidecar"], bg_luma=plan.get("caption_bg")) if words else ""
         ass_path = None
         if ass:
             ass_path = str(tmp / "cap.ass")

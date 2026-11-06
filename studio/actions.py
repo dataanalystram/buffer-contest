@@ -15,6 +15,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 from . import demo, demo_guard, drafter, mediareach, preflight, radar
 from .buffer_api import BufferClient, BufferError
@@ -23,13 +24,22 @@ from .store import Store, sha
 
 MODES = {"draft", "queue", "next", "now", "schedule"}
 POLICIES = ("review", "draft", "trusted")
+POLICY_LABELS = {"review": "publish needs approval", "draft": "drafts only", "trusted": "can schedule"}
+
+
+def _past(value) -> ActionError:
+    """due_at in the past: a structured error with the time now (UTC), never a post dated before it."""
+    from .mcp_flow import StepError
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return StepError(f"due_at {str(value or '')[:40]} is in the past (now is {now} UTC). Pick a time from now on; nothing was "
+                     "sent.", 400, code="due_at_past", now_utc=now)
 NEEDS_MEDIA = {"instagram": "an image or video", "tiktok": "a video", "youtube": "a video", "pinterest": "an image"}
 REQUIRED_METADATA = {"instagram": {"type": "post", "shouldShareToFeed": True}, "facebook": {"type": "post"},
                      "googlebusiness": {"type": "whats_new"}}
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
 CONFIRM_TTL = 15 * 60
 PROBE_MAX = 60 * 1024 * 1024  # media preflight downloads at most this much per file
-OPTION_KEYS = ("title", "category_id", "board_id", "topic", "x_long_posts", "ig_type", "thumbnail_offset_ms", "ig_audio", "fb_type",
+OPTION_KEYS = ("title", "category_id", "made_for_kids", "board_id", "topic", "x_long_posts", "ig_type", "thumbnail_offset_ms", "ig_audio", "fb_type",
                "first_comment", "alt_text")
 FIRST_COMMENT_SERVICES = ("instagram", "facebook", "linkedin")  # metadata.<svc>.firstComment in Buffer's PostInputMetaData
 AUDIO_TYPES = ("music", "originalSound")  # Buffer's InstagramAudioType
@@ -118,7 +128,8 @@ def build_post_input(channel: dict, text: str, media_url: str, mode: str, due_at
         meta["title"] = (options.get("title") or text.split("\n")[0])[:100]
         if options.get("category_id"):
             meta["categoryId"] = str(options["category_id"])
-        meta["madeForKids"] = False  # COPPA: an explicit "not for kids" (Buffer's default too, but never left implicit)
+        # COPPA: always explicit; "not for kids" unless the person said made_for_kids: true (youtube.madeForKids)
+        meta["madeForKids"] = options.get("made_for_kids") is True
     if svc == "pinterest":
         if options.get("board_id"):
             meta["boardServiceId"] = options["board_id"]
@@ -188,8 +199,8 @@ def clean_options(raw) -> dict:
         v = raw.get(k)
         if v in (None, "", False):
             continue
-        if k == "x_long_posts":
-            out[k] = bool(v)
+        if k in ("x_long_posts", "made_for_kids"):
+            out[k] = v is True
         elif k == "thumbnail_offset_ms":
             try:
                 out[k] = max(0, int(v))
@@ -324,6 +335,10 @@ class Studio:
         if not ch:
             raise ActionError("Unknown channel, or this agent token isn't allowed to use it.", 404)
         text, urls, opts, mode = p.get("text") or "", self._media_list(p), clean_options(p.get("options")), p.get("mode") or "queue"
+        if p.get("youtube") not in (None, {}):  # youtube: {title, categoryId, madeForKids} (6 Nov 2026: preflight blocked YouTube)
+            if not isinstance(p["youtube"], dict):
+                raise ActionError("youtube is {title, categoryId, madeForKids}.")
+            opts = {**opts, **preflight.youtube_options(p["youtube"])}
         before = self._preflight(ch, text, urls, mode, opts)
         want = p.get("fixes") or "all"
         ids = [f["id"] for f in before["fixes"]] if want == "all" else [str(x) for x in want]
@@ -517,10 +532,33 @@ class Studio:
             self.store.audit(a.uid, a.label, action, "blocked", {"reason": "daily cap", "cap": a.agent["daily_cap"]}, ok=False)
             raise ActionError(f"This agent token reached its daily cap of {a.agent['daily_cap']} actions.", 429)
 
+    def token_policy(self, a: Actor) -> dict | None:
+        """What this agent token may do, said up front (preview_post, describe_tool, initialize, policy errors)."""
+        if a.kind != "agent" or not a.agent:
+            return None
+        pol = a.agent.get("policy") or "review"
+        return {"policy": pol, "label": POLICY_LABELS.get(pol, pol), "allowed_modes": sorted(MODES) if pol != "draft" else ["draft"],
+                "needs_approval": pol == "review", "change_at": self.s.public_url.rstrip("/") + "/?tab=settings#tokens",
+                "how_to_change": "The owner changes it in HuhQueue → Settings → Apps with access (token policy)."}
+
+    def _policy_gate(self, a: Actor, mode: str) -> None:
+        """A drafts-only token never asks for a schedule / queue / now (owner report 6 Nov 2026: schedule_package and
+        submit_post(mode=schedule) on a drafts-only token silently made Buffer drafts with a dueAt). Before any Buffer call."""
+        if a.kind != "agent" or not a.agent or a.agent.get("policy") != "draft" or mode == "draft":
+            return
+        from .mcp_flow import StepError
+        pol = self.token_policy(a)
+        self.store.audit(a.uid, a.label, "policy_refused", "blocked", {"mode": mode, "policy": "draft"}, ok=False)
+        raise StepError(f"This connection is drafts-only, so mode '{mode}' isn't allowed and nothing was sent to Buffer. Save it "
+                        f"with mode='draft', or ask the owner to allow scheduling in Agents › token policy: {pol['change_at']}",
+                        403, code="policy_drafts_only", token_policy=pol, allowed_modes=["draft"],
+                        next_steps=["the same call with mode='draft'", f"or the owner allows scheduling: {pol['change_at']}"])
+
     def _validate(self, a: Actor, p: dict) -> tuple[dict, dict, list[str], dict]:
         mode = (p.get("mode") or "draft").strip()
         if mode not in MODES:
             raise ActionError(f"mode must be one of {sorted(MODES)}")
+        self._policy_gate(a, mode)
         chans = {c["id"]: c for c in self.channels(a)}
         ch = chans.get(p.get("channel_id") or "")
         if not ch:
@@ -550,7 +588,7 @@ class Studio:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             if dt <= datetime.now(timezone.utc):
-                raise ActionError("due_at is in the past.")
+                raise _past(p.get("due_at"))
             due = dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         elif mode == "draft" and p.get("due_at"):
             due = self._due(p["due_at"])  # a dated draft (One take places clips this way); it still never publishes
@@ -603,7 +641,8 @@ class Studio:
         self.store.audit(a.uid, a.label, "preview_post", "read", {"channel": ch["service"], "mode": clean["mode"]})
         return {"preview": {**clean, "service": ch["service"], "channel_name": ch.get("displayName") or ch["name"],
                             "length": drafter.count(ch["service"], clean["text"]), "limit": drafter.limit_for(ch["service"])},
-                "warnings": warnings, "preflight": pf, "confirm_token": token, "expires_in": CONFIRM_TTL, "on_submit": what}
+                "warnings": warnings, "preflight": pf, "confirm_token": token, "expires_in": CONFIRM_TTL, "on_submit": what,
+                **({"token_policy": self.token_policy(a)} if a.kind == "agent" else {})}
 
     def _outcome(self, a: Actor, mode: str) -> str:
         if a.kind == "human":
@@ -627,6 +666,7 @@ class Studio:
             self._publishing_open(a)                                   # before the confirm token is used up
         self.store.x("UPDATE confirms SET used=1 WHERE token_hash=?", (row["token_hash"],))
         clean = json.loads(row["payload"])
+        self._policy_gate(a, clean.get("mode") or "draft")
         if a.kind == "agent" and a.agent["policy"] == "review":
             aid = self.store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
                                (a.uid, a.agent["id"], a.agent["name"], json.dumps(clean), "pending", time.time()))
@@ -648,6 +688,8 @@ class Studio:
 
     def _send(self, a: Actor, clean: dict, action: str) -> dict:
         self._publishing_open(a)
+        if clean.get("due_at"):  # a confirm made earlier can be past its time now: never a dueAt in the past (6 Nov 2026)
+            self._due(clean["due_at"])
         ch = {c["id"]: c for c in self.channels(Actor(a.uid))}.get(clean["channel_id"])
         if not ch:
             raise ActionError("That channel is no longer in your Buffer organization.", 404)
@@ -690,7 +732,7 @@ class Studio:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         if dt <= datetime.now(timezone.utc):
-            raise ActionError("due_at is in the past. Pick a time from now on.")
+            raise _past(value)
         return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     def _find_post(self, a: Actor, post_id: str) -> tuple[dict, dict]:
@@ -900,6 +942,26 @@ class Studio:
                             "WHERE user_id=? ORDER BY id DESC", (a.uid,))
         return [dict(r) | {"channels": json.loads(r["channels"]) if r["channels"] else None, "allow_paid_apis": bool(r["allow_paid_apis"])}
                 for r in rows]
+
+    def set_agent_policy(self, a: Actor, token_id: int, policy: Any, confirm: Any = None) -> dict:
+        """The token policy switch in Settings → Apps with access: drafts only / publish needs approval / can schedule.
+        Humans only (an agent never widens its own policy), an explicit confirm: true, and an audit entry with from/to."""
+        if a.kind != "human":
+            raise ActionError("Only the owner can change an app's policy, in HuhQueue → Settings → Apps with access.", 403)
+        if policy not in POLICIES:
+            raise ActionError(f"policy must be one of {', '.join(POLICIES)}.")
+        if confirm is not True:
+            raise ActionError("Confirm the change (confirm: true).", 400)
+        if policy == "trusted" and demo.is_demo(a.uid):
+            raise ActionError("The sample workspace never schedules.", 403)
+        rows = self.store.q("SELECT id,policy FROM agent_tokens WHERE id=? AND user_id=? AND revoked=0", (token_id, a.uid))
+        if not rows:
+            raise ActionError("No such token.", 404)
+        was = rows[0]["policy"]
+        if was != policy:
+            self.store.x("UPDATE agent_tokens SET policy=? WHERE id=? AND user_id=?", (policy, token_id, a.uid))
+            self.store.audit(a.uid, a.label, "set_agent_policy", "safety", {"id": token_id, "from": was, "to": policy})
+        return {"id": token_id, "policy": policy, "label": POLICY_LABELS[policy], "was": was, "changed": was != policy}
 
     def set_agent_paid(self, a: Actor, token_id: int, on: bool) -> dict:
         """The person's "Allow paid APIs" switch for one app (studio/consent.py). Off by default; humans only, so an agent

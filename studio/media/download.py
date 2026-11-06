@@ -185,6 +185,71 @@ def _youtube_fallback(url: str, dest: Path, max_bytes: int, max_height: int, cau
     return dest
 
 
+PROBE_BYTES = 64 * 1024
+
+
+def _first_bytes(url: str, headers: dict | None = None) -> int:
+    """Bytes read (up to PROBE_BYTES) of a stream through netguard; raises DownloadError when it isn't readable."""
+    with netguard.safe_stream(url, https_only=True, timeout=20, headers={**(headers or {}), "Range": f"bytes=0-{PROBE_BYTES - 1}"}) as r:
+        if r.status_code not in (200, 206):
+            raise DownloadError(f"The stream answered {r.status_code}.")
+        n = 0
+        for chunk in r.iter_bytes(16 * 1024):
+            n += len(chunk)
+            if n >= PROBE_BYTES:
+                break
+    if n <= 0:
+        raise DownloadError("The stream was empty.")
+    return n
+
+
+def probe_link(url: str) -> dict:
+    """Can THIS worker download the link? (6 Nov 2026: a "downloadable" YouTube video failed on the worker with "This video
+    is not available".) yt-dlp metadata with ONLY the platform's extractor (no download), then the first 64 KB of the
+    stream it would fetch, through netguard; the operator's YouTube fallback route when yt-dlp is bot-checked. A direct file:
+    its first 64 KB. Never raises: {ok, via, reason, code, title, duration, bytes_read}."""
+    plat = platform_of(url)
+    try:
+        netguard.check_url(url, https_only=True)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": f"That link isn't allowed ({str(e)[:100]}).", "code": "blocked"}
+    if not plat:
+        try:
+            return {"ok": True, "via": "direct", "bytes_read": _first_bytes(url)}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "via": "direct", "reason": str(e)[:200] or e.__class__.__name__}
+    try:
+        import yt_dlp
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "via": "yt-dlp", "reason": "yt-dlp isn't installed on this worker", "code": "worker"}
+    from .find import _QuietLog
+    opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "logger": _QuietLog(), "cachedir": False, "skip_download": True,
+            "allowed_extractors": PLATFORMS[plat]["ie"], "socket_timeout": 30, "retries": 1,
+            "format": f"b[ext=mp4][height<={MAX_HEIGHT}]/bv*[ext=mp4][height<={MAX_HEIGHT}]+ba[ext=m4a]/b[height<={MAX_HEIGHT}]/b"}
+    try:
+        with yt_dlp.YoutubeDL(opts) as y:
+            info = y.extract_info(watch_url(url), download=False) or {}
+    except Exception as e:  # noqa: BLE001
+        msg = str(e).split("\n")[0]
+        why = refusal(msg, plat)
+        if why and why[0] == "bot" and plat == "youtube":
+            from . import yt_fallback
+            if yt_fallback.enabled():
+                return yt_fallback.probe(url)
+        return {"ok": False, "via": "yt-dlp", "reason": (why[1] if why else f"Couldn't read the video: {msg[:160]}"),
+                "code": why[0] if why else "error"}
+    fmts = info.get("requested_formats") or ([info] if info.get("url") else [])
+    furl = next((f.get("url") for f in fmts if str(f.get("url") or "").startswith("https://")), "")
+    if not furl:
+        return {"ok": False, "via": "yt-dlp", "reason": "The platform listed no stream this worker can fetch.", "code": "no_format"}
+    hdrs = {k: v for k, v in (fmts[0].get("http_headers") or {}).items() if k.lower() in ("user-agent", "referer", "origin")}
+    try:
+        n = _first_bytes(furl, hdrs)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "via": "yt-dlp", "reason": f"The stream didn't download ({str(e)[:120]}).", "code": "stream"}
+    return {"ok": True, "via": "yt-dlp", "bytes_read": n, "title": str(info.get("title") or "")[:200], "duration": info.get("duration")}
+
+
 def download_video(candidate: dict | str, dest: str | Path, *, max_bytes: int = MAX_BYTES, http=None, max_secs: int = 0) -> dict:
     """candidate: a find_launch_video result (or a URL). Returns {path, bytes, probe_format, credit, source_url, meta}.
     The ONE fetch path for Make a post (media_render), the weekly recap and One take / MCP video links."""

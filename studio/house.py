@@ -464,8 +464,10 @@ class House:
         self.store.audit(a.uid, a.label, "upload_media", "read", {"type": kind, "bytes": len(data)})
         return {"token": tok, "url": self.media_url(tok), "type": kind, "bytes": len(data)}
 
-    def import_url(self, a: Actor, url: str) -> dict:
-        """For agents: fetch a photo or video the user owns from a public URL into HuhQueue."""
+    def import_url(self, a: Actor, url: str, video_gate=None) -> dict:
+        """For agents: fetch a photo or video the user owns from a public URL into HuhQueue. ``video_gate`` (MCP
+        library_upload_url): called when the bytes turn out to be a video; a dict back = the rights step's answer, returned
+        as {"_held": ...} and nothing is saved."""
         self.studio._guard_write(a, "import_media")
         ext = urlparse(url).path.rsplit(".", 1)[-1].lower() if "." in urlparse(url).path else ""
         _FETCH_WHY.v = "unreachable"
@@ -487,6 +489,10 @@ class House:
                 raise ActionError(f"That link returned JSON text (probably an error), not a {word}. Use create_upload instead.", 415)
             raise ActionError(f"That link didn't return a JPG, PNG, WebP or GIF image or an MP4, MOV or WebM video. "
                               "Use create_upload to upload the file itself.", 415)
+        if video_gate is not None and (sniff(data[:32]) or ("", "", ""))[2] == "video":
+            held = video_gate()
+            if held:
+                return {"_held": held}
         if ext not in ("jpg", "jpeg", "png", "webp", "mp4", "mov", "m4v", "webm"):
             ext = "mp4" if data[4:8] == b"ftyp" else ("png" if data[:4] == b"\x89PNG" else "jpg")
         return self.upload(a, "import." + ext, base64.b64encode(data).decode())
@@ -1647,6 +1653,9 @@ class House:
                           json.dumps({"text": str(tr.get("text") or "")[:20000], "language": str(tr.get("language") or "")[:8]}) if ok else None,
                           _now(), jid))
             return {"ok": ok}
+        if kind == "link_probe":  # the worker's answer: can it download this link (studio/link_probe.py)
+            from . import link_probe
+            return link_probe.finish(self.store, job, body, error)
         if kind == "media_recap":  # the files already arrived one by one (on_recap_file); this closes the job
             files = json.loads(job.get("result") or "{}").get("files") or {}
             spec = json.loads(job["spec"])
@@ -1831,7 +1840,7 @@ class House:
         raise ActionError("No package for that channel in this run.", 404)
 
     def schedule_package(self, a: Actor, rid: int, channel_id: str, mode: str = "queue", due_at: str | None = None,
-                         override_warnings: bool = False) -> dict:
+                         override_warnings: bool = False, on_duplicate: str | None = None) -> dict:
         """The hand-off: a ready package goes through the same preview -> confirm -> submit path as every post, so an
         agent token's policy (approval inbox, drafts only) still holds."""
         run = self.run(a, rid)
@@ -1844,6 +1853,11 @@ class House:
             raise ActionError(self.MISSING_MEDIA_NOTE, 409)
         if mode == "draft" and (pk.get("buffer_draft") or {}).get("buffer_post_id"):
             return self.update_package_draft(a, rid, channel_id)  # its Buffer draft takes the new media (never a 2nd draft)
+        if mode == "draft" and a.kind == "agent":  # the same story's draft from an earlier run: update it, never a second one
+            from . import agent_drafts
+            dup = agent_drafts.guard_duplicate(self, a, rid, channel_id, pk, on_duplicate)
+            if dup is not None:
+                return dup
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
                                             "mode": mode, "due_at": due_at, "options": pk.get("options") or {},
                                             "override_warnings": override_warnings})

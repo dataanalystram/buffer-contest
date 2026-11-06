@@ -108,3 +108,26 @@ def test_fallback_failure_message(monkeypatch, tmp_path):
     monkeypatch.setattr(yt_fallback, "fetch", boom)
     with pytest.raises(download.DownloadError, match="blocked our server.*upload the file"):
         download.download_platform("https://youtu.be/QJf0H64BnFo", tmp_path / "v.mp4")
+
+
+def test_probe_stops_at_64kb_when_range_is_ignored(monkeypatch):
+    """A server that ignores Range and answers 200 with the whole body: the probe reads 64 KB and stops."""
+    import contextlib
+    monkeypatch.setenv("HQ_INVIDIOUS_INSTANCES", "https://inv.example")
+    monkeypatch.setattr(yt_fallback, "_get_json", lambda url, http=None: dict(INFO, title="t", lengthSeconds=10))
+    pulled = {"n": 0}
+
+    class R:
+        status_code = 200
+
+        def iter_bytes(self, size):
+            for _ in range(1000):  # 1000 x 64 KB: far more than the probe may read
+                pulled["n"] += 1
+                yield b"x" * 65536
+
+    @contextlib.contextmanager
+    def stream(url, **k):
+        yield R()
+    monkeypatch.setattr(yt_fallback.netguard, "safe_stream", stream)
+    out = yt_fallback.probe("https://www.youtube.com/watch?v=QJf0H64BnFo")
+    assert out["ok"] and out["bytes_read"] == 65536 and pulled["n"] == 1

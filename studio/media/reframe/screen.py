@@ -14,6 +14,11 @@ EDGE_MIN = 0.08
 STATIC_MAX = 2.0
 FLAT_MIN = 0.40
 COL_MIN = 0.05  # a column counts as content when this share of its pixels are edges
+FOCUS_OUT_W = 1064     # the focus card's width on the 1080-wide clip (the fit layout's gutters)
+FOCUS_SCALE = 1.6      # aim: UI text shown at 1.6x its source size (fit shows a 1376 px screen at 0.77x)
+FOCUS_MIN_W = 0.40     # never crop narrower than 40% of the screen ...
+FOCUS_MAX_W = 0.85     # ... and a crop wider than this isn't worth it (the plain fit is kept)
+FOCUS_ASPECT = 1.0     # crop height / width (a square card leaves the caption band below it free)
 
 
 def _mask_faces(edges, faces: list[dict]):
@@ -47,6 +52,46 @@ def signals(thumbs: list, faces: list[dict] | None = None) -> dict:
     width = float((active[-1] - active[0] + 1) / len(cols)) if len(active) >= max(2, len(cols) // 50) else 0.0
     return {"edge": round(edge, 4), "diff": round(diff, 3), "flat": round(flat, 3), "screen": bool(votes >= 2),
             "content_width": round(width, 3)}
+
+
+def _best_window(profile, n: int) -> int:
+    """Start of the length-n window with the most activity in a 1-D profile."""
+    import numpy as np
+    c = np.concatenate([[0.0], np.cumsum(profile, dtype="float64")])
+    sums = c[n:] - c[:-n]
+    return int(np.argmax(sums)) if len(sums) else 0
+
+
+def focus_box(thumbs: list, src_w: int, src_h: int) -> tuple[int, int, int, int] | None:
+    """A readable crop (x, y, w, h in source pixels) of a screen recording's active region: where its text/UI edges
+    and its changes between frames (typing, the cursor, scrolling) are densest, sized so the UI is shown at about
+    FOCUS_SCALE x on the 9:16 clip. None when there is nothing to go on or the crop would be nearly the whole screen."""
+    import cv2
+    import numpy as np
+    if not thumbs or src_w <= 0 or src_h <= 0:
+        return None
+    th, tw = thumbs[0].shape[:2]
+    cw = min(src_w, max(int(FOCUS_MIN_W * src_w), int(FOCUS_OUT_W / FOCUS_SCALE)))
+    ch = min(src_h, int(cw * FOCUS_ASPECT))
+    if cw >= FOCUS_MAX_W * src_w:
+        return None
+    act = np.mean([cv2.Canny(g, 80, 160) / 255.0 for g in thumbs], axis=0)
+    if len(thumbs) > 1:  # what changes counts double: that is where the viewer looks
+        act = act + 2.0 * np.mean([np.abs(a.astype("int16") - b.astype("int16")) > 12 for a, b in zip(thumbs, thumbs[1:])], axis=0)
+    if float(act.mean()) <= 1e-4:
+        return None
+    nw, nh = max(1, round(cw / src_w * tw)), max(1, round(ch / src_h * th))
+    # across: centred on the activity's centre of mass, smoothed over ~5% of the width first (a thin scrollbar or
+    # divider line isn't content) and squared (dense text and changes outweigh a full-width toolbar or address bar);
+    # down: the busiest window
+    k = max(3, tw // 20)
+    cols = np.convolve(act.sum(axis=0).astype("float64"), np.ones(k) / k, mode="same") ** 2
+    cx = float((cols * np.arange(tw)).sum() / cols.sum()) if cols.sum() > 0 else tw / 2
+    x0 = int(min(tw - nw, max(0, round(cx - nw / 2))))
+    y0 = _best_window(act[:, x0:x0 + nw].sum(axis=1), nh)
+    x = int(min(src_w - cw, max(0, round(x0 / tw * src_w))))
+    y = int(min(src_h - ch, max(0, round(y0 / th * src_h))))
+    return x - x % 2, y - y % 2, cw - cw % 2, ch - ch % 2
 
 
 def pick_thumbs(thumbs: dict, a: float, b: float) -> list:

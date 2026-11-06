@@ -3,7 +3,10 @@
   plan_cuts(words, start, end, silences)  pure: which stretches of the span to keep. Long pauses between words shrink to
                                           PAD either side of speech; filler words (um / uh / erm / hmm, and "like" only
                                           when it stands between pauses or commas) go. A cut never starts or ends
-                                          inside a kept word, and keeps PAD (80 ms) next to it.
+                                          inside a kept word, and keeps PAD (80 ms) next to it, except a pause the
+                                          ASR stretched a word across ("kind" 16.5-18.1 s over 0.8 s of silence):
+                                          cut only where the silence detector heard it AND the audio energy there
+                                          is quiet (``quiet_fn``, ffmpeg volumedetect).
   remap / remap_words / remap_points      original time -> trimmed time, so captions, face samples and scene cuts stay
                                           in sync with the trimmed video.
   cut(path, keep, out)                    ffmpeg trim/atrim + concat (10 ms fades at every join: no clicks).
@@ -33,6 +36,9 @@ LIKE_GAP = 0.15       # "like" counts as filler only between pauses this long (o
 MAX_REMOVED = 0.5     # a plan removing this share of the span or more is dropped (fail open)
 MAX_SEGMENTS = 120    # joins per clip (filter graph size); the smallest cuts are dropped past this
 JOIN_FADE = 0.01
+QUIET_DB = -35.0      # an in-word pause must be at most this loud (mean volume) ...
+QUIET_BELOW = 12.0    # ... and this many dB under the span's own mean
+MAX_QUIET_CHECKS = 12  # energy checks per clip (one short ffmpeg read each)
 FILLERS = frozenset({"um", "umm", "uh", "uhh", "uhm", "erm", "er", "hmm", "hm", "mm"})
 _NOT_FILLER_AFTER_LIKE = frozenset({"a", "an", "the", "this", "that", "these", "those", "to", "it", "him", "her", "them",
                                     "me", "you", "us", "my", "your", "his", "our", "their"})
@@ -81,10 +87,12 @@ def _intersect(a: float, b: float, sil: list[list[float]]) -> list[list[float]]:
     return [[max(a, s), min(b, e)] for s, e in sil if min(b, e) - max(a, s) > 0]
 
 
-def plan_cuts(words: list[dict], start: float, end: float, silences: list | None = None) -> dict:
+def plan_cuts(words: list[dict], start: float, end: float, silences: list | None = None, quiet_fn=None) -> dict:
     """Keep segments (absolute seconds) for the span [start, end]. silences: [[s, e], ...] from ffmpeg silencedetect, or
-    None when there is no detector output (then the word gaps alone decide). Returns {keep, removed, pauses, fillers,
-    skipped}; keep == [[start, end]] when nothing is cut."""
+    None when there is no detector output (then the word gaps alone decide). quiet_fn(a, b) -> bool: the audio energy
+    check for a silence that falls INSIDE a word's timestamps (the ASR stretched the word over a pause); without it, or
+    without silences, such pauses are kept. Returns {keep, removed, pauses, fillers, skipped}; keep == [[start, end]]
+    when nothing is cut."""
     start, end = float(start), float(end)
     span = end - start
     base = {"keep": [[round(start, 3), round(end, 3)]], "removed": 0.0, "pauses": 0, "fillers": 0, "skipped": ""}
@@ -139,6 +147,26 @@ def plan_cuts(words: list[dict], start: float, end: float, silences: list | None
                 cuts.append([pa, pb])
                 got = True
         pauses += got
+    # pauses inside a word's span: the ASR stretched it across the silence; the detector AND the energy check must agree
+    if sil and quiet_fn is not None:
+        checks = 0
+        for w in kept:
+            if w["e"] - w["s"] < MIN_PAUSE + 2 * PAD:
+                continue
+            for sa, sb in _intersect(w["s"] + PAD, w["e"] - PAD, sil):
+                if sb - sa < MIN_PAUSE - 2 * PAD or checks >= MAX_QUIET_CHECKS:
+                    continue
+                a, b = sa + PAD, sb - PAD  # keep PAD of the silence next to the sound on both sides
+                if b - a < MIN_CUT:
+                    continue
+                checks += 1
+                try:
+                    ok = bool(quiet_fn(a, b))
+                except Exception:  # noqa: BLE001 - an energy check that fails keeps the pause
+                    ok = False
+                if ok:
+                    cuts.append([a, b])
+                    pauses += 1
     cuts = [c for c in _merge(cuts) if c[1] - c[0] >= MIN_CUT]
     if not cuts:
         return {**base, "skipped": "nothing to trim"}
@@ -181,6 +209,13 @@ def remap_words(words: list[dict], keep: list[list[float]]) -> list[dict]:
             continue
         mid = (s + e) / 2
         seg = next((k for k in keep if k[0] - 1e-6 <= mid <= k[1] + 1e-6), None)
+        if seg is None and _tok(w) not in FILLERS:  # a word an in-word pause cut through (it spans two kept pieces):
+            ov = [k for k in keep if min(e, k[1]) - max(s, k[0]) > 0.02]  # it stays, from its first kept instant to
+            if len(ov) >= 2:                                                # its last, so its caption keeps its timing
+                ns, ne = remap(max(s, ov[0][0]), keep), remap(min(e, ov[-1][1]), keep)
+                if ns is not None and ne is not None:
+                    out.append({**w, "s": ns, "e": max(ne, ns)})
+            continue
         if seg is None:
             continue
         ns, ne = remap(min(max(s, seg[0]), seg[1]), keep), remap(min(max(e, seg[0]), seg[1]), keep)
@@ -262,6 +297,33 @@ def cut(path: str, keep: list[list[float]], out: str, audio: bool = True, timeou
     take.run(cmd, timeout=timeout)
 
 
+def mean_volume(path: str, start: float, dur: float, timeout: int = 60) -> float | None:
+    """Mean volume (dB) of [start, start + dur] with ffmpeg volumedetect, or None (no audio, a failure)."""
+    from .. import mediasafe
+    try:
+        r = mediasafe.run(["ffmpeg", "-hide_banner", "-nostats", "-ss", f"{float(start):.3f}", "-t", f"{max(0.05, float(dur)):.3f}",
+                           "-i", path, "-vn", "-af", "volumedetect", "-f", "null", "-"], timeout=timeout, text=True)
+    except Exception:  # noqa: BLE001 - no reading keeps the pause
+        return None
+    m = re.findall(r"mean_volume:\s*(-?inf|-?[\d.]+) dB", (r.stderr or "") if r.returncode == 0 else "")
+    if not m:
+        return None
+    return -120.0 if "inf" in m[-1] else float(m[-1])
+
+
+def quiet_check(path: str, start: float, end: float):
+    """The energy check plan_cuts uses for in-word pauses: quiet when the stretch is <= QUIET_DB and QUIET_BELOW dB under
+    the span's own mean volume. None when the span itself can't be measured (then in-word pauses are kept)."""
+    ref = mean_volume(path, start, end - start)
+    if ref is None:
+        return None
+
+    def quiet(a: float, b: float) -> bool:
+        v = mean_volume(path, a, b - a, timeout=30)
+        return v is not None and v <= QUIET_DB and v <= ref - QUIET_BELOW
+    return quiet
+
+
 def _measured(stderr: str) -> dict | None:
     """The last loudnorm JSON block in ffmpeg's stderr as floats, or None for silence / garbage."""
     m = None
@@ -307,7 +369,9 @@ def prepare(path: str, m: dict, words: list[dict], faces: list[dict], scenes: li
     start, end = float(m["start"]), float(m["end"])
     stats = {"on": True, "trimmed_s": 0.0, "pauses": 0, "fillers": 0, "skipped": ""}
     try:
-        plan = plan_cuts(words, start, end, m.get("silences") if isinstance(m.get("silences"), list) else None)
+        sil = m.get("silences") if isinstance(m.get("silences"), list) else None
+        quiet = quiet_check(path, start, end) if sil and src.get("audio", True) else None  # in-word pauses: energy check
+        plan = plan_cuts(words, start, end, sil, quiet)
     except Exception as e:  # noqa: BLE001
         return {"stats": {**stats, "skipped": f"plan failed: {e.__class__.__name__}"}}
     if plan["skipped"]:

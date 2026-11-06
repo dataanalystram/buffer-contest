@@ -246,7 +246,7 @@ class Takes(TakeBin):
             return jev
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
-        consent_id, licence, link = None, "", url or platform_url
+        consent_id, licence, link, rights_basis = None, "", url or platform_url, None
         if link:  # rights first, then the fetch (owner ask, 4 Nov 2026): a signed-in person attests; an AI app asks them
             from . import consent, link_ingest
             licence = link_ingest.licence_hint(link, http=self.h.http)
@@ -256,6 +256,8 @@ class Takes(TakeBin):
                 if g.get("needs_user_approval"):
                     return g
                 consent_id = g["consent_id"]
+                rights_basis = {"basis": g.get("basis"), "approval_id": g.get("approval_id"), "consent_id": consent_id,
+                                **({"note": g["note"]} if g.get("note") else {})}
             else:
                 consent_id = link_ingest.human_attest(self.store, a, link, body, licence)
             rights = True
@@ -288,7 +290,8 @@ class Takes(TakeBin):
         self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_upload": upload_id, "source_url": url, "platform_url": platform_url,
                              "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small"), "jev": jev},
                     "transcribe", "Reading captions, else transcribing on the video worker (faster-whisper, CPU)")
-        return self.get(a, rid)
+        out = self.get(a, rid)
+        return {**out, "rights": rights_basis} if rights_basis and isinstance(out, dict) else out
 
     def _jev_consent(self, a: Actor, body: dict):
         """May this take ask Jev (TypeSafe, a paid API on HuhQueue's server key) for a second opinion on faces?
@@ -728,7 +731,47 @@ class Takes(TakeBin):
                 "face_detector": False, "sample_window": w["file"]}
         self._queue(a, rid, spec, "reframe", "Re-rendering 1 clip on the video worker")
 
+    def _face_qa(self, jid: int, meta) -> dict | None:
+        """The final look at a landed clip (studio/face_qa.py): pops the worker's QA frames off the meta (never stored),
+        asks Jev (then SubQ as the tie-break) within the account's daily allowance when the take allows Jev, else the
+        worker's YuNet measurement stands (said so). Returns the clip's face_safe record with ``final_look``. Never raises."""
+        fs = meta.get("face_safe") if isinstance(meta, dict) else None
+        if not isinstance(fs, dict):
+            return None
+        frames = fs.pop("qa_jpegs", None)
+        from . import face_qa
+        worker = {"max_cover": fs.get("max_cover")}
+        log = (lambda m: print(m, flush=True))
+        try:
+            from .media import jev_faces
+            j = self._job(jid)
+            run = self._run(Actor(j["user_id"]), j["run_id"])
+            clean = face_qa.clean(frames)
+            if run["input"].get("jev") is not True:
+                look = face_qa.judge(clean, 0, worker=worker, log=log,
+                                     off="off for this take (not started by a person in the app, or not approved)")
+            else:
+                want = len(clean) * 2  # Jev, and SubQ only where Jev is unsettled
+                with self.store.tx():  # reserve first (atomic), hand back what wasn't used
+                    cap = min(want, max(0, jev_faces.daily_cap() - self._jev_used(j["user_id"])))
+                    if cap > 0:
+                        self._jev_used(j["user_id"], cap)
+                look = None
+                try:
+                    look = face_qa.judge(clean, cap, http=getattr(self, "_jev_http", None), worker=worker, log=log)
+                finally:
+                    spent = int((look or {}).get("calls") or 0)
+                    if cap - spent > 0:
+                        self._jev_used(j["user_id"], -(cap - spent))
+        except Exception as e:  # noqa: BLE001 - the final look never fails the landing: the worker's measurement stands
+            look = face_qa.judge([], 0, worker=worker, log=log, off=f"error: {e.__class__.__name__}")
+        fs["final_look"] = look
+        return fs
+
     def on_clip(self, jid: int, clip_id: str, data: bytes, cover: bytes, meta: dict) -> dict:
+        fs = self._face_qa(jid, meta) if "@" not in clip_id else None
+        if "@" in clip_id and isinstance(meta, dict) and isinstance(meta.get("face_safe"), dict):
+            meta["face_safe"].pop("qa_jpegs", None)  # another ratio: its QA frames are never stored either
         with self._job_lock(jid):
             if self.job_cancelled(jid):
                 return {"ok": False, "cancelled": True}
@@ -752,9 +795,15 @@ class Takes(TakeBin):
             clip.update(status="rendered", token=tok, url=self.media_url(tok), cover_token=ctok, cover_url=self.media_url(ctok),
                         meta=meta, rendered_at=_now())
             clip.pop("rerender_error", None)
+            from . import face_qa
+            why = face_qa.needs_review(fs, (fs or {}).get("final_look"))
+            if why:  # text may cover the speaker's face: never spread until a person looks (owner bug 6 Nov 2026)
+                clip.update(status="needs_review", review_reason=why)
+            else:
+                clip.pop("review_reason", None)
             done = sum(1 for c in res["clips"] if c["status"] in ("rendered", "ready"))
             todo = len(j["spec"].get("clips") or [])
-            got = sum(1 for c in res["clips"] if c["id"] in {x["id"] for x in j["spec"].get("clips") or []} and c["status"] == "rendered")
+            got = sum(1 for c in res["clips"] if c["id"] in {x["id"] for x in j["spec"].get("clips") or []} and c["status"] in ("rendered", "needs_review"))
             for k in ("reframe", "captions", "covers"):
                 self._step(steps, k, "running", f"{got} of {todo} clips")
             del done
@@ -856,7 +905,8 @@ class Takes(TakeBin):
                         pf["status"] = "warning"
                 clip["preflight"][c["id"]] = {k: pf[k] for k in ("status", "chip", "findings", "service", "network")}
                 worst[pf["status"]] += 1
-            clip["status"] = "ready"
+            if clip.get("status") != "needs_review":  # a face-QA flag stays until a person looks / it re-renders
+                clip["status"] = "ready"
         n = len([c for c in res.get("clips", []) if c.get("url") and c.get("status") != "binned"])
         msg = f"{n} clips × {len(run['input']['channels'])} channel(s): {worst['ok']} pass" + \
               (f", {worst['warning']} warning(s)" if worst["warning"] else "") + (f", {worst['error']} need a fix" if worst["error"] else "")
@@ -879,7 +929,8 @@ class Takes(TakeBin):
             if c.get("status") == "binned":  # in the Bin (list_take_bin): not part of the take until restored
                 continue
             d = {k: c.get(k) for k in ("id", "moment_id", "status", "start", "end", "hook", "text", "score", "why", "url", "cover_url",
-                                       "error", "placements", "preflight", "captions", "rank", "reasons", "rerender_error")}
+                                       "error", "placements", "preflight", "captions", "rank", "reasons", "rerender_error",
+                                       "review_reason")}
             d["score"], d["why"] = _clip_score(c, moments)
             d["variants"] = {r: v["url"] for r, v in (c.get("variants") or {}).items()}
             m = c.get("meta") or {}
@@ -887,13 +938,18 @@ class Takes(TakeBin):
             d["layout"], d["face_coverage"] = m.get("layout"), m.get("face_coverage")
             d["layout_plan"], d["caption_preset"] = m.get("layout_plan"), c.get("caption_preset") or m.get("caption_preset")
             d["cover_offset_ms"] = m.get("cover_offset_ms")
+            fsm = m.get("face_safe") if isinstance(m.get("face_safe"), dict) else None
+            d["face_safe"] = {"status": fsm.get("status"), "max_cover": fsm.get("max_cover"),
+                              "final_look": {k: (fsm.get("final_look") or {}).get(k) for k in ("ran", "by", "verdict", "why", "fallback")}
+                              } if fsm else None
             tr = m.get("trim") if isinstance(m.get("trim"), dict) else {}
             d["trimmed_s"] = tr.get("trimmed_s") or 0.0  # pauses + filler cut from this clip (studio/media/cleancut)
             d["trim"] = {k: tr.get(k) for k in ("trimmed_s", "pauses", "fillers", "skipped")} if tr else None
             o = m.get("ocr") if isinstance(m.get("ocr"), dict) else {}
             d["screen_text"] = str(o.get("text") or "")[:500]
             d["watermarks"] = [str(x)[:40] for x in (o.get("watermarks") or [])[:10]]
-            d["alt_text"] = _alt_text(c.get("hook") or "", d["screen_text"])
+            rd = o.get("readable")  # filtered with Tesseract's confidence at render time (studio/media/ocr.readable_text)
+            d["alt_text"] = _alt_text(c.get("hook") or "", rd if isinstance(rd, str) else d["screen_text"], isinstance(rd, str))
             d["words"] = clip_words(words, c, c["start"] - 4, c["end"] + 4)
             d["transcript"] = " ".join(w["w"] for w in clip_words(words, c, c["start"], c["end"]))
             d["transcript_edited"] = bool(c.get("words_fix"))
@@ -1253,9 +1309,9 @@ def _clip_score(c: dict, moments: dict) -> tuple[float | None, str]:
     return score, why[:300]
 
 
-def _alt_text(hook: str, text: str) -> str:
+def _alt_text(hook: str, text: str, cleaned: bool = False) -> str:
     from .media.ocr import alt_text
-    return alt_text(hook, text)
+    return alt_text(hook, text, cleaned=cleaned)
 
 
 WATERMARK_MSG = ("The source video shows {what}. Re-posted videos with another platform's watermark or someone's handle "
@@ -1331,7 +1387,7 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
             c["_ocr_frames"] = seen["frames"]
         data, cover, meta = take.render_clip(src, c, c["words"], c["faces"], spec.get("scenes") or [], spec["src"],
                                              spec["kit"], spec["params"], logo=logo)
-        meta["ocr"] = {k: seen.get(k) for k in ("ok", "version", "text", "watermarks", "ms", "skipped")}
+        meta["ocr"] = {k: seen.get(k) for k in ("ok", "version", "text", "readable", "watermarks", "ms", "skipped")}
         meta["ocr"]["frames"] = len(seen.get("frames") or [])
         yield c["id"], data, cover, meta
         return
@@ -1356,7 +1412,8 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
             meta = {"type": "video", "style": "opus", "ratio": r, "duration": got["duration"], "width": got["width"],
                     "height": got["height"], "layout": {"track": "track", "pad": "pad", "fit": "fit"}.get(rf["mode"], "center"),  # fit: a vertical source, no fallback
                     "face_coverage": rf.get("face_coverage"), "captions": got["captions"], "burned_subs": got["burned_subs"],
-                    "caption_problems": got["caption_problems"], "cover_offset_ms": 400, "credit": spec.get("credit") or ""}
+                    "caption_problems": got["caption_problems"], "cover_offset_ms": 400, "credit": spec.get("credit") or "",
+                    "face_safe": got.get("face_safe")}
             yield (c["id"] if i == 0 else f"{c['id']}@{r}"), out.read_bytes(), cover.read_bytes(), meta
     finally:
         import shutil

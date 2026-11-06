@@ -290,24 +290,102 @@ def reframe_plan(faces: list[dict] | None, start: float, end: float, src_w: int,
 def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16", brand: dict | None = None, credit: str = "",
                   out: str, faces: list[dict] | None = None, scenes: list[float] | None = None, detector: bool = True,
                   burned_subs: bool | None = None, names: list[str] | None = None, music: str = "auto",
-                  src_size: tuple[int, int] | None = None) -> dict:
-    """One finished clip in one ratio: opus style (hook on top, word captions, credit, end card), reframed."""
+                  src_size: tuple[int, int] | None = None, face_safe: bool = True, qa_keep: str | None = None) -> dict:
+    """One finished clip in one ratio: opus style (hook, word captions, credit, end card), reframed.
+
+    face_safe (default on): the hook box, captions and credit are placed clear of the faces (studio/media/facesafe:
+    YuNet on the clip span + the take's Jev-verified boxes, mapped through the reframe), then the render QA measures
+    the finished frames; over facesafe.QA_MAX it re-places with the faces the QA saw and renders ONCE more; still over,
+    r["face_safe"]["status"] is "needs_review" with the reason (the take does not ship it). qa_keep: a path prefix to
+    keep the QA's rendered frames (review only)."""
     from ..headline import render_hook
-    from . import ff
-    from .compose import detect_burned_subs, render_style
+    from . import facesafe, ff
+    from .compose import SIZES, _keep, detect_burned_subs, render_style
     m = {**m, "hook": render_hook(m.get("hook") or "")}  # the headline guard on every render path (owner P0)
+    pr = None
     if src_size is None:
         pr = ff.probe(source)
         src_size = (pr["width"] or 1920, pr["height"] or 1080)
         if burned_subs is None:
             burned_subs = detect_burned_subs(source, pr["duration"])
     plan = reframe_plan(faces, m["start"], m["end"], src_size[0], src_size[1], ratio, scenes, bool(burned_subs), detector)
-    r = render_style(source, "opus", out=out, ratio=ratio, hook=m["hook"], brand=brand, words=words, credit=credit,
-                     clip=(m["start"], m["end"]), music_mood=music, names=names, burned_subs=bool(burned_subs), reframe=plan)
+    kw = dict(out=out, ratio=ratio, hook=m["hook"], brand=brand, words=words, credit=credit, clip=(m["start"], m["end"]),
+              music_mood=music, names=names, burned_subs=bool(burned_subs), reframe=plan)
+    fs = None
+    if face_safe:
+        try:
+            fs = _face_safe_render(source, m, plan, src_size, ratio, faces, scenes, bool(burned_subs), kw, qa_keep)
+            r = fs.pop("_result")
+        except Exception as e:  # noqa: BLE001 - placement never fails the clip: the fixed layout, flagged for review
+            print(f"face-safe: {e.__class__.__name__}: {str(e)[:120]}; fixed layout, flagged", flush=True)
+            r = render_style(source, "opus", **kw)
+            fs = {"status": "needs_review", "reason": f"face-safe placement didn't run ({e.__class__.__name__}): "
+                  "the overlays may cover the face", "placed": False}
+    else:
+        r = render_style(source, "opus", **kw)
+    r["face_safe"] = fs
     cov = take.face_coverage(plan, faces or [], m["start"], m["end"], src_size[0]) if plan["mode"] == "track" else None
     r["reframe"] = {"mode": plan["mode"], "crop_w": plan.get("crop_w"), "keys": len(plan.get("keys") or []),
                     "face_coverage": round(cov, 3) if cov is not None else None, "face_ratio": plan.get("face_ratio")}
     return r
+
+
+def _face_safe_render(source, m, plan, src_size, ratio, faces, scenes, burned, kw, qa_keep=None) -> dict:
+    """Place, render, QA; at most one re-place + re-render. Returns the face_safe record with the render under _result."""
+    import tempfile
+
+    from . import facesafe
+    from .compose import SIZES, _keep, render_style
+    W, H = SIZES[ratio]
+    sw, sh = src_size
+    c0, c1 = float(m["start"]), float(m["end"])
+    D = max(0.5, c1 - c0)
+    keep = _keep(True) if burned else 1.0
+    samples, det = facesafe.clip_samples(source, c0, c1, sw, sh, faces)
+    cuts = [float(x) - c0 for x in scenes or [] if c0 < float(x) < c1]
+    rec = {"detector": det, "passes": [], "status": "ok", "placed": True}
+    if det.get("fallback"):
+        print(f"face-safe: {det['fallback']}", flush=True)
+    extra: list = []
+    td = tempfile.mkdtemp(prefix="hq_fs_")
+    try:
+        r = None
+        for attempt in (1, 2):
+            z = facesafe.zones_for(samples, plan, sw, sh, W, H, D, keep, cuts, extra)
+            r = render_style(source, "opus", face_safe=z, **kw)
+            pred_boxes = facesafe.out_boxes(samples, plan, sw, sh, W, H, keep, head=False)
+
+            def predicted(t, pb=pred_boxes):
+                return [b for tt, b in pb if abs(tt - t) <= 0.5]
+            try:
+                qa = facesafe.qa_measure(r["path"], source, c0, D, plan, W, H, keep, float(r.get("cover_frame_secs") or 0)
+                                         + float(r.get("cover_secs") or 0), workdir=f"{td}/p{attempt}", predicted=predicted,
+                                         keep_frames=f"{qa_keep}_p{attempt}_" if qa_keep else None)
+            except Exception as e:  # noqa: BLE001 - a QA that couldn't run is said, and the clip waits for a person
+                rec["passes"].append({"attempt": attempt, "placement": r.get("face_safe"), "qa": None,
+                                      "qa_error": f"{e.__class__.__name__}: {str(e)[:120]}"})
+                rec.update(status="needs_review", reason="the render QA couldn't check the frames for text on the face")
+                break
+            rec["passes"].append({"attempt": attempt, "placement": r.get("face_safe"), "hook_shown": r.get("hook_shown"),
+                                  "qa": {k: qa[k] for k in ("ok", "max_cover", "threshold", "faces_by")},
+                                  "qa_frames": [{k: f.get(k) for k in ("t", "cover")} for f in qa["frames"]]})
+            rec["qa_jpegs"] = facesafe.qa_jpegs(qa)
+            if qa["ok"]:
+                rec["status"] = "ok"
+                break
+            print(f"face-safe: pass {attempt}: text covers {qa['max_cover'] * 100:.1f}% of a face (max "
+                  f"{facesafe.QA_MAX * 100:.0f}%)", flush=True)
+            if attempt == 2:
+                rec.update(status="needs_review", reason=f"text still covers {qa['max_cover'] * 100:.1f}% of the speaker's "
+                           f"face after one re-place (limit {facesafe.QA_MAX * 100:.0f}%)")
+            extra = facesafe.grow_qa_boxes(qa)
+        rec["max_cover"] = (rec["passes"][-1].get("qa") or {}).get("max_cover")
+        rec["first_cover"] = (rec["passes"][0].get("qa") or {}).get("max_cover")
+        rec["_result"] = r
+        return rec
+    finally:
+        import shutil
+        shutil.rmtree(td, ignore_errors=True)
 
 
 def contact_sheet(video: str, out: str, cols: int = 5, rows: int = 2, width: int = 216) -> str:
