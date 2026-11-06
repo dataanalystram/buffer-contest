@@ -57,3 +57,26 @@ def test_deep_links_hold_the_open_screen_and_fail_in_place():
     assert "HQLoad.cancel(\"openrun\")" in body and "taking too long" in body and "taking too long" in ot
     lt = take[take.index("async function loadTake() {"):take.index("window.openTake = async")]
     assert "const list = loadTakes();" in lt and "  await list;\n}" in lt  # One take is shown once its list is drawn
+
+
+def test_loader_polish_never_blocks_clicks_caps_at_1500ms_and_is_still_under_reduced_motion():
+    """#117 follow-up: the overlay never takes a click (only its error box with Retry does), a slow screen is shown with
+    its own skeletons after 1.5 s at most, and under prefers-reduced-motion nothing in the loader moves."""
+    js = (ST / "viewswap.js").read_text()
+    assert re.search(r"\bCAP_MS = 1500\b", js)
+    css = (ST / "viewswap.css").read_text()
+    vt = re.search(r"\.hq-vt\{[^}]*\}", css).group(0)
+    assert "pointer-events:none" in vt
+    assert re.search(r"\.hq-vt-err\{[^}]*pointer-events:auto", css)
+    blocks = re.findall(r"@media \(prefers-reduced-motion:reduce\)\{(.+?\})\}", css, flags=re.S)
+    assert any(".hq-vt *" in b and "animation-name:none" in b and "transition:none" in b for b in blocks), blocks
+
+
+def test_a_loader_that_fails_after_the_cap_still_shows_retry_while_its_screen_is_current():
+    """CodeRabbit (#123): past CAP_MS the screen is shown; a late failure shows the inline error with Retry and Close,
+    only while no newer transition began (seq), never over another screen."""
+    js = (Path(__file__).resolve().parents[2] / "studio" / "static" / "viewswap.js").read_text()
+    assert "const cap = sleep(CAP_MS).then(() => ({ capped: true }));" in js
+    assert "if (capped) done.then((late) => {" in js
+    assert "if (!late || aborted(late) || my !== seq || !el.isConnected) return;" in js
+    assert "fail(overlay(el, opts.label), el, late, again, true);" in js

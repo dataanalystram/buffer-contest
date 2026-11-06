@@ -102,9 +102,30 @@ def test_loader_respects_reduced_motion(live, chromium, close_contexts, w, motio
         assert (trace, logo, dash) == ("none", "none", "none")
     else:
         assert (trace, logo) == ("hq-vt-trace", "hq-vt-breathe") and dash != "none"
+    # the overlay never takes a click (#117 follow-up)
+    assert page.evaluate("getComputedStyle(document.querySelector('[data-testid=view-loader]')).pointerEvents") == "none"
     # past 300 ms the loader adds list skeletons, then the Planner is drawn once
     page.locator("[data-testid=view-loader] [data-testid=loading-skeleton]").wait_for(state="attached")
+    if motion == "reduce":  # nothing in the loader moves, its skeletons included
+        assert page.evaluate("document.querySelector('[data-testid=view-loader]').getAnimations({subtree: true}).length") == 0
     _settled(page, "planner")
+    assert not errors, errors
+
+
+@pytest.mark.parametrize("w", VIEWPORTS)
+def test_a_slow_screen_is_shown_after_the_1500ms_cap(live, chromium, close_contexts, w):  # noqa: F811
+    """A screen whose data takes 4 s is shown with its own skeletons after 1.5 s; the loader never holds it longer."""
+    _, page, errors = _page(chromium, live["base"], w)
+    _library(page, live["base"])
+    _settled(page, "library")
+    page.evaluate("window.__hqDelay['/api/calendar'] = 4000")
+    t0 = page.evaluate("performance.now()")
+    _go(page, "planner")
+    page.get_by_test_id("view-loader").wait_for(state="visible")
+    page.get_by_test_id("view-loader").wait_for(state="detached", timeout=3500)
+    took = page.evaluate("performance.now()") - t0
+    assert took < 3000, f"the loader held the screen for {took:.0f} ms"
+    assert page.locator("#tab-planner").is_visible()
     assert not errors, errors
 
 
@@ -125,6 +146,7 @@ def test_a_deep_link_that_fails_shows_retry_in_place(live, chromium, close_conte
     page.evaluate(f"window.hqOpenRun({live['rid']})")
     err = page.get_by_test_id("view-error")
     err.wait_for(state="visible")
+    assert err.evaluate("e => getComputedStyle(e).pointerEvents") == "auto"   # Retry still takes the click
     assert "The run store is busy" in err.inner_text()
     assert page.locator("#tab-library").is_visible() and not page.get_by_test_id("library-item").first.is_visible()
     assert "tab=library" in page.url, "a failed View run must not leave the Library"
