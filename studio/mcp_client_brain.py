@@ -33,8 +33,10 @@ INSTRUCTIONS = (
     "1) Start: call start_post(title, brief, user_asked: true, reason) once for the person's request and keep its run_id. If a "
     "tool answers reused: true, keep working on that run. "
     "2) Pass run_id to every render, edit, upload and create_package call. Follow-ups ('brighter', 'swap slide 3', 'shorter "
-    "caption') update the same run: render again with run_id, then create_package(run_id, ...), which replaces the post in "
-    "place and keeps the previous version for undo_package_media. Never start another post, thread, template or brand kit "
+    "caption') update the same run: render again with run_id, then create_package(run_id, ...), which updates the channels "
+    "you name (the others keep their packages) and keeps the previous version for undo_package_media. A different video "
+    "or cover per channel is still ONE run: render each as output 1, 2, 3 and stage them with create_package(run_id, "
+    "captions, channel_media={channel: {output: n}}). Never start another post, thread, template or brand kit "
     "unless the person asked; then pass new_post: true (or the tool's user_asked: true) with a one-line reason. "
     "A change of format ('not a carousel, make it a reel') is the SAME run: start_post(run_id, format='reel'), then render "
     "with that run_id. Several outputs for one request ('make 3 reels') are ONE run: pass output: 1, 2, 3 to each render "
@@ -886,30 +888,107 @@ def t_render_status(studio, a, args):
             out["cover_url"] = pick.get(ratio) or next(iter(pick.values()), "")
             out["cover"] = {"url": out["cover_url"], "frame_s": 0}
     if st == "failed":
+        from .mcp_flow import upload_steps
         out["error"] = (r["error"] or "")[:300]
+        try:
+            fspec = json.loads(r["spec"] or "{}")
+        except ValueError:
+            fspec = {}
+        out.update(code="render_failed", produced="nothing (a failed video is never replaced by slides)",
+                   next_steps=upload_steps(fspec.get("for_run"), fspec.get("for_output")))
     if st == "queued":
         out["next"] = "Still rendering: call render_status again in 15 s."
     return out
 
 
+VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm")
+CM_KEYS = {"output", "media_urls", "cover", "format"}
+FORMATS = ("carousel", "reel", "photo", "text")
+
+
+def _is_video_url(h, a: Actor, u: str) -> bool:
+    if str(u).lower().split("?")[0].endswith(VIDEO_EXT):
+        return True
+    tok = h.media_token_of(str(u)) if hasattr(h, "media_token_of") else ""
+    return bool(tok) and (h.media_meta(a, tok) or {}).get("type") == "video"
+
+
+def _channel_media_arg(args: dict) -> dict:
+    """channel_media: {channel id or service: {output, media_urls, cover, format}}; every field type-checked (400)."""
+    cm = args.get("channel_media")
+    if cm in (None, "", {}):
+        return {}
+    if not isinstance(cm, dict):
+        raise ActionError("channel_media is {channel id or service: {output, media_urls, cover, format}}.")
+    if len(cm) > 20:
+        raise ActionError("channel_media takes up to 20 channels.")
+    out = {}
+    for k, v in cm.items():
+        if not isinstance(v, dict):
+            raise ActionError(f"channel_media['{str(k)[:40]}'] is an object: {{output, media_urls, cover, format}}.")
+        bad = set(v) - CM_KEYS
+        if bad:
+            raise ActionError(f"channel_media['{str(k)[:40]}'] takes only output, media_urls, cover and format.")
+        if "media_urls" in v and (not isinstance(v["media_urls"], list) or len(v["media_urls"]) > 10
+                                  or not all(isinstance(u, str) for u in v["media_urls"])):
+            raise ActionError("channel_media[...].media_urls is a list of up to 10 URLs.")
+        if v.get("format") not in (None, *FORMATS):
+            raise ActionError("channel_media[...].format is one of carousel | reel | photo | text.")
+        if v.get("cover") is not None and not isinstance(v["cover"], dict):
+            raise ActionError("channel_media[...].cover is {url, frame_s}.")
+        if "output" in v:
+            _slot({"output": v["output"]})
+        out[str(k)] = v
+    return out
+
+
+def _output_media(h, a: Actor, rid: int | None, slot: int) -> tuple[list[str], str]:
+    """(media_urls, format) of output `slot` of this run (404 when it hasn't been rendered yet)."""
+    from . import run_discipline
+    if not rid:
+        raise ActionError("output needs run_id (the post the render belongs to).")
+    row = run_discipline.own_run(h.store, a, rid)
+    hit = next((o for o in (json.loads(row["result"] or "{}") or {}).get("outputs") or [] if o.get("output") == slot), None)
+    if not hit:
+        raise ActionError(f"Run {rid} has no output {slot} yet: render it first (output: {slot}).", 404)
+    return [str(u) for u in hit.get("media_urls") or []][:10], (hit.get("format") if hit.get("format") in FORMATS else "")
+
+
+def _cover_of(cover: Any) -> tuple[str, int | None]:
+    cover = cover if isinstance(cover, dict) else {}
+    url = str(cover.get("url") or "")[:500]
+    if url and not url.startswith("https://"):
+        raise ActionError("cover.url must be an https image URL (render_status gives cover_url).")
+    ms = None
+    if cover:
+        try:
+            ms = max(0, int(round(float(cover.get("frame_s") or 0) * 1000)))
+        except (TypeError, ValueError):
+            raise ActionError("cover.frame_s is a number of seconds.")
+    return url, ms
+
+
 def t_create_package(studio, a, args):
+    """Stage captions (+ media) per channel. With run_id only the channels named change; the others keep their packages
+    (owner report 6 Nov 2026: staging one video per channel wiped the previous channel, so the app split one post into
+    three runs). channel_media gives each channel its own output / media / cover / format."""
+    from .mcp_flow import StepError, upload_steps
     h = studio.house
     studio._guard_write(a, "create_package")
     caps = args.get("captions") if isinstance(args.get("captions"), dict) else {}
     if not caps:
         raise ActionError("captions is {channel_id or service: text} with the caption you wrote for each channel.")
+    if args.get("replace_all") not in (None, True, False):
+        raise ActionError("replace_all is true or false.")
+    cm = _channel_media_arg(args)
     chans = [c for c in studio.channels(a) if not c.get("isDisconnected")]
     slot = _slot(args)
+    rid = _run_arg(args)
     media_urls = [str(u) for u in args.get("media_urls") or []][:10]
-    if not media_urls and args.get("output") not in (None, "") and _run_arg(args):  # stage that output's media
-        from . import run_discipline
-        row = run_discipline.own_run(h.store, a, _run_arg(args))
-        hit = next((o for o in (json.loads(row["result"] or "{}") or {}).get("outputs") or [] if o.get("output") == slot), None)
-        if not hit:
-            raise ActionError(f"Run {_run_arg(args)} has no output {slot} yet: render it first (output: {slot}).", 404)
-        media_urls = [str(u) for u in hit.get("media_urls") or []][:10]
-        if not args.get("format") and hit.get("format") in ("carousel", "reel", "photo", "text"):
-            args = {**args, "format": hit["format"]}
+    shared_fmt = args.get("format") if args.get("format") in FORMATS else ""
+    if not media_urls and args.get("output") not in (None, "") and rid:  # stage that output's media
+        media_urls, ofmt = _output_media(h, a, rid, slot)
+        shared_fmt = shared_fmt or ofmt
     credit = ""
     if args.get("rights"):
         rg = _rights(args, str(args.get("source_url") or ""))
@@ -917,44 +996,63 @@ def t_create_package(studio, a, args):
     if credit:  # news_credit: the credit line goes in every caption (once)
         line = credit_line(credit)
         caps = {k: (v if credit.lower() in str(v).lower() else f"{str(v).rstrip()}\n\n{line}") for k, v in caps.items()}
-    cover = args.get("cover") if isinstance(args.get("cover"), dict) else {}
-    cover_url = str(cover.get("url") or "")[:500]
-    if cover_url and not cover_url.startswith("https://"):
-        raise ActionError("cover.url must be an https image URL (render_status gives cover_url).")
-    thumb_ms = None
-    if cover:
-        try:
-            thumb_ms = max(0, int(round(float(cover.get("frame_s") or 0) * 1000)))
-        except (TypeError, ValueError):
-            raise ActionError("cover.frame_s is a number of seconds.")
-    pk, unknown = [], []
+    cover_url, thumb_ms = _cover_of(args.get("cover"))
+    pk, unknown, used_cm = [], [], set()
     for key, text in caps.items():
         hits = [c for c in chans if c["id"] == key] or [c for c in chans if c.get("service") == key]
         if not hits:
             unknown.append(key)
         for c in hits:
-            fmt = args.get("format") or ("reel" if any(u.lower().split("?")[0].endswith((".mp4", ".mov")) for u in media_urls) else
-                                         "carousel" if len(media_urls) > 1 else "photo" if media_urls else "text")
+            ck = c["id"] if c["id"] in cm else (c.get("service") if c.get("service") in cm else None)
+            entry = cm.get(ck) if ck else None
+            urls, fmt, c_slot, own = media_urls, shared_fmt, slot, False
+            c_cover, c_thumb = cover_url, thumb_ms
+            if entry is not None:
+                used_cm.add(ck)
+                own = True
+                if "media_urls" in entry:
+                    urls, fmt = [str(u) for u in entry["media_urls"]][:10], ""
+                elif entry.get("output") not in (None, ""):
+                    c_slot = _slot({"output": entry["output"]})
+                    urls, fmt = _output_media(h, a, rid, c_slot)
+                fmt = entry.get("format") or fmt or (shared_fmt if "media_urls" not in entry and entry.get("output") in (None, "") else "")
+                if entry.get("cover") is not None:
+                    c_cover, c_thumb = _cover_of(entry["cover"])
+            vids = [u for u in urls if _is_video_url(h, a, u)]
+            fmt = fmt or ("reel" if vids else "carousel" if len(urls) > 1 else "photo" if urls else "text")
+            if fmt == "reel" and not vids:  # never a slideshow or a photo in place of the video that was asked for
+                raise StepError(f"{c.get('displayName') or c.get('name') or key}: format 'reel' needs a video, and this "
+                                "channel's media has none. Nothing was staged. Next: render the video (render_reel, output: n) "
+                                "or get the person's file with create_send_code.", 400, code="reel_needs_video",
+                                channel=c["id"], next_steps=upload_steps(rid, c_slot if entry else None))
             pk.append({"channel_id": c["id"], "service": c.get("service"), "channel": c.get("displayName") or c.get("name"),
                        "channel_name": c.get("displayName") or c.get("name"),  # every package reader (Planner, Make a post) uses this
-                       "text": str(text)[:5000], "media_urls": media_urls, "format": fmt, "status": "ready",
-                       "media": [{"url": u, "type": "video" if u.lower().split("?")[0].endswith((".mp4", ".mov")) else "photo"}
-                                 for u in media_urls], "check": h.check(a, str(text))})
-            if args.get("output") not in (None, ""):
-                pk[-1]["output"] = slot
-            if cover_url:
-                pk[-1]["cover_url"] = cover_url
-            if thumb_ms is not None and fmt == "reel" and c.get("service") in ("instagram", "tiktok", "pinterest"):
-                pk[-1]["options"] = {**(pk[-1].get("options") or {}), "thumbnail_offset_ms": thumb_ms}
+                       "text": str(text)[:5000], "media_urls": urls, "format": fmt, "status": "ready",
+                       "media": [{"url": u, "type": "video" if _is_video_url(h, a, u) else "photo"} for u in urls],
+                       "check": h.check(a, str(text))})
+            if args.get("output") not in (None, "") or (entry and entry.get("output") not in (None, "")):
+                pk[-1]["output"] = c_slot
+            if own:
+                pk[-1]["_own_media"] = True
+            if c_cover:
+                pk[-1]["cover_url"] = c_cover
+            if c_thumb is not None and fmt == "reel" and c.get("service") in ("instagram", "tiktok", "pinterest"):
+                pk[-1]["options"] = {**(pk[-1].get("options") or {}), "thumbnail_offset_ms": c_thumb}
+    stray = [k for k in cm if k not in used_cm]
+    if stray:
+        raise ActionError(f"channel_media names {', '.join(stray)[:120]} but captions has no caption for it: give each channel "
+                          "in channel_media a caption too.")
     if not pk:
         raise ActionError(f"No connected channel matches {', '.join(unknown)}. list_channels gives ids and services.")
+    _yt_options(pk, args)
     chans_in = [{"id": p["channel_id"], "service": p["service"], "name": p["channel"]} for p in pk]
-    rid = _run_arg(args)
-    updated, versions = False, 0
+    updated, versions, kept = False, 0, []
     if rid:  # one request = one run: update that post in place, keeping what it had for Undo (owner, 4 Nov 2026)
-        rid, versions = _update_package_run(h, a, rid, args, pk, chans_in)
+        rid, versions, kept = _update_package_run(h, a, rid, args, pk, chans_in)
         updated = True
     else:
+        for p in pk:
+            p.pop("_own_media", None)
         inp = {"prompt": str(args.get("title") or "Post from your AI app")[:200], "via": SOURCE, "channels": chans_in}
         res = {"packages": pk, "media": pk[0]["media"], "story": {"headline": str(args.get("title") or "")[:120]}, "brain": "client"}
         rid = h.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated,agent_id) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -962,18 +1060,21 @@ def t_create_package(studio, a, args):
                          a.agent["id"] if a.kind == "agent" and a.agent else None))
     _library_for_run(h, a, rid, pk, slot)
     return {"run_id": rid, "updated": updated, "versions_kept": versions, **({"output": slot} if args.get("output") not in (None, "") else {}),
-            "packages": [{k: p[k] for k in ("channel_id", "service", "format", "status")} | {"brand_check": p["check"]} for p in pk],
-            "unknown_channels": unknown, "spent_usd": 0,
-            "next": "Show the person. Changes: render again with this run_id and call create_package(run_id) again (it replaces "
-                    "this post; undo_package_media goes back). On their yes: schedule_package(run_id, channel_id, mode='draft')."}
+            "packages": [{k: p.get(k) for k in ("channel_id", "service", "format", "status", "output") if p.get(k) is not None}
+                         | {"brand_check": p["check"], "media_urls": p["media_urls"]} for p in pk],
+            "kept_channels": kept, "unknown_channels": unknown, "spent_usd": 0,
+            "next": "Show the person. Changes: render again with this run_id and call create_package(run_id) for the channels "
+                    "that change (the others keep their packages; undo_package_media goes back). On their yes: "
+                    "schedule_package(run_id, channel_id, mode='draft')."}
 
 
 MAX_PACKAGE_VERSIONS = 6
 
 
-def _update_package_run(h, a: Actor, rid: int, args: dict, pk: list[dict], chans_in: list[dict]) -> tuple[int, int]:
-    """create_package(run_id): the new packages replace the run's in place; the previous ones go to result.package_versions
-    (newest last, at most 6) and each package says what Undo goes back to."""
+def _update_package_run(h, a: Actor, rid: int, args: dict, pk: list[dict], chans_in: list[dict]) -> tuple[int, int, list[str]]:
+    """create_package(run_id): the new packages replace THOSE channels' packages in place; every other channel keeps its
+    package (replace_all: true drops them). The previous set goes to result.package_versions (newest last, at most 6) and
+    each package says what Undo goes back to. Returns (run_id, versions kept, channel ids kept as they were)."""
     from . import run_discipline
     row = run_discipline.own_run(h.store, a, rid)  # 404 for someone else's run (checked here too: every surface)
     if row["kind"] != "client":
@@ -991,20 +1092,125 @@ def _update_package_run(h, a: Actor, rid: int, args: dict, pk: list[dict], chans
                    "label": "Back to the previous version"})
         del vs[:-MAX_PACKAGE_VERSIONS]
     for p in pk:
+        p.pop("_own_media", None)
         if vs:
             p["undo"] = {"label": "Back to the previous version", "versions": len(vs)}
-    res["packages"], res["media"] = pk, pk[0]["media"]
+    new_ids = {p["channel_id"] for p in pk}
+    keep = [] if args.get("replace_all") is True else [p for p in old if p.get("channel_id") not in new_ids]
+    by_id = {p["channel_id"]: p for p in pk}
+    merged = [by_id.pop(p["channel_id"]) if p.get("channel_id") in by_id else p for p in old
+              if p.get("channel_id") in new_ids or p in keep] + list(by_id.values())
+    res["packages"] = merged
+    res["media"] = merged[0].get("media") or []
     if args.get("title"):
         res["story"] = {**(res.get("story") or {}), "headline": str(args["title"])[:120]}
         inp["prompt"] = str(args["title"])[:200]
-    inp["channels"] = chans_in
+    old_in = {c.get("id"): c for c in inp.get("channels") or [] if isinstance(c, dict)}
+    for c in chans_in:
+        old_in[c["id"]] = c
+    inp["channels"] = [old_in[p["channel_id"]] for p in merged if p.get("channel_id") in old_in]
     h.store.x("UPDATE agent_runs SET input=?, result=?, status='ready', updated=? WHERE id=? AND user_id=?",
               (json.dumps(inp), json.dumps(res, default=str), time.time(), rid, a.uid))
-    return rid, len(vs)
+    return rid, len(vs), [p["channel_id"] for p in keep]
+
+
+def client_channel_media(studio, a: Actor, rid: int, channel: str, token: str) -> dict:
+    """replace_channel_media on a start_post / create_package run (and every other non-agent post run): that channel's
+    package takes the person's file (media_token); the other channels are untouched, the previous set is kept for Undo and
+    the brand check runs again (owner report 6 Nov 2026: it answered "made before the agent" on start_post runs)."""
+    from . import run_discipline
+    from .house import VIDEO_ONLY
+    from .mcp_flow import StepError, upload_steps
+    h = studio.house
+    studio._guard_write(a, "replace_channel_media")
+    row = run_discipline.own_run(h.store, a, rid)
+    if row["kind"] == "take":
+        raise StepError("That is a One take run: change a clip with adjust_clip, nothing here.", 409, code="wrong_run_type",
+                        next_steps=["list_clips(take_id)", "adjust_clip(take_id, clip_id, ...)"])
+    res = json.loads(row["result"] or "{}") or {}
+    if run_discipline.closed(res):
+        raise ActionError("That post was already sent to Buffer or is waiting in Approvals, so it isn't changed here. "
+                          "update_package_draft updates its Buffer draft.", 409)
+    pk = res.get("packages") or []
+    ch = str(channel or "").strip()
+    hit = next((p for p in pk if p.get("channel_id") == ch), None) or next((p for p in pk if p.get("service") == ch), None)
+    if not hit:
+        raise StepError("That channel isn't staged in this post yet.", 404, code="channel_not_staged",
+                        missing_step=f"create_package(run_id={rid}, captions={{'{ch[:40]}': '<caption>'}}, "
+                                     f"channel_media={{'{ch[:40]}': {{'output': 1}}}})")
+    tok = str(token or "").strip()
+    if not tok:
+        raise StepError("Give media_token (a render's media_token from render_status, an upload from list_recent_uploads, or "
+                        "a Library item): a post you staged yourself has no HuhQueue agent to regenerate it.", 400,
+                        code="media_token_required", next_steps=upload_steps(rid))
+    meta = h.media_meta(a, tok)
+    if meta is None:
+        raise ActionError("Unknown file. Upload it or pick it from your Library first.", 404)
+    typ = "video" if meta.get("type") == "video" else "photo"
+    if hit.get("service") in VIDEO_ONLY and typ != "video":
+        raise ActionError(f"{str(hit.get('service')).title()} needs a video.")
+    vs = res.setdefault("package_versions", [])
+    vs.append({"at": time.time(), "packages": json.loads(json.dumps(pk, default=str)), "media": res.get("media") or [],
+               "label": "Back to the previous version"})
+    del vs[:-MAX_PACKAGE_VERSIONS]
+    url = h.media_url(tok)
+    hit.update(media=[{"token": tok, "url": url, "type": typ, "name": "your file", "role": "original"}], media_urls=[url],
+               format="reel" if typ == "video" else "photo", check=h.check(a, str(hit.get("text") or ""), tok),
+               undo={"label": "Back to the previous version", "versions": len(vs)})
+    hit.pop("buffer_draft_stale", None)
+    if pk and pk[0] is hit:
+        res["media"] = hit["media"]
+    res.setdefault("thread", []).append({"role": "agent", "text": f"{hit.get('channel') or hit.get('service')}: media replaced", "at": time.time()})
+    h.store.x("UPDATE agent_runs SET result=?, updated=? WHERE id=? AND user_id=?", (json.dumps(res, default=str), time.time(), rid, a.uid))
+    return {"run_id": rid, "channel_id": hit["channel_id"], "service": hit.get("service"), "format": hit["format"],
+            "media_urls": hit["media_urls"], "brand_check": hit["check"], "versions_kept": len(vs), "spent_usd": 0,
+            "packages": [{k: p.get(k) for k in ("channel_id", "service", "format", "status")} for p in pk],
+            "next": "Show the person. undo_package_media goes back; schedule_package(run_id, channel_id, mode='draft') on their yes."}
+
+
+YT_KEYS = ("title", "categoryId", "madeForKids")
+
+
+def _yt_options(pk: list[dict], args: dict) -> None:
+    """youtube: {title, categoryId, madeForKids} -> the YouTube packages' options (title, category_id, made_for_kids), the
+    fields preflight asks for (owner report 6 Nov 2026: nothing could set the category, so preflight blocked YouTube)."""
+    yt = args.get("youtube")
+    if yt in (None, {}):
+        return
+    if not isinstance(yt, dict) or set(yt) - set(YT_KEYS):
+        raise ActionError("youtube is {title, categoryId, madeForKids}.")
+    opts = youtube_options(yt)
+    for p in pk:
+        if p.get("service") == "youtube":
+            p["options"] = {**(p.get("options") or {}), **opts}
+
+
+def youtube_options(yt: dict) -> dict:
+    """Validated YouTube fields as preflight / Buffer options. categoryId: a YouTube category id ('28' = Science &
+    Technology); title up to 100 characters; madeForKids true/false."""
+    out = {}
+    if "title" in yt:
+        t = " ".join(str(yt["title"] or "").split())
+        if not t or len(t) > 100:
+            raise ActionError("youtube.title is 1-100 characters.")
+        out["title"] = t
+    if "categoryId" in yt:
+        c = str(yt["categoryId"]).strip()
+        if not c.isdigit() or not 1 <= int(c) <= 44:
+            raise ActionError("youtube.categoryId is a YouTube category id, e.g. '28' (Science & Technology).")
+        out["category_id"] = c
+    if "madeForKids" in yt:
+        if not isinstance(yt["madeForKids"], bool):
+            raise ActionError("youtube.madeForKids is true or false.")
+        out["made_for_kids"] = yt["madeForKids"]
+    return out
 
 
 def _library_for_run(h, a: Actor, rid: int, pk: list[dict], slot: int = 1) -> None:
-    """The staged post's media is the run's output (its ONE Library item, replaced in place when the post changes)."""
+    """The staged post's media is the run's output (its ONE Library item, replaced in place when the post changes). Only
+    the packages that use the shared media (media_urls / output) are recorded here: a channel_media entry with its own
+    output is already that output (its render recorded it), and one with its own media_urls never overwrites a slot."""
+    pk = [p for p in pk if not p.get("_own_media")]
     media = []
     for m in (pk[0].get("media") or []) if pk else []:
         tok = h.media_token_of(m.get("url") or "")
