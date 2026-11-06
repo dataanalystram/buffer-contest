@@ -141,7 +141,7 @@ def test_search_guard_refuses_instruction_only_queries(owner):
 
 def test_constraints_only_x_no_hashtags_no_link_in_normal_generation(owner, monkeypatch):
     monkeypatch.setattr(sources, "search", lambda q, *a, **k: [dict(STORY)])
-    p = "post about the OpenAI launch on LinkedIn only, no hashtags and don't add a link"
+    p = "post about the new EU rules for AI chatbots on LinkedIn only, no hashtags and don't add a link"
     rid = owner.post("/api/agent/runs", json={"prompt": p, "channel_ids": ["ch_li", "ch_ig"]}).json()["id"]
     run = _run(owner, rid)
     caps = run["result"].get("captions") or {}
