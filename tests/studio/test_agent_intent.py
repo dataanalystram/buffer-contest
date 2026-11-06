@@ -11,7 +11,7 @@ import pytest
 
 from studio import brand, headline, intake, intent, sources
 
-from .test_agent_core import OWNER_CHANNELS, jpeg, owner  # noqa: F401  (the owner fixture)
+from .test_agent_core import OWNER_CHANNELS, TWEET, jpeg, owner  # noqa: F401  (the owner fixture)
 
 RAM = ('Post this exact caption on LinkedIn only, do not change a single character, no hashtags, no extra text: '
        '"[HQ test] LinkedIn text draft 6 Nov - HuhQueue live QA, please ignore."')
@@ -140,8 +140,7 @@ def test_search_guard_refuses_instruction_only_queries(owner):
 
 
 def test_constraints_only_x_no_hashtags_no_link_in_normal_generation(owner, monkeypatch):
-    monkeypatch.setattr(sources, "search", lambda q, *a, **k: [dict(STORY)])
-    p = "post about the new EU rules for AI chatbots on LinkedIn only, no hashtags and don't add a link"
+    p = f"post this on LinkedIn only, no hashtags and don't add a link {TWEET}"
     rid = owner.post("/api/agent/runs", json={"prompt": p, "channel_ids": ["ch_li", "ch_ig"]}).json()["id"]
     run = _run(owner, rid)
     caps = run["result"].get("captions") or {}
