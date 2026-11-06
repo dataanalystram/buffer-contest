@@ -16,9 +16,18 @@ WHOLE = """() => { const a = document.getElementById('mpActs').getBoundingClient
       out: r.left < a.left - 1 || r.right > a.right + 1 || r.top < a.top - 1 || r.bottom > a.bottom + 1 }; }); }"""
 
 
+# the channel ids of the packages still waiting to be sent (a card with an enabled Send button, not on hold, not saved)
+READY_IDS = """() => [...document.querySelectorAll('[data-testid=package]')]
+  .filter((c) => { const b = c.querySelector('[data-testid=pkg-send]'); return b && !b.disabled; }).map((c) => c.dataset.ch)"""
+# true once every one of those cards shows the saved state, as a Buffer draft (not posted)
+ALL_SAVED = """(ids) => ids.every((id) => { const c = [...document.querySelectorAll('[data-testid=package]')].find((x) => x.dataset.ch === id);
+  const st = c && c.querySelector('[data-testid=pkg-sent]'); return !!st && /as a draft/i.test(st.textContent); })"""
+
+
 @pytest.mark.parametrize("w,h", [(1280, 800), (390, 844), (760, 900)])
 def test_ready_bar_never_clips_save_all(live, chromium, close_contexts, w, h):
     base, app = live
+    app.state.studio.media_reach = lambda urls: []  # the draft save never probes the media over the network
     ctx, page, errors = _page(chromium, base, w, h)
     page.goto(base + "/?tab=agent")
     page.get_by_test_id("agent-query").fill("Post this on all my channels: " + ARTICLE["url"])
@@ -38,9 +47,12 @@ def test_ready_bar_never_clips_save_all(live, chromium, close_contexts, w, h):
     sw = page.evaluate("() => document.documentElement.scrollWidth")
     assert sw <= w + 1, f"horizontal overflow at {w}px: {sw}"
     # the bar's button still saves every ready post as a draft
+    # record every ready package (one with a live Send button) before the click; the wait below needs each of them saved
+    ready = page.evaluate(READY_IDS)
+    assert len(ready) >= 2, ready  # "all my channels": more than one post, so one saved card can't pass for all of them
     page.get_by_test_id("mp-approve").scroll_into_view_if_needed()
     page.get_by_test_id("mp-approve").click()
-    page.wait_for_function("() => document.querySelectorAll('[data-testid=pkg-sent]').length > 0 || [...document.querySelectorAll('.toast,[role=status]')].some((t) => /draft/i.test(t.textContent))", timeout=30000)
+    page.wait_for_function(ALL_SAVED, arg=ready, timeout=30000)
     assert not errors, errors
 
 
