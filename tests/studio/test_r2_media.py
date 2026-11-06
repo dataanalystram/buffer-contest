@@ -150,6 +150,85 @@ def test_a_redirect_loop_falls_back_to_the_repeat_limit(app, human, s3, monkeypa
     assert codes[0] == 302 and codes[-1] == 429                 # an anonymous loop stops being signed
 
 
+
+def test_r2_reads_never_count_against_the_supabase_egress_budget(app, human, s3, monkeypatch):
+    """Egress follow-up (6 Nov 2026): bytes read from R2 (a disk-cache fill, a range read with the cache off) and files a
+    browser is redirected to R2 for cost no Supabase egress, so they go to their own counters (``r2_bytes``,
+    ``r2_redirected_bytes``) and never fill the daily ``db`` budget that answers 429 to other people's browsers. Bytes
+    still read from the database are counted as ``db`` exactly as before."""
+    from studio import egress, mediacache
+    from studio.library import media_file
+    store = app.state.store
+    monkeypatch.setenv("HQ_EGRESS_DB_DAILY_MB", "0.0001")      # ~100 bytes: any R2 byte counted as db would trip it
+    data = image_bytes(120, 90)
+    tok = app.state.house.put_media(Actor("acc_1"), data, "r2.png")
+    assert store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"]
+    mediacache.of(store).forget([tok])
+    anon = TestClient(app, base_url="https://hq.test")
+    assert anon.get(f"/m/{tok}").content == data              # Buffer / the worker: R2 -> disk cache -> response
+    snap = egress.snapshot()
+    assert snap["db_bytes"] == 0 and snap["r2_bytes"] == len(data) and not snap["degraded"]
+
+    store._media_cache = mediacache.MediaCache(cap=0)         # cache off: every range is a backend read
+    f = media_file(store, tok)
+    assert f["read"](0, 9) == data[:10]
+    snap = egress.snapshot()
+    assert snap["db_bytes"] == 0 and snap["r2_bytes"] == len(data) + 10
+
+    # a browser that isn't the owner, past nothing: still a 206 for a Range (the db budget wasn't touched)
+    r = anon.get(f"/m/{tok}", headers={**BROWSER, "Range": "bytes=0-99"})
+    assert r.status_code == 206 and r.content == data[:100]
+
+    monkeypatch.setenv("HQ_MEDIA_REDIRECT", "1")              # a browser is sent to R2: counted as redirected, not db
+    assert anon.get(f"/m/{tok}", headers=BROWSER, follow_redirects=False).status_code == 302
+    snap = egress.snapshot()
+    assert snap["db_bytes"] == 0 and snap["r2_redirected_bytes"] == len(data) and not snap["degraded"]
+    hz = anon.get("/healthz").json()["egress"]
+    assert hz["db_bytes_today"] == 0 and hz["r2_bytes_today"] == snap["r2_bytes"]
+    assert hz["r2_redirected_bytes_today"] == len(data)
+
+    old = _db_media(app, monkeypatch, image_bytes(40, 40), "db.png")  # a row whose bytes are in the database
+    got = anon.get(f"/m/{old}").content
+    assert egress.snapshot()["db_bytes"] == len(got)          # database bytes still fill the db budget
+
+
+
+def test_every_r2_read_is_counted_once_inside_or_outside_the_cache(app, s3):
+    """A direct ``blobstore.read`` from R2 (no media-cache tally open) is added to ``r2`` itself; inside a tally the
+    bytes go to the tally only (``backend_read`` books them), so nothing is counted twice (CodeRabbit, PR #133)."""
+    from studio import egress
+    store = app.state.store
+    tok = app.state.house.put_media(Actor("acc_1"), image_bytes(60, 40), "direct.png")
+    key = store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"]
+    assert key
+    base = egress.snapshot()["r2_bytes"]
+    assert len(blobstore.read(None, key, 0, 9)) == 10
+    assert egress.snapshot()["r2_bytes"] == base + 10 and egress.snapshot()["db_bytes"] == 0
+    with egress.r2_tally() as t:
+        assert len(blobstore.read(None, key, 0, 4)) == 5
+    assert t[0] == 5 and egress.snapshot()["r2_bytes"] == base + 10
+
+
+def test_a_library_range_across_an_r2_chunk_and_a_db_chunk_meters_each_part(app, s3, monkeypatch):
+    """Cache off, a Library range spanning a chunk in R2 and a chunk kept in the database: only the R2 chunk's share of
+    the answer is ``r2``; the database chunk's share still fills ``db`` (CodeRabbit, PR #133)."""
+    from studio import egress, library, mediacache
+    store = app.state.store
+    monkeypatch.setattr(library, "CHUNK", 64)
+    item = app.state.house.library.save_bytes(Actor("acc_1"), image_bytes(200, 150, "JPEG"), "mixed.jpg")
+    iid = item["id"]
+    rows = store.q("SELECT n, storage_key FROM library_chunks WHERE item_id=? ORDER BY n", (iid,))
+    assert len(rows) >= 3 and all(r["storage_key"] for r in rows)
+    whole = b"".join(blobstore.read(None, r["storage_key"]) for r in rows)
+    store.x("UPDATE library_chunks SET data=?, storage_key=NULL WHERE item_id=? AND n=2", (whole[128:192], iid))
+    store._media_cache = mediacache.MediaCache(cap=0)
+    f = app.state.house.library.file(Actor("acc_1"), iid)
+    before = egress.snapshot()
+    assert f["read"](100, 160) == whole[100:161]
+    after = egress.snapshot()
+    assert after["r2_bytes"] - before["r2_bytes"] == 28          # 100..127 from the R2 chunk
+    assert after["db_bytes"] - before["db_bytes"] == 33          # 128..160 from the database chunk
+
 # ------------------------------------------------------------------ migration
 def test_copy_only_migration_keeps_the_bytea_and_reads_switch_to_r2(app, human, s3, monkeypatch):
     store = app.state.store

@@ -405,7 +405,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
                 "egress": {"db_bytes_today": eg["db_bytes"], "served_bytes_today": eg["served_bytes"],
                            "db_budget": eg["db_budget"], "served_budget": eg["served_budget"], "degraded": eg["degraded"],
                            "cache_files": mc["files"], "cache_bytes": mc["bytes"], "cache_hits": mc["hits"],
-                           "cache_misses": mc["misses"], "db_migration_bytes_today": eg.get("db_migration_bytes", 0)},
+                           "cache_misses": mc["misses"], "db_migration_bytes_today": eg.get("db_migration_bytes", 0),
+                           # R2 bytes (no egress fees, never in the db budget): read by this server / redirected to a browser
+                           "r2_bytes_today": eg.get("r2_bytes", 0), "r2_redirected_bytes_today": eg.get("r2_redirected_bytes", 0)},
                 # the in-process R2 migration (studio/r2_migrate_bg.py): mode, state and counts only
                 "r2_migrate": r2_migrate_bg.snapshot(),
                 # R2 against its free-tier caps (studio/r2usage.py), numbers only; {"on": false} while unconfigured
@@ -880,6 +882,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         # each signature counts as one whole download plus 256 KB for the repeat limit, so even a tiny file re-fetched in a
         # loop stops being signed after a few rounds (R2 Class B operations are capped, studio/r2usage.py)
         egress.repeat_count(client, etag, size + 256 * 1024)
+        egress.r2_redirected(size)  # bucket -> browser: never database egress, counted on its own (numbers only)
         return RedirectResponse(blobstore.bucket().browser_url(f["r2_key"]), 302,
                                 headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 

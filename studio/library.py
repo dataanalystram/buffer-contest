@@ -852,7 +852,19 @@ class Library:
         last = (end // CHUNK) if end is not None else None
         sql = f"SELECT n, {CHUNK_DATA}, storage_key FROM library_chunks WHERE item_id=? AND n>=?" + (" AND n<=?" if last is not None else "") + " ORDER BY n"
         rows = self.store.q(sql, (iid, first, last) if last is not None else (iid, first))
-        data = b"".join(self._chunk(r, iid, r["n"]) for r in rows)
+        parts, r2_used = [], 0
+        for r in rows:
+            with egress.r2_tally() as t:  # was THIS chunk read from R2? (a chunk is wholly in R2 or in the database)
+                b = self._chunk(r, iid, r["n"])
+            parts.append(b)
+            if t[0]:
+                c0 = r["n"] * CHUNK
+                lo, hi = max(start, c0), (c0 + len(b) - 1) if end is None else min(end, c0 + len(b) - 1)
+                r2_used += max(0, hi - lo + 1)
+        # credit R2 only with the bytes of the answer that came from R2 chunks, so a range spanning an R2 chunk and a
+        # database chunk keeps its database part in the db budget (CodeRabbit, PR #133)
+        egress.note_r2_read(r2_used)
+        data = b"".join(parts)
         off = start - first * CHUNK
         return data[off:(end - first * CHUNK + 1) if end is not None else None]
 

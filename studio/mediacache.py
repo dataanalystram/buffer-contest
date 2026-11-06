@@ -234,8 +234,9 @@ def of(store) -> MediaCache:
 
 def wrap(store, f: dict, token: str, meter_kind: str = "media") -> dict:
     """A ranged reader (``{"mime","size","read","iter","etag"}``) served from the local copy. The first read of any
-    range fills the copy once from the backend (counted in the egress meter as DB bytes); every later read, whole or
-    ranged, comes from disk. With the cache off or the file too big, the backend reader is kept and still metered."""
+    range fills the copy once from the backend (counted in the egress meter: database bytes as ``db``, bytes that came
+    from R2 as ``r2``, never against the database budget); every later read, whole or ranged, comes from disk. With the
+    cache off or the file too big, the backend reader is kept and still metered the same way."""
     from . import egress
     size = int(f.get("size") or 0)
     src_read, src_iter = f["read"], f.get("iter")
@@ -243,8 +244,13 @@ def wrap(store, f: dict, token: str, meter_kind: str = "media") -> dict:
     etag = f.get("etag") or ""
 
     def metered_iter():
-        for b in (src_iter() if src_iter else _pieces(src_read, size)):
-            egress.db_read(len(b), meter_kind)
+        g = src_iter() if src_iter else _pieces(src_read, size)
+        while True:
+            with egress.r2_tally() as t:  # only around the backend's own work, never across a yield
+                b = next(g, None)
+            if b is None:
+                return
+            egress.backend_read(len(b), meter_kind, t[0])
             yield b
 
     def local():
@@ -260,8 +266,9 @@ def wrap(store, f: dict, token: str, meter_kind: str = "media") -> dict:
                 return read_file(p, s, e)
             except OSError:  # evicted or removed between the lookup and the open: read the backend this once
                 pass
-        b = src_read(s, e)
-        egress.db_read(len(b), meter_kind)
+        with egress.r2_tally() as t:
+            b = src_read(s, e)
+        egress.backend_read(len(b), meter_kind, t[0])
         return b
 
     def it():

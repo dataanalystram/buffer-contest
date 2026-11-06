@@ -89,6 +89,13 @@ expires `media/` or `lib/`: those are the person's Library and posts. `scripts/r
 (our `PUBLIC_URL` origin only, no wildcard) and lifecycle (abort incomplete multipart after 1 day, `tmp/` after 7 days)
 documents and sends nothing unless `--apply` is given.
 
+**Backups (`backups/`, 6 Nov 2026).** Encrypted logical database dumps (blob-free `pg_dump -Fc` of `public`, age-encrypted;
+the key is in Ram's Hark vault, never in the repo or on Render) live under `backups/db-YYYYMMDD-HHMM.dump.enc`. They must
+never be auto-deleted: no lifecycle rule may use an empty prefix or `backups/` with a delete (expire) transition. Today's
+rules are safe (abort-incomplete-multipart on every prefix deletes no objects; expiry only on `tmp/`), and
+`blobstore.sweep` only deletes keys queued in `blob_gc` that no row references (it never lists the bucket). Each backup
+upload counts as one Class A operation (and a restore download one Class B) in `r2_usage`.
+
 ## Browser redirect (`HQ_MEDIA_REDIRECT=1`, off by default)
 With R2 on and this flag set, a browser's own fetch of `/m/<token>` (it sends `Sec-Fetch-*`) for a file in R2 gets a
 302 to a presigned GET that lives **at most 15 minutes**, with `Cache-Control: no-store` and `Referrer-Policy:
@@ -197,6 +204,14 @@ size of the same file within `HQ_EGRESS_REPEAT_S` (600 s) gets 429 for that file
 daily summaries are kept in a small JSON file on the instance disk (`HQ_EGRESS_STATE`); at each UTC midnight a
 `egress daily …` summary line is logged. Numbers only: `/healthz` → `egress`, admin → `GET /api/admin/egress` and the
 "Media bandwidth" section of `/admin`.
+
+**R2 bytes are not database egress (6 Nov 2026).** Once files live in R2, a disk-cache fill or range read from the bucket
+costs no Supabase egress, so it never counts toward `db` or its 130 MB budget (it used to, and could 429 other people's
+browser previews of R2 files). `blobstore.read` reports each bucket read into `egress.r2_tally()`, so attribution follows
+where the bytes actually came from (a row that falls back to its database copy still counts as `db`). Two separate
+counters, numbers only and without a budget: `r2` (bytes this server read from R2; `/healthz` → `egress.r2_bytes_today`)
+and `r2_redirected` (size of files a browser was 302'd to R2 for; `egress.r2_redirected_bytes_today`). Bytes this server
+sends still count as `served` (Render bandwidth) wherever they came from.
 
 **Not covered by the cache** (text, not BYTEA): list and poll queries that read `agent_runs.result` (~15 KB a row), e.g.
 the Library list's runs read and the threads list, measured at ~0.5 GB in 6 days. Next step: select only the fields the

@@ -136,9 +136,12 @@ def read(data, key: str | None, start: int | None = None, end: int | None = None
     if capped:
         raise StorageError(f"This file is in object storage and the {capped}; it is back when the month turns (UTC).")
     try:
-        return b.get(key, start, end)
+        got = b.get(key, start, end)
     except r2.R2Error as e:
         raise StorageError(f"Couldn't read this file from storage ({e}).") from None
+    from . import egress
+    egress.note_r2_read(len(got))  # R2 bytes are not database egress (studio/egress.py r2_tally)
+    return got
 
 
 def rewrite(store, table: str, where: str, args: tuple, data: bytes) -> None:
