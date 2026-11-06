@@ -206,22 +206,32 @@ def caption_center(keepout: tuple | None, safe: tuple, cap_h: int, default_cy: i
 
 
 def place_opus(L: dict, W: int, H: int, *, static: tuple | None, segments: list[dict], cap_h: int, hook: str,
-               hook_fit, credit_h: int, captions_on: bool) -> tuple[dict, dict]:
+               hook_fit, credit_h: int, captions_on: bool, opener: tuple | None = None,
+               opener_s: float | None = None) -> tuple[dict, dict]:
     """Re-place the Opus-style overlays in L (compose.layout) clear of the faces.
 
     static: the clip-wide keep-out (hook box and credit chip stay on screen the whole clip); segments: [{start, end,
     keepout}] for the captions. hook_fit(text, w, h) -> (fits: bool, height_px) measures the hook box for a text and a
     box. Returns (L, record): L["hook"] may be None (dropped), L["hook_text"] the (maybe shortened) text,
-    L["credit_xy"] the chip's top-left, L["caption_cy"] a list of (start, end, centre y) per segment."""
+    L["credit_xy"] the chip's top-left, L["caption_cy"] a list of (start, end, centre y) per segment.
+    opener_s: the hook box and credit chip show only for the first opener_s seconds (compose.HOOK_OPENER_SECS): they keep
+    clear of ``opener`` (the keep-out of those seconds, zones_for(opener_s=...)) when given, else of ``static``, and of
+    the captions of those seconds only."""
     l, t, r, b = L["safe"]
     safe = (l, t, r, b)
     rec: dict = {"keepout": list(static) if static else None, "hook": "kept", "notes": []}
+    caps_static = static  # the captions' own fallback keep-out stays the clip-wide one
+    if opener_s:
+        rec["opener_s"] = opener_s
+        if opener is not None:
+            static = opener
+            rec["opener_keepout"] = list(opener)
     default_cy = int(L.get("captions_center") or H * 0.6)
     pad = 10                                     # the white box is drawn 10 px outside L["hook"]
     gap = int(H * 0.012)
     # 1) captions, segment by segment
     caps, cap_where = [], []
-    for s in segments or [{"start": 0.0, "end": 1e9, "keepout": static}]:
+    for s in segments or [{"start": 0.0, "end": 1e9, "keepout": caps_static}]:
         cy, where = caption_center(s.get("keepout"), safe, cap_h, default_cy)
         caps.append((s["start"], s["end"], int(cy)))
         cap_where.append(where)
@@ -233,7 +243,8 @@ def place_opus(L: dict, W: int, H: int, *, static: tuple | None, segments: list[
             rec["notes"].append("no band clear of the face for the captions in "
                                 f"{sum(w.startswith('safest') for w in cap_where)} of {len(cap_where)} segments: safest band used")
     # where the captions sit over the whole clip (the static overlays keep clear of every position they take)
-    cap_rects = [(l, cy - cap_h // 2, r, cy + cap_h // 2) for _, _, cy in caps] if captions_on else []
+    cap_rects = [(l, cy - cap_h // 2, r, cy + cap_h // 2) for a, _, cy in caps
+                 if not opener_s or a < opener_s] if captions_on else []
 
     def free(rect) -> bool:
         return not hits(rect, static) and not any(hits(rect, c) for c in cap_rects)
@@ -306,9 +317,23 @@ def place_opus(L: dict, W: int, H: int, *, static: tuple | None, segments: list[
             if free(rect):
                 got = (where, y)
                 break
-        if not got:  # the credit is a rights line: it always shows, at the lowest safe spot (rarely the face there)
-            got = ("lowest_safe", b - credit_h)
-            if hits((l, b - credit_h, l + cw, b), static):
+        if not got and opener_s:  # an opener's credit is on the end card too: with no free spot it shows only there
+            L["credit_xy"] = None
+            L["credit_end_only"] = True
+            rec["credit"] = "end_card_only"
+            rec["notes"].append("credit chip shown on the end card only: no free spot in the opening seconds")
+            return L, rec
+        if not got:  # the credit is a rights line: it always shows, at the lowest safe spot clear of the hook box (the
+            # face may be there: said in the notes); before 6 Nov 2026 it could land on the hook's second line
+            low = [("lowest_safe", b - credit_h)]
+            if hook_rect:
+                low += [("lowest_safe, over_hook", hook_rect[1] - 14 - credit_h), ("lowest_safe, under_hook", hook_rect[3] + 14)]
+            low = [(w, y) for w, y in low if t <= y and y + credit_h <= b]
+            got = next(((w, y) for w, y in low if not (hook_rect and hits((l, y, l + cw, y + credit_h), hook_rect))), None)
+            if got is None:
+                got = ("lowest_safe", b - credit_h)
+                rec["notes"].append("credit chip overlaps the hook box: no spot clear of it")
+            if hits((l, got[1], l + cw, got[1] + credit_h), static):
                 rec["notes"].append("credit chip overlaps the face zone: no free spot")
         L["credit_xy"] = (l, int(got[1]))
         rec["credit"] = got[0]
@@ -375,16 +400,17 @@ def overlay_rects(L: dict, cap_h: int, captions_on: bool, credit_h: int = 0) -> 
 
 
 def predict_cover(L: dict, pred: list[tuple[float, tuple]], W: int, H: int, *, cap_h: int, captions_on: bool,
-                  credit_h: int = 0, pad: float = QA_PAD) -> float:
+                  credit_h: int = 0, pad: float = QA_PAD, static_until: float | None = None) -> float:
     """The worst share of a face (box + pad, like the QA) that the placed overlays would cover, from the face track
-    [(clip t, (x0, y0, x1, y1) output px)]: what the render QA would measure, known before anything is encoded."""
+    [(clip t, (x0, y0, x1, y1) output px)]: what the render QA would measure, known before anything is encoded.
+    static_until: the hook box and credit chip show only before this clip time (the opener)."""
     static, caps = overlay_rects(L, cap_h, captions_on, credit_h)
     worst = 0.0
     for t, f in pred or []:
         x0, y0, x1, y1 = f
         dx, dy = int((x1 - x0) * pad), int((y1 - y0) * pad)
         face = (max(0, x0 - dx), max(0, y0 - dy), min(W, x1 + dx), min(H, y1 + dy))
-        rects = list(static)
+        rects = list(static) if (static_until is None or t < static_until) else []
         if caps:
             now = [rc for a, e, rc in caps if a - 1e-6 <= t < e]
             rects += now or [caps[-1][2] if t >= caps[-1][1] else caps[0][2]]
@@ -522,12 +548,19 @@ def clip_samples(source: str, start: float, end: float, src_w: int, src_h: int, 
 
 
 def zones_for(samples: list[dict], plan: dict | None, src_w: int, src_h: int, W: int, H: int, D: float, keep: float = 1.0,
-              cuts: list[float] | None = None, extra: list[tuple[float, tuple]] | None = None, fps: float = 2.0) -> dict:
-    """{"static", "segments", "boxes"}: the keep-outs a render needs (output pixels; clip seconds)."""
+              cuts: list[float] | None = None, extra: list[tuple[float, tuple]] | None = None, fps: float = 2.0,
+              opener_s: float | None = None) -> dict:
+    """{"static", "segments", "boxes"[, "opener"]}: the keep-outs a render needs (output pixels; clip seconds). opener_s:
+    also the keep-out of the first opener_s seconds (the opus hook + credit opener, compose.HOOK_OPENER_SECS); with no
+    face sample there it is the clip-wide one (never less careful than before)."""
     bt = out_boxes(samples, plan, src_w, src_h, W, H, keep) + list(extra or [])
     n = max(len(samples or []), int(D * fps))
     static = zone([b for _, b in bt], W, H, OCC_STATIC, n)
-    return {"static": static, "segments": segment_zones(bt, D, W, H, cuts, fps), "boxes": len(bt)}
+    out = {"static": static, "segments": segment_zones(bt, D, W, H, cuts, fps), "boxes": len(bt)}
+    if opener_s:
+        early = [b for tt, b in bt if tt <= opener_s + 0.5]
+        out["opener"] = zone(early, W, H, OCC_STATIC, max(len(early), int(min(D, opener_s) * fps))) if early else static
+    return out
 
 
 def _frame(args: list[str], out: str) -> None:

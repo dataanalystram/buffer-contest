@@ -62,6 +62,11 @@ def cover_frame_secs(secs: float | None) -> float:
         v = COVER_FRAME_SECS
     return round(min(0.25, max(0.1, v)), 3)
 HYPE_HOOK_SECS = 1.4  # hype: the giant hook holds for the first beat, then the one-word captions take over
+# opus: the hook box and the credit chip are an OPENER (owner, 6 Nov 2026: "keeping that all the time on screen is not good,
+# starting is the hook that should be attractive"): they pop in at the start, hold, fade out by 3 s; the credit is also
+# on the end card. HOOK_MODES "keep" is the old behaviour (both on screen for the whole clip).
+HOOK_OPENER_SECS = 3.0
+HOOK_MODES = ("opener", "keep")
 DEFAULT_BRAND = {"name": "HuhByte AI", "handle": "@huhbyte.ai", "accent": "#C9ACFA", "bg": "#0E0E10", "text": "#FFFFFF",
                  "muted": "#A0A0A8", "logo": None, "head_font": "Anton.ttf", "body_font": "Poppins-Medium.ttf",
                  "bold_font": "Poppins-Bold.ttf", "end_line": "AI news made simple, every day."}
@@ -349,9 +354,10 @@ def pick_clip(words: list[dict], duration: float, lo: float = 20.0, hi: float = 
 
 
 # ------------------------------------------------------------------------------------------------ cards
-def end_card(path: str, W: int, H: int, brand: dict) -> dict:
+def end_card(path: str, W: int, H: int, brand: dict, credit: str = "") -> dict:
     """Follow end card (code/hb.py end_card_png, editorial version): logo, 'Follow', @handle in the accent, a hairline
-    and the brand's one-line promise; every line auto-fitted inside the safe area."""
+    and the brand's one-line promise; every line auto-fitted inside the safe area. ``credit``: the source's credit line
+    at the foot of the card (an opener hook shows it only for its first seconds, so the rights line ends the video too)."""
     im = Image.new("RGB", (W, H), _rgb(brand["bg"]))
     d = ImageDraw.Draw(im)
     l, t, r, b = safe_area(W, H)
@@ -380,6 +386,10 @@ def end_card(path: str, W: int, H: int, brand: dict) -> dict:
     bb, _ = _text_block(d, brand["end_line"], "Inter-Regular.ttf", (l, y, r, y + int(H * 0.08)), max_size=40, max_lines=2,
                         fill=brand.get("muted") if brand["text"].upper() != "#FFFFFF" else "#DADADE")
     boxes["line"] = bb
+    if credit.strip():
+        bb, _ = _text_block(d, credit.strip(), "Inter-SemiBold.ttf", (l, b - int(H * 0.05), r, b), max_size=30, min_size=16,
+                            max_lines=1, fill=brand.get("muted") or "#A0A0A8", valign="bottom")
+        boxes["credit"] = bb
     im.save(path)
     return boxes
 
@@ -518,9 +528,14 @@ def _overlay(style: str, W: int, H: int, brand: dict, hook: str, credit: str, L:
     elif style in ("opus", "hype"):
         hb = L["hook"]
         if style == "opus" and hb and hook.strip():
-            d.rounded_rectangle((hb[0] - 10, hb[1] - 10, hb[2] + 10, hb[3] + 10), 28, fill=(255, 255, 255, 236))
+            # the brand's own card (owner, 6 Nov 2026: not a plain white box): the brand ground, an accent bar down the
+            # left edge, the hook in the brand's text colour with its key words in the highlight colour
+            box = (hb[0] - 10, hb[1] - 10, hb[2] + 10, hb[3] + 10)
+            d.rounded_rectangle(box, 28, fill=_rgb(brand["bg"]) + (238,))
+            d.rounded_rectangle((box[0], box[1], box[0] + 12, box[3]), 6, fill=_rgb(_hl(brand)) + (255,))
             bb, _ = _text_block(d, hook, brand["bold_font"], (hb[0] + 18, hb[1] + 4, hb[2] - 18, hb[3] - 4), max_size=64,
-                                min_size=24, max_lines=3, fill="#111114")
+                                min_size=24, max_lines=3, fill=brand["text"], accent_words=accent_words, accent=_hl(brand),
+                                spacing=HOOK_SPACING)
             boxes["hook"] = (hb[0] - 10, hb[1] - 10, hb[2] + 10, hb[3] + 10)
             boxes["hook_text"] = bb
         if credit:
@@ -585,6 +600,7 @@ def picked_music(music_mood: str | None) -> str:
 
 
 CREDIT_CHIP_H = 46  # _credit_chip at its 24 px maximum: 24 px Inter ascent + descent + 16 px padding
+HOOK_SPACING = 1.08  # the opus hook's line spacing: measured (facesafe hook_fit) exactly as it is drawn (_overlay)
 
 
 def _cy_at(caption_cy):
@@ -602,15 +618,18 @@ def _cy_at(caption_cy):
 
 
 def _face_safe_layout(L: dict, W: int, H: int, brand: dict, hook: str, credit: str, caps_on: bool, cfg: dict,
-                      face_safe: dict) -> tuple[dict, dict]:
+                      face_safe: dict, opener: float | None = None) -> tuple[dict, dict]:
     """The Opus-style layout placed clear of the faces (studio/media/facesafe.place_opus), at the caption level picked
     BEFORE rendering from the face track's predicted cover: full when it covers <= QA_MAX of a face, else the level with
-    the lowest prediction (compact: one smaller line under the chin). face_safe["min_level"] starts higher (a re-place)."""
+    the lowest prediction (compact: one smaller line under the chin). face_safe["min_level"] starts higher (a re-place).
+    opener: the hook box and credit show only for the first ``opener`` seconds, so they keep clear of the faces of those
+    seconds (face_safe["opener"], else the clip-wide keep-out) and the prediction counts them only there."""
     from . import facesafe
     st0 = captions.STYLES[cfg["captions"]]
 
     def hook_fit(text: str, w: int, h: int):
-        r = textfit.fit(text, brand["bold_font"], w - 36, max(8, h - 8), max_size=64, min_size=30, max_lines=3)
+        r = textfit.fit(text, brand["bold_font"], w - 36, max(8, h - 8), max_size=64, min_size=30, max_lines=3,
+                        spacing=HOOK_SPACING)
         return bool(r.ok), int(r.height)
     pred = face_safe.get("pred") or []
     lo = face_safe.get("min_level") or 0
@@ -621,8 +640,9 @@ def _face_safe_layout(L: dict, W: int, H: int, brand: dict, hook: str, credit: s
         st = st0 if lv == 0 else facesafe.compact_style(st0)
         cap_h = facesafe.caption_height(st, H)
         L2, rec = facesafe.place_opus(dict(L), W, H, static=face_safe.get("static"), segments=face_safe.get("segments") or [],
-                                      cap_h=cap_h, hook=hook, hook_fit=hook_fit, credit_h=credit_h, captions_on=caps_on)
-        pc = facesafe.predict_cover(L2, pred, W, H, cap_h=cap_h, captions_on=caps_on, credit_h=credit_h)
+                                      cap_h=cap_h, hook=hook, hook_fit=hook_fit, credit_h=credit_h, captions_on=caps_on,
+                                      opener=face_safe.get("opener") if opener else None, opener_s=opener)
+        pc = facesafe.predict_cover(L2, pred, W, H, cap_h=cap_h, captions_on=caps_on, credit_h=credit_h, static_until=opener)
         tried[facesafe.LEVELS[lv]] = pc
         if best is None or pc < best[0] or pc <= facesafe.QA_MAX:
             best = (pc, lv, L2, rec, cap_h, st)
@@ -648,7 +668,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  brand_colors: bool = False, reframe: dict | None = None, lower_third_mode="auto",
                  detect_own_captions: bool = False, brand_pass: bool | dict = False, cover_png: str | None = None,
                  cover_secs: float = COVER_FRAME_SECS, logo: bool = True, face_safe: dict | None = None,
-                 captions_style: str | None = None, skip_sig: str | None = None) -> dict:
+                 captions_style: str | None = None, skip_sig: str | None = None, hook_mode: str = "opener") -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     ``style`` is a base style or a theme (styles.THEMES: its grade, effects, captions, cards and chrome on a base
@@ -670,6 +690,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
     captions_style: a captions.STYLES id instead of the style's own (Layout & captions > Caption look on a shorts clip).
     skip_sig: a placement signature (face_safe["sig"] of an earlier render): when this placement lands on exactly the same
     spots, nothing is encoded and the result is {"skipped": True, "face_safe": ...} (a re-place that changes nothing).
+    hook_mode (opus): "opener" (default) pops the hook box and the credit chip in over the first HOOK_OPENER_SECS and fades
+    them out, with the credit on the end card too; "keep" leaves both on screen for the whole clip.
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from . import theme_cards
     from .styles import ALL_IDS, NONE, apply_palette, config, resolve
@@ -773,15 +795,20 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         # "own video" is not a source to credit on screen: no chip; the brand pass lower-third shows the handle instead
         chip_credit = "" if (credit or "").strip().lower() in ("own video", "your video") else credit
         fs_rec, cap_style = None, None
+        opener_s = (min(D, HOOK_OPENER_SECS) if (cfg["layout"] == "opus" and not cfg.get("chrome") and hook_mode != "keep")
+                    else None)
+        end_credit = chip_credit if opener_s else ""  # an opener's credit ends the video too (the end card)
         if face_safe is not None and cfg["layout"] == "opus":  # never on the face (owner bug 6 Nov 2026)
             safe0 = L["safe"]
             if lower_third and lower_third.get("out_top"):  # and never on the source's name strap: place above it
                 l_, t_, r_, b_ = safe0
                 L = {**L, "safe": (l_, t_, r_, max(t_ + 1, min(b_, int(lower_third["out_top"]) - int(H * 0.02))))}
-            L, fs_rec = _face_safe_layout(L, W, H, brand, hook, chip_credit, caps_on, cfg, face_safe)
+            L, fs_rec = _face_safe_layout(L, W, H, brand, hook, chip_credit, caps_on, cfg, face_safe, opener_s)
             L["safe"] = safe0
             hook = L.get("hook_text", hook) if L.get("hook") else ""
             cap_style = L.pop("_cap_style", None)  # the compact caption level, when the full one would cover the face
+            if L.pop("credit_end_only", False):  # no free spot in the opening seconds: the end card carries it alone
+                chip_credit = ""
             if skip_sig and fs_rec.get("sig") == skip_sig:  # a re-place landing where the first render already was
                 return {"skipped": True, "path": None, "face_safe": fs_rec, "style": style, "ratio": ratio}
         still = Image.open(frame_at(source, c0 + min(D * 0.3, 4.0), str(wd / "still.png"))) if source else Image.open(images[0])
@@ -796,6 +823,12 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         if "cap_band" in L:
             boxes["cap_band"] = L["cap_band"]
         ov_path = wd / "overlay.png"
+        opener = None
+        if opener_s and any(k in boxes for k in ("hook", "credit")):  # the hook + credit as the opener, not all clip long
+            opener = (str(wd / "opener.png"), opener_s)
+            ov.save(opener[0])
+            ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            boxes["opener_secs"] = opener_s
         ov.save(ov_path)
         extras: list = []
         if brand_pass and source:
@@ -844,7 +877,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         _t = time.time()
         main = str(wd / "s1_main.mp4")
         args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand,
-                               hook_path=hook_path, stage_path=stage_path, L=L, wd=wd, reframe=reframe, extras=extras)
+                               hook_path=hook_path, stage_path=stage_path, L=L, wd=wd, reframe=reframe, extras=extras,
+                               opener=opener)
         ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}",
                 *_venc(crf, preset), main], timeout=1800)
         segs.append(main)
@@ -856,7 +890,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             else:
                 facts_card(str(wd / "facts.png"), W, H, brand, cfg["facts_title"], facts, still)
             segs.append(_card_segment(str(wd / "facts.png"), facts_s, str(wd / "s2_facts.mp4"), crf, preset))
-        boxes["end_card"] = end_card(str(wd / "end.png"), W, H, brand)
+        boxes["end_card"] = end_card(str(wd / "end.png"), W, H, brand,
+                                     credit=end_credit)
         segs.append(_card_segment(str(wd / "end.png"), CARD_SECS, str(wd / "s3_end.mp4"), crf, preset))
         lst = wd / "segments.txt"
         lst.write_text("".join(f"file '{Path(s).resolve()}'\n" for s in segs))
@@ -885,7 +920,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                 "cover_secs": cover_s, "facts_secs": facts_s, "credit": credit, "cover_frame_secs": pre_s,
                 "thumbnail_offset_ms": cover_thumb_ms(pre_s) if pre_s else None,
                 "brand_pass": sorted((boxes.get("brand_pass") or {}).keys()) if brand_pass else [],
-                "face_safe": fs_rec, "hook_shown": hook}
+                "face_safe": fs_rec, "hook_shown": hook, "hook_mode": ("opener" if opener else "keep") if cfg["layout"] == "opus" else None,
+                "hook_secs": opener[1] if opener else None}
     finally:
         if own:
             shutil.rmtree(wd, ignore_errors=True)
@@ -972,7 +1008,7 @@ def render_plain(source: str, *, out: str, ratio: str = "9:16", brand: dict | No
 
 
 def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burned_subs, brand, hook_path=None,
-                stage_path=None, L=None, wd=None, reframe=None, extras=None):
+                stage_path=None, L=None, wd=None, reframe=None, extras=None, opener=None):
     args: list[str] = []
     n = 0
     if source:
@@ -996,6 +1032,10 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
     if _st.has_fx(cfg, "sweep") and wd is not None:
         args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", _tc.sweep_png(str(Path(wd) / "sweep.png"), W, H)]
         sw_i, nxt = nxt, nxt + 1
+    op_i = None
+    if opener:  # (png, secs): the opus hook + credit, only over the first seconds
+        args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{opener[1]:.3f}", "-i", str(opener[0])]
+        op_i, nxt = nxt, nxt + 1
     ex_i = []
     for (png, _t0, _t1) in extras or []:  # brand pass layers (hook title, logo bug, lower-third), each with its window
         args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{D:.3f}", "-i", str(png)]
@@ -1057,6 +1097,12 @@ def _main_graph(source, images, cfg, W, H, panel, c0, D, ov_path, ass_path, burn
     chain += f"[{ov_i}:v]overlay=0:0:shortest=1"
     if hook_path:
         chain += f"[b1];[b1][{ov_i + 1}:v]overlay=0:0:eof_action=pass:enable='lt(t,{HYPE_HOOK_SECS})'"
+    if op_i is not None:  # pop in (fade up while rising 36 px over 0.3 s), hold, fade out over the last 0.45 s
+        secs = float(opener[1])
+        parts.append(f"[{op_i}:v]format=rgba,fade=t=in:st=0:d=0.3:alpha=1,"
+                     f"fade=t=out:st={max(0.3, secs - 0.45):.2f}:d=0.45:alpha=1[opn]")
+        chain += (f"[op0];[op0][opn]overlay=x=0:y='if(lt(t,0.3),36*(1-t/0.3),0)':eof_action=pass:"
+                  f"enable='lt(t,{secs:.2f})'")
     for k, (png, t0, t1) in zip(ex_i, extras or []):
         fade = []
         if t0 > 0:

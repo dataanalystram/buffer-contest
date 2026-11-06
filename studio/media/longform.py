@@ -291,7 +291,7 @@ def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16
                   out: str, faces: list[dict] | None = None, scenes: list[float] | None = None, detector: bool = True,
                   burned_subs: bool | None = None, names: list[str] | None = None, music: str = "auto",
                   src_size: tuple[int, int] | None = None, face_safe: bool = True, qa_keep: str | None = None,
-                  framing: str | None = None, captions_style: str | None = None) -> dict:
+                  framing: str | None = None, captions_style: str | None = None, hook_mode: str = "opener") -> dict:
     """One finished clip in one ratio: opus style (hook, word captions, credit, end card), reframed.
 
     face_safe (default on): the hook box, captions and credit are placed clear of the faces (studio/media/facesafe:
@@ -300,7 +300,8 @@ def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16
     r["face_safe"]["status"] is "needs_review" with the reason (the take does not ship it). qa_keep: a path prefix to
     keep the QA's rendered frames (review only).
     framing: the clip's Layout & captions choice: "fit" shows the whole frame over a blurred copy, "track" follows the
-    face, None is automatic. captions_style: a captions.STYLES id (the Caption look)."""
+    face, None is automatic. captions_style: a captions.STYLES id (the Caption look). hook_mode: "opener" (the hook box
+    and credit for the first 3 s, the credit on the end card too) or "keep" (both on screen all clip long)."""
     from ..headline import render_hook
     from . import facesafe, ff
     from .compose import SIZES, _keep, detect_burned_subs, render_style
@@ -316,7 +317,8 @@ def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16
     if framing == "fit":  # Layout & captions > Full frame: the whole picture over a blurred copy of itself
         plan = {"mode": "pad", "crop_w": int(src_size[0]), "keys": [(0.0, 0)], "framing": "fit"}
     kw = dict(out=out, ratio=ratio, hook=m["hook"], brand=brand, words=words, credit=credit, clip=(m["start"], m["end"]),
-              music_mood=music, names=names, burned_subs=bool(burned_subs), reframe=plan, captions_style=captions_style)
+              music_mood=music, names=names, burned_subs=bool(burned_subs), reframe=plan, captions_style=captions_style,
+              hook_mode=hook_mode if hook_mode in ("opener", "keep") else "opener")
     fs = None
     if face_safe:
         try:
@@ -348,8 +350,9 @@ def _face_safe_render(source, m, plan, src_size, ratio, faces, scenes, burned, k
     import time
 
     from . import facesafe
-    from .compose import SIZES, _keep, render_style
+    from .compose import HOOK_OPENER_SECS, SIZES, _keep, render_style
     t_all = time.time()
+    op_s = HOOK_OPENER_SECS if kw.get("hook_mode", "opener") != "keep" else None
     W, H = SIZES[ratio]
     sw, sh = src_size
     c0, c1 = float(m["start"]), float(m["end"])
@@ -394,7 +397,7 @@ def _face_safe_render(source, m, plan, src_size, ratio, faces, scenes, burned, k
                               "qa": {k: qa[k] for k in ("ok", "max_cover", "threshold", "faces_by")},
                               "qa_frames": [{k: f.get(k) for k in ("t", "cover")} for f in qa["frames"]]})
     try:
-        z = facesafe.zones_for(samples, plan, sw, sh, W, H, D, keep, cuts)
+        z = facesafe.zones_for(samples, plan, sw, sh, W, H, D, keep, cuts, opener_s=op_s)
         z["pred"] = pred
         r = encode(z)
         qa = measure(r, 1)
@@ -408,7 +411,7 @@ def _face_safe_render(source, m, plan, src_size, ratio, faces, scenes, burned, k
                       flush=True)
                 fs1 = r.get("face_safe") or {}
                 lv = facesafe.LEVELS.index(fs1["level"]) if fs1.get("level") in facesafe.LEVELS else 0
-                z2 = facesafe.zones_for(samples, plan, sw, sh, W, H, D, keep, cuts, facesafe.grow_qa_boxes(qa))
+                z2 = facesafe.zones_for(samples, plan, sw, sh, W, H, D, keep, cuts, facesafe.grow_qa_boxes(qa), opener_s=op_s)
                 z2["pred"] = pred + facesafe.qa_boxes(qa)
                 z2["min_level"] = min(lv + 1, len(facesafe.LEVELS) - 1)
                 side = f"{kw['out']}.replace.mp4"
