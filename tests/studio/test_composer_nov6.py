@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from studio.agent_tools import overlay_asked
+from studio import agent_tools
 
 from .test_agent_core import jpeg, owner  # noqa: F401  (the owner fixture)
 
@@ -66,7 +66,7 @@ def test_text_only_post_label_is_text_only():
     ("post it without text but use my brand kit", True),
 ])
 def test_overlay_negation(p, want):
-    assert overlay_asked(p) is want
+    assert agent_tools.overlay_asked(p) is want
 
 
 def test_photo_without_an_overlay_is_posted_as_uploaded(owner):  # noqa: F811

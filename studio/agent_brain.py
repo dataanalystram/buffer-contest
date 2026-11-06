@@ -269,7 +269,7 @@ class Brain:
             prompt = (prompt + " " + str(body["url"])).strip()
         if not prompt and not body.get("media_token"):
             raise ActionError("Tell the agent what to post, or paste a link.")
-        chans = [c for c in self.h.studio.channels(a) if not c.get("isDisconnected")]
+        chans = all_chans = [c for c in self.h.studio.channels(a) if not c.get("isDisconnected")]
         parsed = intake.parse(prompt, chans)
         said_all = "you said all" in parsed["channels_why"] or parsed["channels_why"].startswith("the channels you named")
         ids = parsed["channel_ids"] if said_all or not body.get("channel_ids") else body["channel_ids"]  # the prompt wins over the chips
@@ -277,6 +277,14 @@ class Brain:
         # intent first (owner bug, 6 Nov 2026): "test" / "hi" get a short reply with no tools; a request with nothing to
         # post about gets one specific question; quoted exact text is the caption, byte for byte (studio/intent.py)
         it = intent.classify(prompt, has_url=bool(parsed["urls"]), has_upload=bool(body.get("media_token")))
+        if it["kind"] == "verbatim" and it.get("text"):
+            # "Post this exact caption on LinkedIn: "news for Instagram fans"": the channels come from the words around
+            # the caption, never from inside it
+            outside = intake.parse(prompt.replace(it["text"], " "), all_chans)
+            parsed["channel_ids"], parsed["channels_why"] = outside["channel_ids"], outside["channels_why"]
+            said_all = "you said all" in parsed["channels_why"] or parsed["channels_why"].startswith("the channels you named")
+            ids = parsed["channel_ids"] if said_all or not body.get("channel_ids") else body["channel_ids"]
+            chans = [c for c in all_chans if c["id"] in ids]
         if it["kind"] in ("chat", "ask") and body.get("brain") != "external":
             return self._chat_run(a, prompt, parsed, chans, it)
         if not chans:

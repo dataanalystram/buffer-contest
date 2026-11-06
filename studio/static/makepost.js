@@ -311,7 +311,10 @@
   $("#mpRegen").onclick = async () => {
     if (!H_STATE.run) return;
     const b = $("#mpRegen"); b.disabled = true;
-    try { const r = await api(`/api/agent/runs/${H_STATE.run.id}/messages`, { method: "POST", body: { text: (H_STATE.run.result || {}).recap ? "redo the recap" : "Regenerate the media and captions with a fresh angle" } }); showRun(r); watchRun(r.id); }
+    // a late answer (the person pressed New post or a News story meanwhile) never reopens this run over the new post;
+    // the server still finishes the regeneration, so it's there when they open the thread again
+    const rid = H_STATE.run.id, said = (H_STATE.run.result || {}).recap ? "redo the recap" : "Regenerate the media and captions with a fresh angle";
+    try { const r = await api(`/api/agent/runs/${rid}/messages`, { method: "POST", body: { text: said } }); if (window.hqOnRun && !window.hqOnRun(rid)) return; showRun(r); watchRun(r.id); }
     catch (e) { toast(e.message, 5000); } finally { b.disabled = false; }
   };
   const ri = $("#replyIn");  // the sticky composer grows with its text and sends on Enter (Shift+Enter: new line)
