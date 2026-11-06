@@ -174,6 +174,9 @@ class Takes(TakeBin):
                               "Connect Buffer to cut your own videos.", 403)
         from .media.find import platform_of
         owns, rights = bool(body.get("owns")), bool(body.get("rights_confirmed"))
+        punch_in = body.get("punch_in", True)  # the gentle auto zoom on face-tracked shots (media/reframe/punch.py): on by default
+        if not isinstance(punch_in, bool):
+            raise ActionError("punch_in is true or false.")
         token, url = str(body.get("media_token") or "").strip(), str(body.get("url") or body.get("media_url") or "").strip()
         is_link = bool(url) and not str(body.get("upload_id") or "").strip() and not url.startswith(self.s.public_url.rstrip("/") + "/m/")
         if not (owns or rights or (is_link and a.kind == "agent")):  # an AI app's link: the person attests in the Inbox (below)
@@ -249,6 +252,7 @@ class Takes(TakeBin):
         steps = [{"key": k, "label": l, "status": "pending", "detail": "", "data": None} for k, l in STEPS]
         inp = {"media_token": token, "upload_id": upload_id, "url": url, "platform_url": platform_url, "count": count, "owns": owns, "rights_confirmed": rights,
                "credit": credit, "official": bool(body.get("official")), "style": style, "range": [req["lo"], req["hi"]], "jev": jev,
+               "punch_in": punch_in,
                "consent_id": consent_id, "licence_hint": licence,
                "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
@@ -649,6 +653,7 @@ class Takes(TakeBin):
                           "faces": [f for f in an.get("faces") or [] if c["start"] - 1 <= f["t"] <= c["end"] + 1],
                           "layout_overrides": c.get("layout_overrides") or {}, "caption_preset": c.get("caption_preset"),
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
+                          "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else [],
                           "product_card": c.get("product_card")})
         for k in ("reframe", "captions", "covers"):

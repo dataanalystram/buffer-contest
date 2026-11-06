@@ -55,7 +55,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         audio = take.audio_chain(dur) if src.get("audio", True) else None
         plan = rr.render(path, start, end, words, src, str(out), kit=kit, p=p, preset=preset, logo_png=str(tmp / "logo.png"),
                          plan=plan, audio=audio, cover=str(tmp / "cover.jpg"), cover_s=take.COVER_SECS, end_card=end_jpg,
-                         end_s=take.END_SECS if has_end else 0.0)
+                         end_s=take.END_SECS if has_end else 0.0, punch_in=m.get("punch_in", True) is not False)
         data = out.read_bytes()
         info = take.probe(str(out))
         from ...preflight import parse_ffprobe
@@ -73,6 +73,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
                 "face_coverage": plan["face_coverage"], "moment": {k: m.get(k) for k in ("start", "end")},
                 "caption_band": [min(ys) - 60, max(ys) + 60] if ys else None, "probe": pf, "timings": plan["timings"],
                 "audio": {"loudnorm": take.LOUDNESS, "fade_in": take.FADE_IN, "fade_out": take.FADE_OUT} if audio else None,
+                "punch_in": plan.get("punch") or {"on": False, "shots": 0},
                 "face_fallback": "no face found, full frame used" if any(s.get("rule") == "R8-noface" for s in plan["shots"]) else None}
         if meta["face_fallback"]:
             print(f"render: clip {m.get('id', '')} {meta['face_fallback']}", flush=True)

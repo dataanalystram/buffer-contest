@@ -140,7 +140,7 @@ $("#takeForm").addEventListener("submit", async (ev) => {
     const u = $("#tkUrl").value.trim();
     if (!/^https:\/\/[^\s/]+\.[^\s/]+\/\S+/.test(u)) return say("Paste an https:// link to the video: a YouTube, Vimeo or X post, or the video file.");
   }
-  const body = { owns: true, channel_ids: [...T.sel] };
+  const body = { owns: true, channel_ids: [...T.sel], punch_in: !!$("#tkPunch").checked };
   const n = $("#tkCount").value; if (n) body.count = +n;
   const b = $("#tkGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
   try {
@@ -515,3 +515,8 @@ window.openTake = async (id) => {
   } finally { clearTimeout(cap); op.done(); }
 };
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { take: loadTake });
+
+// Auto zoom (punch-in) is on by default; a device that asks for reduced motion starts with it off (the person can still
+// turn it on). Set once at load, so a choice the person makes is never overwritten.
+(() => { const box = document.getElementById("tkPunch");
+  if (box && window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) box.checked = false; })();
