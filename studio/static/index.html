@@ -315,13 +315,19 @@
           <div class="chips-head"><span class="label" id="tkChLbl">Channels for the clips</span></div>
           <div class="chips" id="takeChips" data-testid="take-chips" role="group" aria-labelledby="tkChLbl"></div>
         </div>
-        <section id="takeView" data-testid="take-view" hidden>
+        <section id="takeView" data-testid="take-view" aria-labelledby="tkRunTitle" hidden>
+          <div class="tk-runbar" id="tkRunBar" data-testid="take-runbar">
+            <button type="button" class="btn2 sm tk-back" id="tkBack" data-testid="take-back"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg><span>All takes</span></button>
+            <div class="tk-run-id" id="tkRunId" data-testid="take-run-id" aria-live="polite"></div>
+            <button type="button" class="btn tk-new" id="tkNew" data-testid="take-new"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>New take</span></button>
+          </div>
+          <div id="tkRunErr" data-testid="take-run-err" hidden></div>
           <div class="take-head" id="tkHead" data-testid="take-head"></div>
           <div class="take-grid">
             <ol class="timeline" id="tkTimeline" data-testid="take-timeline" aria-label="Progress"></ol>
             <div class="tk-clips">
               <div class="tk-clips-head"><h2 class="card-title" id="tkClipsH">Clips <span class="muted" id="tkClipsN" data-testid="clip-count"></span></h2>
-                <label class="tk-sort"><span class="muted sm">Sort by</span><select id="tkSort" data-testid="clip-sort" aria-label="Sort clips"><option value="score">Score</option><option value="time">Order in the talk</option></select></label></div>
+                <label class="tk-sort"><span class="muted sm">Sort by</span><select id="tkSort" data-testid="clip-sort" aria-label="Sort clips"><option value="score">Score (high → low)</option><option value="time">Order in the talk</option></select></label></div>
               <ol class="clip-list" id="clipGrid" data-testid="clip-grid" aria-labelledby="tkClipsH"></ol>
             </div>
             <aside class="tk-targets panel" id="tkTargets" data-testid="take-targets" aria-labelledby="tkTargetsH">

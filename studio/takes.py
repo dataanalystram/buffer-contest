@@ -873,12 +873,14 @@ class Takes(TakeBin):
         words = an.get("words") or []
         kit = self.h.kit(a)
         rules = self.h.rules(a)
+        moments = {m.get("id"): m for m in res.get("moments") or [] if isinstance(m, dict)}
         clips = []
         for c in res.get("clips", []):
             if c.get("status") == "binned":  # in the Bin (list_take_bin): not part of the take until restored
                 continue
             d = {k: c.get(k) for k in ("id", "moment_id", "status", "start", "end", "hook", "text", "score", "why", "url", "cover_url",
                                        "error", "placements", "preflight", "captions", "rank", "reasons", "rerender_error")}
+            d["score"], d["why"] = _clip_score(c, moments)
             d["variants"] = {r: v["url"] for r, v in (c.get("variants") or {}).items()}
             m = c.get("meta") or {}
             d["duration"] = m.get("duration") or round((c["end"] - c["start"]) + take.COVER_SECS + take.END_SECS, 2)
@@ -1245,6 +1247,32 @@ class Takes(TakeBin):
                 "message": (f"{okn} clip{'' if okn == 1 else 's'} saved as Buffer drafts at your posting times. Nothing is published "
                             "until you schedule {}.".format("it" if okn == 1 else "them")) if a.kind == "human"
                 else f"{okn} placement{'' if okn == 1 else 's'} submitted under this token's policy."}
+
+
+def _num(x):
+    """A stored score as a float, or None when it isn't a number (drawn as "Not scored", never a crash)."""
+    if isinstance(x, bool) or x is None:
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v and abs(v) != float("inf") else None
+
+
+def _clip_score(c: dict, moments: dict) -> tuple[float | None, str]:
+    """The clip's score and its one-line reason (owner ask, 6 Nov 2026: every row shows both). A take saved before the clip
+    carried them falls back to its moment (by moment_id), then to the scorer's reasons list."""
+    m = moments.get(c.get("moment_id")) or {}
+    score = _num(c.get("score"))
+    if score is None:
+        score = _num(m.get("score"))
+    why = str(c.get("why") or m.get("why") or m.get("reason") or "").strip()
+    if not why:
+        rs = [str(x).strip() for x in (c.get("reasons") or m.get("reasons") or []) if str(x).strip()][:3]
+        why = "; ".join(rs)
+        why = why[:1].upper() + why[1:]
+    return score, why[:300]
 
 
 def _alt_text(hook: str, text: str) -> str:

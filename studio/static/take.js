@@ -159,13 +159,13 @@ $("#takeForm").addEventListener("submit", async (ev) => {
       body.rights_attested = true; body.attestation_version = TK_ATTEST_V;
     }
     const t = await api("/api/takes", { method: "POST", body });
-    showTake(t); watchTake(t.id);
+    showTake(t); tkNav(t.id); watchTake(t.id);
   } catch (e) { say(e.message); if ($("#tkProg").value < 100) $("#tkProgTxt").textContent = e.message; }
   finally { b.disabled = false; b.textContent = "Make clips"; }
 });
 $("#tkSample").onclick = async () => {
   const b = $("#tkSample"); b.disabled = true;
-  try { const t = await api("/api/takes/sample", { method: "POST", body: { channel_ids: [...T.sel] } }); showTake(t); loadTakes(); }
+  try { const t = await api("/api/takes/sample", { method: "POST", body: { channel_ids: [...T.sel] } }); showTake(t); tkNav(t.id); loadTakes(); }
   catch (e) { toast(e.message, 6000); }
   finally { b.disabled = false; }
 };
@@ -185,25 +185,35 @@ function watchTake(id) {
   const tick = async () => {
     if (!mine()) return;  // another take is watched now, or this one afresh
     if (T.unwake) { T.unwake(); T.unwake = null; }
+    const tp = HQLoad.start("takepoll");  // leaving the run aborts the poll in flight (tkStopWatch)
     try {
-      const t = await api(`/api/takes/${id}`);
-      if (!mine()) return;
+      const t = await api(`/api/takes/${id}`, { signal: tp.signal });
+      if (!mine() || !tp.live()) return;
       showTake(t);
       if (["running", "rendering"].includes(t.status)) later(2000);
       else loadTakes();
-    } catch (e) { if (mine()) toast(e.message); }
+    } catch (e) { if (mine() && !HQLoad.aborted(e)) toast(e.message); }
+    finally { tp.done(); }
   };
   T.poll = setTimeout(tick, 1200);
+}
+/** Stop watching the open take: its timer, its wake listener and its request in flight (the run was left). */
+function tkStopWatch() {
+  clearTimeout(T.poll); T.watching = null; T.gen = (T.gen || 0) + 1;
+  if (T.unwake) { T.unwake(); T.unwake = null; }
+  HQLoad.cancel("takepoll");
 }
 
 // ---------------------------------------------------------------- the take: timeline + clips
 function showTake(t) {
-  T.take = t; $("#takeView").hidden = false;
+  T.take = t; tkRunMode(true); $("#takeView").hidden = false;
+  $("#takeView").setAttribute("aria-busy", "false"); $("#tkRunErr").hidden = true;
+  tkRunBar(t);
   $("#tkTimeline").innerHTML = t.steps.map((s) => `<li class="step ${s.status}" data-testid="take-step" data-key="${s.key}" data-status="${s.status}">
       <span class="dot" aria-hidden="true">${STATUS_ICON[s.status] || ""}</span>
       <div><b>${esc(s.label)}</b>${s.detail ? `<small>${esc(s.detail)}</small>` : ""}</div></li>`).join("");
   const src = t.source || {};
-  $("#tkHead").innerHTML = `<b>${esc(src.title || t.input.name || "Your take")}</b>`
+  $("#tkHead").innerHTML = ""
     + (src.duration ? `<span class="muted sm">${secs(src.duration)} long</span>` : "")
     + (t.sample ? `<span class="pill sm" data-testid="take-sample-badge">Sample · ${esc(src.credit || "")}</span>` : "")
     + (t.picked_by ? `<span class="muted sm">Moments picked by ${esc(t.picked_by)}</span>` : "")
@@ -232,7 +242,8 @@ function showTake(t) {
 // clips in the chosen order; i is the clip's number in the take (c1 = 1), shown on the row and in the editor
 function sortedClips(t) {
   const rows = (t.clips || []).map((c, i) => ({ c, i: i + 1 }));
-  return T.sort === "time" ? rows.sort((a, b) => a.c.start - b.c.start) : rows.sort((a, b) => (b.c.score ?? -1) - (a.c.score ?? -1) || a.i - b.i);
+  const sc = (c) => (tkScoreOf(c) ?? -1);
+  return T.sort === "time" ? rows.sort((a, b) => a.c.start - b.c.start) : rows.sort((a, b) => sc(b.c) - sc(a.c) || a.i - b.i);
 }
 $("#tkSort").onchange = () => { T.sort = $("#tkSort").value; if (T.take) showTake(T.take); };
 // Channel targets: what each channel of the take gets (the ratio it's rendered in, its caption limit, how many clips pass
@@ -267,6 +278,23 @@ function pfMini(c) {
   const pf = c.preflight || {};
   return Object.entries(pf).map(([cid, r]) => `<span class="pf-chip s-${esc(r.status)}" data-testid="clip-preflight" data-status="${esc(r.status)}" title="${esc((r.findings || []).map((f) => f.message).join("\n"))}"><b aria-hidden="true">${PF_ICON[r.status]}</b><span class="sr">${PF_WORD[r.status]}: </span>${esc(r.chip)}</span>`).join("");
 }
+// Score + reason on every row (owner ask, 6 Nov 2026, with his reference: "Score 8.9" and one line on why). Scorers answer
+// 0-100; the pill shows it out of 10 (the full number is in its tooltip). A clip with no score says "Not scored", never blank.
+const SPARK = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"/></svg>`;  // Lucide sparkle
+function tkScoreOf(c) {
+  if (c.score == null || c.score === "" || typeof c.score === "boolean") return null;
+  const s = Number(c.score);
+  return Number.isFinite(s) ? Math.max(0, Math.min(100, s)) : null;
+}
+function tkScoreLine(c) {
+  const s = tkScoreOf(c), why = String(c.why || (c.reasons || []).join("; ") || "").trim();
+  const pill = s == null ? `<span class="pill sm clip-score none" data-testid="clip-score" data-score="">Not scored</span>`
+    : `<span class="pill sm clip-score" data-testid="clip-score" data-score="${s}" title="${s.toFixed(1)} out of 100"><span class="sr">Score ${(s / 10).toFixed(1)} out of 10</span><span aria-hidden="true">Score ${(s / 10).toFixed(1)}</span></span>`;
+  const rank = c.rank ? `<b>#${esc(String(c.rank))}</b> · ` : "";
+  const line = why ? `<p class="xs clip-why" data-testid="clip-why" title="${esc(why)}">${SPARK}<span><span class="sr">Why this moment: </span>${rank}${esc(why)}</span></p>`
+    : `<p class="xs clip-why none" data-testid="clip-why">${SPARK}<span>${s == null ? "Not scored: this take was saved before clips kept their scorer's reason." : "No reason saved for this clip."}</span></p>`;
+  return `<div class="clip-scoreline">${pill}${line}</div>`;
+}
 const LAYOUT_IC = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/></svg>`;  // Lucide layout-template
 const SCISSORS = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg>`;
 function clipRow(c, n, k) {
@@ -278,8 +306,8 @@ function clipRow(c, n, k) {
     <span class="clip-n" aria-hidden="true">${n}</span>
     <div class="clip-body">
       <p class="clip-hook" data-testid="clip-hook">${esc(c.hook)}</p>
-      <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.trimmed_s > 0 ? ` · <span data-testid="clip-trimmed" title="Long pauses and filler words cut from this clip">trimmed ${(+c.trimmed_s).toFixed(1)} s</span>` : ""}${c.score != null ? ` · <span class="pill sm clip-score" data-testid="clip-score">Score ${Math.round(c.score)}</span>` : ""}</p>
-      ${c.why ? `<p class="xs clip-why" data-testid="clip-why" title="${esc(c.why)}">${c.rank ? `<b>#${c.rank}</b> · ` : ""}Why this moment: ${esc(c.why)}</p>` : ""}
+      <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.trimmed_s > 0 ? ` · <span data-testid="clip-trimmed" title="Long pauses and filler words cut from this clip">trimmed ${(+c.trimmed_s).toFixed(1)} s</span>` : ""}</p>
+      ${tkScoreLine(c)}
       ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${escUrl(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
       ${st}${c.rerender_error ? `<span class="st err xs" data-testid="clip-rerender-error">Re-render failed: ${esc(c.rerender_error)} The previous video is kept.</span>` : ""}
@@ -312,7 +340,7 @@ async function deleteTake(id) {
   try {
     const r = await api(`/api/takes/${encodeURIComponent(id)}`, { method: "DELETE" });
     tkUndoToast(`Take moved to the Bin for ${(r && r.in_bin_days) || 7} days.`, { take_id: id });
-    if (T.take && String(T.take.id) === String(id)) { clearTimeout(T.poll); T.watching = null; if (T.unwake) { T.unwake(); T.unwake = null; } T.take = null; T.plan = null; $("#takeView").hidden = true; }
+    if (T.take && String(T.take.id) === String(id)) tkLeaveRun({ replace: true });
     tkRefresh();
   } catch (e) { toast(e.message, 6000); }
 }
@@ -432,7 +460,7 @@ const TK_IC = {  // Lucide (ISC): more-horizontal, trash-2
   trash: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><path d="M10 11v6M14 11v6"/></svg>',
 };
 /** Cancel the list request in flight and a take still opening (One take was left). */
-function tkAbort() { HQLoad.start(TK_KEY).done(); HQLoad.start("takeopen").done(); }
+function tkAbort() { HQLoad.start(TK_KEY).done(); HQLoad.start("takeopen").done(); tkStopWatch(); }
 /** Draw a load error with a Retry button in box (role=alert, never a silent empty list). */
 function tkErr(box, msg, retry, id) {
   box.setAttribute("aria-busy", "false");
@@ -467,15 +495,7 @@ async function loadTakes() {
       : `<div class="empty"><b>No takes yet</b><span>Drop a talk, a podcast episode or a tutorial you recorded, or try the sample take.</span></div>`;
     box.querySelectorAll("[data-testid=take-more]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); window.hqMenu.toggle(b, b.nextElementSibling); }));
     box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); window.hqMenu.close(); deleteTake(b.dataset.del); }));
-    box.querySelectorAll("[data-testid=take-row]").forEach((b) => (b.onclick = async () => {
-      const op = HQLoad.start("takeopen");  // opening another take aborts this one: only the latest pick is drawn
-      try {
-        const t = await api(`/api/takes/${encodeURIComponent(b.dataset.id)}`, { signal: op.signal });
-        if (!op.live() || $("#tab-take").hidden) return;  // a take opened, then One take was left: never drawn elsewhere
-        showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
-      } catch (e) { if (!HQLoad.aborted(e) && op.live() && !$("#tab-take").hidden) toast(e.message, 6000); }
-      finally { op.done(); }
-    }));
+    box.querySelectorAll("[data-testid=take-row]").forEach((b) => (b.onclick = () => tkOpen(b.dataset.id)));
   } catch (e) {
     if (HQLoad.aborted(e) || !tk.live()) return;
     tkErr(box, `Your takes didn't load: ${e.message}`, () => loadTakes(), "take-list");
@@ -484,8 +504,15 @@ async function loadTakes() {
 async function loadTake() {
   takeChips(); const list = loadTakes();  // the view transition waits on the list, so One take is shown once it is drawn
   $("#tkSample").hidden = false;
-  const u = new URLSearchParams(location.search);
-  if (u.get("take") && !T.take) { try { const t = await api(`/api/takes/${u.get("take")}`); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id); } catch (_) {} }
+  // which run the address names: a Back/Forward read it before app.js rewrote the URL (tkPop), else the URL itself
+  const nav = T.navTake; T.navTake = undefined;
+  const want = tkId(nav ? nav.id : new URLSearchParams(location.search).get("take"));
+  let open = null;
+  if (want && !(T.take && String(T.take.id) === want)) open = tkOpen(want, { replace: true, scroll: false });
+  else if (want) { tkNav(want, true); if (["running", "rendering"].includes(T.take.status)) watchTake(T.take.id); }
+  else if (nav) tkLeaveRun({ nav: false });  // Back from a run to Your takes
+  else if (T.take && !$("#takeView").hidden) { tkNav(T.take.id, true); if (["running", "rendering"].includes(T.take.status)) watchTake(T.take.id); }
+  if (open) await open;
   await list;
 }
 // Open a take from anywhere (View run, a thread, Make a post): the take is fetched FIRST and One take is shown once with it,
@@ -505,7 +532,7 @@ window.openTake = async (id) => {
     clearTimeout(cap);
     // moved on (another screen, a sub-tab, another open): never yank them to One take
     if (!op.live() || document.querySelector(".tab:not([hidden])") !== cur || (hold && !hold.live())) return hold?.done();
-    showTab("take"); showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
+    showTab("take"); showTake(t); tkNav(t.id, true); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
     hold?.done();
   } catch (e) {
     const err = late ? new Error("Opening the take is taking too long.") : e;
@@ -515,6 +542,90 @@ window.openTake = async (id) => {
   } finally { clearTimeout(cap); op.done(); }
 };
 window.HS_TABS = Object.assign(window.HS_TABS || {}, { take: loadTake });
+
+// ---------------------------------------------------------------- One run at a time (owner ask, 6 Nov 2026)
+// "When I click one run it shows the history of how it ran, but each run is different, and I don't see a fresh-run or back
+// button." An open run is its own view: a run bar (All takes, the run's title, when it started, its status, New take) sits
+// over the steps and clips, and the upload form steps aside until you go back. The run is in the address (?take=<id>,
+// pushed), so browser Back returns to Your takes and Forward reopens it. All takes keeps what was typed in the form; New take
+// clears it for a fresh run. Opening shows a loader in place, a failure says so with Retry, and leaving aborts the open and
+// the status poll (HQLoad), so a late answer never draws over Your takes.
+const TK_ST = { running: "Running", rendering: "Rendering", ready: "Ready to spread", failed: "Failed", draft: "Draft" };
+const tkId = (v) => (v != null && /^\d{1,12}$/.test(String(v)) ? String(v) : null);
+function tkUrl(id) {
+  const p = new URLSearchParams(location.search);
+  p.set("tab", "take"); p.delete("sub");
+  if (id) p.set("take", String(id)); else p.delete("take");
+  return "/?" + p.toString();
+}
+/** Put the open run (or none) in the address: pushed for a person's move, replaced when the screen just catches up. */
+function tkNav(id, replace = false) {
+  if ($("#tab-take").hidden) return;
+  const url = tkUrl(tkId(id)), st = Object.assign({ hq: "take", sub: "" }, tkId(id) ? { take: tkId(id) } : {});
+  if (replace || location.pathname + location.search === url) history.replaceState(st, "", url);
+  else history.pushState(st, "", url);
+}
+// Back/Forward: read the run the entry names before app.js's popstate rewrites the URL to /?tab=take (capture runs first)
+function tkPop(e) {
+  const s = e.state || {};
+  if ((s.hq || new URLSearchParams(location.search).get("tab")) !== "take") { T.navTake = undefined; return; }
+  T.navTake = { id: tkId(s.take || new URLSearchParams(location.search).get("take")) };
+}
+window.addEventListener("popstate", tkPop, true);
+function tkRunMode(on) {
+  const tab = $("#tab-take"); tab.classList.toggle("tk-in-run", !!on);
+  $("#takeCompose").hidden = !!on; const intro = tab.querySelector(":scope > .intro"); if (intro) intro.hidden = !!on;
+  if (!on) $("#takeView").hidden = true;
+}
+/** The run bar: which run this is (title, when it started, status, clips), so one run is never mistaken for another. */
+function tkRunBar(t) {
+  const title = (t.source && t.source.title) || (t.input && t.input.name) || "Your take";
+  const n = (t.clips || []).length, st = TK_ST[t.status] || (t.status ? t.status[0].toUpperCase() + t.status.slice(1) : "");
+  $("#tkRunId").innerHTML = `<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title" title="${esc(title)}">${esc(title)}</h2>
+    <p class="muted xs tk-run-m"><span data-testid="take-run-when">Run #${esc(String(t.id))} · started ${esc(t.created ? tkWhen(t.created) : "")}</span>
+    <span class="pill sm tk-run-st s-${esc(t.status || "")}" data-testid="take-run-status">${esc(st)}</span><span>${n} clip${n === 1 ? "" : "s"}</span></p>`;
+}
+/** Open one run: loader in place at once, then the run (or an error with Retry); a newer open or leaving aborts it. */
+async function tkOpen(id, { replace = false, scroll = true } = {}) {
+  id = tkId(id); if (!id) return;
+  const op = HQLoad.start("takeopen");  // opening another take aborts this one: only the latest pick is drawn
+  tkStopWatch(); T.take = null; T.plan = null;
+  tkRunMode(true); $("#takeView").hidden = false; $("#takeView").setAttribute("aria-busy", "true"); $("#tkRunErr").hidden = true;
+  $("#tkRunId").innerHTML = `<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title">Opening the take…</h2><p class="muted xs tk-run-m">Run #${esc(id)}</p>`;
+  $("#tkHead").innerHTML = ""; $("#tkTimeline").innerHTML = ""; $("#tkTgList").innerHTML = ""; $("#tkClipsN").textContent = "";
+  $("#clipGrid").innerHTML = `<li class="clip-ld" data-testid="take-open-loading">${HQLoad.rows(3, "Loading the clips")}</li>`;
+  $("#spreadBar").hidden = true; $("#spreadErr").textContent = "";
+  tkNav(id, replace);
+  if (scroll) window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
+  try {
+    const t = await api(`/api/takes/${encodeURIComponent(id)}`, { signal: op.signal });
+    if (!op.live() || $("#tab-take").hidden) return;  // a take opened, then One take was left: never drawn elsewhere
+    showTake(t); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
+  } catch (e) {
+    if (HQLoad.aborted(e) || !op.live() || $("#tab-take").hidden) return;
+    $("#takeView").setAttribute("aria-busy", "false"); $("#clipGrid").innerHTML = "";
+    $("#tkRunId").innerHTML = `<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title">This take didn't open</h2><p class="muted xs tk-run-m">Run #${esc(id)}</p>`;
+    const box = $("#tkRunErr"); box.hidden = false;
+    tkErr(box, e.message, () => tkOpen(id, { replace: true, scroll: false }), "take-open");
+  } finally { op.done(); }
+}
+/** A fresh form: no file, no link, no ticks carried over from the last run (the channels stay picked). */
+function tkResetForm() {
+  T.file = null; $("#tkFile").value = ""; $("#tkUrl").value = ""; $("#tkOwns").checked = false; $("#tkCount").value = "";
+  $("#tkErr").textContent = ""; tkProg(null); setTakeSrc("upload");
+  $("#tkDropTxt").textContent = `Drop an MP4 or MOV here, or choose a file (up to ${tkLim(TK_UP)})`; tkUpCfg().catch(() => {});
+}
+/** Back to Your takes and the form: the open run's loads stop, the address follows (nav: false when Back already did). */
+function tkLeaveRun({ reset = false, replace = false, nav = true } = {}) {
+  HQLoad.cancel("takeopen"); tkStopWatch();
+  T.take = null; T.plan = null; tkRunMode(false);
+  if (window.ceClose) window.ceClose();
+  if (nav) tkNav(null, replace);
+  if (reset) tkResetForm();
+  loadTakes();
+}
+$("#tkBack").onclick = () => { tkLeaveRun(); window.scrollTo({ top: 0 }); $("#tkListH").setAttribute("tabindex", "-1"); $("#tkListH").focus({ preventScroll: true }); };
+$("#tkNew").onclick = () => { tkLeaveRun({ reset: true }); window.scrollTo({ top: 0 }); $("#tkDrop").scrollIntoView({ block: "nearest" }); $("#tkFile").focus({ preventScroll: true }); };
 
 // Auto zoom (punch-in) is on by default; a device that asks for reduced motion starts with it off (the person can still
 // turn it on). Set once at load, so a choice the person makes is never overwritten.
