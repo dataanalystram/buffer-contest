@@ -445,6 +445,11 @@ class Store:
                 blobstore.release(self, "library_chunks", "item_id IN (SELECT id FROM library_items WHERE user_id=?)", (uid,))
                 self.x("DELETE FROM library_media WHERE user_id=?", (uid,))
                 self.x("DELETE FROM library_items WHERE user_id=?", (uid,))
+            # retired tables (the product feature removed on 6 Nov 2026, see CHANGELOG.md): no code writes them any more, but
+            # they still hold old rows, so deleting an account still erases that person's rows. Nothing else reads them.
+            for t in ("commerce_links", "commerce_user_day"):
+                if t in have:
+                    self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
             if "take_uploads" in have:  # One take's multipart uploads; the bucket objects are removed by erase_user first
                 # a bucket delete that didn't confirm (del_open / del_ready) keeps its row, cut loose from the person (no
                 # name, no fingerprint, no user), so purge_stale still removes the object; every other row goes now

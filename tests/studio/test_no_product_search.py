@@ -23,6 +23,8 @@ def test_no_trace_in_tracked_text_files():
             text = (ROOT / f).read_text(encoding="utf-8")
         except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
             continue
+        if f == "studio/store.py":   # account erase still clears the two retired tables' old rows (privacy); only those names
+            text = text.replace(WORDS[1] + "_links", "").replace(WORDS[1] + "_user_day", "")
         hits += [f"{f}: {m.group(0)}" for m in pat.finditer(text) or [] if m.group(0)]
         hits += [f"{f}: {pat.pattern}" for _ in [0] if pat.search(f)]
     assert not hits, hits[:20]
