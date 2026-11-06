@@ -1,0 +1,41 @@
+name: media-proof
+# Throwaway: One take media proof on licence-safe clips (branch test/onetake-media-proof only; never merged).
+on:
+  push:
+    branches: [test/onetake-media-proof]
+permissions: {contents: read}
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: {python-version: "3.12", cache: pip, cache-dependency-path: "requirements*.txt"}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libegl1 libgles2 fonts-dejavu-core >/dev/null
+      - name: Tesseract 5.5.4 (the worker's pinned build)
+        run: PREFIX=/tmp/tess sh scripts/worker_tesseract.sh
+      - name: Python deps
+        run: pip install -q -r requirements.txt -r requirements-studio.txt -r requirements-worker.txt "numpy>=2.0"
+      - name: Test clips
+        run: sh tools/media_proof/fetch.sh
+      - name: Face model
+        run: curl -fsSL -o /tmp/blaze_face_short_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
+      - name: Run the take pipeline + measure
+        env: {HQ_REPO: "${{ github.workspace }}", HQ_TESSERACT: /tmp/tess/bin/tesseract, HQ_FACE_MODEL: /tmp/blaze_face_short_range.tflite}
+        run: |
+          cd tools/media_proof
+          python -m studio.media.ocr || true
+          for st in analyze render measure; do python harness.py $st all; done
+          for f in runs/*/measure.json; do echo "== $f"; cat "$f"; done
+          for f in runs/*/meta.json; do echo "== $f"; python -c "import json,sys;m=json.load(open(sys.argv[1]));print(json.dumps({k:m.get(k) for k in ('duration','layout','shots','face_coverage','trim','punch_in','captions_moved_for_text','ocr','preflight_watermark','alt_text','audio','_moment','_shots_plan','face_fallback','layout_detector')},default=str))" "$f"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: media-proof
+          path: |
+            tools/media_proof/runs/
+            tools/media_proof/contact_*.png
+            tools/media_proof/clips.sha256
+          retention-days: 7
