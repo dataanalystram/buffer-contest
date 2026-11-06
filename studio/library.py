@@ -901,7 +901,7 @@ class Library:
         if not d:
             return None
         f = self._file_of(d)  # through the disk cache: a render or Buffer push reads the database once per file
-        return {"token": token, "user_id": d["user_id"], "mime": d["mime"], "data": b"".join(f["iter"]()),
+        return {"token": token, "user_id": d["user_id"], "mime": d["mime"], "data": mediacache.whole(f),
                 "size": int(d["size"] or 0), "meta": json.dumps({"kind": "upload", **d["meta"]})}
 
     def meta(self, a: Actor, token: str) -> dict | None:
