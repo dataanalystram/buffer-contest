@@ -319,7 +319,7 @@ def apply_text_rules(text: str, rules: list[dict], trace: list | None = None) ->
         was = out
         if ty == "banned_words":
             for w in c.get("words", []):
-                out = re.sub(rf"\s*\b{re.escape(w)}\b", "", out, flags=re.I)
+                out = re.sub(rf"\s*\b{re.escape(w)}(?!\w)", "", out, flags=re.I)  # (?!\w), not \b: "agree?" ends in punctuation
         elif ty == "no_emoji":
             out = EMOJI_RE.sub("", out)
         elif ty == "max_hashtags":
@@ -356,7 +356,7 @@ def brand_check(text: str, render_meta: dict | None, rules: list[dict], kit: dic
             continue
         c, ty = r["check"], r["check"]["type"]
         if ty == "banned_words":
-            hit = [w for w in c.get("words", []) if re.search(rf"\b{re.escape(w)}\b", text, re.I)]
+            hit = [w for w in c.get("words", []) if re.search(rf"\b{re.escape(w)}(?!\w)", text, re.I)]
             add(r, not hit, f"uses {', '.join(hit)}" if hit else "")
         elif ty == "prefer_words":
             hit = [w for w in c.get("from", []) if re.search(rf"\b{re.escape(w)}\b", text, re.I)]
