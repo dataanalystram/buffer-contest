@@ -550,7 +550,7 @@ window.HS_TABS = Object.assign(window.HS_TABS || {}, { take: loadTake });
 // pushed), so browser Back returns to Your takes and Forward reopens it. All takes keeps what was typed in the form; New take
 // clears it for a fresh run. Opening shows a loader in place, a failure says so with Retry, and leaving aborts the open and
 // the status poll (HQLoad), so a late answer never draws over Your takes.
-const TK_ST = { running: "Running", rendering: "Rendering", ready: "Ready to spread", failed: "Failed", draft: "Draft" };
+const TK_ST = { running: "Running", rendering: "Rendering", ready: "Ready to spread", failed: "Failed", draft: "Draft", stopped: "Stopped", interrupted: "Interrupted" };
 const tkId = (v) => (v != null && /^\d{1,12}$/.test(String(v)) ? String(v) : null);
 function tkUrl(id) {
   const p = new URLSearchParams(location.search);
@@ -579,6 +579,25 @@ function tkRunBar(t) {
   tkRunId(`<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title" title="${esc(title)}">${esc(title)}</h2>
     <p class="muted xs tk-run-m"><span data-testid="take-run-when">Run #${esc(String(t.id))} · started ${esc(t.created ? tkWhen(t.created) : "")}</span>
     <span class="pill sm tk-run-st s-${esc(t.status || "")}" data-testid="take-run-status">${esc(st)}</span><span>${n} clip${n === 1 ? "" : "s"}</span></p>`);
+  tkRunActs(t);
+}
+// Stop / Try again (owner ask, 6 Nov 2026): a running take can be stopped (what it made is kept); a stopped, interrupted
+// or failed one can be tried again from what it kept. The same as stop_take / retry_take for AI apps.
+function tkRunActs(t) {
+  const busy = ["running", "rendering"].includes(t.status), again = ["stopped", "interrupted", "failed"].includes(t.status) && !t.sample;
+  $("#tkStop").hidden = !busy; $("#tkRetry").hidden = !again;
+  $("#tkStop").disabled = false; $("#tkRetry").disabled = false;
+}
+async function tkRunAct(which) {
+  const t = T.take; if (!t) return;
+  const b = which === "stop" ? $("#tkStop") : $("#tkRetry"); b.disabled = true;
+  try {
+    const out = await api(`/api/takes/${encodeURIComponent(t.id)}/${which}`, { method: "POST", body: {} });
+    if (!T.take || String(T.take.id) !== String(t.id)) return;  // another take was opened meanwhile
+    showTake(out); loadTakes();
+    if (which === "stop") { tkStopWatch(); toast("Stopped. What it made so far is kept; press Try again to carry on.", 5000); }
+    else { toast("Trying again from where it stopped.", 4000); watchTake(out.id); }
+  } catch (e) { b.disabled = false; toast(e.message); }
 }
 /** Open one run: loader in place at once, then the run (or an error with Retry); a newer open or leaving aborts it. */
 async function tkOpen(id, { replace = false, scroll = true } = {}) {
@@ -587,6 +606,7 @@ async function tkOpen(id, { replace = false, scroll = true } = {}) {
   tkStopWatch(); T.take = null; T.plan = null;
   tkRunMode(true); $("#takeView").hidden = false; $("#takeView").setAttribute("aria-busy", "true"); $("#tkRunErr").hidden = true;
   tkRunId(`<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title">Opening the take…</h2><p class="muted xs tk-run-m">Run #${esc(id)}</p>`);
+  $("#tkStop").hidden = true; $("#tkRetry").hidden = true;
   $("#tkHead").innerHTML = ""; $("#tkTimeline").innerHTML = ""; $("#tkTgList").innerHTML = ""; $("#tkClipsN").textContent = "";
   $("#clipGrid").innerHTML = `<li class="clip-ld" data-testid="take-open-loading">${HQLoad.rows(3, "Loading the clips")}</li>`;
   $("#spreadBar").hidden = true; $("#spreadErr").textContent = "";
@@ -620,6 +640,8 @@ function tkLeaveRun({ reset = false, replace = false, nav = true } = {}) {
   loadTakes();
 }
 $("#tkBack").onclick = () => { tkLeaveRun(); window.scrollTo({ top: 0 }); $("#tkListH").setAttribute("tabindex", "-1"); $("#tkListH").focus({ preventScroll: true }); };
+$("#tkStop").onclick = () => tkRunAct("stop");
+$("#tkRetry").onclick = () => tkRunAct("retry");
 $("#tkNew").onclick = () => { tkLeaveRun({ reset: true }); window.scrollTo({ top: 0 }); $("#tkDrop").scrollIntoView({ block: "nearest" }); $("#tkFile").focus({ preventScroll: true }); };
 
 // Auto zoom (punch-in) is on by default; a device that asks for reduced motion starts with it off (the person can still

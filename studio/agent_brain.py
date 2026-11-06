@@ -35,7 +35,7 @@ KEYFRAME_B64_MAX = 400_000  # one 768 px JPEG frame as a data URL is ~60-150 KB
 _rlock = threading.Lock()
 _stop_req: set[int] = set()  # runs the person asked to stop: the next step boundary stops them (Brain.stop)
 STOPPED = "Stopped, as you asked. What's made so far is kept. Press Resume to carry on."
-BOOT = uuid.uuid4().hex[:12]  # this process: a run stamped with another process's id whose heartbeat stopped was cut off
+from .procid import BOOT  # noqa: E402  this process: a run stamped with another process's id whose heartbeat stopped was cut off
 HEARTBEAT_S = int(os.environ.get("HQ_PROC_HEARTBEAT", "20"))
 ORPHAN_S = int(os.environ.get("HQ_PROC_ORPHAN", "90"))  # no heartbeat this long -> that process is gone (a deploy, a crash)
 INTERRUPTED = ("The server restarted while I was working on this post{at}, so I stopped. Press Resume and I'll pick up from "
@@ -178,7 +178,10 @@ class Brain:
         live = {r["boot"] for r in self.store.q("SELECT boot, seen FROM agent_procs") if (r["seen"] or 0) > now - ORPHAN_S}
         live.add(BOOT)
         out = []
-        for r in self.store.q("SELECT id, steps, result, updated FROM agent_runs WHERE status IN ('running','rendering')"):
+        # One take has its own recovery (take_control.recover_orphans): its heavy steps run on the video worker, which
+        # calls back whatever the web process does, so a take silent for minutes is working, not cut off (run #80, 6 Nov 2026)
+        for r in self.store.q("SELECT id, steps, result, updated FROM agent_runs WHERE status IN ('running','rendering') "
+                              "AND (kind IS NULL OR kind <> 'take')"):
             rid = r["id"]
             with _rlock:
                 if rid in _running:
@@ -204,6 +207,12 @@ class Brain:
             out.append(rid)
         if out:
             print(f"agent: marked {len(out)} cut-off run(s) interrupted: {out}", flush=True)
+        takes = getattr(self.h, "takes", None)
+        if takes is not None:
+            try:
+                takes.recover_orphans(live, BOOT, now)
+            except Exception:  # noqa: BLE001  a take's recovery never stops the agent's
+                traceback.print_exc()
         return out
 
     def resume(self, a: Actor, rid: int) -> dict:

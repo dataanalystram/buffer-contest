@@ -426,6 +426,8 @@ _DESC = {
     "POST /api/takes/{rid}/clips/{clip_id}/rewrite": "An AI rewrite of one clip's caption for one network (not saved)", "POST /api/takes/{rid}/place": "Place the clips into your Buffer week",
     "DELETE /api/takes/{rid}": "delete_take: move a take to the Bin for 7 days (a running render is cancelled)",
     "DELETE /api/takes/{rid}/clips/{clip_id}": "delete_take with clip_id: move one clip to the Bin for 7 days",
+    "POST /api/takes/{rid}/stop": "stop_take: stop a running take (what it made is kept)",
+    "POST /api/takes/{rid}/retry": "retry_take: try a stopped, interrupted or failed take again from what it kept",
     "GET /api/takes/bin": "list_take_bin: takes and clips in the Bin with days left", "POST /api/takes/{rid}/restore": "restore_take: bring a take back from the Bin",
     "POST /api/takes/{rid}/clips/{clip_id}/restore": "restore_take with clip_id: bring a clip back from the Bin",
     "POST /api/takes/bin/purge": "purge_take_bin: delete Bin takes / clips and their files for good",
