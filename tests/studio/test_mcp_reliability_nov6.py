@@ -138,6 +138,7 @@ def test_reel_is_a_video_or_a_structured_error_never_slides(human, page):  # noq
     assert sc["code"] == "reel_needs_video" and any("create_send_code" in s for s in sc["next_steps"])
     assert human.get(f"/api/agent/runs/{rid}").json()["result"]["packages"] == []  # nothing staged
     # the deprecated agent family: post_render_reel on a run with no video answers an error, the channels keep nothing
+    tok = agent_token(human, policy="trusted", cap=100)
     run = _ok(human, tok, "make_post", {"prompt": "post this https://news.example.com/ai-launch", "brain": "external"})
     assert run.get("deprecated")
     sc = _err(human, tok, "post_render_reel", {"run_id": run["id"]})
@@ -241,8 +242,9 @@ def test_answers_list_prerequisites_and_post_steps_run_cheap_ones(human, page): 
     assert pk["prerequisites"] == mcp_flow.PREREQS["create_package"]
     sc = _err(human, tok, "create_package", {"run_id": rid, "captions": "nope"})
     assert sc["prerequisites"]
-    run = _ok(human, tok, "make_post", {"prompt": "post this https://news.example.com/ai-launch", "brain": "external"})
-    out = _ok(human, tok, "post_render_carousel", {"run_id": run["id"]})
+    tok2 = agent_token(human, policy="trusted", cap=100)
+    run = _ok(human, tok2, "make_post", {"prompt": "post this https://news.example.com/ai-launch", "brain": "external"})
+    out = _ok(human, tok2, "post_render_carousel", {"run_id": run["id"]})
     assert out["auto_ran"] == ["read_url", "extract_facts"]
     # a post_* step on a start_post run: the right tools named
     sc = _err(human, tok, "post_render_reel", {"run_id": rid})

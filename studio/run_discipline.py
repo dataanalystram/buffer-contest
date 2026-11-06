@@ -288,6 +288,8 @@ def after(studio, a: Actor, name: str, args: dict, result: Any) -> Any:
                 mark_agent(studio.store, a, int(rid))
         except (TypeError, ValueError):
             pass
+    if name == "start_post" and (args.get("new_post") is True or args.get("new_request") is True) and "warning" in result:
+        result = {k: v for k, v in result.items() if k != "warning"}  # the person's new request: no "one run" warning
     if args.get("_deduped") and rid:
         result = {**result, "reused": True, "deduped": True, "note": DEDUPED_NOTE.format(rid=rid)}
     elif args.get("_reused") and rid:

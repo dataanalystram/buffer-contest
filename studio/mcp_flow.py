@@ -229,6 +229,10 @@ def apply(tools: list[dict]) -> None:
     """The flow tools' descriptions, prerequisites and deprecation notes over the modules' own text (idempotent)."""
     for t in tools:
         n = t["name"]
+        if n == "autofix_post" and "youtube" not in t.get("inputSchema", {}).get("properties", {}):
+            t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})["youtube"] = YOUTUBE_SCHEMA
+            t["description"] = t["description"].rstrip() + (" youtube: {title, categoryId, madeForKids} sets the YouTube fields "
+                                                             "preflight asks for (suggested category 28, Science & Technology).")
         if n in BEFORE:
             continue
         old = t["description"]
@@ -259,11 +263,6 @@ def apply(tools: list[dict]) -> None:
             props["youtube"] = YOUTUBE_SCHEMA
             props["replace_all"] = {"type": "boolean", "description": "true: the channels you don't name are dropped from the post "
                                     "(default false: they keep their packages)"}
-        if n == "autofix_post":
-            t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})["youtube"] = YOUTUBE_SCHEMA
-            if "youtube" not in t["description"]:
-                t["description"] = t["description"].rstrip() + (" youtube: {title, categoryId, madeForKids} sets the YouTube "
-                                                                 "fields preflight asks for (suggested category 28, Science & Technology).")
         if n in ("render_reel", "edit_video"):
             props = t.setdefault("inputSchema", {"type": "object"}).setdefault("properties", {})
             props.setdefault("approval_id", {"type": "integer", "description": "The approval_id needs_user_approval returned for "

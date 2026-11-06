@@ -1087,6 +1087,7 @@ def t_create_package(studio, a, args):
         raise ActionError(f"No connected channel matches {', '.join(unknown)}. list_channels gives ids and services.")
     _yt_options(pk, args)
     chans_in = [{"id": p["channel_id"], "service": p["service"], "name": p["channel"]} for p in pk]
+    shared = [p for p in pk if not p.get("_own_media")]  # only these record the run's output below (before the flag is dropped)
     updated, versions, kept = False, 0, []
     if rid:  # one request = one run: update that post in place, keeping what it had for Undo (owner, 4 Nov 2026)
         rid, versions, kept = _update_package_run(h, a, rid, args, pk, chans_in)
@@ -1099,7 +1100,7 @@ def t_create_package(studio, a, args):
         rid = h.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated,agent_id) VALUES(?,?,?,?,?,?,?,?,?)",
                         (a.uid, "client", json.dumps(inp), "ready", json.dumps([]), json.dumps(res), time.time(), time.time(),
                          a.agent["id"] if a.kind == "agent" and a.agent else None))
-    _library_for_run(h, a, rid, pk, slot)
+    _library_for_run(h, a, rid, shared, slot)
     return {"run_id": rid, "updated": updated, "versions_kept": versions, **({"output": slot} if args.get("output") not in (None, "") else {}),
             "packages": [{k: p.get(k) for k in ("channel_id", "service", "format", "status", "output") if p.get(k) is not None}
                          | {"brand_check": p["check"], "media_urls": p["media_urls"]} for p in pk],
@@ -1251,7 +1252,6 @@ def _library_for_run(h, a: Actor, rid: int, pk: list[dict], slot: int = 1) -> No
     """The staged post's media is the run's output (its ONE Library item, replaced in place when the post changes). Only
     the packages that use the shared media (media_urls / output) are recorded here: a channel_media entry with its own
     output is already that output (its render recorded it), and one with its own media_urls never overwrites a slot."""
-    pk = [p for p in pk if not p.get("_own_media")]
     media = []
     for m in (pk[0].get("media") or []) if pk else []:
         tok = h.media_token_of(m.get("url") or "")
