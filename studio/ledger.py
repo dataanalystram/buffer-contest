@@ -426,7 +426,10 @@ class Ledger:
             found = brand.parse_correction(text)
             if len(found) != 1:
                 raise ActionError("Say the rule in one plain sentence, e.g. “never say game-changer or synergy”, “max 2 hashtags”.")
-            changes.update(check=found[0]["check"], rule=found[0]["rule"], kind=found[0]["kind"], source=text)
+            chk = found[0]["check"]
+            if (r.get("check") or {}).get("preset"):  # still that preset's rule: re-applying it replaces, never duplicates
+                chk = {**chk, "preset": r["check"]["preset"]}
+            changes.update(check=chk, rule=found[0]["rule"], kind=found[0]["kind"], source=text)
         if not changes:
             raise ActionError("Nothing to change: give rule (plain words), scope or active.")
         held = self._confirm(a, "update", {"rule_id": int(rule_id), **{k: v for k, v in changes.items() if k != "check"}},
@@ -608,9 +611,13 @@ class Ledger:
             raise ActionError(f"No preset called {pid!r}. Presets: {', '.join(style_presets.BY_ID)}.", 404)
         if edits is not None and not isinstance(edits, dict):
             raise ActionError("edits is an object mapping a rule's index to {drop: true} | {text} | {n} | {words}.", 400)
+        try:  # bad edits answer 400 before any confirm token is made
+            planned = style_presets.plan(style_presets.BY_ID[pid], edits)
+        except ValueError as e:
+            raise ActionError(str(e), 400)
         held = self._confirm(a, "apply_preset", {"preset": pid, "edits": edits or {}}, confirm_token)
         if held:
-            held["preview"]["rules"] = [r["rule"] for r in style_presets.plan(style_presets.BY_ID[pid], edits)]
+            held["preview"]["rules"] = [r["rule"] for r in planned]
             return held
         return style_presets.apply(self.h, a, pid, edits)
 

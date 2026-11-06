@@ -639,7 +639,7 @@ def start_ticker(bs: BrandStudio, every: int | None = None) -> threading.Thread 
     if _ticker.get("t") and _ticker["t"].is_alive():
         return _ticker["t"]
     _ticker["stop"] = False
-    every = int(every or os.environ.get("HQ_SLOT_TICK_S", "300") or 300)
+    every = float(every or os.environ.get("HQ_SLOT_TICK_S", "300") or 300)
     TICK.update(on=True, every_s=every, started=time.time())
 
     def loop():

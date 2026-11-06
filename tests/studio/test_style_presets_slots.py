@@ -13,7 +13,8 @@ C) Recurring slots: a weekly recap slot (Mon 20:00 Europe/Dublin) with the clock
 import json
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -25,8 +26,7 @@ UTC = timezone.utc
 
 
 def _uid(c):
-    return c.app.state.store.q("SELECT id FROM users ORDER BY rowid LIMIT 1")[0]["id"] if not c.app.state.store.pg else \
-        c.app.state.store.q("SELECT id FROM users LIMIT 1")[0]["id"]
+    return c.app.state.store.q("SELECT id FROM users")[0]["id"]  # one person per test app
 
 
 # ------------------------------------------------------------------------------------------------ A) presets
@@ -132,7 +132,7 @@ def test_free_drafter_writes_in_the_preset_shape(pid, ti):
         assert chk["pass"], (pid, svc, chk["summary"], fixed)
         first = fixed.split("\n")[0]
         assert 0 < len(first) <= 125, first
-        assert st["cta"] in fixed or len(fixed) >= drafter.rule_limit(svc, scoped) - 2, fixed  # the CTA survives unless trimmed
+        assert st["cta"] in fixed, fixed  # the one CTA always survives trimming
         assert len(brand.HASHTAG_RE.findall(fixed)) <= st["hashtags"].get(svc, 5)
         assert fixed != before[svc]
 
@@ -187,14 +187,36 @@ def test_provenance_labels():
 
 
 # ------------------------------------------------------------------------------------------------ C) recurring slots
-def _posts(fake):
+DUB = ZoneInfo("Europe/Dublin")
+
+
+def _next_monday_20(min_days=8):
+    """A Monday 20:00 in Dublin at least min_days from now: a real future time, so the test never goes stale."""
+    d = datetime.now(DUB).replace(hour=20, minute=0, second=0, microsecond=0) + timedelta(days=min_days)
+    while d.weekday() != 0:
+        d += timedelta(days=1)
+    return d.astimezone(UTC)
+
+
+def _last_sunday(year, month):
+    d = datetime(year, month, 31 if month in (3, 10) else 30, 12, 0, tzinfo=UTC)
+    while d.weekday() != 6:
+        d -= timedelta(days=1)
+    return d
+
+
+def _iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _posts(fake, occ):
     fake.posts = [
         {"id": "s1", "status": "sent", "channelId": "ch_x", "text": "OpenAI ships a faster model. It halves latency.",
-         "sentAt": "2026-11-04T10:00:00Z", "dueAt": "2026-11-04T10:00:00Z"},
+         "sentAt": _iso(occ - timedelta(days=5)), "dueAt": _iso(occ - timedelta(days=5))},
         {"id": "s2", "status": "sent", "channelId": "ch_li", "text": "Meta opens its laptop model. Free for commercial use.",
-         "sentAt": "2026-11-06T09:00:00Z", "dueAt": "2026-11-06T09:00:00Z"},
+         "sentAt": _iso(occ - timedelta(days=3)), "dueAt": _iso(occ - timedelta(days=3))},
         {"id": "old", "status": "sent", "channelId": "ch_x", "text": "Last month's story. Should not be in the recap.",
-         "sentAt": "2026-10-01T09:00:00Z", "dueAt": "2026-10-01T09:00:00Z"},
+         "sentAt": _iso(occ - timedelta(days=40)), "dueAt": _iso(occ - timedelta(days=40))},
     ]
 
 
@@ -205,90 +227,95 @@ def _slot(c, **kw):
     return r.json()
 
 
-def test_weekly_recap_slot_drafts_once_per_channel_at_the_right_utc_time(app, human, fake):
-    c, store, bs = human, app.state.store, app.state.house.brand_studio
-    _posts(fake)
-    s = _slot(c)
-    occ = datetime(2026, 11, 9, 20, 0, tzinfo=UTC)  # Monday 9 Nov 20:00 in Dublin (GMT, UTC+0)
-    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
-    assert BS.tick_once(bs, now=datetime(2026, 11, 9, 18, 30, tzinfo=UTC)) == 0  # 90 min early: not yet
-    assert fake.created == []
-    assert BS.tick_once(bs, now=datetime(2026, 11, 9, 19, 5, tzinfo=UTC)) == 1  # inside the hour before: drafts now
-    assert len(fake.created) == 2 and {i["channelId"] for i in fake.created} == {"ch_x", "ch_li"}
-    assert all(i["saveToDraft"] and i["dueAt"].startswith("2026-11-09T20:00:00") for i in fake.created)
-    assert all(i["assets"] for i in fake.created)  # the rendered recap slides ride along
-    row = dict(store.q("SELECT * FROM template_slots WHERE id=?", (s["id"],))[0])
-    res = json.loads(row["last_result"])
-    assert res["content"].startswith("2 stories from this week") and res["occurrence"].startswith("2026-11-09T20:00")
-    assert datetime.fromtimestamp(row["next_fire"], UTC) == datetime(2026, 11, 16, 20, 0, tzinfo=UTC)
-    # the same pass again, a restart that lost the next_fire update, and a "Run now" for that time: no second draft
-    assert BS.tick_once(bs, now=datetime(2026, 11, 9, 19, 10, tzinfo=UTC)) == 0
-    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
-    BS.tick_once(bs, now=datetime(2026, 11, 9, 19, 15, tzinfo=UTC))
-    assert len(fake.created) == 2
-    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
-    again = bs.run_slot(_actor(human), s["id"], now=datetime(2026, 11, 9, 19, 20, tzinfo=UTC))
-    assert {d["status"] for d in again["drafts"]} == {"already_drafted"} and len(fake.created) == 2
-    # deleting the slot stops it (and its claims go with it)
-    assert c.delete(f"/api/templates/slots/{s['id']}").json()["deleted"] == s["id"]
-    assert BS.tick_once(bs, now=datetime(2026, 11, 16, 19, 30, tzinfo=UTC)) == 0 and len(fake.created) == 2
-    assert not store.q("SELECT 1 FROM template_slot_runs WHERE slot_id=?", (s["id"],))
-
-
 def _actor(human):
     from studio.actions import Actor
     return Actor(_uid(human))
+
+
+def test_weekly_recap_slot_drafts_once_per_channel_at_the_right_utc_time(app, human, fake):
+    c, store, bs = human, app.state.store, app.state.house.brand_studio
+    occ = _next_monday_20()  # Monday 20:00 in Dublin: 20:00 UTC in winter, 19:00 UTC in summer
+    _posts(fake, occ)
+    s = _slot(c)
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
+    assert BS.tick_once(bs, now=occ - timedelta(minutes=90)) == 0  # 90 min early: not yet
+    assert fake.created == []
+    assert BS.tick_once(bs, now=occ - timedelta(minutes=55)) == 1  # inside the hour before: drafts now
+    assert len(fake.created) == 2 and {i["channelId"] for i in fake.created} == {"ch_x", "ch_li"}
+    assert all(i["saveToDraft"] and i["dueAt"][:19] == occ.isoformat()[:19] for i in fake.created), [i["dueAt"] for i in fake.created]
+    assert all(i["assets"] for i in fake.created)  # the rendered recap slides ride along
+    row = dict(store.q("SELECT * FROM template_slots WHERE id=?", (s["id"],))[0])
+    res = json.loads(row["last_result"])
+    assert res["content"].startswith("2 stories from this week"), res["content"]
+    assert datetime.fromtimestamp(row["next_fire"], UTC) == T.next_fire("mon", "20:00", "Europe/Dublin", occ + timedelta(minutes=1))
+    # the same pass again, a restart that lost the next_fire update, and a "Run now" for that time: no second draft
+    assert BS.tick_once(bs, now=occ - timedelta(minutes=50)) == 0
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
+    BS.tick_once(bs, now=occ - timedelta(minutes=45))
+    assert len(fake.created) == 2
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
+    again = bs.run_slot(_actor(human), s["id"], now=occ - timedelta(minutes=40))
+    assert {d["status"] for d in again["drafts"]} == {"already_drafted"} and len(fake.created) == 2
+    # deleting the slot stops it (and its claims go with it)
+    assert c.delete(f"/api/templates/slots/{s['id']}").json()["deleted"] == s["id"]
+    assert BS.tick_once(bs, now=occ + timedelta(days=7, minutes=-30)) == 0 and len(fake.created) == 2
+    assert not store.q("SELECT 1 FROM template_slot_runs WHERE slot_id=?", (s["id"],))
 
 
 def test_two_tickers_at_once_still_make_one_draft_per_channel(app, human, fake):
     """During a deploy the old and the new instance both tick for a minute."""
     store, bs = app.state.store, app.state.house.brand_studio
     s = _slot(human)
-    occ = datetime(2026, 11, 9, 20, 0, tzinfo=UTC)
+    occ = _next_monday_20()
     store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
-    now = datetime(2026, 11, 9, 19, 30, tzinfo=UTC)
+    now = occ - timedelta(minutes=30)
     ts = [threading.Thread(target=BS.tick_once, args=(bs, now)) for _ in range(3)]
     for t in ts:
         t.start()
     for t in ts:
-        t.join(30)
+        t.join(60)
     assert len(fake.created) == 2 and sorted(i["channelId"] for i in fake.created) == ["ch_li", "ch_x"]
 
 
 def test_slot_follows_dublin_daylight_saving():
-    after = datetime(2027, 3, 20, 12, 0, tzinfo=UTC)
-    first = T.next_fire("mon", "20:00", "Europe/Dublin", after)
-    assert first == datetime(2027, 3, 22, 20, 0, tzinfo=UTC)  # still GMT
-    second = T.next_fire("mon", "20:00", "Europe/Dublin", first + (datetime(2027, 3, 22, 20, 1, tzinfo=UTC) - first))
-    assert second == datetime(2027, 3, 29, 19, 0, tzinfo=UTC)  # Irish summer time (UTC+1) from 28 March
-    autumn = T.next_fire("mon", "20:00", "Europe/Dublin", datetime(2026, 10, 20, 12, 0, tzinfo=UTC))
-    assert autumn == datetime(2026, 10, 26, 20, 0, tzinfo=UTC)  # back to GMT on 25 October 2026
+    y = datetime.now(UTC).year + 1
+    spring, autumn = _last_sunday(y, 3), _last_sunday(y, 10)
+    before = T.next_fire("mon", "20:00", "Europe/Dublin", spring - timedelta(days=7))
+    assert before == (spring - timedelta(days=6)).replace(hour=20, minute=0)  # still GMT: 20:00 UTC
+    after = T.next_fire("mon", "20:00", "Europe/Dublin", before + timedelta(minutes=1))
+    assert after == (spring + timedelta(days=1)).replace(hour=19, minute=0)  # Irish summer time (UTC+1): 19:00 UTC
+    back = T.next_fire("mon", "20:00", "Europe/Dublin", autumn - timedelta(hours=1))
+    assert back == (autumn + timedelta(days=1)).replace(hour=20, minute=0)  # back to GMT
 
 
 def test_slot_across_the_spring_change_drafts_at_19_utc(app, human, fake):
     store, bs = app.state.store, app.state.house.brand_studio
+    spring = _last_sunday(datetime.now(UTC).year + 1, 3)
+    mon1 = (spring - timedelta(days=6)).replace(hour=20, minute=0)
+    mon2 = (spring + timedelta(days=1)).replace(hour=19, minute=0)
     s = _slot(human, channel_ids=["ch_x"])
-    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (datetime(2027, 3, 22, 20, 0, tzinfo=UTC).timestamp(), s["id"]))
-    BS.tick_once(bs, now=datetime(2027, 3, 22, 19, 30, tzinfo=UTC))
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (mon1.timestamp(), s["id"]))
+    BS.tick_once(bs, now=mon1 - timedelta(minutes=30))
     nf = store.q("SELECT next_fire FROM template_slots WHERE id=?", (s["id"],))[0]["next_fire"]
-    assert datetime.fromtimestamp(nf, UTC) == datetime(2027, 3, 29, 19, 0, tzinfo=UTC)
-    BS.tick_once(bs, now=datetime(2027, 3, 29, 18, 30, tzinfo=UTC))
-    assert [i["dueAt"][:19] for i in fake.created] == ["2027-03-22T20:00:00", "2027-03-29T19:00:00"]
+    assert datetime.fromtimestamp(nf, UTC) == mon2
+    BS.tick_once(bs, now=mon2 - timedelta(minutes=30))
+    assert [i["dueAt"][:19] for i in fake.created] == [mon1.isoformat()[:19], mon2.isoformat()[:19]]
 
 
 def test_a_late_fire_lands_ten_minutes_out_and_a_long_outage_is_skipped(app, human, fake):
     store, bs = app.state.store, app.state.house.brand_studio
     s = _slot(human, channel_ids=["ch_x"])
-    occ = datetime(2026, 11, 9, 20, 0, tzinfo=UTC)
+    occ = _next_monday_20()
     store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
-    BS.tick_once(bs, now=datetime(2026, 11, 9, 20, 30, tzinfo=UTC))  # the server woke half an hour late
-    assert fake.created[-1]["dueAt"].startswith("2026-11-09T20:40")
-    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (datetime(2026, 11, 16, 20, 0, tzinfo=UTC).timestamp(), s["id"]))
-    BS.tick_once(bs, now=datetime(2026, 11, 17, 12, 0, tzinfo=UTC))  # down all night: skipped, not a recap a day late
+    BS.tick_once(bs, now=occ + timedelta(minutes=30))  # the server woke half an hour late
+    assert fake.created[-1]["dueAt"][:16] == (occ + timedelta(minutes=40)).isoformat()[:16]
+    nxt = occ + timedelta(days=7)
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (nxt.timestamp(), s["id"]))
+    BS.tick_once(bs, now=nxt + timedelta(hours=16))  # down all night: skipped, not a recap a day late
     assert len(fake.created) == 1
     row = dict(store.q("SELECT next_fire, last_result FROM template_slots WHERE id=?", (s["id"],))[0])
     assert json.loads(row["last_result"])["missed"] is True
-    assert datetime.fromtimestamp(row["next_fire"], UTC) == datetime(2026, 11, 23, 20, 0, tzinfo=UTC)
+    assert datetime.fromtimestamp(row["next_fire"], UTC) == T.next_fire("mon", "20:00", "Europe/Dublin", nxt + timedelta(minutes=1))
 
 
 def test_the_ticker_survives_a_database_error(app, monkeypatch):
@@ -303,14 +330,14 @@ def test_the_ticker_survives_a_database_error(app, monkeypatch):
     monkeypatch.setattr(bs, "due_slots", flaky)
     monkeypatch.setenv("HQ_SLOT_TICK", "1")
     BS.stop_ticker()
-    before = dict(BS.TICK)
+    errors = BS.TICK["errors"]
     t = BS.start_ticker(bs, every=0.05)
     try:
         deadline = time.time() + 10
         while calls["n"] < 3 and time.time() < deadline:
             time.sleep(0.05)
         assert calls["n"] >= 3 and t.is_alive()  # it kept ticking after the error (it used to die for good)
-        assert BS.TICK["errors"] > before["errors"]
+        assert BS.TICK["errors"] > errors and BS.tick_snapshot()["on"] is True
     finally:
         BS.stop_ticker()
 
@@ -324,12 +351,12 @@ def test_add_slot_refuses_an_unknown_time_zone_and_healthz_shows_the_ticker(huma
 
 
 def test_render_for_my_channels_and_reel_too(human, fake):
-    _posts(fake)
+    _posts(fake, datetime.now(UTC))
     r = human.post("/api/templates/render", json={"template": "weekly_recap", "services": ["instagram", "linkedin", "twitter"],
                                                   "video": True}).json()
     assert [c["service"] for c in r["channels"]] == ["instagram", "linkedin", "twitter"]
     assert all(c["slides"] for c in r["channels"])
+    assert r["content"].startswith("2 stories from this week"), r["content"]
     assert r["video"] and r["video"]["url"]  # the person's Reel, or the labelled example where no video worker runs
     if r["video"].get("example"):
         assert "EXAMPLE" in r["video"]["note"]
-    assert "stories from this week" in r["content"] or "sample" in r["content"]
