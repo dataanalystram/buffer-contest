@@ -393,9 +393,11 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
            p: dict | None = None, preset: str | None = None, logo_png: str | None = None, plan: dict | None = None,
            scenes: list[float] | None = None, fallback_faces: list[dict] | None = None, pins=None, prefs: dict | None = None,
            audio: str | None = None, cover: str | None = None, cover_s: float = 0.0, end_card: str | None = None,
-           end_s: float = 0.0, punch_in: bool = False) -> dict:
+           end_s: float = 0.0, punch_in: bool = False, punch_emph: list[float] | None = None) -> dict:
     """Render the clip [start, end] to `out` (1080x1920). Returns {plan, sidecar, timings, ass, punch}.
-    punch_in: the gentle zoom in/out on face-tracked shots (studio/media/reframe/punch.py); off renders as before."""
+    punch_in: the gentle zoom in/out on face-tracked shots (studio/media/reframe/punch.py); off renders as before.
+    punch_emph: emphasis times already on this clip's timeline (a trimmed clip's, studio/media/cleancut), else found on
+    `words`."""
     from .. import captions_ass
     t0 = time.time()
     plan = plan or plan_clip(path, start, end, words, scenes, src, fallback_faces, pins_from(pins), prefs)
@@ -409,7 +411,7 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         if ass:
             ass_path = str(tmp / "cap.ass")
             Path(ass_path).write_text(ass, encoding="utf-8")
-        apply_punch(plan, words, start, src, punch_in)
+        apply_punch(plan, words, start, src, punch_in, punch_emph)
         t1 = time.time()
         _ff(render_body_cmd(path, start, end - start, plan["shots"], (int(src.get("width") or 1920), int(src.get("height") or 1080)),
                             ass_path, logo_png, out, tmp, accent, brand_bg, audio, cover, cover_s, end_card, end_s))
@@ -420,10 +422,17 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def apply_punch(plan: dict, words: list[dict] | None, start: float, src: dict, on: bool) -> None:
-    """Set (or clear) each shot's punch-in plan in place, and plan['punch'] = {on, shots} for the clip's meta."""
+def apply_punch(plan: dict, words: list[dict] | None, start: float, src: dict, on: bool,
+                emph: list[float] | None = None) -> None:
+    """Set (or clear) each shot's punch-in plan in place, and plan['punch'] = {on, shots} for the clip's meta. emph: the
+    emphasis times when the caller already has them (a trimmed clip), else they're found on `words`."""
     sw, sh = int(src.get("width") or 1920), int(src.get("height") or 1080)
-    emph = punch_mod.emphasis(words, start) if on else []
+    if not on:
+        emph = []
+    elif isinstance(emph, list):
+        emph = sorted(float(t) for t in emph if isinstance(t, (int, float)))[:2000]
+    else:
+        emph = punch_mod.emphasis(words, start)
     n, last = 0, None  # last: clip time of the latest punch, so GAP holds across shot boundaries
     for s in plan["shots"]:
         s.pop("punch", None)

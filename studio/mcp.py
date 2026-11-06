@@ -105,7 +105,8 @@ TOOLS: list[dict[str, Any]] = [
          "name": {"type": "string"}, "sample": {"type": "boolean"},
          "upload_id": {"type": "string", "description": "A finished multipart upload of a long video (POST /api/takes/uploads, up to 4 GB when the server has a bucket)"},
          "punch_in": {"type": "boolean", "description": "Gentle auto zoom (1.0 to 1.12, eased over 0.4 s) on face-tracked shots at scene starts and emphasised words; faces are never cropped out. Default true; false renders without it."},
-         "jev": {"type": "boolean", "description": "Ask TypeSafe Jev for a second opinion on the speaker's face on a few keyframes (paid, HuhQueue's key): answers needs_user_approval until the person approves. Off by default for apps; local face detection always runs."}}}},
+         "jev": {"type": "boolean", "description": "Ask TypeSafe Jev for a second opinion on the speaker's face on a few keyframes (paid, HuhQueue's key): answers needs_user_approval until the person approves. Off by default for apps; local face detection always runs."},
+         "trim_pauses": {"type": "boolean", "description": "Cut long pauses and filler words (um, uh) from each clip, from the transcript's word timings (free, on the worker). On by default for One take; false keeps every pause."}}}},
     {"name": "ingest_video_link", "description": "One take from a video LINK: a YouTube, Vimeo or X video post, or a direct https link to an MP4. Use this whenever the person gives you a video link (don't ask them to upload it). HuhQueue's video worker fetches it (the same path Make a post uses: yt-dlp, mp4 up to 1080p, no cookies or accounts; up to 4 GB and 3 h), transcribes it and cuts clips. Rights first: the first call answers needs_user_approval with an approval_id and the rights statement; the person approves it in HuhQueue → Inbox → Approvals (or, only once the person tells you they own it or have permission to use it and are responsible for rights, call approve_link_ingest with i_own_or_have_rights: true; never confirm it without their word. If they turned on Auto-approve video links for this app, the first call starts the take at once). Then call again with the same url and approval_id: it returns the take (poll list_clips(take_id)). If the platform refuses (age-restricted, private, a bot check) the take fails with the exact reason; only then does the person need to download and upload the file. licence_hint shows a Creative Commons flag when the platform states one.",
      "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"},
          "approval_id": {"type": "integer"}, "channel_ids": {"type": "array", "items": {"type": "string"}},
@@ -349,7 +350,8 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "clips_from_video":
         if args.get("sample"):
             return h.takes.start_sample(actor, {"channel_ids": args.get("channel_ids")})
-        body = {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "approval_id", "credit", "jev")}
+        body = {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "approval_id", "credit", "jev",
+                                     "trim_pauses")}
         if "punch_in" in args:
             body["punch_in"] = args["punch_in"]
         return h.takes.start(actor, {**body, "_tool": "clips_from_video"})
