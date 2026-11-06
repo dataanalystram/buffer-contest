@@ -207,3 +207,14 @@ def test_inbox_etag_matches_a_weakened_tag_from_a_gzipped_answer(human):
     assert weak.status_code == 304 and weak.headers["etag"] == "W/" + strong  # the validator the cache holds
     same = human.get("/api/inbox", headers={"If-None-Match": strong})
     assert same.status_code == 304 and same.headers["etag"] == strong
+
+
+def test_inbox_etag_ignores_the_read_time(human, monkeypatch):
+    # as_of moves every second; a poll that crosses a second boundary must still get its 304 (flaked on Postgres CI)
+    from studio import inbox
+    real, ticks = inbox.build, iter(range(60))
+    monkeypatch.setattr(inbox, "build", lambda *a, **k: {**real(*a, **k), "as_of": f"2026-11-06T14:00:{next(ticks):02d}Z"})
+    first = human.get("/api/inbox")
+    tag = first.headers["etag"].removeprefix("W/")
+    again = human.get("/api/inbox", headers={"If-None-Match": tag})
+    assert again.status_code == 304 and again.headers["etag"] == tag

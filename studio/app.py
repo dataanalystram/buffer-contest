@@ -1077,7 +1077,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         a = actor(request)
         if refresh:
             studio.buffer.refresh(a.uid)
-        return etagged(request, inbox_mod.build(studio, a))
+        # as_of is the read time to the second: hashing it gave a new tag every second, so a poll across a second
+        # boundary never got its 304 (and the ETag test flaked on the slower Postgres run, 6 Nov 2026)
+        return etagged(request, inbox_mod.build(studio, a), ignore=("now", "as_of"))
 
     @app.get("/api/calendar")
     def calendar(request: Request, refresh: int = 0):
