@@ -532,7 +532,7 @@ window.openTake = async (id) => {
     clearTimeout(cap);
     // moved on (another screen, a sub-tab, another open): never yank them to One take
     if (!op.live() || document.querySelector(".tab:not([hidden])") !== cur || (hold && !hold.live())) return hold?.done();
-    showTab("take"); showTake(t); tkNav(t.id, true); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
+    showTab("take"); tkStopWatch(); showTake(t); tkNav(t.id, true); if (["running", "rendering"].includes(t.status)) watchTake(t.id);
     hold?.done();
   } catch (e) {
     const err = late ? new Error("Opening the take is taking too long.") : e;
@@ -570,13 +570,15 @@ function tkRunMode(on) {
   $("#takeCompose").hidden = !!on; const intro = tab.querySelector(":scope > .intro"); if (intro) intro.hidden = !!on;
   if (!on) $("#takeView").hidden = true;
 }
+/** Write the run bar's identity (an aria-live region) only when it changed, so a status poll never re-announces it. */
+function tkRunId(html) { const box = $("#tkRunId"); if (box.dataset.sig !== html) { box.dataset.sig = html; box.innerHTML = html; } }
 /** The run bar: which run this is (title, when it started, status, clips), so one run is never mistaken for another. */
 function tkRunBar(t) {
   const title = (t.source && t.source.title) || (t.input && t.input.name) || "Your take";
   const n = (t.clips || []).length, st = TK_ST[t.status] || (t.status ? t.status[0].toUpperCase() + t.status.slice(1) : "");
-  $("#tkRunId").innerHTML = `<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title" title="${esc(title)}">${esc(title)}</h2>
+  tkRunId(`<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title" title="${esc(title)}">${esc(title)}</h2>
     <p class="muted xs tk-run-m"><span data-testid="take-run-when">Run #${esc(String(t.id))} · started ${esc(t.created ? tkWhen(t.created) : "")}</span>
-    <span class="pill sm tk-run-st s-${esc(t.status || "")}" data-testid="take-run-status">${esc(st)}</span><span>${n} clip${n === 1 ? "" : "s"}</span></p>`;
+    <span class="pill sm tk-run-st s-${esc(t.status || "")}" data-testid="take-run-status">${esc(st)}</span><span>${n} clip${n === 1 ? "" : "s"}</span></p>`);
 }
 /** Open one run: loader in place at once, then the run (or an error with Retry); a newer open or leaving aborts it. */
 async function tkOpen(id, { replace = false, scroll = true } = {}) {
@@ -584,7 +586,7 @@ async function tkOpen(id, { replace = false, scroll = true } = {}) {
   const op = HQLoad.start("takeopen");  // opening another take aborts this one: only the latest pick is drawn
   tkStopWatch(); T.take = null; T.plan = null;
   tkRunMode(true); $("#takeView").hidden = false; $("#takeView").setAttribute("aria-busy", "true"); $("#tkRunErr").hidden = true;
-  $("#tkRunId").innerHTML = `<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title">Opening the take…</h2><p class="muted xs tk-run-m">Run #${esc(id)}</p>`;
+  tkRunId(`<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title">Opening the take…</h2><p class="muted xs tk-run-m">Run #${esc(id)}</p>`);
   $("#tkHead").innerHTML = ""; $("#tkTimeline").innerHTML = ""; $("#tkTgList").innerHTML = ""; $("#tkClipsN").textContent = "";
   $("#clipGrid").innerHTML = `<li class="clip-ld" data-testid="take-open-loading">${HQLoad.rows(3, "Loading the clips")}</li>`;
   $("#spreadBar").hidden = true; $("#spreadErr").textContent = "";
@@ -597,7 +599,7 @@ async function tkOpen(id, { replace = false, scroll = true } = {}) {
   } catch (e) {
     if (HQLoad.aborted(e) || !op.live() || $("#tab-take").hidden) return;
     $("#takeView").setAttribute("aria-busy", "false"); $("#clipGrid").innerHTML = "";
-    $("#tkRunId").innerHTML = `<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title">This take didn't open</h2><p class="muted xs tk-run-m">Run #${esc(id)}</p>`;
+    tkRunId(`<h2 class="tk-run-t" id="tkRunTitle" data-testid="take-run-title">This take didn't open</h2><p class="muted xs tk-run-m">Run #${esc(id)}</p>`);
     const box = $("#tkRunErr"); box.hidden = false;
     tkErr(box, e.message, () => tkOpen(id, { replace: true, scroll: false }), "take-open");
   } finally { op.done(); }

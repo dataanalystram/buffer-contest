@@ -481,7 +481,7 @@ function urlFor(name, sub) {
   const keepPl = name === "planner" && (same || NAV.first || NAV.popping) && new URLSearchParams(location.search).get("tab") === "planner";
   // One take's open run (?take=<id>, take.js tkNav) stays in the address on a reload or Back/Forward, so take.js reopens it
   const tkq = new URLSearchParams(location.search);
-  const keepTk = name === "take" && (NAV.first || NAV.popping) && tkq.get("tab") === "take" && /^\d{1,12}$/.test(tkq.get("take") || "");
+  const keepTk = name === "take" && (same || NAV.first || NAV.popping) && tkq.get("tab") === "take" && /^\d{1,12}$/.test(tkq.get("take") || "");
   if (keepTk) st.take = tkq.get("take");
   if (NAV.first || NAV.popping || same) history.replaceState(st, "", keepPl || keepTk ? location.href : url);
   else history.pushState(st, "", url);
