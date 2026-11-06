@@ -47,6 +47,7 @@ ACTIVE_S = int(os.environ.get("HQ_MCP_ACTIVE_RUN_S", str(2 * 3600)))
 # burst guard only (a runaway loop), never an hourly or daily limit on new runs (owner, 4 Nov 2026 15:07)
 PER_MINUTE = int(os.environ.get("HQ_MCP_NEW_RUNS_PER_MINUTE", "30"))
 DEDUPE_S = 10 * 60
+RECENT_S = 5 * 60  # a second start_post this soon after the app's open run gets the one-request-one-run warning
 IDEM_TTL = 24 * 3600
 DERIVED_TTL = 120
 
@@ -69,6 +70,7 @@ DERIVED = {"start_post", "continue_run", "create_package", "render_carousel", "h
 # never stored: answers that carry a single-use secret (a confirm token, an upload URL, a send code) or are part of a
 # chunked upload
 NO_IDEM = {"create_send_code", "create_upload", "upload_media_chunk", "finish_upload", "place_clips_in_week", "cleanup_agent_drafts",
+           "delete_drafts",
            "submit_post", "preview_post"}
 # arguments that steer this layer and never reach a tool's own logic or its idempotency hash
 CONTROL = ("idempotency_key", "user_asked", "new_post", "new_request", "reason", "approval_id")
@@ -496,6 +498,13 @@ def start_post(studio, a: Actor, args: dict) -> dict:
     if prev:
         out.update(previous_run_id=prev, note=f"New post (run {rid}) for a new request. If the person meant to change run "
                    f"{prev} instead, ask them and use continue_run(run_id={prev}).")
+        age = time.time() - float(prev_run.get("updated") or 0)
+        if age < RECENT_S and not args.get("new_request"):
+            # owner report 6 Nov 2026: one request for three channels became three runs in 3 seconds. Never refused (a new
+            # request is always allowed), but the app is told plainly that one request is one run.
+            out["warning"] = (f"This app opened run {prev} {int(age)} s ago. One user request = one run: if this is the same "
+                              f"request (another channel, another video or cover), use run {prev} (continue_run) and stage each "
+                              "channel there with create_package(channel_media). Don't open extra runs without asking the person.")
     return out
 
 

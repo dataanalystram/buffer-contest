@@ -1833,7 +1833,7 @@ class House:
         raise ActionError("No package for that channel in this run.", 404)
 
     def schedule_package(self, a: Actor, rid: int, channel_id: str, mode: str = "queue", due_at: str | None = None,
-                         override_warnings: bool = False) -> dict:
+                         override_warnings: bool = False, on_duplicate: str | None = None) -> dict:
         """The hand-off: a ready package goes through the same preview -> confirm -> submit path as every post, so an
         agent token's policy (approval inbox, drafts only) still holds."""
         run = self.run(a, rid)
@@ -1846,6 +1846,11 @@ class House:
             raise ActionError(self.MISSING_MEDIA_NOTE, 409)
         if mode == "draft" and (pk.get("buffer_draft") or {}).get("buffer_post_id"):
             return self.update_package_draft(a, rid, channel_id)  # its Buffer draft takes the new media (never a 2nd draft)
+        if mode == "draft" and a.kind == "agent":  # the same story's draft from an earlier run: update it, never a second one
+            from . import agent_drafts
+            dup = agent_drafts.guard_duplicate(self, a, rid, channel_id, pk, on_duplicate)
+            if dup is not None:
+                return dup
         prev = self.studio.preview_post(a, {"channel_id": channel_id, "text": pk["text"], "media_urls": pk.get("media_urls") or [],
                                             "mode": mode, "due_at": due_at, "options": pk.get("options") or {},
                                             "override_warnings": override_warnings})

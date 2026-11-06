@@ -91,7 +91,10 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "schedule_package", "description": "Send one ready package from a run to Buffer (mode draft | queue | next | now | schedule with due_at ISO UTC). Goes through preview and the token's policy: with 'review' it waits in the Approvals inbox.",
      "inputSchema": {"type": "object", "required": ["run_id", "channel_id"], "properties": {"run_id": {"type": "integer"}, "channel_id": {"type": "string"},
          "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"},
-         "override_warnings": {"type": "boolean"}}}},
+         "override_warnings": {"type": "boolean"},
+         "on_duplicate": {"type": "string", "enum": ["update", "new"], "description": "When an earlier run of this app already has "
+                          "a Buffer draft of the same story on this channel: update = edit that draft (editPost), new = a second "
+                          "draft (only when the person asked)"}}}},
     {"name": "get_inbox", "description": "Your user's Inbox: everything waiting for a person, most urgent first. Groups: approvals (agent posts held for a human), failed (Buffer posts in status error, with Buffer's reason), preflight (scheduled posts in the next 7 days that preflight would block or warn about), undated (drafts with no date), open_slots (empty posting times this week), plan (Buffer plan meters at 80%+). Each group has urgency now | soon | fyi, a count, a one-line summary and items with ids you can pass to update_post or reschedule_post. waiting is the Inbox badge count. Read-only.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_calendar", "description": "Everything on the user's Planner: scheduled, sent and draft Buffer posts, agent posts waiting for approval, ready packages not yet sent, and each channel's Buffer posting slots.",
@@ -263,6 +266,9 @@ def _mark_server_ai(tools: list[dict]) -> None:
 
 _mark_server_ai(TOOLS)
 
+from . import agent_drafts as _drafts  # noqa: E402  delete_drafts: this app's own Buffer drafts only (6 Nov 2026)
+
+TOOLS += _drafts.TOOLS
 from . import mcp_flow as _flow  # noqa: E402  get_started, the flow tools' descriptions and prerequisites (6 Nov 2026)
 
 TOOLS += _flow.TOOLS
@@ -351,8 +357,10 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "get_brand":
         return {"kit": h.kit(actor), "rules": h.rules(actor)}
     if name == "schedule_package":
+        if args.get("on_duplicate") not in (None, "", "update", "new"):
+            raise ActionError("on_duplicate is 'update' (edit the earlier run's Buffer draft) or 'new' (a second draft).")
         return h.schedule_package(actor, int(args.get("run_id") or 0), args.get("channel_id", ""), args.get("mode") or "queue", args.get("due_at"),
-                                  bool(args.get("override_warnings")))
+                                  bool(args.get("override_warnings")), on_duplicate=args.get("on_duplicate") or None)
     if name == "list_calendar":
         return h.calendar(actor)
     if name == "clips_from_video":
@@ -436,7 +444,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _thread_bin.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
-    for _mod in (_send, _share, _ledger, _parity, _image, _rd, _commerce, _flow):
+    for _mod in (_send, _share, _ledger, _parity, _image, _rd, _commerce, _flow, _drafts):
         extra = _mod.call_tool(studio, actor, name, args)
         if extra is not NotImplemented:
             return extra
