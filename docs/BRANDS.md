@@ -45,8 +45,7 @@ runs out of memory the Reel falls back to hard cuts.
 **Recurring Planner slots** (`POST /api/templates/slots`, MCP `schedule_template_slot`): e.g. weekly recap every Monday
 20:00 Europe/Dublin. When a slot fires it renders the template from that week's posts and puts one **Buffer draft** per
 channel at the slot time, with the slides attached. A person approves it in Buffer (or in Approvals for an agent token).
-Slots fire from "Run now" or, on the hosted app, from a 10-minute ticker that is opt-in (`HQ_SLOT_TICK=1`) and never runs
-for the sample.
+Slots fire from "Run now" (it drafts the slot's next time) or, on the hosted app, from a ticker that is opt-in (`HQ_SLOT_TICK=1`, every `HQ_SLOT_TICK_S` seconds, default 300) and never runs for the sample or an account whose kill switch is on. The ticker makes the drafts up to `HQ_SLOT_LEAD_MIN` (default 60) minutes before the slot so they wait in Buffer at the time; the slot's time follows its own zone (Mon 20:00 Europe/Dublin is 20:00 UTC in winter, 19:00 UTC in summer). Each (slot, occurrence, channel) is claimed in `template_slot_runs` before Buffer is called, so a retry, a restart or two instances during a deploy never make a second draft. A slot the server slept through by under 12 hours drafts 10 minutes out; longer, it is skipped. `/healthz` `slots` shows the ticker is on and when it last ran.
 
 ## The two example brands (sample workspace)
 

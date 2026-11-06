@@ -638,12 +638,13 @@ def start_ticker(bs: BrandStudio, every: int | None = None) -> threading.Thread 
         return None
     if _ticker.get("t") and _ticker["t"].is_alive():
         return _ticker["t"]
+    _ticker["stop"] = False
     every = int(every or os.environ.get("HQ_SLOT_TICK_S", "300") or 300)
     TICK.update(on=True, every_s=every, started=time.time())
 
     def loop():
         time.sleep(min(60, every))  # first pass soon after a deploy, not a whole interval later
-        while True:
+        while not _ticker.get("stop"):
             try:
                 tick_once(bs)
             except Exception as e:  # noqa: BLE001  (due_slots itself: the database was away)
@@ -655,6 +656,16 @@ def start_ticker(bs: BrandStudio, every: int | None = None) -> threading.Thread 
     t.start()
     _ticker["t"] = t
     return t
+
+
+def stop_ticker(wait: float = 5.0) -> None:
+    """Stop this process's ticker (tests; a deploy just ends the process)."""
+    _ticker["stop"] = True
+    t = _ticker.get("t")
+    if t and t.is_alive():
+        t.join(wait)
+    _ticker.pop("t", None)
+    TICK["on"] = False
 
 
 def tick_snapshot() -> dict:

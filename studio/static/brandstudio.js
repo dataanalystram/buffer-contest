@@ -119,10 +119,11 @@
     try {
       const d = await api("/api/brand-studio");
       B.tpls = d.templates; B.styles = d.styles; B.examples = d.examples; B.slots = d.slots; B.channels = d.channels;
-      // custom templates (create_template over MCP / REST / the agent) carry custom: true and show with a "Custom" mark
-      $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}${t.custom ? " · Custom" : ""}</option>`).join("");
+      // every template says who made it: Built-in, Created via MCP by <app> · <model>, or Created by you (studio/provenance.py)
+      const prov = (t) => (t.provenance && t.provenance.label) || (t.custom ? "Created by you" : "Built-in");
+      $("#bsTpl").innerHTML = B.tpls.map((t) => `<option value="${esc(t.id)}" title="${esc(prov(t))}">${esc(t.name)} · ${esc(prov(t))}</option>`).join("");
       $("#bsTplR").innerHTML = $("#bsTpl").innerHTML;
-      $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single" && !t.custom).map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+      $("#bsSlotTpl").innerHTML = B.tpls.filter((t) => t.kind !== "single" && !t.custom).map((t) => `<option value="${esc(t.id)}">${esc(t.name)} · ${esc(prov(t))}</option>`).join("");
       $("#bsSvc").innerHTML = Object.entries(d.channels).filter(([, c]) => !c.video_only).map(([k, c]) => `<option value="${k}">${esc(c.label)} (${c.ratio})</option>`).join("");
       $("#bsTpl").value = B.tpl; $("#bsSvc").value = B.svc;
       fillKit(d.kit); examples(d.active); slots();
@@ -323,14 +324,18 @@
     return api("/api/media", { method: "POST", body: { name: file.name, data } });
   }
   function slots() {
-    $("#bsSlots").innerHTML = B.slots.length ? B.slots.map((s) => `<li data-testid="bs-slot"><b>${esc(s.name)}</b> every ${esc(s.weekday)} ${esc(s.at)} <span class="muted sm">${esc(s.tz)}</span>
+    const when = (iso) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    $("#bsSlots").innerHTML = B.slots.length ? B.slots.map((s) => `<li data-testid="bs-slot"><b>${esc(s.name)}</b> <span class="muted sm">${esc((s.provenance && s.provenance.label) || "Built-in")}</span> every ${esc(s.weekday)} ${esc(s.at)} <span class="muted sm">${esc(s.tz)}</span>
+      ${s.next_fire_iso ? `<span class="muted sm" data-testid="bs-slot-next">next draft for ${esc(when(s.next_fire_iso))}</span>` : ""}
       ${s.last_result ? `<span class="muted sm">last: ${s.last_result.results.length} drafts</span>` : ""}
       <button class="link" type="button" data-run="${s.id}" data-testid="bs-slot-run">Run now</button><button class="link danger" type="button" data-del="${s.id}">Remove</button></li>`).join("")
       : `<li class="muted sm">No slots yet. Try the weekly recap on Monday at 20:00.</li>`;
     document.querySelectorAll("#bsSlots [data-run]").forEach((b) => (b.onclick = async () => {
       b.disabled = true;
       try { const r = await api(`/api/templates/slots/${b.dataset.run}/run`, { method: "POST" }); showCost("#bsSlotCost", r);
-            toast(`${r.drafts.filter((d) => d.status === "sent_to_buffer" || d.status === "pending_approval").length} Buffer drafts for ${new Date(r.due).toLocaleString()}`);
+            const made = r.drafts.filter((d) => d.status === "sent_to_buffer" || d.status === "pending_approval").length;
+            const had = r.drafts.filter((d) => d.status === "already_drafted").length;
+            toast(`${made} Buffer draft${made === 1 ? "" : "s"} for ${new Date(r.due).toLocaleString()}${had ? ` (${had} already there, not made twice)` : ""}`);
             B.slots = await api("/api/templates/slots"); slots(); }
       catch (e) { toast(e.message); } finally { b.disabled = false; }
     }));

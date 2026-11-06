@@ -1,0 +1,335 @@
+"""Style Ledger presets, template provenance and recurring slots end to end (owner, 6 Nov 2026).
+
+A) Built-in presets: listed with every part (hooks, first line, length per network, on-screen text, CTA, hashtag caps with
+   Instagram at most 5, banned phrases), applied as ordinary ledger rules (REST and MCP, MCP in two steps), re-applying never
+   duplicates, a second preset switches the first one's rules off, edits before applying, and the free built-in drafter
+   writes captions in the preset's shape (first line under 125 characters, one CTA, hashtags within the cap).
+B) Provenance: every template and ledger rule says Built-in / Created via MCP by <app> · <model> / Created by you; MCP
+   creates record the calling token's app and the model it reported; older rows are migrated.
+C) Recurring slots: a weekly recap slot (Mon 20:00 Europe/Dublin) with the clock moved forward renders the recap from that
+   week's posts and makes ONE Buffer draft per channel at the right UTC time, never twice (re-run, restart), across the
+   daylight-saving change, stops when deleted, and the ticker survives a database error.
+"""
+import json
+import threading
+import time
+from datetime import datetime, timezone
+
+import pytest
+
+from studio import brand, brand_studio as BS, drafter, provenance, style_presets, templates as T
+
+from .conftest import agent_token, mcp_call
+
+UTC = timezone.utc
+
+
+def _uid(c):
+    return c.app.state.store.q("SELECT id FROM users ORDER BY rowid LIMIT 1")[0]["id"] if not c.app.state.store.pg else \
+        c.app.state.store.q("SELECT id FROM users LIMIT 1")[0]["id"]
+
+
+# ------------------------------------------------------------------------------------------------ A) presets
+def test_every_preset_has_every_part_and_instagram_never_more_than_five_hashtags():
+    assert [p["id"] for p in style_presets.PRESETS] == ["hook_first", "educator", "build_in_public", "news_fast", "podcast_clip"]
+    for p in style_presets.listing():
+        for k in ("hook_formulas", "first_line", "structure", "on_screen", "cta", "length", "hashtags", "banned"):
+            assert p[k], (p["id"], k)
+        assert p["hashtags"]["instagram"] <= 5 and p["hashtags"]["twitter"] <= 2
+        assert any("125" in t for t in p["first_line"]), p["id"]
+        assert p["cta"]["line"] and p["cta"]["rules"]
+        kinds = {r["check"]["type"] for r in p["rules"]}
+        assert {"guideline", "banned_words", "max_hashtags", "max_length"} <= kinds
+        ig = [r for r in p["rules"] if r["check"]["type"] == "max_hashtags" and r["scope"] == ["instagram"]]
+        assert len(ig) == 1 and ig[0]["check"]["n"] <= 5
+
+
+def test_apply_preset_writes_rules_once_and_a_second_preset_switches_the_first_off(human):
+    c = human
+    mine = c.post("/api/ledger", json={"correction": "never say synergy"}).json()
+    assert mine["added"]
+    lst = c.get("/api/ledger/presets").json()["presets"]
+    assert len(lst) == 5 and all(p["provenance"]["label"] == "Built-in" for p in lst)
+    r1 = c.post("/api/ledger/presets/hook_first/apply", json={}).json()
+    n = r1["added"]
+    assert n >= 20 and r1["replaced"] == 0
+    again = c.post("/api/ledger/presets/hook_first/apply", json={}).json()
+    assert again["added"] == n and again["replaced"] == n  # re-applying replaces, never duplicates
+    ov = c.get("/api/ledger").json()
+    hf = [r for r in ov["rules"] if (r["check"] or {}).get("preset") == "hook_first"]
+    assert len(hf) == n and all(r["active"] and r["origin"] == "preset" for r in hf)
+    assert all(r["provenance"]["label"] == "Built-in" for r in hf)
+    assert any(r["group"] == "hooks" for r in hf) and any(g["id"] == "hooks" for g in ov["groups"])
+    assert next(p for p in ov["presets"] if p["id"] == "hook_first")["active"] is True
+    r2 = c.post("/api/ledger/presets/news_fast/apply", json={}).json()
+    assert len([s for s in r2["switched_off"] if "Hook-first" in s["why"]]) == n
+    ov = c.get("/api/ledger").json()
+    assert not any(r["active"] for r in ov["rules"] if (r["check"] or {}).get("preset") == "hook_first")
+    syn = next(r for r in ov["rules"] if r["rule"].lower().startswith("never use") and "synergy" in r["rule"].lower())
+    assert syn["active"] and syn["provenance"]["label"] == "Created by you"  # the person's own rule is left alone
+    assert c.post("/api/ledger/presets/nope/apply", json={}).status_code == 404
+    assert c.post("/api/ledger/presets/hook_first/apply", json={"edits": ["x"]}).status_code == 400
+
+
+def test_preset_edits_before_applying_and_guideline_wording_after(human):
+    c = human
+    rules = next(p for p in c.get("/api/ledger/presets").json()["presets"] if p["id"] == "educator")["rules"]
+    ig = next(i for i, r in enumerate(rules) if r["check"]["type"] == "max_hashtags" and r["scope"] == ["instagram"])
+    out = c.post("/api/ledger/presets/educator/apply", json={"edits": {"0": {"drop": True}, "1": {"text": "Open on the mistake"},
+                                                                      str(ig): {"n": 12}}}).json()
+    assert out["added"] == len(rules) - 1
+    got = {r["rule"]: r for r in out["rules"]}
+    assert "Open on the mistake" in got and rules[0]["rule"] not in got
+    assert next(r for r in out["rules"] if r["check"]["type"] == "max_hashtags" and r["scope"] == ["instagram"])["check"]["n"] == 5
+    g = next(r for r in out["rules"] if r["rule"] == "Open on the mistake")
+    upd = c.patch(f"/api/ledger/rules/{g['id']}", json={"rule": "Open on the mistake people make most"}).json()
+    assert upd["rule"] == "Open on the mistake people make most" and upd["check"]["type"] == "guideline"
+
+
+def test_mcp_apply_preset_is_two_steps_and_records_the_app(human):
+    tok = agent_token(human, policy="draft")
+    _, lst = mcp_call(human, tok, "list_style_presets")
+    assert {p["id"] for p in lst["presets"]} == set(style_presets.BY_ID)
+    _, held = mcp_call(human, tok, "apply_style_preset", {"preset": "podcast_clip"})
+    assert held["needs_confirmation"] and held["preview"]["rules"]
+    assert not [r for r in human.get("/api/ledger").json()["rules"] if (r["check"] or {}).get("preset")]
+    _, done = mcp_call(human, tok, "apply_style_preset", {"preset": "podcast_clip", "confirm_token": held["confirm_token"]})
+    assert done["added"] == len(held["preview"]["rules"])
+    r = next(r for r in human.get("/api/ledger").json()["rules"] if (r["check"] or {}).get("preset") == "podcast_clip")
+    assert r["provenance"]["source"] == "builtin" and r["provenance"]["label"].startswith("Built-in · applied via MCP by ")
+
+
+TOPICS = [
+    {"url": "https://news.example.com/a", "title": "Google cuts Gemini API prices by 50% for developers", "site": "Example News",
+     "description": "Google said on Tuesday it would halve the price of its Gemini API for most developers starting next month.",
+     "paragraphs": ["The cut applies to the Flash and Pro tiers and takes effect on 1 December, the company said in a blog post.",
+                    "Analysts say the move puts pressure on OpenAI and Anthropic, which charge more per million tokens."]},
+    {"url": "https://news.example.com/b", "title": "Meta releases an open model that runs on a laptop", "site": "Tech Daily",
+     "description": "The 8 billion parameter model runs offline on a 16 GB laptop and is free for commercial use.",
+     "paragraphs": ["Meta says the model matches last year's larger models on reasoning tests while using a fraction of the memory.",
+                    "Developers can download it today from Hugging Face under the company's community licence."]},
+    {"url": "https://news.example.com/c", "title": "Startup ships an AI agent that books meetings", "site": "Founder Weekly",
+     "description": "The two-person team says the agent booked 1,200 meetings in its first week of beta.",
+     "paragraphs": ["\u201cWe built it in six weeks because our own calendars were a mess,\u201d the founder said in an interview.",
+                    "The beta is free for teams of up to five people, with a paid plan planned for next year."]},
+]
+
+
+@pytest.mark.parametrize("pid", list(style_presets.BY_ID))
+@pytest.mark.parametrize("ti", range(3))
+def test_free_drafter_writes_in_the_preset_shape(pid, ti):
+    art = TOPICS[ti]
+    rules = [{**r, "id": i, "active": True} for i, r in enumerate(style_presets.rules_for(style_presets.BY_ID[pid]))]
+    st = style_presets.style_from_rules(rules)
+    assert st and st["preset"] == pid and st["cta"]
+    chans = [{"id": f"c_{s}", "service": s} for s in ("instagram", "twitter", "linkedin")]
+    before = {d["service"]: d["text"] for d in drafter.draft(chans, art)}
+    after = {d["service"]: d["text"] for d in drafter.draft(chans, art, style=st)}
+    for svc, text in after.items():
+        scoped = brand.for_channel(rules, svc)
+        fixed = drafter.fit(svc, brand.apply_text_rules(text, scoped), drafter.rule_limit(svc, scoped))
+        chk = brand.brand_check(fixed, None, scoped, {})
+        assert chk["pass"], (pid, svc, chk["summary"], fixed)
+        first = fixed.split("\n")[0]
+        assert 0 < len(first) <= 125, first
+        assert st["cta"] in fixed or len(fixed) >= drafter.rule_limit(svc, scoped) - 2, fixed  # the CTA survives unless trimmed
+        assert len(brand.HASHTAG_RE.findall(fixed)) <= st["hashtags"].get(svc, 5)
+        assert fixed != before[svc]
+
+
+# ------------------------------------------------------------------------------------------------ B) provenance
+def test_template_provenance_built_in_you_and_mcp_with_and_without_a_model(human):
+    c = human
+    lst = c.get("/api/templates").json()["templates"]
+    assert all(t["provenance"]["label"] == "Built-in" for t in lst if not t.get("custom"))
+    body = {"name": "Funding note", "slides": [{"type": "front", "title": "{company} raised {amount}"}]}
+    mine = c.post("/api/templates/custom", json=body).json()
+    assert mine["provenance"] == {"source": "user", "client": "", "model": "", "label": "Created by you"}
+    tok = agent_token(c, policy="draft")
+    r = c.post("/mcp", headers={"Authorization": f"Bearer {tok}"}, json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+        "name": "create_template", "arguments": {**body, "name": "Launch note"}, "_meta": {"model": "claude-opus-4-1"}}}).json()
+    made = json.loads(r["result"]["content"][0]["text"])
+    assert made["provenance"]["source"] == "mcp" and made["provenance"]["model"] == "claude-opus-4-1"
+    assert made["provenance"]["label"] == f"Created via MCP by {made['provenance']['client']} · claude-opus-4-1"
+    assert made["provenance"]["client"]  # the token's app (Claude), never blank
+    _, plain = mcp_call(c, tok, "create_template", {**body, "name": "Hire note"})
+    assert plain["provenance"]["label"].endswith("(model unknown)")
+    by = {t["name"]: t for t in c.get("/api/templates").json()["templates"]}
+    assert by["Funding note"]["provenance"]["label"] == "Created by you"
+    assert by["Launch note"]["provenance"]["label"].endswith("· claude-opus-4-1")
+
+
+def test_rows_from_before_provenance_are_migrated(app, human):
+    from studio import custom_templates, ledger
+    store = app.state.store
+    uid = _uid(human)
+    now = time.time()
+    store.x("INSERT INTO custom_templates(user_id,slug,name,data,created,updated,created_by) VALUES(?,?,?,?,?,?,?)",
+            (uid, "old-agent", "Old agent", json.dumps({"name": "Old agent", "slides": [{"type": "front"}]}), now, now, "agent:7:Cursor"))
+    store.x("INSERT INTO custom_templates(user_id,slug,name,data,created,updated,created_by) VALUES(?,?,?,?,?,?,?)",
+            (uid, "old-mine", "Old mine", json.dumps({"name": "Old mine", "slides": [{"type": "front"}]}), now, now, "you"))
+    store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created,origin) VALUES(?,?,?,?,?,1,?,?)",
+            (uid, "text", json.dumps({"type": "no_emoji"}), "No emojis", "no emojis", now, "agent"))
+    custom_templates.ensure(store)
+    ledger.ensure(store)
+    by = {t["name"]: t for t in custom_templates.attach(app.state.house).list(type("A", (), {"uid": uid})())}
+    assert by["Old agent"]["provenance"]["label"] == "Created via MCP by Cursor (model unknown)"
+    assert by["Old mine"]["provenance"]["label"] == "Created by you"
+    rule = next(r for r in human.get("/api/ledger").json()["rules"] if r["rule"] == "No emojis")
+    assert rule["provenance"]["label"] == "Created via MCP by an AI app (model unknown)"
+
+
+def test_provenance_labels():
+    assert provenance.label("builtin") == "Built-in"
+    assert provenance.label("mcp", "ChatGPT", "") == "Created via MCP by ChatGPT (model unknown)"
+    assert provenance.label("mcp", "Claude<script>", "gpt-5") == "Created via MCP by Claudescript · gpt-5"
+    assert provenance.label(None) == "Created by you"
+
+
+# ------------------------------------------------------------------------------------------------ C) recurring slots
+def _posts(fake):
+    fake.posts = [
+        {"id": "s1", "status": "sent", "channelId": "ch_x", "text": "OpenAI ships a faster model. It halves latency.",
+         "sentAt": "2026-11-04T10:00:00Z", "dueAt": "2026-11-04T10:00:00Z"},
+        {"id": "s2", "status": "sent", "channelId": "ch_li", "text": "Meta opens its laptop model. Free for commercial use.",
+         "sentAt": "2026-11-06T09:00:00Z", "dueAt": "2026-11-06T09:00:00Z"},
+        {"id": "old", "status": "sent", "channelId": "ch_x", "text": "Last month's story. Should not be in the recap.",
+         "sentAt": "2026-10-01T09:00:00Z", "dueAt": "2026-10-01T09:00:00Z"},
+    ]
+
+
+def _slot(c, **kw):
+    body = {"template": "weekly_recap", "weekday": "mon", "time": "20:00", "tz": "Europe/Dublin", "channel_ids": ["ch_x", "ch_li"], **kw}
+    r = c.post("/api/templates/slots", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_weekly_recap_slot_drafts_once_per_channel_at_the_right_utc_time(app, human, fake):
+    c, store, bs = human, app.state.store, app.state.house.brand_studio
+    _posts(fake)
+    s = _slot(c)
+    occ = datetime(2026, 11, 9, 20, 0, tzinfo=UTC)  # Monday 9 Nov 20:00 in Dublin (GMT, UTC+0)
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
+    assert BS.tick_once(bs, now=datetime(2026, 11, 9, 18, 30, tzinfo=UTC)) == 0  # 90 min early: not yet
+    assert fake.created == []
+    assert BS.tick_once(bs, now=datetime(2026, 11, 9, 19, 5, tzinfo=UTC)) == 1  # inside the hour before: drafts now
+    assert len(fake.created) == 2 and {i["channelId"] for i in fake.created} == {"ch_x", "ch_li"}
+    assert all(i["saveToDraft"] and i["dueAt"].startswith("2026-11-09T20:00:00") for i in fake.created)
+    assert all(i["assets"] for i in fake.created)  # the rendered recap slides ride along
+    row = dict(store.q("SELECT * FROM template_slots WHERE id=?", (s["id"],))[0])
+    res = json.loads(row["last_result"])
+    assert res["content"].startswith("2 stories from this week") and res["occurrence"].startswith("2026-11-09T20:00")
+    assert datetime.fromtimestamp(row["next_fire"], UTC) == datetime(2026, 11, 16, 20, 0, tzinfo=UTC)
+    # the same pass again, a restart that lost the next_fire update, and a "Run now" for that time: no second draft
+    assert BS.tick_once(bs, now=datetime(2026, 11, 9, 19, 10, tzinfo=UTC)) == 0
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
+    BS.tick_once(bs, now=datetime(2026, 11, 9, 19, 15, tzinfo=UTC))
+    assert len(fake.created) == 2
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
+    again = bs.run_slot(_actor(human), s["id"], now=datetime(2026, 11, 9, 19, 20, tzinfo=UTC))
+    assert {d["status"] for d in again["drafts"]} == {"already_drafted"} and len(fake.created) == 2
+    # deleting the slot stops it (and its claims go with it)
+    assert c.delete(f"/api/templates/slots/{s['id']}").json()["deleted"] == s["id"]
+    assert BS.tick_once(bs, now=datetime(2026, 11, 16, 19, 30, tzinfo=UTC)) == 0 and len(fake.created) == 2
+    assert not store.q("SELECT 1 FROM template_slot_runs WHERE slot_id=?", (s["id"],))
+
+
+def _actor(human):
+    from studio.actions import Actor
+    return Actor(_uid(human))
+
+
+def test_two_tickers_at_once_still_make_one_draft_per_channel(app, human, fake):
+    """During a deploy the old and the new instance both tick for a minute."""
+    store, bs = app.state.store, app.state.house.brand_studio
+    s = _slot(human)
+    occ = datetime(2026, 11, 9, 20, 0, tzinfo=UTC)
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
+    now = datetime(2026, 11, 9, 19, 30, tzinfo=UTC)
+    ts = [threading.Thread(target=BS.tick_once, args=(bs, now)) for _ in range(3)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(30)
+    assert len(fake.created) == 2 and sorted(i["channelId"] for i in fake.created) == ["ch_li", "ch_x"]
+
+
+def test_slot_follows_dublin_daylight_saving():
+    after = datetime(2027, 3, 20, 12, 0, tzinfo=UTC)
+    first = T.next_fire("mon", "20:00", "Europe/Dublin", after)
+    assert first == datetime(2027, 3, 22, 20, 0, tzinfo=UTC)  # still GMT
+    second = T.next_fire("mon", "20:00", "Europe/Dublin", first + (datetime(2027, 3, 22, 20, 1, tzinfo=UTC) - first))
+    assert second == datetime(2027, 3, 29, 19, 0, tzinfo=UTC)  # Irish summer time (UTC+1) from 28 March
+    autumn = T.next_fire("mon", "20:00", "Europe/Dublin", datetime(2026, 10, 20, 12, 0, tzinfo=UTC))
+    assert autumn == datetime(2026, 10, 26, 20, 0, tzinfo=UTC)  # back to GMT on 25 October 2026
+
+
+def test_slot_across_the_spring_change_drafts_at_19_utc(app, human, fake):
+    store, bs = app.state.store, app.state.house.brand_studio
+    s = _slot(human, channel_ids=["ch_x"])
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (datetime(2027, 3, 22, 20, 0, tzinfo=UTC).timestamp(), s["id"]))
+    BS.tick_once(bs, now=datetime(2027, 3, 22, 19, 30, tzinfo=UTC))
+    nf = store.q("SELECT next_fire FROM template_slots WHERE id=?", (s["id"],))[0]["next_fire"]
+    assert datetime.fromtimestamp(nf, UTC) == datetime(2027, 3, 29, 19, 0, tzinfo=UTC)
+    BS.tick_once(bs, now=datetime(2027, 3, 29, 18, 30, tzinfo=UTC))
+    assert [i["dueAt"][:19] for i in fake.created] == ["2027-03-22T20:00:00", "2027-03-29T19:00:00"]
+
+
+def test_a_late_fire_lands_ten_minutes_out_and_a_long_outage_is_skipped(app, human, fake):
+    store, bs = app.state.store, app.state.house.brand_studio
+    s = _slot(human, channel_ids=["ch_x"])
+    occ = datetime(2026, 11, 9, 20, 0, tzinfo=UTC)
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (occ.timestamp(), s["id"]))
+    BS.tick_once(bs, now=datetime(2026, 11, 9, 20, 30, tzinfo=UTC))  # the server woke half an hour late
+    assert fake.created[-1]["dueAt"].startswith("2026-11-09T20:40")
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (datetime(2026, 11, 16, 20, 0, tzinfo=UTC).timestamp(), s["id"]))
+    BS.tick_once(bs, now=datetime(2026, 11, 17, 12, 0, tzinfo=UTC))  # down all night: skipped, not a recap a day late
+    assert len(fake.created) == 1
+    row = dict(store.q("SELECT next_fire, last_result FROM template_slots WHERE id=?", (s["id"],))[0])
+    assert json.loads(row["last_result"])["missed"] is True
+    assert datetime.fromtimestamp(row["next_fire"], UTC) == datetime(2026, 11, 23, 20, 0, tzinfo=UTC)
+
+
+def test_the_ticker_survives_a_database_error(app, monkeypatch):
+    bs = app.state.house.brand_studio
+    calls = {"n": 0}
+
+    def flaky(now=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("database went away")
+        return []
+    monkeypatch.setattr(bs, "due_slots", flaky)
+    monkeypatch.setenv("HQ_SLOT_TICK", "1")
+    BS.stop_ticker()
+    before = dict(BS.TICK)
+    t = BS.start_ticker(bs, every=0.05)
+    try:
+        deadline = time.time() + 10
+        while calls["n"] < 3 and time.time() < deadline:
+            time.sleep(0.05)
+        assert calls["n"] >= 3 and t.is_alive()  # it kept ticking after the error (it used to die for good)
+        assert BS.TICK["errors"] > before["errors"]
+    finally:
+        BS.stop_ticker()
+
+
+def test_add_slot_refuses_an_unknown_time_zone_and_healthz_shows_the_ticker(human):
+    r = human.post("/api/templates/slots", json={"template": "weekly_recap", "weekday": "mon", "time": "20:00", "tz": "Mars/Base",
+                                                 "channel_ids": ["ch_x"]})
+    assert r.status_code == 400 and "time zone" in r.text
+    h = human.get("/healthz").json()
+    assert set(h["slots"]) >= {"on", "every_s", "lead_s", "last_tick_age_s", "ticks", "fired", "errors"}
+
+
+def test_render_for_my_channels_and_reel_too(human, fake):
+    _posts(fake)
+    r = human.post("/api/templates/render", json={"template": "weekly_recap", "services": ["instagram", "linkedin", "twitter"],
+                                                  "video": True}).json()
+    assert [c["service"] for c in r["channels"]] == ["instagram", "linkedin", "twitter"]
+    assert all(c["slides"] for c in r["channels"])
+    assert r["video"] and r["video"]["url"]  # the person's Reel, or the labelled example where no video worker runs
+    if r["video"].get("example"):
+        assert "EXAMPLE" in r["video"]["note"]
+    assert "stories from this week" in r["content"] or "sample" in r["content"]
