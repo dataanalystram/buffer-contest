@@ -615,3 +615,12 @@ def test_trusted_policy_confirmation_discloses_immediate_publish():
     say = js.split("const POL_SAY = ", 1)[1].split("async function", 1)[0]
     assert "publish now" in pol
     assert "publish them immediately, without your approval" in say
+
+
+def test_own_url_is_exact_host_and_port(human):
+    from studio.mcp_client_brain import _own_url
+    st = human.app.state.studio
+    assert _own_url(st, "https://hq.test/sample/clip4.mp4") and _own_url(st, "https://HQ.test:443/m/x")
+    for u in ("https://hq.test.evil.com/a.mp4", "https://evil.com/hq.test/a.mp4", "http://hq.test/a.mp4",
+              "https://hq.test:8443/a.mp4", "https://hq.test:bad/a.mp4", "notaurl"):
+        assert not _own_url(st, u), u

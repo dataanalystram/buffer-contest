@@ -1280,7 +1280,7 @@ def t_library_upload_url(studio, a, args):
     url = str(args.get("url") or "").strip()
     rid = _run_arg(args)
     rights = None
-    if a.kind == "agent" and url and not share_import.provider(url):
+    if a.kind == "agent" and url and not share_import.provider(url) and not _own_url(studio, url):
         from .media import find
         if find.platform_of(url):  # a YouTube / Vimeo / X post is a page, not a file: the worker fetches it (rights step first)
             raise StepError("library_upload_url takes a file link, and that is a video post page. Nothing was fetched.", 400,
@@ -1312,6 +1312,23 @@ def t_library_upload_url(studio, a, args):
             studio.house.library.attach_run(a, out["library_id"], rid)
         return {**out, "token": out["media_token"]}
     return _library_out(studio, a, studio.house.import_url(a, url), rid, rights)
+
+
+def _own_url(studio, url: str) -> bool:
+    """True for a link on this HuhQueue server itself (its /sample clips, its /m/ media): not a third-party video, so
+    no rights step. Exact hostname + port match (80/443 normalised); anything unparsable is not ours."""
+    from urllib.parse import urlparse
+
+    def hp(u):
+        try:
+            p = urlparse(u)
+            port = p.port or {"https": 443, "http": 80}.get(p.scheme)
+        except ValueError:
+            return None
+        return ((p.hostname or "").lower(), port) if p.hostname else None
+    s = getattr(getattr(studio.house, "s", None), "public_url", "") or ""
+    mine, theirs = hp(s), hp(url)
+    return bool(mine and theirs and mine == theirs and urlparse(url).scheme == "https")
 
 
 def _library_out(studio, a, up: dict, rid, rights: dict | None) -> dict:
