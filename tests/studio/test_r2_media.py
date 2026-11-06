@@ -192,6 +192,22 @@ def test_r2_reads_never_count_against_the_supabase_egress_budget(app, human, s3,
     assert egress.snapshot()["db_bytes"] == len(got)          # database bytes still fill the db budget
 
 
+
+def test_every_r2_read_is_counted_once_inside_or_outside_the_cache(app, s3):
+    """A direct ``blobstore.read`` from R2 (no media-cache tally open) is added to ``r2`` itself; inside a tally the
+    bytes go to the tally only (``backend_read`` books them), so nothing is counted twice (CodeRabbit, PR #133)."""
+    from studio import egress
+    store = app.state.store
+    tok = app.state.house.put_media(Actor("acc_1"), image_bytes(60, 40), "direct.png")
+    key = store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"]
+    assert key
+    base = egress.snapshot()["r2_bytes"]
+    assert len(blobstore.read(None, key, 0, 9)) == 10
+    assert egress.snapshot()["r2_bytes"] == base + 10 and egress.snapshot()["db_bytes"] == 0
+    with egress.r2_tally() as t:
+        assert len(blobstore.read(None, key, 0, 4)) == 5
+    assert t[0] == 5 and egress.snapshot()["r2_bytes"] == base + 10
+
 # ------------------------------------------------------------------ migration
 def test_copy_only_migration_keeps_the_bytea_and_reads_switch_to_r2(app, human, s3, monkeypatch):
     store = app.state.store

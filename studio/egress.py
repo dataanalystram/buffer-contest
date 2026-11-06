@@ -168,10 +168,20 @@ def r2_tally():
 
 
 def note_r2_read(n: int) -> None:
-    """Called by ``blobstore.read`` after a bucket read: credited to the open ``r2_tally`` (if any)."""
+    """Called by ``blobstore.read`` after a bucket read. Inside an open ``r2_tally`` (mediacache.wrap) the bytes are
+    credited to the tally and booked once by ``backend_read``; any other R2 read (a direct ``blobstore.read``) is
+    added to ``r2`` here, so every bucket read is counted exactly once and never as ``db`` (CodeRabbit, PR #133)."""
+    if n <= 0:
+        return
     t = _R2_TALLY.get()
-    if t is not None and n > 0:
+    if t is not None:
         t[0] += int(n)
+        return
+    with _LOCK:
+        _load()
+        _roll()
+        _S["cur"]["r2"] = int(_S["cur"].get("r2", 0)) + int(n)
+        _save()
 
 
 def backend_read(n: int, kind: str = "media", r2_n: int = 0) -> None:
