@@ -22,14 +22,18 @@ export default function Library() {
   const [unsplash, setUnsplash] = useState(false)
   const fileRef = useRef(null)
   const folder = query.folder ?? '*'
+  // only the newest load may set items: a search typed after another one (or a filter change) used to be overwritten when
+  // the earlier, slower answer arrived last (the same stale-response race as the Calendar list)
+  const loadSeq = useRef(0)
   const load = () => {
+    const seq = ++loadSeq.current
     const p = new URLSearchParams()
     if (query.q) p.set('q', query.q)
     if (folder !== '*') p.set('folder', folder)
     if (query.tag) p.set('tag', query.tag)
     if (query.kind) p.set('kind', query.kind)
     if (query.smart) p.set(query.smart, 'true')
-    get('/api/media?' + p).then(setItems).catch((e) => toast(e.message, 'err'))
+    get('/api/media?' + p).then((r) => { if (seq === loadSeq.current) setItems(r) }).catch((e) => toast(e.message, 'err'))
     get('/api/media-folders').then(setMeta).catch(() => {})
   }
   useEffect(load, [query.q, folder, query.tag, query.kind, query.smart])
