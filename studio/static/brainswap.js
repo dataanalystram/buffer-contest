@@ -16,11 +16,32 @@ function goConnect() {
   setTimeout(() => { const c = document.getElementById("useInClaude"); if (!c) return; c.scrollIntoView({ block: "start", behavior: "smooth" });
     c.classList.add("integ-flash"); setTimeout(() => c.classList.remove("integ-flash"), 1600); }, 120);
 }
+// Make a post: the allowance notice has a dismiss (×). Hidden for the rest of the local day on this sign-in; a new day or a
+// fresh sign-in (new signed_in_at from /api/session) shows it again. localStorage key per user id; a stale mark is removed.
+const DISMISS = "hq_meter_dismissed:";
+function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function who() { const s = window.S && S.session; const u = s && s.user && s.user.id; return u ? { key: DISMISS + u, mark: `${today()}|${s.signed_in_at || ""}` } : null; }
+function dismissed() {
+  const w = who(); if (!w) return false;
+  try {
+    const v = localStorage.getItem(w.key);
+    if (v && v !== w.mark) localStorage.removeItem(w.key);  // another day or an earlier sign-in: show it again
+    return v === w.mark;
+  } catch (_) { return false; }  // storage blocked: the notice just shows
+}
+function dismiss(box) {
+  const w = who();
+  if (w) { try { localStorage.setItem(w.key, w.mark); } catch (_) { /* storage blocked: hidden until reload */ } }
+  box.hidden = true; box.innerHTML = "";
+  const next = document.getElementById("agChips") || document.getElementById("agEngineSel");
+  if (next && next.focus) { if (!next.hasAttribute("tabindex") && next.tagName === "DIV") next.setAttribute("tabindex", "-1"); next.focus({ preventScroll: true }); }
+}
 function meterHtml(m, where) {
   const pct = Math.max(0, Math.min(100, m.used_pct || 0));
   const lvl = m.out ? "out" : m.nudge ? "low" : "ok";
   return `<div class="bsw-meter ${lvl}" data-testid="${where}-meter-box" data-level="${lvl}">
-    <div class="bsw-row"><span class="bsw-label">AI allowance</span><b class="bsw-left" data-testid="${where}-meter-left">${esc(m.label)}</b></div>
+    <div class="bsw-row"><span class="bsw-label">AI allowance</span><b class="bsw-left" data-testid="${where}-meter-left">${esc(m.label)}</b>${where === "agent"
+      ? `<button class="bsw-x" type="button" aria-label="Dismiss the AI allowance notice for today" title="Dismiss for today" data-testid="agent-meter-dismiss"><svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg></button>` : ""}</div>
     <div class="bsw-bar" role="meter" aria-label="AI allowance used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
     ${m.nudge ? `<p class="bsw-nudge" data-testid="${where}-meter-nudge">${m.out ? "<b>Out of credit?</b> " : ""}Keep going free in Claude: <button class="link bsw-link" type="button" data-bs-connect data-testid="${where}-meter-connect">connect HuhQueue</button></p>` : ""}
   </div>`;
@@ -30,9 +51,10 @@ function paint(m) {
   for (const [id, where] of [["aiMeter", "ai"], ["agMeter", "agent"]]) {
     const box = document.getElementById(id); if (!box) continue;
     // the agent screen only carries it once it matters (70%+); Settings always shows the number
-    const show = !!m && (where === "ai" || m.nudge);
+    const show = !!m && (where === "ai" || (m.nudge && !dismissed()));
     box.hidden = !show; box.innerHTML = show ? meterHtml(m, where) : "";
     box.querySelectorAll("[data-bs-connect]").forEach((b) => (b.onclick = goConnect));
+    const x = box.querySelector("[data-testid=agent-meter-dismiss]"); if (x) x.onclick = () => dismiss(box);
   }
 }
 async function refresh() {
