@@ -450,6 +450,8 @@ class Store:
             for t in ("commerce_links", "commerce_user_day"):
                 if t in have:
                     self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+            if "commerce_credits" in have:  # the person's own monthly meter row; shared ("global") rows stay
+                self.x("DELETE FROM commerce_credits WHERE scope=?", ("u:" + uid,))
             if "take_uploads" in have:  # One take's multipart uploads; the bucket objects are removed by erase_user first
                 # a bucket delete that didn't confirm (del_open / del_ready) keeps its row, cut loose from the person (no
                 # name, no fingerprint, no user), so purge_stale still removes the object; every other row goes now

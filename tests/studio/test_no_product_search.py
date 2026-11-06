@@ -23,8 +23,8 @@ def test_no_trace_in_tracked_text_files():
             text = (ROOT / f).read_text(encoding="utf-8")
         except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
             continue
-        if f == "studio/store.py":   # account erase still clears the two retired tables' old rows (privacy); only those names
-            text = text.replace(WORDS[1] + "_links", "").replace(WORDS[1] + "_user_day", "")
+        if f == "studio/store.py":   # account erase still clears the three retired tables' old rows (privacy); only those names
+            text = text.replace(WORDS[1] + "_links", "").replace(WORDS[1] + "_user_day", "").replace(WORDS[1] + "_credits", "")
         hits += [f"{f}: {m.group(0)}" for m in pat.finditer(text) or [] if m.group(0)]
         hits += [f"{f}: {pat.pattern}" for _ in [0] if pat.search(f)]
     assert not hits, hits[:20]
@@ -42,7 +42,7 @@ def test_no_routes_and_no_mcp_tools(client, human):
 def test_homepage_and_make_a_post_carry_none_of_it(client, human):
     home = client.get("/").text.lower()
     assert "channel" + "3" not in home and "commission" not in home and 'id="shop"' not in home
-    app_html = human.get("/").text if "agMeter" in human.get("/").text else (ROOT / "studio/static/index.html").read_text()
+    app_html = human.get("/").text
     idx = (ROOT / "studio/static/index.html").read_text()
     assert "product-panel" not in idx and "/static/" + WORDS[1] not in idx and "product-panel" not in app_html
     house = (ROOT / "studio/static/house.js").read_text()
