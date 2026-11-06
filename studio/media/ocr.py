@@ -368,7 +368,9 @@ def readable_text(seq: list[list[tuple[str, float]]], limit: int = 500) -> str:
         for i, (core, c) in enumerate(cores):
             if not core:
                 continue
-            near = (i > 0 and good[i - 1]) or (i + 1 < len(good) and good[i + 1])
+            before, after = i > 0 and good[i - 1], i + 1 < len(good) and good[i + 1]
+            # a 1-letter word needs real words on both sides ("Plan a trip"), anything else short one beside it
+            near = (before and after) if len(core) == 1 and _kind(core) == "word" else (before or after)
             k = _kind(core)
             keep = good[i] or (near and c >= ALT_MIN_CONF and (
                 (k == "word" and core.lower() in SHORT_OK) or k == "num" or (k == "mixed" and len(core) >= 2)))

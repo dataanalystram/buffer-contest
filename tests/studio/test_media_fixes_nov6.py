@@ -36,9 +36,9 @@ def test_a_full_height_crop_does_not_add_the_horizontal_dead_zone_vertically():
     pp = punch.plan_shot(shot, [3.94, 9.3], face, (1920, 1080))
     assert pp and pp["peak"] >= 1.1 and [w[0] for w in pp["windows"]] == [0.0, 3.94, 9.3]
     # a face that moves up and down gets a smaller peak, and still never leaves the frame at the peak
-    moving = punch.plan_shot(shot, [3.94], {**face, "dy": 0.05}, (1920, 1080))
+    moving = punch.plan_shot(shot, [3.94], {**face, "dy": 0.08}, (1920, 1080))
     z = moving["peak"] if moving else 1.0
-    assert z < pp["peak"] and face["cy"] - (0.05 + face["h"] / 2) * z >= punch.MARGIN - 1e-9
+    assert z < pp["peak"] and face["cy"] - (0.08 + face["h"] / 2) * z >= punch.MARGIN - 1e-9
     # a crop shorter than the frame can drift vertically: the dead zone counts there, as before
     assert punch.safe_peak(0.2, 0.2, 0.4) == punch.safe_peak(0.2, 0.2, 0.4, punch.DEAD, punch.DEAD)
     short = {"layout": "track", "start": 0, "end": 14, "path": {"crop_w": 506, "crop_h": 900}}
