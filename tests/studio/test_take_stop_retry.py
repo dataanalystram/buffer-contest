@@ -103,6 +103,7 @@ def test_someone_elses_take_cant_be_stopped(human, app):
 def test_a_local_job_cut_off_by_a_restart_runs_again_then_gives_up(human, app, monkeypatch):
     house, st = app.state.house, app.state.store
     ran = []
+    monkeypatch.setattr(house, "sync", True)  # the in-process job is spawned inline, so `ran` is filled before it's read
     monkeypatch.setattr(house.takes, "_mode", lambda: "local")
     monkeypatch.setattr(house.takes, "_local_job", lambda jid: ran.append(jid))
     up = human.post("/api/media", json={"name": "talk.mp4", "data": base64.b64encode(MP4_HEAD + b"0" * 64).decode()}).json()
