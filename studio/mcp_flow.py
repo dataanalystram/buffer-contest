@@ -61,7 +61,7 @@ WORKFLOW = {
         "One user request = one run. Never open a run per channel or per video. A new start_post only for a NEW request from the "
         "person (start_post(new_request: true)); if unsure, ask them and use continue_run(run_id).",
         "A video LINK you fetch (not the person's own upload) goes through the same rights step whichever tool fetches it: the "
-        "answer is needs_user_approval with approval_id; the person approves in HuhQueue -> Inbox -> Approvals (or tells you "
+        "answer is needs_user_approval with approval_id; the person approves in HuhQueue → Inbox → Approvals (or tells you "
         "they own it / have permission: approve_link_ingest with i_own_or_have_rights: true). Then repeat the call with "
         "approval_id. Their standing 'Auto-approve video links' setting answers it at once (rights.basis: auto_approved).",
         "Change one channel later: render the new media (output: n), then replace_channel_media(run_id, channel, media_token) "
@@ -196,7 +196,7 @@ DESCRIPTIONS: dict[str, str] = {
         "get_started (start_post -> find_video -> render_reel(run_id, url) -> create_package(run_id)). It takes no run_id: a "
         "take is not a post run. Links: a YouTube, Vimeo or X video post, or a direct https link to an MP4. Rights first, "
         "the same step every tool uses for a link: the first call answers needs_user_approval with an approval_id and the "
-        "rights statement; the person approves it in HuhQueue -> Inbox -> Approvals (or, only once they tell you they own it "
+        "rights statement; the person approves it in HuhQueue → Inbox → Approvals (or, only once they tell you they own it "
         "or have permission and are responsible for rights, approve_link_ingest with i_own_or_have_rights: true; never "
         "without their word). With their standing 'Auto-approve video links' setting on, it starts at once and says "
         "rights.basis: auto_approved. Then call again with the same url and approval_id; poll list_clips(take_id). The worker "

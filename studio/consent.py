@@ -210,7 +210,7 @@ def _link_rows(store, a: Actor) -> list[dict]:
     out = []
     since = time.time() - APPROVAL_TTL
     for r in store.q("SELECT id, payload, status, result, created, decided FROM approvals WHERE user_id=? AND agent_id=? "
-                     "AND ((status='pending' AND created>?) OR (status='approved' AND COALESCE(decided, created)>?)) "
+                     "AND (created>? OR (status='approved' AND decided>?)) "
                      "ORDER BY id DESC LIMIT 100", (a.uid, a.agent["id"], since, since)):
         try:
             p = json.loads(r["payload"] or "{}")
