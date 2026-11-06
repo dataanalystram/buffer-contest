@@ -827,6 +827,32 @@ def markdown_table() -> str:
     return "\n".join(rows)
 
 
+def _yt_error(msg: str):
+    from .actions import ActionError
+    return ActionError(msg)
+
+
+def youtube_options(yt: dict) -> dict:
+    """Validated YouTube fields as preflight / Buffer options. categoryId: a YouTube category id ('28' = Science &
+    Technology); title up to 100 characters; madeForKids true/false."""
+    out = {}
+    if "title" in yt:
+        t = " ".join(str(yt["title"] or "").split())
+        if not t or len(t) > 100:
+            raise _yt_error("youtube.title is 1-100 characters.")
+        out["title"] = t
+    if "categoryId" in yt:
+        c = str(yt["categoryId"]).strip()
+        if not c.isdigit() or not 1 <= int(c) <= 44:
+            raise _yt_error("youtube.categoryId is a YouTube category id, e.g. '28' (Science & Technology).")
+        out["category_id"] = c
+    if "madeForKids" in yt:
+        if not isinstance(yt["madeForKids"], bool):
+            raise _yt_error("youtube.madeForKids is true or false.")
+        out["made_for_kids"] = yt["madeForKids"]
+    return out
+
+
 if __name__ == "__main__":  # pragma: no cover
     import sys
     if "--markdown" in sys.argv:

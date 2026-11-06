@@ -345,8 +345,7 @@ class Studio:
         if p.get("youtube") not in (None, {}):  # youtube: {title, categoryId, madeForKids} (6 Nov 2026: preflight blocked YouTube)
             if not isinstance(p["youtube"], dict):
                 raise ActionError("youtube is {title, categoryId, madeForKids}.")
-            from .mcp_client_brain import youtube_options
-            opts = {**opts, **youtube_options(p["youtube"])}
+            opts = {**opts, **preflight.youtube_options(p["youtube"])}
         before = self._preflight(ch, text, urls, mode, opts)
         want = p.get("fixes") or "all"
         ids = [f["id"] for f in before["fixes"]] if want == "all" else [str(x) for x in want]

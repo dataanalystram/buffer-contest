@@ -1227,25 +1227,7 @@ def _yt_options(pk: list[dict], args: dict) -> None:
             p["options"] = {**(p.get("options") or {}), **opts}
 
 
-def youtube_options(yt: dict) -> dict:
-    """Validated YouTube fields as preflight / Buffer options. categoryId: a YouTube category id ('28' = Science &
-    Technology); title up to 100 characters; madeForKids true/false."""
-    out = {}
-    if "title" in yt:
-        t = " ".join(str(yt["title"] or "").split())
-        if not t or len(t) > 100:
-            raise ActionError("youtube.title is 1-100 characters.")
-        out["title"] = t
-    if "categoryId" in yt:
-        c = str(yt["categoryId"]).strip()
-        if not c.isdigit() or not 1 <= int(c) <= 44:
-            raise ActionError("youtube.categoryId is a YouTube category id, e.g. '28' (Science & Technology).")
-        out["category_id"] = c
-    if "madeForKids" in yt:
-        if not isinstance(yt["madeForKids"], bool):
-            raise ActionError("youtube.madeForKids is true or false.")
-        out["made_for_kids"] = yt["madeForKids"]
-    return out
+from .preflight import youtube_options  # noqa: E402,F401  worker-safe home (actions.autofix uses it too)
 
 
 def _library_for_run(h, a: Actor, rid: int, pk: list[dict], slot: int = 1) -> None:

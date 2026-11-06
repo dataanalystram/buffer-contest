@@ -273,7 +273,7 @@ from . import mcp_flow as _flow  # noqa: E402  get_started, the flow tools' desc
 
 TOOLS += _flow.TOOLS
 READ_ONLY |= _flow.READ_ONLY
-_flow.apply(TOOLS)
+_flow.apply(TOOLS, _cb.SERVER_AI_NOTE)
 
 from . import mcp_registry as _registry  # noqa: E402  search_tools, describe_tool, call_tool (5 Nov 2026)
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from .actions import ActionError
+from .actions import ActionError  # the only studio import: actions reaches this module, and the worker reaches actions
 
 
 class StepError(ActionError):
@@ -225,7 +225,7 @@ TOOLS: list[dict[str, Any]] = [
 READ_ONLY = {"get_started"}
 
 
-def apply(tools: list[dict]) -> None:
+def apply(tools: list[dict], server_ai_note: str = "") -> None:
     """The flow tools' descriptions, prerequisites and deprecation notes over the modules' own text (idempotent)."""
     for t in tools:
         n = t["name"]
@@ -238,9 +238,8 @@ def apply(tools: list[dict]) -> None:
         old = t["description"]
         if n in DESCRIPTIONS:
             new = DESCRIPTIONS[n]
-            from .mcp_client_brain import SERVER_AI_NOTE
-            if SERVER_AI_NOTE.strip() in old and SERVER_AI_NOTE.strip() not in new:
-                new = new.rstrip() + SERVER_AI_NOTE
+            if server_ai_note and server_ai_note.strip() in old and server_ai_note.strip() not in new:
+                new = new.rstrip() + server_ai_note
         elif n in ("clips_from_video", "split_video"):
             new = ONE_TAKE_PREFIX + old
         elif n.startswith("post_"):
