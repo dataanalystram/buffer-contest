@@ -119,7 +119,8 @@ ADDED_COLUMNS = {
               ("tokens_out", "INTEGER"), ("cost_usd", "REAL"), ("ip", "TEXT"), ("ua", "TEXT")),
     "agent_tokens": (("client_id", "TEXT"), ("client_info", "TEXT"), ("app", "TEXT"),
                      ("allow_paid_apis", "INTEGER"),  # the person's "Allow paid APIs" switch for this app (studio/consent.py)
-                     ("admin_hourly_cap", "INTEGER")),  # an admin's hourly request cap for this token (studio/opsctl.py), NULL = none  # the person's "Allow paid APIs" switch for this app (studio/consent.py), off by default
+                     ("admin_hourly_cap", "INTEGER"),
+                     ("parent_id", "INTEGER")),  # the token an MCP refresh rotated this one from (admin revoke follows it)  # an admin's hourly request cap for this token (studio/opsctl.py), NULL = none  # the person's "Allow paid APIs" switch for this app (studio/consent.py), off by default
     # which agent token made the run (studio/run_discipline.py: one request = one run, run caps, cleanup)
     "agent_runs": (("agent_id", "INTEGER"),),
     "render_jobs": (("result", "TEXT"),),

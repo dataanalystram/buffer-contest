@@ -82,11 +82,11 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         host = redirect_host(redirect_uri or (c["redirect_uris"] or [""])[0])
         return f"{c['client_name']} via {host}" + ("" if verified_host(host) else " (unverified)")
 
-    def mint(uid: str, c: dict, policy: str, cap: int, redirect_uri: str = "", refreshed: bool = False) -> dict:
+    def mint(uid: str, c: dict, policy: str, cap: int, redirect_uri: str = "", refreshed: bool = False, parent: int | None = None) -> dict:
         from . import activity
         tok = studio.create_agent_token(Actor(uid), f"{label(c, redirect_uri)} (connected)", policy, cap, days=ACCESS_DAYS)
         app = activity.classify_app(c.get("client_name", ""), redirect_host(redirect_uri or (c["redirect_uris"] or [""])[0]))
-        store.x("UPDATE agent_tokens SET client_id=?, app=? WHERE id=?", (c["client_id"], app, tok["id"]))  # attributable writes
+        store.x("UPDATE agent_tokens SET client_id=?, app=?, parent_id=? WHERE id=?", (c["client_id"], app, parent, tok["id"]))  # attributable writes
         activity.note(client_id=c["client_id"])
         store.audit(uid, "you", "oauth_token_refreshed" if refreshed else "oauth_token_issued", "auth",
                     {"client": activity.clean_text(c.get("client_name"), 80), "app": activity.APPS.get(app, app), "token_id": tok["id"]})
@@ -268,9 +268,20 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
             old = store.q("SELECT revoked FROM agent_tokens WHERE id=?", (row["agent_id"],))
             if not old or old[0]["revoked"] or store.blocked(row["user_id"]):
                 return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
-            store.x("UPDATE oauth_refresh SET used=1 WHERE token_hash=?", (row["token_hash"],))
-            store.x("UPDATE agent_tokens SET revoked=1 WHERE id=?", (row["agent_id"],))
-            return JSONResponse(mint(row["user_id"], c, row["policy"], row["daily_cap"], refreshed=True), headers={"Cache-Control": "no-store"})
+            # conditional claims: two refreshes, or a refresh and a revoke, can't both win (store.xn counts changed rows)
+            if not store.xn("UPDATE oauth_refresh SET used=1 WHERE token_hash=? AND used=0", (row["token_hash"],)):
+                return _err("invalid_grant", "Refresh token is unknown, used or expired.")
+            if not store.xn("UPDATE agent_tokens SET revoked=1 WHERE id=? AND revoked=0", (row["agent_id"],)):
+                return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
+            out = mint(row["user_id"], c, row["policy"], row["daily_cap"], refreshed=True, parent=row["agent_id"])
+            # an admin revoke that landed while this refresh ran marks the parent 2 (studio/admin.py revoke_token): the
+            # successor it may not have seen goes too
+            if (store.q("SELECT revoked FROM agent_tokens WHERE id=?", (row["agent_id"],)) or [{"revoked": 0}])[0]["revoked"] == 2:
+                for k in store.q("SELECT id FROM agent_tokens WHERE parent_id=?", (row["agent_id"],)):
+                    store.x("UPDATE agent_tokens SET revoked=2 WHERE id=?", (k["id"],))
+                    store.x("UPDATE oauth_refresh SET used=1 WHERE agent_id=?", (k["id"],))
+                return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
+            return JSONResponse(out, headers={"Cache-Control": "no-store"})
         return _err("unsupported_grant_type", "Use authorization_code or refresh_token.")
 
 

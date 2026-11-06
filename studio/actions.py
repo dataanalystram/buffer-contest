@@ -444,7 +444,7 @@ class Studio:
         from . import opsctl
         if opsctl.paused("ai", self.store):  # the operator's AI kill switch: the rule drafter, no call on our key
             ai = {"base_url": "", "api_key": "", "model": ""}
-        if self.s.ai_base_url and demo_guard.is_demo(a.uid):  # the free sample's AI allowance, reserved atomically first
+        if ai["base_url"] and demo_guard.is_demo(a.uid):  # the free sample's AI allowance (not spent while AI is paused)
             if not demo_guard.reserve(self.store, a.uid, "ai"):
                 ai = {"base_url": "", "api_key": "", "model": ""}
         drafts = drafter.draft(chans, article, ai=ai, tone=tone, thread=thread)

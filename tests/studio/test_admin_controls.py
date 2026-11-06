@@ -271,3 +271,67 @@ def test_publishing_pause_keeps_a_spread_token_usable(app, human, adm, monkeypat
         takes.place(_A("acc_1"), 5, {"confirm_token": "spread-ct"})
     assert e.value.status == 503
     assert store.q("SELECT used FROM confirms WHERE token_hash=?", (sha("spread-ct"),))[0]["used"] == 0
+
+
+# ------------------------------------------------------------------ CodeRabbit round 3: the MCP refresh lineage
+def _mcp_grant(store, uid="acc_1"):
+    from studio.store import sha
+    store.x("INSERT INTO oauth_clients(client_id,client_name,redirect_uris,created) VALUES(?,?,?,?) ON CONFLICT(client_id) DO NOTHING",
+            ("cl_1", "Claude", '["https://claude.ai/cb"]', time.time()))
+    tid = store.x("INSERT INTO agent_tokens(user_id,name,token_hash,policy,daily_cap,channels,created,expires,client_id) "
+                  "VALUES(?,?,?,?,?,?,?,?,?)", (uid, "Claude", "p" * 64, "review", 10, None, time.time(), time.time() + 3600, "cl_1"))
+    store.x("INSERT INTO oauth_refresh(token_hash,client_id,user_id,agent_id,policy,daily_cap,expires) VALUES(?,?,?,?,?,?,?)",
+            (sha("rt-lineage"), "cl_1", uid, tid, "review", 10, time.time() + 3600))
+    return tid
+
+
+def _refresh(app, rt="rt-lineage"):
+    return TestClient(app, base_url="https://hq.test").post("/oauth/token", data={"grant_type": "refresh_token", "client_id": "cl_1",
+                                                                                  "refresh_token": rt})
+
+
+def test_admin_revoke_follows_the_refresh_lineage_not_other_connections(app, human, adm):
+    store = app.state.store
+    tid = _mcp_grant(store)
+    other = store.x("INSERT INTO agent_tokens(user_id,name,token_hash,policy,daily_cap,channels,created,expires,client_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)", ("acc_1", "Claude 2", "q" * 64, "review", 10, None, time.time(), time.time() + 3600, "cl_1"))
+    r = _refresh(app)
+    assert r.status_code == 200
+    succ = store.q("SELECT id, revoked FROM agent_tokens WHERE parent_id=?", (tid,))
+    assert len(succ) == 1 and succ[0]["revoked"] == 0
+    new_bearer = TestClient(app, base_url="https://hq.test", headers={"Authorization": f"Bearer {r.json()['access_token']}"})
+    assert new_bearer.get("/api/me").status_code == 200
+    out = adm.post(f"/api/admin/users/acc_1/tokens/{tid}/revoke").json()     # the old (rotated) row: its successor goes too
+    assert out["successors_revoked"] == 1
+    assert new_bearer.get("/api/me").status_code == 401
+    assert _refresh(app, r.json()["refresh_token"]).status_code == 400
+    assert store.q("SELECT revoked FROM agent_tokens WHERE id=?", (other,))[0]["revoked"] == 0   # a separate connection stays
+
+
+def test_admin_revoke_during_a_refresh_revokes_the_successor_it_made(app, human, adm, monkeypatch):
+    store, studio = app.state.store, app.state.studio
+    tid = _mcp_grant(store)
+    real = studio.create_agent_token
+
+    def racing(*a, **k):                     # the admin's revoke lands after the refresh claimed the old row, before mint ends
+        out = real(*a, **k)
+        assert adm.post(f"/api/admin/users/acc_1/tokens/{tid}/revoke").status_code == 200
+        return out
+    monkeypatch.setattr(studio, "create_agent_token", racing)
+    r = _refresh(app)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+    assert all(x["revoked"] for x in store.q("SELECT revoked FROM agent_tokens WHERE user_id='acc_1' AND client_id='cl_1'"))
+
+
+def test_a_refresh_after_an_admin_revoke_is_refused(app, human, adm):
+    store = app.state.store
+    tid = _mcp_grant(store)
+    adm.post(f"/api/admin/users/acc_1/tokens/{tid}/revoke")
+    assert _refresh(app).status_code == 400
+    assert not store.q("SELECT 1 AS x FROM agent_tokens WHERE parent_id=?", (tid,))
+
+
+def test_sample_ai_allowance_is_not_spent_while_ai_is_paused():
+    from pathlib import Path
+    src = (Path(admin.__file__).parent / "actions.py").read_text()
+    assert 'if ai["base_url"] and demo_guard.is_demo(a.uid)' in src

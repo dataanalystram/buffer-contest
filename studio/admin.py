@@ -292,15 +292,26 @@ def _token(store, uid: str, tid) -> dict:
 
 
 def revoke_token(store, admin_uid: str, uid: str, tid) -> dict:
-    """Revoke one token for good (its MCP refresh is refused too: studio/mcp_oauth.py checks agent_tokens.revoked)."""
+    """Revoke one token for good, with every successor its MCP refreshes rotated into (``parent_id``), never a token the
+    person connected separately. ``revoked=2`` is the admin's mark: a refresh that was already running when this landed
+    sees it after minting and revokes the successor it made (studio/mcp_oauth.py). The refresh tokens go too."""
     from . import opsctl
     t = _token(store, uid, tid)
+    ids, frontier = [t["id"]], [t["id"]]
     with store.tx():
-        store.x("UPDATE agent_tokens SET revoked=1 WHERE id=? AND user_id=?", (t["id"], uid))
-        log(store, admin_uid, "revoke_token", uid, {"token": t["id"], "was_revoked": bool(t["revoked"])})
-    opsctl.token_reset(t["id"])
+        while frontier and len(ids) < 10_000:
+            marks = ",".join("?" * len(frontier))
+            frontier = [r["id"] for r in store.q(f"SELECT id FROM agent_tokens WHERE user_id=? AND parent_id IN ({marks})",
+                                                 (uid, *frontier)) if r["id"] not in ids]
+            ids += frontier
+        marks = ",".join("?" * len(ids))
+        store.x(f"UPDATE agent_tokens SET revoked=2 WHERE user_id=? AND id IN ({marks})", (uid, *ids))
+        store.x(f"UPDATE oauth_refresh SET used=1 WHERE user_id=? AND agent_id IN ({marks})", (uid, *ids))
+        log(store, admin_uid, "revoke_token", uid, {"token": t["id"], "was_revoked": bool(t["revoked"]), "successors": len(ids) - 1})
+    for i in ids:
+        opsctl.token_reset(i)
     store.audit(uid, "system", "token_revoked_by_admin", "safety", {"id": t["id"]})
-    return {"id": t["id"], "revoked": True}
+    return {"id": t["id"], "revoked": True, "successors_revoked": len(ids) - 1}
 
 
 def _cap(v, lo: int, hi: int, what: str):
