@@ -54,7 +54,8 @@ def test_dismiss_hides_the_notice_until_a_new_day_or_a_fresh_sign_in(live, chrom
         ctx.route(lambda u: not u.startswith(base), lambda r: r.abort())
         page = ctx.new_page()
         page.on("pageerror", lambda e: errors.append(str(e)))
-        page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+        # console errors, except the hermetic route's own aborts of off-site requests (fonts, avatars): net::ERR_FAILED
+        page.on("console", lambda m: errors.append(m.text) if m.type == "error" and "net::ERR_FAILED" not in m.text else None)
         page.goto(base + "/?tab=agent")
         box, x = page.get_by_test_id("agent-meter"), page.get_by_test_id("agent-meter-dismiss")
         x.wait_for()
