@@ -142,7 +142,8 @@ def test_own_photo_run_goes_through_the_agent(client):
 
 def test_reel_without_worker_falls_back_to_slides(client, monkeypatch):
     monkeypatch.setattr(house.House, "local_video_ok", staticmethod(lambda: False))
-    r = client.post("/api/agent/runs", json={"query": "x", "format": "reel", "channel_ids": ["demo_ig"]}).json()
+    # a real topic: a bare "x" is no longer searched (intent first, 6 Nov 2026: it gets a question instead)
+    r = client.post("/api/agent/runs", json={"query": "AI agents that book travel", "format": "reel", "channel_ids": ["demo_ig"]}).json()
     assert r["status"] == "ready", r["steps"]
     pk = r["result"]["packages"][0]
     # no source video at all: NO VIDEO -> NO REEL (owner, 1 Nov 2026), the carousel with the note, never a slideshow
