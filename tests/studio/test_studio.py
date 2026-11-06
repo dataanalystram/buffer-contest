@@ -210,7 +210,10 @@ def test_review_policy_holds_agent_posts_until_human_approves(human, fake):
 
 def test_draft_policy_never_publishes(human, fake):
     tok = agent_token(human, "draft")
-    _, pv = mcp_call(human, tok, "preview_post", {"channel_id": "ch_x", "text": "x", "mode": "now"})
+    # 6 Nov 2026: a drafts-only token asking for "now" fails fast with a structured error, before any Buffer call
+    res, out = mcp_call(human, tok, "preview_post", {"channel_id": "ch_x", "text": "x", "mode": "now"})
+    assert res["isError"] and res["structuredContent"]["code"] == "policy_drafts_only" and fake.created == []
+    _, pv = mcp_call(human, tok, "preview_post", {"channel_id": "ch_x", "text": "x", "mode": "draft"})
     _, res = mcp_call(human, tok, "submit_post", {"confirm_token": pv["confirm_token"]})
     assert res["mode"] == "draft" and fake.created[-1]["saveToDraft"] is True and "shareNow" not in str(fake.created[-1])
 

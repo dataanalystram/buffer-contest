@@ -361,7 +361,8 @@ def channel_media(studio, a, rid: int, channel: str, token: str = "") -> dict:
     or the person's file); a start_post / create_package run (and any other post run) takes the file in place."""
     from . import run_discipline
     row = run_discipline.own_run(studio.store, a, int(rid or 0))  # 404 for a missing or foreign run, before anything
-    if row["kind"] == "agent":
+    # a make_post run, or a pre-agent run asked to regenerate ("Redo with the agent", 409), stays on the agent path
+    if row["kind"] == "agent" or (not token and row["kind"] not in ("client", "take")):
         return studio.house.brain.channel_media(a, int(rid), channel, token)
     from .mcp_client_brain import client_channel_media
     return client_channel_media(studio, a, int(rid), channel, token)
