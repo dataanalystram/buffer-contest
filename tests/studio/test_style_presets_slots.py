@@ -409,8 +409,15 @@ def test_edit_slot_moves_the_next_draft_and_switching_off_stops_it(app, human, f
     assert BS.tick_once(bs, now=datetime.fromisoformat(r["next_fire_iso"]) - timedelta(minutes=30)) == 0 and len(fake.created) == 2
     r = c.patch(f"/api/templates/slots/{s['id']}", json={"active": True}).json()
     assert r["active"] == 1
-    assert BS.tick_once(bs, now=datetime.fromisoformat(r["next_fire_iso"]) - timedelta(minutes=30)) == 1
+    nf = datetime.fromisoformat(r["next_fire_iso"])
+    assert nf == occ  # switched back on before that Wednesday: the same occurrence, already drafted for ch_li
+    BS.tick_once(bs, now=nf - timedelta(minutes=30))
+    assert len(fake.created) == 2  # never a second draft for one occurrence and channel, even after an edit
+    # the week after, it drafts again (ch_li only now)
+    store.x("UPDATE template_slots SET next_fire=? WHERE id=?", (nxt.timestamp(), s["id"]))
+    assert BS.tick_once(bs, now=nxt - timedelta(minutes=30)) == 1
     assert len(fake.created) == 3 and fake.created[-1]["channelId"] == "ch_li"
+    assert fake.created[-1]["dueAt"][:19] == nxt.isoformat()[:19]
 
 
 def test_slot_in_the_accounts_time_zone_new_york(app, human, fake):
@@ -472,7 +479,7 @@ def test_a_failed_preset_insert_leaves_the_ledger_as_it_was(app, human, monkeypa
     """Delete, switch-off and insert are one transaction: a failure part way keeps the earlier preset's rules on."""
     c, store = human, app.state.store
     c.post("/api/ledger/presets/hook_first/apply", json={})
-    snap = lambda: [tuple(r.values()) for r in store.q("SELECT id, active, rule FROM style_rules ORDER BY id")]  # noqa: E731
+    snap = lambda: [tuple(dict(r).values()) for r in store.q("SELECT id, active, rule FROM style_rules ORDER BY id")]  # noqa: E731
     before = snap()
     real = store.x
     calls = {"n": 0}
