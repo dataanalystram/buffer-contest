@@ -31,7 +31,8 @@ def _uid(c):
 
 # ------------------------------------------------------------------------------------------------ A) presets
 def test_every_preset_has_every_part_and_instagram_never_more_than_five_hashtags():
-    assert [p["id"] for p in style_presets.PRESETS] == ["hook_first", "educator", "build_in_public", "news_fast", "podcast_clip"]
+    assert [p["id"] for p in style_presets.PRESETS] == ["hook_first", "educator", "build_in_public", "news_fast", "podcast_clip", "data_led",
+                                                         "linkedin_thread", "genz_casual"]
     for p in style_presets.listing():
         for k in ("hook_formulas", "first_line", "structure", "on_screen", "cta", "length", "hashtags", "banned"):
             assert p[k], (p["id"], k)

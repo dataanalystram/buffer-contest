@@ -267,6 +267,21 @@ def styled_draft(service: str, article: dict, style: dict) -> str:
         quoted = next((m.group(1) for x in sents for m in [re.search(r"[\"“]([^\"“”]{12,}?)[\"”]", x)] if m), "")
         q = (quoted or idea or t).strip("\"“” ").rstrip(",")
         lines = [_short(f"“{q}”", 120), f"From {site}: {_short(t, 140)}" if site else _short(t, 140)]
+    elif shape == "data":
+        num = t if _NUM.search(t) else next((x for x in sents if _NUM.search(x)), "")
+        ctx = next((x for x in sents if _NUM.search(x) and x not in (num, t)), "")
+        means = next((x for x in sents if x not in (num, ctx)), "")
+        lines = [_short(num or t, 120), f"For scale: {_short(ctx, 180)}" if ctx else "",
+                 f"What it changes: {_short(means, 180)}" if means else "", f"Source: {site}" if site else ""]
+    elif shape == "thread":
+        pts = [s for s in sents if s != t][:4]
+        hook = _short(t, 120)
+        body = "\n\n".join(f"\u2192 {_short(s, 170)}" for s in pts) or idea
+        lines = [hook, body, f"The takeaway: {_short(idea, 160)}" if idea and idea not in pts else ""]
+    elif shape == "casual":
+        hook = _short(f"ok so {t.rstrip('.')}", 120)  # names keep their capitals (OpenAI, Meta): casual, never inaccurate
+        care = next((s for s in sents if s != idea), "")
+        lines = [hook, f"basically: {_short(idea, 150)}" if idea else "", f"why you should care: {_short(care, 150)}" if care else ""]
     else:  # hook_idea_payoff
         # the most surprising number first: the title when it carries one, else the first sentence that does
         num = t if _NUM.search(t) else next((x for x in sents if _NUM.search(x)), "")
@@ -274,8 +289,8 @@ def styled_draft(service: str, article: dict, style: dict) -> str:
         payoff = next((s for s in sents if s not in (num, idea)), "")
         lines = [hook, _short(idea, 200) if idea and idea != hook else "", f"Why it matters: {_short(payoff, 180)}" if payoff else ""]
     lim = min(limit_for(service), int((style.get("length") or {}).get(service) or TARGET.get(service, limit_for(service))))
-    n = (style.get("hashtags") or {}).get(service, 3)
-    tags = " ".join(_hashtags(article, max(0, min(int(n), 5))))
+    n = max(0, min(int((style.get("hashtags") or {}).get(service, 3)), 5))
+    tags = " ".join(_hashtags(article, n)) if n else ""  # a zero cap means none (they'd only cost room before being removed)
     # the hook and the one CTA always stay: the middle lines give way first, then the hashtags
     tail = [x for x in (link, style.get("cta") or "", tags) if x]
     head, middle = lines[0], [x for x in lines[1:] if x]

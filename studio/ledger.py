@@ -94,10 +94,11 @@ def ensure(store) -> None:
     # builtin, the rest -> the person's own
     from . import provenance
     provenance.add_columns(store, "style_rules")
-    store.x("UPDATE style_rules SET created_by_source = CASE WHEN origin='agent' OR source LIKE 'agent:%' THEN 'mcp' "
-            "WHEN origin='preset' THEN 'builtin' ELSE 'user' END WHERE created_by_source IS NULL")
+    # LIKE patterns are bound: psycopg reads a literal % in the SQL as a placeholder
+    store.x("UPDATE style_rules SET created_by_source = CASE WHEN origin='agent' OR source LIKE ? THEN 'mcp' "
+            "WHEN origin='preset' THEN 'builtin' ELSE 'user' END WHERE created_by_source IS NULL", ("agent:%",))
     store.x("UPDATE style_rules SET client_name = substr(source, 13) WHERE created_by_source='mcp' AND client_name IS NULL "
-            "AND source LIKE 'agent:agent:%'")
+            "AND source LIKE ?", ("agent:agent:%",))
     store.x("CREATE INDEX IF NOT EXISTS style_edits_user ON style_edits(user_id, id)")
     store.x("CREATE INDEX IF NOT EXISTS review_links_hash ON review_links(token_hash)")
 
@@ -420,7 +421,10 @@ class Ledger:
         text = str(body.get("rule") or body.get("correction") or "").strip()[:500]
         if text and (r.get("check") or {}).get("type") == "guideline":  # a preset's guidance: new wording, same kind of rule
             text = re.sub(r"[\x00-\x1f<>]", "", text)[:300]
-            changes.update(check={**r["check"], "text": text}, rule=text, kind="text", source=r.get("source") or "")
+            chk = {**r["check"], "text": text}
+            if chk.get("area") == "cta" and "line" in chk:  # the sign-off the free drafter writes follows the new wording
+                chk["line"] = text.removeprefix("Sign off with:").strip()[:120] or chk["line"]
+            changes.update(check=chk, rule=text, kind="text", source=r.get("source") or "")
             text = ""
         if text:
             found = brand.parse_correction(text)
@@ -824,8 +828,9 @@ TOOLS = [
 ]
 TOOLS += [
     {"name": "list_style_presets", "description": "Built-in Style Ledger presets for people whose captions need structure: Hook-first short-form "
-     "(hook in 1-2 s, pattern interrupts, one idea, payoff, one CTA), Educator / explainer, Founder build-in-public, News fast and "
-     "accurate, Podcast clip. Each lists its hook formulas, first-line rules, caption length and hashtag cap per network, on-screen "
+     "(hook in 1-2 s, pattern interrupts, one idea, payoff, one CTA), Plain explainer, Founder story, Punchy news hook, Data-led, "
+     "Thread-style LinkedIn, Gen Z casual, "
+     "Podcast clip. Each lists its hook formulas, first-line rules, caption length and hashtag cap per network, on-screen "
      "text rules, CTA and banned phrases, and the exact ledger rules applying it would add (with their index for edits). Read-only.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "apply_style_preset", "description": "Add a built-in preset's rules to the person's Style Ledger (only when they chose it). "

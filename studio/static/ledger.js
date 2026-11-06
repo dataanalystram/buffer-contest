@@ -20,10 +20,10 @@
     const rows = full ? full.rules.map((r, i) => {
       const c = r.check || {};
       const num = c.type === "max_hashtags" || c.type === "max_length";
-      const field = c.type === "guideline" ? `<input class="lg-pre-in" data-i="${i}" data-k="text" value="${esc(r.rule)}" aria-label="Rule ${i + 1}">`
-        : num ? `<span>${esc(r.rule.replace(/\d+/, "#"))}</span> <input class="lg-pre-n" type="number" min="0" max="${c.type === "max_hashtags" ? (r.scope[0] === "instagram" ? 5 : 30) : 5000}" data-i="${i}" data-k="n" value="${esc(c.n)}" aria-label="${esc(r.rule)}">`
+      const field = c.type === "guideline" ? `<input class="lg-pre-in" data-testid="preset-rule-text" data-i="${i}" data-k="text" value="${esc(r.rule)}" aria-label="Rule ${i + 1}">`
+        : num ? `<span>${esc(r.rule.replace(/\d+/, "#"))}</span> <input class="lg-pre-n" data-testid="preset-rule-n" type="number" min="0" max="${c.type === "max_hashtags" ? (r.scope[0] === "instagram" ? 5 : 30) : 5000}" data-i="${i}" data-k="n" value="${esc(c.n)}" aria-label="${esc(r.rule)}">`
         : `<span>${esc(r.rule)}</span>`;
-      return `<li data-testid="preset-rule"><label class="chk"><input type="checkbox" data-keep="${i}" checked aria-label="Keep rule ${i + 1}"></label>${field}</li>`;
+      return `<li data-testid="preset-rule"><label class="chk"><input type="checkbox" data-testid="preset-rule-keep" data-keep="${i}" checked aria-label="Keep rule ${i + 1}"></label>${field}</li>`;
     }).join("") : "";
     return `<li class="lg-pre${p.active ? " on" : ""}" data-testid="preset-card" data-preset="${esc(p.id)}">
       <div class="lg-txt"><b>${esc(p.name)}</b>${p.active ? ` <span class="lg-src preset" data-testid="preset-active">In use</span>` : ""}
@@ -31,7 +31,7 @@
       <p class="sm">${esc(p.summary)}</p>
       ${open ? (full ? `<form class="lg-pre-form" data-pre-form="${esc(p.id)}"><p class="muted sm">Untick a rule to leave it out, or change its words or number. Everything stays editable afterwards.</p>
           <ul class="lg-pre-rules">${rows}</ul>
-          <div class="row tight"><button class="btn sm" type="submit" data-testid="preset-apply">Add these rules</button><button class="btn2 sm" type="button" data-pre-close>Cancel</button></div></form>`
+          <div class="row tight"><button class="btn sm" type="submit" data-testid="preset-apply">Add these rules</button><button class="btn2 sm" type="button" data-testid="preset-cancel" data-pre-close>Cancel</button></div></form>`
         : `<small class="muted">Loading…</small>`)
         : `<button type="button" class="btn2 sm" data-pre="${esc(p.id)}" data-testid="preset-preview">Preview and edit</button>`}</li>`;
   }

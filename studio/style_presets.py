@@ -62,7 +62,7 @@ PRESETS: list[dict] = [
     },
     {
         "id": "educator",
-        "name": "Educator / explainer",
+        "name": "Plain explainer",
         "for": "Teaching one thing clearly: tutorials, how-tos, breakdowns",
         "summary": "Name the problem, teach it in numbered steps, recap, ask people to save it.",
         "hook_formulas": [
@@ -94,7 +94,7 @@ PRESETS: list[dict] = [
     },
     {
         "id": "build_in_public",
-        "name": "Founder build-in-public",
+        "name": "Founder story",
         "for": "Founders sharing what they ship, the numbers and the lessons",
         "summary": "A real number or date up front, what happened, the honest lesson, a question that invites replies.",
         "hook_formulas": [
@@ -123,7 +123,7 @@ PRESETS: list[dict] = [
     },
     {
         "id": "news_fast",
-        "name": "News, fast and accurate",
+        "name": "Punchy news hook",
         "for": "Breaking and daily news: speed without losing accuracy",
         "summary": "Who did what, attributed, in the first line; why it matters; what's next; the source. No hype.",
         "hook_formulas": [
@@ -177,6 +177,96 @@ PRESETS: list[dict] = [
         "banned": ["in this episode we talk about", "hey guys", "make sure to subscribe"],
         "video": "20-60 s (house default)",
         "drafter": {"hook": "quote", "shape": "quote"},
+    },
+    {
+        "id": "data_led",
+        "name": "Data-led",
+        "for": "Stories with a figure at their heart: benchmarks, prices, growth, surveys",
+        "summary": "Lead with one sourced number, give it a comparison so it means something, say what it changes, name the source.",
+        "hook_formulas": [
+            "{number} {unit}: {what it measures}",
+            "{thing} went from {before} to {after}",
+            "{number} times {faster/cheaper/bigger} than {the usual comparison}",
+            "The one figure in {story} worth remembering",
+        ],
+        "first_line": [
+            "The first line carries the number and what it measures",
+            "Round only where the source rounds; never make a number bigger than the source",
+            "First line under 125 characters",
+        ],
+        "structure": [
+            "The number, a comparison that gives it scale, what it changes, the source",
+            "One number per post as the star; any second number is the comparison",
+            "Say what was measured and by whom before saying what it means",
+        ],
+        "on_screen": ["The number large on screen, the unit and source small beneath it", "No chart without labelled axes"],
+        "cta": {"line": "Save this for the numbers.", "rules": ["One CTA: save it, or check the source"]},
+        "length": {"instagram": 500, "tiktok": 350, "youtube": 500, "facebook": 500, "linkedin": 1100, "twitter": 260, "threads": 450},
+        "hashtags": {"instagram": 3, "tiktok": 3, "youtube": 2, "facebook": 2, "linkedin": 3, "twitter": 1, "threads": 1, "bluesky": 1},
+        "banned": ["studies show", "skyrocketed", "literally", "mind-blowing", "game-changer"],
+        "extra_rules": ["always credit the source"],
+        "video": "15-40 s (house default)",
+        "drafter": {"hook": "number", "shape": "data"},
+    },
+    {
+        "id": "linkedin_thread",
+        "name": "Thread-style LinkedIn",
+        "for": "LinkedIn posts that read like a short thread: one line per thought, easy to skim",
+        "summary": "A one-line hook, short one-sentence lines with space between them, a takeaway, then one real question.",
+        "hook_formulas": [
+            "{thing} just changed {what}. Here's what it means:",
+            "{n} things {story} tells us about {topic}:",
+            "Everyone is talking about {thing}. Few are talking about {the overlooked part}.",
+            "I read {source} so you don't have to. The short version:",
+        ],
+        "first_line": [
+            "The first line works on its own before \u201csee more\u201d: a claim or a promise of a list",
+            "First line under 125 characters",
+            "No \u201cI'm excited to share\u201d openers",
+        ],
+        "structure": [
+            "One sentence per line, a blank line between them",
+            "3-5 points, each starting with \u2192 or a number",
+            "End with a one-line takeaway, then one question",
+            "Write for a smart reader outside your field: no unexplained acronyms",
+        ],
+        "on_screen": ["A document or carousel: one point per slide, the hook on slide one"],
+        "cta": {"line": "What's your take?", "rules": ["End on one specific question, not \u201cThoughts?\u201d or \u201cAgree?\u201d"]},
+        "length": {"instagram": 600, "tiktok": 400, "youtube": 600, "facebook": 700, "linkedin": 1500, "twitter": 260, "threads": 450},
+        "hashtags": {"instagram": 3, "tiktok": 3, "youtube": 2, "facebook": 2, "linkedin": 3, "twitter": 1, "threads": 1, "bluesky": 1},
+        "banned": ["thrilled to share", "excited to share", "let that sink in", "agree?", "thoughts?", "game-changer"],
+        "video": "30-60 s (house default)",
+        "drafter": {"hook": "list", "shape": "thread"},
+    },
+    {
+        "id": "genz_casual",
+        "name": "Gen Z casual",
+        "for": "Relaxed, conversational posts for a young audience on TikTok, Reels and Threads",
+        "summary": "Talk like a friend explaining it in a group chat: short lines, plain words, a bit of humour, no corporate voice.",
+        "hook_formulas": [
+            "ok so {thing} just happened",
+            "nobody is talking about {the part that matters}",
+            "{thing}, but explained like you have 10 seconds",
+            "pov: you just found out {fact}",
+        ],
+        "first_line": [
+            "The first line sounds like a person talking, not a press release",
+            "First line under 125 characters",
+            "Still say what happened: casual, never vague",
+        ],
+        "structure": [
+            "Short lines; one thought each",
+            "Plain words: if a friend would ask \u201cmeaning what?\u201d, say it simpler",
+            "A little humour is fine; facts stay exact",
+            "At most one emoji per line, and none needed",
+        ],
+        "on_screen": ["Big casual text, a few words at a time", "Captions on every spoken line"],
+        "cta": {"line": "follow for more like this", "rules": ["One CTA, said casually"]},
+        "length": {"instagram": 300, "tiktok": 250, "youtube": 300, "facebook": 300, "linkedin": 700, "twitter": 260, "threads": 350},
+        "hashtags": {"instagram": 3, "tiktok": 4, "youtube": 2, "facebook": 2, "linkedin": 2, "twitter": 1, "threads": 1, "bluesky": 1},
+        "banned": ["synergy", "leverage", "dear followers", "in today's fast-paced world", "game-changer", "hello fellow"],
+        "video": "10-30 s (house default)",
+        "drafter": {"hook": "casual", "shape": "casual"},
     },
 ]
 BY_ID = {p["id"]: p for p in PRESETS}
@@ -322,7 +412,7 @@ def apply(house, a, pid: str, edits: dict | None = None) -> dict:
     now = time.time()
     replaced, switched_off = 0, []
     from .userlocks import held
-    with held(a.uid, "ledger"):
+    with held(a.uid, "ledger"), store.tx():  # the deletes, switch-offs and inserts commit together or not at all
         existing = house.rules(a, include_inactive=True)
         for r in existing:  # the same preset applied again: its old rules go (no duplicates)
             if preset_of(r) == p["id"]:
@@ -343,14 +433,13 @@ def apply(house, a, pid: str, edits: dict | None = None) -> dict:
                     old["active"] = False
                     switched_off.append({"id": old["id"], "rule": old["rule"], "why": "replaced by the preset's rule"})
         added = []
-        with store.tx():
-            for nr in rules:
-                rid = store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created,scope,origin,examples,evidence,updated,"
-                              "created_by_source,client_name,model) VALUES(?,?,?,?,?,1,?,?,?,?,?,?,?,?,?)",
-                              (a.uid, nr["kind"], json.dumps(nr["check"]), nr["rule"][:300], SOURCE_PREFIX + p["name"], now,
-                               json.dumps(nr["scope"]), "preset", "[]", "[]", now, prov["created_by_source"], prov["client_name"],
-                               prov["model"]))
-                added.append({**nr, "id": rid})
+        for nr in rules:
+            rid = store.x("INSERT INTO style_rules(user_id,kind,spec,rule,source,active,created,scope,origin,examples,evidence,updated,"
+                          "created_by_source,client_name,model) VALUES(?,?,?,?,?,1,?,?,?,?,?,?,?,?,?)",
+                          (a.uid, nr["kind"], json.dumps(nr["check"]), nr["rule"][:300], SOURCE_PREFIX + p["name"], now,
+                           json.dumps(nr["scope"]), "preset", "[]", "[]", now, prov["created_by_source"], prov["client_name"],
+                           prov["model"]))
+            added.append({**nr, "id": rid})
     store.audit(a.uid, a.label, "apply_style_preset", "write", {"preset": p["id"], "rules": len(added), "replaced": replaced,
                                                                 "switched_off": len(switched_off)})
     return {"preset": {"id": p["id"], "name": p["name"]}, "added": len(added), "replaced": replaced,
