@@ -330,6 +330,9 @@ def _key_for(store, uid: str, *, operator: bool = False) -> tuple[str, bool]:
 def _request(key: str, method: str, path: str, *, uid: str, body: dict | None = None, params: dict | None = None,
              byo: bool = False) -> dict:
     """One request to api.trychannel3.com through netguard. Errors never carry the key (it travels in a header only)."""
+    from . import opsctl
+    if opsctl.paused("channel3"):  # the operator's kill switch (studio/opsctl.py): nothing leaves, nothing is spent
+        raise CommerceError(opsctl.message("channel3"), 503)
     url = API + path + (("?" + urlencode(params, doseq=True)) if params else "")
     if (urlparse(url).hostname or "") != HOST:
         raise CommerceError("Only api.trychannel3.com is allowed.", 400)
@@ -526,6 +529,9 @@ def search_products(studio, a: Actor, args: dict) -> dict:
     hit = _cget(ck)
     if hit is not None:
         return {**hit, "cached": True, "credits_spent": 0, "usage": usage(store, a.uid)}
+    from . import opsctl
+    if opsctl.paused("channel3", store):  # the operator's kill switch: before any credit is reserved
+        raise CommerceError(opsctl.message("channel3"), 503)
     spend(store, a.uid, byo, key=key)   # hard stop BEFORE the request leaves the server
     data = _request(key, "POST", "/v1/search", uid=a.uid, body=body, byo=byo)
     products = [card(p) for p in (data.get("products") or [])[:lim] if isinstance(p, dict) and p.get("id")]

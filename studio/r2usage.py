@@ -259,6 +259,9 @@ def redirect_ok(store=None) -> bool:
 
 def can_write(nbytes: int = 0, store=None) -> str | None:
     """None when a new write of ``nbytes`` stays inside the caps; otherwise the reason (shown to the operator)."""
+    from . import opsctl
+    if opsctl.paused("r2_uploads", store):  # the operator's kill switch (studio/opsctl.py)
+        return opsctl.message("r2_uploads")
     cap = caps()
     o, have = ops(store), stored_bytes(store) + _reserved()
     _warn("Class A operations", o["A"], cap["A"])

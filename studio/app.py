@@ -67,6 +67,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     demo_guard.ensure(store)
     from . import r2usage
     r2usage.bind(store)  # R2 free-tier operation counts live in this database (studio/r2usage.py)
+    from . import opsctl
+    opsctl.bind(store)  # the operator's kill switches and per-token caps (studio/opsctl.py, docs/ADMIN.md)
     # migration: every sealed row moves to the current TOKEN_KEY (the log gets counts only, never values)
     print(f"token keys: {'dedicated TOKEN_KEY' if store.dedicated_key else 'derived from SESSION_SECRET'}; "
           f"{store.rotate_keys()}", flush=True)
@@ -150,6 +152,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             if not a:
                 failed_token(auth[7:].strip(), request)
                 raise ActionError("Invalid or revoked agent token.", 401)
+            counted = getattr(request.state, "hq_token_counted", False)  # once per request, however often actor() runs
+            request.state.hq_token_counted = True
+            if not counted and opsctl.token_hit(a.agent):  # an admin's hourly cap for this token (studio/opsctl.py): reads count too
+                raise ActionError("This token reached the hourly request limit the HuhQueue operator set. Try again later.", 429)
             if write:  # the kill switch stops every agent write, whatever the route (SECURITY_RULES 4)
                 studio.kill_switch_check(a, request.url.path)
             return a
@@ -1264,6 +1270,10 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             meta = mcp_oauth.resource_metadata_url(s.public_url)
             return JSONResponse({"error": "Agent token required: Authorization: Bearer hq_..."}, status_code=401,
                                 headers={"WWW-Authenticate": f'Bearer realm="huhqueue", resource_metadata="{meta}"'})
+        wait = opsctl.token_hit(a.agent)  # an admin's hourly cap for this token (studio/opsctl.py)
+        if wait:
+            return JSONResponse({"error": "This token reached the hourly request limit the HuhQueue operator set. Try again later."},
+                                status_code=429, headers={"Retry-After": str(wait)})
         msg = await request.json()
         # Tools run in the thread pool, never on the event loop: submit_post waits on Buffer, and Buffer downloads our
         # /m/ media while it decides. Run inline, the whole server stopped answering for the call (Render logs, 2 Nov 2026:

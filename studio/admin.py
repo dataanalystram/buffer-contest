@@ -16,6 +16,9 @@ runs and posts, storage used, status), and three actions, each CSRF-checked and 
   hashed id, the time and how. The admin audit row keeps the hashed id, time and admin.
 
 An admin can't block or delete their own account.
+
+Also (docs/ADMIN.md): one account's agent / MCP tokens with an hourly request cap, the daily cap and Revoke; the global
+kill switches (studio/opsctl.py); and the credit / free-tier meters. Every write is CSRF-checked and in ``admin_audit``.
 """
 from __future__ import annotations
 
@@ -246,6 +249,166 @@ def delete(store, admin_uid: str, uid: str, confirm, house=None) -> dict:
     return {"deleted": True, "subject_hash": subject_hash(uid)}
 
 
+# ------------------------------------------------------------------ agent / MCP tokens of one account (admin view)
+TOKEN_ID_RE = re.compile(r"[0-9]{1,9}")  # fits a 32-bit id column, so a long id is a clean 404, never a database error
+
+
+def tokens_of(store, uid: str) -> list[dict]:
+    """One account's agent and MCP tokens: never the token or its hash; requests this hour (this process) and audited
+    actions in the last 24 h."""
+    from . import opsctl
+    _target(store, uid)
+    day = time.time() - 86400
+    acts = _by_user_token(store, uid, day)
+    out = []
+    for r in store.q("SELECT id,name,app,client_id,policy,daily_cap,admin_hourly_cap,created,expires,revoked,last_used "
+                     "FROM agent_tokens WHERE user_id=? ORDER BY id DESC LIMIT 200", (uid,)):
+        d = dict(r)
+        out.append({"id": d["id"], "name": d["name"] or "", "app": d.get("app") or "", "mcp": bool(d.get("client_id")),
+                    "policy": d["policy"] or "", "daily_cap": d["daily_cap"], "hourly_cap": d.get("admin_hourly_cap"),
+                    "created": d["created"], "expires": d["expires"], "revoked": bool(d["revoked"]),
+                    "expired": bool(d["expires"] and float(d["expires"]) < time.time()), "last_used": d["last_used"],
+                    "requests_this_hour": opsctl.token_window(d["id"]), "actions_24h": int(acts.get(d["id"]) or 0)})
+    return out
+
+
+def _by_user_token(store, uid: str, since: float) -> dict:
+    try:
+        return {r["token_id"]: r["n"] for r in store.q(
+            "SELECT token_id, COUNT(*) AS n FROM audit WHERE user_id=? AND token_id IS NOT NULL AND ts>? GROUP BY token_id",
+            (uid, since))}
+    except Exception:  # noqa: BLE001  (an older store without the column)
+        return {}
+
+
+def _token(store, uid: str, tid) -> dict:
+    _target(store, uid)
+    if not isinstance(tid, str) or not TOKEN_ID_RE.fullmatch(tid):
+        raise AdminError("No such token.", 404)
+    rows = store.q("SELECT id, revoked, daily_cap, admin_hourly_cap FROM agent_tokens WHERE id=? AND user_id=?", (int(tid), uid))
+    if not rows:
+        raise AdminError("No such token.", 404)   # a token of another account answers the same as a missing one
+    return dict(rows[0])
+
+
+def _lineage(store, uid: str, tid: int) -> list[int]:
+    """This token and every successor its MCP refreshes rotated into (``parent_id``), never a separate connection."""
+    ids, frontier = [tid], [tid]
+    while frontier and len(ids) < 10_000:
+        marks = ",".join("?" * len(frontier))
+        frontier = [r["id"] for r in store.q(f"SELECT id FROM agent_tokens WHERE user_id=? AND parent_id IN ({marks})",
+                                             (uid, *frontier)) if r["id"] not in ids]
+        ids += frontier
+    return ids
+
+
+def revoke_token(store, admin_uid: str, uid: str, tid) -> dict:
+    """Revoke one token for good, with every successor its MCP refreshes rotated into (``parent_id``), never a token the
+    person connected separately. ``revoked=2`` is the admin's mark: a refresh that was already running when this landed
+    sees it after minting and revokes the successor it made (studio/mcp_oauth.py). The refresh tokens go too."""
+    from . import opsctl
+    t = _token(store, uid, tid)
+    with store.tx():
+        ids = _lineage(store, uid, t["id"])
+        marks = ",".join("?" * len(ids))
+        store.x(f"UPDATE agent_tokens SET revoked=2 WHERE user_id=? AND id IN ({marks})", (uid, *ids))
+        store.x(f"UPDATE oauth_refresh SET used=1 WHERE user_id=? AND agent_id IN ({marks})", (uid, *ids))
+        log(store, admin_uid, "revoke_token", uid, {"token": t["id"], "was_revoked": bool(t["revoked"]), "successors": len(ids) - 1})
+    for i in ids:
+        opsctl.token_reset(i)
+    store.audit(uid, "system", "token_revoked_by_admin", "safety", {"id": t["id"]})
+    return {"id": t["id"], "revoked": True, "successors_revoked": len(ids) - 1}
+
+
+def _cap(v, lo: int, hi: int, what: str):
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+        raise AdminError(f"{what} must be a whole number from {lo} to {hi}, or null.", 400)
+    return v
+
+
+def limit_token(store, admin_uid: str, uid: str, tid, body: dict) -> dict:
+    """Set one token's hourly request cap (every request, reads included; null clears it) and/or its daily action cap."""
+    from . import opsctl
+    t = _token(store, uid, tid)
+    if not isinstance(body, dict) or not ({"hourly_cap", "daily_cap"} & set(body)):
+        raise AdminError("Give hourly_cap (1-100000 or null) and/or daily_cap (1-100).", 400)
+    hourly = _cap(body.get("hourly_cap"), 1, opsctl.HOURLY_MAX, "hourly_cap") if "hourly_cap" in body else t["admin_hourly_cap"]
+    daily = t["daily_cap"]
+    if "daily_cap" in body:
+        daily = _cap(body.get("daily_cap"), 1, 100, "daily_cap")
+        if daily is None:
+            raise AdminError("daily_cap must be a whole number from 1 to 100.", 400)
+    with store.tx():
+        # the token and its refresh successors: a refresh racing this save can't carry the old caps forward
+        ids = _lineage(store, uid, t["id"])
+        marks = ",".join("?" * len(ids))
+        store.x(f"UPDATE agent_tokens SET admin_hourly_cap=?, daily_cap=? WHERE user_id=? AND id IN ({marks})", (hourly, daily, uid, *ids))
+        store.x(f"UPDATE oauth_refresh SET daily_cap=? WHERE user_id=? AND agent_id IN ({marks})", (daily, uid, *ids))
+        log(store, admin_uid, "limit_token", uid, {"token": t["id"], "hourly_cap": {"from": t["admin_hourly_cap"], "to": hourly},
+                                                   "daily_cap": {"from": t["daily_cap"], "to": daily}})
+    for i in ids:
+        opsctl.token_reset(i)
+    return {"id": t["id"], "hourly_cap": hourly, "daily_cap": daily}
+
+
+# ------------------------------------------------------------------ kill switches
+def switches(store) -> list[dict]:
+    from . import opsctl
+    st = opsctl.state(store)
+    return [{"name": n, "label": label, **st[n]} for n, label in opsctl.SWITCHES.items()]
+
+
+def set_switch(store, admin_uid: str, name, body: dict) -> dict:
+    from . import opsctl
+    if not isinstance(name, str) or name not in opsctl.SWITCHES:
+        raise AdminError("No such switch.", 404)
+    on = body.get("paused") if isinstance(body, dict) else None
+    if not isinstance(on, bool):
+        raise AdminError("paused must be true or false.", 400)
+    reason = body.get("reason", "")
+    reason = reason[:200] if isinstance(reason, str) else ""
+    with store.tx():
+        opsctl.set_switch(store, name, on, subject_hash(admin_uid), reason)
+        log(store, admin_uid, "pause" if on else "resume", "", {"switch": name, **({"reason": reason} if reason else {})})
+    opsctl.forget(store)
+    return {"name": name, "paused": on}
+
+
+# ------------------------------------------------------------------ usage meters (numbers only)
+def usage(store) -> dict:
+    """What the service spends on its own keys and free tiers, against the caps enforced in code."""
+    from . import budget, commerce, free_quota
+    out: dict = {}
+    def spent(scope: str) -> float:
+        try:
+            return round(budget._spent(store, scope), 4)
+        except Exception:  # noqa: BLE001  (the budget table is created on the first AI call: nothing spent yet)
+            return 0.0
+    c, oc = budget.caps(), budget.oci_caps()
+    out["claude"] = {"spent_usd": spent("global"), "cap_usd": c["global"], "testing_spent_usd": spent("testing"),
+                     "testing_cap_usd": c["testing"]}
+    out["oci"] = {"spent_usd": spent(budget.OCI_GLOBAL), "cap_usd": oc["global"]}
+    try:
+        commerce.ensure(store)
+        m = commerce._month()
+        out["channel3"] = {"month": m, "used": commerce._used(store, m, "global"), "cap": commerce.monthly_cap(),
+                           "configured": bool(commerce.operator_key())}
+    except Exception as e:  # noqa: BLE001
+        out["channel3"] = {"error": e.__class__.__name__}
+    free: dict = {}
+    since = time.time() - 86400
+    for prov, lim in free_quota.LIMITS.items():
+        try:
+            r = store.q("SELECT COUNT(*) AS n, COALESCE(SUM(units),0) AS u FROM free_usage WHERE provider=? AND t>=?", (prov, since))[0]
+            free[prov] = {"requests_24h": int(r["n"] or 0), "units_24h": float(r["u"] or 0), "max_requests_day": lim["rpd"]}
+        except Exception:  # noqa: BLE001  (the ledger table is created on first use)
+            free[prov] = {"requests_24h": 0, "units_24h": 0.0, "max_requests_day": lim["rpd"]}
+    out["free_tiers"] = free
+    return out
+
+
 # ------------------------------------------------------------------ routes
 def _int(v, default: int, lo: int, hi: int) -> int:
     try:
@@ -340,3 +503,38 @@ def add_routes(app, store, studio, cookie: str) -> None:
     def admin_audit(request: Request):
         gate(request)
         return {"items": audit_rows(store, _int(request.query_params.get("limit"), 100, 1, 500))}
+
+    @app.get("/api/admin/users/{uid}/tokens", include_in_schema=False)
+    def admin_tokens(uid: str, request: Request):
+        gate(request)
+        try:
+            return {"items": tokens_of(store, uid)}
+        except AdminError as e:
+            return JSONResponse({"error": str(e)}, status_code=e.status)
+
+    @app.post("/api/admin/users/{uid}/tokens/{tid}/revoke", include_in_schema=False)
+    async def admin_revoke_token(uid: str, tid: str, request: Request):
+        me = gate(request, write=True)
+        return await act(lambda: revoke_token(store, me, uid, tid))
+
+    @app.post("/api/admin/users/{uid}/tokens/{tid}/limit", include_in_schema=False)
+    async def admin_limit_token(uid: str, tid: str, request: Request):
+        me = gate(request, write=True)
+        b = await body_of(request)
+        return await act(lambda: limit_token(store, me, uid, tid, b))
+
+    @app.get("/api/admin/switches", include_in_schema=False)
+    def admin_switches(request: Request):
+        gate(request)
+        return JSONResponse({"items": switches(store)}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/admin/switches/{name}", include_in_schema=False)
+    async def admin_set_switch(name: str, request: Request):
+        me = gate(request, write=True)
+        b = await body_of(request)
+        return await act(lambda: set_switch(store, me, name, b))
+
+    @app.get("/api/admin/usage", include_in_schema=False)
+    def admin_usage(request: Request):
+        gate(request)
+        return JSONResponse(usage(store), headers={"Cache-Control": "no-store"})

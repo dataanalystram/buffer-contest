@@ -191,6 +191,10 @@ class Takes(TakeBin):
             token, url = url[len(base):], ""
         if not token and not url and not upload_id:
             raise ActionError("Upload a video (media_token), or give a link to the video (a YouTube / Vimeo / X post, or a file).")
+        if url:  # the operator's kill switch (studio/opsctl.py): before any DNS lookup, oEmbed fetch or consent work
+            from . import opsctl
+            if opsctl.paused("link_ingest", self.store):
+                raise ActionError(opsctl.message("link_ingest"), 503)
         platform_url, credit = "", str(body.get("credit") or "").strip()[:160]
         if token:
             meta = self.h.media_meta(a, token)
@@ -1208,6 +1212,8 @@ class Takes(TakeBin):
         payload = json.loads(row["payload"])
         if payload.get("kind") != "spread" or payload.get("take") != rid:
             raise ActionError("That confirm_token is for something else.", 400)
+        if not (a.kind == "agent" and a.agent["policy"] == "review"):  # publishing paused: the spread token stays usable
+            self.studio._publishing_open(a)
         self.store.x("UPDATE confirms SET used=1 WHERE token_hash=?", (row["token_hash"],))
         plan = payload["plan"]
         results = []

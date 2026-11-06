@@ -82,11 +82,11 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         host = redirect_host(redirect_uri or (c["redirect_uris"] or [""])[0])
         return f"{c['client_name']} via {host}" + ("" if verified_host(host) else " (unverified)")
 
-    def mint(uid: str, c: dict, policy: str, cap: int, redirect_uri: str = "", refreshed: bool = False) -> dict:
+    def mint(uid: str, c: dict, policy: str, cap: int, redirect_uri: str = "", refreshed: bool = False, parent: int | None = None) -> dict:
         from . import activity
         tok = studio.create_agent_token(Actor(uid), f"{label(c, redirect_uri)} (connected)", policy, cap, days=ACCESS_DAYS)
         app = activity.classify_app(c.get("client_name", ""), redirect_host(redirect_uri or (c["redirect_uris"] or [""])[0]))
-        store.x("UPDATE agent_tokens SET client_id=?, app=? WHERE id=?", (c["client_id"], app, tok["id"]))  # attributable writes
+        store.x("UPDATE agent_tokens SET client_id=?, app=?, parent_id=? WHERE id=?", (c["client_id"], app, parent, tok["id"]))  # attributable writes
         activity.note(client_id=c["client_id"])
         store.audit(uid, "you", "oauth_token_refreshed" if refreshed else "oauth_token_issued", "auth",
                     {"client": activity.clean_text(c.get("client_name"), 80), "app": activity.APPS.get(app, app), "token_id": tok["id"]})
@@ -96,6 +96,15 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
                                              time.time() + REFRESH_DAYS * 86400))
         return {"access_token": tok["token"], "token_type": "Bearer", "expires_in": ACCESS_DAYS * 86400,
                 "refresh_token": refresh, "scope": "huhqueue"}
+
+    def inherit_caps(parent: int, child: int) -> None:
+        """Copy the parent's current daily and admin hourly caps onto its refresh successor (and the successor's refresh
+        record), and carry the hourly request window over, so a refresh never resets an operator's limit."""
+        from . import opsctl
+        store.x("UPDATE agent_tokens SET daily_cap=COALESCE((SELECT p.daily_cap FROM agent_tokens p WHERE p.id=?), daily_cap), "
+                "admin_hourly_cap=(SELECT p.admin_hourly_cap FROM agent_tokens p WHERE p.id=?) WHERE id=?", (parent, parent, child))
+        store.x("UPDATE oauth_refresh SET daily_cap=(SELECT daily_cap FROM agent_tokens WHERE id=?) WHERE agent_id=?", (child, child))
+        opsctl.token_inherit(parent, child)
 
     # ---------------------------------------------------------------- discovery
     @app.get("/.well-known/oauth-protected-resource", include_in_schema=False)
@@ -268,9 +277,27 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
             old = store.q("SELECT revoked FROM agent_tokens WHERE id=?", (row["agent_id"],))
             if not old or old[0]["revoked"] or store.blocked(row["user_id"]):
                 return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
-            store.x("UPDATE oauth_refresh SET used=1 WHERE token_hash=?", (row["token_hash"],))
-            store.x("UPDATE agent_tokens SET revoked=1 WHERE id=?", (row["agent_id"],))
-            return JSONResponse(mint(row["user_id"], c, row["policy"], row["daily_cap"], refreshed=True), headers={"Cache-Control": "no-store"})
+            # conditional claims: two refreshes, or a refresh and a revoke, can't both win (store.xn counts changed rows)
+            if not store.xn("UPDATE oauth_refresh SET used=1 WHERE token_hash=? AND used=0", (row["token_hash"],)):
+                return _err("invalid_grant", "Refresh token is unknown, used or expired.")
+            if not store.xn("UPDATE agent_tokens SET revoked=1 WHERE id=? AND revoked=0", (row["agent_id"],)):
+                return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
+            # the successor keeps the caps in force on the parent now (an operator's daily / hourly limit), not the
+            # ones granted at connect time; read after the claim, synced again after the mint (admin.limit_token also
+            # writes every successor), so a limit saved while this runs is never lost (CodeRabbit, PR #128)
+            pc = store.q("SELECT daily_cap FROM agent_tokens WHERE id=?", (row["agent_id"],))
+            daily = (pc[0]["daily_cap"] if pc else None) or row["daily_cap"]
+            out = mint(row["user_id"], c, row["policy"], daily, refreshed=True, parent=row["agent_id"])
+            child = store.q("SELECT agent_id FROM oauth_refresh WHERE token_hash=?", (sha(out["refresh_token"]),))[0]["agent_id"]
+            inherit_caps(row["agent_id"], child)
+            # an admin revoke that landed while this refresh ran marks the parent 2 (studio/admin.py revoke_token): the
+            # successor it may not have seen goes too
+            if (store.q("SELECT revoked FROM agent_tokens WHERE id=?", (row["agent_id"],)) or [{"revoked": 0}])[0]["revoked"] == 2:
+                for k in store.q("SELECT id FROM agent_tokens WHERE parent_id=?", (row["agent_id"],)):
+                    store.x("UPDATE agent_tokens SET revoked=2 WHERE id=?", (k["id"],))
+                    store.x("UPDATE oauth_refresh SET used=1 WHERE agent_id=?", (k["id"],))
+                return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
+            return JSONResponse(out, headers={"Cache-Control": "no-store"})
         return _err("unsupported_grant_type", "Use authorization_code or refresh_token.")
 
 

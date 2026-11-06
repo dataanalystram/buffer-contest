@@ -98,6 +98,9 @@ class Ledger:
 
     def reserve(self, provider, units) -> tuple[bool, str]:
         provider, units = clean(provider, units)
+        from . import opsctl
+        if opsctl.paused("ai", self.store):  # the operator's AI kill switch: the worker falls back to local, never paid
+            return False, opsctl.message("ai")
         with _lock:
             self._table()
             t = self.now()

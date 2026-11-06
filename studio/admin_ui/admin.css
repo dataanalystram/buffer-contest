@@ -27,4 +27,9 @@ td .adm-actions{display:flex;gap:6px;flex-wrap:wrap}
 dialog{border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);max-width:460px}
 dialog label{display:block;margin-top:10px}dialog input{display:block;width:100%;margin-top:6px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+#tokDlg{max-width:980px;width:calc(100% - 32px)}
+#tokDlg input{display:inline-block;width:96px;margin:0}
+.adm-switches{display:flex;flex-wrap:wrap;gap:12px}
+.adm-switches div{border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:210px;display:flex;flex-direction:column;gap:6px}
+.adm-switches div.paused{border-color:var(--danger)}.adm-switches small{color:var(--muted)}
 .adm-loading{padding:32px 12px;text-align:center}.adm-loading .hq-vt-in{margin:0 auto}.adm-loading button{margin-left:12px}

@@ -441,7 +441,10 @@ class Studio:
             except drafter.FetchError as e:
                 raise ActionError(str(e))
         ai = {"base_url": self.s.ai_base_url, "api_key": self.s.ai_api_key, "model": self.s.ai_model}
-        if self.s.ai_base_url and demo_guard.is_demo(a.uid):  # the free sample's AI allowance, reserved atomically first
+        from . import opsctl
+        if opsctl.paused("ai", self.store):  # the operator's AI kill switch: the rule drafter, no call on our key
+            ai = {"base_url": "", "api_key": "", "model": ""}
+        if ai["base_url"] and demo_guard.is_demo(a.uid):  # the free sample's AI allowance (not spent while AI is paused)
             if not demo_guard.reserve(self.store, a.uid, "ai"):
                 ai = {"base_url": "", "api_key": "", "model": ""}
         drafts = drafter.draft(chans, article, ai=ai, tone=tone, thread=thread)
@@ -628,6 +631,8 @@ class Studio:
         if (row["agent_id"] or None) != (a.agent["id"] if a.agent else None):
             raise ActionError("This confirm_token belongs to a different caller.", 403)
         self._guard_write(a, "submit_post")
+        if not (a.kind == "agent" and a.agent["policy"] == "review"):  # a held post waits for approval: holding it still works
+            self._publishing_open(a)                                   # before the confirm token is used up
         self.store.x("UPDATE confirms SET used=1 WHERE token_hash=?", (row["token_hash"],))
         clean = json.loads(row["payload"])
         if a.kind == "agent" and a.agent["policy"] == "review":
@@ -640,7 +645,17 @@ class Studio:
             clean["mode"] = "draft"
         return self._send(a, clean, action="submit_post")
 
+    def _publishing_open(self, a: Actor) -> None:
+        """The operator's publishing kill switch (studio/opsctl.py), before any send work. The sample workspace never
+        reaches Buffer, so it is not stopped; BufferClient.create_post / edit_post keep the same guard as a backstop."""
+        if demo.is_demo(a.uid):
+            return
+        from . import opsctl
+        if opsctl.paused("publishing", self.store):
+            raise BufferError(opsctl.message("publishing"), 503)
+
     def _send(self, a: Actor, clean: dict, action: str) -> dict:
+        self._publishing_open(a)
         ch = {c["id"]: c for c in self.channels(Actor(a.uid))}.get(clean["channel_id"])
         if not ch:
             raise ActionError("That channel is no longer in your Buffer organization.", 404)

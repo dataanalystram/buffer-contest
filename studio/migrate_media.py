@@ -107,6 +107,9 @@ def migrate(store, bucket: "r2.Bucket", limit: int | None = None, log=print, kee
             f"R2 storage cap reached ({cap['bytes'] / r2usage.GB:.1f} GB, HQ_R2_MAX_BYTES)"
         if not why and r2usage.ops(u)["A"] + 1 > cap["A"]:
             why = f"R2 monthly write cap reached ({cap['A']:,} Class A operations, HQ_R2_MAX_CLASS_A)"
+        if not why:  # the operator's r2_uploads kill switch (studio/opsctl.py) stops the copy too
+            from . import opsctl
+            why = opsctl.message("r2_uploads") if opsctl.paused("r2_uploads", u) else ""
         why = why or r2usage.can_read(u) or ""
         if why:
             stats["capped"] = why
