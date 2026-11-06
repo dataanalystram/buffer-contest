@@ -22,7 +22,7 @@ import uuid
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, brain_llm, budget, chat_context, demo_guard, demo_view, editorial_tools, intake, intent, llm, template_pick, untrusted
+from . import activity, brain_llm, budget, chat_context, demo_guard, demo_view, editorial_tools, intake, intent, llm, template_pick, untrusted, video_names
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -711,7 +711,7 @@ class Brain:
         parts = []
         for p in pk:
             n = len(p.get("media_urls") or [])
-            what = fmt.get(p.get("format"), p.get("format") or "post")
+            what = p.get("video_name") or fmt.get(p.get("format"), p.get("format") or "post")  # Reel, Short, Video...
             if p.get("format") == "carousel":
                 what += f", {n} slides"
             state = "in Buffer" if p.get("sent") else ("on hold" if p.get("status") == "hold" else "ready")
@@ -937,10 +937,10 @@ class Brain:
             self.call(a, rid, tools, "write_captions", {"channel_ids": reel + feed})
         self.call(a, rid, tools, "check", {})
         res = self.h.run(a, rid)["result"]
-        reels = [p["service"].title() for p in res.get("packages") or [] if p.get("format") == "reel"]
+        reels = [video_names.phrase(p["service"], p.get("video_name") or "Reel") for p in res.get("packages") or [] if p.get("format") == "reel"]
         cr = res.get("video_credit") or "the creator"
-        if reels:
-            self._say(a, rid, f"Done: {', '.join(reels)} {'is' if len(reels) == 1 else 'are'} now a Reel of the video, credited “{cr}” "
+        if reels:  # each network's own word: an Instagram Reel, a YouTube Short, a LinkedIn video
+            self._say(a, rid, f"Done: the video is now your {', '.join(reels)}, credited “{cr}” "
                               "on screen and in the caption. It's in **Your posts** below.")
         else:
             self._say(a, rid, "I couldn't make the Reel from that video. Upload the file with **Upload video** below and I'll use it.")
