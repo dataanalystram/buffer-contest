@@ -98,7 +98,7 @@
       <small>${t.revoked ? "revoked" : t.expired ? "expired" : "active"}</small></td>
       <td>${esc(when(t.last_used))}</td><td>${esc(t.requests_this_hour)}</td><td>${esc(t.actions_24h)}</td>
       <td><input type="number" min="1" max="100000" step="1" data-cap="hourly" data-tid="${esc(t.id)}" data-testid="admin-token-hourly" value="${t.hourly_cap ?? ""}" placeholder="none"${dead ? " disabled" : ""} aria-label="Hourly cap"></td>
-      <td><input type="number" min="1" max="100" step="1" data-cap="daily" data-tid="${esc(t.id)}" data-testid="admin-token-daily" value="${esc(t.daily_cap)}"${dead ? " disabled" : ""} aria-label="Daily cap"></td>
+      <td><input type="number" min="1" max="500" step="1" data-cap="daily" data-tid="${esc(t.id)}" data-testid="admin-token-daily" value="${esc(t.daily_cap)}"${dead ? " disabled" : ""} aria-label="Buffer posts per day at most"></td>
       <td><div class="adm-actions"><button type="button" data-tok="save" data-tid="${esc(t.id)}" data-testid="admin-token-save"${dead ? " disabled" : ""}>Save caps</button>
       <button type="button" class="danger" data-tok="revoke" data-tid="${esc(t.id)}" data-testid="admin-token-revoke"${t.revoked ? " disabled" : ""}>Revoke</button></div></td></tr>`;
   }

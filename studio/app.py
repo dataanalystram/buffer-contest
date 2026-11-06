@@ -808,11 +808,11 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.post("/api/agent-tokens")
     def new_token(request: Request, body: dict = Body(...)):
         return studio.create_agent_token(actor(request, write=True), body.get("name", ""), body.get("policy", "review"),
-                                         int(body.get("daily_cap", 10)), body.get("channels") or None, int(body.get("days", 30)))
+                                         int(body.get("daily_cap", 50)), body.get("channels") or None, int(body.get("days", 30)))
 
     @app.patch("/api/agent-tokens/{token_id}")
     def token_cap(token_id: int, request: Request, body: dict = Body(...)):
-        """{"daily_cap": 1-100}, {"allow_paid_apis": true|false} and/or {"policy": review|draft|trusted, "confirm": true}
+        """{"daily_cap": 1-500 Buffer posts a day}, {"allow_paid_apis": true|false} and/or {"policy": review|draft|trusted, "confirm": true}
         (humans only)."""
         a = actor(request, write=True)
         out: dict = {"id": token_id}

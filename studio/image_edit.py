@@ -167,8 +167,8 @@ def png_within_cap(im, cap: int | None = None) -> tuple[bytes, Any]:
 
 # ------------------------------------------------------------------------------------------------ storage
 def _audit(h, a: Actor, action: str, detail: dict) -> None:
-    """One activity row per successful image call; the action names are in Studio.COUNTED, so an agent token's
-    daily cap counts them (REST and MCP alike)."""
+    """One activity row per successful image call (Studio.COUNTED activity). Not a Buffer write, so it never uses up an
+    agent token's daily cap (6 Nov 2026)."""
     h.store.audit(a.uid, a.label, action, "write", detail)
 
 

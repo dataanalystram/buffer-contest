@@ -154,7 +154,7 @@ def test_admin_lists_limits_and_revokes_one_token(app, human, adm):
     assert "token" not in items[0] and "token_hash" not in items[0] and tok not in adm.get("/api/admin/users/acc_1/tokens").text
 
     # bad values answer 400, never 500
-    for body in ({"hourly_cap": "5"}, {"hourly_cap": 0}, {"hourly_cap": True}, {"daily_cap": 101}, {"daily_cap": None}, {}, []):
+    for body in ({"hourly_cap": "5"}, {"hourly_cap": 0}, {"hourly_cap": True}, {"daily_cap": 501}, {"daily_cap": None}, {}, []):
         assert adm.post(f"/api/admin/users/acc_1/tokens/{tid}/limit", json=body).status_code == 400, body
     # a token of another account, a missing one and a bad id all answer 404
     other = store.x("INSERT INTO agent_tokens(user_id,name,token_hash,policy,daily_cap,channels,created,expires) VALUES(?,?,?,?,?,?,?,?)",

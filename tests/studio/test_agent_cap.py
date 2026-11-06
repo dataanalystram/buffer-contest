@@ -20,9 +20,18 @@ def test_human_raises_cap_and_agent_gets_more_actions(client, human):
 def test_cap_bounds_and_unknown_token(client, human):
     agent_token(human)
     tid = _tid(human)
-    for bad in (0, 101, "x", None):
+    for bad in (0, 501, "x", None):
         assert human.patch(f"/api/agent-tokens/{tid}", json={"daily_cap": bad}).status_code == 400
     assert human.patch("/api/agent-tokens/99999", json={"daily_cap": 20}).status_code == 404
+    r = human.patch(f"/api/agent-tokens/{tid}", json={"daily_cap": 500})
+    assert r.status_code == 200 and r.json()["daily_cap"] == 500
+
+
+def test_new_token_defaults_to_50_and_clamps_at_500(client, human):
+    human.post("/api/agent-tokens", json={"name": "Default", "policy": "review"})
+    human.post("/api/agent-tokens", json={"name": "Huge", "policy": "review", "daily_cap": 9999})
+    caps = {t["name"]: t["daily_cap"] for t in human.get("/api/safety").json()["tokens"]}
+    assert caps["Default"] == 50 and caps["Huge"] == 500
 
 
 def test_agent_cannot_change_its_own_cap(app, client, human):

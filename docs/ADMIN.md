@@ -51,7 +51,8 @@ audited actions in the last 24 h, and two caps (never the token or its hash):
   one-hour window in memory (one process); a deploy starts it at zero. Use it for a noisy token such as a smoke-test agent.
   **Requests this hour** is only counted while the token has an hourly cap (an uncapped token shows 0 here; use
   **Actions in 24 h** and **Last used** for those), and saving either cap starts the hour again.
-- **Daily cap** (1–100): the token's existing daily cap on actions (`Studio._guard_write`).
+- **Daily cap** (1–500, default 50): Buffer posts per day at most (`Studio._guard_write`). Only Buffer writes count
+  (`Studio.BUFFER_WRITES`: submit_post, update_post, replace_draft, delete_draft, create_idea), over a rolling 24 h.
 - Both caps follow an MCP token through its refreshes: the successor takes the parent's caps in force at that moment
   (and its hourly window), a cap saved on a token also lands on every successor it rotated into (`parent_id`), and a
   cap saved while a refresh runs reaches the new token too. A refresh never resets an operator's limit.
@@ -97,7 +98,7 @@ All under a signed-in admin browser session; writes need the `X-HQ-CSRF` header 
 - `POST /api/admin/users/{id}/delete` `{confirm: "<id>"}`
 - `GET /api/admin/audit?limit=100`
 - `GET /api/admin/users/{id}/tokens` · `POST /api/admin/users/{id}/tokens/{tid}/revoke`
-- `POST /api/admin/users/{id}/tokens/{tid}/limit` `{hourly_cap?: 1-100000|null, daily_cap?: 1-100}`
+- `POST /api/admin/users/{id}/tokens/{tid}/limit` `{hourly_cap?: 1-100000|null, daily_cap?: 1-500}`
 - `GET /api/admin/switches` · `POST /api/admin/switches/{name}` `{paused: bool, reason?}`
 - `GET /api/admin/usage`
 

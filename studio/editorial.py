@@ -416,29 +416,34 @@ def check_spec(spec: dict, facts_available: int = 99) -> list[str]:
 
 
 def render(b: T.Brand, spec: dict, *, hero: Image.Image | None = None, band: Image.Image | None = None,
-           founders: list[Image.Image] | None = None, ratio: str = "4:5") -> tuple[list[Image.Image], Fit]:
+           founders: list[Image.Image] | None = None, ratio: str = "4:5",
+           pictures: list[Image.Image | None] | None = None) -> tuple[list[Image.Image], Fit]:
     """spec: {eyebrow, headline, accent[], dek, slides:[{eyebrow, blocks:[{head, body}], accent[], note, image: bool}],
     founders:{eyebrow, blocks, accent, note, names[]}, follow_line}. hero: the hero_edit cover image; band: a picture for
-    an idea slide that asks for one (image: true); founders: photos in the order of founders.names."""
+    an idea slide that asks for one (image: true); pictures: one optional picture per spec slide (same order as
+    spec["slides"]), used before band, so each product slide shows its own image; founders: photos in the order of
+    founders.names."""
     fit = Fit()
     copy = [spec.get("dek", "")] + [bl.get("body", "") for x in spec.get("slides") or [] for bl in x.get("blocks") or []]
     tok = _KEEP.set(keep_words(*copy, extra=list(spec.get("keep_case") or []) + [spec.get("company") or ""]))
     try:
-        return _render(b, spec, hero, band, founders, ratio, fit)
+        return _render(b, spec, hero, band, founders, ratio, fit, pictures)
     finally:
         _KEEP.reset(tok)
 
 
-def _render(b, spec, hero, band, founders, ratio, fit):
-    sl = [x for x in spec.get("slides") or [] if x.get("blocks")]
+def _render(b, spec, hero, band, founders, ratio, fit, pictures=None):
+    pics = list(pictures or [])
+    sl = [(x, pics[i] if i < len(pics) else None) for i, x in enumerate(spec.get("slides") or []) if x.get("blocks")]
     fo = spec.get("founders") or {}
     total = 1 + len(sl) + (1 if fo.get("blocks") else 0) + 1
     W, _H = SIZES.get(ratio, SIZES["4:5"])
     out = [cover(b, hero, spec.get("eyebrow", ""), spec.get("headline", ""), spec.get("dek", ""), spec.get("accent") or [],
                  (1, total), ratio, fit)]
     k = 2
-    for x in sl:
-        img = band if (x.get("image") and band is not None) else None
+    for x, pic in sl:
+        own = pic if pic is not None else band
+        img = own if (x.get("image") and own is not None) else None
         out.append(idea(b, x.get("eyebrow", ""), x["blocks"], (k, total), ratio, x.get("accent") or [], x.get("note", ""),
                         image=img, image_h=560 if img is not None else None, fit=fit))
         k += 1

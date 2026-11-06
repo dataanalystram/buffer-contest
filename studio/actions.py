@@ -519,18 +519,30 @@ class Studio:
             self.store.audit(a.uid, a.label, action, "blocked", {"reason": "kill switch on"}, ok=False)
             raise ActionError("Agent actions are paused: the kill switch is on in HuhQueue.", 423)
 
+    # The token's daily cap counts and blocks Buffer writes only (owner, 6 Nov 2026: 20 renders used up a cap of 10 before
+    # one draft was saved). Renders, previews, image edits, runs and rules are free of it; the kill switch still stops all.
+    BUFFER_WRITES = ("submit_post", "update_post", "replace_draft", "delete_draft", "create_idea")
+    CAP_DEFAULT, CAP_MAX, CAP_SAMPLE = 50, 500, 10
+
     def _guard_write(self, a: Actor, action: str) -> None:
-        """Kill switch + the token's daily cap, before an agent action runs."""
+        """Kill switch (every agent action) + the token's daily cap (Buffer writes only), before an agent action runs."""
         if a.kind != "agent":
             return
         self.kill_switch_check(a, action)
+        if action not in self.BUFFER_WRITES:
+            return
         day = time.time() - 86400
-        marks = ",".join("?" * len(self.COUNTED))
-        used = self.store.q(f"SELECT COUNT(*) n FROM audit WHERE user_id=? AND actor=? AND action IN ({marks}) AND ok=1 AND ts>?",
-                            (a.uid, a.label, *self.COUNTED, day))[0]["n"]
-        if used >= int(a.agent["daily_cap"]):
-            self.store.audit(a.uid, a.label, action, "blocked", {"reason": "daily cap", "cap": a.agent["daily_cap"]}, ok=False)
-            raise ActionError(f"This agent token reached its daily cap of {a.agent['daily_cap']} actions.", 429)
+        marks = ",".join("?" * len(self.BUFFER_WRITES))
+        row = self.store.q(f"SELECT COUNT(*) n, MIN(ts) t FROM audit WHERE user_id=? AND actor=? AND action IN ({marks}) "
+                           "AND ok=1 AND ts>?", (a.uid, a.label, *self.BUFFER_WRITES, day))[0]
+        cap = int(a.agent["daily_cap"])
+        if int(row["n"] or 0) >= cap:
+            reset = float(row["t"] or time.time()) + 86400  # rolling 24 h: the oldest counted write drops out then
+            at = time.strftime("%H:%M UTC on %d %b", time.gmtime(reset))
+            self.store.audit(a.uid, a.label, action, "blocked", {"reason": "daily cap", "cap": cap, "resets": int(reset)}, ok=False)
+            raise ActionError(f"This agent token reached its daily cap: {cap} Buffer posts per day at most. Only Buffer writes count "
+                              "(posts, drafts, draft edits and deletes, ideas); renders, previews and image edits don't. "
+                              f"The next one frees up at {at} (24 hours after the oldest counted write).", 429)
 
     def token_policy(self, a: Actor) -> dict | None:
         """What this agent token may do, said up front (preview_post, describe_tool, initialize, policy errors)."""
@@ -914,7 +926,7 @@ class Studio:
         self.store.audit(a.uid, a.label, "kill_switch", "safety", {"on": on})
         return {"kill_switch": on}
 
-    def create_agent_token(self, a: Actor, name: str, policy: str = "review", daily_cap: int = 10,
+    def create_agent_token(self, a: Actor, name: str, policy: str = "review", daily_cap: int = 50,
                            channels: list[str] | None = None, days: int = 30) -> dict:
         if a.kind != "human":
             raise ActionError("Agents can't mint agent tokens.", 403)
@@ -923,10 +935,10 @@ class Studio:
         name = (name or "my agent").strip()[:40]
         sample = demo.is_demo(a.uid)
         if sample:  # a sample token only ever reaches the sample workspace, and dies with it
-            days, daily_cap = 1, min(int(daily_cap), 10)
+            days, daily_cap = 1, min(int(daily_cap), self.CAP_SAMPLE)
         token = "hq_" + secrets.token_urlsafe(32)
         tid = self.store.x("INSERT INTO agent_tokens(user_id,name,token_hash,policy,daily_cap,channels,created,expires) "
-                           "VALUES(?,?,?,?,?,?,?,?)", (a.uid, name, sha(token), policy, max(1, min(int(daily_cap), 100)),
+                           "VALUES(?,?,?,?,?,?,?,?)", (a.uid, name, sha(token), policy, max(1, min(int(daily_cap), self.CAP_MAX)),
                                                        json.dumps(channels) if channels else None, time.time(),
                                                        time.time() + max(1, min(int(days), 365)) * 86400))
         self.store.audit(a.uid, a.label, "create_agent_token", "safety", {"id": tid, "name": name, "policy": policy})
@@ -980,18 +992,18 @@ class Studio:
         return {"id": token_id, "allow_paid_apis": on}
 
     def set_agent_cap(self, a: Actor, token_id: int, daily_cap: int) -> dict:
-        """Change a token's daily cap (1-100 actions a day) without minting a new one. Humans only: an agent can never raise
+        """Change a token's daily cap (1-500 Buffer posts a day) without minting a new one. Humans only: an agent can never raise
         its own limit (SECURITY_RULES 4). Sample-workspace tokens stay at 10."""
         if a.kind != "human":
             raise ActionError("Only a human can change a token's daily limit.", 403)
         try:
             cap = int(daily_cap)
         except (TypeError, ValueError):
-            raise ActionError("daily_cap must be a whole number from 1 to 100.")
-        if not 1 <= cap <= 100:
-            raise ActionError("daily_cap must be a whole number from 1 to 100.")
+            raise ActionError("daily_cap must be a whole number from 1 to 500.")
+        if not 1 <= cap <= self.CAP_MAX:
+            raise ActionError("daily_cap must be a whole number from 1 to 500.")
         if demo.is_demo(a.uid):
-            cap = min(cap, 10)
+            cap = min(cap, self.CAP_SAMPLE)
         rows = self.store.q("SELECT id,daily_cap FROM agent_tokens WHERE id=? AND user_id=? AND revoked=0", (token_id, a.uid))
         if not rows:
             raise ActionError("No such token.", 404)

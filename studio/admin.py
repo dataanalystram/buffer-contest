@@ -333,13 +333,13 @@ def limit_token(store, admin_uid: str, uid: str, tid, body: dict) -> dict:
     from . import opsctl
     t = _token(store, uid, tid)
     if not isinstance(body, dict) or not ({"hourly_cap", "daily_cap"} & set(body)):
-        raise AdminError("Give hourly_cap (1-100000 or null) and/or daily_cap (1-100).", 400)
+        raise AdminError("Give hourly_cap (1-100000 or null) and/or daily_cap (1-500).", 400)
     hourly = _cap(body.get("hourly_cap"), 1, opsctl.HOURLY_MAX, "hourly_cap") if "hourly_cap" in body else t["admin_hourly_cap"]
     daily = t["daily_cap"]
     if "daily_cap" in body:
-        daily = _cap(body.get("daily_cap"), 1, 100, "daily_cap")
+        daily = _cap(body.get("daily_cap"), 1, 500, "daily_cap")
         if daily is None:
-            raise AdminError("daily_cap must be a whole number from 1 to 100.", 400)
+            raise AdminError("daily_cap must be a whole number from 1 to 500.", 400)
     with store.tx():
         # the token and its refresh successors: a refresh racing this save can't carry the old caps forward
         ids = _lineage(store, uid, t["id"])

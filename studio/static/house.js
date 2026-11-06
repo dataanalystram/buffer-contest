@@ -9,16 +9,41 @@ const STATUS_ICON = { pending: "", running: '<span class="spin" aria-hidden="tru
 // built-in" over the reply, and "Try again with a different angle").
 const chatOnly = (r) => { const res = (r && r.result) || {};
   return !!res.chat && ["chat", "ask"].includes(res.chat.kind) && !(res.packages || []).length && !(r.steps || []).length; };
+const TPL_Q = "What templates can you use?";
+// The template list, answered on the page (an AI app's run has no agent to ask; posting a message there redrew and
+// restarted the preview, 6 Nov 2026). Read-only: picking one is the AI app's job ("use the funding template").
+let TPL_DLG = null;
+async function templateList() {
+  if (TPL_DLG) { try { TPL_DLG.close(); } catch (_) {} TPL_DLG.remove(); }
+  const dlg = document.createElement("dialog");
+  dlg.className = "pl-dialog pc-tpl-dialog"; dlg.setAttribute("aria-labelledby", "hqTplListT"); dlg.setAttribute("data-testid", "tpl-list-dialog");
+  dlg.innerHTML = `<div class="pc-tpl-head"><div><h2 id="hqTplListT">Templates you can use</h2><p class="muted sm">Ask your AI app to use one by name, for example “use the Launch template”.</p></div>
+    <button type="button" class="icon-btn" data-testid="tpl-list-close" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <ul class="tpl-list" data-testid="tpl-list"><li class="muted sm"><span class="spin" aria-hidden="true"></span> Loading templates…</li></ul>`;
+  document.body.append(dlg); TPL_DLG = dlg;
+  const close = () => { try { dlg.close(); } catch (_) {} dlg.remove(); if (TPL_DLG === dlg) TPL_DLG = null; };
+  dlg.querySelector("[data-testid=tpl-list-close]").onclick = close;
+  dlg.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+  if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
+  const ul = dlg.querySelector("[data-testid=tpl-list]");
+  try {
+    const t = await api("/api/templates");
+    if (TPL_DLG !== dlg) return;  // closed or replaced while loading
+    ul.innerHTML = (t.templates || []).map((o) => `<li data-testid="tpl-list-item"><b>${esc(o.name || o.id)}</b>${o.about ? ` <span class="muted sm">${esc(o.about)}</span>` : ""}${o.custom ? ` <small class="muted">Yours</small>` : ""}</li>`).join("") ||
+      `<li class="muted sm">No templates.</li>`;
+  } catch (e) { if (TPL_DLG === dlg) ul.innerHTML = `<li class="st warn">${esc(e.message)}</li>`; }
+}
+window.hqTemplateList = templateList;
 function replyChips(r) {
   const pk = (r.result || {}).packages || [], svc = new Set(pk.map((p) => p.service)), fm = new Set(pk.map((p) => p.format));
   if (chatOnly(r)) return [];
-  if (!pk.length) return ["Try again with a different angle", "What templates can you use?"];
+  if (!pk.length) return ["Try again with a different angle", TPL_Q];
   const out = ["Make the hook stronger", "Shorter captions"];
   if (fm.has("carousel")) out.push("Restyle slide 2");
   if (fm.has("reel")) out.push("Add captions", "Trim the first 3 s");
   if (svc.has("youtube")) out.push("Redo YouTube at 30s");
   if (svc.has("linkedin")) out.push("LinkedIn more formal");
-  out.push("What templates can you use?");
+  out.push(TPL_Q);
   return out.slice(0, 6);
 }
 // agent replies are markdown: escaped first, then **bold**, *italic*, `code`, [links](https://...) and "- " lists. Nothing
@@ -367,7 +392,10 @@ function agentExtras(r, busy) {
   // one edit box for every run, after it finishes (also older runs: the server routes it)
   $("#replyForm").hidden = busy;
   $("#replyChips").innerHTML = replyChips(r).map((q) => `<button type="button" class="chip mini" data-testid="reply-chip" data-say="${esc(q)}">${esc(q)}</button>`).join("");
-  $("#replyChips").querySelectorAll("[data-say]").forEach((b) => (b.onclick = () => { $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit(); }));
+  $("#replyChips").querySelectorAll("[data-say]").forEach((b) => (b.onclick = () => {
+    if (b.dataset.say === TPL_Q && r.kind !== "agent") return void templateList();  // answered here: no message, no redraw
+    $("#replyIn").value = b.dataset.say; $("#replyForm").requestSubmit();
+  }));
   drawReady(r, busy);
   drawTemplates(r, busy);
   // "where is the post" / "give me an option to upload": the answer points at the thing on the page

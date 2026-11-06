@@ -61,7 +61,7 @@ async function loadConnect() {
     const a = CX.find((x) => x.id === b.dataset.make);
     if (made[a.id]) return;
     b.disabled = true;
-    try { const t = await api("/api/agent-tokens", { method: "POST", body: { name: a.id === "other" ? "MCP client" : a.name, policy: "review", daily_cap: 10 } }); made[a.id] = t.token; loadConnect(); }
+    try { const t = await api("/api/agent-tokens", { method: "POST", body: { name: a.id === "other" ? "MCP client" : a.name, policy: "review", daily_cap: 50 } }); made[a.id] = t.token; loadConnect(); }
     catch (e) { toast(e.message, 5000); b.disabled = false; }
   }));
 }
