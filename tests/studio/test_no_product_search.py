@@ -23,6 +23,8 @@ def test_no_trace_in_tracked_text_files():
             text = (ROOT / f).read_text(encoding="utf-8")
         except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
             continue
+        if f == ".gitleaksignore":   # history fingerprints of the removed test file (dummy keys in old commits)
+            text = text.replace("tests/studio/test_" + WORDS[1] + ".py", "")
         if f == "studio/store.py":   # account erase still clears the three retired tables' old rows (privacy); only those names
             text = text.replace(WORDS[1] + "_links", "").replace(WORDS[1] + "_user_day", "").replace(WORDS[1] + "_credits", "")
         hits += [f"{f}: {m.group(0)}" for m in pat.finditer(text) or [] if m.group(0)]
