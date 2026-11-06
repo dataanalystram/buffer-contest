@@ -105,12 +105,21 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
                 fetched = {"via": "direct"}
         dl = round(time.time() - t_dl, 1)
         print(f"timing: source download {dl}s ({'yt-dlp' if spec.get('platform_url') else 'stored copy / upload'})", flush=True)
-        stored_s = None
+        store = None
         if fetched is not None and spec["kind"] == "take_analyze" and urls.get("source_put"):
-            t = time.time()
-            fetched["stored_bytes"] = store_source(c, urls["source_put"], src)
-            stored_s = round(time.time() - t, 1)
-            print(f"timing: source kept in storage (R2) {stored_s}s", flush=True)
+            # the fetched link is kept in storage (no second fetch for re-renders) WHILE the analysis reads the same file:
+            # the upload used to finish before the analysis started
+            import threading
+            store = {"t": time.time()}
+
+            def keep() -> None:
+                try:
+                    store["bytes"] = store_source(c, urls["source_put"], src)
+                except BaseException as e:  # noqa: BLE001 - raised on the main thread at the join, as before
+                    store["error"] = e
+                store["secs"] = round(time.time() - store["t"], 1)
+            store["th"] = threading.Thread(target=keep, name="hq_store_source", daemon=True)
+            store["th"].start()
         if spec["kind"] == "take_analyze":
             tr = reuse_captions(str(src), spec)  # existing captions first; Whisper only when there are none
             print("captions:", f"reused {tr['source']} ({tr['count']} words)" if tr else "none, transcribing")
@@ -119,8 +128,13 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
             if fetched is not None:
                 analysis["fetch"] = fetched
             analysis.setdefault("timings", {})["download"] = dl
-            if stored_s is not None:
-                analysis["timings"]["store_source"] = stored_s
+            if store is not None:
+                store["th"].join()
+                if store.get("error") is not None:
+                    raise store["error"]
+                fetched["stored_bytes"] = store["bytes"]
+                analysis["timings"]["store_source"] = store["secs"]  # alongside the analysis, not before it
+                print(f"timing: source kept in storage (R2) {store['secs']}s, alongside the analysis", flush=True)
             print("timing: analysis", analysis.get("timings"), flush=True)
             r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"analysis": analysis})
             print("analysis posted:", r.status_code, r.text[:200])
