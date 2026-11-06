@@ -178,6 +178,9 @@ from . import take_bin as _take_bin  # noqa: E402  delete_take, list_take_bin, r
 
 TOOLS += _take_bin.TOOLS
 READ_ONLY |= _take_bin.READ_ONLY
+from . import take_control as _take_control  # noqa: E402  stop_take, retry_take
+
+TOOLS += _take_control.TOOLS
 from . import take_layout as _take_layout  # noqa: E402  get_clip_layout, set_clip_layout (per-scene layouts, caption look)
 
 TOOLS += _take_layout.TOOLS
@@ -433,6 +436,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _take_bin.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _take_control.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     extra = _thread_bin.call_tool(studio, actor, name, args)

@@ -178,7 +178,10 @@ class Brain:
         live = {r["boot"] for r in self.store.q("SELECT boot, seen FROM agent_procs") if (r["seen"] or 0) > now - ORPHAN_S}
         live.add(BOOT)
         out = []
-        for r in self.store.q("SELECT id, steps, result, updated FROM agent_runs WHERE status IN ('running','rendering')"):
+        # One take has its own recovery (take_control.recover_orphans): its heavy steps run on the video worker, which
+        # calls back whatever the web process does, so a take silent for minutes is working, not cut off (run #80, 6 Nov 2026)
+        for r in self.store.q("SELECT id, steps, result, updated FROM agent_runs WHERE status IN ('running','rendering') "
+                              "AND (kind IS NULL OR kind <> 'take')"):
             rid = r["id"]
             with _rlock:
                 if rid in _running:
@@ -204,6 +207,12 @@ class Brain:
             out.append(rid)
         if out:
             print(f"agent: marked {len(out)} cut-off run(s) interrupted: {out}", flush=True)
+        takes = getattr(self.h, "takes", None)
+        if takes is not None:
+            try:
+                takes.recover_orphans(live, BOOT, now)
+            except Exception:  # noqa: BLE001  a take's recovery never stops the agent's
+                traceback.print_exc()
         return out
 
     def resume(self, a: Actor, rid: int) -> dict:

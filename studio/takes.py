@@ -32,6 +32,7 @@ import httpx
 from . import brand, demo, drafter, llm, netguard, sources, take
 from .actions import CONFIRM_TTL, ActionError, Actor
 from .take_bin import TakeBin
+from .take_control import TakeControl  # Stop / Try again, and recovery after a restart
 from . import take_layout  # per-clip layout plan, per-scene overrides, Smart layout opt-in (no FastAPI: the worker imports this)
 from .store import sha
 
@@ -68,7 +69,7 @@ def sample_meta() -> dict | None:
     return json.loads(p.read_text()) if p.exists() else None
 
 
-class Takes(TakeBin):
+class Takes(TakeBin, TakeControl):
     def __init__(self, house):
         self.h, self.studio, self.store, self.s = house, house.studio, house.store, house.s
         self._lock = threading.RLock()  # guards _locks only
@@ -367,6 +368,9 @@ class Takes(TakeBin):
     # ------------------------------------------------------------------ worker jobs
     def _queue(self, a: Actor, rid: int, spec: dict, step: str, detail: str) -> None:
         spec = {**spec, "take": rid}
+        if self._mode() == "local":  # an in-process job: which process runs it (take_control.recover_orphans re-runs it after a restart)
+            from .agent_brain import BOOT
+            spec["_boot"] = BOOT
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (a.uid, rid, json.dumps(spec), "queued", _now(), _now()))
         run = self._run(a, rid)
