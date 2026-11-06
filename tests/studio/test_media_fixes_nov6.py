@@ -133,7 +133,10 @@ def test_a_quiet_pause_inside_a_stretched_word_is_cut():
     assert plan["pauses"] == 1 and 0.5 <= plan["removed"] <= 0.8, plan
     cut = [plan["keep"][0][1], plan["keep"][1][0]]
     assert 16.79 <= cut[0] < cut[1] <= 17.6
-    assert [w["w"] for w in cleancut.remap_words(STRETCH, plan["keep"])] == ["that", "kind", "of"]  # the word stays
+    rw = cleancut.remap_words(STRETCH, plan["keep"])
+    assert [w["w"] for w in rw] == ["that", "kind", "of"]                         # the word stays
+    assert rw[1]["s"] == pytest.approx(rw[0]["e"], abs=1e-3)                       # and starts where it was said
+    assert rw[1]["e"] - rw[1]["s"] == pytest.approx(1.56 - plan["removed"], abs=0.01)  # minus only the cut pause
     assert cleancut.plan_cuts(STRETCH, 15.6, 18.3, [[16.79, 17.6]], quiet_fn=lambda a, b: False)["skipped"] == "nothing to trim"
     assert cleancut.plan_cuts(STRETCH, 15.6, 18.3, [[16.79, 17.6]])["skipped"] == "nothing to trim"  # no energy check
     assert cleancut.plan_cuts(STRETCH, 15.6, 18.3, None, quiet_fn=lambda a, b: True)["skipped"] == "nothing to trim"

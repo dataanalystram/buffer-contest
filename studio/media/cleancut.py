@@ -210,9 +210,12 @@ def remap_words(words: list[dict], keep: list[list[float]]) -> list[dict]:
         mid = (s + e) / 2
         seg = next((k for k in keep if k[0] - 1e-6 <= mid <= k[1] + 1e-6), None)
         if seg is None and _tok(w) not in FILLERS:  # a word an in-word pause cut through (it spans two kept pieces):
-            ov = [(min(e, k[1]) - max(s, k[0]), k) for k in keep]  # it stays, on the piece holding most of it
-            ov = [x for x in ov if x[0] > 0.02]
-            seg = max(ov, key=lambda x: x[0])[1] if len(ov) >= 2 else None
+            ov = [k for k in keep if min(e, k[1]) - max(s, k[0]) > 0.02]  # it stays, from its first kept instant to
+            if len(ov) >= 2:                                                # its last, so its caption keeps its timing
+                ns, ne = remap(max(s, ov[0][0]), keep), remap(min(e, ov[-1][1]), keep)
+                if ns is not None and ne is not None:
+                    out.append({**w, "s": ns, "e": max(ne, ns)})
+            continue
         if seg is None:
             continue
         ns, ne = remap(min(max(s, seg[0]), seg[1]), keep), remap(min(max(e, seg[0]), seg[1]), keep)
