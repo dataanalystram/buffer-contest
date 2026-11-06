@@ -12,7 +12,13 @@ window.safeUrl = safeUrl; window.escUrl = escUrl;
 const MODES = [["draft", "Buffer draft"], ["queue", "Add to queue"], ["next", "Share next"], ["now", "Share now"], ["schedule", "Schedule…"]];
 const S = { csrf: "", channels: [], selected: new Set(), drafts: [], article: null, session: null };
 
-async function api(path, opts = {}) {
+// Abortable wait: a view change (HQLoad's AbortController) cancels a pending retry too.
+const waitFor = (ms, signal) => new Promise((res, rej) => {
+  if (signal && signal.aborted) return rej(new DOMException("Aborted", "AbortError"));
+  const t = setTimeout(res, ms);
+  if (signal) signal.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("Aborted", "AbortError")); }, { once: true });
+});
+async function api(path, opts = {}, _try = 0) {
   // cache: no-store: an API answer is never reused from the HTTP cache (a purged Library item must not reappear)
   const o = { method: opts.method || "GET", headers: { "Content-Type": "application/json" }, credentials: "same-origin", cache: "no-store" };
   if (o.method !== "GET") o.headers["X-HQ-CSRF"] = S.csrf;
@@ -20,8 +26,31 @@ async function api(path, opts = {}) {
   if (opts.signal) o.signal = opts.signal;  // HQLoad.start(): a view's newer request aborts this one (loading.js)
   const r = await fetch(path, o);
   let j = null; try { j = await r.json(); } catch (_) { j = {}; }
-  if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; throw e; }
+  if (!r.ok) {
+    // Buffer's token endpoint blipped (server kept the tokens): say so and retry a read, never treat it as signed out.
+    // Writes aren't replayed (a confirm token or upload may already be spent); the user presses the button again.
+    if (j.code === "buffer_busy") {
+      if (o.method === "GET" && _try < 2) {
+        toast("Buffer is busy, retrying…", 4000);
+        const ra = Math.min(10, Math.max(1, parseInt(r.headers.get("Retry-After") || "3", 10) || 3));
+        await waitFor(ra * 1000, opts.signal);
+        return api(path, opts, _try + 1);
+      }
+      j.error = "Buffer is busy. You're still connected; try again in a moment.";
+    }
+    if (j.code === "buffer_scope") reconnectToast(j.error || "Reconnect Buffer to allow the access this needs.");
+    const e = new Error(j.error || `HTTP ${r.status}`); e.status = r.status; e.code = j.code || ""; throw e;
+  }
   return j;
+}
+// A scope refusal: the message plus a Reconnect Buffer link (/login re-runs consent). A caller's toast(e.message) with
+// the same words keeps the link instead of replacing it.
+function reconnectToast(msg) {
+  const t = $("#toast"); if (!t) return;
+  t.innerHTML = ""; const p = document.createElement("span"); p.textContent = msg;
+  const a = document.createElement("a"); a.href = "/login"; a.className = "toast-undo"; a.textContent = "Reconnect Buffer";
+  a.dataset.testid = "toast-reconnect"; t.append(p, a);
+  t.hidden = false; toast._keep = msg; clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; toast._keep = ""; }, 12000);
 }
 // The view-only demo (studio/demo_view.py): answer an action that would change data at once, on screen, instead of
 // sending it and waiting behind other requests (the server refuses it with the same line anyway). True when it answered.
@@ -30,7 +59,7 @@ function demoSays(would) {
   toast(`In the real app this would ${would}. The demo doesn't change anything.`, 6000);
   return true;
 }
-function toast(msg, ms = 3200) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms); }
+function toast(msg, ms = 3200) { if (toast._keep && msg === toast._keep && !$("#toast").hidden) return; toast._keep = ""; const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms); }
 
 // Buffer-style character counting (mirrors studio/preflight.py count_text; the server is the source of truth)
 const LIMITS = { twitter: 280, linkedin: 3000, instagram: 2196, facebook: 5000, threads: 500, bluesky: 300, mastodon: 500, tiktok: 2200, youtube: 5000, pinterest: 500, googlebusiness: 4000, startPage: 2000 };

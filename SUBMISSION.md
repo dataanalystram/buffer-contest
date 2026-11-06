@@ -5,6 +5,7 @@
 - **Buffer app client ID:** `BFQSCDAPoD-hJ0cmZtncSW-kLqnDwPfQ511K35AcVmj`
 - **Demo video (1:26):** [demo/huhqueue-buffer-commit-demo-16x9.mp4](https://github.com/dataanalystram/buffer-contest/blob/main/demo/huhqueue-buffer-commit-demo-16x9.mp4) ([direct download](https://github.com/dataanalystram/buffer-contest/raw/main/demo/huhqueue-buffer-commit-demo-16x9.mp4)); 9:16 cut on YouTube: https://www.youtube.com/watch?v=iBFgP1GOMlU
 - **What was built in the window vs. before it:** [CONTEST.md](CONTEST.md)
+- **What is the entry:** Studio (`studio/`). It signs users in with **Buffer OAuth only** (Authorization Code + PKCE S256, `prompt=consent`, rotating `offline_access` refresh tokens) and never asks for a Buffer API key. The core `huhqueue/` app's paste-a-token options are for connecting LinkedIn and Instagram directly, not Buffer.
 - **Build-in-public posts:**
   - LinkedIn (Ram, with the 16:9 demo): https://www.linkedin.com/feed/update/urn:li:activity:7521244269584539648/
   - Instagram Reel (@huhbyte.ai): https://www.instagram.com/reel/DfC3PW3uiL9/

@@ -26,7 +26,7 @@ from . import staticver
 from .gzipmw import GzipText
 from . import buffer_api, demo, demo_guard, demo_view, house as house_mod, inbox as inbox_mod, limits as reqlimits, mcp, mcp_oauth
 from .actions import ActionError, Actor, Studio
-from .buffer_api import BufferClient, BufferError
+from .buffer_api import BufferBusy, BufferClient, BufferError, ScopeMissing
 from .config import Settings, load_settings
 from .store import Store, sha
 
@@ -174,7 +174,12 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     @app.exception_handler(BufferError)
     async def _buffer_err(_, e: BufferError):
         headers = {"Retry-After": str(e.retry_after)} if e.retry_after else {}
-        return JSONResponse({"error": str(e), "buffer": True}, status_code=e.status, headers=headers)
+        body = {"error": str(e), "buffer": True}
+        if isinstance(e, BufferBusy):  # still connected: the page says "Buffer is busy, retrying", never signs out
+            body.update(code="buffer_busy", retryable=True)
+        elif isinstance(e, ScopeMissing):  # the grant lacks a scope: the page offers Reconnect Buffer (/login)
+            body.update(code="buffer_scope", reconnect="/login")
+        return JSONResponse(body, status_code=e.status, headers=headers)
 
     # Anonymous and free-sample traffic: a per-IP request rate limit (SECURITY_RULES 3). Real accounts, by cookie or by
     # a real account's agent token, are never slowed here. Media links (/m/) are left alone: Buffer fetches them.
@@ -450,6 +455,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         if error:
             store.audit((sess or {}).get("user_id") or "", "system", "signin_failed", "auth",
                         {"via": "buffer oauth", "reason": (error or "")[:60]}, ok=False)
+            if error in ("invalid_scope", "insufficient_scope"):
+                return RedirectResponse("/?error=" + quote(SCOPE_SIGNIN_MSG), 302)
             return RedirectResponse("/?error=" + quote(error_description or error), 302)
         pending = store.unseal(sess["oauth"]) if sess else None
         if not pending or not state or not secrets.compare_digest(state, pending.get("state") or ""):
@@ -498,6 +505,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         """Buffer's Retry-After plus 5-30 s of jitter, so sign-ins deferred together don't all retry in the same second."""
         return float(max(1, int(retry_after or 60))) + 5 + secrets.randbelow(26)
 
+    SCOPE_SIGNIN_MSG = ("Buffer didn't grant the access HuhQueue asks for. Reconnect Buffer to allow it; if this keeps "
+                        "happening, the HuhQueue operator needs to enable those scopes on its Buffer app.")
     BLOCKED_MSG = "This account can't sign in right now. If you think this is a mistake, contact us (see /privacy)."
 
     def _finish_signin(sid: str, tokens: dict, acct: dict) -> bool:

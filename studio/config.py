@@ -13,6 +13,9 @@ AUTH_URL = "https://auth.buffer.com/auth"
 TOKEN_URL = "https://auth.buffer.com/token"
 API_URL = "https://api.buffer.com"
 # offline_access gives a rotating refresh token, so users are not sent back to consent every hour.
+# Never change SCOPES without first enabling the new scopes on the Buffer app client (publish.buffer.com/settings/api):
+# a scope the client isn't allowed makes Buffer answer invalid_scope and breaks every sign-in. Existing tokens never gain
+# new scopes; users get "Reconnect Buffer to allow X" (ScopeMissing) until they consent again. See README "Buffer scopes".
 SCOPES = "account:read posts:read posts:write ideas:read ideas:write offline_access"
 
 
