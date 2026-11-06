@@ -126,7 +126,8 @@ def test_a_run_has_back_new_take_and_a_score_and_reason_on_every_clip(live, chro
     # every row: the score out of 10 and its reason (or Not scored), highest first, unscored last
     scores = [x.inner_text() for x in page.get_by_test_id("clip-score").all()]
     assert scores == ["Score 8.9", "Score 8.2", "Score 7.9", "Not scored"], scores
-    whys = [x.inner_text() for x in page.get_by_test_id("clip-why").all()]
+    # the screen-reader prefix ("Why this moment:") is in inner_text; the visible line is what follows it
+    whys = [x.inner_text().replace("Why this moment:", "", 1).strip() for x in page.get_by_test_id("clip-why").all()]
     assert whys[0].startswith("Strong opening with a clear question") and "practical call to action" in whys[2]
     assert all(x.strip() for x in whys) and "Not scored" in whys[3]
     page.get_by_test_id("clip-sort").select_option("time")

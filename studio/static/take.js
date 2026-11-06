@@ -504,13 +504,13 @@ async function loadTakes() {
 async function loadTake() {
   takeChips(); const list = loadTakes();  // the view transition waits on the list, so One take is shown once it is drawn
   $("#tkSample").hidden = false;
-  // which run the address names: a Back/Forward read it before app.js rewrote the URL (tkPop), else the URL itself
-  const nav = T.navTake; T.navTake = undefined;
-  const want = tkId(nav ? nav.id : new URLSearchParams(location.search).get("take"));
+  // which run the address names (app.js urlFor keeps ?take=<id> on a reload and on Back/Forward)
+  const popping = !!(window.HQ_NAV_STATE && window.HQ_NAV_STATE.popping);
+  const want = tkId(new URLSearchParams(location.search).get("take"));
   let open = null;
   if (want && !(T.take && String(T.take.id) === want)) open = tkOpen(want, { replace: true, scroll: false });
   else if (want) { tkNav(want, true); if (["running", "rendering"].includes(T.take.status)) watchTake(T.take.id); }
-  else if (nav) tkLeaveRun({ nav: false });  // Back from a run to Your takes
+  else if (popping) { if (T.take || !$("#takeView").hidden) tkLeaveRun({ nav: false }); }  // Back from a run to Your takes
   else if (T.take && !$("#takeView").hidden) { tkNav(T.take.id, true); if (["running", "rendering"].includes(T.take.status)) watchTake(T.take.id); }
   if (open) await open;
   await list;
@@ -565,13 +565,6 @@ function tkNav(id, replace = false) {
   if (replace || location.pathname + location.search === url) history.replaceState(st, "", url);
   else history.pushState(st, "", url);
 }
-// Back/Forward: read the run the entry names before app.js's popstate rewrites the URL to /?tab=take (capture runs first)
-function tkPop(e) {
-  const s = e.state || {};
-  if ((s.hq || new URLSearchParams(location.search).get("tab")) !== "take") { T.navTake = undefined; return; }
-  T.navTake = { id: tkId(s.take || new URLSearchParams(location.search).get("take")) };
-}
-window.addEventListener("popstate", tkPop, true);
 function tkRunMode(on) {
   const tab = $("#tab-take"); tab.classList.toggle("tk-in-run", !!on);
   $("#takeCompose").hidden = !!on; const intro = tab.querySelector(":scope > .intro"); if (intro) intro.hidden = !!on;

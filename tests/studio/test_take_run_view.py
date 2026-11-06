@@ -59,7 +59,9 @@ def test_the_run_view_has_a_back_and_a_new_take_and_keeps_the_run_in_the_address
     assert "All takes" in view and "New take" in view
     # the open run is in the URL, pushed (browser Back leaves it), and read back on Back/Forward before app.js redraws
     assert 'p.set("take", String(id))' in js and "history.pushState(st, \"\", url)" in js
-    assert 'window.addEventListener("popstate", tkPop, true)' in js
+    app_js = (ST / "app.js").read_text()
+    assert 'const keepTk = name === "take" && (NAV.first || NAV.popping)' in app_js and "keepPl || keepTk ? location.href : url" in app_js
+    assert "window.HQ_NAV_STATE.popping" in js and "tkPop" not in js   # never relies on popstate listener order
     # leaving the run: the open and the status poll are aborted, a late answer is never drawn
     assert 'HQLoad.start("takepoll")' in js and 'HQLoad.cancel("takepoll")' in js and 'HQLoad.cancel("takeopen")' in js
     assert 'if (!op.live() || $("#tab-take").hidden) return;' in js
