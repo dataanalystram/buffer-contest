@@ -5,13 +5,14 @@
 # Usage: scripts/ci_apt_install.sh ffmpeg [libegl1 libgles2 ...]
 set -u
 opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60)
-for attempt in 1 2 3; do
+tries="${CI_APT_ATTEMPTS:-3}"  # an informative job passes 1 and carries on without the package
+for attempt in $(seq 1 "$tries"); do
   if timeout 180 sudo apt-get "${opts[@]}" update -qq \
      && timeout 420 sudo DEBIAN_FRONTEND=noninteractive apt-get "${opts[@]}" install -y -qq --no-install-recommends "$@" >/dev/null; then
     exit 0
   fi
-  echo "::warning::apt install of $* failed or timed out (attempt $attempt of 3)"
+  echo "::warning::apt install of $* failed or timed out (attempt $attempt of $tries)"
   sleep $((attempt * 10))
 done
-echo "::error::apt install of $* failed 3 times"
+echo "::error::apt install of $* failed $tries times"
 exit 1

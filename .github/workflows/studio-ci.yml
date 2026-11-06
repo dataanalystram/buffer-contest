@@ -42,17 +42,21 @@ jobs:
     # informative only: never fails the build
     runs-on: ubuntu-latest
     continue-on-error: true
-    timeout-minutes: 12
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: {python-version: "3.12"}
-      - run: bash scripts/ci_apt_install.sh ffmpeg
+      # one apt attempt: a dead Ubuntu mirror skips the benchmark with a warning instead of running into the job timeout
+      # (6 Nov 2026: three timed-out attempts got the job cancelled, which showed as a red X on PR #147)
+      - run: CI_APT_ATTEMPTS=1 bash scripts/ci_apt_install.sh ffmpeg || echo "::warning::ffmpeg didn't install (Ubuntu mirror); layout benchmark skipped"
       - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-studio.txt "numpy>=2.0" "opencv-python-headless>=4.10,<5"
       - name: One take layout speed on 2 cores (informative, target <= 1.2x realtime)
         timeout-minutes: 8
-        run: taskset -c 0,1 python scripts/bench_layouts.py 30 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          if ! command -v ffmpeg >/dev/null; then echo "Layout benchmark skipped: ffmpeg didn't install." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          taskset -c 0,1 python scripts/bench_layouts.py 30 | tee -a "$GITHUB_STEP_SUMMARY"
   test:
     # the required status check (branch protection names "test"): green only when both stores passed
     needs: [test-sqlite, test-postgres]
