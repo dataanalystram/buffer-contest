@@ -156,21 +156,33 @@ def delete_drafts(studio, a: Actor, args: dict) -> dict:
         plan = json.loads(row["payload"] or "{}")
         if plan.get("kind") != "delete_drafts":
             raise ActionError("That confirm_token is for something else.", 409)
-        store.x("UPDATE confirms SET used=1 WHERE token_hash=?", (row["token_hash"],))
+        # claim the token atomically: two calls racing past the check above can't both spend it
+        if store.xn("UPDATE confirms SET used=1 WHERE token_hash=? AND user_id=? AND used=0",
+                    (row["token_hash"], a.uid)) != 1:
+            raise ActionError("This confirm_token is used or expired. Run the dry run again.", 410)
         listed = {d["buffer_post_id"]: d for d in plan.get("drafts") or []}
         mine_now = {d["buffer_post_id"]: d for d in app_drafts(store, a)}  # still this app's, right now
         want = [p for p in (only if only is not None else list(listed)) if p in listed and p in mine_now]
-        deleted, refused = [], []
+        from .buffer_api import BufferError
+        deleted, refused, unknown = [], [], []
         for pid in want:
             try:
                 studio.delete_draft(a, pid)  # re-reads the post in Buffer: only a DRAFT is deleted (409 for scheduled / sent)
             except ActionError as e:
                 refused.append({"buffer_post_id": pid, "why": str(e)[:200], "status": e.status})
                 continue
+            except BufferError as e:
+                # Buffer failed mid-call: the delete may or may not have landed, so say so and carry on with the rest
+                unknown.append({"buffer_post_id": pid, "outcome": "unknown", "status": getattr(e, "status", 502),
+                                "why": "Buffer did not answer cleanly; check this draft in Buffer before retrying."})
+                continue
             d = mine_now[pid]
             _mark_old(store, a, d["run_id"], d["channel_id"], {"draft_deleted": True})
             deleted.append(pid)
-        return {"deleted": deleted, "refused": refused, "spent_usd": 0}
+        out = {"deleted": deleted, "refused": refused, "spent_usd": 0}
+        if unknown:
+            out["unknown"] = unknown
+        return out
     drafts = [d for d in app_drafts(store, a) if rid is None or d["run_id"] == rid]
     out = {"dry_run": True, "drafts": drafts, "count": len(drafts), "spent_usd": 0}
     if drafts:

@@ -38,6 +38,9 @@ class TooLong(FallbackError):
     """The video is over the caller's duration cap (read from the instance's metadata before any stream downloads)."""
 
 
+PROBE_BYTES = 64 * 1024  # same as download.PROBE_BYTES
+
+
 def instances() -> list[str]:
     raw = os.environ.get("HQ_INVIDIOUS_INSTANCES", "")
     return [u.strip().rstrip("/") for u in raw.split(",") if u.strip().startswith("https://")]
@@ -104,7 +107,12 @@ def probe(url: str, http=None) -> dict:
             with netguard.safe_stream(vurl, http=http, https_only=True, timeout=20, headers={**UA, "Range": "bytes=0-65535"}) as r:
                 if r.status_code not in (200, 206):
                     raise FallbackError(f"stream answered {r.status_code}")
-                n = sum(len(c) for c in r.iter_bytes(65536))
+                n = 0
+                for c in r.iter_bytes(16 * 1024):  # a server may ignore Range and answer 200 with the whole video
+                    n += len(c)
+                    if n >= PROBE_BYTES:
+                        break
+                n = min(n, PROBE_BYTES)
             return {"ok": True, "via": "youtube_fallback", "bytes_read": n, "title": str(info.get("title") or "")[:200],
                     "duration": info.get("lengthSeconds")}
         except Exception as e:  # noqa: BLE001

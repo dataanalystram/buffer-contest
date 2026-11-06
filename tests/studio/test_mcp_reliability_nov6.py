@@ -558,3 +558,50 @@ def test_cold_worker_pending_probe_is_documented_and_says_wait_first(human, monk
         assert "pending" in tools[n]["description"], n
     gs = _ok(human, tok, "get_started")
     assert "probe.status 'pending'" in gs["steps"][1]
+
+
+def test_delete_drafts_token_claim_is_atomic(human, fake, page, monkeypatch):  # noqa: F811
+    """Two calls that both read the token as unused: only the one whose conditional UPDATE changes a row deletes."""
+    tok = agent_token(human, policy="draft", cap=100)
+    r1 = _draft_run(human, tok, fake, "Race story")
+    pid = _ok(human, tok, "schedule_package", {"run_id": r1, "channel_id": "ch_li", "mode": "draft"})["post"]["id"]
+    fake.posts.append({"id": pid, "text": "x", "status": "draft", "channelId": "ch_li"})
+    dry = _ok(human, tok, "delete_drafts")
+    store = human.app.state.studio.store
+    store.x("UPDATE confirms SET used=1")  # the other caller won the race
+    real_q = store.q
+
+    def stale(sql, args=()):
+        rows = real_q(sql, args)
+        if "FROM confirms" in sql:
+            return [dict(r, used=0) for r in rows]  # what this caller read before the other one claimed it
+        return rows
+    monkeypatch.setattr(store, "q", stale)
+    assert _err(human, tok, "delete_drafts", {"confirm_token": dry["confirm_token"]})["status"] == 410
+    assert fake.deleted == []
+
+
+def test_delete_drafts_buffer_error_on_one_draft_keeps_going(human, fake, page, monkeypatch):  # noqa: F811
+    from studio.buffer_api import BufferError
+    tok = agent_token(human, policy="draft", cap=100)
+    pids = []
+    for title in ("First story here", "Second different story"):
+        rid = _draft_run(human, tok, fake, title)
+        pid = _ok(human, tok, "schedule_package", {"run_id": rid, "channel_id": "ch_li", "mode": "draft"})["post"]["id"]
+        fake.posts.append({"id": pid, "text": title, "status": "draft", "channelId": "ch_li"})
+        pids.append(pid)
+    dry = _ok(human, tok, "delete_drafts")
+    assert sorted(d["buffer_post_id"] for d in dry["drafts"]) == sorted(pids)
+    buf = human.app.state.studio.buffer
+    real = buf.delete_post
+    bad = dry["drafts"][0]["buffer_post_id"]
+
+    def flaky(uid, post_id):
+        if post_id == bad:
+            raise BufferError("Buffer timed out", 503)
+        return real(uid, post_id)
+    monkeypatch.setattr(buf, "delete_post", flaky)
+    done = _ok(human, tok, "delete_drafts", {"confirm_token": dry["confirm_token"]})
+    good = [p for p in pids if p != bad]
+    assert done["deleted"] == good and fake.deleted == good
+    assert done["unknown"][0]["buffer_post_id"] == bad and done["unknown"][0]["outcome"] == "unknown"
