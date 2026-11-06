@@ -264,6 +264,7 @@ def test_replace_channel_media_on_a_start_post_run(human, page):  # noqa: F811
     assert out["channel_id"] == "ch_li" and out["versions_kept"] >= 1
     by = {p["channel_id"]: p for p in human.get(f"/api/agent/runs/{rid}").json()["result"]["packages"]}
     assert by["ch_ig"]["media_urls"] == c1["media_urls"] and by["ch_li"]["media_urls"] != c1["media_urls"]
+    assert "video_name" not in by["ch_li"]  # a photo has no video word left over from the media it replaced
     sc = _err(human, tok, "replace_channel_media", {"run_id": rid, "channel": "linkedin"})
     assert sc["code"] == "media_token_required"
     sc = _err(human, tok, "replace_channel_media", {"run_id": rid, "channel": "twitter", "media_token": up["media_token"]})

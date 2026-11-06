@@ -25,6 +25,9 @@ CASES = [  # service, ratio, options, duration, expected
     ("youtube", "1:1", {}, 170, "Short"),
     ("youtube", "9:16", {}, 240, "Video"),  # over 3 minutes is a regular video
     ("youtube", "16:9", {}, 30, "Video"),
+    ("youtube", "abc", {}, 30, "Video"),  # a ratio we can't read is not called a Short
+    ("youtube", "0:0", {}, 30, "Video"),
+    ("youtube", "9:16", {}, "181", "Video"),
     ("linkedin", "4:5", {}, 30, "Video"),
     ("linkedin", "9:16", {}, 30, "Video"),
     ("tiktok", "9:16", {}, 30, "Video"),
@@ -64,7 +67,9 @@ def test_facebook_reel_is_9_16_only():
 
 def test_house_js_table_matches_python():
     js = HOUSE.read_text(encoding="utf-8")
-    table = re.search(r"const VIDEO_NAMES = (\{[^}]*\});", js).group(1)
+    match = re.search(r"const VIDEO_NAMES = (\{[^}]*\});", js)
+    assert match, "house.js does not contain a VIDEO_NAMES table"
+    table = match.group(1)
     as_json = re.sub(r"(\w+):", r'"\1":', table)
     assert json.loads(as_json) == video_names.VIDEO_NAMES
 
