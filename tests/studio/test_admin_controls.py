@@ -254,3 +254,20 @@ def test_migration_stops_while_r2_uploads_is_paused(app, human, adm, monkeypatch
     from studio import blobstore
     st = migrate_media.migrate(app.state.store, r2.Bucket(r2.config(), http=blobstore._client()), log=lambda *_: None)
     assert st["moved"] == 0 and "paused" in st.get("capped", "") and not [c for c in s3.calls if c[0] == "PUT"]
+
+
+def test_publishing_pause_keeps_a_spread_token_usable(app, human, adm, monkeypatch):
+    """CodeRabbit round 2: One take's spread token is checked against the pause before it is used up."""
+    import json as _json
+    from studio.actions import Actor as _A
+    from studio.buffer_api import BufferError
+    from studio.store import sha
+    store, takes = app.state.store, app.state.house.takes
+    monkeypatch.setattr(takes, "_run", lambda a, rid: {"status": "ready", "result": {}})
+    store.x("INSERT INTO confirms(token_hash,user_id,agent_id,payload,expires) VALUES(?,?,?,?,?)",
+            (sha("spread-ct"), "acc_1", None, _json.dumps({"kind": "spread", "take": 5, "plan": {"placements": []}}), time.time() + 600))
+    _pause(adm, "publishing")
+    with pytest.raises(BufferError) as e:
+        takes.place(_A("acc_1"), 5, {"confirm_token": "spread-ct"})
+    assert e.value.status == 503
+    assert store.q("SELECT used FROM confirms WHERE token_hash=?", (sha("spread-ct"),))[0]["used"] == 0

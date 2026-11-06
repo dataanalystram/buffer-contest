@@ -1212,6 +1212,8 @@ class Takes(TakeBin):
         payload = json.loads(row["payload"])
         if payload.get("kind") != "spread" or payload.get("take") != rid:
             raise ActionError("That confirm_token is for something else.", 400)
+        if not (a.kind == "agent" and a.agent["policy"] == "review"):  # publishing paused: the spread token stays usable
+            self.studio._publishing_open(a)
         self.store.x("UPDATE confirms SET used=1 WHERE token_hash=?", (row["token_hash"],))
         plan = payload["plan"]
         results = []
