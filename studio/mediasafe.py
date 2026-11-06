@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -107,12 +109,42 @@ def check_source(path: str, max_bytes: int | None = None) -> dict:
     cap = max_bytes or MAX_INPUT_BYTES
     if p.stat().st_size > cap:
         raise MediaRefused(f"The video is over {cap // (1024 * 1024)} MB.")
-    r = run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(p)], timeout=120, text=True)
-    try:
-        j = json.loads(r.stdout or "{}")
-    except ValueError:
-        j = {}
+    if shutil.which("ffprobe"):
+        r = run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(p)], timeout=120, text=True)
+        try:
+            j = json.loads(r.stdout or "{}")
+        except ValueError:
+            j = {}
+        ok = r.returncode == 0
+    else:  # the web image ships only the imageio-ffmpeg static ffmpeg (no ffprobe): read the same facts from `ffmpeg -i`
+        j, ok = _probe_with_ffmpeg(str(p)), True
     names = set(((j.get("format") or {}).get("format_name") or "").split(","))
-    if r.returncode != 0 or not j.get("streams") or not names & set(SOURCE_CONTAINERS):
+    if not ok or not j.get("streams") or not names & set(SOURCE_CONTAINERS):
         raise MediaRefused("That file isn't a plain video (MP4, MOV, MKV or WebM), so it can't be processed.")
     return j
+
+
+def _probe_with_ffmpeg(path: str) -> dict:
+    """ffprobe-shaped JSON (format_name, duration, streams with codec_type/width/height) from hardened ``ffmpeg -i``'s
+    banner, for hosts with FFmpeg but no ffprobe. Same whitelists, so a playlist or list demuxer still can't open."""
+    from .media import ff  # lazy: ff imports this module
+    try:
+        r = run([ff.ffmpeg_bin(), "-hide_banner", "-i", path], timeout=60, text=True)  # exits 1: no output file given
+    except Exception:  # noqa: BLE001  no FFmpeg at all: callers see "not a plain video"
+        return {}
+    err = r.stderr or ""
+    m = re.search(r"^Input #0, ([\w,]+), from ", err, re.MULTILINE)
+    if not m:
+        return {}
+    fmt: dict = {"format_name": m.group(1)}
+    d = re.search(r"Duration: (\d+):(\d+):([\d.]+)", err)
+    if d:
+        fmt["duration"] = str(int(d.group(1)) * 3600 + int(d.group(2)) * 60 + float(d.group(3)))
+    streams = []
+    for kind, rest in re.findall(r"^\s*Stream #0:\d+\S*: (Video|Audio|Subtitle|Data): (.*)$", err, re.MULTILINE):
+        st: dict = {"codec_type": kind.lower(), "codec_name": rest.split(" ", 1)[0].rstrip(",")}
+        wh = re.search(r"\b(\d{2,5})x(\d{2,5})\b", rest) if kind == "Video" else None
+        if wh:
+            st["width"], st["height"] = int(wh.group(1)), int(wh.group(2))
+        streams.append(st)
+    return {"format": fmt, "streams": streams}

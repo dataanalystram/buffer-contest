@@ -306,6 +306,51 @@ def test_media_preview_video_frames_at_0_1_2(human, app, tmp_path):
     assert [f["at_s"] for f in json.loads(res["content"][0]["text"])["frames"]] == [0, 1, 2]
 
 
+def _no_ffprobe(monkeypatch):
+    """The Render web image: FFmpeg from the imageio-ffmpeg wheel, no ffprobe anywhere (prod error, 6 Nov 2026)."""
+    from studio import mediasafe
+    real = shutil.which
+    monkeypatch.setattr(mediasafe.shutil, "which", lambda n, *a, **k: None if n == "ffprobe" else real(n, *a, **k))
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_media_preview_video_without_ffprobe(human, app, tmp_path, monkeypatch):
+    import subprocess
+    _no_ffprobe(monkeypatch)
+    mcp_parity._hits.clear()
+    out = tmp_path / "v.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x568:rate=10", "-t", "3", "-pix_fmt", "yuv420p",
+                    str(out)], check=True)
+    mt = _own_media(app, _uid(app), out.read_bytes(), "video/mp4", "v.mp4")
+    res, msg = mcp_call(human, agent_token(human), "get_media_preview", {"media_token": mt})
+    assert not res["isError"], msg
+    assert "ffprobe" not in msg
+    assert len([c for c in res["content"] if c["type"] == "image"]) == 3
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_check_source_without_ffprobe_reads_ffmpeg_and_still_refuses_playlists(tmp_path, monkeypatch):
+    import subprocess
+
+    from studio import mediasafe
+    _no_ffprobe(monkeypatch)
+    v = tmp_path / "v.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10", "-f", "lavfi", "-i", "sine",
+                    "-t", "2", "-pix_fmt", "yuv420p", str(v)], check=True)
+    j = mediasafe.check_source(str(v))
+    assert "mp4" in j["format"]["format_name"].split(",") and abs(float(j["format"]["duration"]) - 2) < 0.2
+    vid = next(s for s in j["streams"] if s["codec_type"] == "video")
+    assert (vid["width"], vid["height"]) == (320, 240) and any(s["codec_type"] == "audio" for s in j["streams"])
+    pl = tmp_path / "evil.mp4"  # an HLS playlist dressed as an mp4: the format whitelist refuses it, so it is not a video
+    pl.write_text("#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nfile:///etc/passwd\n#EXT-X-ENDLIST\n")
+    with pytest.raises(mediasafe.MediaRefused):
+        mediasafe.check_source(str(pl))
+    txt = tmp_path / "x.mp4"
+    txt.write_bytes(b"not a video at all")
+    with pytest.raises(mediasafe.MediaRefused):
+        mediasafe.check_source(str(txt))
+
+
 # ------------------------------------------------------------------------------------------------ parity: tools/list
 def test_tools_list_parity_and_page_context(human):
     tok = agent_token(human)

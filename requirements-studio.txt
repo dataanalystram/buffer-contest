@@ -9,3 +9,4 @@ psycopg[binary]>=3.2
 pillow>=11.3.0
 fonttools>=4.65.0
 segno>=1.6                # QR codes for the Send a file page (pure Python, no dependencies)
+imageio-ffmpeg>=0.7.0       # static FFmpeg for get_media_preview stills (no apt ffmpeg/ffprobe on the web image; mediasafe falls back to `ffmpeg -i`)

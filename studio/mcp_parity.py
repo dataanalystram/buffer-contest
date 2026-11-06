@@ -142,16 +142,23 @@ def media_preview(studio, a, args: dict) -> dict:
     head = house.media_head(tok) or {}
     if int(head.get("size") or 0) > PREVIEW_MAX_BYTES:
         raise ActionError(f"That file is over {PREVIEW_MAX_BYTES // (1024 * 1024)} MB; preview a shorter cut.", 413)
-    m = house.get_media(tok)
-    if not m:
+    mime = str(head.get("mime") or "")
+    # a video is decoded from the instance's disk cache (filled once from the database/R2), never held in memory or
+    # downloaded again for every preview (Render RAM, Supabase egress); images and a cache miss read the bytes as before
+    cached = house.media_path(tok) if mime.startswith("video/") else None
+    m = None if cached else house.get_media(tok)
+    if not cached and not m:
         raise ActionError("No such media in your account.", 404)
-    mime = str(m.get("mime") or "")
-    out: dict[str, Any] = {"media_token": tok, "mime": mime, "bytes": len(m["data"]), "signed": signed_url(house, tok),
+    mime = mime or str((m or {}).get("mime") or "")
+    size = int(head.get("size") or 0) or (len(m["data"]) if m else 0)
+    out: dict[str, Any] = {"media_token": tok, "mime": mime, "bytes": size, "signed": signed_url(house, tok),
                            "public_url": house.media_url(tok)}
     imgs = []
-    if mime.startswith("image/"):
+    if mime.startswith("image/") and m:
         imgs = [(0.0, _thumb(m["data"], width))]
-    elif mime.startswith("video/"):
+    elif mime.startswith("video/") and cached:
+        imgs = _frames(str(cached), times, width)
+    elif mime.startswith("video/") and m:
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
             f.write(m["data"])
             src = f.name
