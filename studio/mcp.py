@@ -487,8 +487,8 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
                    "capabilities": {"tools": {"listChanged": False}, "prompts": {"listChanged": False},
                                     "resources": {"subscribe": False, "listChanged": False}},
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
-                   "instructions": "Start with get_started (or the make_a_post prompt): it is the one recommended path for a post. "
-                   + _cb.INSTRUCTIONS + " Video links: a video for a normal post (a launch video, a news clip) goes to "
+                   "instructions": _cb.INSTRUCTIONS + " Start with get_started (or the make_a_post prompt): it is the one "
+                   "recommended path for a post. Video links: a video for a normal post (a launch video, a news clip) goes to "
                    "render_reel(run_id, url) after find_video probed it; ingest_video_link is ONLY for One take (cutting one long "
                    "video into clips). Any video link you fetch goes through the same rights step: needs_user_approval -> the "
                    "person approves in HuhQueue → Inbox → Approvals (list_pending_approvals) -> call again with approval_id; or, "

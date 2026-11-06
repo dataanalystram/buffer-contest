@@ -234,8 +234,9 @@ def apply(tools: list[dict]) -> None:
         old = t["description"]
         if n in DESCRIPTIONS:
             new = DESCRIPTIONS[n]
-            if "server_ai" in old and "server_ai" not in new:
-                new += " Uses HuhQueue's server AI only with server_ai: true."
+            from .mcp_client_brain import SERVER_AI_NOTE
+            if SERVER_AI_NOTE.strip() in old and SERVER_AI_NOTE.strip() not in new:
+                new = new.rstrip() + SERVER_AI_NOTE
         elif n in ("clips_from_video", "split_video"):
             new = ONE_TAKE_PREFIX + old
         elif n.startswith("post_"):
