@@ -25,6 +25,16 @@ def add_bin_routes(app, house, actor) -> None:
     def take_clip_delete(rid: str, clip_id: str, request: Request):
         return t.delete_take(actor(request, write=True), rid, clip_id)
 
+    @app.post("/api/takes/{rid}/stop")
+    def take_stop(rid: int, request: Request):
+        """stop_take: stop a running take; what it made is kept."""
+        return house.takes.stop_take(actor(request, write=True), rid)
+
+    @app.post("/api/takes/{rid}/retry")
+    def take_retry(rid: int, request: Request):
+        """retry_take: try a stopped, interrupted or failed take again from what it kept."""
+        return house.takes.retry_take(actor(request, write=True), rid)
+
     @app.post("/api/takes/{rid}/restore")
     def take_restore(rid: str, request: Request):
         return t.restore_take(actor(request, write=True), rid)

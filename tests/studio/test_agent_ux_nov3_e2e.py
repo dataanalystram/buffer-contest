@@ -213,10 +213,10 @@ def test_owner_sequence_in_the_browser(live, chromium):
         page.wait_for_selector("#packages .pkg.flash", timeout=5000)
         # 4 one rights question -> Yes -> a Reel, never asked again
         page.get_by_test_id("rights-yes").click()
-        page.wait_for_function("() => /Video/.test(document.querySelector('[data-testid=pkg-format]')?.innerText || '')")
+        page.wait_for_function("() => /^(Reel|Short|Video) ·/.test(document.querySelector('[data-testid=pkg-format]')?.innerText || '')")
         assert page.get_by_test_id("rights-card").count() == 0
         txt = page.get_by_test_id("agent-thread").inner_text()
-        assert txt.count("Do you have the right") <= 1 and "now a Reel" in txt
+        assert txt.count("Do you have the right") <= 1 and "now your Instagram Reel" in txt
         assert "couldn't tell what to change" not in txt and "undefined" not in txt  # one click = one answer, no stray send
         # 5 "what templates can you use"
         _say(page, "you said video you found video and also can you check what else brand templates you can use")

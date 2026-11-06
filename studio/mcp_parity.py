@@ -247,7 +247,7 @@ PAGES: dict[str, dict] = {
               "tools": ["get_brand", "list_brand_kits", "create_brand_kit", "update_brand_kit", "edit_brand", "remember_rule", "brand_check"]},
     "one_take": {"title": "One take", "shows": "A long video split into short clips placed in a week.",
                  "tools": ["clips_from_video", "ingest_video_link", "list_clips", "adjust_clip", "rewrite_clip_caption", "place_clips_in_week", "split_video", "get_clip_layout", "set_clip_layout",
-                           "delete_take", "list_take_bin", "restore_take", "purge_take_bin",
+                           "delete_take", "list_take_bin", "restore_take", "purge_take_bin", "stop_take", "retry_take",
                            "list_threads", "get_thread", "delete_thread", "restore_thread", "list_thread_bin", "purge_thread_bin"]},
     "settings_ai": {"title": "Settings > AI engine", "shows": "Which engine the in-app agent uses, keys, logs.",
                     "tools": ["get_ai_engine", "set_ai_engine", "get_ai_logs", "list_ai_keys", "get_brain"]},

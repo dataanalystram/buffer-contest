@@ -412,7 +412,7 @@ async function drawTemplates(r, busy) {
   const slides = pk.some((p) => ["carousel", "photo"].includes(p.format));
   const line = `<p class="mp-tpl-line" data-testid="mp-template-line"><span class="muted">Template:</span> <b data-testid="mp-template-name">${esc(tp.name)}</b>
     <span class="muted">· <span data-testid="mp-template-why">${esc(tp.why)}</span>${tp.kit ? ` · in your ${esc(tp.kit)} kit` : ""}${sl ? " · " + sl : ""}</span>
-    ${slides ? "" : `<small class="muted sm">Your posts are Reels; pick a template to make the image channels slides.</small>`}</p>`;
+    ${slides ? "" : `<small class="muted sm">Your posts are videos; pick a template to make the image channels slides.</small>`}</p>`;
   const key = [r.id, tp.id, JSON.stringify(tp.slide_names || {}), pk.map((p) => (p.media_urls || [])[0]).join()].join("|");
   box.hidden = false;
   if (H.tplKey === key && H.tplHtml) { box.innerHTML = H.tplHtml; wireTpl(r); return; }
@@ -462,6 +462,23 @@ function checkList(chk) {
 }
 
 const FMT_NAME = { reel: "Reel", carousel: "Carousel", photo: "Image", video: "Video" };
+// each network's own word for a video post (owner, 6 Nov 2026: every chip said "Reel"). Same table as
+// studio/video_names.py: Instagram Reel, Facebook Reel (9:16) or Video, YouTube Short (vertical, up to 3 min) or Video,
+// Pinterest Video Pin, everyone else Video. The server sends p.video_name; older posts are worked out here.
+const VIDEO_NAMES = { instagram: "Reel", facebook: "Video", youtube: "Video", tiktok: "Video", linkedin: "Video", twitter: "Video", x: "Video", threads: "Video", bluesky: "Video", mastodon: "Video", pinterest: "Video Pin", googlebusiness: "Video" };
+function videoName(p, ratio, duration) {
+  if (p.video_name) return p.video_name;
+  const o = p.options || {}, svc = String(p.service || "").toLowerCase();
+  if (svc === "instagram") return o.ig_type === "story" ? "Story" : "Reel";
+  if (svc === "facebook") return { story: "Story", reel: "Reel" }[o.fb_type] || "Video";
+  if (svc === "youtube") {
+    const [w, h] = String(ratio || "").split(":").map(Number), vertical = ratio ? w / h <= 1 : true;
+    const secs = Number(duration) || 0;  // an unreadable length doesn't decide it (same as video_names.py)
+    return vertical && (!secs || secs <= 180) ? "Short" : "Video";
+  }
+  return VIDEO_NAMES[svc] || "Video";
+}
+window.HQ_VIDEO_NAME = videoName;
 // one list of files per card, whatever shape the package has (older runs only have media_urls)
 // files deleted from the Library (the server's media_missing) are left out, so a card never shows a broken image
 const pkgFiles = (p) => { const gone = new Set(p.media_missing || []);
@@ -475,13 +492,14 @@ function pkgMissing(p) {
 }
 const RATIOS = [["9:16", 9 / 16], ["4:5", 0.8], ["1:1", 1], ["16:9", 16 / 9]];
 const ratioOf = (w, h) => (w && h ? RATIOS.reduce((b, r) => (Math.abs(r[1] - w / h) < Math.abs(b[1] - w / h) ? r : b))[0] : "");
-// owner P0: a video was labelled "Image". A video is always "Video · ratio · length"; the ratio and length come from the
+// owner P0: a video was labelled "Image". A video is always "<network's word> · ratio · length" (Reel, Short, Video); the ratio and length come from the
 // file itself when the server didn't record them.
 function mediaLabel(p) {
   const m = pkgFiles(p), first = m[0] || {};
   if (!m.length) return p.media_state === "missing" ? "Media deleted" : "Text only";  // owner, 6 Nov 2026: "Image · Ready" on text
   if (first.type === "video" || isVid(first.url)) {
-    const parts = ["Video", first.ratio || ratioOf(first.width, first.height) || "…", first.duration ? fmtDur(first.duration) : "…"];
+    const r = first.ratio || ratioOf(first.width, first.height);
+    const parts = [videoName(p, r, first.duration), r || "…", first.duration ? fmtDur(first.duration) : "…"];
     if (first.role === "original") parts.push("your file");
     return parts.join(" · ");
   }
@@ -564,7 +582,8 @@ function pkgCard(p) {
 // screen); the card below is that channel's media and caption. The choice stays while the run redraws.
 const PKG_TAB = { run: null, ch: "" };
 const fmtLine = (p) => { const m = pkgFiles(p)[0] || {}, r = m.ratio || ratioOf(m.width, m.height) || p.ratio || "";
-  return [p.format === "reel" ? "Reel" : (m.type === "video" ? "Video" : FMT_NAME[p.format] || (m.url ? "Image" : "Text")), r].filter(Boolean).join(" · "); };
+  const vid = m.type === "video" || (m.url && isVid(m.url)) || (p.format === "reel" && !m.url);
+  return [vid ? videoName(p, r, m.duration) : FMT_NAME[p.format] || (m.url ? "Image" : "Text"), r].filter(Boolean).join(" · "); };
 function pkgTabs(r, pk) {
   if (pk.length < 2) return "";
   if (PKG_TAB.run !== r.id || !pk.some((p) => p.channel_id === PKG_TAB.ch)) { PKG_TAB.run = r.id; PKG_TAB.ch = pk[0].channel_id; }

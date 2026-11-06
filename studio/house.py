@@ -732,7 +732,8 @@ class House:
         d = dict(rows[0])
         for k in ("input", "steps", "result"):
             d[k] = json.loads(d[k] or "null")
-        if d["status"] in ("running", "rendering") and d["updated"] < _now() - STALE_RUN and not self._busy(rid):
+        if d["status"] in ("running", "rendering") and d["updated"] < _now() - STALE_RUN and not self._busy(rid) \
+                and not (d.get("kind") == "take" and self._take_job_open(rid)):
             # the worker died, the server restarted mid-run or a callback never came: say so instead of spinning forever
             why = "The agent stopped before finishing (the server restarted or a step timed out). Reply or press Retry to continue."
             for s in d["steps"]:
@@ -796,6 +797,11 @@ class House:
             self.sweep_stale_jobs()
         except Exception:  # noqa: BLE001  the watchdog never breaks a page
             traceback.print_exc()
+
+    def _take_job_open(self, rid: int) -> bool:
+        """A take whose job is still open on the video worker is working, however long its run row stays quiet (a long
+        video reads for many minutes; the worker's heartbeat lands on the job). The job watchdog fails a silent worker."""
+        return bool(self.store.q("SELECT 1 FROM render_jobs WHERE run_id=? AND status='queued' LIMIT 1", (rid,)))
 
     def _busy(self, rid: int) -> bool:
         from . import agent_brain
@@ -1783,6 +1789,8 @@ class House:
         self.studio._guard_write(a, "revise")
         if self._run_kind(rid) in ("media", "news"):  # never re-run the pre-agent pipeline (owner P0): the agent remakes it
             return self.brain.reply(a, rid, correction)
+        if self._run_kind(rid) == "client":  # an AI app's post (string format, no pipeline input): its app revises it (run #83)
+            raise ActionError("Your AI app made this post, so ask it for the change; it updates this same post.", 409)
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
             raise ActionError(demo_guard.why("run"), 429)
         run = self.run(a, rid)

@@ -2,6 +2,9 @@
 # Render/any host: set BUFFER_CLIENT_ID, BUFFER_CLIENT_SECRET, SESSION_SECRET, PUBLIC_URL, DATABASE_URL (Postgres).
 FROM python:3.12-slim
 WORKDIR /app
+# ffmpeg/ffprobe: the web process probes and previews media itself (get_media_preview, mediasafe.check_source,
+# link ingest probes). Without them every preview fails with "No such file or directory: 'ffprobe'" (6 Nov 2026).
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY requirements-studio.txt ./
 RUN pip install --no-cache-dir -r requirements-studio.txt && useradd --create-home --uid 1000 app
 COPY studio ./studio

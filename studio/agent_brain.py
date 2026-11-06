@@ -22,7 +22,7 @@ import uuid
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, brain_llm, budget, chat_context, demo_guard, demo_view, editorial_tools, intake, intent, llm, template_pick, untrusted
+from . import activity, brain_llm, budget, chat_context, demo_guard, demo_view, editorial_tools, intake, intent, llm, template_pick, untrusted, video_names
 from .actions import ActionError, Actor
 from .agent_tools import LABELS, SPECS, TEXT_FIRST, VIDEO_ONLY, Tools
 
@@ -34,8 +34,10 @@ KEYFRAMES_MAX = 4
 KEYFRAME_B64_MAX = 400_000  # one 768 px JPEG frame as a data URL is ~60-150 KB
 _rlock = threading.Lock()
 _stop_req: set[int] = set()  # runs the person asked to stop: the next step boundary stops them (Brain.stop)
+CLIENT_REPLY = ("Your AI app made this post over MCP, so changes come from there: ask it and it updates this same "
+                "post. You can still edit each channel's caption on its card below.")
 STOPPED = "Stopped, as you asked. What's made so far is kept. Press Resume to carry on."
-BOOT = uuid.uuid4().hex[:12]  # this process: a run stamped with another process's id whose heartbeat stopped was cut off
+from .procid import BOOT  # noqa: E402  this process: a run stamped with another process's id whose heartbeat stopped was cut off
 HEARTBEAT_S = int(os.environ.get("HQ_PROC_HEARTBEAT", "20"))
 ORPHAN_S = int(os.environ.get("HQ_PROC_ORPHAN", "90"))  # no heartbeat this long -> that process is gone (a deploy, a crash)
 INTERRUPTED = ("The server restarted while I was working on this post{at}, so I stopped. Press Resume and I'll pick up from "
@@ -178,7 +180,10 @@ class Brain:
         live = {r["boot"] for r in self.store.q("SELECT boot, seen FROM agent_procs") if (r["seen"] or 0) > now - ORPHAN_S}
         live.add(BOOT)
         out = []
-        for r in self.store.q("SELECT id, steps, result, updated FROM agent_runs WHERE status IN ('running','rendering')"):
+        # One take has its own recovery (take_control.recover_orphans): its heavy steps run on the video worker, which
+        # calls back whatever the web process does, so a take silent for minutes is working, not cut off (run #80, 6 Nov 2026)
+        for r in self.store.q("SELECT id, steps, result, updated FROM agent_runs WHERE status IN ('running','rendering') "
+                              "AND (kind IS NULL OR kind <> 'take')"):
             rid = r["id"]
             with _rlock:
                 if rid in _running:
@@ -204,6 +209,12 @@ class Brain:
             out.append(rid)
         if out:
             print(f"agent: marked {len(out)} cut-off run(s) interrupted: {out}", flush=True)
+        takes = getattr(self.h, "takes", None)
+        if takes is not None:
+            try:
+                takes.recover_orphans(live, BOOT, now)
+            except Exception:  # noqa: BLE001  a take's recovery never stops the agent's
+                traceback.print_exc()
         return out
 
     def resume(self, a: Actor, rid: int) -> dict:
@@ -613,6 +624,9 @@ class Brain:
         run = self.h.run(a, rid)
         if run["kind"] in ("media", "news"):
             return self.h.redo_with_agent(a, rid, text)  # a pre-agent run: redone by the agent, never the old pipeline
+        if run["kind"] == "client":  # made by the person's AI app over MCP: never the old revise pipeline (live run #83)
+            run["result"].setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
+            return self._answer(a, rid, run, CLIENT_REPLY)
         if run["kind"] != "agent":
             return self.h.revise(a, rid, text)
         with _rlock:
@@ -711,7 +725,7 @@ class Brain:
         parts = []
         for p in pk:
             n = len(p.get("media_urls") or [])
-            what = fmt.get(p.get("format"), p.get("format") or "post")
+            what = p.get("video_name") or fmt.get(p.get("format"), p.get("format") or "post")  # Reel, Short, Video...
             if p.get("format") == "carousel":
                 what += f", {n} slides"
             state = "in Buffer" if p.get("sent") else ("on hold" if p.get("status") == "hold" else "ready")
@@ -937,10 +951,10 @@ class Brain:
             self.call(a, rid, tools, "write_captions", {"channel_ids": reel + feed})
         self.call(a, rid, tools, "check", {})
         res = self.h.run(a, rid)["result"]
-        reels = [p["service"].title() for p in res.get("packages") or [] if p.get("format") == "reel"]
+        reels = [video_names.phrase(p["service"], p.get("video_name") or "Reel") for p in res.get("packages") or [] if p.get("format") == "reel"]
         cr = res.get("video_credit") or "the creator"
-        if reels:
-            self._say(a, rid, f"Done: {', '.join(reels)} {'is' if len(reels) == 1 else 'are'} now a Reel of the video, credited “{cr}” "
+        if reels:  # each network's own word: an Instagram Reel, a YouTube Short, a LinkedIn video
+            self._say(a, rid, f"Done: the video is now your {', '.join(reels)}, credited “{cr}” "
                               "on screen and in the caption. It's in **Your posts** below.")
         else:
             self._say(a, rid, "I couldn't make the Reel from that video. Upload the file with **Upload video** below and I'll use it.")
