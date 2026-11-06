@@ -17,7 +17,7 @@ from . import brand, demo_guard, demo_view, drafter, factcheck, hbstyle, intake,
 from .media import styles as media_styles
 from .actions import ActionError
 from .headline import cover_hook
-from . import editorial_tools
+from . import editorial_tools, video_names
 from .editorial_tools import EditorialTools
 
 VIDEO_ONLY = {"tiktok", "youtube"}
@@ -2263,8 +2263,10 @@ class Tools(EditorialTools):
             if c["service"] == "youtube":
                 pk["options"] = {"title": st["headline"][:100], "category_id": "28"}
             has_vid = any(u.lower().split("?")[0].endswith((".mp4", ".mov", ".m4v", ".webm")) for u in pk["media_urls"])
-            if cm["format"] == "reel" and has_vid and c["service"] in ("instagram", "facebook"):
-                # a 9:16 Reel goes out as a Reel on both Meta networks (Facebook defaulted to a feed video "post")
+            if cm["format"] == "reel" and has_vid and (c["service"] == "instagram" or
+                                                      (c["service"] == "facebook" and video_names.facebook_reel(pk["ratio"]))):
+                # a 9:16 Reel goes out as a Reel on both Meta networks (Facebook defaulted to a feed video "post"); a 4:5
+                # Facebook video is a feed video, not a Reel
                 pk.setdefault("options", {})["ig_type" if c["service"] == "instagram" else "fb_type"] = "reel"
             if cm.get("covers"):  # the branded cover variants (Reel cover = the opening frame; YouTube thumbnail 1280x720)
                 ci = min(int(cm.get("cover_index") or 0), len(cm["covers"]) - 1)
@@ -2288,6 +2290,10 @@ class Tools(EditorialTools):
                 if was.get("buffer_post_id") and was.get("mode") == "draft":
                     pk["buffer_draft"] = {"buffer_post_id": was["buffer_post_id"], "at": was.get("at")}
             pk["media"] = self._media_info(media, pk["media_urls"], pk["ratio"])
+            if has_vid:  # the network's own word for this video: Reel, Short, Video, Video Pin (studio/video_names.py)
+                v0 = next((m for m in pk["media"] if m.get("type") == "video"), {})
+                pk["video_name"] = video_names.video_name(c["service"], v0.get("ratio") or pk["ratio"], pk.get("options"),
+                                                          v0.get("duration"))
             vs = (res.get("media_versions") or {}).get(c["id"]) or []
             if vs:  # what Undo goes back to (the card's "Undo" / "Back to the Reel")
                 pk["undo"] = {"label": vs[-1].get("label") or "Undo", "format": vs[-1].get("format") or "", "versions": len(vs)}

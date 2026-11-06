@@ -174,7 +174,7 @@ def test_rights_yes_records_news_credit_and_renders_the_reel_never_asking_again(
     assert res["rights"]["mode"] == "news_credit" and res["rights"]["video"] == VID["url"] and not res.get("rights_question")
     ig = next(p for p in res["packages"] if p["service"] == "instagram")
     assert ig["format"] == "reel" and made and made[-1]["rights_confirmed"] is True and made[-1]["credit"] == VID["credit"]
-    assert "now a Reel" in res["thread"][-1]["text"]
+    assert "now your Instagram Reel" in res["thread"][-1]["text"]
     n_jobs = len(made)
     run = _say(owner, rid, "yes")  # the owner said it again: no second question, no re-render
     asked = [t for t in run["result"]["thread"] if t["role"] == "agent" and "Do you have the right" in t["text"]]

@@ -1205,6 +1205,13 @@ def client_channel_media(studio, a: Actor, rid: int, channel: str, token: str) -
                format="reel" if typ == "video" else "photo", check=h.check(a, str(hit.get("text") or ""), tok),
                undo={"label": "Back to the previous version", "versions": len(vs)})
     hit.pop("buffer_draft_stale", None)
+    if typ == "video":  # the network's word for the new file (a 16:9 YouTube upload is a Video, not a Short)
+        from . import video_names
+        w, hh = meta.get("width"), meta.get("height")
+        r = min((("9:16", 9 / 16), ("4:5", 0.8), ("1:1", 1.0), ("16:9", 16 / 9)), key=lambda x: abs(x[1] - w / hh))[0] if w and hh else ""
+        hit["video_name"] = video_names.video_name(str(hit.get("service") or ""), r, hit.get("options"), meta.get("duration"))
+    else:
+        hit.pop("video_name", None)
     if pk and pk[0] is hit:
         res["media"] = hit["media"]
     res.setdefault("thread", []).append({"role": "agent", "text": f"{hit.get('channel') or hit.get('service')}: media replaced", "at": time.time()})
