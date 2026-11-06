@@ -619,7 +619,7 @@ function tkResetForm() {
 function tkLeaveRun({ reset = false, replace = false, nav = true } = {}) {
   HQLoad.cancel("takeopen"); tkStopWatch();
   T.take = null; T.plan = null; tkRunMode(false);
-  if (window.ceClose) window.ceClose();
+  const dlg = document.getElementById("clipDialog"); if (dlg && dlg.open) dlg.close();
   if (nav) tkNav(null, replace);
   if (reset) tkResetForm();
   loadTakes();
