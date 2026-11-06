@@ -446,3 +446,115 @@ def test_never_a_due_at_in_the_past(human, fake, page, monkeypatch):  # noqa: F8
     monkeypatch.setattr(actions, "datetime", Later)
     sc = _err(human, tok, "submit_post", {"confirm_token": pv["confirm_token"]})
     assert sc["code"] == "due_at_past" and not fake.created
+
+
+# ------------------------------------------------------------------------------------------------ PR #139 gaps (6 Nov 2026)
+MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 4096
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+def _fetch(human, monkeypatch, body):
+    calls = []
+
+    def fake(url, limit=None, *a, **k):
+        calls.append(url)
+        return body
+    monkeypatch.setattr(human.app.state.house, "_fetch_bytes", fake)
+    return calls
+
+
+def _approve(human, aid):
+    r = human.post(f"/api/approvals/{aid}/approve", json={"rights_attested": True})
+    assert r.status_code == 200, r.text
+
+
+def test_library_upload_url_video_link_takes_the_rights_step(human, monkeypatch):
+    tok = agent_token(human)
+    rid = _start(human, tok)["run_id"]
+    calls = _fetch(human, monkeypatch, MP4)
+    url = "https://cdn.example.com/launch.mp4"
+    out = _ok(human, tok, "library_upload_url", {"url": url, "run_id": rid})
+    assert out["needs_user_approval"] is True and out["tool"] == "library_upload_url" and out["run_id"] == rid
+    assert calls == []  # nothing fetched before the person's yes
+    store = human.app.state.store
+    assert store.q("SELECT COUNT(*) AS n FROM library_items")[0]["n"] == 0
+    _approve(human, out["approval_id"])
+    got = _ok(human, tok, "library_upload_url", {"url": url, "run_id": rid, "approval_id": out["approval_id"]})
+    assert got["media_token"] and got["type"] == "video" and got["rights"]["approval_id"] == out["approval_id"]
+    assert calls == [url]
+    # the approval is used once: the same link again asks again
+    again = _ok(human, tok, "library_upload_url", {"url": url, "run_id": rid})
+    assert again["needs_user_approval"] is True
+
+
+def test_library_upload_url_extensionless_video_is_held_and_nothing_is_saved(human, monkeypatch):
+    tok = agent_token(human)
+    _fetch(human, monkeypatch, MP4)
+    store = human.app.state.store
+    before = store.q("SELECT COUNT(*) AS n FROM media")[0]["n"]
+    out = _ok(human, tok, "library_upload_url", {"url": "https://cdn.example.com/v?id=7"})
+    assert out["needs_user_approval"] is True and out["saved"] is False and "nothing was saved" in out["message"]
+    assert store.q("SELECT COUNT(*) AS n FROM media")[0]["n"] == before
+
+
+def test_library_upload_url_photo_and_platform_page(human, monkeypatch):
+    tok = agent_token(human)
+    _fetch(human, monkeypatch, PNG)
+    img = _ok(human, tok, "library_upload_url", {"url": "https://cdn.example.com/hero.png"})
+    assert img["media_token"] and "needs_user_approval" not in img  # a photo needs no rights step
+    sc = _err(human, tok, "library_upload_url", {"url": YT})
+    assert sc["code"] == "wrong_tool" and any("render_reel" in s for s in sc["next_steps"])
+    tools = _tools(human, tok)
+    assert "approval_id" in tools["library_upload_url"]["inputSchema"]["properties"]
+    assert "rights step" in tools["library_upload_url"]["description"]
+
+
+def _ready_run(human, tok, prompt):
+    run = _ok(human, tok, "make_post", {"prompt": prompt, "brain": "external"})
+    h = human.app.state.house
+    a = Actor(_uid(human))
+    r = h.run(a, run["id"])
+    r["result"]["packages"] = [{"channel_id": "ch_li", "service": "linkedin", "text": "Acme launches its AI card", "media_urls": [],
+                                "status": "ready", "idempotency_key": f"k{run['id']}", "options": {}}]
+    h._save(run["id"], r["steps"], r["result"], "ready")
+    return run["id"]
+
+
+def test_post_save_buffer_drafts_runs_the_duplicate_draft_guard(human, fake, page):  # noqa: F811
+    tok = agent_token(human, policy="draft", cap=100)
+    r1 = _ready_run(human, tok, "Save as drafts: https://news.example.com/ai-launch")
+    out = _ok(human, tok, "post_save_buffer_drafts", {"run_id": r1})
+    pid = out["drafts"][0]["buffer_post_id"]
+    assert pid and len(fake.created) == 1 and out["deprecated"]
+    fake.posts.append({"id": pid, "text": "x", "status": "draft", "channelId": "ch_li"})
+    r2 = _ready_run(human, tok, "Put it in Buffer as a draft https://news.example.com/ai-launch")
+    sc = _err(human, tok, "post_save_buffer_drafts", {"run_id": r2})
+    assert sc["code"] == "duplicate_draft" and sc["duplicate_of"]["buffer_post_id"] == pid and sc["choices"] == ["update", "new"]
+    assert len(fake.created) == 1  # nothing created
+    assert _err(human, tok, "post_save_buffer_drafts", {"run_id": r2, "on_duplicate": "maybe"})["status"] == 400
+    assert _err(human, tok, "post_save_buffer_drafts", {"run_id": r2, "channel_ids": "ch_li"})["status"] == 400
+    up = _ok(human, tok, "post_save_buffer_drafts", {"run_id": r2, "on_duplicate": "update"})
+    assert up["drafts"] == [{"service": "linkedin", "status": "updated", "buffer_post_id": pid, "replaced_run_id": r1}]
+    assert len(fake.created) == 1 and fake.edits and fake.edits[-1]["id"] == pid
+    # 'new' on a third run: a second draft, only because the app said so
+    r3 = _ready_run(human, tok, "Drafts please: https://news.example.com/ai-launch")
+    new = _ok(human, tok, "post_save_buffer_drafts", {"run_id": r3, "on_duplicate": "new"})
+    assert len(fake.created) == 2 and new["drafts"][0]["buffer_post_id"]
+    tools = _tools(human, tok)
+    assert tools["post_save_buffer_drafts"]["inputSchema"]["properties"]["on_duplicate"]["enum"] == ["update", "new"]
+    assert "duplicate_draft" in tools["post_save_buffer_drafts"]["description"]
+
+
+def test_cold_worker_pending_probe_is_documented_and_says_wait_first(human, monkeypatch):
+    tok = agent_token(human)
+    _found(monkeypatch)
+    _worker(human.app, monkeypatch, None)
+    monkeypatch.setattr(link_probe, "WAIT", 0.2)
+    out = _ok(human, tok, "find_video", {"query": YT})
+    assert out["probe"]["status"] == "pending" and out["video"]["probed"] is False
+    assert out["next_steps"][0].startswith(f"render_status(job_id={out['probe']['job_id']})")
+    tools = _tools(human, tok)
+    for n in ("find_video", "research_link", "render_status"):
+        assert "pending" in tools[n]["description"], n
+    gs = _ok(human, tok, "get_started")
+    assert "probe.status 'pending'" in gs["steps"][1]

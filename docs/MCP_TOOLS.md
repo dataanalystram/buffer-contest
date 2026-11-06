@@ -320,6 +320,10 @@ tests in `tests/studio/test_mcp_reliability_nov6.py` and the end-to-end pass `te
    the video worker (`link_probe` job: yt-dlp metadata with the platform's own extractor and the first 64 KB of the stream,
    through netguard; direct files: the first 64 KB here). Otherwise `found_not_downloadable` with `probe.reason`, the upload
    ask and `next_steps`. Results are kept 6 h per person and link; waiting is capped by `HQ_PROBE_WAIT` (default 20 s).
+   A **cold worker** that hasn't answered within ~20 s gives `probe.status: pending` (with `probe.job_id`): the answer
+   is still `found_not_downloadable`, but the next steps say to poll `render_status(job_id)` or call `find_video`
+   again with the same url (it reuses the check) before asking the person for the file. Only `probe.status: failed` is
+   a verdict.
 5. **Prerequisites run themselves.** `post_*` render steps on a make_post run auto-run `read_url` then `extract_facts` when
    missing (`auto_ran`), or answer `missing_prerequisite` with the exact step.
 6. **`replace_channel_media` on every run type**: start_post / create_package runs take `media_token` in place (only that
