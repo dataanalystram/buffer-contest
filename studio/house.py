@@ -1789,6 +1789,8 @@ class House:
         self.studio._guard_write(a, "revise")
         if self._run_kind(rid) in ("media", "news"):  # never re-run the pre-agent pipeline (owner P0): the agent remakes it
             return self.brain.reply(a, rid, correction)
+        if self._run_kind(rid) == "client":  # an AI app's post (string format, no pipeline input): its app revises it (run #83)
+            raise ActionError("Your AI app made this post, so ask it for the change; it updates this same post.", 409)
         if demo_guard.is_demo(a.uid) and not demo_guard.take(self.store, a.uid, "run"):
             raise ActionError(demo_guard.why("run"), 429)
         run = self.run(a, rid)

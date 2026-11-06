@@ -34,6 +34,8 @@ KEYFRAMES_MAX = 4
 KEYFRAME_B64_MAX = 400_000  # one 768 px JPEG frame as a data URL is ~60-150 KB
 _rlock = threading.Lock()
 _stop_req: set[int] = set()  # runs the person asked to stop: the next step boundary stops them (Brain.stop)
+CLIENT_REPLY = ("Your AI app made this post over MCP, so changes come from there: ask it and it updates this same "
+                "post. You can still edit each channel's caption on its card below.")
 STOPPED = "Stopped, as you asked. What's made so far is kept. Press Resume to carry on."
 from .procid import BOOT  # noqa: E402  this process: a run stamped with another process's id whose heartbeat stopped was cut off
 HEARTBEAT_S = int(os.environ.get("HQ_PROC_HEARTBEAT", "20"))
@@ -622,6 +624,9 @@ class Brain:
         run = self.h.run(a, rid)
         if run["kind"] in ("media", "news"):
             return self.h.redo_with_agent(a, rid, text)  # a pre-agent run: redone by the agent, never the old pipeline
+        if run["kind"] == "client":  # made by the person's AI app over MCP: never the old revise pipeline (live run #83)
+            run["result"].setdefault("thread", []).append({"role": "user", "text": text, "at": _now()})
+            return self._answer(a, rid, run, CLIENT_REPLY)
         if run["kind"] != "agent":
             return self.h.revise(a, rid, text)
         with _rlock:
