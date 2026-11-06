@@ -260,13 +260,6 @@ def apply(tools: list[dict]) -> None:
                              "this video link, once the person approved it"})
 
 
-def describe(name: str) -> dict:
-    return {"before": BEFORE.get(name, ""), "after": next((t["description"] for t in _ALL if t["name"] == name), "")}
-
-
-_ALL: list[dict] = []
-
-
 def workflow() -> dict:
     return {**copy.deepcopy(WORKFLOW), "prerequisites": copy.deepcopy(PREREQS), "spent_usd": 0,
             "resource": "huhqueue://workflow/make-a-post", "prompt": "make_a_post"}
