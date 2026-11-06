@@ -67,6 +67,17 @@ def tessdata_for(exe: str) -> str | None:
     return str(d) if (d / "eng.traineddata").is_file() else None
 
 
+def has_eng(exe: str, tessdata: str | None) -> bool:
+    """Whether the tesseract program sees English data in the folder read_frame() will use (the prefix's tessdata, else
+    Tesseract's own default location). Fixed arguments, no shell, a timeout."""
+    cmd = [exe] + (["--tessdata-dir", tessdata] if tessdata else []) + ["--list-langs"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return any(line.strip() == "eng" for line in ((r.stdout or "") + "\n" + (r.stderr or "")).splitlines())
+
+
 def status() -> dict:
     """{ok, version, path, why}: what the worker can report about its OCR (read-only, no frames)."""
     exe = binary()
@@ -83,7 +94,10 @@ def status() -> dict:
     ver = ".".join(map(str, v))
     if v < MIN_VERSION:
         return {"ok": False, "version": ver, "path": exe, "why": f"tesseract {ver} is older than {'.'.join(map(str, MIN_VERSION))}"}
-    return {"ok": True, "version": ver, "path": exe, "why": "", "tessdata": tessdata_for(exe)}
+    td = tessdata_for(exe)
+    if not has_eng(exe, td):
+        return {"ok": False, "version": ver, "path": exe, "why": "English language data (eng.traineddata) not found"}
+    return {"ok": True, "version": ver, "path": exe, "why": "", "tessdata": td}
 
 
 def sample_times(start: float, end: float, step: float = STEP_S, cap: int = MAX_FRAMES) -> list[float]:
@@ -117,11 +131,13 @@ def parse_tsv(tsv: str, w: int, h: int, min_conf: float = MIN_CONF) -> list[dict
 
 
 def _grab(path: str, t: float, out: Path, timeout: float = 30) -> bool:
-    """One frame at t, scaled to FRAME_W wide, within `timeout` seconds."""
+    """One frame at t, scaled to FRAME_W wide, within `timeout` seconds (never raised: the take's budget is a ceiling)."""
     from .. import mediasafe
+    if timeout <= 0:
+        return False
     try:
         r = mediasafe.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", path, "-frames:v", "1", "-vf",
-                           f"scale={FRAME_W}:-2", str(out)], timeout=max(1.0, timeout))
+                           f"scale={FRAME_W}:-2", str(out)], timeout=timeout)
     except (OSError, subprocess.SubprocessError):
         return False
     return r.returncode == 0 and out.is_file()
@@ -165,10 +181,14 @@ def scan(path: str, start: float, end: float, budget: Budget | None = None, st: 
             if not budget.left():
                 res["skipped"] = "take OCR budget used"
                 break
+            allow = min(30.0, budget.seconds - budget.used_s)
+            if allow <= 0.05:
+                res["skipped"] = "take OCR budget used"
+                break
             f0 = time.monotonic()
             png = tmp / f"f{k}.png"
             boxes = []
-            if _grab(path, t, png, timeout=min(30.0, budget.seconds - budget.used_s)):
+            if _grab(path, t, png, timeout=allow):
                 left = budget.seconds - budget.used_s - (time.monotonic() - f0)  # what the extraction left of the budget
                 if left > 0.2:
                     boxes, _ = read_frame(st["path"], str(png), st.get("tessdata"), timeout=min(FRAME_TIMEOUT, left))

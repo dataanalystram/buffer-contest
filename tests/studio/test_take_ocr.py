@@ -19,6 +19,9 @@ def _ok_status():
     return st if st["ok"] else None
 
 
+LANGS_SH = ("#!/bin/sh\ncase \"$*\" in *--list-langs*) echo 'List of available languages in \"/x/\" (1):'; "
+            "for l in {langs}; do echo $l; done;; *) echo 'tesseract 5.5.4';; esac\n")
+
 needs_tess = pytest.mark.skipif(not (shutil.which("ffmpeg") and _ok_status()), reason="tesseract >= 5.5.4 + ffmpeg not installed")
 
 
@@ -32,7 +35,7 @@ def test_versions_below_5_5_4_turn_ocr_off(monkeypatch, tmp_path):
     assert st["ok"] is False and st["version"] == "5.5.0" and "older than 5.5.4" in st["why"]
     res = ocr.scan("x.mp4", 0, 10, ocr.Budget(), st)
     assert res["ok"] is False and res["frames"] == [] and "older" in res["skipped"]
-    fake.write_text("#!/bin/sh\necho 'tesseract 5.5.4'\n")
+    fake.write_text(LANGS_SH.format(langs="eng"))
     assert ocr.status()["ok"] is True and ocr.status()["version"] == "5.5.4"
     assert ocr.parse_version("tesseract v5.10.0") == (5, 10, 0) and ocr.parse_version("nope") is None
 
@@ -230,3 +233,48 @@ def test_status_survives_undecodable_version_output(monkeypatch, tmp_path):
 def test_worker_retries_setup_when_the_language_data_is_missing():
     cmd = instabox_worker.command(7, "https://hq.example", "take_render", "main")
     assert "[ -s /data/tesseract/share/tessdata/eng.traineddata ]; } ||" in cmd
+
+
+def test_ocr_is_off_without_english_data(monkeypatch, tmp_path):
+    fake = tmp_path / "tesseract"
+    fake.write_text(LANGS_SH.format(langs="osd"))
+    fake.chmod(0o755)
+    monkeypatch.setenv("HQ_TESSERACT", str(fake))
+    st = ocr.status()
+    assert st["ok"] is False and st["version"] == "5.5.4" and "eng.traineddata" in st["why"]
+    assert ocr.scan("x.mp4", 0, 10, ocr.Budget(), st)["frames"] == []
+    monkeypatch.setattr(ocr.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired("t", 10)))
+    assert ocr.has_eng(str(fake), None) is False
+
+
+def test_frame_extraction_never_gets_more_than_the_budget_left(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ocr, "_grab", lambda path, t, out, timeout=30: seen.append(timeout) or False)
+    b = ocr.Budget(seconds=30.0)
+    b.used_s = 29.9
+    ocr.scan("x.mp4", 0, 20, b, {"ok": True, "path": "/bin/true", "version": "5.5.4"})
+    assert seen and all(0 < t <= 0.1 + 1e-9 for t in seen)
+    seen.clear()
+    b.used_s = 30.0
+    res = ocr.scan("x.mp4", 0, 20, b, {"ok": True, "path": "/bin/true", "version": "5.5.4"})
+    assert seen == [] and res["skipped"] == "take OCR budget used"
+
+
+def test_ocr_frame_times_follow_the_pause_trim():
+    from studio.media import cleancut
+    keep = [[10.0, 12.0], [15.0, 20.0]]           # 3 s cut between 12 and 15 (source seconds)
+    frames = [{"t": 1.0, "boxes": [1]}, {"t": 3.0, "boxes": [2]}, {"t": 6.0, "boxes": [3]}, {"t": "x"}, None]
+    got = cleancut.remap_frames(frames, keep, 10.0)   # t is clip seconds from the span's start (10 s)
+    assert got == [{"t": 1.0, "boxes": [1]}, {"t": 3.0, "boxes": [3]}]   # 13 s was cut; 16 s -> 2 + 1
+
+
+def test_prepare_carries_remapped_ocr_frames(monkeypatch, tmp_path):
+    from studio.media import cleancut
+    monkeypatch.setattr(cleancut, "plan_cuts", lambda *a, **k: {"keep": [[10.0, 12.0], [15.0, 20.0]], "removed": 3.0,
+                                                                "pauses": 1, "fillers": 0, "skipped": ""})
+    monkeypatch.setattr(cleancut, "cut", lambda *a, **k: None)
+    m = {"id": "c1", "start": 10.0, "end": 20.0, "_ocr_frames": [{"t": 1.0, "boxes": []}, {"t": 3.0, "boxes": []},
+                                                                    {"t": 6.0, "boxes": []}]}
+    got = cleancut.prepare("src.mp4", m, [], [], [], {"audio": False}, str(tmp_path))
+    assert got["m"]["start"] == 0.0 and got["m"]["_ocr_frames"] == [{"t": 1.0, "boxes": []}, {"t": 3.0, "boxes": []}]
+    assert m["_ocr_frames"][1]["t"] == 3.0   # the caller's dict is left alone
