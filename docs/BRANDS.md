@@ -79,7 +79,7 @@ follows.
 | Use an example brand | `POST /api/brand-studio/examples/{huhbyte,buffer}` | `apply_brand_example` |
 | Render for my channels | `POST /api/templates/render` | `render_template` |
 | Recap stories from posts | `GET /api/templates/recap?template=weekly_recap` | (inside `render_template`) |
-| Recurring slots | `GET/POST /api/templates/slots`, `DELETE /api/templates/slots/{id}`, `POST /api/templates/slots/{id}/run` | `schedule_template_slot`, `templates_slot_run` |
+| Recurring slots | `GET/POST /api/templates/slots`, `PATCH/DELETE /api/templates/slots/{id}`, `POST /api/templates/slots/{id}/run` | `schedule_template_slot`, `templates_slot_run` |
 
 Every write answers with `buffer_cost` (`{"requests": n, "live": true}`): the real Buffer GraphQL requests the action made on a
 connected account (0 in the sample, which has no Buffer behind it).
