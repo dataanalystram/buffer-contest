@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 
 SOURCES = ("builtin", "mcp", "user")
+APPS = {"claude": "Claude", "claude-code": "Claude Code", "chatgpt": "ChatGPT", "codex": "Codex", "cursor": "Cursor", "grok": "Grok"}
 _CLEAN = re.compile(r"[\x00-\x1f<>]")
 
 
@@ -28,11 +29,17 @@ def _clean(s, n: int = 60) -> str:
 def client_of(agent: dict | None) -> str:
     if not agent:
         return ""
+    # the same naming as studio/mcp_runs.app_name, without importing it (mcp_runs reaches agent_tools and FastAPI, and this
+    # module is reachable from the video worker through brand_studio)
     try:
-        from .mcp_runs import app_name
-        return _clean(app_name(agent))
+        from . import activity
+        app = agent.get("app") or activity.classify_app(agent.get("name", ""), agent.get("client_info") or "")
     except Exception:  # noqa: BLE001  (attribution never breaks a write)
-        return _clean(agent.get("name"))
+        app = ""
+    if app in APPS:
+        return APPS[app]
+    client = str(agent.get("client_info") or "").strip().partition(" ")[0]
+    return _clean(client or agent.get("name") or "")
 
 
 def model_hint() -> str:
