@@ -335,3 +335,53 @@ def test_sample_ai_allowance_is_not_spent_while_ai_is_paused():
     from pathlib import Path
     src = (Path(admin.__file__).parent / "actions.py").read_text()
     assert 'if ai["base_url"] and demo_guard.is_demo(a.uid)' in src
+
+
+# ------------------------------------------------------------------ CodeRabbit round 4: caps survive a refresh
+def test_a_refresh_keeps_the_operators_caps_and_hourly_window(app, human, adm):
+    """An operator-limited MCP token can't refresh its way out of the limit: the successor carries the parent's current
+    daily and hourly caps (not the ones granted at connect time), its refresh record keeps the daily cap, and the hourly
+    window carries over."""
+    store = app.state.store
+    tid = _mcp_grant(store)
+    assert adm.post(f"/api/admin/users/acc_1/tokens/{tid}/limit", json={"hourly_cap": 2, "daily_cap": 3}).status_code == 200
+    opsctl.token_hit({"id": tid, "admin_hourly_cap": 2})               # one request already spent this hour
+    r = _refresh(app)
+    assert r.status_code == 200
+    succ = dict(store.q("SELECT id, daily_cap, admin_hourly_cap FROM agent_tokens WHERE parent_id=?", (tid,))[0])
+    assert succ["daily_cap"] == 3 and succ["admin_hourly_cap"] == 2
+    from studio.store import sha
+    assert store.q("SELECT daily_cap FROM oauth_refresh WHERE token_hash=?", (sha(r.json()["refresh_token"]),))[0]["daily_cap"] == 3
+    assert opsctl.token_window(succ["id"]) == 1
+    new_bearer = TestClient(app, base_url="https://hq.test", headers={"Authorization": f"Bearer {r.json()['access_token']}"})
+    assert new_bearer.get("/api/me").status_code == 200                  # the second request of the hour
+    assert new_bearer.get("/api/me").status_code == 429                  # past the cap the refresh didn't reset
+    # a second refresh still carries the limit (the lineage, not only one hop)
+    r2 = _refresh(app, r.json()["refresh_token"])
+    assert r2.status_code == 200
+    s2 = store.q("SELECT daily_cap, admin_hourly_cap FROM agent_tokens WHERE parent_id=?", (succ["id"],))[0]
+    assert s2["daily_cap"] == 3 and s2["admin_hourly_cap"] == 2
+
+
+def test_a_limit_saved_during_a_refresh_reaches_the_successor(app, human, adm, monkeypatch):
+    store, studio = app.state.store, app.state.studio
+    tid = _mcp_grant(store)
+    real = studio.create_agent_token
+
+    def racing(*a, **k):                     # the operator saves a limit on the old row while the refresh is minting
+        out = real(*a, **k)
+        assert adm.post(f"/api/admin/users/acc_1/tokens/{tid}/limit", json={"hourly_cap": 7, "daily_cap": 4}).status_code == 200
+        return out
+    monkeypatch.setattr(studio, "create_agent_token", racing)
+    r = _refresh(app)
+    assert r.status_code == 200
+    s = store.q("SELECT daily_cap, admin_hourly_cap FROM agent_tokens WHERE parent_id=?", (tid,))[0]
+    assert s["daily_cap"] == 4 and s["admin_hourly_cap"] == 7
+
+
+def test_a_limit_on_a_rotated_token_reaches_its_successors(app, human, adm):
+    store = app.state.store
+    tid = _mcp_grant(store)
+    assert _refresh(app).status_code == 200
+    assert adm.post(f"/api/admin/users/acc_1/tokens/{tid}/limit", json={"hourly_cap": 9}).status_code == 200
+    assert store.q("SELECT admin_hourly_cap FROM agent_tokens WHERE parent_id=?", (tid,))[0]["admin_hourly_cap"] == 9

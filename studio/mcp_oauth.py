@@ -97,6 +97,15 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
         return {"access_token": tok["token"], "token_type": "Bearer", "expires_in": ACCESS_DAYS * 86400,
                 "refresh_token": refresh, "scope": "huhqueue"}
 
+    def inherit_caps(parent: int, child: int) -> None:
+        """Copy the parent's current daily and admin hourly caps onto its refresh successor (and the successor's refresh
+        record), and carry the hourly request window over, so a refresh never resets an operator's limit."""
+        from . import opsctl
+        store.x("UPDATE agent_tokens SET daily_cap=COALESCE((SELECT p.daily_cap FROM agent_tokens p WHERE p.id=?), daily_cap), "
+                "admin_hourly_cap=(SELECT p.admin_hourly_cap FROM agent_tokens p WHERE p.id=?) WHERE id=?", (parent, parent, child))
+        store.x("UPDATE oauth_refresh SET daily_cap=(SELECT daily_cap FROM agent_tokens WHERE id=?) WHERE agent_id=?", (child, child))
+        opsctl.token_inherit(parent, child)
+
     # ---------------------------------------------------------------- discovery
     @app.get("/.well-known/oauth-protected-resource", include_in_schema=False)
     @app.get("/.well-known/oauth-protected-resource/mcp", include_in_schema=False)
@@ -273,7 +282,14 @@ def add_mcp_oauth_routes(app: FastAPI, store: Store, studio: Studio, public_url:
                 return _err("invalid_grant", "Refresh token is unknown, used or expired.")
             if not store.xn("UPDATE agent_tokens SET revoked=1 WHERE id=? AND revoked=0", (row["agent_id"],)):
                 return _err("invalid_grant", "Access was revoked in HuhQueue. Connect again.")
-            out = mint(row["user_id"], c, row["policy"], row["daily_cap"], refreshed=True, parent=row["agent_id"])
+            # the successor keeps the caps in force on the parent now (an operator's daily / hourly limit), not the
+            # ones granted at connect time; read after the claim, synced again after the mint (admin.limit_token also
+            # writes every successor), so a limit saved while this runs is never lost (CodeRabbit, PR #128)
+            pc = store.q("SELECT daily_cap FROM agent_tokens WHERE id=?", (row["agent_id"],))
+            daily = (pc[0]["daily_cap"] if pc else None) or row["daily_cap"]
+            out = mint(row["user_id"], c, row["policy"], daily, refreshed=True, parent=row["agent_id"])
+            child = store.q("SELECT agent_id FROM oauth_refresh WHERE token_hash=?", (sha(out["refresh_token"]),))[0]["agent_id"]
+            inherit_caps(row["agent_id"], child)
             # an admin revoke that landed while this refresh ran marks the parent 2 (studio/admin.py revoke_token): the
             # successor it may not have seen goes too
             if (store.q("SELECT revoked FROM agent_tokens WHERE id=?", (row["agent_id"],)) or [{"revoked": 0}])[0]["revoked"] == 2:

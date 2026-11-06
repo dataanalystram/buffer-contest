@@ -52,6 +52,9 @@ audited actions in the last 24 h, and two caps (never the token or its hash):
   **Requests this hour** is only counted while the token has an hourly cap (an uncapped token shows 0 here; use
   **Actions in 24 h** and **Last used** for those), and saving either cap starts the hour again.
 - **Daily cap** (1–100): the token's existing daily cap on actions (`Studio._guard_write`).
+- Both caps follow an MCP token through its refreshes: the successor takes the parent's caps in force at that moment
+  (and its hourly window), a cap saved on a token also lands on every successor it rotated into (`parent_id`), and a
+  cap saved while a refresh runs reaches the new token too. A refresh never resets an operator's limit.
 - **Revoke** (two clicks): `revoked=1`, for good. Its MCP refresh token is refused too (`mcp_oauth` checks `revoked`).
   To stop a whole account reversibly, Block instead.
 

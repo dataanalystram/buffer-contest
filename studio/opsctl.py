@@ -135,6 +135,14 @@ def token_reset(tid: int | None = None) -> None:
             _hits.pop(int(tid), None)
 
 
+def token_inherit(parent: int, child: int) -> None:
+    """A refreshed MCP token takes over its parent's hourly window (a refresh doesn't buy a fresh hour)."""
+    with _hlock:
+        q = _hits.get(int(parent))
+        if q:
+            _hits[int(child)] = deque(q)
+
+
 def token_window(tid: int, now: float | None = None) -> int:
     """Requests counted in the last hour for this token (this process)."""
     t = time.time() if now is None else now

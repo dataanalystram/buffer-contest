@@ -291,19 +291,25 @@ def _token(store, uid: str, tid) -> dict:
     return dict(rows[0])
 
 
+def _lineage(store, uid: str, tid: int) -> list[int]:
+    """This token and every successor its MCP refreshes rotated into (``parent_id``), never a separate connection."""
+    ids, frontier = [tid], [tid]
+    while frontier and len(ids) < 10_000:
+        marks = ",".join("?" * len(frontier))
+        frontier = [r["id"] for r in store.q(f"SELECT id FROM agent_tokens WHERE user_id=? AND parent_id IN ({marks})",
+                                             (uid, *frontier)) if r["id"] not in ids]
+        ids += frontier
+    return ids
+
+
 def revoke_token(store, admin_uid: str, uid: str, tid) -> dict:
     """Revoke one token for good, with every successor its MCP refreshes rotated into (``parent_id``), never a token the
     person connected separately. ``revoked=2`` is the admin's mark: a refresh that was already running when this landed
     sees it after minting and revokes the successor it made (studio/mcp_oauth.py). The refresh tokens go too."""
     from . import opsctl
     t = _token(store, uid, tid)
-    ids, frontier = [t["id"]], [t["id"]]
     with store.tx():
-        while frontier and len(ids) < 10_000:
-            marks = ",".join("?" * len(frontier))
-            frontier = [r["id"] for r in store.q(f"SELECT id FROM agent_tokens WHERE user_id=? AND parent_id IN ({marks})",
-                                                 (uid, *frontier)) if r["id"] not in ids]
-            ids += frontier
+        ids = _lineage(store, uid, t["id"])
         marks = ",".join("?" * len(ids))
         store.x(f"UPDATE agent_tokens SET revoked=2 WHERE user_id=? AND id IN ({marks})", (uid, *ids))
         store.x(f"UPDATE oauth_refresh SET used=1 WHERE user_id=? AND agent_id IN ({marks})", (uid, *ids))
@@ -335,10 +341,15 @@ def limit_token(store, admin_uid: str, uid: str, tid, body: dict) -> dict:
         if daily is None:
             raise AdminError("daily_cap must be a whole number from 1 to 100.", 400)
     with store.tx():
-        store.x("UPDATE agent_tokens SET admin_hourly_cap=?, daily_cap=? WHERE id=? AND user_id=?", (hourly, daily, t["id"], uid))
+        # the token and its refresh successors: a refresh racing this save can't carry the old caps forward
+        ids = _lineage(store, uid, t["id"])
+        marks = ",".join("?" * len(ids))
+        store.x(f"UPDATE agent_tokens SET admin_hourly_cap=?, daily_cap=? WHERE user_id=? AND id IN ({marks})", (hourly, daily, uid, *ids))
+        store.x(f"UPDATE oauth_refresh SET daily_cap=? WHERE user_id=? AND agent_id IN ({marks})", (daily, uid, *ids))
         log(store, admin_uid, "limit_token", uid, {"token": t["id"], "hourly_cap": {"from": t["admin_hourly_cap"], "to": hourly},
                                                    "daily_cap": {"from": t["daily_cap"], "to": daily}})
-    opsctl.token_reset(t["id"])
+    for i in ids:
+        opsctl.token_reset(i)
     return {"id": t["id"], "hourly_cap": hourly, "daily_cap": daily}
 
 
