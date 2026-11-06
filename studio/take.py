@@ -671,23 +671,33 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
         raise TakeError(f"This video is {info['duration'] / 60:.0f} min; the free worker takes up to {max_secs / 60:.0f} min.")
     timings = {}
     log(f"probe: {info['duration']:.1f}s {info['width']}x{info['height']}")
-    t = time.time()
-    silences = detect_silences(path)
-    timings["silences"] = round(time.time() - t, 1)
-    t = time.time()
-    if transcript and transcript.get("words"):
-        words, lang = transcript["words"], transcript.get("language") or ""
-        provider = f"reused captions: {transcript.get('detail') or transcript.get('source')} (no Whisper run)"
-    else:
-        words, lang, provider = transcribe(path, model)
-    timings["transcribe"] = round(time.time() - t, 1)
-    log(f"transcribe: {len(words)} words in {timings['transcribe']}s ({provider})")
-    t = time.time()
-    scenes, scene_how = detect_scenes(path)
-    timings["scenes"] = round(time.time() - t, 1)
-    t = time.time()
-    faces, face_how = face_track(path, info["duration"])
-    timings["faces"] = round(time.time() - t, 1)
+    # the face track and the scene cuts decode the video on their own while the silences and the transcript run here:
+    # the slowest stage (the face track) no longer waits for the others (owner, 6 Nov 2026: a link take in <= 5 min)
+    from concurrent.futures import ThreadPoolExecutor
+
+    def timed(fn, *a):
+        t = time.time()
+        out = fn(*a)
+        return out, round(time.time() - t, 1)
+    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hq_analyze")
+    try:
+        f_faces = pool.submit(timed, face_track, path, info["duration"])
+        f_scenes = pool.submit(timed, detect_scenes, path)
+        t = time.time()
+        silences = detect_silences(path)
+        timings["silences"] = round(time.time() - t, 1)
+        t = time.time()
+        if transcript and transcript.get("words"):
+            words, lang = transcript["words"], transcript.get("language") or ""
+            provider = f"reused captions: {transcript.get('detail') or transcript.get('source')} (no Whisper run)"
+        else:
+            words, lang, provider = transcribe(path, model)
+        timings["transcribe"] = round(time.time() - t, 1)
+        log(f"transcribe: {len(words)} words in {timings['transcribe']}s ({provider})")
+        (scenes, scene_how), timings["scenes"] = f_scenes.result()
+        (faces, face_how), timings["faces"] = f_faces.result()
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     log(f"scenes: {len(scenes)} ({scene_how}); faces: {len(faces)} samples ({face_how})")
     t = time.time()
     jev_frames = None
@@ -722,7 +732,7 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
             "silences": silences, "scenes": scenes, "faces": faces, "jev": jev_rec, **({"jev_frames": jev_frames} if jev_frames else {}),
             "providers": {"stt": provider, "scenes": scene_how, "faces": face_how + jev_note, "vad": "Silero VAD (inside faster-whisper)"
                           if "faster-whisper" in provider else "ffmpeg silencedetect"},
-            "timings": {**timings, "total": round(time.time() - t0, 1)}}
+            "timings": {**timings, "total": round(time.time() - t0, 1)}}  # total: wall clock (stages overlap)
 
 
 # ====================================================================== heavy: render one clip (worker)

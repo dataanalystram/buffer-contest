@@ -17,6 +17,7 @@ import base64
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import httpx
@@ -59,6 +60,25 @@ def store_source(c: httpx.Client, put_url: str, src: Path) -> int:
         return 0
 
 
+def render_parallel(spec: dict) -> int:
+    """How many clips of a shorts-style take render at once: HQ_RENDER_PARALLEL, else one per 2 vCPUs (each encode
+    uses HQ_FFMPEG_THREADS=2) while ~1.5 GB of memory stays free per clip, at most 3. One take's own render (OCR,
+    Smart layout) keeps one at a time."""
+    if spec.get("style") != "opus":
+        return 1
+    v = os.environ.get("HQ_RENDER_PARALLEL", "")
+    if v.isdigit():
+        return max(1, min(4, int(v)))
+    avail = 0
+    try:
+        with open("/proc/meminfo") as fh:
+            avail = next((int(x.split()[1]) // 1024 for x in fh if x.startswith("MemAvailable:")), 0)
+    except (OSError, ValueError, IndexError):
+        avail = 0
+    by_mem = avail // 1500 if avail else 1
+    return max(1, min((os.cpu_count() or 1) // 2, by_mem, 3))
+
+
 def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
     from . import take
     from .media import selfcheck
@@ -76,14 +96,21 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
     try:
         from .takes import fetch_platform, render_spec_clip, reuse_captions
         fetched = None
+        t_dl = time.time()
         if spec.get("platform_url"):  # a YouTube / Vimeo / X post: Make a post's own fetch path (yt-dlp, 4 GB / 3 h caps, vetted)
             fetched = {**fetch_platform(spec["platform_url"], src, MAX_SOURCE), "via": "yt-dlp"}
         else:
             _download(c, urls["source"], src)
             if spec.get("source_url"):
                 fetched = {"via": "direct"}
+        dl = round(time.time() - t_dl, 1)
+        print(f"timing: source download {dl}s ({'yt-dlp' if spec.get('platform_url') else 'stored copy / upload'})", flush=True)
+        stored_s = None
         if fetched is not None and spec["kind"] == "take_analyze" and urls.get("source_put"):
+            t = time.time()
             fetched["stored_bytes"] = store_source(c, urls["source_put"], src)
+            stored_s = round(time.time() - t, 1)
+            print(f"timing: source kept in storage (R2) {stored_s}s", flush=True)
         if spec["kind"] == "take_analyze":
             tr = reuse_captions(str(src), spec)  # existing captions first; Whisper only when there are none
             print("captions:", f"reused {tr['source']} ({tr['count']} words)" if tr else "none, transcribing")
@@ -91,16 +118,37 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
                                     transcript=tr, jev=spec.get("jev") is True)
             if fetched is not None:
                 analysis["fetch"] = fetched
+            analysis.setdefault("timings", {})["download"] = dl
+            if stored_s is not None:
+                analysis["timings"]["store_source"] = stored_s
+            print("timing: analysis", analysis.get("timings"), flush=True)
             r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"analysis": analysis})
             print("analysis posted:", r.status_code, r.text[:200])
             return 0 if r.status_code == 200 else 1
         logo = c.get(urls["logo"]).content if urls.get("logo") else None
         from urllib.parse import quote
-        for clip in spec["clips"]:
+
+        def one(clip: dict) -> None:
+            t = time.time()
             for cid, data, cover, meta in render_spec_clip(str(src), spec, clip, logo):
+                if isinstance(meta.get("timings"), dict):
+                    meta["timings"]["source_download"] = dl
+                tp = time.time()
                 r = c.post(f"{base}/api/worker/jobs/{jid}/clips/{quote(cid, safe='')}", headers=h,
                            json={"data": base64.b64encode(data).decode(), "cover": base64.b64encode(cover).decode(), "meta": meta})
-                print(f"clip {cid}: {len(data)} bytes, {meta['layout']}: {r.status_code}")
+                print(f"clip {cid}: {len(data)} bytes, {meta['layout']}: {r.status_code}; timing {meta.get('timings')}, "
+                      f"post + storage {time.time() - tp:.1f}s", flush=True)
+            print(f"timing: clip {clip['id']} done in {time.time() - t:.1f}s", flush=True)
+        k = render_parallel(spec)
+        t_r = time.time()
+        if k > 1 and len(spec["clips"]) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=k, thread_name_prefix="hq_clip") as ex:
+                list(ex.map(one, spec["clips"]))  # the first failure is raised (and reported) once every clip stopped
+        else:
+            for clip in spec["clips"]:
+                one(clip)
+        print(f"timing: {len(spec['clips'])} clip(s) rendered in {time.time() - t_r:.1f}s, {k} at a time", flush=True)
         r = c.post(f"{base}/api/worker/jobs/{jid}", headers=h, json={"meta": {"clips": len(spec["clips"])}})
         print("render done:", r.status_code)
         return 0 if r.status_code == 200 else 1
