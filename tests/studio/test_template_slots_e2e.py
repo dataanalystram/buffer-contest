@@ -84,8 +84,8 @@ def test_slot_create_repeat_assign_edit_delete(live, chromium, width):
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     try:
-        page.goto(base + "/?tab=brandstudio")
-        page.wait_for_selector("[data-testid=bs-slot-add]", state="attached", timeout=60000)
+        page.goto(base + "/?tab=templates")  # Brand > Templates: render a template, recurring slots
+        page.wait_for_selector("[data-testid=bs-slot-add]", state="visible", timeout=60000)
         _until(lambda: page.locator("#bsSlotTpl option[value=weekly_recap]").count() == 1)
         add = page.locator("[data-testid=bs-slot-add]")
         add.scroll_into_view_if_needed()
@@ -125,7 +125,7 @@ def test_slot_create_repeat_assign_edit_delete(live, chromium, width):
 
         # 4. edit: Wednesday 08:30; the list and the next draft follow
         page.reload()
-        page.wait_for_selector("[data-testid=bs-slot]", timeout=30000)
+        page.wait_for_selector("[data-testid=bs-slot]", state="visible", timeout=30000)
         page.locator("[data-testid=bs-slot-edit]").first.click()
         _until(lambda: page.inner_text("[data-testid=bs-slot-add]") == "Save changes")
         assert page.input_value("#bsSlotDay") == "mon" and page.input_value("#bsSlotTime") == "20:00"
