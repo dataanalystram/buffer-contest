@@ -72,7 +72,9 @@ NO_IDEM = {"create_send_code", "create_upload", "upload_media_chunk", "finish_up
            "submit_post", "preview_post"}
 # arguments that steer this layer and never reach a tool's own logic or its idempotency hash
 CONTROL = ("idempotency_key", "user_asked", "new_post", "new_request", "reason", "approval_id")
-KEEP_APPROVAL_ID = {"approve_link_ingest", "reject_link_ingest"}  # approval_id is what these tools act on (5 Nov 2026)
+KEEP_APPROVAL_ID = {"approve_link_ingest", "reject_link_ingest",
+                    # a video link's rights step: the approval_id comes back on the call that fetches the link (6 Nov 2026)
+                    "render_reel", "edit_video", "post_render_reel", "post_edit_video", "post_set_theme", "post_edit_channel_media"}  # approval_id is what these tools act on (5 Nov 2026)
 
 SCHEMA = ("CREATE TABLE IF NOT EXISTS mcp_idem (user_id TEXT, agent_id INTEGER, ikey TEXT, tool TEXT, args_hash TEXT, result TEXT, "
           "at REAL, PRIMARY KEY (user_id, agent_id, ikey))")
