@@ -394,6 +394,8 @@ def alt_text(hook: str, text: str, limit: int = 420, cleaned: bool = False) -> s
     """A plain description of a clip: what is said (the hook) and the readable text on screen. ``text`` is OCR output;
     unless ``cleaned`` (already readable_text), it is filtered here (no confidence known, so dictionary words only)."""
     hook = re.sub(r"\s+", " ", (hook or "").strip().rstrip("…").strip())
+    if len(hook) > limit // 2:  # a long hook never pushes the on-screen text out of the limit
+        hook = hook[:limit // 2].rsplit(" ", 1)[0].rstrip(",;:") + "…"
     text = re.sub(r"\s+", " ", text or "").strip()
     if text and not cleaned:
         text = readable_text([[(t, ALT_MIN_CONF) for t in text.split(" ")]])

@@ -122,14 +122,14 @@ def plan_shot(s: dict, emph: list[float], face: dict | None, src: tuple[int, int
 
 
 def face_size(points: list[tuple[float, dict]]) -> dict | None:
-    """Median face box (fractions of the source) over a shot's samples: {w, h, cy, dy}; dy is half the p10-p90 range
-    of the face centre's height (how far it moves up and down)."""
+    """Median face box (fractions of the source) over a shot's samples: {w, h, cy, dy}; dy is the largest distance of
+    any sampled face centre from the median height (how far it moves up or down; a full-height crop can't follow it)."""
     if not points:
         return None
-    cys = sorted(f["y"] + f["h"] / 2 for _, f in points)
-    lo, hi = cys[int(0.1 * (len(cys) - 1))], cys[int(round(0.9 * (len(cys) - 1)))]
+    cys = [f["y"] + f["h"] / 2 for _, f in points]
+    mid = median(cys)
     return {"w": median(f["w"] for _, f in points), "h": median(f["h"] for _, f in points),
-            "cy": median(cys), "dy": round((hi - lo) / 2, 4)}
+            "cy": mid, "dy": round(max(abs(c - mid) for c in cys), 4)}
 
 
 def filter_for(pp: dict | None, w: int, h: int) -> str:

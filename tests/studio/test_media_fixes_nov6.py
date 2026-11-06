@@ -51,6 +51,14 @@ def test_face_size_reports_the_vertical_spread():
     pts = [(t, {"x": 0.4, "y": 0.2 + 0.01 * (t % 5), "w": 0.1, "h": 0.2}) for t in range(20)]
     f = punch.face_size(pts)
     assert 0.015 <= f["dy"] <= 0.025 and f["w"] == 0.1
+    # two samples far above the median (CodeRabbit #141): the drift is their distance, so the peak keeps them inside
+    pts = [(t, {"x": 0.4, "y": 0.15, "w": 0.1, "h": 0.2}) for t in range(18)] + [(t, {"x": 0.4, "y": 0.01, "w": 0.1, "h": 0.2}) for t in (18, 19)]
+    f = punch.face_size(pts)
+    assert f["dy"] >= 0.14 - 1e-9
+    shot = {"layout": "track", "start": 0, "end": 14, "path": {"crop_w": 608, "crop_h": 1080}}
+    pp = punch.plan_shot(shot, [3.0], f, (1920, 1080))
+    z = pp["peak"] if pp else 1.0
+    assert f["cy"] - (f["dy"] + f["h"] / 2) * z >= punch.MARGIN - 1e-9 or pp is None
 
 
 # ---------------------------------------------------------------- 4. OCR noise stays out of alt text
@@ -82,6 +90,8 @@ def test_alt_text_never_doubles_punctuation():
     assert ocr.alt_text("time.", "Launch day") == "Video clip: “time.” On-screen text: Launch day"
     assert ocr.alt_text("Is it live?", "Launch day") == "Video clip: “Is it live?” On-screen text: Launch day"
     assert ocr.alt_text("Done.", "") == "Video clip: “Done.”"
+    long = ocr.alt_text("word " * 200, "Launch day")
+    assert len(long) <= 420 and long.endswith("On-screen text: Launch day")
     for hook in ("a.", "b?", "c!", "d…", "e"):
         out = ocr.alt_text(hook, "Launch day")
         assert ".”." not in out and "?”." not in out and "!”." not in out and ".." not in out
@@ -127,6 +137,10 @@ def test_a_quiet_pause_inside_a_stretched_word_is_cut():
     assert cleancut.plan_cuts(STRETCH, 15.6, 18.3, [[16.79, 17.6]], quiet_fn=lambda a, b: False)["skipped"] == "nothing to trim"
     assert cleancut.plan_cuts(STRETCH, 15.6, 18.3, [[16.79, 17.6]])["skipped"] == "nothing to trim"  # no energy check
     assert cleancut.plan_cuts(STRETCH, 15.6, 18.3, None, quiet_fn=lambda a, b: True)["skipped"] == "nothing to trim"
+
+    # a filler whose own cut was too short to make stays dropped even when a neighbour's in-word cut splits it
+    um = [W("so", 0.0, 0.3), W("um", 1.0, 1.05), W("next", 1.1, 1.4)]
+    assert [w["w"] for w in cleancut.remap_words(um, [[0.0, 1.02], [1.03, 1.4]])] == ["so", "next"]
 
     def boom(a, b):
         raise RuntimeError("x")
