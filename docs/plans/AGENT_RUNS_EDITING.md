@@ -1,6 +1,6 @@
-# Agent runs, image and video editing, and Commerce: plan
+# Agent runs, image and video editing: plan
 
-Status: **plan only, no product code in this PR.** Owner (Ram), 4 Nov 2026: implementation starts after PR #100
+Status: **plan only, no product code in this PR.** A fourth phase (a product-search integration) was dropped on 6 Nov 2026 by the owner. Owner (Ram), 4 Nov 2026: implementation starts after PR #100
 (SSRF guard + channel scope) and PR #99 (loading states + wide layout) are merged. Phase 2 depends on #100's
 `netguard.safe_once()`.
 
@@ -11,7 +11,6 @@ Read against `main` @ `fdcf693` (merge of #98). File and line numbers below are 
 | 1 | Run discipline: one request = one run, consent before new runs/threads/templates, Library dedupe, cleanup tool, rewritten MCP instructions | nothing | $0 (code only) |
 | 2 | Image editing on HuhQueue's side: fixed fast cut-out, ML cut-out on the worker, fetch-by-URL, fit/pad/shadow/grade/text, same in the UI | #100 | $0 (Pillow on Render; ML on the free worker) |
 | 3 | Video editing tools over MCP: tighten (silence/filler cuts), multi-range cuts, scenes, transcript, stitch, frames, audio | Phase 1 run_id plumbing | $0 (FFmpeg/whisper on the free worker) |
-| 4 | HuhQueue Commerce on Channel3: discovery, comparison, product cards, product content, shop pages, affiliate links with disclosure, click insights | Phases 1-2 | $0 up to 1,000 Channel3 credits/month shared by everyone, then $0.007/credit (see 4.6) |
 
 ---
 
@@ -298,10 +297,6 @@ full BiRefNet ~900 MB+. CPU inference at 1024 px is seconds per image on a 4-vCP
 several GB of RAM. GitHub-hosted runners are free for this public repo; cache the model with `actions/cache` (or keep it
 on the InstaBox disk). Latency on Actions is dominated by the runner start (about a minute); InstaBox is warm. **$0.**
 
-Channel3 also returns a `cleaned_url` (square, uniform background) per product image and has an
-`/experimental/sticker` endpoint (transparent cut-out, 1 credit). Useful for Commerce product cards, but the same image
-rights rules apply (4.5).
-
 ### 2.4 Fetch by URL on the server
 
 New `fetch_image(url, run_id)` (MCP + REST) so the agent never downloads or pastes images:
@@ -328,7 +323,7 @@ All take `run_id`, write a new version of the same run media (non-destructive, u
   `grade {preset: brand|neutral|warm|cool, exposure, contrast, saturation, temperature}`,
   `text {text, role: headline|label|price, position}` (brand fonts, safe zones), `round {radius}`, `sharpen`.
 - `compose_product_card(product images, name, price?, ratio)`: cut-out onto the brand ground with shadow and a quiet
-  name/price line, for Commerce slides.
+  name/price line.
 - `hero_edit` keeps working and uses the fixed cut-out.
 - UI: the existing image editor (`tests/e2e/test_ui_image_editor.py`) gains Remove background (Fast / High quality),
   Fit/Pad presets per network, Shadow, Grade presets and Text, with before/after. Same REST endpoints as MCP.
@@ -440,181 +435,7 @@ validated numbers only (no user strings in filter graphs except escaped text via
 
 ---
 
-## Phase 4: HuhQueue Commerce on Channel3
-
-### 4.1 What Channel3 actually offers (docs fetched 4 Nov 2026)
-
-- **Catalog API, 100M+ products** (homepage). Base `https://api.trychannel3.com`, header `x-api-key`. OpenAPI:
-  https://api.trychannel3.com/openapi.json. SDKs (TS, Python), CLI, an MCP server (mcp.trychannel3.com), React UI
-  components (shadcn registry).
-- **Endpoints**: `POST /v1/search` (text, `image_url` or `base64_image`; `filters`: price min/max, brand_ids,
-  website_ids, category_ids, availability, condition, colors, gender, age, sale, attributes, dimensions, excludes;
-  `config`: country/currency/language, `collection_id`, `mode` default|keyword|agentic; `limit` default 20),
-  `POST /v1/browse`, `POST /v1/image-search`, `POST /v1/similar`, `GET /v1/products/{id}` (detail, variants),
-  `POST /v1/lookup` (product page URL → product), brands/categories/websites search + list, `POST|GET|PATCH|DELETE
-  /v1/collections`, `/v1/conversations` (hosted shopping agent), price tracking + product subscriptions + webhooks,
-  `GET /v1/reporting/clicks` and `/v1/reporting/transactions`, `/experimental/find-products-in-image`,
-  `/experimental/sticker` (transparent cut-out). `/v1/monetize` is restricted (by request only).
-  https://docs.trychannel3.com/guides/search, /guides/collections, /guides/reporting
-- **Product shape** (live test below): `id, title, description, brands[], images[] {url, cleaned_url, is_main_image,
-  shot_type, alt_text}, category, key_features, colors, materials, offers[] {url (tracked buy.trychannel3.com link),
-  domain, price {price, compare_at_price, currency}, availability, condition, max_commission_rate}, variants,
-  structured_attributes, ratings`.
-- **Markets**: US, CA, GB, **IE**, AU, DE, AT, FR, BE, IT, ES, NL, SE, FI, PT, CZ, GR, RO, CH, PL, EU; currencies USD,
-  CAD, AUD, GBP, EUR, SEK, CZK, RON, CHF, PLN. "Coverage outside the U.S. is still growing."
-  https://docs.trychannel3.com/guides/localization
-- **Pricing**: 1,000 free credits/month, then **$0.007 per credit**. 1 credit: search, browse, image-search, similar,
-  lookup, sticker; find-products-in-image 1 + 1 per item; conversations 1/turn + searches; price tracking 1/product/day.
-  **Free**: `GET /v1/products/{id}`, collections, brands, websites, categories. https://docs.trychannel3.com/pricing
-- **Rate limits** (per key; new keys on `default`): 10 req/s most endpoints, 10/s search + image search, 5/s lookup,
-  **10,000/day** shared quota; 429 with `Retry-After: 5`. https://docs.trychannel3.com/faq/rate-limits
-- **Caching rules**: cache product IDs and category slugs indefinitely; titles/images short TTL; **always refresh
-  prices, availability and offer URLs before showing them; offer URLs are short-lived**.
-  https://docs.trychannel3.com/guides/caching
-- **Commissions**: offers carry `max_commission_rate`; Channel3 takes **50%** of commissions ("will reduce as you drive
-  more sales"); payouts after the retailer's return window via Stripe, to the key owner's account; attribution only on
-  a tracked click + network-approved sale (up to 90 days); `x-user-id` header attributes clicks/sales to one of your
-  users. **Required disclosure near the links on every page/screen/message: "We may earn a commission when you buy
-  through links on this page."** https://docs.trychannel3.com/commissions, https://trychannel3.com/terms/publishers §9
-
-**Live check (2 calls, 1 credit):** `GET /v1/categories?limit=1` (free) → 200; `POST /v1/search`
-`{"query":"wireless over-ear headphones","filters":{"price":{"max_price":150}},"config":{"country":"IE","currency":"EUR"},"limit":3}`
-→ 200 with Philips SHD6000 (decathlon.ie, €90.40, commission 0.0), Audio-Technica ATH-M20xBT (decathlon.ie, €109.35,
-0.0), JBL Tune 730BT (currys.ie, €49.99, 0.021). Images on `cdn.trychannel3.com` (WebP) fetch fine from a server
-without a key. The key is bound server-side as service `channel3` (header `x-api-key`, host `api.trychannel3.com`); it
-was never printed.
-
-### 4.2 Terms that shape the design (Publisher Terms, effective 2 Nov 2026)
-
-- Licence to build Channel3 into our product and show results to our users (§4-5). **Users may not get our key or direct
-  API access**; we proxy every call. Bind users to terms at least as protective (§5).
-- **No storing/redistributing a significant portion of the catalog**, no competing catalog, **no training models on the
-  output** (§7). Short caches + IDs only.
-- **We don't own the output**: "We and our licensors and merchants retain all right, title, and interest in and to the
-  product data … You do not own Customer Output. You may use it … including displaying it to End Customers in your
-  applications" (§8).
-- Output may be wrong; **verify before using it for advertising** (§9). Disclosure near links (§9). Keep personal data
-  out of queries (§8): strip emails/phones/names from queries; send a pseudonymous `x-user-id`.
-- Brands license Channel3 to "re-host product images on our CDN so they load inside Publisher experiences" and to
-  crop/pad/remove backgrounds (Advertiser Terms). That is display **inside our app/pages**.
-
-### 4.3 Product images: what is allowed (flag)
-
-- **In-app product cards, comparisons and HuhQueue-hosted shop pages**: show Channel3 images (`url` / `cleaned_url`) as
-  returned, refreshed at load. Covered by "displaying … in your applications".
-- **Social posts (carousels, Reels, Shorts) built from retailer/brand product photos**: **not clearly covered.** The
-  terms grant display in our application; republishing to Instagram/YouTube, and editing (cut-outs, composites, grading)
-  makes derivatives of images owned by merchants/brands. Until Channel3 confirms in writing that publishers may use
-  catalog images in social posts that link back to the offer, treat them as not licensed for social use.
-- What the plan does instead: product content uses (a) the person's own photos/videos, (b) brand press-kit or
-  official media the person confirms they may use (`rights: own | permission`, the same pattern as video `RIGHTS`), or
-  (c) a text/spec-led design with no product photo. Channel3 images show in previews and shop pages only, and the
-  render tools refuse a Channel3 CDN image for a social render unless `rights: permission` is set.
-- **Open question for Ram**: email support@trychannel3.com asking whether social-post use of catalog images (unedited
-  and edited) is permitted for publishers; update this section with the answer.
-
-### 4.4 EU / Ireland disclosure
-
-- CCPC + ASAI joint guidance (Oct 2023): affiliate links are commercial content and must be labelled **"#Ad"** (or
-  "#Fógra"), instantly visible, **at the start** of the content; "#Affiliate" is only a secondary label after a primary
-  one; a platform label like Instagram "Paid partnership" also counts as primary. A post linking to your own page that
-  earns commission is labelled too, and the page itself must say it's advertising.
-  https://www.ccpc.ie/business/help-for-business/guidelines-for-business/influencer-advertising-and-marketing,
-  https://adstandards.ie/social-media-influencers/
-- Legal basis named there: Consumer Protection Act 2007 and the ASAI Code (EU UCPD transposition). Other EU markets
-  have similar national rules; Channel3 separately requires its disclosure near links.
-- Product rule: any package with a commissionable link (caption link, link sticker, link-in-bio shop page) gets a
-  **preflight error** unless the caption's first token is `#Ad`/`#Fógra` or the post uses a platform paid-partnership
-  label; shop pages show the Channel3 disclosure above the first product and an "Ad" marker; video/cover gets an
-  optional small "Ad" label. New preflight rule with its source URLs in `list_rules`.
-
-### 4.5 Design
-
-**Server module** `studio/commerce/` (new): `channel3.py` (httpx client, allow-listed host, timeouts, 429 back-off with
-`Retry-After`), `cache.py` (IDs forever; search results per normalised query 1 h; product detail ≤ 1 h for
-title/images; prices/offers always refreshed via the free detail call), `budget.py`, `pages.py`, `links.py`.
-
-**MCP tools** (client brain, $0 HuhQueue AI; `run_id` everywhere; product text marked untrusted):
-- `find_products(query, budget_max?, budget_min?, currency?, country?, brand?, category?, in_stock=true, limit≤10,
-  mode=default|agentic)` → compact cards (id, title, brand, image, best offer price/retailer, rating, key features,
-  commission flag). Country defaults from the account (IE → EUR).
-- `get_product(product_id)` (free), `compare_products(product_ids[2..4])` (free detail calls → one table: price per
-  retailer, key specs, ratings, availability), `similar_products(product_id)`, `lookup_product_url(url)` (1 credit;
-  lets a Galaxus/Currys link resolve without scraping).
-- `save_shortlist(run_id, product_ids, name)` → HuhQueue collection (IDs only) on the run; optional Channel3 collection
-  (free) for scoped search.
-- `make_product_content(run_id, product_ids, format=carousel|reel|short, brand_kit?, rights)` → slides/Reel through
-  Phases 2-3, with the 4.3 image rule and a disclosure-ready caption draft for the agent to finish.
-- `publish_shop_page(run_id | shortlist, slug?)` → HuhQueue-hosted page `/s/<slug>`; offers fetched fresh at load
-  (free detail calls), disclosure near links, `rel="sponsored nofollow noopener"`.
-- `shop_link(product_id)` → stable `/go/<code>` on HuhQueue that resolves a fresh tracked offer URL at click time
-  (offer URLs are short-lived, so captions never carry a raw one) and counts the click.
-- `commerce_insights(from, to)` → our `/go` clicks + Channel3 `reporting/clicks` and `reporting/transactions` filtered
-  by the person's `x-user-id`.
-- Campaigns: `create_package` + `schedule_package(mode=draft)` as today → Planner + Approvals; no new path.
-
-**UI** (premium, restrained, per DESIGN.md: no gradients, no glowing cards, purple only as the single accent):
-product cards in the chat thread (image, name, price, retailer, rating, a checkbox), a compare table, "Make a carousel /
-Reel" from the selection, a shop page preview, a quiet usage line ("Product search: 18 left today"). No pricing screens.
-
-**Usage limits (free for signed-in users).** One operator key means **1,000 free credits/month for everyone
-together**, then billed per credit to the key owner.
-- Global guard: `HQ_C3_MONTHLY_CREDITS` (default 1,000) and `HQ_C3_OVERAGE_USD` (default 0 = hard stop at the free
-  allowance). Ledger rows per call (`source=channel3`, credits), shown in Activity.
-- Per user: `HQ_C3_USER_SEARCHES_PER_DAY` (start at 10) and per month (start at 60); detail/compare/collections/shop
-  page loads are free calls and not counted, but rate-limited (≤ 5/s total, under Channel3's 10/s).
-- At a limit the tool says when it resets; nothing else changes.
-- Optional bring-your-own Channel3 key (sealed with `TOKEN_KEY` like AI keys): the person's own Channel3 account, own
-  credits, own commission. That is also the only clean way for users to *earn* commission: with the operator key, all
-  commissions go to the key owner's Channel3/Stripe account (Ram), and HuhQueue has no payout system. Say so plainly
-  in the UI copy; don't promise users earnings on the operator key.
-
-### 4.6 Cost
-
-| Item | Cost |
-|---|---|
-| Search / browse / similar / lookup / image search | 1 credit each; first 1,000/month free (shared), then $0.007 |
-| Product detail, compare, collections, brands, categories, shop page loads | Free |
-| Hosting (pages, redirects) | Render free instance, $0 |
-| Example: 60 active users × 10 searches/month | 600 credits = $0 |
-| Over the allowance with overage enabled | 10,000 extra searches ≈ $70 |
-
-### 4.7 Files
-
-New `studio/commerce/*`, `studio/mcp_commerce.py` (tools), registration in `studio/mcp.py`, REST in `studio/app.py`,
-`studio/preflight.py` (disclosure rule), `studio/budget.py` (credits ledger), `studio/integrations.py` /
-`studio/byo_keys.py` (BYO key), `studio/static/*` (cards, compare, shop page), templates for product slides,
-`studio/mcp_parity.py`, `docs/MCP_TOOLS.md`, `docs/COMMERCE.md` (new), `.env.example` (`CHANNEL3_API_KEY` etc.),
-`render.yaml` (`CHANNEL3_API_KEY`, `sync: false`).
-
-### 4.8 Tests
-
-Mocked Channel3 (httpx `MockTransport`): request shapes and filters, locale defaults, 429 back-off, budget guard (global
-and per user), cache TTLs (prices never served stale), `/go` resolves a fresh offer and counts the click, shop page
-renders the disclosure above the first link and escapes product text, preflight blocks a commissionable post without
-`#Ad`, render tools refuse Channel3 images for social renders without `rights`, PII scrubbed from queries, key never in
-logs/responses/errors (grep test), `x-user-id` is a pseudonymous hash.
-
-### 4.9 Security notes
-
-- Key: env/secret only, sealed at rest; outbound only to `api.trychannel3.com` (host allow-list); never returned by any
-  tool, never in Activity; per-user BYO keys sealed and scoped to their owner.
-- Product data is untrusted input: escape on pages, `UNTRUSTED_NOTE` applies to tool output, no instruction-following
-  from descriptions.
-- `/go/<code>`: only redirects to `buy.trychannel3.com` (or the offer domain Channel3 returned), signed code, no open
-  redirect; rate-limited; no user data in the URL.
-- Images from `cdn.trychannel3.com` fetched through netguard like any other URL.
-- Token scopes: `commerce:read` (find/get/compare/insights), `commerce:write` (shortlists, shop pages, links); review
-  tokens can't publish shop pages without approval; caps per token as in Phase 1.
-
----
-
 ## Open questions for Ram
 
 1. Phase 1 defaults: active-run window 2 h, 3 new runs/hour per token. OK?
 2. Phase 2 HQ engine: run on GitHub Actions (free, ~1 min start) or the InstaBox worker (warm)? Which InstaBox machine?
-3. Phase 4: ask Channel3 in writing about catalog images in social posts (4.3)? Until then, social renders use own /
-   press-kit images only.
-4. Phase 4 overage: keep the hard stop at 1,000 credits/month, or allow a small monthly overage budget?
-5. Commission: operator key only (earnings go to your Channel3 account, disclosed), or also BYO keys so users earn
-   their own?
