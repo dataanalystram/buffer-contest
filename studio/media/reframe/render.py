@@ -32,7 +32,7 @@ RADIUS = 40
 FOCUS_TOP = 220        # the focus card's top edge (below the platform's top UI)
 FOCUS_MAX_H = 1064     # and its height at most: it ends above the fit caption band (y 1400)
 VENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", "30"]
-AENC = ["-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2"]
+from ..ff import AENC  # noqa: E402  ff.AAC_KBPS: under Instagram's 128 kbps spec
 MASK_DIR = Path(os.environ.get("HQ_MASK_DIR") or (Path(tempfile.gettempdir()) / "hq_layout_masks"))
 
 

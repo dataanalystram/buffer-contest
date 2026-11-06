@@ -29,6 +29,9 @@ the clip is marked needs_review with the reason. Never silent: every fallback is
 """
 from __future__ import annotations
 
+import copy
+import os
+import threading
 from statistics import median
 
 HEAD_UP = 0.35      # forehead + hair above a detector's face box (fraction of the box height)
@@ -42,6 +45,9 @@ QA_MAX = 0.02       # more than 2 % of a face (box + QA_PAD) under our pixels fa
 QA_PAD = 0.06       # the QA face box grows 6 % each side (eyes, nose and mouth are what matter)
 QA_FRAMES = 6
 MIN_HOOK_H = 0.045  # a hook box shorter than 4.5 % of the frame height (86 px at 1920) isn't readable: shorten / drop
+LEVELS = ("full", "compact")  # caption levels: the style's own size, then one line at COMPACT_SIZE of it under the chin
+COMPACT_SIZE = 0.62           # opus at 4:5: 1350 x 0.062 x 0.62 x 1.25 x 1.08 = ~70 px tall, one line
+SAMPLE_CACHE_MAX = 32         # YuNet samples kept per (source, clip span): the 4:5 render reuses the 9:16 samples
 
 
 # ---------------------------------------------------------------------- boxes
@@ -309,6 +315,98 @@ def place_opus(L: dict, W: int, H: int, *, static: tuple | None, segments: list[
     return L, rec
 
 
+# ---------------------------------------------------------------------- caption levels + predicted cover (before rendering)
+def compact_style(st):
+    """The compact caption level of a captions.CapStyle: one line at COMPACT_SIZE of the size, sitting under the chin
+    where the full block has no room (a face filling a 4:5 frame)."""
+    from dataclasses import replace
+    return replace(st, size_frac=st.size_frac * COMPACT_SIZE, min_frac=st.min_frac * COMPACT_SIZE, max_lines=1)
+
+
+def caption_height(st, H: int) -> int:
+    """The caption block's height in px for a CapStyle (the pop animation's growth included)."""
+    return int(H * st.size_frac * 1.25 * st.max_lines * (1.08 if st.pop else 1.0))
+
+
+def _union_cover(face: tuple, rects: list[tuple]) -> float:
+    """Share of the face box covered by the union of rects (exact, by coordinate compression)."""
+    fx0, fy0, fx1, fy1 = face
+    area = max(1, (fx1 - fx0) * (fy1 - fy0))
+    cl = [(max(fx0, r[0]), max(fy0, r[1]), min(fx1, r[2]), min(fy1, r[3])) for r in rects]
+    cl = [r for r in cl if r[2] > r[0] and r[3] > r[1]]
+    if not cl:
+        return 0.0
+    xs = sorted({v for r in cl for v in (r[0], r[2])})
+    tot = 0
+    for a, b in zip(xs, xs[1:]):
+        ys = sorted((r[1], r[3]) for r in cl if r[0] <= a and r[2] >= b)
+        cov, c0, c1 = 0, None, None
+        for y0, y1 in ys:
+            if c1 is None or y0 > c1:
+                if c1 is not None:
+                    cov += c1 - c0
+                c0, c1 = y0, y1
+            else:
+                c1 = max(c1, y1)
+        if c1 is not None:
+            cov += c1 - c0
+        tot += cov * (b - a)
+    return tot / area
+
+
+def overlay_rects(L: dict, cap_h: int, captions_on: bool, credit_h: int = 0) -> tuple[list[tuple], list[tuple]]:
+    """(static rects, [(start, end, caption rect)]) of a placed layout: the hook box (with its 10 px white pad), the credit
+    chip (its widest), and the caption block per segment across the safe width (an upper bound of the drawn text)."""
+    l, t, r, b = L["safe"]
+    static = []
+    if L.get("hook"):
+        hx0, hy0, hx1, hy1 = L["hook"]
+        static.append((hx0 - 10, hy0 - 10, hx1 + 10, hy1 + 10))
+    if credit_h and L.get("credit_xy"):
+        x, y = L["credit_xy"]
+        static.append((x, y, x + int((r - l) * 0.75), y + credit_h))
+    caps = []
+    if captions_on:
+        caps = [(float(a), float(e), (l, int(cy) - cap_h // 2, r, int(cy) + cap_h // 2)) for a, e, cy in (L.get("caption_cy") or [])]
+        if not caps and L.get("captions_center"):
+            cc = int(L["captions_center"])
+            caps = [(0.0, 1e9, (l, cc - cap_h // 2, r, cc + cap_h // 2))]
+    return static, caps
+
+
+def predict_cover(L: dict, pred: list[tuple[float, tuple]], W: int, H: int, *, cap_h: int, captions_on: bool,
+                  credit_h: int = 0, pad: float = QA_PAD) -> float:
+    """The worst share of a face (box + pad, like the QA) that the placed overlays would cover, from the face track
+    [(clip t, (x0, y0, x1, y1) output px)]: what the render QA would measure, known before anything is encoded."""
+    static, caps = overlay_rects(L, cap_h, captions_on, credit_h)
+    worst = 0.0
+    for t, f in pred or []:
+        x0, y0, x1, y1 = f
+        dx, dy = int((x1 - x0) * pad), int((y1 - y0) * pad)
+        face = (max(0, x0 - dx), max(0, y0 - dy), min(W, x1 + dx), min(H, y1 + dy))
+        rects = list(static)
+        if caps:
+            now = [rc for a, e, rc in caps if a - 1e-6 <= t < e]
+            rects += now or [caps[-1][2] if t >= caps[-1][1] else caps[0][2]]
+        worst = max(worst, _union_cover(face, rects))
+    return round(worst, 4)
+
+
+def placement_sig(L: dict, level: str) -> str:
+    """A short signature of where every overlay lands: a re-place with the same signature would encode the same video."""
+    import hashlib
+    import json
+    key = {"level": level, "hook": list(L["hook"]) if L.get("hook") else None, "hook_text": L.get("hook_text") or "",
+           "credit": list(L["credit_xy"]) if L.get("credit_xy") else None,
+           "caps": [list(c) for c in L.get("caption_cy") or []], "center": L.get("captions_center")}
+    return hashlib.sha1(json.dumps(key, sort_keys=True, default=str).encode(), usedforsecurity=False).hexdigest()[:16]
+
+
+def qa_boxes(qa: dict) -> list[tuple[float, tuple]]:
+    """The faces the QA found, as predicted-cover samples [(t, box)] (output px)."""
+    return [(float(f["t"]), tuple(int(v) for v in b)) for f in qa.get("frames") or [] for b in f.get("faces") or []]
+
+
 # ---------------------------------------------------------------------- render QA (cv2 + numpy, worker only)
 def detect_out(img_bgr, score: float = 0.6) -> list[tuple[int, int, int, int]]:
     """YuNet faces on an output-sized frame -> pixel boxes (x0, y0, x1, y1). Raises reframe.faces.FaceModelError."""
@@ -348,16 +446,47 @@ def face_cover(mask, face: tuple, pad: float = QA_PAD) -> float:
 
 
 # ---------------------------------------------------------------------- the worker side: faces for a clip, zones, QA
+_SAMPLES: dict = {}
+_SAMPLES_LOCK = threading.Lock()
+
+
+def _sample_key(source: str, start: float, end: float, src_w: int, src_h: int, fps: float) -> tuple:
+    try:
+        st = os.stat(source)
+        sig = (st.st_size, st.st_mtime_ns)
+    except OSError:
+        sig = None
+    return (str(source), sig, round(float(start), 3), round(float(end), 3), int(src_w), int(src_h), float(fps))
+
+
+def cached_sample(source: str, start: float, end: float, src_w: int, src_h: int, fps: float = 2.0) -> tuple[dict, bool]:
+    """reframe.faces.sample for a clip span, cached per (file, span, size, fps): the clip's other ratios reuse the samples
+    instead of decoding and running YuNet again (431 s per ratio under CPU steal, take #91). Deep copies both ways, so a
+    caller adding Jev boxes never changes the cached samples. Returns (samples, cache_hit)."""
+    from .reframe import faces as fm
+    key = _sample_key(source, start, end, src_w, src_h, fps)
+    with _SAMPLES_LOCK:
+        hit = _SAMPLES.get(key)
+    if hit is not None:
+        return copy.deepcopy(hit), True
+    got = fm.sample(source, start, end, src_w, src_h, fps=fps)
+    with _SAMPLES_LOCK:
+        while len(_SAMPLES) >= SAMPLE_CACHE_MAX:
+            _SAMPLES.pop(next(iter(_SAMPLES)))
+        _SAMPLES[key] = copy.deepcopy(got)
+    return got, False
+
+
 def clip_samples(source: str, start: float, end: float, src_w: int, src_h: int, faces: list[dict] | None,
                  fps: float = 2.0) -> tuple[list[dict], dict]:
     """Face samples over the clip [start, end] in clip seconds, and a record of what found them. YuNet (OpenCV, free)
     on every sampled frame; the analysis' Jev-verified keyframe boxes added on top; when YuNet can't run here, the
     analysis' samples (MediaPipe / Haar + Jev) and the record says so (never silent)."""
-    rec: dict = {"detector": "", "samples": 0, "with_face": 0, "jev_boxes": 0, "fallback": None}
+    rec: dict = {"detector": "", "samples": 0, "with_face": 0, "jev_boxes": 0, "fallback": None, "cache": None}
     samples: list[dict] | None = None
     try:
-        from .reframe import faces as fm
-        got = fm.sample(source, start, end, src_w, src_h, fps=fps)
+        got, hit = cached_sample(source, start, end, src_w, src_h, fps)
+        rec["cache"] = "hit" if hit else "miss"
         samples = [{"t": s["t"], "faces": [{k: f[k] for k in ("x", "y", "w", "h", "score")} for f in s["faces"]]}
                    for s in got["samples"]]
         rec["detector"] = got["detector"]

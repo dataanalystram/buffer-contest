@@ -221,6 +221,7 @@ table.data{width:100%;border-collapse:collapse;font-size:14px;line-height:1.45}
 .st:before{font-weight:600}
 .st.ok{color:var(--ok)}.st.ok:before{content:"Done."}
 .st.err{color:var(--bad)}.st.err:before{content:"Error."}
+.st.err:empty{display:none}  /* an empty error box is not an error (Layout & captions showed a bare "Error.", 6 Nov 2026) */
 .st.warn{color:var(--warn)}.st.warn:before{content:"Note."}
 
 /* agents */

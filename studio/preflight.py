@@ -542,7 +542,7 @@ def check(channel: dict, text: str, media_urls: list[str] | None = None, mode: s
                                    f"{label}: not inspected ({p.get('why', 'unknown')}). Buffer checks it on publish."))
                 continue
             chips_media.append(f"{p.get('width')}×{p.get('height')} · {round(p.get('duration') or 0)} s")
-            findings.extend(_video_rules(svc, net, label, p, fixes))
+            findings.extend(_video_rules(svc, net, label, p, fixes, i))
 
     worst = "error" if any(f["level"] == "error" for f in findings) else "warning" if any(f["level"] == "warning" for f in findings) else "ok"
     chip = f"{net} · {longest:,}/{limit:,}" + (f" · {len(parts)} posts" if len(parts) > 1 else "") + \
@@ -612,7 +612,22 @@ def _image_rules(svc: str, net: str, label: str, i: int, p: dict, fixes: dict) -
     return out
 
 
-def _video_rules(svc: str, net: str, label: str, p: dict, fixes: dict) -> list[dict]:
+AUDIO_FIX_KBPS = 124  # studio.media.ff.AAC_KBPS (kept here too: preflight imports nothing heavy)
+
+
+def audio_fix_ids(results: list[dict]) -> list[int]:
+    """Media indexes whose only fix is the sound (fix "audio:<i>"): HuhQueue re-encodes those itself (job audio_fix, picture
+    copied), so a draft or a schedule never stops on Instagram's 128 kbps audio warning (owner, 6 Nov 2026)."""
+    out = set()
+    for r in results:
+        for f in r.get("findings") or []:
+            fx = str(f.get("fix") or "")
+            if fx.startswith("audio:") and fx[6:].isdigit():
+                out.add(int(fx[6:]))
+    return sorted(out)
+
+
+def _video_rules(svc: str, net: str, label: str, p: dict, fixes: dict, i: int = 0) -> list[dict]:
     out = []
     dur, fps, w, h = p.get("duration") or 0, p.get("fps"), p.get("width") or 0, p.get("height") or 0
     kbps, akbps, codec, size = p.get("video_kbps"), p.get("audio_kbps"), (p.get("codec") or "").lower(), p.get("bytes") or 0
@@ -637,8 +652,9 @@ def _video_rules(svc: str, net: str, label: str, p: dict, fixes: dict) -> list[d
             reencode(rid, f"{w} px wide; Instagram allows 1920.")
         if kbps and kbps > 25000:
             reencode(rid, f"{kbps / 1000:.1f} Mbps; Instagram allows 25 Mbps.")
-        if akbps and akbps > 128:
-            reencode(rid, f"audio is {akbps} kbps; Instagram's spec is 128 kbps.", level="warning")
+        if akbps and akbps > 128:  # only the sound: HuhQueue re-encodes it (picture copied), autofix_post(fixes=['audio:<i>'])
+            fixes[f"audio:{i}"] = f"Re-encode the sound of {label.lower()} to {AUDIO_FIX_KBPS} kbps (the picture stays as it is)"
+            out.append(_f("warning", rid, f"{label}: audio is {akbps} kbps; Instagram's spec is 128 kbps.", f"audio:{i}"))
         if h and abs(w / h - 9 / 16) > 0.02:
             out.append(_f("info", rid, f"{label} is {w}×{h}; Instagram recommends 9:16 for Reels to avoid cropping."))
     elif svc == "threads":

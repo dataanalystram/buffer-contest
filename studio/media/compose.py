@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
@@ -602,20 +603,41 @@ def _cy_at(caption_cy):
 
 def _face_safe_layout(L: dict, W: int, H: int, brand: dict, hook: str, credit: str, caps_on: bool, cfg: dict,
                       face_safe: dict) -> tuple[dict, dict]:
-    """The Opus-style layout placed clear of the faces (studio/media/facesafe.place_opus)."""
+    """The Opus-style layout placed clear of the faces (studio/media/facesafe.place_opus), at the caption level picked
+    BEFORE rendering from the face track's predicted cover: full when it covers <= QA_MAX of a face, else the level with
+    the lowest prediction (compact: one smaller line under the chin). face_safe["min_level"] starts higher (a re-place)."""
     from . import facesafe
-    st = captions.STYLES[cfg["captions"]]
-    cap_h = int(H * st.size_frac * 1.25 * st.max_lines * (1.08 if st.pop else 1.0))
+    st0 = captions.STYLES[cfg["captions"]]
 
     def hook_fit(text: str, w: int, h: int):
         r = textfit.fit(text, brand["bold_font"], w - 36, max(8, h - 8), max_size=64, min_size=30, max_lines=3)
         return bool(r.ok), int(r.height)
-    L = dict(L)
-    L, rec = facesafe.place_opus(L, W, H, static=face_safe.get("static"), segments=face_safe.get("segments") or [],
-                                 cap_h=cap_h, hook=hook, hook_fit=hook_fit, credit_h=CREDIT_CHIP_H if credit else 0,
-                                 captions_on=caps_on)
-    rec["cap_h"] = cap_h
-    return L, rec
+    pred = face_safe.get("pred") or []
+    lo = face_safe.get("min_level") or 0
+    lo = max(0, min(int(lo) if isinstance(lo, int) else 0, len(facesafe.LEVELS) - 1))
+    credit_h = CREDIT_CHIP_H if credit else 0
+    best, tried = None, {}
+    for lv in range(lo, len(facesafe.LEVELS)):
+        st = st0 if lv == 0 else facesafe.compact_style(st0)
+        cap_h = facesafe.caption_height(st, H)
+        L2, rec = facesafe.place_opus(dict(L), W, H, static=face_safe.get("static"), segments=face_safe.get("segments") or [],
+                                      cap_h=cap_h, hook=hook, hook_fit=hook_fit, credit_h=credit_h, captions_on=caps_on)
+        pc = facesafe.predict_cover(L2, pred, W, H, cap_h=cap_h, captions_on=caps_on, credit_h=credit_h)
+        tried[facesafe.LEVELS[lv]] = pc
+        if best is None or pc < best[0] or pc <= facesafe.QA_MAX:
+            best = (pc, lv, L2, rec, cap_h, st)
+        if pc <= facesafe.QA_MAX:
+            break
+    pc, lv, L2, rec, cap_h, st = best
+    rec.update(cap_h=cap_h, level=facesafe.LEVELS[lv], predicted_cover=pc, levels=tried, sig=placement_sig_of(L2, lv))
+    if lv:
+        L2["_cap_style"] = st
+    return L2, rec
+
+
+def placement_sig_of(L: dict, lv: int) -> str:
+    from . import facesafe
+    return facesafe.placement_sig(L, facesafe.LEVELS[lv])
 
 
 def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16", hook: str = "", facts: list[str] | None = None,
@@ -625,7 +647,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                  crf: int = 21, preset: str = "veryfast", workdir: str | None = None, max_main: float = 180.0,
                  brand_colors: bool = False, reframe: dict | None = None, lower_third_mode="auto",
                  detect_own_captions: bool = False, brand_pass: bool | dict = False, cover_png: str | None = None,
-                 cover_secs: float = COVER_FRAME_SECS, logo: bool = True, face_safe: dict | None = None) -> dict:
+                 cover_secs: float = COVER_FRAME_SECS, logo: bool = True, face_safe: dict | None = None,
+                 captions_style: str | None = None, skip_sig: str | None = None) -> dict:
     """Render one styled video. ``source`` None + ``images`` -> a slow push-in slideshow (no-media fallback).
     captions_mode: auto (off in panel styles when the source already has burned-in subtitles) | on | off.
     ``style`` is a base style or a theme (styles.THEMES: its grade, effects, captions, cards and chrome on a base
@@ -644,6 +667,9 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
     face_safe: {"static": keep-out (x0, y0, x1, y1), "segments": [{start, end, keepout}]} in output pixels / clip
     seconds (studio/media/facesafe): the Opus-style hook box, credit chip and captions are placed clear of the faces
     there (the hook shrinks, shortens or drops when nothing fits). The result's ``face_safe`` says what moved.
+    captions_style: a captions.STYLES id instead of the style's own (Layout & captions > Caption look on a shorts clip).
+    skip_sig: a placement signature (face_safe["sig"] of an earlier render): when this placement lands on exactly the same
+    spots, nothing is encoded and the result is {"skipped": True, "face_safe": ...} (a re-place that changes nothing).
     Returns {path, style, ratio, width, height, duration, clip, boxes, safe_area, caption_problems, ...}."""
     from . import theme_cards
     from .styles import ALL_IDS, NONE, apply_palette, config, resolve
@@ -659,6 +685,11 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         cfg = config(style)
     except KeyError:
         raise ff.MediaError(f"Unknown style {style!r}. Pick one of: {', '.join(ALL_IDS)}.") from None
+    if captions_style and cfg.get("captions"):
+        if captions_style not in captions.STYLES:
+            raise ff.MediaError(f"Unknown caption style {captions_style!r}.")
+        cfg = {**cfg, "captions": captions_style}
+    tm: dict = {}
     brand = {**DEFAULT_BRAND, **(brand or {})}
     if cfg.get("theme"):
         brand = apply_palette(brand, cfg, keep_brand=brand_colors)
@@ -712,7 +743,6 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         facts_s = cfg["facts_secs"] if facts else 0.0
         total = cover_s + D + facts_s + CARD_SECS
 
-        still = Image.open(frame_at(source, c0 + min(D * 0.3, 4.0), str(wd / "still.png"))) if source else Image.open(images[0])
         lsw, lsh = (int(1000 * cfg["gate"][0] / cfg["gate"][1]), 1000) if cfg.get("gate") else (sw, sh)
         if cfg.get("tall_aspect") and H / W > 1.6:  # vertical is its own layout: a square crop fills the stage
             lsw, lsh = cfg["tall_aspect"]
@@ -742,7 +772,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                 lower_third = {**lower_third, "out_top": y_band}
         # "own video" is not a source to credit on screen: no chip; the brand pass lower-third shows the handle instead
         chip_credit = "" if (credit or "").strip().lower() in ("own video", "your video") else credit
-        fs_rec = None
+        fs_rec, cap_style = None, None
         if face_safe is not None and cfg["layout"] == "opus":  # never on the face (owner bug 6 Nov 2026)
             safe0 = L["safe"]
             if lower_third and lower_third.get("out_top"):  # and never on the source's name strap: place above it
@@ -751,6 +781,10 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             L, fs_rec = _face_safe_layout(L, W, H, brand, hook, chip_credit, caps_on, cfg, face_safe)
             L["safe"] = safe0
             hook = L.get("hook_text", hook) if L.get("hook") else ""
+            cap_style = L.pop("_cap_style", None)  # the compact caption level, when the full one would cover the face
+            if skip_sig and fs_rec.get("sig") == skip_sig:  # a re-place landing where the first render already was
+                return {"skipped": True, "path": None, "face_safe": fs_rec, "style": style, "ratio": ratio}
+        still = Image.open(frame_at(source, c0 + min(D * 0.3, 4.0), str(wd / "still.png"))) if source else Image.open(images[0])
         if cfg.get("chrome"):
             ov, boxes = theme_cards.overlay(cfg, W, H, brand, hook, chip_credit, L, acc)
         else:
@@ -792,6 +826,7 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
             boxes["cover_card"] = "cover.png"
             segs.append(_card_segment(str(wd / "cover.png"), cover_s, str(wd / "s0_cover.mp4"), crf, preset, fade=False))
 
+        _t = time.time()
         ass_path = None
         cap_problems: list[str] = []
         if caps_on:
@@ -799,17 +834,22 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
                                      outline=brand["bg"], band=(L["cap_band"][1], L["cap_band"][3]) if "cap_band" in L else None,
                                      center_y=(L["captions_center"] / H) if "captions_center" in L else None, end=D,
                                      palette={k: brand[k] for k in ("text", "accent", "bg", "muted", "on_accent") if brand.get(k)},
-                                     left=L.get("cap_left", L["safe"][0]), center_y_at=_cy_at(L.get("caption_cy")))
+                                     left=L.get("cap_left", L["safe"][0]), center_y_at=_cy_at(L.get("caption_cy")),
+                                     cap_style=cap_style)
             cap_problems = captions.check_ass_fits(ass, W, H)
             ass_path = wd / "caps.ass"
             ass_path.write_text(ass)
 
+        tm["captions"] = round(time.time() - _t, 2)
+        _t = time.time()
         main = str(wd / "s1_main.mp4")
         args, fc = _main_graph(source, images, cfg, W, H, L["panel"], c0, D, ov_path, ass_path, burned_subs, brand,
                                hook_path=hook_path, stage_path=stage_path, L=L, wd=wd, reframe=reframe, extras=extras)
         ff.run(["-y", "-v", "error", *args, "-filter_complex", fc, "-map", "[v]", "-an", "-t", f"{D:.3f}",
                 *_venc(crf, preset), main], timeout=1800)
         segs.append(main)
+        tm["encode"] = round(time.time() - _t, 2)
+        _t = time.time()
         if facts_s:
             if cfg.get("card"):
                 theme_cards.facts(cfg, str(wd / "facts.png"), W, H, brand, cfg["facts_title"] or "What it does", facts, still)
@@ -823,6 +863,8 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         video = str(wd / "video.mp4")
         ff.run(["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", video], timeout=300)
 
+        tm["cards"] = round(time.time() - _t, 2)  # facts + end card segments and the concat
+        _t = time.time()
         mood = picked_music(music_mood)  # never the theme's score by default (owner, 3 Nov 2026: a piano bed on his upload)
         wav = None
         if mood != "none":
@@ -832,8 +874,9 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         outp.parent.mkdir(parents=True, exist_ok=True)
         total += pre_s
         _mux_audio(video, source if (source and not silent) else None, c0, D, cover_s + pre_s, total, wav, str(outp))
+        tm["audio_mux"] = round(time.time() - _t, 2)
         got = ff.probe(str(outp))
-        return {"path": str(outp), "style": style, "theme": cfg.get("theme"), "ratio": ratio, "width": got["width"], "height": got["height"],
+        return {"timings": tm, "path": str(outp), "style": style, "theme": cfg.get("theme"), "ratio": ratio, "width": got["width"], "height": got["height"],
                 "duration": round(got["duration"], 2), "clip": [round(c0, 2), round(c1, 2), why], "boxes": boxes,
                 "layout": {k: v for k, v in L.items()}, "safe_area": safe_area(W, H), "caption_problems": cap_problems,
                 "captions": caps_on, "burned_subs": bool(burned_subs), "lower_third": lower_third,
@@ -1105,5 +1148,6 @@ def _mux_audio(video: str, speech_src: str | None, c0: float, D: float, cover_s:
     else:
         args += ["-f", "lavfi", "-t", f"{total:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
         parts.append(f"[{n}:a]anull[a]")
+    # ff.AAC_KBPS, under Instagram's 128 kbps Reels spec (160k measured 142-153 kbps and every Instagram chip warned, take #91)
     ff.run([*args, "-filter_complex", ";".join(parts), "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
-            "-b:a", "160k", "-ar", "44100", "-t", f"{total:.3f}", "-movflags", "+faststart", out], timeout=900)
+            "-b:a", f"{ff.AAC_KBPS}k", "-ar", "44100", "-t", f"{total:.3f}", "-movflags", "+faststart", out], timeout=900)
