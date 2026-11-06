@@ -605,3 +605,13 @@ def test_delete_drafts_buffer_error_on_one_draft_keeps_going(human, fake, page, 
     good = [p for p in pids if p != bad]
     assert done["deleted"] == good and fake.deleted == good
     assert done["unknown"][0]["buffer_post_id"] == bad and done["unknown"][0]["outcome"] == "unknown"
+
+
+def test_trusted_policy_confirmation_discloses_immediate_publish():
+    """A trusted app can post with mode "now" (Buffer shareNow) without approval; the owner is told before confirming."""
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[2] / "studio" / "static" / "app.js").read_text()
+    pol = js.split("const POL = ", 1)[1].split("\n", 1)[0]
+    say = js.split("const POL_SAY = ", 1)[1].split("async function", 1)[0]
+    assert "publish now" in pol
+    assert "publish them immediately, without your approval" in say
