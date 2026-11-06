@@ -143,6 +143,11 @@ def topic_of(prompt: str, rules: list[str] | None = None) -> str:
     return t if re.search(r"[A-Za-z0-9$€£₹]{2,}", t) else ""
 
 
+# a clause that tells the app what to do (it starts with an order): never the person's words about their content
+IMPERATIVE_RE = re.compile(r"^(?:please\s+|pls\s+|can you\s+|could you\s+)?(?:use|post|put|make|create|add|attach|upload|write|"
+                           r"share|publish|schedule|send|keep|turn|give|generate|do not|don'?t|with)\b", re.I)
+
+
 def describe(prompt: str, rules: list[str] | None = None) -> str:
     """The person's own words about their content, with the instructions taken out but their grammar kept: clauses that
     only say what to do ("make a reel", "post on all my channels", "search it") are dropped whole, links removed.
@@ -155,7 +160,14 @@ def describe(prompt: str, rules: list[str] | None = None) -> str:
     keep = []
     for sent in re.split(r"(?<=[.!?])\s+|\n+", t):
         parts = [p for p in re.split(r",\s*|\s+(?:and|then|also|so)\s+", sent) if p and p.strip()]
-        kept = [p.strip() for p in parts if topic_of(p)]
+        kept = []
+        for p in parts:
+            p = p.strip()
+            if IMPERATIVE_RE.match(p):  # "use the attached image as the media", "post it on Instagram only ... about X"
+                m = re.search(r"\babout\s+(.+)$", p, re.I)
+                p = m.group(1).strip() if m else ""
+            if p and topic_of(p):
+                kept.append(p)
         if kept:
             s = ", ".join(kept)
             keep.append(s if re.search(r"[.!?]$", s) else s + ".")

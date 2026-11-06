@@ -28,6 +28,31 @@ REQUEST_ONLY = re.compile(r"\b(?:you can do that|search (?:it|online|for it)|res
                           r"(?:make|create|generate) me (?:a|an) |inst?a?g?ram reel|post (?:it|this) (?:on|to|in|everywhere)|"
                           r"(?:on|to|in) all (?:my |the )?channels|with my branding|i want to post|look it up)", re.I)
 _WORD = re.compile(r"[a-z0-9$€£₹.%]+")
+# a line that tells the app what to do (owner bug B2, 6 Nov 2026: "USE THE ATTACHED UPLOADED IMAGE AS THE MEDIA..." was
+# burned onto a photo as its headline): an imperative opening, or wording only a request uses
+INSTRUCTION = re.compile(
+    r"\b(?:attached|uploaded) (?:image|photo|picture|video|file|media)\b|\bas the (?:media|image|photo|cover)\b|"
+    r"\b(?:on|to|for) (?:instagram|insta|linkedin|facebook|tiktok|youtube|threads|bluesky) only\b|"
+    r"\bdo not change\b|\bno hashtags\b|\bno extra text\b|\bverbatim\b|\bthis exact caption\b", re.I)
+IMPERATIVE = re.compile(r"^\s*(?:please\s+|pls\s+|can you\s+|could you\s+)?(?:use|post|put|make|create|add|attach|upload|"
+                        r"write|share|publish|schedule|send|replace|set|edit|change|don'?t|do not)\b", re.I)
+
+
+def looks_like_instruction(text: str, prompt: str = "") -> bool:
+    """True for a headline (or image text) that is the request, not words about the content: request-only wording
+    anywhere, or an order ("Use the attached ...") whose opening words are copied from the person's prompt."""
+    t = strip_urls(text)
+    if not t:
+        return False
+    if INSTRUCTION.search(t) or REQUEST_ONLY.search(t):
+        return True
+    hw, pw = _WORD.findall(t.lower()), _WORD.findall((prompt or "").lower())
+    if IMPERATIVE.match(t) and pw and len(hw) >= 3 and " ".join(hw[:4]) in " ".join(pw):
+        return True
+    if prompt and any(m.group(0).lower() in prompt.lower() for m in ORDERS.finditer(t)):
+        return True
+    return bool(pw) and len(hw) >= 6 and " ".join(hw[:6]) in " ".join(pw) and " ".join(hw[:6]) not in \
+        " ".join(_WORD.findall(intake.describe(prompt or "").lower()))
 
 
 def strip_urls(text: str) -> str:
@@ -46,7 +71,7 @@ def safe_headline(headline: str, prompt: str = "", fallbacks: tuple | list = ())
             continue
         if prompt and any(m.group(0).lower() in prompt.lower() for m in ORDERS.finditer(h)):
             continue  # the request's own wording ("search it", "post on all channels") is not a headline
-        if REQUEST_ONLY.search(h):
+        if REQUEST_ONLY.search(h) or INSTRUCTION.search(h):
             continue
         hw = _WORD.findall(h.lower())
         if pw and len(hw) >= 8 and " ".join(hw[:8]) in " ".join(pw) and " ".join(hw[:8]) not in own:
@@ -60,7 +85,7 @@ def safe_headline(headline: str, prompt: str = "", fallbacks: tuple | list = ())
 def render_hook(text: str) -> str:
     """At render time (no prompt known): URLs out; text that reads as an instruction becomes no headline at all."""
     h = strip_urls(text)
-    if not h or REQUEST_ONLY.search(h) or len(re.findall(r"\w{2,}", h)) < 2:
+    if not h or REQUEST_ONLY.search(h) or INSTRUCTION.search(h) or len(re.findall(r"\w{2,}", h)) < 2:
         return ""
     return h[:120]
 

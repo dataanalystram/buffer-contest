@@ -206,20 +206,23 @@ def brand_photo(photo: bytes, kit: dict, p: dict, *, logo: bytes | None = None, 
     canvas = cover(Image.open(io.BytesIO(photo)), W, H, *focus)
     canvas = ImageOps.autocontrast(canvas, cutoff=1)
     head = ""
+    from .headline import looks_like_instruction, render_hook
+    caption = "" if looks_like_instruction(caption or "") else render_hook(caption or "")  # never the request on a photo
     if caption:
         prim, acc, txt = (hex_to_rgb(p["colors"][k]) for k in ("primary", "accent", "text"))
-        _gradient(canvas, prim, 0.55, float(p.get("overlay", 0.55)) + 0.3)
         d = ImageDraw.Draw(canvas)
         m = int(p.get("safe_margin", 64))
         head = shape_headline(caption, p)
         f = font(FONTS.get(p.get("font"), "Inter-Bold.ttf"), int(W * 0.075))
         lines = wrap(d, head, f, W - 2 * m)[:4]
         y = H - m - int(f.size * 1.08) * len(lines) - int(H * 0.03)
+        # a solid band in the brand ground behind the words (no gradients, owner rule)
+        d.rectangle([0, y - int(H * 0.03), W, H], fill=prim)
         for i, line in enumerate(lines):
             _draw(d, (m, y + i * int(f.size * 1.08)), line, font=f, fill=acc if i == 0 and len(lines) > 1 else txt)
     has_logo = place_logo(canvas, load_logo(logo), p, kit)
     return _jpeg(canvas), {"type": "photo", "width": W, "height": H, "params": _pub(p), "has_logo": has_logo,
-                           "headline": head, "credit": "own photo"}
+                           "headline": head, "credit": "own photo", "gradient": False}
 
 
 def _jpeg(im: Image.Image) -> bytes:

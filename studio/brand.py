@@ -428,6 +428,25 @@ def brand_check(text: str, render_meta: dict | None, rules: list[dict], kit: dic
             "summary": "Passes every rule" if not failed else "; ".join(f"“{f['rule']}”: {f['why'] or 'failed'}" for f in failed)}
 
 
+def content_check(chk: dict, caption: str, headlines: list[str], render_meta: dict | None, prompt: str = "",
+                  exact: bool = False) -> dict:
+    """Two checks every post gets on top of the ledger (owner bug B2, 6 Nov 2026: a photo carried the request as its
+    headline over a dark gradient and the check still said "every check passes"): no instruction text on the image or
+    in the caption, and no gradient overlay. An exact caption the person gave is theirs: only the image is checked."""
+    from .headline import looks_like_instruction  # headline imports intake; kept lazy so brand stays a leaf module
+    results = list(chk.get("results") or [])
+    bad = [h for h in headlines if h and looks_like_instruction(h, prompt)]
+    cap_bad = (not exact) and bool(caption) and looks_like_instruction(caption.split("\n", 1)[0], prompt)
+    results.append({"rule_id": None, "rule": "No instruction text on the post", "kind": "content", "pass": not (bad or cap_bad),
+                    "why": (f"“{(bad[0] if bad else caption)[:60]}” reads like your request, not the post") if bad or cap_bad else ""})
+    grad = bool((render_meta or {}).get("gradient"))
+    results.append({"rule_id": None, "rule": "No gradient overlay", "kind": "content", "pass": not grad,
+                    "why": "the image has a gradient overlay" if grad else ""})
+    failed = [r for r in results if not r["pass"]]
+    return {**chk, "pass": not failed, "results": results, "failed": failed,
+            "summary": "Passes every rule" if not failed else "; ".join(f"“{f['rule']}”: {f['why'] or 'failed'}" for f in failed)}
+
+
 def rules_prompt(rules: list[dict]) -> str:
     lines = [f"- {r['rule']}" for r in rules if r.get("active", True) and r.get("kind") == "text"]
     return ("Brand rules you must follow:\n" + "\n".join(lines)) if lines else ""
