@@ -115,7 +115,7 @@ def test_watermark_is_a_preflight_warning_never_an_error():
 
 def test_alt_text_says_the_hook_and_the_screen_text():
     assert ocr.alt_text("We shipped it…", "Launch  day\nv2") == "Video clip: “We shipped it”. On-screen text: Launch day v2"
-    assert ocr.alt_text("", "") == "Video clip" and len(ocr.alt_text("x", "y" * 2000)) == 420
+    assert ocr.alt_text("", "") == "Video clip" and len(ocr.alt_text("x" * 600, "y" * 2000, cleaned=True)) == 420
 
 
 # ---------------------------------------------------------------- caption placement

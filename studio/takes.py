@@ -945,7 +945,8 @@ class Takes(TakeBin):
             o = m.get("ocr") if isinstance(m.get("ocr"), dict) else {}
             d["screen_text"] = str(o.get("text") or "")[:500]
             d["watermarks"] = [str(x)[:40] for x in (o.get("watermarks") or [])[:10]]
-            d["alt_text"] = _alt_text(c.get("hook") or "", d["screen_text"])
+            rd = o.get("readable")  # filtered with Tesseract's confidence at render time (studio/media/ocr.readable_text)
+            d["alt_text"] = _alt_text(c.get("hook") or "", rd if isinstance(rd, str) else d["screen_text"], isinstance(rd, str))
             d["words"] = clip_words(words, c, c["start"] - 4, c["end"] + 4)
             d["transcript"] = " ".join(w["w"] for w in clip_words(words, c, c["start"], c["end"]))
             d["transcript_edited"] = bool(c.get("words_fix"))
@@ -1327,9 +1328,9 @@ def _clip_score(c: dict, moments: dict) -> tuple[float | None, str]:
     return score, why[:300]
 
 
-def _alt_text(hook: str, text: str) -> str:
+def _alt_text(hook: str, text: str, cleaned: bool = False) -> str:
     from .media.ocr import alt_text
-    return alt_text(hook, text)
+    return alt_text(hook, text, cleaned=cleaned)
 
 
 WATERMARK_MSG = ("The source video shows {what}. Re-posted videos with another platform's watermark or someone's handle "
@@ -1405,7 +1406,7 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
             c["_ocr_frames"] = seen["frames"]
         data, cover, meta = take.render_clip(src, c, c["words"], c["faces"], spec.get("scenes") or [], spec["src"],
                                              spec["kit"], spec["params"], logo=logo)
-        meta["ocr"] = {k: seen.get(k) for k in ("ok", "version", "text", "watermarks", "ms", "skipped")}
+        meta["ocr"] = {k: seen.get(k) for k in ("ok", "version", "text", "readable", "watermarks", "ms", "skipped")}
         meta["ocr"]["frames"] = len(seen.get("frames") or [])
         yield c["id"], data, cover, meta
         return
