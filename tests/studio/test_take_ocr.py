@@ -82,7 +82,7 @@ def test_frames_are_at_most_one_per_two_seconds_and_sixty_per_take():
 def test_the_budget_is_shared_by_every_clip_of_a_take(monkeypatch):
     st = {"ok": True, "version": "5.5.4", "path": "/t", "tessdata": None}
     calls = []
-    monkeypatch.setattr(ocr, "_grab", lambda path, t, out: calls.append(t) or True)
+    monkeypatch.setattr(ocr, "_grab", lambda path, t, out, timeout=30: calls.append(t) or True)
     monkeypatch.setattr(ocr, "read_frame", lambda *a, **k: ([{"x": 0, "y": 0, "w": 0.1, "h": 0.1, "text": "Hi", "conf": 90}], (1, 1)))
     b = ocr.Budget(seconds=30, frames=60)
     for _ in range(5):                                                       # five 60 s clips: 30 frames asked each
@@ -183,3 +183,50 @@ def test_real_tesseract_reads_a_watermark_within_the_caps(tmp_path):
     assert ocr.watermarks(res["text"]) == ["tiktok", "@coolcreator"]
     box = next(x for f in res["frames"] for x in f["boxes"] if x["text"] == "@coolcreator")
     assert 0.78 < box["y"] < 0.9
+
+
+# ---------------------------------------------------------------- review fixes (CodeRabbit, #130)
+def test_a_zoomed_track_crop_maps_boxes_through_its_own_window():
+    # text at 40-45% of a 1080-tall source; the crop is 540 px tall starting at y=270 -> 20-30% of the clip...
+    box = {"x": 0.1, "y": 0.40, "w": 0.3, "h": 0.05, "text": "SALE", "conf": 90}
+    full = ocr._to_out_y(box, "track", 1920, 1080, 1920, 1080)
+    zoom = ocr._to_out_y(box, "track", 1920, 1080, 1920, 1080, crop=(270.0, 540.0))
+    assert round(full[0]) == 768 and round(zoom[0]) == 576 and round(zoom[1]) == 768
+    shots = [{"start": 0, "end": 5, "layout": "track", "path": {"crop_w": 304, "crop_h": 540, "keys": [(0.0, 10, 270)]}}]
+    assert take_clip.crop_at_fn(shots)(1.0) == (270.0, 540.0) and take_clip.crop_at_fn(shots)(6.0) is None
+    default = captions_ass.band_y({"layout": "track"})                       # 1330: text at 1280-1380 if the crop is used
+    hit = {**box, "y": (270 + default / 1920 * 540 - 20) / 1080, "h": 40 / 1080}
+    frames = [{"t": 1.0, "boxes": [hit]}]
+    seg = {"start": 0, "end": 5, "layout": "track"}
+    assert ocr.free_caption_y(frames, seg, default, 1920, 1080) is None       # full-frame mapping: misses it
+    assert ocr.free_caption_y(frames, seg, default, 1920, 1080, crop_at=take_clip.crop_at_fn(shots)) is not None
+
+
+def test_frame_extraction_counts_against_the_budget(monkeypatch):
+    st = {"ok": True, "version": "5.5.4", "path": "/t", "tessdata": None}
+    seen = {}
+    clock = iter([0, 0, 29.9, 29.9, 30, 30, 30, 30])
+
+    def grab(path, t, out, timeout=30):
+        seen.setdefault("grab_timeouts", []).append(timeout)
+        return True
+    monkeypatch.setattr(ocr, "_grab", grab)
+    monkeypatch.setattr(ocr.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(ocr, "read_frame", lambda *a, **k: seen.setdefault("read", True) and ([], (1, 1)))
+    b = ocr.Budget(seconds=30)
+    ocr.scan("x.mp4", 0, 4, b, st)
+    assert seen["grab_timeouts"][0] == 30 and seen["grab_timeouts"][1] < 0.2      # the 2nd grab only gets what's left
+    assert "read" not in seen and b.used_s >= 29.9                              # no time left: no recognition
+
+
+def test_status_survives_undecodable_version_output(monkeypatch, tmp_path):
+    fake = tmp_path / "tesseract"
+    fake.write_bytes(b"#!/bin/sh\nprintf 'tesseract 5.5.4\\n\\377\\376 junk\\n'\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("HQ_TESSERACT", str(fake))
+    assert ocr.status()["version"] == "5.5.4"
+
+
+def test_worker_retries_setup_when_the_language_data_is_missing():
+    cmd = instabox_worker.command(7, "https://hq.example", "take_render", "main")
+    assert "[ -s /data/tesseract/share/tessdata/eng.traineddata ]; } ||" in cmd

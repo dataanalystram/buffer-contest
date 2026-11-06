@@ -93,7 +93,8 @@ def command(jid: int, app_url: str, kind: str = "", ref: str = "main") -> str:
             "mkdir -p /data/logs; "
             # Tesseract OCR >= 5.5.4 (One take on-screen text): built once from the pinned tag in the background, at nice 19,
             # under a non-blocking lock; OCR stays off (fail open) until it's there (scripts/worker_tesseract.sh)
-            f"{TESSERACT_PREFIX}/bin/tesseract --version 2>&1 | head -1 | grep -qx 'tesseract {TESSERACT_TAG}' || "
+            f"{{ {TESSERACT_PREFIX}/bin/tesseract --version 2>&1 | head -1 | grep -qx 'tesseract {TESSERACT_TAG}' && "
+            f"[ -s {TESSERACT_PREFIX}/share/tessdata/eng.traineddata ]; }} || "
             "(cp scripts/worker_tesseract.sh /data/tesseract-setup.sh && nohup flock -n /data/tesseract.lock nice -n 19 "
             "sh /data/tesseract-setup.sh > /data/logs/tesseract-setup.log 2>&1 &); ")
     log = f"/data/logs/job-{int(jid)}.log"

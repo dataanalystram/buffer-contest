@@ -16,16 +16,28 @@ from . import path as path_mod, render as rr
 from .decide import OUT_H, OUT_W
 
 
-def place_captions(sidecar: list[dict], frames, sw: int, sh: int) -> int:
+def crop_at_fn(shots: list[dict] | None):
+    """t (clip seconds) -> the tracked crop's (top, height) in source pixels, or None outside a tracked shot."""
+    def at(t: float):
+        for s in shots or []:
+            p = s.get("path") if s.get("layout") == "track" else None
+            if p and s["start"] - 1e-6 <= t < s["end"] and p.get("crop_h"):
+                _, y = path_mod.at(p, t - s["start"])
+                return float(y), float(p["crop_h"])
+        return None
+    return at
+
+
+def place_captions(sidecar: list[dict], frames, sw: int, sh: int, shots: list[dict] | None = None) -> int:
     """Move each segment's caption line off on-screen text the OCR found (studio/media/ocr). Fail open: any problem keeps
     the default band. Returns how many segments moved."""
     if not frames or not isinstance(frames, list):
         return 0
     from .. import captions_ass, ocr
-    n = 0
+    n, crop_at = 0, crop_at_fn(shots)
     for seg in sidecar:
         try:
-            y = ocr.free_caption_y(frames, seg, captions_ass.band_y(seg, captions_ass.REF_H), sw, sh)
+            y = ocr.free_caption_y(frames, seg, captions_ass.band_y(seg, captions_ass.REF_H), sw, sh, crop_at=crop_at)
         except Exception:  # noqa: BLE001 - placement never fails a render
             y = None
         if y is not None:
@@ -49,7 +61,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         pins = rr.pins_from(m.get("layout_overrides"))
         plan = rr.plan_clip(path, start, end, words, scenes, src, faces, pins, m.get("layout_prefs") or {},
                             smart_layout=bool(m.get("smart_layout")))
-        moved = place_captions(plan["sidecar"], m.get("_ocr_frames"), sw, int(src.get("height") or 1080))
+        moved = place_captions(plan["sidecar"], m.get("_ocr_frames"), sw, int(src.get("height") or 1080), plan["shots"])
         # cover: the sharpest early frame, framed like the shot it falls in
         ct = take.pick_cover_time(path, m, faces, tmp)
         shot = next((s for s in plan["shots"] if s["start"] <= ct - start < s["end"]), plan["shots"][0])

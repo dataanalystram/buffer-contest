@@ -73,8 +73,9 @@ def status() -> dict:
     if not exe:
         return {"ok": False, "version": None, "path": None, "why": "tesseract not installed"}
     try:
-        r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError) as e:
+        r = subprocess.run([exe, "--version"], capture_output=True, text=True, errors="replace", timeout=10,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
         return {"ok": False, "version": None, "path": exe, "why": f"tesseract --version failed: {e.__class__.__name__}"}
     v = parse_version((r.stdout or "") + (r.stderr or ""))
     if not v:
@@ -115,11 +116,12 @@ def parse_tsv(tsv: str, w: int, h: int, min_conf: float = MIN_CONF) -> list[dict
     return out
 
 
-def _grab(path: str, t: float, out: Path) -> bool:
+def _grab(path: str, t: float, out: Path, timeout: float = 30) -> bool:
+    """One frame at t, scaled to FRAME_W wide, within `timeout` seconds."""
     from .. import mediasafe
     try:
         r = mediasafe.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", path, "-frames:v", "1", "-vf",
-                           f"scale={FRAME_W}:-2", str(out)], timeout=30)
+                           f"scale={FRAME_W}:-2", str(out)], timeout=max(1.0, timeout))
     except (OSError, subprocess.SubprocessError):
         return False
     return r.returncode == 0 and out.is_file()
@@ -135,9 +137,9 @@ def read_frame(exe: str, png: str, tessdata: str | None, timeout: float = FRAME_
         cmd += ["--tessdata-dir", tessdata]
     cmd.append("tsv")
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout, stdin=subprocess.DEVNULL,
                            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "OMP_THREAD_LIMIT": "1"})
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
         return [], (w, h)
     if r.returncode != 0:
         return [], (w, h)
@@ -166,9 +168,10 @@ def scan(path: str, start: float, end: float, budget: Budget | None = None, st: 
             f0 = time.monotonic()
             png = tmp / f"f{k}.png"
             boxes = []
-            if _grab(path, t, png):
-                left = max(1.0, min(FRAME_TIMEOUT, budget.seconds - budget.used_s))
-                boxes, _ = read_frame(st["path"], str(png), st.get("tessdata"), timeout=left)
+            if _grab(path, t, png, timeout=min(30.0, budget.seconds - budget.used_s)):
+                left = budget.seconds - budget.used_s - (time.monotonic() - f0)  # what the extraction left of the budget
+                if left > 0.2:
+                    boxes, _ = read_frame(st["path"], str(png), st.get("tessdata"), timeout=min(FRAME_TIMEOUT, left))
                 png.unlink(missing_ok=True)
             budget.used_s += time.monotonic() - f0
             budget.used_frames += 1
@@ -196,10 +199,13 @@ def watermarks(text: str, own_handle: str = "") -> list[str]:
     return hits[:10]
 
 
-def _to_out_y(b: dict, layout: str, src_w: int, src_h: int, H: int, W: int) -> tuple[float, float] | None:
-    """A source box's vertical extent on the WxH clip, for layouts whose vertical mapping is known."""
-    if layout == "track":  # a full-height crop scaled to the clip's height
-        return b["y"] * H, (b["y"] + b["h"]) * H
+def _to_out_y(b: dict, layout: str, src_w: int, src_h: int, H: int, W: int,
+              crop: tuple[float, float] | None = None) -> tuple[float, float] | None:
+    """A source box's vertical extent on the WxH clip, for layouts whose vertical mapping is known. crop: the tracked
+    crop's (top, height) in source pixels at that moment (a zoomed track crop), else the full frame height."""
+    if layout == "track":  # the crop window scaled to the clip's height
+        top, ch = crop if crop and crop[1] > 0 else (0.0, float(src_h))
+        return (b["y"] * src_h - top) / ch * H, ((b["y"] + b["h"]) * src_h - top) / ch * H
     if layout == "fit":   # the whole frame scaled to the clip's width, centred
         fh = W * src_h / max(1, src_w)
         top = (H - fh) / 2
@@ -208,16 +214,18 @@ def _to_out_y(b: dict, layout: str, src_w: int, src_h: int, H: int, W: int) -> t
 
 
 def free_caption_y(frames: list[dict], seg: dict, default_y: int, src_w: int, src_h: int, W: int = 1080, H: int = 1920,
-                   line_h: int = 170, safe_top: int = 290, safe_bottom: int = 1470) -> int | None:
+                   line_h: int = 170, safe_top: int = 290, safe_bottom: int = 1470, crop_at=None) -> int | None:
     """A caption y for the sidecar segment `seg` ({start, end, layout} in clip seconds) that stays off on-screen text,
-    or None to keep the default (no text in the band, an unmapped layout, or no free band)."""
+    or None to keep the default (no text in the band, an unmapped layout, or no free band). crop_at(t) gives a tracked
+    crop's (top, height) in source pixels at clip time t, or None for the full frame."""
     lay = seg.get("layout", "track")
     spans = []
     for f in frames or []:
         if not (seg.get("start", 0) - 1e-6 <= f.get("t", -1) < seg.get("end", 0) + 1e-6):
             continue
-        for b in f.get("boxes") or []:
-            y = _to_out_y(b, lay, src_w, src_h, H, W)
+        boxes = [b for b in f.get("boxes") or [] if isinstance(b, dict)]
+        for b in boxes:
+            y = _to_out_y(b, lay, src_w, src_h, H, W, crop_at(f["t"]) if crop_at and lay == "track" else None)
             if y is None:
                 return None
             spans.append((y[0] - 12, y[1] + 12))
