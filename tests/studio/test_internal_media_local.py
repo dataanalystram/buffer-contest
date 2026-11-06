@@ -61,3 +61,17 @@ def test_whole_reads_the_local_copy_in_one_buffer(app, human):
     assert p is not None
     p.unlink()                                                     # evicted between lookup and read: the backend, once
     assert mediacache.whole({**f, "path": lambda: p}) == data
+
+
+def test_a_video_evicted_while_ffprobe_runs_falls_back_to_the_bytes(tmp_path, monkeypatch):
+    p = tmp_path / "v.mp4"
+    p.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64)
+
+    def gone(path):
+        p.unlink()
+        return {"probed": False, "why": "ffprobe failed"}
+    monkeypatch.setattr(preflight, "ffprobe_path", gone)
+    assert preflight.probe_path(p, "/m/x.mp4") is None
+    preflight._CACHE.clear()
+    res = preflight.probe_url("https://hq.test/m/x", lambda u: b"loaded", lambda u: (p.write_bytes(b"\x00\x00\x00\x18ftyp" + b"\x00" * 8), p)[1])
+    assert res.get("bytes") == len(b"loaded")                       # the bytes loader ran instead

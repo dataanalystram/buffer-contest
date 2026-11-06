@@ -353,8 +353,11 @@ def probe_path(p: Path, hint: str = "") -> dict | None:
     except OSError:
         return None
     if head[4:8] == b"ftyp" or head[:4] == b"\x1aE\xdf\xa3" or hint.endswith(VIDEO_EXT):
+        got = ffprobe_path(str(p))
+        if not got.get("probed") and not p.exists():
+            return None  # evicted while ffprobe ran: probe the bytes instead, never cache an uninspected video (CodeRabbit, PR #132)
         out["kind"] = "video"
-        out.update(ffprobe_path(str(p)))
+        out.update(got)
         return out
     out["kind"] = "unknown"
     return out
