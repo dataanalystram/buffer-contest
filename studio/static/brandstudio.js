@@ -1,10 +1,10 @@
 // HuhQueue: Brand studio (kit, front/end cards, templates with a live preview, example brands, recurring slots) and the
-// Sources agent (scan -> clusters -> per-channel drafts -> Buffer DRAFTS). Every button is one REST call that is also an
+// Story scan (scan -> clusters -> Make a post opens a new thread with the picked stories; nothing goes to Buffer from here). Every button is one REST call that is also an
 // MCP tool. This file adds its own two tabs, so the page shell stays untouched.
 "use strict";
 (function () {
   const B = { kit: null, tpls: [], styles: {}, examples: [], slots: [], tpl: "weekly_recap", svc: "instagram", over: {}, t: null,
-              run: null, picks: new Set(), pkgs: [] };
+              run: null, picks: new Set() };
   const FONTS = [["anton", "Anton"], ["poppins", "Poppins"], ["inter", "Inter"], ["figtree", "Figtree"], ["roboto", "Roboto"],
                  ["sourceserif", "Source Serif 4"], ["garamond", "EB Garamond"], ["serif", "DM Serif Display"], ["dot", "Doto (dot matrix)"]];
   const BODY_ONLY = new Set(["anton", "garamond", "serif", "dot"]);  // display faces never set body copy
@@ -415,15 +415,15 @@
   // ============================================================ Sources agent
   const SCAN_HTML = `
     <section class="panel sa-set" aria-labelledby="saScanH"><div class="sa-head"><div><h2 class="h2" id="saScanH">Story scan</h2>
-      <p class="muted sm">Reads YC launches, Hacker News, your feeds, and Product Hunt or X with your own key. The same story from several places becomes one card. Pick stories and it writes a post per channel in your brand, saved to Buffer as <b>drafts</b>.</p></div>
+      <p class="muted sm">Reads YC launches, Hacker News, your feeds, and Product Hunt or X with your own key. The same story from several places becomes one card. Scan now only reads the sources. Nothing goes to Buffer. Pick stories and <b>Make a post</b> opens a new post with their links, ready for you to edit and send.</p></div>
       <div class="sa-go"><button class="btn big" type="button" id="saScan" data-testid="sa-scan">Scan now</button><span class="muted xs" id="saMode"></span></div></div>
       <p class="muted xs">Sources and keys: <button class="link" type="button" data-go="news:sources">Sources</button></p></section>
     <div id="saStatus" class="sa-status" data-testid="sa-status"></div>
     <div id="saTopics" class="chips" data-testid="sa-topics"></div>
     <ul id="saClusters" class="sa-clusters" data-testid="sa-clusters"><li class="ib-none" data-testid="sa-empty">No scan yet. Scan now reads every source you turned on and groups the same story into one card.</li></ul>
     <div id="saPager" class="pg-wrap" data-testid="sa-pager" hidden></div>
-    <div class="sa-bar" id="saBar" hidden><span id="saPicked">0 stories</span><button class="btn" type="button" id="saDraft" data-testid="sa-draft">Write posts</button></div>
-    <section id="saPkgs" class="panel" data-testid="sa-packages" hidden></section>`;
+    <div class="sa-bar" id="saBar" hidden><span id="saPicked" aria-live="polite">0 stories</span><span class="xs" id="saCap" data-testid="sa-pick-cap" hidden></span>
+      <button class="btn" type="button" id="saMakePicked" data-testid="sa-make-picked">Make a post</button></div>`;
   const SRC_HTML = `
     <section class="panel sa-set" aria-labelledby="saSetH"><h2 class="h2" id="saSetH">What the story scan reads</h2>
       <div class="sa-srcs" id="saSrcs" data-testid="sa-sources"></div>
@@ -441,7 +441,7 @@
       $("#saSrcs").innerHTML = s.adapters.map((a) => `<label class="sa-src" title="${esc(a.about)}"><input type="checkbox" data-src="${a.key}" ${s.on[a.key] ? "checked" : ""} data-testid="sa-src-${a.key}">
         <span class="sa-src-t"><b>${esc(a.label)}</b>${a.needs_key ? ((a.key === "x" ? s.x_key : s.ph_key) ? "<small>key added</small>" : `<small><button class="link xs" type="button" data-integ="integ-${a.key}" data-testid="sa-add-key-${a.key}">Add your key</button></small>`) : "<small>free</small>"}</span></label>`).join("");
       $("#saXq").value = s.x_query || "";
-      $("#saMode").textContent = s.sample ? "Sample workspace: recorded sources, no live calls." : "Live: reads the sources now and drafts into your Buffer.";
+      $("#saMode").textContent = s.sample ? "Sample workspace: recorded sources, no live calls." : "Live: reads the sources now. Nothing goes to Buffer.";
       const cls = s.classifier || { order: ["rules"] };
       api("/api/ai").then((ai) => { $("#saAi").textContent = `Writer: ${ai.engine}. Story judges: ${cls.order.join(" → ")}${cls.configured ? ` (capped at ${cls.cap_per_day} a day)` : ""}.`; }).catch(() => {});
       if (d.latest && !B.run) render(d.latest);
@@ -471,7 +471,7 @@
         <h3><a href="${escUrl(url)}" target="_blank" rel="noopener">${esc(c.story.headline)}</a></h3>
         ${why ? `<p class="sa-why" data-testid="sa-why"><b>Why it matters:</b> ${esc(why)}</p>` : ""}
         <div class="sa-tags" data-testid="sa-tags">${tags.map((t) => `<span class="sa-tag">${esc(t)}</span>`).join("")}<span class="sa-score muted">score ${c.score}</span></div>
-        <div class="sa-act"><button class="btn sm" type="button" data-make="${esc(url)}" data-testid="sa-make">Make post</button>
+        <div class="sa-act"><button class="btn sm" type="button" data-make="${esc(url)}" data-title="${esc(c.story.headline || "")}" data-testid="sa-make">Make post</button>
           <a class="link sm" href="${escUrl(url)}" target="_blank" rel="noopener" data-testid="sa-open">Open source</a></div></div></li>`;
   }
   function list(page) {
@@ -487,40 +487,38 @@
     window.hqPager($("#saPager"), { total: rows.length, page: B.page, per: PER, label: "Story scan pages",
       onPage: (n) => { list(n); $("#saClusters").scrollIntoView({ behavior: "smooth", block: "start" }); } });
   }
-  function bar() { $("#saBar").hidden = !B.picks.size; $("#saPicked").textContent = `${B.picks.size} stor${B.picks.size === 1 ? "y" : "ies"}`; }
-  function pkgs(r, sent) {
-    B.pkgs = r.packages;
-    const box = $("#saPkgs"); box.hidden = false;
-    box.innerHTML = `<div class="row"><h2 class="h2">${sent ? "Saved to Buffer as drafts" : "Posts per channel"}</h2><span class="muted sm">Writer: ${esc(r.engine)}</span><span class="muted sm bs-cost" data-testid="sa-cost">${esc(cost(r))}</span></div>` +
-      r.packages.map((p, i) => `<article class="sa-pkg" data-testid="sa-package">
-        <img src="${esc(p.media_url)}" alt="Cover for ${esc(netName(p.service))}" class="r-${esc(p.ratio.replace(":", "x"))}">
-        <div><div class="sa-meta"><b>${esc(netName(p.service))}</b><span>${esc(p.channel_name || "")}</span><span class="muted">${esc(p.format)} · ${esc(p.ratio)}</span>${p.agent !== "agent_ok" ? `<span class="sa-warn">${AGENT[p.agent]}</span>` : ""}</div>
-        <textarea data-i="${i}" rows="6" ${sent ? "readonly" : ""} aria-label="Caption for ${esc(netName(p.service))}">${esc(p.text)}</textarea>
-        <div class="muted sm"><span data-len="${i}">${p.length}</span> / ${p.limit} · ${p.hashtags} hashtags · ${esc(p.writer || "")}
-        ${p.result ? ` · <b class="${p.result.status === "sent_to_buffer" || p.result.status === "pending_approval" ? "ok" : "bad"}" data-testid="sa-result">${esc(p.result.status === "sent_to_buffer" ? "Buffer draft " + (p.result.post_id || "") : p.result.status === "pending_approval" ? "Waiting in Approvals" : p.result.error || p.result.status)}</b>` : ""}</div></div></article>`).join("") +
-      (sent ? "" : `<div class="row"><button class="btn big" type="button" id="saSend" data-testid="sa-send">Save as Buffer drafts</button><span class="muted sm">Drafts only. Nothing is scheduled or published.</span></div>`);
-    box.querySelectorAll("textarea[data-i]").forEach((t) => (t.oninput = () => { const p = B.pkgs[t.dataset.i]; box.querySelector(`[data-len="${t.dataset.i}"]`).textContent = count(p.service, t.value); }));
-    const send = $("#saSend");
-    if (send) send.onclick = async () => {
-      const texts = {};
-      box.querySelectorAll("textarea[data-i]").forEach((t) => { const p = B.pkgs[t.dataset.i]; if (t.value !== p.text) (texts[p.cluster_id] = texts[p.cluster_id] || {})[p.channel_id] = t.value; });
-      send.disabled = true; send.textContent = "Saving…";
-      try { pkgs(await api("/api/sources/draft", { method: "POST", body: { run_id: B.run.run_id, cluster_ids: [...B.picks], dry_run: false, texts } }), true); toast("Saved as Buffer drafts"); }
-      catch (e) { toast(e.message); send.disabled = false; send.textContent = "Save as Buffer drafts"; }
-    };
-    box.scrollIntoView({ behavior: "smooth", block: "start" });
+  // At most MAX_PICK stories go into one Make a post prompt; past that the button waits and says why.
+  const MAX_PICK = 10;
+  function bar() {
+    const n = B.picks.size, over = n > MAX_PICK, btn = $("#saMakePicked"), cap = $("#saCap");
+    $("#saBar").hidden = !n;
+    $("#saPicked").textContent = `${n} stor${n === 1 ? "y" : "ies"}`;
+    btn.textContent = `Make a post (${n})`; btn.disabled = over;
+    cap.hidden = !over; cap.textContent = over ? `Pick up to ${MAX_PICK} stories for one post. Untick ${n - MAX_PICK}.` : "";
+  }
+  // The picked stories (in the order they were ticked) as {title, url} for the Make a post composer
+  function picked() {
+    const byId = new Map(((B.run || {}).clusters || []).map((c) => [c.id, c]));
+    return [...B.picks].map((id) => byId.get(id)).filter(Boolean)
+      .map((c) => ({ title: c.story.headline || "", url: c.story.url || (c.items[0] || {}).url || "" }));
   }
   function wireSources() {
     $("#saScan").onclick = async () => {
       const b = $("#saScan"); b.disabled = true; b.textContent = "Scanning…";
       try { const on = {}; document.querySelectorAll("#saSrcs [data-src]").forEach((i) => (on[i.dataset.src] = i.checked));
-            render(await api("/api/sources/scan", { method: "POST", body: { sources: Object.keys(on).filter((k) => on[k]) } })); $("#saPkgs").hidden = true; }
+            render(await api("/api/sources/scan", { method: "POST", body: { sources: Object.keys(on).filter((k) => on[k]) } })); }
       catch (e) { toast(e.message); } finally { b.disabled = false; b.textContent = "Scan now"; }
     };
-    $("#saDraft").onclick = async () => {
-      const b = $("#saDraft"); b.disabled = true; b.textContent = "Writing…";
-      try { pkgs(await api("/api/sources/draft", { method: "POST", body: { run_id: B.run.run_id, cluster_ids: [...B.picks], dry_run: true } }), false); }
-      catch (e) { toast(e.message); } finally { b.disabled = false; b.textContent = "Write posts"; }
+    // Make a post (N): a NEW Make a post thread with the picked stories' titles and links prefilled (hqNewPost aborts the
+    // old thread's loads). No request from here: nothing is written or sent until the person edits the prompt and sends it.
+    $("#saMakePicked").onclick = () => {
+      if (!B.picks.size) return;
+      if (B.picks.size > MAX_PICK) { toast(`Pick up to ${MAX_PICK} stories for one post.`); return; }
+      const text = window.hqStoryPrompt ? window.hqStoryPrompt(picked()) : "";
+      if (!text) { toast("Those stories have no link to post from."); return; }
+      if (window.hqNewPost) window.hqNewPost(text); else showTab("agent", "agent");
+      const got = window.hqStoryPrompt.last || {};
+      toast(got.used < got.asked ? `${got.used} of ${got.asked} stories fit in one prompt. Edit it, then press send.` : "Stories added. Edit the prompt, then press send.");
     };
     $("#saSaveSet").onclick = async () => {
       const on = {}; document.querySelectorAll("#saSrcs [data-src]").forEach((i) => (on[i.dataset.src] = i.checked));

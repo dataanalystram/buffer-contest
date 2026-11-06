@@ -119,7 +119,7 @@
         <a class="lib-t" href="${escUrl(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>
         ${it.summary ? `<p class="lib-sum">${esc(it.summary)}</p>` : ""}
         <div class="lib-act">${vid ? `<a class="btn2 sm" href="${escUrl(vid.url)}" target="_blank" rel="noopener" data-testid="lib-watch">Watch on YouTube</a><span class="muted xs" title="${esc(vid.note)}">Link or embed only · reuse: ${esc(vid.reuse)}</span>`
-          : `<button class="btn sm" type="button" data-make="${esc(it.url)}" data-testid="lib-make">Make post</button>`}${it.discussion ? `<a class="link sm" href="${escUrl(it.discussion)}" target="_blank" rel="noopener">HN discussion</a>` : ""}</div>
+          : `<button class="btn sm" type="button" data-make="${esc(it.url)}" data-title="${esc(it.title || "")}" data-testid="lib-make">Make post</button>`}${it.discussion ? `<a class="link sm" href="${escUrl(it.discussion)}" target="_blank" rel="noopener">HN discussion</a>` : ""}</div>
       </div></li>`;
   }
   function list() {

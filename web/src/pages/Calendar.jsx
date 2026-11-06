@@ -53,16 +53,23 @@ export default function CalendarPage() {
   }, [view, query.date])
   const filterKey = ['ch', 'type', 'status', 'tag', 'campaign', 'q'].map((k) => fl.f[k]).join('|')
 
+  // only the newest load may set rows: a restored filter (useFilters) starts a second load while the first, unfiltered
+  // one is still in flight, and a slower first answer used to overwrite the filtered list
+  const loadSeq = useRef(0)
   const load = async () => {
+    const seq = ++loadSeq.current
     // pad the window by a day each side so a timezone switch never drops edge posts
     const lo = new Date(days[0]); lo.setDate(lo.getDate() - 1)
     const hi = new Date(days[days.length - 1]); hi.setDate(hi.getDate() + 2)
     const p = fl.params({ start: ymd(lo) + 'T00:00', end: ymd(hi) + 'T00:00' })
     if (!fl.f.status) p.set('status', 'scheduled,sending,processing,sent,failed,needs_action,pending_approval,draft')
-    setRows(await get('/api/posts?' + p))
+    const got = await get('/api/posts?' + p)
+    if (seq !== loadSeq.current) return
+    setRows(got)
     if (showNoDate) {
       const u = fl.params({ undated: 'true' }); u.set('status', 'draft')
-      setUndated(await get('/api/posts?' + u))
+      const und = await get('/api/posts?' + u)
+      if (seq === loadSeq.current) setUndated(und)
     }
   }
   useEffect(() => { load().catch((e) => toast(e.message, 'err')) }, [days, filterKey, showNoDate])

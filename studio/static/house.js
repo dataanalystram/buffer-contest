@@ -4,8 +4,14 @@ const H = { run: null, poll: null, sel: new Set(), ai: null, upload: null, attac
 const STATUS_ICON = { pending: "", running: '<span class="spin" aria-hidden="true"></span>', done: "✓", warn: "!", failed: "×" };
 // suggestion chips under the reply box: one box edits any channel, its media or its caption
 // relevant to THIS post (owner, 3 Nov 2026: "Redo YouTube at 30s" showed when only Instagram was selected)
+// A short reply with no tools ("test", "hi", or the one question asked before there's anything to post): the run has no
+// plan, steps or posts, so there's no agent card and nothing to retry (owner, 6 Nov 2026: "Standard plan, written with
+// built-in" over the reply, and "Try again with a different angle").
+const chatOnly = (r) => { const res = (r && r.result) || {};
+  return !!res.chat && ["chat", "ask"].includes(res.chat.kind) && !(res.packages || []).length && !(r.steps || []).length; };
 function replyChips(r) {
   const pk = (r.result || {}).packages || [], svc = new Set(pk.map((p) => p.service)), fm = new Set(pk.map((p) => p.format));
+  if (chatOnly(r)) return [];
   if (!pk.length) return ["Try again with a different angle", "What templates can you use?"];
   const out = ["Make the hook stronger", "Shorter captions"];
   if (fm.has("carousel")) out.push("Restyle slide 2");
@@ -262,7 +268,7 @@ function showRun(r) {
   $("#mediaBox").innerHTML = html;
   const redo = $("[data-testid=legacy-redo]");
   if (redo) redo.onclick = async () => { redo.disabled = true;
-    try { const n = await api(`/api/agent/runs/${r.id}/messages`, { method: "POST", body: { text: "redo" } }); showRun(n); watch(n.id); loadRuns(); }
+    try { const n = await api(`/api/agent/runs/${r.id}/messages`, { method: "POST", body: { text: "redo" } }); if (showIfOn(r.id, n)) watch(n.id); loadRuns(); }
     catch (e) { toast(e.message, 5000); redo.disabled = false; } };
   const opn = $("[data-testid=legacy-open-new]");
   if (opn) opn.onclick = async () => { const n = await api(`/api/agent/runs/${opn.dataset.run}`); showRun(n); if (["running", "rendering"].includes(n.status)) watch(n.id); };
@@ -278,16 +284,18 @@ function showRun(r) {
   if (sd) sd.onclick = async () => {
     sd.disabled = true;
     try { const out = await api(`/api/agent/runs/${r.id}/tools/save_buffer_drafts`, { method: "POST", body: {} });
-      toast(out.drafts.map((d) => `${netName(d.service)}: ${d.status.replaceAll("_", " ")}`).join(" · "), 6000); showRun(await api(`/api/agent/runs/${r.id}`)); readyBadge(); }
+      toast(out.drafts.map((d) => `${netName(d.service)}: ${d.status.replaceAll("_", " ")}`).join(" · "), 6000); showIfOn(r.id, await api(`/api/agent/runs/${r.id}`)); readyBadge(); }
     catch (e) { toast(e.message, 6000); sd.disabled = false; }
   };
   wirePackages(r);
 }
 
 function agentExtras(r, busy) {
-  const res = r.result || {}, br = res.brain || {}, agent = r.kind === "agent" || br.mode === "mcp";
-  $("#agentBrain").hidden = !agent || !br.mode;
-  if (agent && br.mode) {
+  const res = r.result || {}, br = res.brain || {}, agent = r.kind === "agent" || br.mode === "mcp", quiet = !busy && chatOnly(r);
+  const card = document.querySelector("[data-testid=mp-agent-msg]");
+  if (card) card.hidden = quiet;  // a short reply: just the reply, no empty agent card above it
+  $("#agentBrain").hidden = !agent || !br.mode || quiet;
+  if (agent && br.mode && !quiet) {
     // the same words in the run view and the composer, after a reply too (QA: "free starter" showed while Claude ran)
     $("#agentBrain").textContent = br.mode === "mcp" ? `Made in ${brainName(br)}. ${br.hint || ""}`.trim() : (br.mode === "tools" ? "Planned and run by " : "Standard plan, written with ") + brainName(br) +
       ((res.notes || []).length ? " · " + res.notes[res.notes.length - 1] : "");
@@ -327,11 +335,11 @@ function agentExtras(r, busy) {
     const lastAsk = th.length > 1 ? ([...th].reverse().find((m) => m.role === "user") || {}).text : "";
     const again = (((res.error || {}).retry_text) || (res.error ? "" : lastAsk) || "").trim();
     try { const n = again ? await api(`/api/agent/runs/${r.id}/messages`, { method: "POST", body: { text: again } })
-      : await api(`/api/agent/runs/${r.id}/resume`, { method: "POST", body: {} }); showRun(n); watch(n.id); }
+      : await api(`/api/agent/runs/${r.id}/resume`, { method: "POST", body: {} }); if (showIfOn(r.id, n)) watch(n.id); }
     catch (e) { toast(e.message, 5000); rt.disabled = false; } };
   const rs = $("#agentThread [data-testid=mp-resume]");
   if (rs) rs.onclick = async () => { rs.disabled = true;
-    try { const n = await api(`/api/agent/runs/${r.id}/resume`, { method: "POST", body: {} }); showRun(n); watch(n.id); } catch (e) { toast(e.message, 5000); rs.disabled = false; } };
+    try { const n = await api(`/api/agent/runs/${r.id}/resume`, { method: "POST", body: {} }); if (showIfOn(r.id, n)) watch(n.id); } catch (e) { toast(e.message, 5000); rs.disabled = false; } };
   // VIDEO FIRST: the launch video can't be fetched here (YouTube only) or there is none -> an upload button in the chat
   const ask = res.video_ask;
   if (ask && !busy && !(res.upload && res.upload.type === "video")) {
@@ -352,7 +360,7 @@ function agentExtras(r, busy) {
       try {
         const tok = await uploadFile(f);
         const n = await api(`/api/agent/runs/${r.id}/messages`, { method: "POST", body: { text: "Here's the video: " + f.name, media_token: tok } });
-        showRun(n); watch(n.id);
+        if (showIfOn(r.id, n)) watch(n.id);
       } catch (e) { toast(e.message, 6000); lab.classList.remove("busy"); lab.lastChild.textContent = "Upload video"; }
     };
   }
@@ -424,7 +432,7 @@ function wireTpl(r) {
   box.querySelectorAll("[data-tpl]").forEach((b) => (b.onclick = async () => {
     if (b.classList.contains("on")) return;
     box.querySelectorAll("[data-tpl]").forEach((x) => (x.disabled = true)); b.classList.add("busy");
-    try { const n = await api(`/api/agent/runs/${r.id}/template`, { method: "POST", body: { template: b.dataset.tpl } }); showRun(n); watch(n.id); }
+    try { const n = await api(`/api/agent/runs/${r.id}/template`, { method: "POST", body: { template: b.dataset.tpl } }); if (showIfOn(r.id, n)) watch(n.id); }
     catch (e) { toast(e.message, 6000); box.querySelectorAll("[data-tpl]").forEach((x) => (x.disabled = false)); b.classList.remove("busy"); }
   }));
   const all = box.querySelector("[data-testid=mp-template-all]");
@@ -471,6 +479,7 @@ const ratioOf = (w, h) => (w && h ? RATIOS.reduce((b, r) => (Math.abs(r[1] - w /
 // file itself when the server didn't record them.
 function mediaLabel(p) {
   const m = pkgFiles(p), first = m[0] || {};
+  if (!m.length) return p.media_state === "missing" ? "Media deleted" : "Text only";  // owner, 6 Nov 2026: "Image · Ready" on text
   if (first.type === "video" || isVid(first.url)) {
     const parts = ["Video", first.ratio || ratioOf(first.width, first.height) || "…", first.duration ? fmtDur(first.duration) : "…"];
     if (first.role === "original") parts.push("your file");
@@ -602,7 +611,7 @@ function wirePackages(r) {
     const rep = el.querySelector("[data-testid=pkg-replace]");
     if (rep) rep.onclick = () => window.pickFromLibrary && window.pickFromLibrary(async (item) => {
       busyBtn(rep, "Replacing…");
-      try { showRun(await api(`/api/agent/runs/${r.id}/packages/${ch}/media`, { method: "POST", body: { token: item.media_token } })); toast("Media replaced"); }
+      try { showIfOn(r.id, await api(`/api/agent/runs/${r.id}/packages/${ch}/media`, { method: "POST", body: { token: item.media_token } })); toast("Media replaced"); }
       catch (e) { toast(e.message, 6000); rep.disabled = false; rep.textContent = "Replace"; }
     }, { title: `Replace ${netName(pk.service)} media`, upload: true, video: pk.service === "youtube" || pk.service === "tiktok" });
     el.querySelectorAll("[data-cover]").forEach((b) => (b.onclick = async () => {
@@ -610,7 +619,7 @@ function wirePackages(r) {
       el.querySelectorAll("[data-cover]").forEach((x) => (x.disabled = true));
       b.classList.add("busy");
       try { const n = await api(`/api/agent/runs/${r.id}/packages/${ch}/cover`, { method: "POST", body: { index: +b.dataset.cover } });
-        toast("Swapping the cover…"); showRun(n); watch(n.id); }
+        toast("Swapping the cover…"); if (showIfOn(r.id, n)) watch(n.id); }
       catch (e) { toast(e.message, 6000); el.querySelectorAll("[data-cover]").forEach((x) => (x.disabled = false)); b.classList.remove("busy"); }
     }));
     if (window.hqProduct) window.hqProduct.wire(el, r, pk);  // Product panel: search, price, shop link + #Ad (commerce.js)
@@ -619,7 +628,7 @@ function wirePackages(r) {
     const regen = el.querySelector("[data-testid=pkg-regen]");
     if (regen) regen.onclick = async () => {
       busyBtn(regen, "Regenerating…");
-      try { showRun(await api(`/api/agent/runs/${r.id}/packages/${ch}/media`, { method: "POST", body: {} })); toast(`${netName(pk.service)} regenerated`); }
+      try { showIfOn(r.id, await api(`/api/agent/runs/${r.id}/packages/${ch}/media`, { method: "POST", body: {} })); toast(`${netName(pk.service)} regenerated`); }
       catch (e) { toast(e.message, 6000); regen.disabled = false; regen.textContent = "Regenerate"; }
     };
     if (mode) mode.onchange = () => {
@@ -634,7 +643,7 @@ function wirePackages(r) {
         if (mode.value === "schedule") { if (!when.value) throw new Error("Pick a day and time"); body.due_at = new Date(when.value).toISOString(); }
         const out = await api(`/api/agent/runs/${r.id}/packages/${ch}/schedule`, { method: "POST", body });
         toast(out.status === "pending_approval" ? "Waiting for approval" : (mode.value === "draft" ? "Saved as a Buffer draft (not posted)" : "Sent to Buffer") + (out.warnings?.length ? " · " + out.warnings[0] : ""), 4500);
-        const fresh = await api(`/api/agent/runs/${r.id}`); showRun(fresh); readyBadge();
+        const fresh = await api(`/api/agent/runs/${r.id}`); showIfOn(r.id, fresh); readyBadge();
       } catch (e) { toast(e.message, 6000); send.disabled = false; }
     };
   });
@@ -706,6 +715,9 @@ function brainName(b) {
 }
 
 window.showRunFromLibrary = (r) => { showRun(r); window.scrollTo({ top: 0 }); };
+// draw an in-thread action's answer only while its run is still the one on screen (-> whether it was drawn)
+function showIfOn(rid, n) { if (!onRun(rid)) return false; showRun(n); return true; }
+window.hqOnRun = onRun;
 window.showRun = showRun; window.watchRun = watch; window.loadRuns = loadRuns; window.H_STATE = H;
 
 async function loadAgent() {
