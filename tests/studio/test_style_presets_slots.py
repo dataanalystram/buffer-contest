@@ -497,3 +497,14 @@ def test_a_failed_preset_insert_leaves_the_ledger_as_it_was(app, human, monkeypa
         pass  # the test client re-raises the server's exception
     monkeypatch.setattr(store, "x", real)
     assert calls["n"] == 3 and snap() == before  # hook_first's rules still on, none of data_led's half-written
+
+
+def test_banned_phrases_ending_in_punctuation_are_removed_and_flagged():
+    rules = [{"kind": "text", "check": {"type": "banned_words", "words": ["agree?", "thoughts?", "game-changer"]}, "rule": "x",
+              "scope": [], "active": True}]
+    text = "Big news for builders. Agree?\n\nThoughts? It is a game-changer, and the gamechanger-ish part stays."
+    out = brand.apply_text_rules(text, rules)
+    assert "agree?" not in out.lower() and "thoughts?" not in out.lower() and "game-changer" not in out.lower()
+    assert "gamechanger-ish" in out
+    assert not brand.brand_check("Ship it. Thoughts?", None, rules, {})["pass"]
+    assert brand.brand_check("Ship it. What would you change?", None, rules, {})["pass"]
