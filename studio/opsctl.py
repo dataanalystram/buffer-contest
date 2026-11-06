@@ -61,7 +61,7 @@ def _store(store=None):
 def state(store=None) -> dict:
     """{name: {"paused": bool, "at", "reason", "unreadable"}} for every switch. Fail closed on a read error."""
     st = _store(store)
-    if st is None:
+    if st is None or not callable(getattr(st, "q", None)):  # no database here (a worker, a script, a test stub)
         return {n: {"paused": False, "at": None, "reason": "", "unreadable": False} for n in SWITCHES}
     now = time.time()
     cached = getattr(st, "_ops_switch_cache", None)
