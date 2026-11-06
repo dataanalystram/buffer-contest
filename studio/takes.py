@@ -64,6 +64,33 @@ def _now() -> float:
     return time.time()
 
 
+TIMING_KEYS = 24
+
+
+def _clip_timing(res: dict, clip_id: str, meta, upload_s: float) -> None:
+    """Per clip / ratio stage seconds from the worker (face sampling, encode, QA, captions, cards, audio, cover), plus
+    the storage upload measured here. Numbers only, a bounded number of keys."""
+    tm = meta.get("timings") if isinstance(meta, dict) and isinstance(meta.get("timings"), dict) else {}
+    row = {str(k)[:24]: round(float(v), 2) for k, v in list(tm.items())[:TIMING_KEYS]
+           if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    row["upload_storage"] = round(upload_s, 2)
+    clips = res.setdefault("timings", {}).setdefault("clips", {})
+    if isinstance(clips, dict) and len(clips) < 100:
+        clips[str(clip_id)[:40]] = row
+
+
+def _timings_view(run: dict, res: dict) -> dict:
+    """The take's stage table: the analysis stages (download, transcribe, silences, scenes, faces), moments, every clip
+    and ratio, preflight, the render job, and end to end (created to ready)."""
+    tm = dict(res.get("timings") or {})
+    try:
+        if run.get("status") == "ready":
+            tm["end_to_end"] = round(float(run["updated"]) - float(run["created"]), 1)
+    except (KeyError, TypeError, ValueError):
+        pass
+    return tm
+
+
 def sample_meta() -> dict | None:
     p = SAMPLE_DIR / "sample.json"
     return json.loads(p.read_text()) if p.exists() else None
@@ -506,10 +533,13 @@ class Takes(TakeBin, TakeControl):
         if first.get("done") is not None:
             return first["done"]
         a, rid, run, eng, chat, used = first["ctx"]
+        t_m = time.time()
         try:
             mined = self._mine(run, analysis, eng, chat)
         except take.TakeError as e:
             mined = e
+        if isinstance(mined, dict):
+            mined["_secs"] = round(time.time() - t_m, 1)
         with self._job_lock(jid):
             if self.job_cancelled(jid):
                 return {"ok": False, "cancelled": True}
@@ -640,6 +670,9 @@ class Takes(TakeBin, TakeControl):
         if used.get("label") and mined["picked_by"].startswith(MOMENTS_AI):
             mined["picked_by"] = used["label"] + mined["picked_by"][len(MOMENTS_AI):]
         res["moments"], res["picked_by"] = mined["moments"], mined["picked_by"]
+        secs = mined.pop("_secs", None)
+        if isinstance(secs, (int, float)):
+            res.setdefault("timings", {})["moments"] = secs
         self._step(steps, "moments", "done", f"{len(mined['moments'])} moments from {mined['sentences']} sentences · picked by {mined['picked_by']}",
                    {"moments": [{k: m[k] for k in ("id", "start", "end", "hook", "score")} for m in mined["moments"]]})
         res["clips"] = [{"id": f"c{i + 1}", "moment_id": m["id"], "status": "rendering", "start": m["start"], "end": m["end"],
@@ -789,13 +822,21 @@ class Takes(TakeBin, TakeControl):
                 return {"ok": False, "cancelled": True}
             if not clip:
                 raise ActionError("No such clip.", 404)
+            t_up = time.time()
             if ratio:  # another aspect ratio of the same clip (Opus-style takes): kept beside it, used by placement
                 vt = self.h.put_media(a, data, f"clip-{base_id}-{ratio.replace(':', 'x')}.mp4", kind="render", meta=meta)
                 clip.setdefault("variants", {})[ratio] = {"token": vt, "url": self.media_url(vt), "meta": meta}
+                _clip_timing(res, clip_id, meta, time.time() - t_up)
+                vfs = meta.get("face_safe") if isinstance(meta, dict) else None
+                # this ratio's own face check counts too: a flag is added, never cleared, by another ratio or the final look
+                if isinstance(vfs, dict) and vfs.get("status") == "needs_review" and clip.get("status") == "rendered":
+                    clip.update(status="needs_review", review_reason=f"{ratio} version: "
+                                + str(vfs.get("reason") or "the overlays may cover the speaker's face")[:180])
                 self._save(rid, steps, res)
                 return {"ok": True, "token": vt}
             tok = self.h.put_media(a, data, f"clip-{clip_id}.mp4", kind="render", meta=meta)
             ctok = self.h.put_media(a, cover, f"cover-{clip_id}.jpg", kind="render", meta={"type": "photo", "cover": True})
+            _clip_timing(res, clip_id, meta, time.time() - t_up)
             clip.update(status="rendered", token=tok, url=self.media_url(tok), cover_token=ctok, cover_url=self.media_url(ctok),
                         meta=meta, rendered_at=_now())
             clip.pop("rerender_error", None)
@@ -826,6 +867,10 @@ class Takes(TakeBin, TakeControl):
         run = self._run(a, rid)
         steps, res = run["steps"], run["result"]
         ids = {x["id"] for x in j["spec"].get("clips") or []}
+        try:  # the render job from queued to done (a wait for the box's one-job lock included)
+            res.setdefault("timings", {})["render_job"] = round(_now() - float(j.get("created") or _now()), 1)
+        except (TypeError, ValueError):
+            pass
         failed = [c for c in res.get("clips", []) if c["id"] in ids and c["status"] == "rendering"]
         self.store.x("UPDATE render_jobs SET status=?, error=?, updated=? WHERE id=?",
                      ("failed" if error and failed else "done", (error or "")[:500], _now(), jid))
@@ -885,6 +930,7 @@ class Takes(TakeBin, TakeControl):
         return drafter.fit(service, brand.apply_text_rules(text, rules if rules is not None else self.h.rules(a)))
 
     def _preflight_all(self, a: Actor, rid: int) -> None:
+        t_p = time.time()
         run = self._run(a, rid)
         steps, res = run["steps"], run["result"]
         self._step(steps, "preflight", "running", "Checking every clip against each channel's rules")
@@ -914,6 +960,7 @@ class Takes(TakeBin, TakeControl):
         n = len([c for c in res.get("clips", []) if c.get("url") and c.get("status") != "binned"])
         msg = f"{n} clips × {len(run['input']['channels'])} channel(s): {worst['ok']} pass" + \
               (f", {worst['warning']} warning(s)" if worst["warning"] else "") + (f", {worst['error']} need a fix" if worst["error"] else "")
+        res.setdefault("timings", {})["preflight"] = round(time.time() - t_p, 2)
         self._step(steps, "preflight", "warn" if worst["error"] else "done", msg)
         self._step(steps, "ready", "done", "Spread them into the open slots of your week, as Buffer drafts")
         self._save(rid, steps, res, "ready")
@@ -966,7 +1013,7 @@ class Takes(TakeBin, TakeControl):
         return {"id": run["id"], "kind": "take", "status": run["status"], "steps": run["steps"], "input": run["input"],
                 "style": run["input"].get("style") or "take", "transcript_source": an.get("transcript_source"),
                 "sample": bool(res.get("sample")), "source": res.get("source") or {}, "providers": res.get("providers") or {},
-                "timings": res.get("timings") or {}, "picked_by": res.get("picked_by"), "moments": res.get("moments") or [],
+                "timings": _timings_view(run, res), "picked_by": res.get("picked_by"), "moments": res.get("moments") or [],
                 "clips": clips, "created": run["created"], "updated": run["updated"],
                 "caption_limits": {ch["service"]: drafter.limit_for(ch["service"]) for ch in run["input"]["channels"]},
                 "can_rerender": self._can_rerender(a, res), "face_fallback": res.get("face_fallback"),
@@ -1381,6 +1428,20 @@ def ocr_clip(src: str, spec: dict, c: dict) -> dict:
         return {"ok": False, "frames": [], "text": "", "watermarks": [], "skipped": f"ocr failed: {e.__class__.__name__}"}
 
 
+# Layout & captions > Caption look on a shorts-style clip: the closest caption style of the shorts render (studio/media/captions)
+OPUS_CAPTION_STYLE = {"bold_pop": "opus", "lower_third": "minimal", "two_tone": "slam", "typewriter": "mono"}
+
+
+def opus_choices(c: dict) -> tuple[str | None, str | None]:
+    """(framing, caption style) a shorts-style clip's Layout dialog pinned: framing "track" | "fit" | None (automatic),
+    the caption style for its caption preset (None: the style's own)."""
+    ov = (c.get("layout_overrides") or {}) if isinstance(c.get("layout_overrides"), dict) else {}
+    pin = ov.get("0") if isinstance(ov.get("0"), dict) else {}
+    framing = pin.get("layout") if pin.get("layout") in ("track", "fit") else None
+    preset = c.get("caption_preset")
+    return framing, OPUS_CAPTION_STYLE.get(preset) if isinstance(preset, str) else None
+
+
 def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
     """Yields (clip_id, mp4, cover_jpg, meta) for one clip of a take_render job: the classic One take render, or for
     Opus-style takes one render per ratio (the first under the clip's id, the others as '<id>@<ratio>')."""
@@ -1405,19 +1466,25 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
             Path(logo_path).write_bytes(logo)
         b = brand_from_kit(spec.get("kit"), logo_path)
         sz = (int(spec["src"].get("width") or 1920), int(spec["src"].get("height") or 1080))
+        framing, cap_style = opus_choices(c)
         for i, r in enumerate(spec.get("ratios") or ["9:16"]):
             out = tmp / f"{c['id']}_{r.replace(':', 'x')}.mp4"
+            t0 = time.time()
             got = longform.render_moment(src, c, c["words"], ratio=r, brand=b, credit=spec.get("credit") or "", out=str(out),
                                          faces=c.get("faces"), scenes=spec.get("scenes"), detector=spec.get("face_detector", True),
-                                         burned_subs=bool(spec.get("burned_subs")), src_size=sz)
+                                         burned_subs=bool(spec.get("burned_subs")), src_size=sz, framing=framing,
+                                         captions_style=cap_style)
+            t1 = time.time()
             cover = tmp / f"{c['id']}_{i}.jpg"
             take.frame_at(str(out), 0.4, str(cover))  # the hook is on screen from frame 0
+            tms = {k: v for k, v in (got.get("timings") or {}).items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+            tms.update(cover=round(time.time() - t1, 2), clip_total=round(time.time() - t0, 2))
             rf = got["reframe"]
             meta = {"type": "video", "style": "opus", "ratio": r, "duration": got["duration"], "width": got["width"],
                     "height": got["height"], "layout": {"track": "track", "pad": "pad", "fit": "fit"}.get(rf["mode"], "center"),  # fit: a vertical source, no fallback
                     "face_coverage": rf.get("face_coverage"), "captions": got["captions"], "burned_subs": got["burned_subs"],
                     "caption_problems": got["caption_problems"], "cover_offset_ms": 400, "credit": spec.get("credit") or "",
-                    "face_safe": got.get("face_safe")}
+                    "face_safe": got.get("face_safe"), "timings": tms, "framing": framing or "auto", "caption_style": cap_style}
             yield (c["id"] if i == 0 else f"{c['id']}@{r}"), out.read_bytes(), cover.read_bytes(), meta
     finally:
         import shutil

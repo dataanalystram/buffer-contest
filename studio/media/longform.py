@@ -290,14 +290,17 @@ def reframe_plan(faces: list[dict] | None, start: float, end: float, src_w: int,
 def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16", brand: dict | None = None, credit: str = "",
                   out: str, faces: list[dict] | None = None, scenes: list[float] | None = None, detector: bool = True,
                   burned_subs: bool | None = None, names: list[str] | None = None, music: str = "auto",
-                  src_size: tuple[int, int] | None = None, face_safe: bool = True, qa_keep: str | None = None) -> dict:
+                  src_size: tuple[int, int] | None = None, face_safe: bool = True, qa_keep: str | None = None,
+                  framing: str | None = None, captions_style: str | None = None) -> dict:
     """One finished clip in one ratio: opus style (hook, word captions, credit, end card), reframed.
 
     face_safe (default on): the hook box, captions and credit are placed clear of the faces (studio/media/facesafe:
     YuNet on the clip span + the take's Jev-verified boxes, mapped through the reframe), then the render QA measures
     the finished frames; over facesafe.QA_MAX it re-places with the faces the QA saw and renders ONCE more; still over,
     r["face_safe"]["status"] is "needs_review" with the reason (the take does not ship it). qa_keep: a path prefix to
-    keep the QA's rendered frames (review only)."""
+    keep the QA's rendered frames (review only).
+    framing: the clip's Layout & captions choice: "fit" shows the whole frame over a blurred copy, "track" follows the
+    face, None is automatic. captions_style: a captions.STYLES id (the Caption look)."""
     from ..headline import render_hook
     from . import facesafe, ff
     from .compose import SIZES, _keep, detect_burned_subs, render_style
@@ -308,9 +311,12 @@ def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16
         src_size = (pr["width"] or 1920, pr["height"] or 1080)
         if burned_subs is None:
             burned_subs = detect_burned_subs(source, pr["duration"])
-    plan = reframe_plan(faces, m["start"], m["end"], src_size[0], src_size[1], ratio, scenes, bool(burned_subs), detector)
+    plan = reframe_plan(faces, m["start"], m["end"], src_size[0], src_size[1], ratio, scenes, bool(burned_subs),
+                        detector or framing == "track")
+    if framing == "fit":  # Layout & captions > Full frame: the whole picture over a blurred copy of itself
+        plan = {"mode": "pad", "crop_w": int(src_size[0]), "keys": [(0.0, 0)], "framing": "fit"}
     kw = dict(out=out, ratio=ratio, hook=m["hook"], brand=brand, words=words, credit=credit, clip=(m["start"], m["end"]),
-              music_mood=music, names=names, burned_subs=bool(burned_subs), reframe=plan)
+              music_mood=music, names=names, burned_subs=bool(burned_subs), reframe=plan, captions_style=captions_style)
     fs = None
     if face_safe:
         try:
@@ -324,6 +330,7 @@ def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16
     else:
         r = render_style(source, "opus", **kw)
     r["face_safe"] = fs
+    r["timings"] = {**(r.get("timings") or {}), **((fs or {}).get("timings") or {})}
     cov = take.face_coverage(plan, faces or [], m["start"], m["end"], src_size[0]) if plan["mode"] == "track" else None
     r["reframe"] = {"mode": plan["mode"], "crop_w": plan.get("crop_w"), "keys": len(plan.get("keys") or []),
                     "face_coverage": round(cov, 3) if cov is not None else None, "face_ratio": plan.get("face_ratio")}
@@ -331,60 +338,118 @@ def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16
 
 
 def _face_safe_render(source, m, plan, src_size, ratio, faces, scenes, burned, kw, qa_keep=None) -> dict:
-    """Place, render, QA; at most one re-place + re-render. Returns the face_safe record with the render under _result."""
+    """Place, render ONCE, QA. The caption level is picked before rendering from the face track (compose._face_safe_layout).
+    A failed QA re-places once with the faces the QA saw, one level up, into a side file, and keeps whichever covers less;
+    a re-place that would land on the same spots is skipped (no second encode) and the clip waits for a person, saying
+    why. Returns the face_safe record (renders, timings) with the kept render under _result."""
+    import os
+    import shutil
     import tempfile
+    import time
 
     from . import facesafe
     from .compose import SIZES, _keep, render_style
+    t_all = time.time()
     W, H = SIZES[ratio]
     sw, sh = src_size
     c0, c1 = float(m["start"]), float(m["end"])
     D = max(0.5, c1 - c0)
     keep = _keep(True) if burned else 1.0
+    t = time.time()
     samples, det = facesafe.clip_samples(source, c0, c1, sw, sh, faces)
+    tm = {"face_sampling": round(time.time() - t, 2), "render": 0.0, "qa": 0.0}
     cuts = [float(x) - c0 for x in scenes or [] if c0 < float(x) < c1]
-    rec = {"detector": det, "passes": [], "status": "ok", "placed": True}
+    rec = {"detector": det, "passes": [], "status": "ok", "placed": True, "renders": 0}
     if det.get("fallback"):
         print(f"face-safe: {det['fallback']}", flush=True)
-    extra: list = []
+    pred = facesafe.out_boxes(samples, plan, sw, sh, W, H, keep, head=False)
     td = tempfile.mkdtemp(prefix="hq_fs_")
-    try:
-        r = None
-        for attempt in (1, 2):
-            z = facesafe.zones_for(samples, plan, sw, sh, W, H, D, keep, cuts, extra)
-            r = render_style(source, "opus", face_safe=z, **kw)
-            pred_boxes = facesafe.out_boxes(samples, plan, sw, sh, W, H, keep, head=False)
 
-            def predicted(t, pb=pred_boxes):
-                return [b for tt, b in pb if abs(tt - t) <= 0.5]
-            try:
-                qa = facesafe.qa_measure(r["path"], source, c0, D, plan, W, H, keep, float(r.get("cover_frame_secs") or 0)
-                                         + float(r.get("cover_secs") or 0), workdir=f"{td}/p{attempt}", predicted=predicted,
-                                         keep_frames=f"{qa_keep}_p{attempt}_" if qa_keep else None)
-            except Exception as e:  # noqa: BLE001 - a QA that couldn't run is said, and the clip waits for a person
-                rec["passes"].append({"attempt": attempt, "placement": r.get("face_safe"), "qa": None,
-                                      "qa_error": f"{e.__class__.__name__}: {str(e)[:120]}"})
-                rec.update(status="needs_review", reason="the render QA couldn't check the frames for text on the face")
-                break
-            rec["passes"].append({"attempt": attempt, "placement": r.get("face_safe"), "hook_shown": r.get("hook_shown"),
-                                  "qa": {k: qa[k] for k in ("ok", "max_cover", "threshold", "faces_by")},
-                                  "qa_frames": [{k: f.get(k) for k in ("t", "cover")} for f in qa["frames"]]})
-            rec["qa_jpegs"] = facesafe.qa_jpegs(qa)
-            if qa["ok"]:
-                rec["status"] = "ok"
-                break
-            print(f"face-safe: pass {attempt}: text covers {qa['max_cover'] * 100:.1f}% of a face (max "
-                  f"{facesafe.QA_MAX * 100:.0f}%)", flush=True)
-            if attempt == 2:
-                rec.update(status="needs_review", reason=f"text still covers {qa['max_cover'] * 100:.1f}% of the speaker's "
-                           f"face after one re-place (limit {facesafe.QA_MAX * 100:.0f}%)")
-            extra = facesafe.grow_qa_boxes(qa)
-        rec["max_cover"] = (rec["passes"][-1].get("qa") or {}).get("max_cover")
-        rec["first_cover"] = (rec["passes"][0].get("qa") or {}).get("max_cover")
+    def predicted(t, pb=pred):
+        return [b for tt, b in pb if abs(tt - t) <= 0.5]
+
+    def encode(z, **extra):
+        t = time.time()
+        r = render_style(source, "opus", face_safe=z, **{**kw, **extra})
+        tm["render"] = round(tm["render"] + time.time() - t, 2)
+        if not r.get("skipped"):
+            rec["renders"] += 1
+        return r
+
+    def measure(r, attempt):
+        t = time.time()
+        try:
+            return facesafe.qa_measure(r["path"], source, c0, D, plan, W, H, keep, float(r.get("cover_frame_secs") or 0)
+                                       + float(r.get("cover_secs") or 0), workdir=f"{td}/p{attempt}", predicted=predicted,
+                                       keep_frames=f"{qa_keep}_p{attempt}_" if qa_keep else None)
+        except Exception as e:  # noqa: BLE001 - a QA that couldn't run is said, and the clip waits for a person
+            rec["passes"].append({"attempt": attempt, "placement": r.get("face_safe"), "qa": None,
+                                  "qa_error": f"{e.__class__.__name__}: {str(e)[:120]}"})
+            return None
+        finally:
+            tm["qa"] = round(tm["qa"] + time.time() - t, 2)
+
+    def note(r, qa, attempt):
+        rec["passes"].append({"attempt": attempt, "placement": r.get("face_safe"), "hook_shown": r.get("hook_shown"),
+                              "qa": {k: qa[k] for k in ("ok", "max_cover", "threshold", "faces_by")},
+                              "qa_frames": [{k: f.get(k) for k in ("t", "cover")} for f in qa["frames"]]})
+    try:
+        z = facesafe.zones_for(samples, plan, sw, sh, W, H, D, keep, cuts)
+        z["pred"] = pred
+        r = encode(z)
+        qa = measure(r, 1)
+        best = qa
+        if qa is None:
+            rec.update(status="needs_review", reason="the render QA couldn't check the frames for text on the face")
+        else:
+            note(r, qa, 1)
+            if not qa["ok"]:
+                print(f"face-safe: pass 1: text covers {qa['max_cover'] * 100:.1f}% of a face (max {facesafe.QA_MAX * 100:.0f}%)",
+                      flush=True)
+                fs1 = r.get("face_safe") or {}
+                lv = facesafe.LEVELS.index(fs1["level"]) if fs1.get("level") in facesafe.LEVELS else 0
+                z2 = facesafe.zones_for(samples, plan, sw, sh, W, H, D, keep, cuts, facesafe.grow_qa_boxes(qa))
+                z2["pred"] = pred + facesafe.qa_boxes(qa)
+                z2["min_level"] = min(lv + 1, len(facesafe.LEVELS) - 1)
+                side = f"{kw['out']}.replace.mp4"
+                r2 = encode(z2, out=side, skip_sig=fs1.get("sig"))
+                if r2.get("skipped"):  # the faces the QA saw change nothing: a second encode would be the same video
+                    rec["replace"] = "skipped: the re-place lands where the first render already was"
+                    rec["passes"].append({"attempt": 2, "placement": r2.get("face_safe"), "skipped": True})
+                else:
+                    qa2 = measure(r2, 2)
+                    if qa2 is not None:
+                        note(r2, qa2, 2)
+                        if qa2["max_cover"] < qa["max_cover"]:
+                            shutil.move(side, kw["out"])
+                            r2["path"] = kw["out"]
+                            r, best = r2, qa2
+                            rec["kept"] = "re-placed"
+                        else:
+                            rec["kept"] = "first"
+                if os.path.exists(side):
+                    os.remove(side)
+                if not best["ok"]:
+                    how = ("no other placement clears it (the re-place lands on the same spots, so it wasn't rendered again)"
+                           if r2.get("skipped") else "after one re-place")
+                    rec.update(status="needs_review", reason=f"text still covers {best['max_cover'] * 100:.1f}% of the speaker's "
+                               f"face {how} (limit {facesafe.QA_MAX * 100:.0f}%)")
+            rec["qa_jpegs"] = facesafe.qa_jpegs(best)
+        fsr = r.get("face_safe") or {}
+        rec["level"], rec["predicted_cover"] = fsr.get("level"), fsr.get("predicted_cover")
+        rec["max_cover"] = best["max_cover"] if best else None
+        rec["first_cover"] = qa["max_cover"] if qa else None
+        tm["total"] = round(time.time() - t_all, 2)
+        tm["renders"] = rec["renders"]
+        rec["timings"] = tm
+        measured = "n/a" if rec["max_cover"] is None else f"{rec['max_cover'] * 100:.1f}%"
+        print(f"face-safe {ratio}: {rec['renders']} render(s) in {tm['total']:.1f}s (face sampling {tm['face_sampling']:.1f}s"
+              f"{' cached' if det.get('cache') == 'hit' else ''}, encode {tm['render']:.1f}s, QA {tm['qa']:.1f}s); level "
+              f"{rec['level']}, predicted {(rec['predicted_cover'] or 0) * 100:.1f}%, measured {measured}; {rec['status']}",
+              flush=True)
         rec["_result"] = r
         return rec
     finally:
-        import shutil
         shutil.rmtree(td, ignore_errors=True)
 
 

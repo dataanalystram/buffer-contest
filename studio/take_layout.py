@@ -18,6 +18,7 @@ import time
 from .actions import ActionError, Actor
 
 LAYOUT_CHOICES = ("auto", "track", "fit", "split", "screen")
+OPUS_LAYOUTS = ("auto", "track", "fit")  # a shorts-style clip (a pasted link) has one framing for the whole clip
 BG_CHOICES = ("blur", "brand")
 STYLE_CHOICES = ("pip", "stack")
 MAX_SCENES = 200
@@ -27,7 +28,8 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["take_id", "clip_id"],
                      "properties": {"take_id": {"type": "integer"}, "clip_id": {"type": "string"}}}},
     {"name": "set_clip_layout", "description": "One take: change a clip's layout for one scene (scene: its index in "
-     "get_clip_layout's plan) or for the whole clip (no scene), and/or its caption preset. layout: track (follow the "
+     "get_clip_layout's plan) or for the whole clip (no scene), and/or its caption preset (clips from a link: the whole "
+     "clip only, track or fit). layout: track (follow the "
      "face), fit (whole frame over a blurred or brand-colour background, bg: blur | brand), split (two people stacked), "
      "screen (screen with the face, style: pip | stack) or auto (back to the automatic choice). caption_preset: "
      "bold_pop | lower_third | two_tone | typewriter. The clip re-renders on the video worker (poll list_clips).",
@@ -124,7 +126,8 @@ def view(takes, a: Actor, rid, clip_id) -> dict:
     return {"take_id": run["id"], "clip_id": clip["id"], "status": clip.get("status"), "plan": m.get("layout_plan") or [],
             "sidecar": m.get("layout_sidecar") or [], "detector": m.get("layout_detector"), "vision": m.get("layout_vision"),
             "overrides": clip.get("layout_overrides") or {}, "caption_preset": clip.get("caption_preset") or m.get("caption_preset")
-            or captions_ass.DEFAULT_PRESET, "layouts": list(LAYOUT_CHOICES), "caption_presets": captions_ass.presets(),
+            or captions_ass.DEFAULT_PRESET, "caption_presets": captions_ass.presets(),
+            "layouts": list(OPUS_LAYOUTS if run["input"].get("style") == "opus" else LAYOUT_CHOICES),
             "style": run["input"].get("style") or "take"}
 
 
@@ -168,9 +171,18 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         run, res, clip = _clip(takes, a, rid, clip_id)
         if run["status"] in ("running", "rendering"):
             raise ActionError("This take is still being worked on. Try again when it's ready.", 409)
-        if (run["input"].get("style") or "take") != "take" or res.get("sample"):
-            raise ActionError("Per-scene layouts apply to One take clips; this take uses the shorts style, which picks its "
-                              "own framing.", 409)
+        style = run["input"].get("style") or "take"
+        if res.get("sample"):
+            raise ActionError("The sample take can't be re-rendered: start a take from your own video to change a layout.", 409)
+        if style not in ("take", "opus"):
+            raise ActionError(f"This take's style ({str(style)[:20]}) has no layout choices.", 409)
+        if style == "opus":  # a pasted link: one framing for the whole clip, Follow face or Full frame
+            if any(i != 0 for i in ([scene] if scene is not None else []) + list(batch)):
+                raise ActionError("Clips from a link have one layout for the whole clip: use scene 0, or no scene.")
+            used = [v if isinstance(v, str) else v.get("layout") for v in batch.values()] + ([lay] if lay is not None else [])
+            if any(u not in OPUS_LAYOUTS for u in used):
+                raise ActionError("Clips from a link can Follow face or show the Full frame; Split and Screen + face need a "
+                                  "One take clip from your own upload.")
         if not takes._can_rerender(a, res):
             raise ActionError("Layout and caption changes re-render the clip on the video worker, which this server doesn't have.", 409)
         plan = (clip.get("meta") or {}).get("layout_plan") or []

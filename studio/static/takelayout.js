@@ -18,6 +18,11 @@ let L = null;
 const $l = (id) => document.getElementById(id);
 const clock = (s) => { s = Math.max(0, +s || 0); return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`; };
 
+// one place for the sheet's error line: a message shows it, an empty one hides it; a failure without words names the action
+const say = (msg) => { const e = $l("tlErr"); if (!e) return; e.textContent = msg || ""; e.hidden = !msg; };
+const why = (e, what) => (e && e.message && !/^(HTTP \d+|Error\.?)$/.test(e.message.trim()) ? e.message
+  : `${what} didn't work${e && e.status ? ` (HTTP ${e.status})` : ""}. Try again in a moment.`);
+
 function sheet() {
   let d = $l("clipLayoutDialog");
   if (d) return d;
@@ -31,7 +36,7 @@ function sheet() {
     <ol class="tl-scenes" id="tlScenes" data-testid="layout-scenes"></ol>
     <fieldset class="tl-caps"><legend>${icon("captions")} Caption look</legend><div class="tl-chips" id="tlCaps" role="radiogroup" aria-label="Caption look"></div></fieldset>
     <label class="tl-smart"><input type="checkbox" id="tlSmart" data-testid="layout-smart"> <span><b>Smart layout (beta)</b> · lets a free vision model suggest layouts from up to 12 still frames of each clip (no audio). Free endpoints may log what they receive. Applies to every take in your account.</span></label>
-    <p class="st err xs" id="tlErr" role="alert"></p>
+    <p class="st err xs" id="tlErr" role="alert" data-testid="layout-error" hidden></p>
     <footer class="tl-foot"><button type="button" class="btn sm" id="tlSave" data-testid="layout-save">Save and re-render</button></footer>
   </form>`;
   document.body.appendChild(d);
@@ -44,7 +49,8 @@ function sheet() {
 function draw() {
   const v = L.view;
   $l("tlTitle").textContent = `Layout & captions · clip ${L.n}`;
-  $l("tlNote").textContent = v.plan.length ? "Each scene gets its own layout. Auto is the automatic choice; a choice you make here always wins."
+  $l("tlNote").textContent = v.style === "opus" ? "A clip from a link has one layout for the whole clip: Follow face or Full frame. Auto is the automatic choice."
+    : v.plan.length ? "Each scene gets its own layout. Auto is the automatic choice; a choice you make here always wins."
     : "This clip hasn't been rendered with scene layouts yet. Pick a layout for the whole clip, or a caption look.";
   const rows = v.plan.length ? v.plan : [{ scene: 0, start: 0, end: 0, layout: "auto" }];
   $l("tlScenes").innerHTML = rows.map((s) => {
@@ -66,7 +72,7 @@ window.openClipLayout = async function (id) {
   const list = t.clips || [];
   L = { id, take: t.id, n: list.findIndex((c) => c.id === id) + 1, ctl: new AbortController(), pick: {}, orig: {}, cap: null, view: null };
   const my = L;
-  $l("tlErr").textContent = ""; $l("tlScenes").innerHTML = `<li class="muted xs"><span class="spin" aria-hidden="true"></span> Loading…</li>`;
+  say(""); $l("tlScenes").innerHTML = `<li class="muted xs"><span class="spin" aria-hidden="true"></span> Loading…</li>`;
   if (!d.open) d.showModal();
   try {
     const [v, s] = await Promise.all([api(`/api/takes/${t.id}/clips/${encodeURIComponent(id)}/layout`, { signal: my.ctl.signal }),
@@ -76,7 +82,7 @@ window.openClipLayout = async function (id) {
     Object.entries(v.overrides || {}).forEach(([k, o]) => { my.pick[+k] = o.layout; my.orig[+k] = o; });
     $l("tlSmart").checked = !!s.smart_layout;
     draw();
-  } catch (e) { if (L === my && e.name !== "AbortError") $l("tlErr").textContent = e.message; }
+  } catch (e) { if (L === my && e.name !== "AbortError") say(why(e, "Loading this clip's layout")); }
 };
 
 async function save() {
@@ -89,20 +95,20 @@ async function save() {
     // an unchanged scene keeps its saved options (a brand background, a stacked screen) set through REST or MCP
     scenes[String(i)] = o && o.layout === p ? { layout: o.layout, ...(o.bg ? { bg: o.bg } : {}), ...(o.style ? { style: o.style } : {}) } : p;
   }
-  b.disabled = true;
+  b.disabled = true; say("");
   try {
     await api(`/api/takes/${my.take}/clips/${encodeURIComponent(my.id)}/layout`, { method: "POST", body: { scenes, caption_preset: my.cap }, signal: my.ctl.signal });
     if (L !== my) return;
     toast("Re-rendering the clip with its new layout…");
     $l("clipLayoutDialog").close();
     if (typeof watchTake === "function") watchTake(my.take);
-  } catch (e) { if (L === my && e.name !== "AbortError") $l("tlErr").textContent = e.message; }
+  } catch (e) { if (L === my && e.name !== "AbortError") say(why(e, "Saving the layout")); }
   finally { b.disabled = false; }
 }
 
 async function smart() {
   const box = $l("tlSmart");
   try { const r = await api("/api/takes/settings/smart-layout", { method: "POST", body: { smart_layout: box.checked } }); box.checked = !!r.smart_layout; }
-  catch (e) { box.checked = !box.checked; $l("tlErr").textContent = e.message; }
+  catch (e) { box.checked = !box.checked; say(why(e, "Changing Smart layout")); }
 }
 })();
