@@ -81,7 +81,11 @@ def focus_box(thumbs: list, src_w: int, src_h: int) -> tuple[int, int, int, int]
     if float(act.mean()) <= 1e-4:
         return None
     nw, nh = max(1, round(cw / src_w * tw)), max(1, round(ch / src_h * th))
-    x0 = _best_window(act.sum(axis=0), nw)
+    cols = act.sum(axis=0)
+    x0 = _best_window(cols, nw)
+    span = np.where(cols >= 0.1 * float(cols.max()))[0]  # the content's own extent: when it fits, centre on it
+    if len(span) and span[-1] - span[0] + 1 <= nw:
+        x0 = int(min(tw - nw, max(0, (span[0] + span[-1] + 1) // 2 - nw // 2)))
     y0 = _best_window(act[:, x0:x0 + nw].sum(axis=1), nh)
     x = int(min(src_w - cw, max(0, round(x0 / tw * src_w))))
     y = int(min(src_h - ch, max(0, round(y0 / th * src_h))))
