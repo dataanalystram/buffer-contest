@@ -563,20 +563,27 @@ def video_jpegs(video: str, ts: list[float], width: int = 540) -> list[dict]:
     return out
 
 
+MAIN_QA_FRAMES = 12  # the main path's QA looks at most this many tracked segments, spread over the whole clip
+
+
 def main_qa(video: str, sidecar: list[dict], placement: dict, offset: float = 0.0, W: int = 1080, H: int = 1920,
             line_h: int = 170, k: int = 2) -> dict:
     """The main path's QA (worker): YuNet on the finished clip at each tracked segment's middle, and the share of each
     face (box + QA_PAD) under the caption line there. {status, reason?, max_cover, frames, faces_by, qa_jpegs}.
     Never raises: a QA that can't run says so and the clip waits for a person only when placement was blocked."""
     from . import captions_ass
-    rec: dict = {"placed": True, "frames": [], "faces_by": [], "status": "ok", "max_cover": 0.0}
+    rec: dict = {"placed": True, "frames": [], "faces_by": [], "status": "ok", "max_cover": None}
     try:
         import cv2
         import numpy as np
 
         from .jev_faces import frame_image
         worst = []
-        for seg in [s for s in sidecar or [] if s.get("layout", "track") == "track"][:6]:
+        tracked = [s for s in sidecar or [] if s.get("layout", "track") == "track"]
+        if len(tracked) > MAIN_QA_FRAMES:  # evenly over the clip, the last segment included (not just the first few)
+            step = (len(tracked) - 1) / (MAIN_QA_FRAMES - 1)
+            tracked = [tracked[round(i * step)] for i in range(MAIN_QA_FRAMES)]
+        for seg in tracked:
             t = (float(seg["start"]) + float(seg["end"])) / 2
             im = frame_image(video, offset + t, W)
             bgr = cv2.cvtColor(np.asarray(im.convert("RGB")), cv2.COLOR_RGB2BGR)
@@ -591,19 +598,26 @@ def main_qa(video: str, sidecar: list[dict], placement: dict, offset: float = 0.
             cov = round(max(covers), 4) if covers else 0.0
             rec["frames"].append({"t": round(offset + t, 2), "faces": [list(f) for f in fb], "cover": cov})
             worst.append((cov, offset + t, bool(fb)))
+            rec["max_cover"] = max(cov, rec["max_cover"] or 0.0)  # kept as measured, even if a later frame fails
         rec["faces_by"] = ["YuNet"]
-        rec["max_cover"] = max((c for c, _, _ in worst), default=0.0)
+        if tracked and rec["max_cover"] is None:
+            rec["max_cover"] = 0.0
         pick = [t for c, t, has in sorted(worst, key=lambda x: -x[0]) if has][:k]
-        rec["qa_jpegs"] = video_jpegs(video, pick)
-    except Exception as e:  # noqa: BLE001
+        try:
+            rec["qa_jpegs"] = video_jpegs(video, pick)
+        except Exception:  # noqa: BLE001 - the measurement stands without the final look's frames
+            rec["qa_jpegs"] = []
+    except Exception as e:  # noqa: BLE001 - never reported as clear: max_cover stays None (or what was measured)
         rec["qa_error"] = f"{e.__class__.__name__}"
         rec["faces_by"] = [f"none ({e.__class__.__name__})"]
     if placement.get("blocked"):
         rec.update(status="needs_review", reason=f"no caption line clear of the speaker's face in {len(placement['blocked'])} "
                    "segment(s): the nearest safe line was used")
-    elif rec["max_cover"] > QA_MAX:
+    elif rec["max_cover"] is not None and rec["max_cover"] > QA_MAX:
         rec.update(status="needs_review", reason=f"the captions cover {rec['max_cover'] * 100:.1f}% of the speaker's face "
                    f"(limit {QA_MAX * 100:.0f}%)")
+    elif rec.get("qa_error") and not rec["frames"]:
+        rec.update(status="needs_review", reason="the render QA couldn't check the frames for text on the face")
     return rec
 
 

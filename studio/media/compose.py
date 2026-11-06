@@ -744,7 +744,12 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         chip_credit = "" if (credit or "").strip().lower() in ("own video", "your video") else credit
         fs_rec = None
         if face_safe is not None and cfg["layout"] == "opus":  # never on the face (owner bug 6 Nov 2026)
+            safe0 = L["safe"]
+            if lower_third and lower_third.get("out_top"):  # and never on the source's name strap: place above it
+                l_, t_, r_, b_ = safe0
+                L = {**L, "safe": (l_, t_, r_, max(t_ + 1, min(b_, int(lower_third["out_top"]) - int(H * 0.02))))}
             L, fs_rec = _face_safe_layout(L, W, H, brand, hook, chip_credit, caps_on, cfg, face_safe)
+            L["safe"] = safe0
             hook = L.get("hook_text", hook) if L.get("hook") else ""
         if cfg.get("chrome"):
             ov, boxes = theme_cards.overlay(cfg, W, H, brand, hook, chip_credit, L, acc)

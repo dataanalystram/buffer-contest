@@ -131,6 +131,26 @@ def test_a_face_filling_the_frame_is_flagged_not_silently_covered():
     assert qa["status"] == "needs_review" and "face" in qa["reason"] and qa["faces_by"][0].startswith("none")
 
 
+def test_main_qa_never_reports_an_unmeasured_cover_as_clear_and_samples_the_whole_clip(monkeypatch):
+    side = [{"start": float(i), "end": float(i + 1), "layout": "track"} for i in range(30)]
+    qa = facesafe.main_qa("/nonexistent.mp4", side, {"blocked": []})
+    assert qa["max_cover"] is None and qa["status"] == "needs_review" and "couldn't check" in qa["reason"]
+    assert face_qa.fallback({"max_cover": qa["max_cover"]})["verdict"] == "unsettled"   # not "clear"
+    from PIL import Image
+    seen = []
+
+    def frame(video, t, width=768):
+        seen.append(t)
+        if t > 25:
+            raise RuntimeError("late frame failed")
+        return Image.new("RGB", (W, H))
+    monkeypatch.setattr(jev_faces, "frame_image", frame)
+    monkeypatch.setattr(facesafe, "detect_out", lambda img: [(300, 1200, 700, 1700)])   # a face low in the frame
+    qa = facesafe.main_qa("x.mp4", side, {"blocked": []})
+    assert max(seen) > 25 and len(seen) <= facesafe.MAIN_QA_FRAMES + 2                  # the late segments are looked at
+    assert qa["max_cover"] > facesafe.QA_MAX and qa["status"] == "needs_review"        # the partial measure is kept
+
+
 def test_other_layouts_keep_their_caption_line():
     side = [{"start": 0.0, "end": 5.0, "layout": "split"}]
     rec = facesafe.place_track_captions(side, [_shot(0.5, 0.25)], 1920, 1080)
