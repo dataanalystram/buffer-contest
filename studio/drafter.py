@@ -282,11 +282,85 @@ def styled_draft(service: str, article: dict, style: dict) -> str:
         if count(service, text) <= lim:
             return text
         if middle:
-            middle = middle[:-1] if len(middle) > 1 else [fit(service, middle[0], max(40, lim - count(service, "\n\n".join([head] + tail)) - 4))]
-            if len(middle) == 1 and count(service, "\n\n".join([head] + middle + tail)) > lim:
+            room = lim - count(service, "\n\n".join([head] + tail)) - 4
+            if len(middle) > 1:
+                middle = middle[:-1]
+            elif room >= 40 and count(service, middle[0]) > room:
+                middle = [fit(service, middle[0], room)]
+            else:
                 middle = []
             continue
         if tags and tags in tail:
             tail = [x for x in tail if x != tags]
             continue
         return fit(service, text, lim)
+
+
+def thread_draft(service: str, article: dict, max_parts: int = 5) -> str:
+    """Hook, then one key sentence per post from the article body, then the link."""
+    lim = min(limit_for(service), TARGET.get(service, limit_for(service)))
+    parts = [fit(service, "\n\n".join(p for p in [article["title"], article["description"]] if p), lim)]
+    seen = article["description"].lower()
+    for para in article.get("paragraphs", []):
+        if len(parts) >= max_parts - 1:
+            break
+        sents = re.split(r"(?<=[.!?])\s+", para)
+        s = " ".join(sents[:2]) if count(service, " ".join(sents[:2])) <= lim else sents[0]
+        if s.lower()[:80] in seen:
+            continue
+        seen += " " + s.lower()
+        parts.append(fit(service, s, lim))
+    parts.append(fit(service, f"Read the full story: {article['url']}", lim))
+    return THREAD_SEP.join(parts)
+
+
+def ai_draft(services: list[str], article: dict, base_url: str, api_key: str, model: str,
+             http: httpx.Client | None = None, tone: str = "") -> dict[str, str]:
+    prompt = (
+        "Write one social post per network for the article below. Return ONLY a JSON object mapping "
+        "network name to post text. Rules: plain, specific, no clickbait, no invented facts; Instagram has no "
+        "clickable links (say 'link in bio'); include the URL on twitter/bluesky/threads/mastodon/linkedin/facebook; "
+        "at most 3 hashtags; stay under these character targets: "
+        + json.dumps({s: TARGET.get(s, limit_for(s)) for s in services})
+        + (f"\nTone: {tone}" if tone else "")
+        + "\n\nARTICLE\n" + json.dumps({k: article[k] for k in ("url", "title", "description", "site")} |
+                                     {"text": " ".join(article.get("paragraphs", []))[:1200]})
+    )
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    client = http or httpx.Client(timeout=50)
+    r = client.post(base_url + "/chat/completions", headers=headers, json={
+        "model": model or "gpt-4o-mini", "max_tokens": 2500,
+        "messages": [{"role": "system", "content": "You are a concise social media editor."},
+                     {"role": "user", "content": prompt}]})
+    r.raise_for_status()
+    content = r.json()["choices"][0]["message"]["content"]
+    m = re.search(r"\{.*\}", content, re.S)
+    data = json.loads(m.group(0) if m else content)
+    return {s: str(data[s]).strip() for s in services if isinstance(data.get(s), str) and data[s].strip()}
+
+
+def draft(channels: list[dict], article: dict, *, ai: dict | None = None, http: httpx.Client | None = None,
+          tone: str = "", thread: bool = False, style: dict | None = None) -> list[dict]:
+    """One caption per channel. style (a chosen Style Ledger preset, studio/style_presets.style_from_rules) shapes the
+    free built-in drafter's captions; the AI drafter gets the preset's rules in its prompt through tone."""
+    services = sorted({c["service"] for c in channels})
+    threads = {s: thread_draft(s, article) for s in services if thread and s in THREAD_SERVICES}
+    services = [s for s in services if s not in threads]
+    written, engine = {}, "built-in"
+    if services and ai and ai.get("base_url"):
+        try:
+            written = ai_draft(services, article, ai["base_url"], ai.get("api_key", ""), ai.get("model", ""), http, tone)
+            engine = "ai"
+        except Exception:
+            written = {}
+    out = []
+    for c in channels:
+        svc = c["service"]
+        local = (styled_draft(svc, article, style) if style else rule_draft(svc, article)) if svc not in written else ""
+        text = threads.get(svc) or fit(svc, written.get(svc) or local)
+        parts = split_thread(svc, text)
+        out.append({"channel_id": c["id"], "service": svc, "channel_name": c.get("displayName") or c.get("name"),
+                    "text": text, "length": max(count(svc, t) for t in parts), "limit": limit_for(svc),
+                    "parts": len(parts), "media_url": article.get("image") or "",
+                    "engine": engine if svc in written else "built-in"})
+    return out
