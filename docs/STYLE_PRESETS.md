@@ -19,22 +19,30 @@ Re-applying a preset replaces the rules it wrote before (never duplicates). Appl
 preset's rules off (kept, off). The person's own rules are left alone, except a single-valued rule of the same type on the
 same networks, which the newer preset rule replaces (the ledger's usual "newest wins"; the reply lists every rule switched off).
 
-## The five presets
+## The eight presets
 
 | Preset | Shape | Hook formulas (paraphrased) | Hashtags IG / X / LinkedIn | Caption length IG / X / LinkedIn |
 |---|---|---|---|---|
 | Hook-first short-form | Hook in 1-2 s, pattern interrupt every 2-4 s, one idea, payoff, one CTA, abrupt end | surprising number first; result first; common belief then twist; the question the video answers; what the viewer loses | 5 / 2 / 3 | 300 / 260 / 900 |
-| Educator / explainer | Problem, 3-5 numbered steps, recap, "save this" | the common mistake; "{topic} in {n} steps"; why it happens; "before you…" | 5 / 2 / 3 | 700 / 260 / 1300 |
-| Founder build-in-public | Real number or date up front, what happened, one thing that went wrong, lesson, a question | "Day {n} of building…"; "we shipped X, here's what broke"; the honest numbers; the decision I'd change | 3 / 1 / 3 | 600 / 260 / 1300 |
-| News, fast and accurate | Attributed fact first, why it matters, what's next, the source; no hype | who did what; the figure that matters; what changes for you | 3 / 1 / 2 | 600 / 260 / 900 |
+| Plain explainer | Problem, 3-5 numbered steps, recap, "save this" | the common mistake; "{topic} in {n} steps"; why it happens; "before you…" | 5 / 2 / 3 | 700 / 260 / 1300 |
+| Founder story | Real number or date up front, what happened, one thing that went wrong, lesson, a question | "Day {n} of building…"; "we shipped X, here's what broke"; the honest numbers; the decision I'd change | 3 / 1 / 3 | 600 / 260 / 1300 |
+| Punchy news hook | Attributed fact first, why it matters, what's next, the source; no hype | who did what; the figure that matters; what changes for you | 3 / 1 / 2 | 600 / 260 / 900 |
 | Podcast clip | Cold open on the strongest line, one moment per clip, speaker named, full-episode CTA | strongest sentence mid-thought; guest + claim; question then answer | 4 / 1 / 2 | 400 / 260 / 900 |
+| Data-led | One sourced number first, a comparison for scale, what it changes, the source | "{number} {unit}: what it measures"; from {before} to {after}; "{n} times faster than…"; the one figure worth remembering | 3 / 1 / 3 | 500 / 260 / 1100 |
+| Thread-style LinkedIn | One-line hook that works before "see more", one sentence per line with space between, 3-5 → points, a takeaway, one real question | "X just changed Y. Here's what it means:"; "{n} things … tells us"; the overlooked part; "the short version" | 3 / 1 / 3 | 600 / 260 / 1500 |
+| Gen Z casual | Talks like a friend in a group chat: short lines, plain words, a little humour, facts exact, one casual CTA | "ok so … just happened"; "nobody is talking about …"; "explained like you have 10 seconds"; "pov: …" | 3 / 1 / 2 | 300 / 260 / 700 |
+
+Ids (for MCP and the API): `hook_first`, `educator` (Plain explainer), `build_in_public` (Founder story), `news_fast` (Punchy
+news hook), `podcast_clip`, `data_led`, `linkedin_thread`, `genz_casual`. The free built-in drafter has a caption shape for
+each (`studio/drafter.py` `styled_draft`).
 
 Lengths and hashtag counts other than the platform caps below are **house defaults**: starting points, editable before and
 after applying.
 
 ## Where each principle comes from
 
-Principles are paraphrased; no text is copied. Fetched 6 Nov 2026.
+Principles are paraphrased in HuhQueue's own words; no text is copied. A source below says where a principle comes from; it is not
+an endorsement, and no person or company endorses HuhQueue or these presets. Nothing in the app names a person. Fetched 6 Nov 2026.
 
 - **Instagram allows at most 5 hashtags per post or Reel**, and Instagram recommends fewer, targeted tags. Instagram @creators
   announcement (18 Dec 2025), reported by Social Media Today:
@@ -62,11 +70,29 @@ Principles are paraphrased; no text is copied. Fetched 6 Nov 2026.
   https://archive.org/details/how-to-succeed-in-mr-beast-production
 - **News: accuracy before speed, verify, attribute, headlines and teasers must not misrepresent, label opinion.** SPJ Code of
   Ethics (revised 4 Oct 2026): https://www.spj.org/spj-code-of-ethics
+- **Data-led, Thread-style LinkedIn and Gen Z casual** combine the principles above (attribute every figure and never inflate
+  it, from the SPJ code; one idea and one CTA; a first line that stands on its own before truncation) with HuhQueue house
+  defaults for line length, list shape and tone. No further external source is claimed for them.
 - **Background research and constraints** (free-only, no paid models, QC ideas such as hook motion in the first 2 s):
   HuhQueue feature research of 5 Nov 2026 (private working note).
 
 ## Before and after (free built-in drafter, no model)
 
 `test_free_drafter_writes_in_the_preset_shape` drafts three example topics with every preset and checks each caption passes
-the preset's rules (first line under 125 characters, hashtags within the cap, length, banned phrases, CTA). Examples are in
-the PR description.
+the preset's rules (first line under 125 characters, hashtags within the cap, length, banned phrases, CTA).
+
+## Who made it (provenance)
+
+Every template, recurring slot and ledger rule carries `created_by_source` (`builtin` | `mcp` | `user`), `client_name` and
+`model`, stored when it is created, and the UI labels it **Built-in**, **Created via MCP by <app> · <model>** (or "model
+unknown" when the app did not report one; HuhQueue never guesses), or **Created by you**. A preset applied over MCP stays
+Built-in and adds "applied via MCP by <app>". Code: `studio/provenance.py`.
+
+## Recurring slots
+
+A slot is a template on a weekly day and time in the account's time zone (the browser's zone when added in the app). The
+ticker (`HQ_SLOT_TICK=1`) drafts each occurrence up to `HQ_SLOT_LEAD_MIN` (60) minutes before it, as one Buffer **draft** per
+channel due at the slot time, and claims each slot + occurrence + channel once, so a retry, a restart or two instances never
+make a second draft. **Edit** (`PATCH /api/templates/slots/{id}`: weekday, time, tz, channel_ids, template, active) works the
+next time out again from now; **Remove** deletes the slot and its claims. A missing slot and another account's slot both
+answer 404.
