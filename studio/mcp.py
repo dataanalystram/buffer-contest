@@ -282,7 +282,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "search_tools":
         return _registry.search(TOOLS, args)
     if name == "describe_tool":
-        return _registry.describe(TOOLS_BY_NAME, READ_ONLY, args)
+        out = _registry.describe(TOOLS_BY_NAME, READ_ONLY, args)
+        pol = studio.token_policy(actor)  # what this connection may do, up front (drafts-only never tries to schedule)
+        return {**out, "token_policy": pol} if pol and isinstance(out, dict) else out
     if name == "call_tool":  # only unwrapped in handle(), before every gate; never dispatched from here (no gate bypass)
         raise ActionError("call_tool works over MCP tools/call only.", 400)
     if name not in READ_ONLY:
@@ -314,7 +316,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return [r for r in rows if actor.agent is None or r["agent_id"] == actor.agent["id"]]
     if name == "list_pending_approvals":
         from . import consent
-        return {"pending": consent.pending_links(studio.store, actor)}
+        return {"pending": consent.pending_links(studio.store, actor), "approved_waiting": consent.approved_links(studio.store, actor)}
     if name in ("approve_link_ingest", "reject_link_ingest"):
         from . import consent
         return consent.app_decide_link(studio.store, actor, args.get("approval_id"), name == "approve_link_ingest",
@@ -362,6 +364,12 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
             body["punch_in"] = args["punch_in"]
         return h.takes.start(actor, {**body, "_tool": "clips_from_video"})
     if name == "ingest_video_link":
+        if args.get("run_id") not in (None, "", 0):
+            from .mcp_flow import StepError
+            raise StepError("ingest_video_link is One take (one long video cut into many clips), not a step of a post. For a post "
+                            "with this video: render_reel(run_id, url) after find_video probed it.", 400, code="wrong_tool",
+                            next_steps=["find_video(url) -> status found", "render_reel(run_id, url, rights, credit, output: n)",
+                                        "create_package(run_id, captions, channel_media)"])
         if not isinstance(args.get("url"), str) or not args["url"].strip():
             raise ActionError("Give the video link (url).")
         body = {k: args.get(k) for k in ("url", "owns", "channel_ids", "count", "name", "approval_id", "credit", "prompt")}
@@ -457,6 +465,9 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
         return {"jsonrpc": "2.0", "id": mid, "result": result}
 
     if method == "initialize":
+        pol = studio.token_policy(actor) if hasattr(studio, "token_policy") else None
+        pol_line = (f" This connection's token policy: {pol['label']} (allowed modes: {', '.join(pol['allowed_modes'])}); "
+                    f"the owner changes it at {pol['change_at']}." if pol else "")
         ci = (msg.get("params") or {}).get("clientInfo") or {}
         studio.note_client(actor, f"{ci.get('name', '')} {ci.get('version', '')}".strip())
         caps = (msg.get("params") or {}).get("capabilities") or {}
@@ -481,7 +492,7 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
                    "feedback the person gives ('logo smaller', 'no hype'): remember_rule saves it to the Style Ledger. Leftover "
                    "drafts from earlier sessions: cleanup_agent_drafts lists them first and changes nothing until the person "
                    "confirms. Large tool list: search_tools finds a tool by keyword, describe_tool gives its schema, call_tool runs it "
-                   "(the same rules as a direct call)." + UNTRUSTED_NOTE})
+                   "(the same rules as a direct call)." + pol_line + UNTRUSTED_NOTE})
     if method == "ping":
         return ok({})
     if method == "tools/list":

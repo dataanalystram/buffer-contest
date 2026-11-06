@@ -204,10 +204,14 @@ LINK_KIND = "link_rights"
 
 
 def _link_rows(store, a: Actor) -> list[dict]:
+    """This app's link-rights items still in play: pending ones asked in the last day, and approved ones DECIDED in the
+    last day. Approval 136 (6 Nov 2026): the person approved it 23 h after the app asked, the window counted from the ask,
+    so 70 minutes later the approval no longer counted and the app never saw it."""
     out = []
+    since = time.time() - APPROVAL_TTL
     for r in store.q("SELECT id, payload, status, result, created, decided FROM approvals WHERE user_id=? AND agent_id=? "
-                     "AND status IN ('pending','approved') AND created>? ORDER BY id DESC LIMIT 100",
-                     (a.uid, a.agent["id"], time.time() - APPROVAL_TTL)):
+                     "AND ((status='pending' AND created>?) OR (status='approved' AND COALESCE(decided, created)>?)) "
+                     "ORDER BY id DESC LIMIT 100", (a.uid, a.agent["id"], since, since)):
         try:
             p = json.loads(r["payload"] or "{}")
         except ValueError:
@@ -217,7 +221,22 @@ def _link_rows(store, a: Actor) -> list[dict]:
     return out
 
 
-def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any = None, tool: str = "ingest_video_link") -> dict:
+def rights_for_link(studio, a: Actor, url: str, *, approval_id: Any = None, tool: str = "", run_id: Any = None,
+                    licence: str = "") -> dict:
+    """THE rights step for a video link an AI app wants fetched, whichever tool fetches it (One take, render_reel,
+    edit_video, the post_* video steps): the same link_gate every time (owner report 6 Nov 2026: One take asked, a
+    post_render_reel of the same third-party video went ahead on the app's own rights_confirmed). Returns needs_user_approval,
+    or {consent_id, approval_id, basis: approved | app_relayed | auto_approved, url_hash}."""
+    from . import link_ingest
+    g = link_gate(studio, a, url, licence=licence, approval_id=approval_id, tool=tool or "render_reel", run_id=run_id)
+    if g.get("needs_user_approval"):
+        return g
+    return {**g, "url_hash": link_ingest.url_hash(url),
+            "rights": {"basis": g.get("basis"), "approval_id": g.get("approval_id"), "consent_id": g.get("consent_id")}}
+
+
+def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any = None, tool: str = "ingest_video_link",
+              run_id: Any = None) -> dict:
     """An agent asks to fetch a video link. Returns {"consent_id": n} when the person approved this exact link (used up
     now), else needs_user_approval with the Inbox item. Whatever the agent passes (owns, rights_attested) changes nothing."""
     from . import link_ingest
@@ -244,7 +263,9 @@ def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any
                 again = store.q("SELECT result FROM approvals WHERE id=?", (r["id"],))
                 if again and again[0]["result"] == used:
                     store.audit(a.uid, a.label, "link_rights", "read", {"approval_id": r["id"], "consent_id": cid})
-                    return {"consent_id": int(cid), "approval_id": r["id"]}
+                    via = (r["payload"].get("decided_by") or {}).get("via")
+                    basis = "auto_approved" if r["payload"].get("auto_approved") else ("app_relayed" if via == "mcp_app_approval" else "approved")
+                    return {"consent_id": int(cid), "approval_id": r["id"], "basis": basis}
     auto = _auto_approve(store, a, url, h, licence, tool)
     if auto:
         return auto
@@ -262,6 +283,8 @@ def link_gate(studio, a: Actor, url: str, *, licence: str = "", approval_id: Any
             payload = {"kind": LINK_KIND, "tool": tool, "url": str(url)[:2000], "url_hash": h, "host": link_ingest.host(url),
                        "licence": (licence or "")[:120], "attestation": link_ingest.ATTESTATION,
                        "attestation_version": link_ingest.ATTESTATION_VERSION, "app": (a.agent or {}).get("name") or ""}
+            if _int_or_none(run_id):  # the post it is for: approving it says so in that post's thread
+                payload["run_id"] = _int_or_none(run_id)
             aid = store.x("INSERT INTO approvals(user_id,agent_id,agent_name,payload,status,created) VALUES(?,?,?,?,?,?)",
                           (a.uid, a.agent["id"], a.agent["name"], json.dumps(payload), "pending", time.time()))
             store.audit(a.uid, a.label, "link_rights", "held", {"approval_id": aid, "host": link_ingest.host(url)})
@@ -303,7 +326,34 @@ def _auto_approve(store, a: Actor, url: str, h: str, licence: str, tool: str) ->
         store.x("UPDATE approvals SET payload=? WHERE id=? AND user_id=?", (json.dumps({**payload, "consent_id": cid}), aid, a.uid))
     store.audit(a.uid, a.label, "auto_approve_link_rights", "safety",
                 {"approval_id": aid, "consent_id": cid, "host": link_ingest.host(url), "app": app, "auto_approved": True})
-    return {"consent_id": int(cid), "approval_id": aid, "auto_approved": True}
+    return {"consent_id": int(cid), "approval_id": aid, "auto_approved": True, "basis": "auto_approved",
+            "note": "Auto-approved by the person's standing 'Auto-approve video links' setting (Settings → Privacy & data)."}
+
+
+def _int_or_none(v: Any) -> int | None:
+    if isinstance(v, bool):
+        return None
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if 0 < n < 2**53 else None
+
+
+def _note_run(store, uid: str, run_id: Any, text: str) -> None:
+    """A line in the post's thread (the person's own run only); never breaks a decision."""
+    rid = _int_or_none(run_id)
+    if not rid:
+        return
+    try:
+        rows = store.q("SELECT result FROM agent_runs WHERE id=? AND user_id=?", (rid, uid))
+        if not rows:
+            return
+        res = json.loads(rows[0]["result"] or "{}") or {}
+        res.setdefault("thread", []).append({"role": "agent", "text": text[:500], "at": time.time()})
+        store.x("UPDATE agent_runs SET result=?, updated=? WHERE id=? AND user_id=?", (json.dumps(res, default=str), time.time(), rid, uid))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_version: Any = None) -> dict:
@@ -373,6 +423,8 @@ def decide_link(store, a: Actor, row: dict, approve: bool, attested: bool, seen_
         store.audit(a.uid, a.label, "reject_link_rights", "safety", {"approval_id": aid, "by": app_name})
         return {"status": "rejected", "approval_id": aid, "kind": LINK_KIND, "decided_by": app_name}
     store.audit(a.uid, a.label, "approve_link_rights", "safety", {"approval_id": aid, "consent_id": cid, "by": app_name})
+    _note_run(store, a.uid, p.get("run_id"), f"Approved the video link ({p.get('host') or 'link'}): the app can fetch it now "
+              f"(approval {aid}, usable for a day).")
     return {"status": "approved", "approval_id": aid, "kind": LINK_KIND, "consent_id": cid, "decided_by": app_name,
             "message": "Approved: the app can fetch this video once for a take."}
 
@@ -425,6 +477,21 @@ def pending_links(store, a: Actor) -> list[dict]:
         out.append({"approval_id": r["id"], "kind": LINK_KIND, "url": p.get("url", ""), "host": p.get("host", ""),
                     "asked_by": r["agent_name"], "created": r["created"], "licence_hint": p.get("licence", ""),
                     "attestation": p.get("attestation", ""), "attestation_version": p.get("attestation_version", "")})
+    return out
+
+
+def approved_links(store, a: Actor) -> list[dict]:
+    """Video links the person approved for THIS app that it hasn't used yet (decided in the last day): the app finds an
+    approval it missed (approval 136, 6 Nov 2026) and calls again with approval_id."""
+    if getattr(a, "kind", "") != "agent" or not a.agent:
+        return []
+    out = []
+    for r in _link_rows(store, a):
+        if r["status"] == "approved" and not r["result"]:
+            p = r["payload"]
+            out.append({"approval_id": r["id"], "url": p.get("url", ""), "host": p.get("host", ""), "tool": p.get("tool", ""),
+                        "run_id": p.get("run_id"), "decided": r.get("decided"),
+                        "next": f"call {p.get('tool') or 'the same tool'} again with this url and approval_id: {r['id']}"})
     return out
 
 
