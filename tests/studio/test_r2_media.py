@@ -150,6 +150,48 @@ def test_a_redirect_loop_falls_back_to_the_repeat_limit(app, human, s3, monkeypa
     assert codes[0] == 302 and codes[-1] == 429                 # an anonymous loop stops being signed
 
 
+
+def test_r2_reads_never_count_against_the_supabase_egress_budget(app, human, s3, monkeypatch):
+    """Egress follow-up (6 Nov 2026): bytes read from R2 (a disk-cache fill, a range read with the cache off) and files a
+    browser is redirected to R2 for cost no Supabase egress, so they go to their own counters (``r2_bytes``,
+    ``r2_redirected_bytes``) and never fill the daily ``db`` budget that answers 429 to other people's browsers. Bytes
+    still read from the database are counted as ``db`` exactly as before."""
+    from studio import egress, mediacache
+    from studio.library import media_file
+    store = app.state.store
+    monkeypatch.setenv("HQ_EGRESS_DB_DAILY_MB", "0.0001")      # ~100 bytes: any R2 byte counted as db would trip it
+    data = image_bytes(120, 90)
+    tok = app.state.house.put_media(Actor("acc_1"), data, "r2.png")
+    assert store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"]
+    mediacache.of(store).forget([tok])
+    anon = TestClient(app, base_url="https://hq.test")
+    assert anon.get(f"/m/{tok}").content == data              # Buffer / the worker: R2 -> disk cache -> response
+    snap = egress.snapshot()
+    assert snap["db_bytes"] == 0 and snap["r2_bytes"] == len(data) and not snap["degraded"]
+
+    store._media_cache = mediacache.MediaCache(cap=0)         # cache off: every range is a backend read
+    f = media_file(store, tok)
+    assert f["read"](0, 9) == data[:10]
+    snap = egress.snapshot()
+    assert snap["db_bytes"] == 0 and snap["r2_bytes"] == len(data) + 10
+
+    # a browser that isn't the owner, past nothing: still a 206 for a Range (the db budget wasn't touched)
+    r = anon.get(f"/m/{tok}", headers={**BROWSER, "Range": "bytes=0-99"})
+    assert r.status_code == 206 and r.content == data[:100]
+
+    monkeypatch.setenv("HQ_MEDIA_REDIRECT", "1")              # a browser is sent to R2: counted as redirected, not db
+    assert anon.get(f"/m/{tok}", headers=BROWSER, follow_redirects=False).status_code == 302
+    snap = egress.snapshot()
+    assert snap["db_bytes"] == 0 and snap["r2_redirected_bytes"] == len(data) and not snap["degraded"]
+    hz = anon.get("/healthz").json()["egress"]
+    assert hz["db_bytes_today"] == 0 and hz["r2_bytes_today"] == snap["r2_bytes"]
+    assert hz["r2_redirected_bytes_today"] == len(data)
+
+    old = _db_media(app, monkeypatch, image_bytes(40, 40), "db.png")  # a row whose bytes are in the database
+    got = anon.get(f"/m/{old}").content
+    assert egress.snapshot()["db_bytes"] == len(got)          # database bytes still fill the db budget
+
+
 # ------------------------------------------------------------------ migration
 def test_copy_only_migration_keeps_the_bytea_and_reads_switch_to_r2(app, human, s3, monkeypatch):
     store = app.state.store
