@@ -249,6 +249,16 @@ class Studio:
             return self.media_loader(url)
         return self.house._fetch_bytes(url, PROBE_MAX) if self.house else None
 
+    def _media_path(self, url: str):
+        """The local copy of our own /m/ file (studio/mediacache.py), so preflight probes it from disk; None otherwise
+        (another host, a sample, the cache off): preflight then loads the bytes as before. Tests that fake media
+        downloads keep using their loader."""
+        base = self.s.public_url.rstrip("/") + "/m/"
+        if self.media_loader or not self.house or not url.startswith(base):
+            return None
+        getp = getattr(self.house, "media_path", None)
+        return getp(url[len(base):].split("?")[0]) if getp else None
+
     def _reach(self, urls: list[str]) -> list[str]:
         """Can Buffer download every media link? Read each one from the outside, HEAD then a byte range, like Buffer's
         fetcher (studio/mediareach.py). Test apps that fake media downloads skip the network unless they set media_reach."""
@@ -264,7 +274,7 @@ class Studio:
     def _preflight(self, ch: dict, text: str, media_urls: list[str], mode: str, options: dict | None = None,
                    probe: bool = True, creating: bool = True) -> dict:
         res = preflight.check(ch, text, media_urls, mode, options, loader=self._load_media, probe_media=probe, creating=creating,
-                              known=self._known_probe)
+                              known=self._known_probe, path_loader=self._media_path)
         from . import commerce  # #Ad + disclosure for shop links, no Channel3 catalogue images (docs/COMMERCE.md)
         extra = commerce.preflight_findings(self.store, self.s.public_url, text, media_urls)
         if extra:

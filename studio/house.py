@@ -395,9 +395,26 @@ class House:
         f = media_file(self.store, token)
         if f is None:  # deleted between the two reads
             return None
-        d["data"] = b"".join(f["iter"]())
+        from . import mediacache
+        d["data"] = mediacache.whole(f)
         d["size"] = d.get("size") or len(d["data"])
         return d
+
+    def media_path(self, token: str):
+        """The instance's local copy of a media token (a ``media`` row or an uploaded Library file), filled once from the
+        database or R2, or None (cache off, file too big, gone). For callers that only need to probe a file (preflight
+        before a Buffer push): ffprobe and Pillow read it from disk, so the file is never held in memory."""
+        from .library import TRASH_TOKEN, media_file
+        if not token or token.startswith(TRASH_TOKEN):
+            return None
+        f = media_file(self.store, token)
+        if f is None:
+            d = self.library.by_token(token)
+            if not d:
+                return None
+            f = self.library._file_of(d)
+        getp = f.get("path")
+        return getp() if getp else None
 
     def media_head(self, token: str) -> dict | None:
         """Type and length of a media token without reading its bytes (HEAD /m/<token>)."""

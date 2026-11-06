@@ -280,7 +280,22 @@ def wrap(store, f: dict, token: str, meter_kind: str = "media") -> dict:
                         yield b
         yield from metered_iter()
 
-    return {**f, "read": read, "iter": it}
+    # "path": the local copy (filled once), or None when the cache is off / the file is too big: internal callers
+    # (preflight's ffprobe, whole-file readers) use it instead of holding a second copy of the file in memory
+    return {**f, "read": read, "iter": it, "path": local}
+
+
+def whole(f: dict) -> bytes:
+    """The whole file as one bytes object, for callers that need it in memory (renders, image edits): read from the
+    local copy in one go when there is one (a single buffer, no list of pieces joined into a second copy)."""
+    getp = f.get("path")
+    p = getp() if getp else None
+    if p is not None:
+        try:
+            return p.read_bytes()
+        except OSError:  # evicted between the lookup and the read: the backend this once
+            pass
+    return b"".join(f["iter"]())
 
 
 def _pieces(read, size: int, piece: int = MB):

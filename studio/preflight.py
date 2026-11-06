@@ -21,6 +21,7 @@ import shutil
 import tempfile
 import time
 import unicodedata
+from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
@@ -288,13 +289,19 @@ def ffprobe_bytes(data: bytes) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".bin") as f:
         f.write(data)
         f.flush()
-        try:
-            from . import mediasafe  # protocol + demuxer whitelists: a crafted upload can't open URLs or local files
-            r = mediasafe.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", f.name],
-                              timeout=30, check=False)
-            j = json.loads(r.stdout or b"{}")
-        except Exception as e:  # noqa: BLE001 - a broken file is a finding, not a crash
-            return {"probed": False, "why": f"ffprobe failed: {e}"}
+        return ffprobe_path(f.name)
+
+
+def ffprobe_path(path: str) -> dict:
+    if not shutil.which("ffprobe"):
+        return {"probed": False, "why": "ffprobe is not installed on this server"}
+    try:
+        from . import mediasafe  # protocol + demuxer whitelists: a crafted upload can't open URLs or local files
+        r = mediasafe.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
+                          timeout=30, check=False)
+        j = json.loads(r.stdout or b"{}")
+    except Exception as e:  # noqa: BLE001 - a broken file is a finding, not a crash
+        return {"probed": False, "why": f"ffprobe failed: {e}"}
     return parse_ffprobe(j)
 
 
@@ -323,17 +330,55 @@ def parse_ffprobe(j: dict) -> dict:
             "container": fmt.get("format_name")}
 
 
-def probe_url(url: str, loader: Callable[[str], bytes | None] | None) -> dict:
+def probe_path(p: Path, hint: str = "") -> dict | None:
+    """probe_bytes for a file on disk (the media cache's copy of our own /m/ file): Pillow reads the header and ffprobe
+    the file itself, so a 26 MB video is never loaded into memory or copied to a temp file. None when the file is gone
+    (evicted meanwhile): the caller loads the bytes instead."""
+    try:
+        size = p.stat().st_size
+        out: dict = {"bytes": size}
+        try:
+            from PIL import Image
+            with Image.open(p) as im:
+                out.update(kind="image", format=(im.format or "").upper(), width=im.width, height=im.height,
+                           animated=bool(getattr(im, "is_animated", False)))
+                return out
+        except OSError:
+            if not p.exists():
+                return None
+        except Exception:  # noqa: BLE001  (not an image)
+            pass
+        with open(p, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return None
+    if head[4:8] == b"ftyp" or head[:4] == b"\x1aE\xdf\xa3" or hint.endswith(VIDEO_EXT):
+        out["kind"] = "video"
+        out.update(ffprobe_path(str(p)))
+        return out
+    out["kind"] = "unknown"
+    return out
+
+
+def probe_url(url: str, loader: Callable[[str], bytes | None] | None, path_loader: Callable[[str], Path | None] | None = None) -> dict:
     hit = _CACHE.get(url)
     if hit and time.time() - hit[0] < CACHE_TTL:
         return hit[1]
+    res = None
+    if path_loader:
+        try:
+            p = path_loader(url)
+            res = probe_path(p, urlparse(url).path.lower()) if p is not None else None
+        except Exception:  # noqa: BLE001 - fall back to the bytes
+            res = None
     data = None
-    if loader:
+    if res is None and loader:
         try:
             data = loader(url)
         except Exception:  # noqa: BLE001 - unreachable media is reported, never raised
             data = None
-    res = probe_bytes(data, urlparse(url).path.lower()) if data else {"kind": "unknown", "unreachable": True}
+    if res is None:
+        res = probe_bytes(data, urlparse(url).path.lower()) if data else {"kind": "unknown", "unreachable": True}
     if not res.get("unreachable"):  # never cache a failure: the next check should try again
         if len(_CACHE) > 256:
             _CACHE.clear()
@@ -353,8 +398,10 @@ def _ratio_label(w: int, h: int) -> str:
 
 def check(channel: dict, text: str, media_urls: list[str] | None = None, mode: str = "queue", options: dict | None = None,
           loader: Callable[[str], bytes | None] | None = None, probe_media: bool = True, creating: bool = True,
-          media_kinds: list[str] | None = None, known: Callable[[str], dict | None] | None = None) -> dict:
-    """Preflight one post for one channel. Pure apart from media probing (loader fetches bytes; None skips probing)."""
+          media_kinds: list[str] | None = None, known: Callable[[str], dict | None] | None = None,
+          path_loader: Callable[[str], Path | None] | None = None) -> dict:
+    """Preflight one post for one channel. Pure apart from media probing (loader fetches bytes; None skips probing;
+    path_loader, tried first, gives a local copy of our own media so it is probed from disk, never loaded whole)."""
     svc = channel.get("service", "")
     net = NETWORK.get(svc, svc)
     options = dict(options or {})
@@ -362,7 +409,7 @@ def check(channel: dict, text: str, media_urls: list[str] | None = None, mode: s
     draft = mode == "draft"
     findings: list[dict] = []
     fixes: dict[str, str] = {}
-    probes = [((known and known(u)) or probe_url(u, loader)) if (probe_media and loader) else {"kind": "unknown", "skipped": True}
+    probes = [((known and known(u)) or probe_url(u, loader, path_loader)) if (probe_media and loader) else {"kind": "unknown", "skipped": True}
               for u in media_urls]
     kinds = [kind_of(u, p) for u, p in zip(media_urls, probes)]
     if media_kinds and len(media_kinds) == len(kinds):
