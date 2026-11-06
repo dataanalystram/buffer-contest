@@ -213,3 +213,11 @@
   :root.hq-anim .sk{animation:none}
   #runView.hc .mp-trace.hc-working summary::after{animation:none}
 }
+
+/* Ready to send bar (owner, 5 Nov 2026): at 390 and 1280 px the sticky bar sat over the "Save all as Buffer drafts (not
+   posted)" button under the post cards, clipping it. That button does exactly what the bar's "Approve all as Buffer drafts"
+   does (makepost.js clicks it), so while the bar is shown it is hidden (still in the DOM for the bar to press), and the
+   bar wraps onto a second line instead of cutting a button off when the column is narrow. */
+#runView.hc:has(#mpActs:not([hidden])) #packages>.pkg-all{display:none}
+#runView.hc .hc-dock .mp-acts.hc-ready{flex-wrap:wrap}
+#runView.hc .mp-acts.hc-ready .btn,#runView.hc .mp-acts.hc-ready .btn2{max-width:100%}
