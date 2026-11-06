@@ -193,3 +193,33 @@ def test_start_runs_in_a_background_thread_after_its_delay(app, human, s3, monke
     assert t is not None
     t.join(20)
     assert r2_migrate_bg.snapshot()["state"] == "done" and r2_migrate_bg.snapshot()["copied"] == 1
+
+
+def test_switches_default_to_running_so_the_migration_is_not_stopped(app, human, s3, monkeypatch):
+    """An empty, readable ops_switches table means every switch runs (PR #128): the in-process copy goes on."""
+    from studio import opsctl
+    store = app.state.store
+    opsctl.forget(store)
+    assert store.q("SELECT COUNT(*) AS n FROM ops_switches")[0]["n"] == 0
+    assert not any(v["paused"] or v["unreadable"] for v in opsctl.state(store).values())
+    _db_media(app, monkeypatch, image_bytes(22, 21), "d.png")
+    monkeypatch.setenv("HQ_R2_MIGRATE", "copy")
+    s = r2_migrate_bg.run(store, _bucket(), log=lambda *_: None)
+    assert s["state"] == "done" and s["copied"] == 1 and not s["capped"]
+
+
+def test_r2_uploads_pause_stops_the_in_process_copy(app, human, s3, monkeypatch):
+    """The operator's r2_uploads switch is read from the app's store (not the run's own connection) and stops the copy
+    before any PUT; the rows stay in the database."""
+    from studio import opsctl
+    store = app.state.store
+    tok = _db_media(app, monkeypatch, image_bytes(23, 24), "e.png")
+    opsctl.set_switch(store, "r2_uploads", True, "test")
+    try:
+        monkeypatch.setenv("HQ_R2_MIGRATE", "copy")
+        s = r2_migrate_bg.run(store, _bucket(), log=lambda *_: None)
+        assert s["copied"] == 0 and s["capped"]
+        assert not any(m == "PUT" for m, *_ in s3.calls)
+        assert store.q("SELECT storage_key FROM media WHERE token=?", (tok,))[0]["storage_key"] is None
+    finally:
+        opsctl.set_switch(store, "r2_uploads", False, "test")
