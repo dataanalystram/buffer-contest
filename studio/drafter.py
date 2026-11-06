@@ -240,6 +240,15 @@ def _short(s: str, n: int) -> str:
     return cut + "…"
 
 
+_SOFT = {"the", "a", "an", "this", "that", "it", "its", "they", "we", "our", "their", "in", "on", "at", "for", "after", "now"}
+
+
+def _soft(s: str) -> str:
+    """Casual voice: lower-case a plain first word ("The cut" -> "the cut"), never a name ("Google", "OpenAI" stay)."""
+    w = s.split(" ", 1)[0]
+    return s[:1].lower() + s[1:] if w.lower() in _SOFT else s
+
+
 def styled_draft(service: str, article: dict, style: dict) -> str:
     """The free drafter's caption in a preset's shape (studio/style_presets.py): hook first line (< 125 characters), one
     idea, the payoff, one CTA, hashtags within the preset's cap for this network. Deterministic: same input, same caption."""
@@ -270,7 +279,9 @@ def styled_draft(service: str, article: dict, style: dict) -> str:
     elif shape == "data":
         num = t if _NUM.search(t) else next((x for x in sents if _NUM.search(x)), "")
         ctx = next((x for x in sents if _NUM.search(x) and x not in (num, t)), "")
-        means = next((x for x in sents if x not in (num, ctx)), "")
+        # what it changes: an interpretive line (no figure of its own) reads best after the numbers
+        means = next((x for x in sents if x not in (num, ctx) and not _NUM.search(x)), "") or \
+            next((x for x in sents if x not in (num, ctx)), "")
         lines = [_short(num or t, 120), f"For scale: {_short(ctx, 180)}" if ctx else "",
                  f"What it changes: {_short(means, 180)}" if means else "", f"Source: {site}" if site else ""]
     elif shape == "thread":
@@ -280,8 +291,10 @@ def styled_draft(service: str, article: dict, style: dict) -> str:
         lines = [hook, body, f"The takeaway: {_short(idea, 160)}" if idea and idea not in pts else ""]
     elif shape == "casual":
         hook = _short(f"ok so {t.rstrip('.')}", 120)  # names keep their capitals (OpenAI, Meta): casual, never inaccurate
-        care = next((s for s in sents if s != idea), "")
-        lines = [hook, f"basically: {_short(idea, 150)}" if idea else "", f"why you should care: {_short(care, 150)}" if care else ""]
+        basic = sents[0] if sents else idea  # the plain one-line version first, then why it matters
+        care = next((s for s in sents if s not in (basic, idea) and not _NUM.search(s)), "") or next((s for s in sents if s != basic), "")
+        lines = [hook, f"basically: {_soft(_short(basic, 150))}" if basic else "",
+                 f"why you should care: {_soft(_short(care, 150))}" if care else ""]
     else:  # hook_idea_payoff
         # the most surprising number first: the title when it carries one, else the first sentence that does
         num = t if _NUM.search(t) else next((x for x in sents if _NUM.search(x)), "")
