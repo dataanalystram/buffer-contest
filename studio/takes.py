@@ -246,7 +246,7 @@ class Takes(TakeBin):
             return jev
         count = body.get("count") or req["n"]
         count = max(1, min(longform.MAX_CLIPS if style == "opus" else 7, int(count))) if count else None
-        consent_id, licence, link = None, "", url or platform_url
+        consent_id, licence, link, rights_basis = None, "", url or platform_url, None
         if link:  # rights first, then the fetch (owner ask, 4 Nov 2026): a signed-in person attests; an AI app asks them
             from . import consent, link_ingest
             licence = link_ingest.licence_hint(link, http=self.h.http)
@@ -256,6 +256,8 @@ class Takes(TakeBin):
                 if g.get("needs_user_approval"):
                     return g
                 consent_id = g["consent_id"]
+                rights_basis = {"basis": g.get("basis"), "approval_id": g.get("approval_id"), "consent_id": consent_id,
+                                **({"note": g["note"]} if g.get("note") else {})}
             else:
                 consent_id = link_ingest.human_attest(self.store, a, link, body, licence)
             rights = True
@@ -288,7 +290,8 @@ class Takes(TakeBin):
         self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_upload": upload_id, "source_url": url, "platform_url": platform_url,
                              "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small"), "jev": jev},
                     "transcribe", "Reading captions, else transcribing on the video worker (faster-whisper, CPU)")
-        return self.get(a, rid)
+        out = self.get(a, rid)
+        return {**out, "rights": rights_basis} if rights_basis and isinstance(out, dict) else out
 
     def _jev_consent(self, a: Actor, body: dict):
         """May this take ask Jev (TypeSafe, a paid API on HuhQueue's server key) for a second opinion on faces?

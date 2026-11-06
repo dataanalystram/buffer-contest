@@ -126,7 +126,7 @@ def add_routes(app: FastAPI, house, actor) -> None:
     @app.post("/api/agent/runs/{rid}/packages/{channel_id}/media")
     def run_channel_media(rid: int, channel_id: str, request: Request, body: dict = Body(default={})):
         """One channel's media: {"token": ...} uses the person's own file (Library item / upload); {} regenerates it."""
-        return house.brain.channel_media(actor(request, write=True), rid, channel_id, str((body or {}).get("token") or ""))
+        return channel_media(house.studio, actor(request, write=True), rid, channel_id, str((body or {}).get("token") or ""))
 
     @app.post("/api/agent/runs/{rid}/tools/{name}")
     def run_tool(rid: int, name: str, request: Request, body: dict = Body(default={})):
@@ -291,6 +291,11 @@ def call_tool(studio, actor, name: str, args: dict):
     ob = attach(h)
     try:
         if name == "make_post":
+            if actor.kind == "agent":  # deprecated for AI apps (mcp_flow): it still works, and says what to use instead
+                from .mcp_flow import DEPRECATED_NOTE
+                out = h.brain.start(actor, {k: args.get(k) for k in ("prompt", "channel_ids", "format", "brain", "theme") if args.get(k)}
+                                    | {"prompt": args.get("prompt", "")} | ({"add_logo": bool(args["add_logo"])} if "add_logo" in args else {}))
+                return {**out, "deprecated": DEPRECATED_NOTE} if isinstance(out, dict) else out
             return h.brain.start(actor, {k: args.get(k) for k in ("prompt", "channel_ids", "format", "brain", "theme") if args.get(k)}
                                  | {"prompt": args.get("prompt", "")} | ({"add_logo": bool(args["add_logo"])} if "add_logo" in args else {}))
         if name == "list_themes":
@@ -313,7 +318,7 @@ def call_tool(studio, actor, name: str, args: dict):
         if name == "reply_post":
             return h.brain.reply(actor, int(args.get("run_id") or 0), args.get("text", ""), str(args.get("media_token") or ""))
         if name == "replace_channel_media":
-            return h.brain.channel_media(actor, int(args.get("run_id") or 0), str(args.get("channel") or ""), str(args.get("media_token") or ""))
+            return channel_media(studio, actor, int(args.get("run_id") or 0), str(args.get("channel") or ""), str(args.get("media_token") or ""))
         if name == "edit_brand":
             return edit_brand(h, actor, args.get("instruction", ""))
         if name == "get_onboarding":
@@ -339,7 +344,152 @@ def call_tool(studio, actor, name: str, args: dict):
             return delete_ai_key(h, actor, str(args.get("provider") or ""))
         if name.startswith("post_"):
             rid = int(args.pop("run_id", 0) or 0)
-            return h.brain.tool(actor, rid, name[5:], args)
+            return post_step(studio, actor, rid, name[5:], args)
     except OnboardingError as e:
         raise ActionError(str(e))
     return NotImplemented
+
+
+# ------------------------------------------------------------------------------------------------ MCP glue (6 Nov 2026)
+NEEDS_FACTS = {"render_reel", "render_carousel", "render_cover", "render_template", "write_captions", "set_template", "edit_video",
+               "edit_channel_media", "set_theme"}
+VIDEO_STEPS = {"render_reel", "edit_video", "set_theme", "edit_channel_media"}
+
+
+def channel_media(studio, a, rid: int, channel: str, token: str = "") -> dict:
+    """replace_channel_media (MCP and REST) on every kind of post run: a make_post run goes to HuhQueue's agent (regenerate
+    or the person's file); a start_post / create_package run (and any other post run) takes the file in place."""
+    from . import run_discipline
+    row = run_discipline.own_run(studio.store, a, int(rid or 0))  # 404 for a missing or foreign run, before anything
+    # a make_post run, or a pre-agent run asked to regenerate ("Redo with the agent", 409), stays on the agent path
+    if row["kind"] == "agent" or (not token and row["kind"] not in ("client", "take")):
+        return studio.house.brain.channel_media(a, int(rid), channel, token)
+    from .mcp_client_brain import client_channel_media
+    return client_channel_media(studio, a, int(rid), channel, token)
+
+
+def _run_link(run: dict) -> str:
+    inp = run.get("input") or {}
+    urls = (inp.get("intake") or {}).get("urls") or []
+    return str(inp.get("source_url") or (urls[0] if urls else "") or "")
+
+
+def _video_link(run: dict) -> str:
+    """The video link the run's Reel would fetch, when it isn't the person's own upload ('' otherwise)."""
+    res = run.get("result") or {}
+    if res.get("clip_owned") or (res.get("upload") or {}).get("type") == "video":
+        return ""
+    found = res.get("found_media") if isinstance(res.get("found_media"), dict) else {}
+    cand = (found.get("best_downloadable") or {}).get("url") or ""
+    if cand:
+        return str(cand)
+    vid = next((m for m in (res.get("source") or {}).get("media") or [] if m.get("type") == "video" and m.get("url")), None)
+    return str(vid["url"]) if vid else ""
+
+
+def post_step(studio, a, rid: int, tool: str, args: dict) -> dict:
+    """One post_* step (the deprecated make_post brain=external family). For an AI app: the run must be a make_post run,
+    the cheap prerequisites run first when missing (read_url, then extract_facts), a video link the Reel would fetch goes
+    through the same rights step as every other tool, and a find_video answer is probed on the worker."""
+    from .mcp_flow import DEPRECATED_NOTE, StepError
+    h = studio.house
+    run = h.run(a, rid)  # 404 for someone else's run
+    if a.kind != "agent":
+        return h.brain.tool(a, rid, tool, args)
+    if run["kind"] != "agent":
+        raise StepError(f"post_{tool} works on make_post runs only; run {rid} was opened with start_post. Use the recommended "
+                        "path's tools with this run_id.", 409, code="wrong_run_type",
+                        next_steps=[f"render_reel(run_id={rid}, ...) / render_carousel(run_id={rid}, slides)",
+                                    f"create_package(run_id={rid}, captions, channel_media)"])
+    auto = []
+    res = run["result"] or {}
+    has_source = bool(res.get("source") or res.get("upload"))
+    if (tool == "extract_facts" or tool in NEEDS_FACTS) and not has_source:
+        url = _run_link(run)
+        if not url:
+            raise StepError(f"post_{tool} needs a source first, and this run has no link to read.", 409, code="missing_prerequisite",
+                            missing_step=f"post_read_url(run_id={rid}, url) or post_search_news(run_id={rid}, query)")
+        h.brain.tool(a, rid, "read_url", {"url": url})
+        auto.append("read_url")
+    if tool in NEEDS_FACTS and not (h.run(a, rid)["result"] or {}).get("story"):
+        h.brain.tool(a, rid, "extract_facts", {})
+        auto.append("extract_facts")
+    approval_id = args.pop("approval_id", None)
+    if tool == "save_buffer_drafts":
+        return _save_drafts(studio, a, rid, args)
+    if tool in VIDEO_STEPS:
+        args.pop("rights_confirmed", None)  # an app's own say-so is not the rights step for a link (consent.link_gate is)
+        run = h.run(a, rid)
+        vr = (run["result"] or {}).get("video_research") or {}
+        if (vr.get("probe") or {}).get("ok") is False and not (run["result"] or {}).get("clip_token"):
+            from .mcp_flow import upload_steps
+            raise StepError("The worker can't fetch this run's video (" + str(vr["probe"].get("reason") or "probe failed")[:200]
+                            + "), so no Reel was made and nothing changed.", 422, code="found_not_downloadable",
+                            produced="nothing", next_steps=upload_steps(rid) + [f"reply_post(run_id={rid}, media_token)"])
+        link = _video_link(run)
+        if link:
+            from . import consent
+            g = consent.rights_for_link(studio, a, link, approval_id=approval_id, tool="post_" + tool, run_id=rid)
+            if g.get("needs_user_approval"):
+                return {**g, "run_id": rid, **({"auto_ran": auto} if auto else {})}
+            run = h.run(a, rid)
+            run["result"]["rights_confirmed"] = True
+            run["result"].setdefault("link_rights", {})[g["url_hash"]] = {k: g.get(k) for k in ("consent_id", "approval_id", "basis")}
+            h._save(rid, run["steps"], run["result"])
+            if tool == "render_reel":
+                args["rights_confirmed"] = True
+    out = h.brain.tool(a, rid, tool, args)
+    if tool == "find_video" and isinstance(out, dict):
+        from . import link_probe
+        out = link_probe.apply_to_run(studio, a, rid, out)
+    if isinstance(out, dict):
+        out = {**out, "deprecated": DEPRECATED_NOTE, **({"auto_ran": auto} if auto else {})}
+    return out
+
+
+def _save_drafts(studio, a, rid: int, args: dict) -> dict:
+    """post_save_buffer_drafts from an AI app: the same duplicate-draft guard as schedule_package (agent_drafts). A channel
+    whose story an earlier run of this app already saved as a Buffer draft answers duplicate_draft and nothing is created;
+    on_duplicate 'update' edits that draft (editPost), 'new' saves a second one."""
+    from . import agent_drafts
+    from .mcp_flow import DEPRECATED_NOTE, StepError
+    h = studio.house
+    choice = args.pop("on_duplicate", None)
+    if choice not in (None, "", "update", "new"):
+        raise ActionError("on_duplicate is 'update' (edit the earlier run's Buffer draft) or 'new' (a second draft).", 400)
+    want = args.get("channel_ids")
+    if want is not None and (not isinstance(want, list) or len(want) > 50 or not all(isinstance(c, str) for c in want)):
+        raise ActionError("channel_ids is a list of channel ids or services (up to 50).", 400)
+    res = h.run(a, rid)["result"] or {}
+    dups = []
+    if choice != "new" and not res.get("conflicts"):  # an open fact conflict: the tool itself refuses and saves nothing
+        todo = [pk for pk in res.get("packages") or [] if (not want or pk.get("channel_id") in want or pk.get("service") in want)
+                and not pk.get("sent") and pk.get("status") == "ready" and not (pk.get("buffer_draft") or {}).get("buffer_post_id")]
+        if todo:
+            row = h.store.q("SELECT id, input, result FROM agent_runs WHERE id=? AND user_id=?", (rid, a.uid))
+            me = agent_drafts._story(dict(row[0])) if row else {}
+            earlier = agent_drafts.app_drafts(h.store, a, exclude_run=rid) if me else []
+            for pk in todo:
+                d = next((d for d in earlier if d["channel_id"] == pk["channel_id"] and agent_drafts.same_story(me, d)), None)
+                if d:
+                    dups.append((pk, d))
+    if dups and choice != "update":
+        first = dups[0][1]
+        raise StepError(f"Run {first['run_id']} of this app already saved a Buffer draft of this story on "
+                        f"{', '.join(str(pk.get('service') or pk['channel_id']) for pk, _ in dups)}. Nothing was created. Ask the "
+                        "person: update those drafts with this post, or make second ones?", 409, code="duplicate_draft",
+                        duplicate_of=first, duplicates=[d for _, d in dups], choices=["update", "new"],
+                        next_steps=[f"post_save_buffer_drafts(run_id={rid}, on_duplicate='update') edits the earlier drafts "
+                                    "(editPost), never second ones", "on_duplicate='new' only if the person wants two drafts"])
+    drafts = []
+    dup_ch = {pk["channel_id"] for pk, _ in dups}
+    rest = [pk["channel_id"] for pk in res.get("packages") or [] if pk["channel_id"] not in dup_ch
+            and (not want or pk.get("channel_id") in want or pk.get("service") in want)]
+    if not dups or rest:
+        out = h.brain.tool(a, rid, "save_buffer_drafts", {**args, **({"channel_ids": rest} if dups else {})})
+        drafts = list((out or {}).get("drafts") or [])
+    for pk, d in dups:
+        u = agent_drafts.guard_duplicate(h, a, rid, pk["channel_id"], pk, "update") or {}
+        drafts.append({"service": pk.get("service", ""), "status": u.get("status", "updated"),
+                       "buffer_post_id": d["buffer_post_id"], "replaced_run_id": d["run_id"]})
+    return {"drafts": drafts, "deprecated": DEPRECATED_NOTE}

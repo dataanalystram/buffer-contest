@@ -809,12 +809,15 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
 
     @app.patch("/api/agent-tokens/{token_id}")
     def token_cap(token_id: int, request: Request, body: dict = Body(...)):
-        """{"daily_cap": 1-100} and/or {"allow_paid_apis": true|false} (humans only)."""
+        """{"daily_cap": 1-100}, {"allow_paid_apis": true|false} and/or {"policy": review|draft|trusted, "confirm": true}
+        (humans only)."""
         a = actor(request, write=True)
         out: dict = {"id": token_id}
+        if "policy" in body:
+            out.update(studio.set_agent_policy(a, token_id, body.get("policy"), body.get("confirm")))
         if "allow_paid_apis" in body:
             out.update(studio.set_agent_paid(a, token_id, body.get("allow_paid_apis")))
-        if "daily_cap" in body or "allow_paid_apis" not in body:
+        if "daily_cap" in body or not ({"allow_paid_apis", "policy"} & set(body)):
             out.update(studio.set_agent_cap(a, token_id, body.get("daily_cap")))
         return out
 
@@ -1080,7 +1083,9 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         a = actor(request)
         if refresh:
             studio.buffer.refresh(a.uid)
-        return etagged(request, inbox_mod.build(studio, a))
+        # as_of is the read time to the second: hashing it gave a new tag every second, so a poll across a second
+        # boundary never got its 304 (and the ETag test flaked on the slower Postgres run, 6 Nov 2026)
+        return etagged(request, inbox_mod.build(studio, a), ignore=("now", "as_of"))
 
     @app.get("/api/calendar")
     def calendar(request: Request, refresh: int = 0):

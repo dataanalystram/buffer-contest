@@ -223,8 +223,12 @@ def test_import_of_a_sign_in_page_says_so(human, monkeypatch):
     house = human.app.state.house
     monkeypatch.setattr(house, "_fetch_bytes", lambda url, cap: HTML)
     tok = agent_token(human, "draft")
-    _, msg = mcp_call(human, tok, "library_upload_url", {"url": "https://claude.ai/artifacts/abc/launch.mp4"})
-    assert msg.startswith("That link returned a web page (probably a sign-in page), not a video.") and "create_upload" in msg
+    # a .mp4 link is a third-party video: the rights step comes first and nothing is fetched (#139)
+    _, held = mcp_call(human, tok, "library_upload_url", {"url": "https://claude.ai/artifacts/abc/launch.mp4"})
+    assert held["needs_user_approval"] is True
+    # a link without a video extension is read first, and a sign-in page says so
+    _, msg = mcp_call(human, tok, "library_upload_url", {"url": "https://claude.ai/artifacts/abc/launch"})
+    assert msg.startswith("That link returned a web page (probably a sign-in page), not a photo or video.") and "create_upload" in msg
 
 
 # ---------------------------------------------------------------------------------------------------- rights in one parameter

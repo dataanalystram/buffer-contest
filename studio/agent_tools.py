@@ -1372,7 +1372,10 @@ class Tools(EditorialTools):
                       ratio: str | None = None, clip: list | None = None, captions_mode: str | None = None) -> dict:
         run = self.state()
         ids = [c["id"] for c in self.channels(run, channel_ids)]
+        strict = getattr(self, "strict_format", False)  # an AI app over MCP: a Reel or an error, never slides in its place
         if not self._has_video(run):  # NO VIDEO -> NO REEL (owner, 1 Nov 2026): never a text-on-gradient video
+            if strict:
+                raise self._reel_error(ids, "no_video", "This run has no video the worker can fetch.")
             return self._no_video(run, ids)
         ratio = ratio if ratio in ("9:16", "4:5", "1:1") else "9:16"
         if any(c["service"] in VIDEO_ONLY for c in self.channels(run, ids)):
@@ -1403,6 +1406,8 @@ class Tools(EditorialTools):
         if style:
             media, note, ask = self._media_reel(run, style, seconds=seconds, music=music, rights_confirmed=bool(rights_confirmed), ratio=ratio,
                                                 clip=clip, captions_mode=captions_mode)
+            if strict and not (media and media[0]["type"] == "video"):
+                raise self._reel_error(ids, "needs_rights" if ask else "reel_failed", note, ask)
             run = self.state()
             fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
             self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": captions_mode != "off", "style": style, "note": note, "ratio": ratio,
@@ -1418,12 +1423,23 @@ class Tools(EditorialTools):
                 out.update(needs_confirmation=True, question=ask)
             return out
         media, note = self._reel(run, seconds=seconds, captions=bool(captions), ratio=ratio)
+        if strict and not (media and media[0]["type"] == "video"):
+            raise self._reel_error(ids, "reel_failed", note)
         run = self.state()
         fmt = "reel" if media and media[0]["type"] == "video" else "carousel"
         self._set_media(run, ids, media, fmt, {"seconds": seconds, "captions": bool(captions), "note": note, "ratio": ratio})
         self.save(run)
         return {"channels": ids, "format": fmt, "media": [m["url"] for m in media], "note": note,
                 "clipped": self._clipped([m for m in media if m["type"] == "photo"])}
+
+    def _reel_error(self, ids: list[str], code: str, note: str, question: str = ""):
+        """The structured answer an AI app gets instead of slides: nothing on the channels changed (6 Nov 2026)."""
+        from .mcp_flow import StepError, upload_steps
+        steps = ([question] if question else []) + upload_steps(self.rid)[:2] + [
+            f"replace_channel_media(run_id={self.rid}, channel, media_token) for each channel, or reply_post(run_id={self.rid}, media_token)"]
+        return StepError(f"The Reel wasn't made ({str(note or '').strip()[:240]}). Nothing on the channels changed: no slides were "
+                         "made in place of the video. Next: get the video file from the person (create_send_code).", 422,
+                         code=code, format_requested="reel", produced="nothing", channels=ids, next_steps=steps)
 
     def _no_video(self, run, ids: list[str]) -> dict:
         """No real video for this run: video-only channels (YouTube, TikTok) are skipped with a note, every other channel

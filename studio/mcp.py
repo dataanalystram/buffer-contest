@@ -91,7 +91,10 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "schedule_package", "description": "Send one ready package from a run to Buffer (mode draft | queue | next | now | schedule with due_at ISO UTC). Goes through preview and the token's policy: with 'review' it waits in the Approvals inbox.",
      "inputSchema": {"type": "object", "required": ["run_id", "channel_id"], "properties": {"run_id": {"type": "integer"}, "channel_id": {"type": "string"},
          "mode": {"type": "string", "enum": ["draft", "queue", "next", "now", "schedule"]}, "due_at": {"type": "string"},
-         "override_warnings": {"type": "boolean"}}}},
+         "override_warnings": {"type": "boolean"},
+         "on_duplicate": {"type": "string", "enum": ["update", "new"], "description": "When an earlier run of this app already has "
+                          "a Buffer draft of the same story on this channel: update = edit that draft (editPost), new = a second "
+                          "draft (only when the person asked)"}}}},
     {"name": "get_inbox", "description": "Your user's Inbox: everything waiting for a person, most urgent first. Groups: approvals (agent posts held for a human), failed (Buffer posts in status error, with Buffer's reason), preflight (scheduled posts in the next 7 days that preflight would block or warn about), undated (drafts with no date), open_slots (empty posting times this week), plan (Buffer plan meters at 80%+). Each group has urgency now | soon | fyi, a count, a one-line summary and items with ids you can pass to update_post or reschedule_post. waiting is the Inbox badge count. Read-only.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_calendar", "description": "Everything on the user's Planner: scheduled, sent and draft Buffer posts, agent posts waiting for approval, ready packages not yet sent, and each channel's Buffer posting slots.",
@@ -263,6 +266,15 @@ def _mark_server_ai(tools: list[dict]) -> None:
 
 _mark_server_ai(TOOLS)
 
+from . import agent_drafts as _drafts  # noqa: E402  delete_drafts: this app's own Buffer drafts only (6 Nov 2026)
+
+TOOLS += _drafts.TOOLS
+from . import mcp_flow as _flow  # noqa: E402  get_started, the flow tools' descriptions and prerequisites (6 Nov 2026)
+
+TOOLS += _flow.TOOLS
+READ_ONLY |= _flow.READ_ONLY
+_flow.apply(TOOLS, _cb.SERVER_AI_NOTE)
+
 from . import mcp_registry as _registry  # noqa: E402  search_tools, describe_tool, call_tool (5 Nov 2026)
 
 TOOLS += _registry.TOOLS
@@ -276,7 +288,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "search_tools":
         return _registry.search(TOOLS, args)
     if name == "describe_tool":
-        return _registry.describe(TOOLS_BY_NAME, READ_ONLY, args)
+        out = _registry.describe(TOOLS_BY_NAME, READ_ONLY, args)
+        pol = studio.token_policy(actor)  # what this connection may do, up front (drafts-only never tries to schedule)
+        return {**out, "token_policy": pol} if pol and isinstance(out, dict) else out
     if name == "call_tool":  # only unwrapped in handle(), before every gate; never dispatched from here (no gate bypass)
         raise ActionError("call_tool works over MCP tools/call only.", 400)
     if name not in READ_ONLY:
@@ -308,7 +322,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return [r for r in rows if actor.agent is None or r["agent_id"] == actor.agent["id"]]
     if name == "list_pending_approvals":
         from . import consent
-        return {"pending": consent.pending_links(studio.store, actor)}
+        return {"pending": consent.pending_links(studio.store, actor), "approved_waiting": consent.approved_links(studio.store, actor)}
     if name in ("approve_link_ingest", "reject_link_ingest"):
         from . import consent
         return consent.app_decide_link(studio.store, actor, args.get("approval_id"), name == "approve_link_ingest",
@@ -343,8 +357,10 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "get_brand":
         return {"kit": h.kit(actor), "rules": h.rules(actor)}
     if name == "schedule_package":
+        if args.get("on_duplicate") not in (None, "", "update", "new"):
+            raise ActionError("on_duplicate is 'update' (edit the earlier run's Buffer draft) or 'new' (a second draft).")
         return h.schedule_package(actor, int(args.get("run_id") or 0), args.get("channel_id", ""), args.get("mode") or "queue", args.get("due_at"),
-                                  bool(args.get("override_warnings")))
+                                  bool(args.get("override_warnings")), on_duplicate=args.get("on_duplicate") or None)
     if name == "list_calendar":
         return h.calendar(actor)
     if name == "clips_from_video":
@@ -356,6 +372,12 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
             body["punch_in"] = args["punch_in"]
         return h.takes.start(actor, {**body, "_tool": "clips_from_video"})
     if name == "ingest_video_link":
+        if args.get("run_id") not in (None, "", 0):
+            from .mcp_flow import StepError
+            raise StepError("ingest_video_link is One take (one long video cut into many clips), not a step of a post. For a post "
+                            "with this video: render_reel(run_id, url) after find_video probed it.", 400, code="wrong_tool",
+                            next_steps=["find_video(url) -> status found", "render_reel(run_id, url, rights, credit, output: n)",
+                                        "create_package(run_id, captions, channel_media)"])
         if not isinstance(args.get("url"), str) or not args["url"].strip():
             raise ActionError("Give the video link (url).")
         body = {k: args.get(k) for k in ("url", "owns", "channel_ids", "count", "name", "approval_id", "credit", "prompt")}
@@ -422,7 +444,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     extra = _thread_bin.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
-    for _mod in (_send, _share, _ledger, _parity, _image, _rd, _commerce):
+    for _mod in (_send, _share, _ledger, _parity, _image, _rd, _commerce, _flow, _drafts):
         extra = _mod.call_tool(studio, actor, name, args)
         if extra is not NotImplemented:
             return extra
@@ -451,6 +473,9 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
         return {"jsonrpc": "2.0", "id": mid, "result": result}
 
     if method == "initialize":
+        pol = studio.token_policy(actor) if hasattr(studio, "token_policy") else None
+        pol_line = (f" This connection's token policy: {pol['label']} (allowed modes: {', '.join(pol['allowed_modes'])}); "
+                    f"the owner changes it at {pol['change_at']}." if pol else "")
         ci = (msg.get("params") or {}).get("clientInfo") or {}
         studio.note_client(actor, f"{ci.get('name', '')} {ci.get('version', '')}".strip())
         caps = (msg.get("params") or {}).get("capabilities") or {}
@@ -462,16 +487,20 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
                    "capabilities": {"tools": {"listChanged": False}, "prompts": {"listChanged": False},
                                     "resources": {"subscribe": False, "listChanged": False}},
                    "serverInfo": {"name": "huhqueue-studio", "title": "HuhQueue — brand-aware editor on the Buffer API", "version": "2.0.0"},
-                   "instructions": _cb.INSTRUCTIONS + " Also: a video LINK the person gives you (YouTube, Vimeo, X, an MP4): "
-                   "call ingest_video_link, ask them to approve the rights in HuhQueue → Inbox → Approvals, wait (list_approvals), "
-                   "then call it again with approval_id; or, only when they tell you they own it or have permission and are "
-                   "responsible for rights, approve_link_ingest with i_own_or_have_rights: true. Never ask them to upload a "
-                   "video they linked, and never confirm the rights yourself without their word. One take -> a week: clips_from_video -> poll list_clips(take_id) -> "
+                   "instructions": _cb.INSTRUCTIONS + " Start with get_started (or the make_a_post prompt): it is the one "
+                   "recommended path for a post. Video links: a video for a normal post (a launch video, a news clip) goes to "
+                   "render_reel(run_id, url) after find_video probed it; ingest_video_link is ONLY for One take (cutting one long "
+                   "video into clips). Any video link you fetch goes through the same rights step: needs_user_approval -> the "
+                   "person approves in HuhQueue → Inbox → Approvals (list_pending_approvals) -> call again with approval_id; or, "
+                   "only when they tell you they own it or have permission and are responsible for rights, approve_link_ingest "
+                   "with i_own_or_have_rights: true. Never confirm the rights yourself without their word. When the worker "
+                   "can't fetch a video (found_not_downloadable, a failed render), ask the person for the file with "
+                   "create_send_code. One take -> a week: clips_from_video -> poll list_clips(take_id) -> "
                    "adjust_clip if asked -> place_clips_in_week (dry_run, show the plan, then confirm_token; drafts only). Brand "
                    "feedback the person gives ('logo smaller', 'no hype'): remember_rule saves it to the Style Ledger. Leftover "
                    "drafts from earlier sessions: cleanup_agent_drafts lists them first and changes nothing until the person "
                    "confirms. Large tool list: search_tools finds a tool by keyword, describe_tool gives its schema, call_tool runs it "
-                   "(the same rules as a direct call)." + UNTRUSTED_NOTE})
+                   "(the same rules as a direct call)." + pol_line + UNTRUSTED_NOTE})
     if method == "ping":
         return ok({})
     if method == "tools/list":
@@ -557,6 +586,7 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
                 if key:
                     _rd.remember(studio.store, actor, name, clean, key, result)
             # the run's thread shows what the external agent did: one visible step per tool call (studio/mcp_runs.py)
+            result = _flow.annotate(name, result)  # what this tool needs first, in the answer itself (6 Nov 2026)
             mcp_runs.record(studio.store, actor, name, clean, result, True, int((time.monotonic() - t0) * 1000), model_hint=hint)
             images = result.pop("_mcp_images", None) if isinstance(result, dict) else None  # get_media_preview's stills
             content = [{"type": "text", "text": json.dumps(result, indent=1, default=str)}]
@@ -564,9 +594,14 @@ def handle(studio: Studio, actor: Actor, msg: dict, registry_only: bool = False)
             return ok({"content": content, "structuredContent": result if isinstance(result, dict) else {"items": result}, "isError": False})
         except (ActionError, BufferError) as e:
             mcp_runs.record(studio.store, actor, name, clean, None, False, int((time.monotonic() - t0) * 1000), str(e), model_hint=hint)
-            # the HTTP status the same call answers over REST (400 bad input, 404 not yours or missing), so an app can tell
+            # the HTTP status the same call answers over REST (400 bad input, 404 not yours or missing), so an app can tell;
+            # a StepError adds its code, the missing step and the next steps (studio/mcp_flow.py)
+            data = getattr(e, "data", None)
+            extra = {k: v for k, v in data.items() if k not in ("error", "status")} if isinstance(data, dict) else {}
+            if name in _flow.PREREQS:
+                extra.setdefault("prerequisites", _flow.PREREQS[name])
             return ok({"content": [{"type": "text", "text": str(e)}], "isError": True,
-                       "structuredContent": {"error": str(e), "status": int(getattr(e, "status", 400) or 400)}})
+                       "structuredContent": {"error": str(e), "status": int(getattr(e, "status", 400) or 400), **extra}})
         finally:
             brain_llm.client_brain_end(tok)
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"Method not found: {method}"}}

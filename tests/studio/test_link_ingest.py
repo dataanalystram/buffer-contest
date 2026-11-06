@@ -108,7 +108,9 @@ def test_tools_list_and_instructions_send_links_to_the_ingest_tool():
     names = {t["name"] for t in mcp.TOOLS}
     assert "ingest_video_link" in names
     tool = next(t for t in mcp.TOOLS if t["name"] == "ingest_video_link")
-    assert "don't ask them to upload" in tool["description"] and "Inbox → Approvals" in tool["description"]
+    # 6 Nov 2026: One take only (it was "use this whenever the person gives you a video link", so a normal post with a
+    # launch video became a One take); the rights step is unchanged
+    assert tool["description"].startswith("ONE TAKE ONLY") and "Inbox → Approvals" in tool["description"]
     assert "not a social media page" not in next(t for t in mcp.TOOLS if t["name"] == "clips_from_video")["description"]
 
 

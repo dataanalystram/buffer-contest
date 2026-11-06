@@ -114,6 +114,8 @@ that app's paid calls run without asking and each one is written to Activity.
 
 | Tool | Brain | What it does |
 |---|---|---|
+| `get_started` | no model | READ FIRST. The one recommended path for a post (start_post -> research_link / find_video -> render_reel / render_carousel, one `output` per video or slide set -> create_package with `channel_media` -> schedule_package after the person's yes), which tools are not for a post (One take; the deprecated `make_post` brain=external + `post_*` family), the rights step for video links and each flow tool's prerequisites. Read-only. Also as the `make_a_post` prompt and the `huhqueue://workflow/make-a-post` resource. |
+| `delete_drafts` | no model | Buffer drafts THIS app created from its own runs: dry run lists them with a single-use `confirm_token`; the confirm deletes only those still drafts in Buffer (scheduled and sent posts are refused per post). Never lists drafts the person or another app made. |
 | `start_post` | no model | Open ONE post for the person's request (`user_asked: true`) and get its `run_id`. A new request or a new chat is a new run, never limited by count; the same request within 10 minutes returns it (`deduped: true`). With `run_id` (and `format`) it continues that post, e.g. switching a carousel to a reel. |
 | `continue_run` | no model | Join an existing post (run) for a follow-up about the same content: the person's words go in its thread, and `run_id` + `thread_url` come back. Use it after asking the person when a request might belong to the current post; `format` switches the post. A post sent to Buffer or waiting in Approvals answers 409. |
 | `cleanup_agent_drafts` | no model | List the runs and Library items AI apps left (dry run, changes nothing, single-use `confirm_token`); with the token the person OK'd: runs archived, items to the Library Bin (7 days). |
@@ -136,7 +138,7 @@ that app's paid calls run without asking and each one is written to Activity.
 | `list_recent_uploads` | client brain | The newest files the user uploaded, sent from a device or imported from a link (`minutes`, `limit`): `library_id`, `media_token`, `name`, `kind`, `bytes`, `from`, `when`. |
 | `import_from_link` | client brain | A Google Drive, Dropbox, OneDrive / SharePoint or iCloud Drive share link ("anyone with the link"), or any direct https link, streamed into the Library up to the per-file limit. Drive's large-file "Download anyway" page is followed; a sign-in page says how to share the file publicly; folders are refused. |
 | `finish_upload` | client brain | Join the chunks into one Library item: `library_id`, `media_token`, `url`, `kind`, `bytes`. |
-| `library_upload_url` | client brain | Only for a file that is already at a public https URL (up to 40 MB). A cloud-drive share link goes through `import_from_link` (up to the per-file limit). A link that answers with a web page (a sign-in or preview page) is refused with "That link returned a web page … Use create_upload instead …". |
+| `library_upload_url` | client brain | Only for a file that is already at a public https URL (up to 40 MB). A cloud-drive share link goes through `import_from_link` (up to the per-file limit). A link that answers with a web page (a sign-in or preview page) is refused with "That link returned a web page … Use create_upload instead …". A video link that isn't the person's own HuhQueue file takes the rights step first (`needs_user_approval` -> call again with `approval_id`); a link with no video extension that turns out to be a video is held the same way and nothing is saved. A YouTube / Vimeo / X post page answers `wrong_tool` (use `render_reel` / `edit_video` with the url). |
 | `integrations_status` | client brain | Which integrations are connected for this user (Product Hunt, X reader key, image models...) and whether each key last tested OK. |
 
 ### Server AI: HuhQueue's own agent (needs server_ai: true, spends the user's allowance)
@@ -297,7 +299,54 @@ These act on one post run (`run_id`), the same steps HuhQueue's in-app agent tak
 | `post_write_captions` | client brain \* | Write one caption per channel in the brand voice and the ledger's text rules. |
 | `post_x_oembed` | client brain \* | Read an X/Twitter post through the public oEmbed endpoint: author, handle, text, date. |
 
-193 tools in total (from `tools/list`, 6 Nov 2026: +`list_style_presets`, `apply_style_preset`; 5 Nov 2026: 188 plus the three registry tools below; after #94, #96, #97, the One take Bin and thread tools of #107 and #108, `ingest_video_link` of #111, the layout tools of #113 and `list_pending_approvals` / `approve_link_ingest` / `reject_link_ingest`; `test_tools_list_parity_and_page_context` checks the count matches). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
+195 tools in total (from `tools/list`; 6 Nov 2026: +`get_started`, +`delete_drafts`, +`list_style_presets`, +`apply_style_preset`; 5 Nov 2026: 188 plus the three registry tools below; after #94, #96, #97, the One take Bin and thread tools of #107 and #108, `ingest_video_link` of #111, the layout tools of #113 and `list_pending_approvals` / `approve_link_ingest` / `reject_link_ingest`; `test_tools_list_parity_and_page_context` checks the count matches). Tools added since the tables were last filled in carry their full description in `tools/list` itself: `create_brand_kit`, `list_brand_kits`, `set_active_brand_kit`, `preview_brand_kit`, `preview_brand_themes`, `extract_brand`, `list_sample_brands`, `schedule_sample_brand_story`, `update_template`, `delete_template`, `set_cover`, `find_video`, `list_sources`, `refresh_sources`, `set_source_enabled`, and the run steps `post_create_template`, `post_edit_video`, `post_find_brand_assets`, `post_find_video`, `post_hero_edit`, `post_render_editorial`, `post_research_company`, `post_set_cover`, `post_write_editorial`.
+
+## MCP reliability fixes (owner report, 6 Nov 2026)
+
+Claude made ONE post for three channels from a topic and a launch video, and it went wrong. What changed (`studio/mcp_flow.py`,
+tests in `tests/studio/test_mcp_reliability_nov6.py` and the end-to-end pass `tests/studio/test_mcp_flow_e2e_nov6.py`):
+
+1. **One recommended path.** `get_started` (tool, prompt `make_a_post`, resource `huhqueue://workflow/make-a-post`). The flow
+   tools' descriptions say when to use them and list their prerequisites, and every answer of a flow tool carries
+   `prerequisites`. `ingest_video_link`, `clips_from_video` and `split_video` say ONE TAKE ONLY; `ingest_video_link` with a
+   `run_id` answers `wrong_tool`. `make_post` and the `post_*` tools are marked deprecated for AI apps (they still work).
+2. **Per-channel media.** `create_package(run_id, captions, channel_media={channel: {output | media_urls, cover, format}})`
+   holds a different video and cover per channel in ONE run. With `run_id`, only the channels named change; the others keep
+   their packages (`replace_all: true` drops them). `youtube: {title, categoryId, madeForKids}` sets the YouTube fields.
+3. **No silent fallback.** `format: reel` without a video is `reel_needs_video`; `post_render_reel` for an AI app is a video or
+   an error (`no_video`, `reel_failed`, `produced: nothing`) with next steps (`create_send_code`); a failed `render_status`
+   carries `code: render_failed` and `next_steps`. Errors carry `structuredContent.code`, `next_steps`, `missing_step`.
+4. **Probed before "downloadable".** `find_video` / `research_link` (and `post_find_video`) say `found` only after a probe on
+   the video worker (`link_probe` job: yt-dlp metadata with the platform's own extractor and the first 64 KB of the stream,
+   through netguard; direct files: the first 64 KB here). Otherwise `found_not_downloadable` with `probe.reason`, the upload
+   ask and `next_steps`. Results are kept 6 h per person and link; waiting is capped by `HQ_PROBE_WAIT` (default 20 s).
+   A **cold worker** that hasn't answered within ~20 s gives `probe.status: pending` (with `probe.job_id`): the answer
+   is still `found_not_downloadable`, but the next steps say to poll `render_status(job_id)` or call `find_video`
+   again with the same url (it reuses the check) before asking the person for the file. Only `probe.status: failed` is
+   a verdict.
+5. **Prerequisites run themselves.** `post_*` render steps on a make_post run auto-run `read_url` then `extract_facts` when
+   missing (`auto_ran`), or answer `missing_prerequisite` with the exact step.
+6. **`replace_channel_media` on every run type**: start_post / create_package runs take `media_token` in place (only that
+   channel; versions kept for Undo); make_post runs as before; One take runs answer `wrong_run_type` (use `adjust_clip`).
+7. **One rights step for every video link.** `render_reel` / `edit_video` with a link, the `post_*` video steps and One take
+   and `library_upload_url` with a video link all go through `consent.rights_for_link` (the same `needs_user_approval` -> `approval_id`); an app's own
+   `rights_confirmed` doesn't count for a link. Answers carry `rights.basis` (approved, app_relayed, auto_approved). An
+   approval stays usable for a day from the person's DECISION (approval 136 was approved 23 h after the ask and expired 70
+   minutes later); `list_pending_approvals` also returns `approved_waiting`, and approving says so in the post's thread.
+   The Taan ingest went ahead because the person's own "Auto-approve video links" setting was on (since 6 Nov 09:20 UTC);
+   that is still honoured, and now said in the answer.
+8. **One request = one run.** A second `start_post` within 5 minutes of the app's open run (without `new_request`) gets a
+   `warning` naming the open run; the run is never refused.
+9. **Token policy up front.** A drafts-only token asking for schedule / queue / now (preview_post, submit_post,
+   schedule_package) fails before any Buffer call with `policy_drafts_only`, the `token_policy` and the settings link.
+   `preview_post`, `describe_tool` and `initialize` state the policy. The owner switches it in Settings -> Apps with access
+   (a select per app, a confirm step, audited as `set_agent_policy`; PATCH `/api/agent-tokens/{id}` `{policy, confirm: true}`,
+   humans only).
+10. **No duplicate drafts.** `schedule_package(mode=draft)` from an app finds an earlier run of the same app with a Buffer
+   draft of the same story on that channel and answers `duplicate_draft`; `on_duplicate: 'update'` edits that draft
+   (editPost), `'new'` makes a second one. `post_save_buffer_drafts` (the deprecated family) runs the same guard per
+   channel (`on_duplicate` on that tool too). `delete_drafts` removes only this app's drafts.
+11. **Never a past dueAt**: `due_at_past` on preview, and again right before Buffer for a confirm that aged past its time.
 
 ## Tool registry: search_tools, describe_tool, call_tool (5 Nov 2026)
 
