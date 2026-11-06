@@ -520,7 +520,7 @@ function pkgCovers(p, sent) {
 // what a saved post says, once, on its card (owner, 6 Nov 2026, B3/B7): "Saved to Buffer as draft · <id>" with a link to
 // the channel in Buffer; nothing reaches Buffer before the person presses the button on this card
 function sentLine(p) {
-  if (p.status === "pending_approval") return "Waiting in Approvals";
+  if (p.status === "pending_approval") return "Waiting in Approvals" + (p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : "");
   const s = p.sent || {}, id = s.buffer_post_id ? String(s.buffer_post_id) : "";
   const href = `https://publish.buffer.com/channels/${encodeURIComponent(p.channel_id || "")}/schedule`;
   return `${s.mode === "draft" ? "Saved to Buffer as draft (not posted)" : "In Buffer"}${id ? ` · <code data-testid="pkg-buffer-id">${esc(id)}</code>` : ""}`

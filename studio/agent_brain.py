@@ -632,7 +632,9 @@ class Brain:
             return self.h.run(a, rid)
         if res.get("chat") and not res.get("packages"):
             return self._restart_from_chat(a, rid, run, text)
-        if intent.small_talk(text):
+        pending = bool(res.get("ask") or res.get("conflicts") or (res.get("recap") or {}).get("awaiting_rights") or
+                       (res.get("rights_question") and not (res.get("rights") or {}).get("mode")))
+        if intent.small_talk(text) and not pending:
             return self._answer(a, rid, run, "I'm here. Tell me what to change on the post, for example “make the hook "
                                              "stronger”, or set an exact caption: set the LinkedIn caption to “your text”.")
         routed = self._route_reply(a, rid, run, text)
@@ -1697,9 +1699,10 @@ class Brain:
                  "Check brand rules, clipping and the source"]
         # nothing goes to Buffer from the agent (owner, 6 Nov 2026): the person presses the button on the review card
         query = ""
-        if not it["source_url"] and not from_upload and not up:
-            query = (inp.get("intent") or {}).get("query") if inp.get("intent") else intent.search_query(it["topic"] or inp["prompt"])
-            if not query:  # only instruction words: never searched (live bug: "exact only, do not change single character")
+        if not it["source_url"] and not from_upload:
+            query = ((inp.get("intent") or {}).get("query") if inp.get("intent") and not up else "") or \
+                intent.search_query(it["topic"] or ("" if up else inp["prompt"]))
+            if not query and not up:  # only instruction words: never searched (live bug: "exact only, do not change ...")
                 run["result"]["chat"] = {"kind": "ask"}
                 self.h._save(rid, run["steps"], run["result"])
                 return self._say(a, rid, intent.ASK_REPLY)

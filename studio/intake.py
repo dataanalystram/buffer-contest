@@ -144,8 +144,11 @@ def topic_of(prompt: str, rules: list[str] | None = None) -> str:
 
 
 # a clause that tells the app what to do (it starts with an order): never the person's words about their content
-IMPERATIVE_RE = re.compile(r"^(?:please\s+|pls\s+|can you\s+|could you\s+)?(?:use|post|put|make|create|add|attach|upload|write|"
-                           r"share|publish|schedule|send|keep|turn|give|generate|do not|don'?t|with)\b", re.I)
+IMPERATIVE_RE = re.compile(
+    r"^(?:please\s+|pls\s+|can you\s+|could you\s+)?(?:"
+    r"(?:use|post|put|attach|upload|publish|schedule|send|share|make|create|write|add)\s+(?:it|this|that|them|these|the|my|our|a|an)\b|"
+    r"(?:do not|don'?t)\s+(?:change|edit|add|alter|rewrite|include|use)\b|"
+    r"with\s+(?:a|an|the)\s+(?:short\s+|long\s+|simple\s+)?(?:caption|headline|title|text)\b)", re.I)
 
 
 def describe(prompt: str, rules: list[str] | None = None) -> str:

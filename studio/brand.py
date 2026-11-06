@@ -433,10 +433,10 @@ def content_check(chk: dict, caption: str, headlines: list[str], render_meta: di
     """Two checks every post gets on top of the ledger (owner bug B2, 6 Nov 2026: a photo carried the request as its
     headline over a dark gradient and the check still said "every check passes"): no instruction text on the image or
     in the caption, and no gradient overlay. An exact caption the person gave is theirs: only the image is checked."""
-    from .headline import looks_like_instruction  # headline imports intake; kept lazy so brand stays a leaf module
+    from .headline import looks_like_instruction, request_wording  # lazy: headline imports intake
     results = list(chk.get("results") or [])
     bad = [h for h in headlines if h and looks_like_instruction(h, prompt)]
-    cap_bad = (not exact) and bool(caption) and looks_like_instruction(caption.split("\n", 1)[0], prompt)
+    cap_bad = (not exact) and bool(caption) and request_wording(caption.split("\n", 1)[0])
     results.append({"rule_id": None, "rule": "No instruction text on the post", "kind": "content", "pass": not (bad or cap_bad),
                     "why": (f"“{(bad[0] if bad else caption)[:60]}” reads like your request, not the post") if bad or cap_bad else ""})
     grad = bool((render_meta or {}).get("gradient"))

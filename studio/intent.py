@@ -52,6 +52,8 @@ CONSTRAINT_WORDS = re.compile(
     r"(?: (?:a|any|the))?(?: single)?(?: [a-z]+)?|no (?:extra|other|additional) [a-z]+|"
     r"exact(?:ly)?|verbatim|word[- ]for[- ]word|as[- ]is|unchanged|only|just|single|character|characters|"
     r"hash ?tags?|links?|urls?|nothing else|text|caption|captions|draft|drafts|please|no)\b", re.I)
+CAPTION_PHRASE = re.compile(r"\b(?:post|use|publish|share|put|set)\s+(?:this|that|the|my|following|this\s+exact)?\s*(?:exact\s+)?"
+                            r"(?:caption|text)\b", re.I)
 QUOTES = (('"', '"'), ("“", "”"), ("„", "“"), ("«", "»"), ("‘", "’"), ("「", "」"))
 CAPTION_WORD = re.compile(r"\b(?:captions?|text|copy|wording|words|message)\b", re.I)
 EDIT_VERB = re.compile(r"\b(?:replace|set|change|edit|update|make|use|swap|put|switch|rewrite)\b", re.I)
@@ -105,7 +107,8 @@ def verbatim(text: str) -> str:
     if not q:
         return ""
     outside = (text or "").replace(q, " ")
-    if EXACT.search(outside) or (re.search(r"\bcaptions?\b", outside, re.I) and re.search(r"\b(?:post|use|publish|share|put|set)\b", outside, re.I)):
+    before = (text or "")[:max(0, (text or "").find(q) - 1)]
+    if EXACT.search(outside) or CAPTION_PHRASE.search(outside) or (re.search(r":\s*$", before) and re.search(r"\bcaptions?\b", before, re.I)):
         return q
     return ""
 
@@ -119,7 +122,10 @@ def caption_edit(text: str) -> str:
         return ""
     q = quoted(t)
     if q:
-        return q
+        before = t[:max(0, t.find(q) - 1)]
+        if EXACT.search(t.replace(q, " ")) or re.search(r"(?:\bto|\bwith|\bas|\binto|\bsay|\bread|:)\s*$", before, re.I):
+            return q
+        return ""
     m = COLON_TAIL.search(t)
     if m and (EXACT.search(t[:m.start("t")]) or CAPTION_TO.search(t)):
         return m.group("t").strip()

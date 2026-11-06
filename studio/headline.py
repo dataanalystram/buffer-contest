@@ -38,6 +38,12 @@ IMPERATIVE = re.compile(r"^\s*(?:please\s+|pls\s+|can you\s+|could you\s+)?(?:us
                         r"write|share|publish|schedule|send|replace|set|edit|change|don'?t|do not)\b", re.I)
 
 
+def request_wording(text: str) -> bool:
+    """Wording only a request uses (no prompt comparison): safe on captions, which may echo the prompt's topic."""
+    t = strip_urls(text)
+    return bool(t) and bool(INSTRUCTION.search(t) or REQUEST_ONLY.search(t))
+
+
 def looks_like_instruction(text: str, prompt: str = "") -> bool:
     """True for a headline (or image text) that is the request, not words about the content: request-only wording
     anywhere, or an order ("Use the attached ...") whose opening words are copied from the person's prompt."""

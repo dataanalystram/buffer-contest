@@ -206,3 +206,43 @@ def test_describe_drops_instruction_clauses():
     d = intake.describe("Use the attached uploaded image as the media and post it on Instagram only with a short caption "
                         "about our new studio opening on Monday")
     assert "attached" not in d.lower() and "studio opening on Monday" in d
+
+
+# ---------------------------------------------------------------- CodeRabbit round 1
+def test_quoted_name_is_not_an_exact_caption_and_a_quoted_word_is_not_an_edit():
+    assert intent.classify('Write a LinkedIn caption about "Project Atlas" and post it')["kind"] == "post"
+    assert intent.caption_edit('make sure the LinkedIn caption never says "game-changer"') == ""
+    assert intent.verbatim('Post this caption on LinkedIn: "Hello"') == "Hello"
+
+
+def test_describe_keeps_content_that_starts_with_a_verb():
+    assert "grand opening Monday" in intake.describe("Don't miss our grand opening Monday, post it on Instagram")
+    assert "SAVE10" in intake.describe("Use code SAVE10 for 20% off")
+
+
+def test_caption_check_ignores_prompt_echoes():
+    base = {"pass": True, "results": [], "failed": [], "summary": "Passes every rule"}
+    ok = brand.content_check(base, "You can now build apps in minutes", [], {}, "you can do that, make a post about it")
+    assert ok["pass"], ok
+
+
+def test_ok_still_answers_a_pending_question(owner):
+    rid = owner.post("/api/agent/runs", json={"prompt": 'Post this exact caption on LinkedIn only: "v1"', "channel_ids": ["ch_li"]}).json()["id"]
+    st = owner.app.state.store
+    import json as _j
+    row = st.q("SELECT result FROM agent_runs WHERE id=?", (rid,))[0]
+    res = _j.loads(row["result"]); res["rights_question"] = "Can I repost it with credit?"
+    st.x("UPDATE agent_runs SET result=? WHERE id=?", (_j.dumps(res), rid))
+    owner.post(f"/api/agent/runs/{rid}/messages", json={"text": "ok"})
+    last = _run(owner, rid)["result"]["thread"][-1]["text"]
+    assert not last.startswith("I'm here.")
+
+
+def test_upload_with_research_searches_its_topic(owner, monkeypatch):
+    seen = []
+    monkeypatch.setattr(sources, "search", lambda q, *a, **k: seen.append(q) or [dict(STORY)])
+    data = "data:image/jpeg;base64," + base64.b64encode(jpeg(1080, 1350)).decode()
+    up = owner.post("/api/media", json={"name": "me.jpg", "data": data}).json()
+    owner.post("/api/agent/runs", json={"prompt": "research the OpenAI developer conference and post it on LinkedIn",
+                                        "media_token": up["token"], "channel_ids": ["ch_li"]})
+    assert not seen or all(q.strip() for q in seen)
