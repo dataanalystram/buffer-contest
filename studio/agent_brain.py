@@ -35,7 +35,7 @@ KEYFRAME_B64_MAX = 400_000  # one 768 px JPEG frame as a data URL is ~60-150 KB
 _rlock = threading.Lock()
 _stop_req: set[int] = set()  # runs the person asked to stop: the next step boundary stops them (Brain.stop)
 STOPPED = "Stopped, as you asked. What's made so far is kept. Press Resume to carry on."
-BOOT = uuid.uuid4().hex[:12]  # this process: a run stamped with another process's id whose heartbeat stopped was cut off
+from .procid import BOOT  # noqa: E402  this process: a run stamped with another process's id whose heartbeat stopped was cut off
 HEARTBEAT_S = int(os.environ.get("HQ_PROC_HEARTBEAT", "20"))
 ORPHAN_S = int(os.environ.get("HQ_PROC_ORPHAN", "90"))  # no heartbeat this long -> that process is gone (a deploy, a crash)
 INTERRUPTED = ("The server restarted while I was working on this post{at}, so I stopped. Press Resume and I'll pick up from "

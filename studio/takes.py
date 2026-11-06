@@ -369,7 +369,7 @@ class Takes(TakeBin, TakeControl):
     def _queue(self, a: Actor, rid: int, spec: dict, step: str, detail: str) -> None:
         spec = {**spec, "take": rid}
         if self._mode() == "local":  # an in-process job: which process runs it (take_control.recover_orphans re-runs it after a restart)
-            from .agent_brain import BOOT
+            from .procid import BOOT
             spec["_boot"] = BOOT
         jid = self.store.x("INSERT INTO render_jobs(user_id,run_id,spec,status,created,updated) VALUES(?,?,?,?,?,?)",
                            (a.uid, rid, json.dumps(spec), "queued", _now(), _now()))
