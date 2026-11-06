@@ -347,6 +347,49 @@ def _img_bytes(h, url: str) -> bytes | None:
     return h._fetch_bytes(url, 8 * 1024 * 1024)
 
 
+def _img_why(h, url: str) -> tuple[bytes | None, str]:
+    """(bytes, "") or (None, why) for a slide picture: our own /m/ link, or a public URL through netguard
+    (House._fetch_bytes_why: not_found, forbidden, http_<code>, too_large, private, unreachable, bad_url)."""
+    if not url:
+        return None, ""
+    base = h.s.public_url.rstrip("/") + "/m/"
+    if url.startswith(base):
+        m = h.get_media(url[len(base):])
+        return (m["data"], "") if m else (None, "not_found")
+    from . import house as house_mod
+    house_mod._FETCH_WHY.v = ""
+    data = h._fetch_bytes(url, 8 * 1024 * 1024)  # -> House._fetch_bytes_why; the reason is left in _FETCH_WHY.v
+    return data, ("" if data else (getattr(house_mod._FETCH_WHY, "v", "") or "unreachable"))
+
+
+_WHY_SAY = {"not_found": "the link answered 404 (not found)", "forbidden": "the site refused it (401/403: private or sign-in only)",
+            "too_large": "the image is over 8 MB", "private": "the address is private or not allowed",
+            "unreachable": "the site couldn't be reached", "bad_url": "it isn't a public http(s) link",
+            "not_an_image": "the file isn't an image we can open"}
+
+
+def _slide_pictures(h, slides) -> tuple[list, list[dict]]:
+    """One PIL picture (or None) per slide, and image_problems for each picture that could not be used (never silent)."""
+    from PIL import Image
+    out, problems = [], []
+    for i, s in enumerate(slides):
+        url = str(s.get("image") or "") if isinstance(s.get("image"), str) else ""
+        im = None
+        if url:
+            data, why = _img_why(h, url)
+            if data:
+                try:
+                    im = Image.open(io.BytesIO(data)).convert("RGB")
+                except Exception:  # noqa: BLE001  (any decode error: not an image, truncated, too many pixels)
+                    why = "not_an_image"
+            if im is None:
+                why = why or "unreachable"
+                problems.append({"slide": i + 1, "url": url[:300], "reason": why,
+                                 "say": f"Slide {i + 1}'s image wasn't used: {_WHY_SAY.get(why, why.replace('_', ' '))}."})
+        out.append(im)
+    return out, problems
+
+
 def _keep_image(h, a: Actor, im, name: str, meta: dict) -> dict:
     from . import templates
     tok = h.put_media(a, templates.jpeg(im), name, kind="render", meta={"type": "photo", "width": im.width, "height": im.height, **meta})
@@ -600,33 +643,39 @@ def _carousel_editorial(h, a, slides, ratio, follow_line, keep_case=()):
     from PIL import Image
     b = brand_routes.attach(h)[0].brand_obj(a)
     cov = slides[0]
-    hero = _img_bytes(h, cov.get("image") or "")
-    hero_im = Image.open(io.BytesIO(hero)).convert("RGB") if hero else None
-    band, sl = None, []
-    for s in slides[1:]:
-        img = _img_bytes(h, s.get("image") or "") if band is None and s.get("image") else None
-        if img:
-            band = Image.open(io.BytesIO(img)).convert("RGB")
+    pics, img_problems = _slide_pictures(h, slides)  # every slide's own picture (6 Nov 2026: only the first one was used)
+    hero_im, pictures = pics[0], pics[1:]
+    sl = []
+    for s, im in zip(slides[1:], pictures):
         sl.append({"eyebrow": s.get("eyebrow", ""), "blocks": [{"head": s.get("headline", ""), "body": s.get("body", "")}],
                    "accent": [s["accent_word"]] if s.get("accent_word") else [], "note": s.get("footnote", ""),
-                   "image": bool(s.get("image")) and bool(img)})
+                   "image": im is not None})
     spec = {"eyebrow": cov.get("eyebrow", ""), "headline": cov.get("headline", ""), "dek": cov.get("body", ""),
             "accent": [cov["accent_word"]] if cov.get("accent_word") else [], "slides": sl, "follow_line": follow_line or "",
             "keep_case": [str(w) for w in keep_case or [] if isinstance(w, str)][:20]}
     problems = list(editorial.check_spec(spec)) if hasattr(editorial, "check_spec") else []
-    ims, fit = editorial.render(b, spec, hero=hero_im, band=band, ratio=ratio)
-    return ims, problems + list(getattr(fit, "problems", []) or []), "editorial_story"
+    ims, fit = editorial.render(b, spec, hero=hero_im, ratio=ratio, pictures=pictures)
+    return ims, problems + list(getattr(fit, "problems", []) or []), "editorial_story", img_problems
 
 
 def _carousel_text(h, a, slides, ratio):
     from . import brand_routes, templates
     b = brand_routes.attach(h)[0].brand_obj(a)
     cov = slides[0]
+    raw, img_problems = [], []
+    for i, s in enumerate(slides):
+        url = str(s.get("image") or "") if isinstance(s.get("image"), str) else ""
+        data, why = _img_why(h, url)
+        raw.append(data)
+        if url and not data:
+            why = why or "unreachable"
+            img_problems.append({"slide": i + 1, "url": url[:300], "reason": why,
+                                 "say": f"Slide {i + 1}'s image wasn't used: {_WHY_SAY.get(why, why.replace('_', ' '))}."})
     data = {"title": cov.get("headline", ""), "accent_words": [cov["accent_word"]] if cov.get("accent_word") else None,
-            "sub": cov.get("body", ""), "hero": _img_bytes(h, cov.get("image") or ""),
+            "sub": cov.get("body", ""), "hero": raw[0],
             "slides": [{"title": s.get("headline", ""), "text": " ".join(x for x in (s.get("body", ""), s.get("footnote", "")) if x),
-                        "image": _img_bytes(h, s.get("image") or "")} for s in slides[1:]]}
-    return templates.slides("text_slides", data, b, ratio, max_slides=10), [], "text_slides"
+                        "image": im} for s, im in zip(slides[1:], raw[1:])]}
+    return templates.slides("text_slides", data, b, ratio, max_slides=10), [], "text_slides", img_problems
 
 
 def t_render_carousel(studio, a, args):
@@ -638,15 +687,15 @@ def t_render_carousel(studio, a, args):
         raise ActionError("Give at least a cover and one content slide (slides[0] is the cover).")
     ratio = args.get("ratio") if args.get("ratio") in ("4:5", "1:1", "9:16") else "4:5"
     tpl = str(args.get("template") or "editorial")
-    ims, problems, used = None, [], ""
+    ims, problems, used, img_problems = None, [], "", []
     if tpl in ("editorial", "editorial_story"):
         try:
-            ims, problems, used = _carousel_editorial(h, a, slides, ratio, args.get("follow_line"),
-                                                          args.get("keep_case") if isinstance(args.get("keep_case"), list) else ())
+            ims, problems, used, img_problems = _carousel_editorial(
+                h, a, slides, ratio, args.get("follow_line"), args.get("keep_case") if isinstance(args.get("keep_case"), list) else ())
         except ImportError:
             ims = None
     if ims is None:
-        ims, problems, used = _carousel_text(h, a, slides, ratio)
+        ims, problems, used, img_problems = _carousel_text(h, a, slides, ratio)
     rid = _run_arg(args)
     extra = {"template": used, "ratio": ratio, **({"run_id": rid} if rid else {})}
     media = [_keep_image(h, a, im, f"slide{i + 1}.jpg", extra) for i, im in enumerate(ims)]
@@ -657,7 +706,7 @@ def t_render_carousel(studio, a, args):
     # without run_id the slides stay run media until create_package stages them (no "Carousel (N slides)" per retry)
     return {"template": used, "ratio": ratio, "slides": len(media), "media_urls": [m["url"] for m in media],
             "media_tokens": [m["token"] for m in media], "library_id": lib, "run_id": rid, **({"output": slot} if rid else {}),
-            "fit_problems": problems, "spent_usd": 0,
+            "fit_problems": problems, "image_problems": img_problems, "spent_usd": 0,
             "next": ("Fix any fit_problems by writing shorter text and render again with the same run_id (it replaces these "
                      "slides); then brand_check your caption and create_package(run_id, captions, media_urls)."
                      if rid else "Start the post with start_post and pass its run_id next time. Fix any fit_problems by writing "
