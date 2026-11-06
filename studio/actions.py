@@ -251,10 +251,9 @@ class Studio:
 
     def _media_path(self, url: str):
         """The local copy of our own /m/ file (studio/mediacache.py), so preflight probes it from disk; None otherwise
-        (another host, a sample, the cache off): preflight then loads the bytes as before. Tests that fake media
-        downloads keep using their loader."""
+        (another host, a sample, the cache off): preflight then loads the bytes as before."""
         base = self.s.public_url.rstrip("/") + "/m/"
-        if self.media_loader or not self.house or not url.startswith(base):
+        if not self.house or not url.startswith(base):
             return None
         getp = getattr(self.house, "media_path", None)
         return getp(url[len(base):].split("?")[0]) if getp else None
