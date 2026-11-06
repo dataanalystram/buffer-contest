@@ -473,7 +473,8 @@ function videoName(p, ratio, duration) {
   if (svc === "facebook") return { story: "Story", reel: "Reel" }[o.fb_type] || "Video";
   if (svc === "youtube") {
     const [w, h] = String(ratio || "").split(":").map(Number), vertical = ratio ? w / h <= 1 : true;
-    return vertical && (!duration || duration <= 180) ? "Short" : "Video";
+    const secs = Number(duration) || 0;  // an unreadable length doesn't decide it (same as video_names.py)
+    return vertical && (!secs || secs <= 180) ? "Short" : "Video";
   }
   return VIDEO_NAMES[svc] || "Video";
 }
