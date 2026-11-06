@@ -33,9 +33,12 @@ def test_focus_box_crops_the_active_region_at_a_readable_size():
     assert 1064 / w >= 1.4                                         # UI shown at >= 1.4x (fit shows it at 0.77x)
     assert x <= 200 / 320 * 1376 and x + w >= 300 / 320 * 1376     # covers the active column
     assert 0 <= y and y + h <= 744 and x + w <= 1376 and w % 2 == 0 and h % 2 == 0
-    # content narrower than the crop sits in its middle, never against an edge
-    cx = (x + w / 2) / 1376 * 320
-    assert abs(cx - 250) <= 8
+    # a thin full-height line (a scrollbar) at the edge doesn't pull the crop off the content
+    bar = [g.copy() for g in _screen_thumbs()]
+    for g in bar:
+        g[:, 316:318] = 60
+    bx, _, bw, _ = screen.focus_box(bar, 1376, 744)
+    assert bx <= 200 / 320 * 1376 and bx + bw >= 300 / 320 * 1376
     assert screen.focus_box([], 1376, 744) is None
     assert screen.focus_box(_screen_thumbs(), 700, 400) is None     # a small screen: nearly all of it, plain fit
 
