@@ -138,6 +138,7 @@ def test_free_drafter_writes_in_the_preset_shape(pid, ti):
 
 
 # ------------------------------------------------------------------------------------------------ B) provenance
+ASKED = {"user_asked": True, "reason": "the person asked for a new template"}
 def test_template_provenance_built_in_you_and_mcp_with_and_without_a_model(human):
     c = human
     lst = c.get("/api/templates").json()["templates"]
@@ -147,12 +148,12 @@ def test_template_provenance_built_in_you_and_mcp_with_and_without_a_model(human
     assert mine["provenance"] == {"source": "user", "client": "", "model": "", "label": "Created by you"}
     tok = agent_token(c, policy="draft")
     r = c.post("/mcp", headers={"Authorization": f"Bearer {tok}"}, json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-        "name": "create_template", "arguments": {**body, "name": "Launch note"}, "_meta": {"model": "claude-opus-4-1"}}}).json()
+        "name": "create_template", "arguments": {**body, "name": "Launch note", **ASKED}, "_meta": {"model": "claude-opus-4-1"}}}).json()
     made = json.loads(r["result"]["content"][0]["text"])
     assert made["provenance"]["source"] == "mcp" and made["provenance"]["model"] == "claude-opus-4-1"
     assert made["provenance"]["label"] == f"Created via MCP by {made['provenance']['client']} · claude-opus-4-1"
     assert made["provenance"]["client"]  # the token's app (Claude), never blank
-    _, plain = mcp_call(c, tok, "create_template", {**body, "name": "Hire note"})
+    _, plain = mcp_call(c, tok, "create_template", {**body, "name": "Hire note", **ASKED})
     assert plain["provenance"]["label"].endswith("(model unknown)")
     by = {t["name"]: t for t in c.get("/api/templates").json()["templates"]}
     assert by["Funding note"]["provenance"]["label"] == "Created by you"
