@@ -45,12 +45,12 @@ def _flow(page, base, monkeypatch):
     assert page.get_by_test_id("agent-query").input_value() == ""
     # a late regenerate answer never reopens the old run over a new post
     _open_thread(page, base)
-    real = agent_brain.AgentBrain.reply
+    real = agent_brain.Brain.reply
 
     def slow(self, *a, **k):
         time.sleep(2.5)
         return real(self, *a, **k)
-    monkeypatch.setattr(agent_brain.AgentBrain, "reply", slow)
+    monkeypatch.setattr(agent_brain.Brain, "reply", slow)
     regen = page.get_by_test_id("mp-regenerate")
     regen.scroll_into_view_if_needed()
     regen.click()
@@ -58,7 +58,7 @@ def _flow(page, base, monkeypatch):
     page.evaluate("() => window.hqNewPost('')")
     page.wait_for_timeout(4000)
     _fresh(page)
-    monkeypatch.setattr(agent_brain.AgentBrain, "reply", real)
+    monkeypatch.setattr(agent_brain.Brain, "reply", real)
 
 
 def test_composer_fixes_1280(live, chromium, close_contexts, monkeypatch):  # noqa: F811
