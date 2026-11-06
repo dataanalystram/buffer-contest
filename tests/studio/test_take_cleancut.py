@@ -180,6 +180,11 @@ def test_render_spec_carries_trim_and_only_the_clips_silences():
     assert spec == {"trim_pauses": True, "silences": [[10.0, 11.0]]}
     assert cls._trim_spec({"input": {"style": "take"}}, an, {"start": 0, "end": 5}) == {}   # takes from before: off
     assert cls._trim_spec({"input": {"style": "opus", "trim_pauses": True}}, an, {"start": 0, "end": 5}) == {}
+    # a 3-hour take: a late clip still gets its own silences (no fixed prefix of the list), capped at 500
+    long = {"silences": [[t, t + 0.8] for t in range(0, 10800, 2)]}
+    late = cls._trim_spec(run, long, {"start": 10000.0, "end": 10060.0})["silences"]
+    assert late[0] == [10000, 10000.8] and len(late) == 30
+    assert len(cls._trim_spec(run, long, {"start": 0.0, "end": 10800.0})["silences"]) == 500
 
 
 

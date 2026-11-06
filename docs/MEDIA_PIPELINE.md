@@ -238,7 +238,7 @@ where FFmpeg `silencedetect` agrees there is silence), and filler words go (um /
 stands between pauses or commas, never "like a ..."). A cut never starts or ends inside a kept word. A plan that would
 remove half the span or more is dropped (music, silent screen work), and any failure renders the span untrimmed (fail
 open). The kept stretches are joined with FFmpeg `trim`/`atrim` + `concat` (10 ms fades at each join), and the captions,
-face samples and scene cuts are remapped onto the trimmed timeline. Audio is then normalised two-pass: `loudnorm`
+face samples and scene cuts are remapped onto the trimmed timeline; punch-in emphasis (a word after a pause) is found on the untrimmed words and remapped, so a shortened pause still counts. Audio is then normalised two-pass: `loudnorm`
 measures the span first, and the render applies the linear filter for -14 LUFS integrated / -1 dBTP (one pass when the
 measurement fails). Each clip reports `trimmed_s` (shown as "trimmed X s" on the clip) and `meta.trim`. FFmpeg only: no
 new dependency, no model, no paid API.

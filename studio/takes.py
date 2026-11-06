@@ -686,14 +686,17 @@ class Takes(TakeBin):
             return {}
         s, e = float(c["start"]), float(c["end"])
         sil = []
-        for x in (an.get("silences") or [])[:5000]:
+        all_sil = an.get("silences") if isinstance(an.get("silences"), list) else []
+        for x in all_sil:  # the whole take's list (a late clip's silences sit past any fixed prefix), stop at 500 matches
             try:
                 a, b = float(x[0]), float(x[1])
             except (TypeError, ValueError, IndexError, KeyError):
                 continue
             if b > s and a < e:
                 sil.append([a, b])
-        return {"trim_pauses": True, "silences": sil[:500]}
+                if len(sil) >= 500:
+                    break
+        return {"trim_pauses": True, "silences": sil}
 
     def _render_sample(self, a: Actor, rid: int, c: dict) -> None:
         """Re-render one sample clip from its bundled source window: the same opus-style render as a long-video take, with
