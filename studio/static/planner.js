@@ -10,7 +10,7 @@ const plPhone = () => matchMedia("(max-width:600px)").matches; // week and day b
 const PL_VIEWS = ["week", "month", "day", "list", "board", "grid"];
 const PL_BOARD = [["draft", "Draft"], ["approval", "Needs approval"], ["ready", "Ready to post"], ["scheduled", "Scheduled in Buffer"], ["sent", "Sent"], ["failed", "Failed in Buffer"]];
 const PL_KEY = "hq_planner";
-const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft", failed: "Failed in Buffer", ghost: "Planned clip (not saved yet)" };
+const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft", failed: "Failed in Buffer", ghost: "Planned, not saved yet" };
 const PL_TYPES = { text: "Text", image: "Image", carousel: "Carousel", video: "Video or Reel" };
 const NET_MARK = { twitter: "X", linkedin: "in", instagram: "IG", bluesky: "bs", threads: "@", mastodon: "M", facebook: "f", tiktok: "TT", youtube: "YT", pinterest: "P", googlebusiness: "G" };
 const DOW = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -281,7 +281,7 @@ function plCard(i, where) {
     <span class="pl-thumb">${plThumb(i)}</span>
     <div class="pl-card-body"><div class="pl-meta">${netMark(i.service, i.channel_id)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted nw">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
       <p class="pl-cap">${esc(i.text || "(media only)")}</p>${i.error ? `<p class="pl-err" data-testid="planner-error">${esc(i.error)}</p>` : ""}
-      <div class="pl-foot">${stateChip(i.state)}${i.agent ? `<span class="muted xs">by ${esc(i.agent)}</span>` : ""}<span class="pl-acts">${acts.join("")}</span></div></div></article>`;
+      <div class="pl-foot">${stateChip(i.state)}${i.kind === "ghost" && i.how && i.how !== "draft" ? `<span class="muted xs" data-testid="planner-ghost-how">${i.how === "schedule" ? "will be scheduled" : "goes to your queue"}</span>` : ""}${i.agent ? `<span class="muted xs">by ${esc(i.agent)}</span>` : ""}<span class="pl-acts">${acts.join("")}</span></div></div></article>`;
 }
 function plList(r, byDay) {
   const days = r.days.filter((d) => (byDay[d] || []).length);
@@ -446,7 +446,7 @@ function plWire() {
 }
 function plOpenItem(i) {
   if (!i) return;
-  if (i.kind === "ghost") return toast("A planned clip. Save the plan below to create it as a Buffer draft.");
+  if (i.kind === "ghost") return window.plGhostOpen ? window.plGhostOpen(i) : toast("A planned clip: not saved yet. Save the plan below.");
   if (i.kind === "ready") return plAct("run", i.ref);
   if (i.kind === "approval") return plDialog("reschedule", i);
   if (i.state === "sent") { if (i.link) window.open(safeUrl(i.link), "_blank", "noopener"); else toast("Sent by Buffer. Sent posts can't be moved."); return; }
