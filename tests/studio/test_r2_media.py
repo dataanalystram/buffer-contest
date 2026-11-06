@@ -215,7 +215,7 @@ def test_a_library_range_across_an_r2_chunk_and_a_db_chunk_meters_each_part(app,
     from studio import egress, library, mediacache
     store = app.state.store
     monkeypatch.setattr(library, "CHUNK", 64)
-    item = app.state.house.library.save_bytes(Actor("acc_1"), image_bytes(40, 30), "mixed.png")
+    item = app.state.house.library.save_bytes(Actor("acc_1"), image_bytes(200, 150, "JPEG"), "mixed.jpg")
     iid = item["id"]
     rows = store.q("SELECT n, storage_key FROM library_chunks WHERE item_id=? ORDER BY n", (iid,))
     assert len(rows) >= 3 and all(r["storage_key"] for r in rows)
