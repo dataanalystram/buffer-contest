@@ -400,3 +400,35 @@ chin (fixed layout positions; the faces only steered the crop). Now no overlay i
 
 Layouts, safe-area numbers and the cinematic score are adapted from the owner's own HuhByte pipeline
 (`dataanalystram/Huhbyte.ai`: `code/hb.py`, `code/music/make_cinematic.py`); open-source licences are listed in NOTICE.
+
+### 10.1 One render per clip, and where a link take spends its time (6 Nov 2026, take #91)
+
+Take #91 rendered every clip twice with the same face cover (the re-place moved nothing), sampled YuNet again for the 4:5
+render, and rendered the clips one at a time: ~19 min from the pasted link to ready. Now:
+
+* **Caption level before rendering.** `compose._face_safe_layout` places the overlays at each level in `facesafe.LEVELS`
+  (`full`, then `compact`: one line at 62 % size, ~70 px at 4:5, under the chin) and predicts the QA's number from the
+  face track (`facesafe.predict_cover`: the union of hook box, credit chip and caption block over each face box + 6 %).
+  It renders `full` when that covers <= 2 % of a face, else the level with the lowest prediction.
+* **One encode, one re-place at most.** `longform._face_safe_render` encodes once and runs the QA. On a failed QA it
+  re-places once with the faces the QA saw, one level up, into a side file, and keeps whichever covers less. When the
+  re-place lands on the same spots (`facesafe.placement_sig`), `render_style(skip_sig=...)` returns `skipped` without
+  encoding, and the clip is `needs_review` with that reason. Jev/SubQ (and a flagged 4:5 version) can add
+  `needs_review`; nothing clears it except a new render.
+* **YuNet samples once per clip.** `facesafe.cached_sample` keeps the samples per (file, span, size, fps), deep-copied,
+  so the 4:5 render reuses the 9:16 samples.
+* **Clips in parallel.** `render_worker.render_parallel`: link takes render one clip per 2 vCPUs (`HQ_FFMPEG_THREADS=2`
+  per encode) while ~1.5 GB stays free per clip, at most 3 (`HQ_RENDER_PARALLEL` overrides). One take's own render
+  stays one at a time.
+* **Analysis overlap.** The face track and scene cuts run beside the silences + transcript, and the fetched link is
+  kept in storage while the analysis reads it.
+* **Audio.** AAC at 128 kbps, Instagram's Reels spec (160k measured 142-153 kbps, a warning on every Instagram chip).
+* **Timings.** `GET /api/takes/{id}` → `timings`: `download`, `store_source`, `silences`, `transcribe`, `scenes`,
+  `faces`, `faces_jev`, `total` (analysis wall clock), `moments`, `clips.{id or id@ratio}` (`face_sampling`, `render`,
+  `qa`, `renders`, `captions`, `encode`, `cards`, `audio_mux`, `cover`, `clip_total`, `source_download`,
+  `upload_storage`), `preflight`, `render_job` (queued to done) and `end_to_end` (created to ready). The worker prints
+  the same as `timing:` / `face-safe <ratio>:` lines in its job log.
+* 4:5 is rendered only when a selected channel posts 4:5 (`takes.TAKE_RATIO`: LinkedIn, Threads).
+* **Layout & captions on link takes.** Clips from a link get the dialog too: one framing for the whole clip (Auto,
+  Follow face, Full frame) and the Caption look (Bold pop → opus, Clean lower third → minimal, Two-tone keyword → slam,
+  Typewriter → mono). Split and Screen + face stay One take only (400 with the reason).
