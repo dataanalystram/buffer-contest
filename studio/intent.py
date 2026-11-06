@@ -26,7 +26,7 @@ from . import intake
 
 # a whole message that is small talk or a test: answered in one line, never researched
 SMALL_TALK = re.compile(
-    r"^\s*(?:h+i+|hey+|hello+|hell?o there|yo|hiya|howdy|sup|wassup|good (?:morning|afternoon|evening|night)|"
+    r"^\s*(?:h+i+|hey+|hello+|(?:hi|hey|hello|hiya) (?:there|team|all|everyone)|yo|hiya|howdy|sup|wassup|good (?:morning|afternoon|evening|night)|"
     r"thanks?(?: you| a lot| so much)?|thank u|thx|ty|cheers|ok(?:ay)?|k|cool|nice|great|awesome|got it|"
     r"test(?:ing)?(?: ?(?:test|one two|1 ?2 ?3|\d+))*|ping|hello world|are you (?:there|working|alive)|you there|"
     r"help|what can you do|who are you|\?+|\.+|!+)\s*[.!?]*\s*(?:hq|huhqueue|agent|bot)?\s*[.!?]*\s*$", re.I)
