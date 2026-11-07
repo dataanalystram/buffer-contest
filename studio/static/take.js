@@ -236,7 +236,8 @@ function showTake(t) {
   $("#spreadGo").hidden = sampleOnly; $("#spreadWeek").hidden = sampleOnly; $("#spreadHelp").hidden = sampleOnly;
   $("#spreadSampleNote").hidden = !sampleOnly;
   $("#spreadErr").textContent = "";
-  $("#spreadCount").textContent = `${ready} clip${ready === 1 ? "" : "s"} ready`;
+  const review = clips.filter((c) => c.status === "needs_review").length;
+  $("#spreadCount").textContent = `${ready} clip${ready === 1 ? "" : "s"} ready` + (review ? ` · ${review} need${review === 1 ? "s" : ""} a look` : "");
   if (window.ceRefresh) window.ceRefresh(t);
 }
 // clips in the chosen order; i is the clip's number in the take (c1 = 1), shown on the row and in the editor
@@ -298,9 +299,9 @@ function tkScoreLine(c) {
 const LAYOUT_IC = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/></svg>`;  // Lucide layout-template
 const SCISSORS = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg>`;
 function clipRow(c, n, k) {
-  const placed = (c.placements || []).filter((p) => ["draft", "pending_approval"].includes(p.status));
+  const placed = (c.placements || []).filter((p) => ["draft", "scheduled", "queued", "pending_approval"].includes(p.status));
   const failed = (c.placements || []).filter((p) => p.status === "failed");
-  const st = c.status === "ready" ? "" : c.status === "needs_review" ? `<span class="st queued" data-testid="clip-needs-review" title="${esc(c.review_reason || "")}">Needs review</span> <span class="muted xs" data-testid="clip-review-reason">${esc(c.review_reason || "Text may cover the speaker's face.")}</span>` : c.status === "failed" ? `<span class="st err" data-testid="clip-error">${esc(c.error || "Render failed")}</span>` : `<span class="muted xs" data-testid="clip-rendering"><span class="spin" aria-hidden="true"></span> Rendering…</span>`;
+  const st = c.status === "ready" ? "" : c.status === "needs_review" ? `<span class="st queued" data-testid="clip-needs-review" title="${esc(c.review_reason || "")}">Needs review</span> <span class="muted xs" data-testid="clip-review-reason">${esc(c.review_reason || "Text may cover the speaker's face.")}</span>${T.take && !T.take.sample ? ` <button type="button" class="btn2 xs" data-act="review_ok" data-clip="${esc(c.id)}" data-testid="clip-review-ok">Looks fine, use it</button>` : ""}` : c.status === "failed" ? `<span class="st err" data-testid="clip-error">${esc(c.error || "Render failed")}</span>` : `<span class="muted xs" data-testid="clip-rendering"><span class="spin" aria-hidden="true"></span> Rendering…</span>`;
   return `<li class="clip-row deal" style="--i:${k}" data-testid="clip-card" data-clip="${esc(c.id)}" data-status="${esc(c.status)}">
     <button type="button" class="clip-thumb" data-act="edit" data-clip="${esc(c.id)}" aria-label="Open clip ${n} in Trim and caption" ${c.url ? "" : "disabled"}>${c.cover_url ? `<img src="${esc(c.cover_url)}${c.rendered_at ? "?v=" + Math.round(c.rendered_at) : ""}" alt="" loading="lazy">` : `<span class="spin" aria-hidden="true"></span>`}</button>
     <span class="clip-n" aria-hidden="true">${n}</span>
@@ -312,7 +313,7 @@ function clipRow(c, n, k) {
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
       ${st}${c.rerender_error ? `<span class="st err xs" data-testid="clip-rerender-error">Re-render failed: ${esc(c.rerender_error)} The previous video is kept.</span>` : ""}
       <div class="clip-pf">${pfCompact(c)}</div>
-      ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${p.status === "draft" ? "Buffer draft" : "waiting for approval"}`).join("<br>")}</p>` : ""}
+      ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${{ draft: "Buffer draft", scheduled: "scheduled in Buffer", queued: "in your Buffer queue" }[p.status] || "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
     </div>
     <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button>${T.take && !T.take.sample ? `<button type="button" class="btn2 sm" data-act="layout" data-clip="${esc(c.id)}" data-testid="clip-layout">${LAYOUT_IC}<span>Layout</span></button>` : ""}<a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
@@ -324,6 +325,16 @@ function clipAct(act, id) {
   if (act === "edit" && window.openClipEditor) window.openClipEditor(id);
   if (act === "layout" && window.openClipLayout) window.openClipLayout(id);  // takelayout.js
   if (act === "delete") deleteClip(id);
+  if (act === "review_ok") reviewOk(id);
+}
+// "Looks fine, use it": a person watched a Needs review clip and it's fine, so it counts as ready for the Spread
+async function reviewOk(id) {
+  const rid = T.take.id;
+  try {
+    await api(`/api/takes/${encodeURIComponent(rid)}/clips/${encodeURIComponent(id)}`, { method: "PATCH", body: { review_ok: true } });
+    toast("Clip marked as fine. It's ready to spread.");
+    await tkShowIfOpen(rid);
+  } catch (e) { toast(e.message, 6000); }
 }
 async function deleteClip(id) {
   if (!T.take || !(await hqConfirm("Delete this clip? It moves to the Bin (Library › Bin) for 7 days, then it's removed for good. A Buffer draft already made from it stays in Buffer.", { ok: "Delete clip", danger: true }))) return;
@@ -390,7 +401,8 @@ async function spread(out) {
   document.querySelectorAll("#clipGrid [data-testid=clip-card]").forEach((el) => { const m = el.querySelector(".clip-thumb"); from[el.dataset.clip] = (m || el).getBoundingClientRect(); });
   // ghost items in the Planner, one per placement, in the planned week
   PL.extra = plan.placements.map((p, i) => ({ kind: "ghost", state: "ghost", ref: `ghost:${i}`, when: p.at, text: p.text, service: p.service,
-    channel: p.channel_name, channel_id: p.channel_id, id: `ghost:${i}`, thumb: p.cover_url || "", type: "reel", draggable: false, clip_id: p.clip_id, preflight: p.preflight }));
+    channel: p.channel_name, channel_id: p.channel_id, id: `ghost:${i}`, thumb: p.cover_url || "", type: "reel", draggable: false, clip_id: p.clip_id,
+    preflight: p.preflight, idx: i, how: "draft" }));
   if (!PL.tz) plLoadState();
   PL.view = "week"; PL.date = plan.week_of;
   showTab("planner");   // loads the Planner (same request path as opening the tab)
@@ -423,26 +435,93 @@ async function spread(out) {
   await Promise.allSettled(anims);
   layer.remove();
 }
+// The plan bar (owner, 6 Nov 2026: "what does planned mean, where is it saved"): the cards are a preview until Save; each
+// card opens a small sheet to remove it, move it, or pick how it goes (draft at its time, schedule, or add to the queue)
+const HOW = { draft: "Draft at this time", schedule: "Schedule at this time", queue: "Add to queue" };
+function spreadCounts() {
+  const g = PL.extra.filter((x) => x.kind === "ghost");
+  const n = { draft: 0, schedule: 0, queue: 0 };
+  g.forEach((x) => (n[x.how] += 1));
+  return { all: g.length, ...n, days: new Set(g.filter((x) => x.how !== "queue").map((x) => zoned(new Date(x.when), PL.tz).ymd)).size };
+}
 function showSpreadBar(out) {
-  const bar = $("#plSpread"), plan = out.plan;
-  const days = new Set(plan.placements.map((p) => p.day)).size;
+  const bar = $("#plSpread"), plan = out.plan, n = spreadCounts();
   bar.hidden = false;
-  $("#plSpreadText").innerHTML = `<b>${plan.placements.length} clip post${plan.placements.length === 1 ? "" : "s"} planned</b> across ${days} day${days === 1 ? "" : "s"} in your open posting times`
+  const goes = [n.draft ? `${n.draft} as Buffer draft${n.draft === 1 ? "" : "s"} (not published)` : "",
+    n.schedule ? `${n.schedule} scheduled (publish on their own)` : "", n.queue ? `${n.queue} added to your queue (publish on their own)` : ""].filter(Boolean).join(", ");
+  $("#plSpreadText").innerHTML = `<b>Planned, not saved yet: ${n.all} clip post${n.all === 1 ? "" : "s"}</b> across ${n.days} day${n.days === 1 ? "" : "s"}`
     + (plan.suggested_times ? " (suggested times where a channel has none in Buffer)" : "")
     + (plan.unplaced.length ? ` · ${plan.unplaced.length} without a free slot` : "")
-    + `. ${esc(out.on_confirm[0].toUpperCase() + out.on_confirm.slice(1))}; nothing is published.`;
+    + `. Save sends ${esc(goes || "nothing")}. Click a card to remove it, move it, or change how it goes.`;
+  const save = $("#plSpreadSave");
+  if (save) save.textContent = n.schedule || n.queue ? "Save to Buffer" : "Save as Buffer drafts";
 }
+function ghostSheet() {
+  let d = $("#ghostDialog");
+  if (d) return d;
+  d = document.createElement("dialog");
+  d.id = "ghostDialog"; d.className = "tl-dialog"; d.setAttribute("aria-labelledby", "ghTitle");
+  d.innerHTML = `<form method="dialog" class="tl-form">
+    <header class="tl-head"><h2 id="ghTitle">Planned post</h2><button type="submit" class="btn2 sm" aria-label="Close" data-testid="ghost-close">Close</button></header>
+    <p class="muted xs" id="ghNote"></p>
+    <fieldset class="tl-caps"><legend>How it goes to Buffer</legend><div class="tl-chips" id="ghHow" role="radiogroup" aria-label="How it goes to Buffer"></div></fieldset>
+    <label class="xs" id="ghWhenRow">Time (${esc(PL.tz || "")})<br><input type="datetime-local" id="ghWhen" data-testid="ghost-when"></label>
+    <p class="st err xs" id="ghErr" role="alert" hidden></p>
+    <footer class="tl-foot" style="justify-content:space-between"><button type="button" class="link danger" id="ghRemove" data-testid="ghost-remove">Remove from plan</button><button type="button" class="btn sm" id="ghDone" data-testid="ghost-done">Done</button></footer>
+  </form>`;
+  document.body.appendChild(d);
+  return d;
+}
+window.plGhostOpen = function (g) {
+  if (!g || !T.plan) return;
+  const d = ghostSheet();
+  let how = g.how || "draft";
+  const draw = () => {
+    $("#ghHow").innerHTML = Object.entries(HOW).map(([k, v]) => `<button type="button" role="radio" class="chip sm" data-how="${k}" aria-checked="${how === k}" data-testid="ghost-how-${k}">${esc(v)}</button>`).join("");
+    $("#ghHow").querySelectorAll("[data-how]").forEach((b) => (b.onclick = () => { how = b.dataset.how; draw(); }));
+    $("#ghWhenRow").hidden = how === "queue";
+    $("#ghNote").textContent = `${g.channel || ""} · not saved yet. ${how === "draft" ? "A draft never publishes until you schedule it in Buffer." : how === "schedule" ? "Buffer publishes it at this time." : "Buffer publishes it in your next free queue slot."}`;
+  };
+  $("#ghTitle").textContent = `Planned post · ${netName(g.service)}`;
+  $("#ghWhen").value = toLocalInput(new Date(g.when));
+  $("#ghErr").hidden = true;
+  draw();
+  $("#ghRemove").onclick = () => {
+    PL.extra = PL.extra.filter((x) => x !== g);
+    if (!PL.extra.some((x) => x.kind === "ghost")) { $("#plSpreadCancel").click(); d.close(); return; }
+    d.close(); plDraw(); showSpreadBar(T.plan);
+  };
+  $("#ghDone").onclick = () => {
+    if (how !== "queue") {
+      const v = $("#ghWhen").value, inst = v ? fromLocalInput(v) : null;
+      if (!inst || inst.getTime() < Date.now() + 5 * 60e3) { const e = $("#ghErr"); e.textContent = "Pick a time at least a few minutes from now."; e.hidden = false; return; }
+      if (Math.abs(inst.getTime() - new Date(g.when).getTime()) > 30e3) { g.when = inst.toISOString(); g.moved = true; }
+    }
+    g.how = how;
+    d.close(); plDraw(); showSpreadBar(T.plan);
+  };
+  if (!d.open) d.showModal();
+};
 $("#plSpreadSave").onclick = async () => {
   if (!T.plan) return;
-  const b = $("#plSpreadSave"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Saving drafts…`;
+  const kept = new Set(PL.extra.filter((x) => x.kind === "ghost").map((x) => x.idx));
+  const choices = {}, times = {};
+  T.plan.plan.placements.forEach((_, i) => { if (!kept.has(i)) choices[String(i)] = "skip"; });
+  PL.extra.filter((x) => x.kind === "ghost").forEach((x) => {
+    if (x.how !== "draft") choices[String(x.idx)] = x.how;
+    if (x.moved && x.how !== "queue") times[String(x.idx)] = x.when;
+  });
+  const n = spreadCounts();
+  if ((n.schedule || n.queue) && !(await hqConfirm(`${n.schedule + n.queue} of these posts will publish on their own in Buffer (scheduled or queued). The rest are saved as drafts. Save now?`, { ok: "Save to Buffer" }))) return;
+  const b = $("#plSpreadSave"), label = b.textContent; b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Saving…`;
   try {
-    const out = await api(`/api/takes/${T.take.id}/place`, { method: "POST", body: { confirm_token: T.plan.confirm_token } });
+    const out = await api(`/api/takes/${T.take.id}/place`, { method: "POST", body: { confirm_token: T.plan.confirm_token, choices, times } });
     T.plan = null; PL.extra = []; $("#plSpread").hidden = true;
-    toast(out.failed ? `${out.placed} saved as Buffer drafts, ${out.failed} failed: ${(out.results.find((r) => r.status === "failed") || {}).error || ""}` : out.message, 7000);
+    toast(out.failed ? `${out.placed} saved to Buffer, ${out.failed} failed: ${(out.results.find((r) => r.status === "failed") || {}).error || ""}` : out.message, 7000);
     await loadPlanner(); budget();
     api(`/api/takes/${T.take.id}`).then((t) => (T.take = t)).catch(() => {});
   } catch (e) { toast(e.message, 7000); }
-  finally { b.disabled = false; b.textContent = "Save as Buffer drafts"; }
+  finally { b.disabled = false; b.textContent = label; }
 };
 $("#plSpreadCancel").onclick = () => { T.plan = null; PL.extra = []; $("#plSpread").hidden = true; plDraw(); toast("Plan discarded. Nothing was saved."); };
 

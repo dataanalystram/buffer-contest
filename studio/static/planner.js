@@ -10,7 +10,7 @@ const plPhone = () => matchMedia("(max-width:600px)").matches; // week and day b
 const PL_VIEWS = ["week", "month", "day", "list", "board", "grid"];
 const PL_BOARD = [["draft", "Draft"], ["approval", "Needs approval"], ["ready", "Ready to post"], ["scheduled", "Scheduled in Buffer"], ["sent", "Sent"], ["failed", "Failed in Buffer"]];
 const PL_KEY = "hq_planner";
-const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft", failed: "Failed in Buffer", ghost: "Planned clip (not saved yet)" };
+const PL_STATES = { scheduled: "Scheduled in Buffer", sent: "Sent", approval: "Needs approval", ready: "Ready to post", draft: "Draft", failed: "Failed in Buffer", ghost: "Planned, not saved yet" };
 const PL_TYPES = { text: "Text", image: "Image", carousel: "Carousel", video: "Video or Reel" };
 const NET_MARK = { twitter: "X", linkedin: "in", instagram: "IG", bluesky: "bs", threads: "@", mastodon: "M", facebook: "f", tiktok: "TT", youtube: "YT", pinterest: "P", googlebusiness: "G" };
 const DOW = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -281,7 +281,7 @@ function plCard(i, where) {
     <span class="pl-thumb">${plThumb(i)}</span>
     <div class="pl-card-body"><div class="pl-meta">${netMark(i.service, i.channel_id)}<b>${esc(i.channel || netName(i.service))}</b><span class="muted nw">${esc(netName(i.service))}</span><span class="pl-time">${esc(plWhen(i))}</span></div>
       <p class="pl-cap">${esc(i.text || "(media only)")}</p>${i.error ? `<p class="pl-err" data-testid="planner-error">${esc(i.error)}</p>` : ""}
-      <div class="pl-foot">${stateChip(i.state)}${i.agent ? `<span class="muted xs">by ${esc(i.agent)}</span>` : ""}<span class="pl-acts">${acts.join("")}</span></div></div></article>`;
+      <div class="pl-foot">${stateChip(i.state)}${i.kind === "ghost" && i.how && i.how !== "draft" ? `<span class="muted xs" data-testid="planner-ghost-how">${i.how === "schedule" ? "will be scheduled" : "goes to your queue"}</span>` : ""}${i.agent ? `<span class="muted xs">by ${esc(i.agent)}</span>` : ""}<span class="pl-acts">${acts.join("")}</span></div></div></article>`;
 }
 function plList(r, byDay) {
   const days = r.days.filter((d) => (byDay[d] || []).length);
@@ -299,7 +299,7 @@ function plAgenda(r, byDay) {
       .filter((s) => !items.some((i) => i.channel_id === s.ch && i.z.h === s.h && i.z.mi === s.mi)).sort((a, b) => a.h - b.h || a.mi - b.mi).slice(0, 4);
     return `<section class="pl-day" data-day="${d}"><h3><span>${d === t ? "Today" : esc(dayLabel(d, { weekday: "long" }))}</span><span class="muted">${esc(dayLabel(d, { day: "numeric", month: "long" }))}</span><span class="pill sm" data-testid="planner-day-count">${items.length}</span></h3>
       <div class="pl-cards" data-testid="planner-list-day" data-day="${d}">${items.map((i) => plCard(i)).join("")}${items.length ? "" : `<p class="muted sm pl-agenda-empty">Nothing planned.</p>`}</div>
-      ${open.length ? `<div class="pl-open">${open.map((s) => `<button type="button" class="pl-slotmark" data-testid="planner-posting-time" data-day="${d}" data-hour="${s.h}" data-min="${s.mi}" data-ch="${esc(s.ch)}" aria-label="New post at ${esc(timeLabel(s.h, s.mi))}">${netMark(s.service)}${esc(timeLabel(s.h, s.mi))}</button>`).join("")}</div>` : ""}</section>`;
+      ${open.length ? `<div class="pl-open">${open.map((s) => `<button type="button" class="pl-slotmark" data-testid="planner-posting-time" data-day="${d}" data-hour="${s.h}" data-min="${s.mi}" data-ch="${esc(s.ch)}" aria-label="New post at ${esc(timeLabel(s.h, s.mi))}" title="An open posting time in your Buffer schedule. Click to write a post for it.">${netMark(s.service)}${esc(timeLabel(s.h, s.mi))}</button>`).join("")}</div>` : ""}</section>`;
   }).join("")}</div>`;
 }
 function plSlotMap(days) { // Buffer posting slots per channel, shown in the planner's timezone: "ymd|hour" -> [{time, service}]
@@ -336,7 +336,7 @@ function plWeek(r, byDay) {
       const nowLine = d === t && now.h === hr ? `<span class="pl-now" style="top:${(now.mi / 60) * 100}%" aria-hidden="true"></span>` : "";
       h += `<div class="pl-cell${d === t ? " today" : ""}" role="gridcell" data-testid="planner-slot" data-day="${d}" data-hour="${hr}" aria-label="${esc(dayLabel(d, { weekday: "long", day: "numeric", month: "long" }) + " " + timeLabel(hr, 0))}">${nowLine}`
         + items.map(plChip).join("")
-        + (items.length ? "" : sl.slice(0, 2).map((s) => `<span class="pl-slotmark" data-testid="planner-posting-time" data-day="${d}" data-hour="${s.h}" data-min="${s.mi}" data-ch="${esc(s.ch)}">${netMark(s.service)}${esc(timeLabel(s.h, s.mi))}</span>`).join(""))
+        + (items.length ? "" : sl.slice(0, 2).map((s) => `<span class="pl-slotmark" title="An open posting time in your Buffer schedule. Click to write a post for it." data-testid="planner-posting-time" data-day="${d}" data-hour="${s.h}" data-min="${s.mi}" data-ch="${esc(s.ch)}">${netMark(s.service)}${esc(timeLabel(s.h, s.mi))}</span>`).join(""))
         + `</div>`;
     }
   }
@@ -372,7 +372,7 @@ function plDay(r, byDay) {
       const nowLine = d === t && now.h === hr ? `<span class="pl-now" style="top:${(now.mi / 60) * 100}%" aria-hidden="true"></span>` : "";
       h += `<div class="pl-cell${d === t ? " today" : ""}" role="gridcell" data-testid="planner-slot" data-day="${d}" data-hour="${hr}" data-lane="${esc(c.id)}" aria-label="${esc((c.displayName || c.name) + ", " + timeLabel(hr, 0))}">${nowLine}`
         + its.map(plChip).join("")
-        + (its.length ? "" : sl.slice(0, 1).map((x) => `<span class="pl-slotmark" data-testid="planner-posting-time" data-day="${d}" data-hour="${x.h}" data-min="${x.mi}" data-ch="${esc(x.ch)}">${esc(timeLabel(x.h, x.mi))}</span>`).join(""))
+        + (its.length ? "" : sl.slice(0, 1).map((x) => `<span class="pl-slotmark" title="An open posting time in your Buffer schedule. Click to write a post for it." data-testid="planner-posting-time" data-day="${d}" data-hour="${x.h}" data-min="${x.mi}" data-ch="${esc(x.ch)}">${esc(timeLabel(x.h, x.mi))}</span>`).join(""))
         + `</div>`;
     }
   }
@@ -446,7 +446,7 @@ function plWire() {
 }
 function plOpenItem(i) {
   if (!i) return;
-  if (i.kind === "ghost") return toast("A planned clip. Save the plan below to create it as a Buffer draft.");
+  if (i.kind === "ghost") return window.plGhostOpen ? window.plGhostOpen(i) : toast("A planned clip: not saved yet. Save the plan below.");
   if (i.kind === "ready") return plAct("run", i.ref);
   if (i.kind === "approval") return plDialog("reschedule", i);
   if (i.state === "sent") { if (i.link) window.open(safeUrl(i.link), "_blank", "noopener"); else toast("Sent by Buffer. Sent posts can't be moved."); return; }
@@ -549,7 +549,9 @@ function plDialog(mode, i) {
   $("#plDlgNote").textContent = i.kind === "approval" ? "It stays in Approvals until you approve it, then goes out at this time." : i.state === "draft" ? "It stays a draft in Buffer, with this time." : "";
   $("#plDlgErr").textContent = "";
   $("#plDlgPf").hidden = resched || !(isNew || i.kind === "buffer");
-  if (!$("#plDlgPf").hidden) { PL.pf.run(true); } else { $("#plDlgPf").innerHTML = ""; }
+  // a new post starts empty: no red "Post text is empty" before anything is typed (owner, 7 Nov 2026); the check runs
+  // as soon as there is a caption or a media link, and again on Save
+  if (!$("#plDlgPf").hidden && !(isNew && plDlgBlank())) { PL.pf.run(true); } else { $("#plDlgPf").innerHTML = ""; }
   if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
   (resched ? $("#plDlgWhen") : isNew ? $("#plDlgChSel") : $("#plDlgText")).focus();
 }
@@ -557,11 +559,13 @@ function plDialog(mode, i) {
 PL.pf = pfPanel($("#plDlgPf"), () => {
   const { mode, i } = PL.edit || {};
   if (!mode || mode === "reschedule") return null;
+  if (mode === "new" && plDlgBlank()) return null;  // nothing typed yet: no check (Save still says what's missing)
   if (mode === "new") return { channel_id: $("#plDlgChSel").value, text: $("#plDlgText").value, media_url: $("#plDlgMedia").value.trim(), mode: "schedule" };
   return { channel_id: i.channel_id, text: $("#plDlgText").value, mode: i.state === "draft" ? "draft" : "queue", editing: true };
 }, (r) => { $("#plDlgText").value = r.text; if (PL.edit?.mode === "new") $("#plDlgMedia").value = r.media_url || ""; });
-["#plDlgText", "#plDlgMedia"].forEach((s) => $(s).addEventListener("input", () => PL.pf.run()));
-$("#plDlgChSel").addEventListener("change", () => PL.pf.run(true));
+function plDlgBlank() { return !$("#plDlgText").value.trim() && !$("#plDlgMedia").value.trim(); }
+["#plDlgText", "#plDlgMedia"].forEach((s) => $(s).addEventListener("input", () => { if (PL.edit?.mode === "new" && plDlgBlank()) { $("#plDlgPf").innerHTML = ""; return; } PL.pf.run(); }));
+$("#plDlgChSel").addEventListener("change", () => { if (!plDlgBlank()) PL.pf.run(true); });
 async function plDialogSave(asDraft) {
   const { mode, i } = PL.edit || {}, err = $("#plDlgErr"), btn = $("#plDlgSave");
   if (mode === "new" || (mode === "edit" && $("#plDlgText").value !== i.text)) {

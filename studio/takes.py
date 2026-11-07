@@ -982,7 +982,7 @@ class Takes(TakeBin, TakeControl):
                 continue
             d = {k: c.get(k) for k in ("id", "moment_id", "status", "start", "end", "hook", "text", "score", "why", "url", "cover_url",
                                        "error", "placements", "preflight", "captions", "rank", "reasons", "rerender_error",
-                                       "review_reason")}
+                                       "review_reason", "review_ok")}
             d["score"], d["why"] = _clip_score(c, moments)
             d["variants"] = {r: v["url"] for r, v in (c.get("variants") or {}).items()}
             m = c.get("meta") or {}
@@ -1148,8 +1148,22 @@ class Takes(TakeBin, TakeControl):
                 clip["hook"] = hook
                 rerender = True
                 changed.append("hook")
+        if body.get("review_ok") is not None:  # "Looks fine, use it" on a Needs review clip (owner, 6 Nov 2026)
+            if body["review_ok"] is not True:
+                raise ActionError("review_ok must be true (a person looked at the clip and it's fine).")
+            if a.kind != "human":
+                raise ActionError("Only a person can clear a Needs review flag: open the clip in One take and press "
+                                  "\"Looks fine, use it\".", 403)
+            if clip.get("status") != "needs_review":
+                raise ActionError("This clip doesn't need a review.", 409)
+            if rerender:
+                raise ActionError("Clear the review on its own, not with a trim, transcript or hook change (those re-render "
+                                  "the clip and it's checked again).")
+            clip.update(status="ready", review_ok={"by": a.label, "at": round(_now()), "reason": clip.get("review_reason")})
+            clip.pop("review_reason", None)
+            changed.append("review_ok")
         if not changed:
-            raise ActionError("Nothing to change: give start_ms/end_ms, transcript, hook, caption(s) or music.")
+            raise ActionError("Nothing to change: give start_ms/end_ms, transcript, hook, caption(s), music or review_ok.")
         if rerender and not self._can_rerender(a, res):
             from . import demo_guard
             why = ("the view-only sample workspace doesn't run. Sign in to trim the sample, or edit its captions here."
@@ -1300,23 +1314,30 @@ class Takes(TakeBin, TakeControl):
         payload = json.loads(row["payload"])
         if payload.get("kind") != "spread" or payload.get("take") != rid:
             raise ActionError("That confirm_token is for something else.", 400)
+        choices = self._spread_choices(a, payload["plan"], body)
         if not (a.kind == "agent" and a.agent["policy"] == "review"):  # publishing paused: the spread token stays usable
             self.studio._publishing_open(a)
         self.store.x("UPDATE confirms SET used=1 WHERE token_hash=?", (row["token_hash"],))
         plan = payload["plan"]
         results = []
-        for p in plan["placements"]:
-            item = {k: p[k] for k in ("clip_id", "channel_id", "service", "at", "local", "channel_name")}
+        for i, p in enumerate(plan["placements"]):
+            how, at = choices.get(i, ("draft", None))
+            if how == "skip":  # removed from the plan before saving
+                continue
+            at = at or p["at"]
+            item = {k: p[k] for k in ("clip_id", "channel_id", "service", "local", "channel_name")}
+            item.update(at=None if how == "queue" else at, mode=how)
             try:
-                if datetime.fromisoformat(p["at"].replace("Z", "+00:00")) <= datetime.now(timezone.utc) + timedelta(minutes=2):
+                if how != "queue" and datetime.fromisoformat(at.replace("Z", "+00:00")) <= datetime.now(timezone.utc) + timedelta(minutes=2):
                     raise ActionError("That slot has passed. Plan again.")
                 prev = self.studio.preview_post(a, {"channel_id": p["channel_id"], "text": p["text"], "media_url": p["media_url"],
-                                                    "mode": "draft", "due_at": p["at"], "options": p["options"],
+                                                    "mode": how, "due_at": None if how == "queue" else at, "options": p["options"],
                                                     "override_warnings": bool(body.get("override_warnings"))})
                 out = self.studio.submit_post(a, prev["confirm_token"])
                 st = out["status"]
-                item.update(status="draft" if st == "sent_to_buffer" else st, buffer_post_id=(out.get("post") or {}).get("id"),
-                            approval_id=out.get("approval_id"))
+                if st == "sent_to_buffer":
+                    st = {"draft": "draft", "schedule": "scheduled", "queue": "queued"}[how]
+                item.update(status=st, buffer_post_id=(out.get("post") or {}).get("id"), approval_id=out.get("approval_id"))
             except Exception as e:  # noqa: BLE001 - one bad placement never blocks the others
                 item.update(status="failed", error=str(e)[:300])
             results.append(item)
@@ -1326,13 +1347,59 @@ class Takes(TakeBin, TakeControl):
             if mine:
                 c["placements"] = [x for x in c.get("placements") or [] if x["channel_id"] not in {m["channel_id"] for m in mine}] + mine
         self._save(rid, run["steps"], run["result"])
-        okn = sum(1 for r in results if r["status"] in ("draft", "pending_approval"))
+        okn = sum(1 for r in results if r["status"] in ("draft", "scheduled", "queued", "pending_approval"))
+        sent = sum(1 for r in results if r["status"] in ("scheduled", "queued"))
         self.store.audit(a.uid, a.label, "place_clips_in_week", "draft", {"take": rid, "placed": okn, "failed": len(results) - okn})
         return {"dry_run": False, "placed": okn, "failed": len(results) - okn, "results": results, "week_of": plan["week_of"],
                 "unplaced": plan.get("unplaced", []),
-                "message": (f"{okn} clip{'' if okn == 1 else 's'} saved as Buffer drafts at your posting times. Nothing is published "
-                            "until you schedule {}.".format("it" if okn == 1 else "them")) if a.kind == "human"
-                else f"{okn} placement{'' if okn == 1 else 's'} submitted under this token's policy."}
+                "message": self._spread_message(a, results, okn, sent)}
+
+    @staticmethod
+    def _spread_message(a: Actor, results: list[dict], okn: int, sent: int) -> str:
+        if a.kind != "human":
+            return f"{okn} placement{'' if okn == 1 else 's'} submitted under this token's policy."
+        n = {k: sum(1 for r in results if r["status"] == k) for k in ("draft", "scheduled", "queued")}
+        parts = [f"{n['draft']} saved as Buffer draft{'' if n['draft'] == 1 else 's'}" if n["draft"] else "",
+                 f"{n['scheduled']} scheduled" if n["scheduled"] else "", f"{n['queued']} added to your queue" if n["queued"] else ""]
+        msg = ", ".join(x for x in parts if x) or "Nothing saved"
+        return msg + (". Scheduled and queued posts publish on their own in Buffer." if sent
+                      else ". Nothing is published until you schedule {}.".format("it" if okn == 1 else "them"))
+
+    def _spread_choices(self, a: Actor, plan: dict, body: dict) -> dict[int, tuple[str, str | None]]:
+        """How each planned post goes, from the confirm call: choices {"<placement index>": draft | schedule | queue | skip}
+        (default draft) and times {"<index>": ISO time} (a moved card). Schedule and queue publish on their own, so only a
+        person can pick them; an agent's Spread is drafts (or skips) only."""
+        raw_c, raw_t = body.get("choices") or {}, body.get("times") or {}
+        if not isinstance(raw_c, dict) or not isinstance(raw_t, dict):
+            raise ActionError("choices and times must be objects keyed by the placement's index in the plan.")
+        n = len(plan.get("placements") or [])
+        out: dict[int, tuple[str, str | None]] = {}
+        for k in set(raw_c) | set(raw_t):
+            if not (isinstance(k, str) and k.isdigit() and int(k) < n):
+                raise ActionError(f"Unknown placement {k!r}: use the index of a placement in the plan (0 to {n - 1}).")
+            how = raw_c.get(k, "draft")
+            if how not in SPREAD_MODES:
+                raise ActionError(f"Each choice must be one of: {', '.join(SPREAD_MODES)}.")
+            if how in ("schedule", "queue") and a.kind != "human":
+                raise ActionError("Agents place clips as drafts only: a person picks Schedule or Add to queue in One take.", 403)
+            at = raw_t.get(k)
+            if at is not None:
+                try:
+                    when = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+                except ValueError:
+                    raise ActionError(f"times[{k}] must be an ISO date-time like 2026-11-10T18:00:00Z.")
+                if when.tzinfo is None:
+                    raise ActionError(f"times[{k}] needs a timezone (end it with Z or +01:00).")
+                if when <= datetime.now(timezone.utc) + timedelta(minutes=2):
+                    raise ActionError(f"times[{k}] is in the past. Pick a later time.")
+                at = when.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            out[int(k)] = (how, at)
+        if n and all(out.get(i, ("draft",))[0] == "skip" for i in range(n)):
+            raise ActionError("Every planned post is removed: nothing to save. Discard the plan instead.")
+        return out
+
+
+SPREAD_MODES = ("draft", "schedule", "queue", "skip")  # how each planned post goes (The Spread's confirm call)
 
 
 def _num(x):
