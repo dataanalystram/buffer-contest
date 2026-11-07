@@ -299,7 +299,9 @@ function tkScoreLine(c) {
 const LAYOUT_IC = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/></svg>`;  // Lucide layout-template
 const SCISSORS = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg>`;
 function clipRow(c, n, k) {
-  const placed = (c.placements || []).filter((p) => ["draft", "scheduled", "queued", "pending_approval"].includes(p.status));
+  // placements follow Buffer: the server re-checks them on every view (takes._reconcile), so a draft deleted in Buffer
+  // is "gone" and no longer listed here
+  const placed = (c.placements || []).filter((p) => ["draft", "scheduled", "queued", "pending_approval", "sent"].includes(p.status));
   const failed = (c.placements || []).filter((p) => p.status === "failed");
   const st = c.status === "ready" ? "" : c.status === "needs_review" ? `<span class="st queued" data-testid="clip-needs-review" title="${esc(c.review_reason || "")}">Needs review</span> <span class="muted xs" data-testid="clip-review-reason">${esc(c.review_reason || "Text may cover the speaker's face.")}</span>${T.take && !T.take.sample ? ` <button type="button" class="btn2 xs" data-act="review_ok" data-clip="${esc(c.id)}" data-testid="clip-review-ok">Looks fine, use it</button>` : ""}` : c.status === "failed" ? `<span class="st err" data-testid="clip-error">${esc(c.error || "Render failed")}</span>` : `<span class="muted xs" data-testid="clip-rendering"><span class="spin" aria-hidden="true"></span> Rendering…</span>`;
   return `<li class="clip-row deal" style="--i:${k}" data-testid="clip-card" data-clip="${esc(c.id)}" data-status="${esc(c.status)}">
@@ -313,7 +315,7 @@ function clipRow(c, n, k) {
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
       ${st}${c.rerender_error ? `<span class="st err xs" data-testid="clip-rerender-error">Re-render failed: ${esc(c.rerender_error)} The previous video is kept.</span>` : ""}
       <div class="clip-pf">${pfCompact(c)}</div>
-      ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${{ draft: "Buffer draft", scheduled: "scheduled in Buffer", queued: "in your Buffer queue" }[p.status] || "waiting for approval"}`).join("<br>")}</p>` : ""}
+      ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${{ draft: "Buffer draft", scheduled: "scheduled in Buffer", queued: "in your Buffer queue", sent: "posted by Buffer" }[p.status] || "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
     </div>
     <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button>${T.take && !T.take.sample ? `<button type="button" class="btn2 sm" data-act="layout" data-clip="${esc(c.id)}" data-testid="clip-layout">${LAYOUT_IC}<span>Layout</span></button>` : ""}<a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
