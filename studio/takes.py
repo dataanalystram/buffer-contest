@@ -60,6 +60,12 @@ def ratios_for(services: list[str]) -> list[str]:
     return sorted(got, key=["9:16", "4:5", "1:1"].index)
 
 
+def trim_vad_on() -> bool:
+    """HQ_TRIM_VAD=1 (app env, read per render): One take's pause trim also uses the speech detector's gaps, so pauses
+    under background music get trimmed. Off by default; turning it off again restores the old trim with no code change."""
+    return os.environ.get("HQ_TRIM_VAD", "").strip().lower() in ("1", "true", "on", "yes")
+
+
 def _now() -> float:
     return time.time()
 
@@ -724,24 +730,36 @@ class Takes(TakeBin, TakeControl):
         self._queue(a, rid, spec, "reframe", f"Rendering {len(clips)} clips on the video worker")
 
     @staticmethod
-    def _trim_spec(run: dict, an: dict, c: dict) -> dict:
-        """The clip's pause/filler trim for the worker: the take's choice (older takes: off) and the detected silences
-        inside the clip, so a pause is only cut where the silence detector agrees."""
-        if run["input"].get("style", "take") != "take" or run["input"].get("trim_pauses") is not True:
-            return {}
-        s, e = float(c["start"]), float(c["end"])
-        sil = []
-        all_sil = an.get("silences") if isinstance(an.get("silences"), list) else []
-        for x in all_sil:  # the whole take's list (a late clip's silences sit past any fixed prefix), stop at 500 matches
+    def _spans_in(items, s: float, e: float, cap: int = 500) -> list[list[float]]:
+        """The [a, b] stretches of a take-wide list that overlap the clip [s, e] (a late clip's sit past any fixed
+        prefix, so the whole list is read), at most `cap`."""
+        out = []
+        for x in items if isinstance(items, list) else []:
             try:
                 a, b = float(x[0]), float(x[1])
             except (TypeError, ValueError, IndexError, KeyError):
                 continue
             if b > s and a < e:
-                sil.append([a, b])
-                if len(sil) >= 500:
+                out.append([a, b])
+                if len(out) >= cap:
                     break
-        return {"trim_pauses": True, "silences": sil}
+        return out
+
+    @staticmethod
+    def _trim_spec(run: dict, an: dict, c: dict) -> dict:
+        """The clip's pause/filler trim for the worker: the take's choice (older takes: off) and the detected silences
+        inside the clip, so a pause is only cut where the silence detector agrees. With HQ_TRIM_VAD=1 the clip also
+        gets the speech detector's gaps (take.detect_speech_gaps), so pauses under background music are trimmed too;
+        off (the default) the spec is byte for byte what it was."""
+        if run["input"].get("style", "take") != "take" or run["input"].get("trim_pauses") is not True:
+            return {}
+        s, e = float(c["start"]), float(c["end"])
+        spec = {"trim_pauses": True, "silences": Takes._spans_in(an.get("silences"), s, e)}
+        if trim_vad_on():
+            gaps = Takes._spans_in(an.get("speech_gaps"), s, e)
+            if gaps:
+                spec["speech_gaps"] = gaps
+        return spec
 
     def _render_sample(self, a: Actor, rid: int, c: dict) -> None:
         """Re-render one sample clip from its bundled source window: the same opus-style render as a long-video take, with
