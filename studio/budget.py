@@ -3,7 +3,8 @@
 - Global lifetime cap AI_BUDGET_TOTAL_USD (default $60) across every account.
 - Testing pool AI_BUDGET_TEST_USD (default $30) for the accounts in HQ_BRAIN_TESTERS (comma-separated Buffer account
   emails or user ids); testers draw from this pool instead of the per-user cap.
-- Per signed-in user AI_BUDGET_PER_USER_USD (default $1) lifetime.
+- Per signed-in user AI_BUDGET_PER_USER_USD (default $5) lifetime, unless the admin gave that person a personal
+  allowance or put them in a group with its own (studio/credits.py: personal, then group, then this default).
 - The free sample never uses the operator key.
 
 Every call is priced from its real token usage (input, output, cache writes, cache reads) with PRICES; before each call
@@ -50,7 +51,7 @@ def caps() -> dict:
     e = os.environ.get
     return {"global": float(e("AI_BUDGET_TOTAL_USD") or e("HQ_BRAIN_GLOBAL_USD") or "60"),
             "testing": float(e("AI_BUDGET_TEST_USD") or e("HQ_BRAIN_TEST_USD") or "30"),
-            "user": float(e("AI_BUDGET_PER_USER_USD") or e("HQ_BRAIN_USER_USD") or "1"), "byo_tokens": int(os.environ.get("HQ_BRAIN_BYO_TOKENS", "400000"))}
+            "user": float(e("AI_BUDGET_PER_USER_USD") or e("HQ_BRAIN_USER_USD") or "5"), "byo_tokens": int(os.environ.get("HQ_BRAIN_BYO_TOKENS", "400000"))}
 
 
 def family(model: str) -> str:
@@ -78,6 +79,12 @@ def _spent(store, scope: str) -> float:
     return float(rows[0]["spent"]) if rows else 0.0
 
 
+def user_cap(store, uid: str) -> float:
+    """This person's own Claude allowance in USD: personal, group or default (studio/credits.py)."""
+    from . import credits
+    return credits.cap(store, uid)
+
+
 def scopes(store, uid: str) -> list[str]:
     return ["global", "testing" if is_tester(store, uid) else f"user:{uid}"]
 
@@ -88,7 +95,8 @@ def remaining(store, uid: str) -> dict:
     if is_tester(store, uid):
         mine, label, cap = c["testing"] - _spent(store, "testing"), "testing pool", c["testing"]
     else:
-        mine, label, cap = c["user"] - _spent(store, f"user:{uid}"), "your allowance", c["user"]
+        cap = user_cap(store, uid)
+        mine, label = cap - _spent(store, f"user:{uid}"), "your allowance"
     return {"global_left_usd": round(max(0.0, g), 4), "left_usd": round(max(0.0, min(g, mine)), 4), "pool": label, "pool_cap_usd": cap,
             "global_cap_usd": c["global"], "spent_usd": round(cap - max(0.0, mine), 4)}
 
@@ -121,8 +129,8 @@ def check(store, uid: str, model: str, est_in: int, max_out: int) -> None:
     if is_tester(store, uid):
         if _spent(store, "testing") + worst > c["testing"]:
             raise BudgetExceeded("The testing budget is used up, so I'm using the free model.")
-    elif _spent(store, f"user:{uid}") + worst > c["user"]:
-        raise BudgetExceeded(f"Your ${c['user']:.2f} of included Claude usage is used up, so I'm using the free model. "
+    elif _spent(store, f"user:{uid}") + worst > (cap := user_cap(store, uid)):
+        raise BudgetExceeded(f"Your ${cap:.2f} of included Claude usage is used up, so I'm using the free model. "
                              "Add your own key in AI engine to keep the full agent.")
 
 
@@ -207,7 +215,7 @@ def claude_credit(store, uid: str) -> dict:
     if is_tester(store, uid):
         spent, cap = _spent(store, "testing"), c["testing"]
     else:
-        spent, cap = _spent(store, f"user:{uid}"), c["user"]
+        spent, cap = _spent(store, f"user:{uid}"), user_cap(store, uid)
     return _credit(spent, cap, _spent(store, "global"), c["global"], "Claude")
 
 

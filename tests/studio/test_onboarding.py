@@ -111,6 +111,7 @@ def test_signed_in_recommendations_rate_limited_and_charged(human, monkeypatch):
                  "items": [{"title": "Acme launches a new AI model", "url": "https://news.example.com/acme", "source": "HN"}]}]
     monkeypatch.setattr(type(h.sources), "scan", lambda self, a, body=None: calls.append(body) or {"run_id": len(calls), "clusters": clusters})
     monkeypatch.setattr(ob_mod, "RECS_COST", 0.25)
+    monkeypatch.setenv("AI_BUDGET_PER_USER_USD", "1")  # the default is $5 since 7 Nov 2026; this test spends against $1
     human.put("/api/onboarding", json={"x_watchlist": []})  # nothing to read from X here
     r = human.get("/api/recommendations").json()
     assert r["cached"] is False and len(calls) == 1 and r["recommended"][0]["cover"]

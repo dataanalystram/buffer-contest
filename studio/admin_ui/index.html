@@ -18,13 +18,25 @@
     <p class="adm-msg">Each switch stops new work of its kind for everyone, you included, until you resume it. If the switch state can't be read, every switch reads as paused.</p>
     <p class="adm-msg" id="swMsg" role="status" aria-live="polite"></p>
     <div class="adm-switches" id="switches"></div></section>
+  <section aria-labelledby="groupsH" data-testid="admin-groups"><h2 id="groupsH">Claude credit groups</h2>
+    <p class="adm-msg">Each person gets their personal allowance if you set one, else their group's, else the default (<span id="credDefault">$5</span>, AI_BUDGET_PER_USER_USD on Render). What they already spent counts. Every call stays inside the app-wide cap on Render.</p>
+    <form class="adm-inline" id="grpNew" data-testid="admin-group-new">
+      <label>Name <input id="grpName" data-testid="admin-group-name" maxlength="60" autocomplete="off" required></label>
+      <label>Allowance ($) <input id="grpUsd" data-testid="admin-group-usd" type="number" min="0" max="500" step="0.5" required></label>
+      <button type="submit" data-testid="admin-group-create">Create group</button></form>
+    <p class="adm-msg" id="grpMsg" role="status" aria-live="polite"></p>
+    <div class="adm-scroll"><table data-testid="admin-groups-table"><thead><tr><th>Group</th><th>Allowance</th><th>Members</th><th>Actions</th></tr></thead>
+      <tbody id="grpRows"></tbody></table></div></section>
   <section aria-labelledby="usersH">
     <div class="adm-bar"><h2 id="usersH">Users</h2>
       <label class="adm-search">Search <input id="q" data-testid="admin-search" type="search" placeholder="id, name or email" autocomplete="off"></label>
       <label><input id="demo" data-testid="admin-show-demo" type="checkbox"> Show sample workspaces</label></div>
+    <div class="adm-inline" data-testid="admin-bulk"><span id="bulkCount">0 selected</span>
+      <label>Group <select id="bulkGroup" data-testid="admin-bulk-group" aria-label="Group for the selected users"></select></label>
+      <button type="button" id="bulkAdd" data-testid="admin-bulk-add" disabled>Add selected to group</button></div>
     <p class="adm-msg" id="msg" role="status" aria-live="polite"></p>
-    <div class="adm-scroll"><table data-testid="admin-users"><thead><tr><th>Buffer account</th><th>First sign-in</th><th>Last sign-in</th>
-      <th>Last active</th><th>Runs</th><th>Posts</th><th>Storage</th><th>Status</th><th>Actions</th></tr></thead>
+    <div class="adm-scroll"><table data-testid="admin-users"><thead><tr><th><input type="checkbox" id="selAll" data-testid="admin-select-all" aria-label="Select every user on this page"></th><th>Buffer account</th><th>First sign-in</th><th>Last sign-in</th>
+      <th>Last active</th><th>Runs</th><th>Posts</th><th>Storage</th><th>Claude credit</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody id="rows"></tbody></table></div>
     <div class="adm-pager"><button id="prev" data-testid="admin-prev" type="button">Previous</button><span id="page"></span><button id="next" data-testid="admin-next" type="button">Next</button></div>
   </section>
@@ -52,6 +64,25 @@
   <div class="adm-scroll"><table data-testid="admin-tokens"><thead><tr><th>Token</th><th>Last used</th><th>Requests this hour</th><th>Actions in 24 h</th>
     <th>Hourly cap</th><th>Daily cap</th><th>Actions</th></tr></thead><tbody id="tokRows"></tbody></table></div>
   <div class="adm-actions"><button type="button" id="tokClose" data-testid="admin-tokens-close">Close</button></div></form></dialog>
+<dialog id="credDlg" aria-labelledby="credH" data-testid="admin-credit-dialog"><form method="dialog" id="credForm">
+  <h2 id="credH">Claude credit</h2>
+  <p id="credNow" data-testid="admin-credit-now"></p>
+  <label>Personal allowance ($, 0 to 500) <input id="credUsd" data-testid="admin-credit-usd" type="number" min="0" max="500" step="0.5"></label>
+  <div class="adm-actions adm-left"><button type="button" data-cred="set" data-testid="admin-credit-save">Save allowance</button>
+    <button type="button" data-cred="add5" data-testid="admin-credit-add5">+ $5</button>
+    <button type="button" data-cred="add10" data-testid="admin-credit-add10">+ $10</button>
+    <button type="button" data-cred="clear" data-testid="admin-credit-clear">Use group or default</button></div>
+  <label>Group <select id="credGroup" data-testid="admin-credit-group" aria-label="Group"></select></label>
+  <div class="adm-actions adm-left"><button type="button" data-cred="group" data-testid="admin-credit-group-save">Save group</button></div>
+  <label>Note for the admin log (optional) <input id="credNote" data-testid="admin-credit-note" maxlength="200" autocomplete="off"></label>
+  <p class="adm-msg" id="credMsg" role="status" aria-live="polite"></p>
+  <div class="adm-actions"><button type="button" id="credClose" data-testid="admin-credit-close">Close</button></div></form></dialog>
+<dialog id="memDlg" aria-labelledby="memH" data-testid="admin-members-dialog"><form method="dialog" id="memForm">
+  <h2 id="memH">Group members</h2>
+  <p>To add people, tick them in the Users table and use Add selected to group.</p>
+  <p class="adm-msg" id="memMsg" role="status" aria-live="polite"></p>
+  <div class="adm-scroll"><table data-testid="admin-members"><thead><tr><th>User</th><th>Actions</th></tr></thead><tbody id="memRows"></tbody></table></div>
+  <div class="adm-actions"><button type="button" id="memClose" data-testid="admin-members-close">Close</button></div></form></dialog>
 <script src="/static/viewswap.js"></script>
 <script src="/admin/admin.js"></script>
 </body></html>

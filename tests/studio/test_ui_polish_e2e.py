@@ -71,7 +71,7 @@ def test_settings_ai_engine_cards_keys_and_logs(live, chromium, close_contexts, 
     assert page.get_by_test_id("ai-engine-gemini-flash").count() == 0  # Oracle Gemini is gone from the picker
     assert page.locator("[data-testid=ai-engine-nvidia] .bmark svg").count() == 1  # the NVIDIA logo
     assert "0 of 150 calls today" in page.get_by_test_id("ai-engine-usage-nvidia").inner_text()
-    assert "$0.00 of $1" in page.get_by_test_id("ai-engine-usage-claude").inner_text()
+    assert "$0.00 of $5" in page.get_by_test_id("ai-engine-usage-claude").inner_text()
     assert page.locator("[data-testid=ai-engine-nvidia] .ai-c-tier").inner_text().strip().lower() == "free"
     assert page.locator("[data-testid=ai-engine-claude] .ai-c-tier").inner_text().strip().lower() == "paid"
     pw.expect(page.get_by_test_id("ai-engine-auto")).to_have_attribute("aria-checked", "true")

@@ -6,7 +6,8 @@ cards and Reels, writes one caption per channel, and checks all of it against yo
 your corrections. You approve, and the **Planner** shows it in your Buffer queue, ready to drag to a better time. Your own
 Claude or ChatGPT can do all of this over MCP, but nothing they write goes out until you approve it.
 
-**Bring your own brain.** In the app the agent runs on $1 of included AI. Add HuhQueue to the Claude or ChatGPT you already
+**Bring your own brain.** In the app the agent starts on Claude with $5 of included credit
+(an admin can give a person or a group more), then switches to NVIDIA when it runs out. Add HuhQueue to the Claude or ChatGPT you already
 pay for and keep going free: your model does the thinking, HuhQueue does the editing (research, carousels, reels, cuts,
 captions, splits) at $0 AI spend. See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
 

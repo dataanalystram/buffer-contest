@@ -53,17 +53,17 @@ def _engines(app, uid, demo=False):
 # ------------------------------------------------------------------ selection
 def test_default_order_and_the_chosen_engine_first(app, human, oci_env, claude_env):
     uid = _uid(app)
-    assert _engines(app, uid) == ["gemini-flash", "claude"]  # no free-engine keys, no own key, no free model here
+    assert _engines(app, uid) == ["claude", "gemini-flash"]  # Claude first (owner, 7 Nov 2026); no free-engine keys here
     ai_engines.set_pref(app.state.store, uid, "claude")
     assert _engines(app, uid) == ["claude", "gemini-flash"]
     ai_engines.set_pref(app.state.store, uid, "gemini-pro")  # Pro only runs when chosen; Flash stays as the backup
-    assert _engines(app, uid) == ["gemini-pro", "gemini-flash", "claude"]
+    assert _engines(app, uid) == ["gemini-pro", "claude", "gemini-flash"]
     eng = brain_llm.engines(app.state.store, uid, app.state.house.s, app.state.house.http)[0]
     assert eng["model"] == "google.gemini-2.5-pro" and eng["fast_model"] == "google.gemini-2.5-flash"
     assert eng["oci_targets"]["google.gemini-2.5-flash"].startswith("ocid1.generativeairoutingprofile")
     assert eng["oci_targets"]["google.gemini-2.5-pro"] == "google.gemini-2.5-pro"  # no profile set: the model name
     ai_engines.set_pref(app.state.store, uid, "auto")
-    assert _engines(app, uid) == ["gemini-flash", "claude"]
+    assert _engines(app, uid) == ["claude", "gemini-flash"]
     assert _engines(app, uid, demo=True) == []  # the free sample never reaches the app's paid engines
 
 

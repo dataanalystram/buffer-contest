@@ -67,7 +67,7 @@ async function draw() {
   }
   if (s === 3) {
     const url = window.hqMcpUrl ? hqMcpUrl() : location.origin + "/mcp";
-    inner = `<h2 id="onbH">Bring your own brain</h2><p class="lead">HuhQueue's agent comes with $1 of included AI. Already pay for Claude or ChatGPT? Add HuhQueue there and keep going free: your model does the thinking, HuhQueue does the editing.</p>
+    inner = `<h2 id="onbH">Bring your own brain</h2><p class="lead">HuhQueue's agent starts on Claude with included credit, then switches to NVIDIA when it runs out. Already pay for Claude or ChatGPT? Add HuhQueue there and keep going free: your model does the thinking, HuhQueue does the editing.</p>
     <div class="bsw-addr" data-testid="onboarding-mcp"><span class="label">MCP address</span><code>${esc(url)}</code><button class="btn2 sm" type="button" data-onb="copy" data-testid="onboarding-mcp-copy">Copy</button></div>
     <ol class="bsw-steps" style="margin-top:12px"><li>Copy the address.</li><li>In Claude: Settings, Connectors, Add custom connector. In ChatGPT: Plugins, Add custom MCP server.</li><li>Sign in with Buffer when HuhQueue asks. Every post still waits for your approval.</li></ol>
     <p class="muted sm" style="margin-top:8px">Not now? It's under Settings, Integrations any time.</p>${nav(s)}`;

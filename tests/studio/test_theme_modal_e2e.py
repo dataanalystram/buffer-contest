@@ -164,7 +164,7 @@ def test_e2e_ai_engine_switch(live, chromium, close_contexts, monkeypatch, w):
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base + "/?tab=settings&sub=ai")  # Settings sidebar: AI engine is its own page (3 Nov 2026)
     page.get_by_test_id("ai-engine-claude").wait_for()
-    assert "Claude: $0.00 of your $1 used" in page.get_by_test_id("ai-engine-credit-claude").inner_text()
+    assert "Claude: $0.00 of your $5 used" in page.get_by_test_id("ai-engine-credit-claude").inner_text()
     for eid in ("gemini-flash", "gemini-pro"):  # Oracle Gemini is gone from the picker
         assert page.get_by_test_id(f"ai-engine-{eid}").count() == 0
     assert "Oracle" not in page.get_by_test_id("ai-engine-picker").inner_text()

@@ -65,6 +65,7 @@
     const usd = (v) => `$${Number(v || 0).toFixed(2)}`;
     const cards = [];
     if (d.claude && !d.claude.error) cards.push(["Claude (our key)", `${usd(d.claude.spent_usd)} of ${usd(d.claude.cap_usd)}`],
+      ["Claude app-wide left", usd(d.claude.left_usd)], ["Default allowance per user", usd(d.claude.default_user_usd)],
       ["Claude testing pool", `${usd(d.claude.testing_spent_usd)} of ${usd(d.claude.testing_cap_usd)}`]);
     if (d.oci && !d.oci.error) cards.push(["OCI Gemini (our credit)", `${usd(d.oci.spent_usd)} of ${usd(d.oci.cap_usd)}`]);
     for (const [p, f] of Object.entries(d.free_tiers || {})) cards.push([`${p} requests (24 h)`, `${f.requests_24h} of ${f.max_requests_day}/day`]);
@@ -142,27 +143,180 @@
     loadTokens();
   });
 
+  // Claude credit (studio/credits.py): the column, the per-user dialog, groups and the bulk "Add selected to group"
+  const usd2 = (v) => `$${Number(v || 0).toFixed(2)}`;
+  let groupsList = [], selected = new Set(), credUid = "", credBusy = false, grpArmed = "", memGid = "";
+  function creditCell(c) {
+    if (!c) return "—";
+    if (c.tester) return `<span>Testing pool</span><small>HQ_BRAIN_TESTERS</small>`;
+    const from = c.source === "personal" ? "personal" : c.source === "group" ? `group: ${c.group ? c.group.name : ""}` : "default";
+    return `<span class="${c.left_usd <= 0.005 ? "credit-out" : ""}">${esc(usd2(c.left_usd))} of ${esc(usd2(c.cap_usd))} left</span><small>${esc(from)}</small>`;
+  }
+  function groupOptions(sel, current, none) {
+    sel.innerHTML = `<option value="">${esc(none)}</option>` + groupsList.map((g) =>
+      `<option value="${esc(g.id)}"${current === g.id ? " selected" : ""}>${esc(g.name)} (${esc(usd2(g.allowance_usd))})</option>`).join("");
+  }
+  function grpRow(g) {
+    return `<tr data-testid="admin-group"><td><input value="${esc(g.name)}" maxlength="60" data-gname="${esc(g.id)}" data-testid="admin-group-edit-name" aria-label="Group name"></td>
+      <td><input type="number" min="0" max="500" step="0.5" value="${esc(g.allowance_usd)}" data-gusd="${esc(g.id)}" data-testid="admin-group-edit-usd" aria-label="Group allowance in dollars"></td>
+      <td>${esc(g.members)}</td>
+      <td><div class="adm-actions"><button type="button" data-grp="save" data-gid="${esc(g.id)}" data-testid="admin-group-save">Save</button>
+      <button type="button" data-grp="members" data-gid="${esc(g.id)}" data-testid="admin-group-members">Members</button>
+      <button type="button" class="danger" data-grp="delete" data-gid="${esc(g.id)}" data-testid="admin-group-delete">${grpArmed === String(g.id) ? "Confirm delete" : "Delete"}</button></div></td></tr>`;
+  }
+  async function loadGroups() {
+    try {
+      const d = await api("/api/admin/groups");
+      groupsList = d.items; $("credDefault").textContent = usd2(d.default_usd);
+      $("grpRows").innerHTML = d.items.map(grpRow).join("") || `<tr><td colspan="4">No groups yet.</td></tr>`;
+      groupOptions($("bulkGroup"), null, "Choose a group");
+    } catch (e) { $("grpMsg").textContent = `Couldn't load groups: ${e.message}`; }
+  }
+  $("grpNew").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      await api("/api/admin/groups", { method: "POST", body: JSON.stringify({ name: $("grpName").value, allowance_usd: Number($("grpUsd").value) }) });
+      $("grpMsg").textContent = "Group created."; $("grpName").value = ""; $("grpUsd").value = "";
+    } catch (e) { $("grpMsg").textContent = e.message; }
+    loadGroups();
+  });
+  $("grpRows").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-grp]");
+    if (!b || b.disabled) return;
+    const gid = b.dataset.gid, g = groupsList.find((x) => String(x.id) === gid) || {};
+    if (b.dataset.grp === "members") { openMembers(gid); return; }
+    if (b.dataset.grp === "delete" && grpArmed !== gid) {    // in-app two-step confirm (never window.confirm)
+      grpArmed = gid; b.textContent = "Confirm delete";
+      $("grpMsg").textContent = `Click Confirm delete to remove ${g.name}. Its ${g.members} member(s) go back to their personal allowance or the default.`;
+      return;
+    }
+    b.disabled = true;
+    try {
+      if (b.dataset.grp === "delete") {
+        await api(`/api/admin/groups/${encodeURIComponent(gid)}/delete`, { method: "POST", body: JSON.stringify({ confirm: g.name }) });
+        $("grpMsg").textContent = "Group deleted.";
+      } else {
+        const name = $("grpRows").querySelector(`[data-gname="${gid}"]`).value, amt = $("grpRows").querySelector(`[data-gusd="${gid}"]`).value;
+        await api(`/api/admin/groups/${encodeURIComponent(gid)}`, { method: "POST", body: JSON.stringify({ name, allowance_usd: Number(amt) }) });
+        $("grpMsg").textContent = "Saved. The new allowance applies to every member now.";
+      }
+    } catch (e) { $("grpMsg").textContent = e.message; }
+    grpArmed = ""; loadGroups(); load();
+  });
+  function bulkDraw() {
+    $("bulkCount").textContent = `${selected.size} selected`;
+    $("bulkAdd").disabled = !selected.size || !$("bulkGroup").value;
+  }
+  $("bulkGroup").addEventListener("change", bulkDraw);
+  $("selAll").addEventListener("change", () => {
+    for (const u of rows) { if ($("selAll").checked) selected.add(u.id); else selected.delete(u.id); }
+    $("rows").querySelectorAll("input[data-sel]").forEach((c) => { c.checked = selected.has(c.dataset.sel); });
+    bulkDraw();
+  });
+  $("rows").addEventListener("change", (ev) => {
+    const c = ev.target.closest("input[data-sel]");
+    if (!c) return;
+    if (c.checked) selected.add(c.dataset.sel); else selected.delete(c.dataset.sel);
+    bulkDraw();
+  });
+  $("bulkAdd").addEventListener("click", async () => {
+    const gid = $("bulkGroup").value;
+    if (!gid || !selected.size) return;
+    $("bulkAdd").disabled = true;
+    try {
+      const r = await api(`/api/admin/groups/${encodeURIComponent(gid)}/members`, { method: "POST", body: JSON.stringify({ add: [...selected] }) });
+      say(`Added ${r.added} user(s) to the group.`); selected.clear(); $("selAll").checked = false;
+    } catch (e) { say(e.message); }
+    bulkDraw(); loadGroups(); load();
+  });
+  async function credLoad() {
+    $("credMsg").textContent = "";
+    try {
+      const c = await api(`/api/admin/users/${encodeURIComponent(credUid)}/credit`);
+      groupsList = c.groups;
+      const from = c.source === "personal" ? "a personal allowance" : c.source === "group" ? `the group ${c.group.name}` : "the default";
+      $("credNow").textContent = c.tester ? "This account is a tester (HQ_BRAIN_TESTERS): it uses the shared testing pool, so these settings apply only if it stops being a tester."
+        : `${usd2(c.spent_usd)} spent of ${usd2(c.cap_usd)} (from ${from}). ${usd2(c.left_usd)} left.`;
+      $("credUsd").value = c.personal_usd ?? "";
+      groupOptions($("credGroup"), c.group ? c.group.id : null, "No group");
+    } catch (e) { $("credMsg").textContent = e.message; }
+  }
+  function openCredit(id) {
+    const u = rows.find((x) => x.id === id) || { id };
+    credUid = id; $("credNote").value = "";
+    $("credH").textContent = `Claude credit · ${u.name || u.email || u.id}`;
+    $("credDlg").showModal(); credLoad();
+  }
+  function closeCredit() { if ($("credDlg").open) $("credDlg").close(); credUid = ""; load(); }
+  $("credClose").addEventListener("click", closeCredit);
+  $("credDlg").addEventListener("cancel", (ev) => { ev.preventDefault(); closeCredit(); });
+  $("credForm").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-cred]");
+    if (!b || credBusy) return;
+    const k = b.dataset.cred, note = $("credNote").value;
+    let body;
+    if (k === "set") {
+      const v = $("credUsd").value.trim();
+      if (v === "") { $("credMsg").textContent = "Type an amount, or use Use group or default."; return; }
+      body = { allowance_usd: Number(v) };
+    } else if (k === "add5" || k === "add10") body = { add_usd: k === "add5" ? 5 : 10 };
+    else if (k === "clear") body = { allowance_usd: null };
+    else body = { group_id: $("credGroup").value ? Number($("credGroup").value) : null };
+    credBusy = true; b.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(credUid)}/credit`, { method: "POST", body: JSON.stringify({ ...body, note }) });
+      await credLoad(); $("credMsg").textContent = "Saved.";
+    } catch (e) { $("credMsg").textContent = e.message; }
+    credBusy = false; b.disabled = false; loadGroups();
+  });
+  async function membersLoad() {
+    try {
+      const d = await api(`/api/admin/groups/${encodeURIComponent(memGid)}/members`);
+      $("memRows").innerHTML = d.items.map((m) => `<tr data-testid="admin-member"><td><b>${esc(m.name || "(no name)")}</b><small>${esc(m.email)}</small><small><code>${esc(m.id)}</code></small></td>
+        <td><button type="button" data-mem="${esc(m.id)}" data-testid="admin-member-remove">Remove</button></td></tr>`).join("") || `<tr><td colspan="2">No members yet.</td></tr>`;
+    } catch (e) { $("memMsg").textContent = e.message; }
+  }
+  function openMembers(gid) {
+    const g = groupsList.find((x) => String(x.id) === String(gid)) || {};
+    memGid = gid; $("memMsg").textContent = ""; $("memH").textContent = `Members of ${g.name || "the group"}`;
+    $("memDlg").showModal(); membersLoad();
+  }
+  function closeMembers() { if ($("memDlg").open) $("memDlg").close(); memGid = ""; loadGroups(); load(); }
+  $("memClose").addEventListener("click", closeMembers);
+  $("memDlg").addEventListener("cancel", (ev) => { ev.preventDefault(); closeMembers(); });
+  $("memRows").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-mem]");
+    if (!b || b.disabled) return;
+    b.disabled = true;
+    try {
+      await api(`/api/admin/groups/${encodeURIComponent(memGid)}/members`, { method: "POST", body: JSON.stringify({ remove: [b.dataset.mem] }) });
+      $("memMsg").textContent = "Removed. They're back on their personal allowance or the default.";
+    } catch (e) { $("memMsg").textContent = e.message; }
+    membersLoad();
+  });
+
   function row(u) {
     const self = u.id === me;
     const block = u.status === "blocked"
       ? `<button type="button" data-act="unblock" data-testid="admin-unblock" data-id="${esc(u.id)}">Unblock</button>`
       : `<button type="button" data-act="block" data-testid="admin-block" data-id="${esc(u.id)}"${self ? " disabled title=\"You can't block yourself\"" : ""}>Block</button>`;
-    return `<tr data-testid="admin-user"><td><b>${esc(u.name || "(no name)")}</b><small>${esc(u.email)}</small>${u.org ? `<small>${esc(u.org)}</small>` : ""}<small><code>${esc(u.id)}</code></small></td>
+    return `<tr data-testid="admin-user"><td><input type="checkbox" data-sel="${esc(u.id)}" data-testid="admin-select"${selected.has(u.id) ? " checked" : ""} aria-label="Select ${esc(u.name || u.email || u.id)}"></td><td><b>${esc(u.name || "(no name)")}</b><small>${esc(u.email)}</small>${u.org ? `<small>${esc(u.org)}</small>` : ""}<small><code>${esc(u.id)}</code></small></td>
       <td>${esc(when(u.first_signin))}</td>
       <td>${esc(when(u.last_signin))}<small>${esc(u.last_signin_ip)}${u.last_signin_ua ? " · " + esc(u.last_signin_ua) : ""}</small></td>
       <td>${esc(when(u.last_seen))}</td><td>${esc(u.runs)}</td><td>${esc(u.posts)}</td><td>${esc(size(u.storage_bytes))}</td>
+      <td data-testid="admin-user-credit">${creditCell(u.credit)}</td>
       <td><span class="pill ${esc(u.status)}">${esc(u.status)}</span></td>
-      <td><div class="adm-actions">${block}<button type="button" data-act="tokens" data-testid="admin-tokens-open" data-id="${esc(u.id)}">Tokens</button><button type="button" class="danger" data-act="delete" data-testid="admin-delete" data-id="${esc(u.id)}"${self ? " disabled" : ""}>Delete</button></div></td></tr>`;
+      <td><div class="adm-actions">${block}<button type="button" data-act="credit" data-testid="admin-credit-open" data-id="${esc(u.id)}">Credit</button><button type="button" data-act="tokens" data-testid="admin-tokens-open" data-id="${esc(u.id)}">Tokens</button><button type="button" class="danger" data-act="delete" data-testid="admin-delete" data-id="${esc(u.id)}"${self ? " disabled" : ""}>Delete</button></div></td></tr>`;
   }
 
   // View transitions (5 Nov 2026, studio/static/viewswap.js): a new page or search shows the HuhQueue loader in the table at
   // once, so the rows being left never stay on view as if they were the answer; at least 150 ms so it doesn't flicker
   const LOAD_MIN_MS = 150;
   function loadingRows() {
-    $("rows").innerHTML = `<tr data-testid="admin-loading"><td colspan="9" class="adm-loading">${window.HQView ? HQView.markup("Loading users") : "Loading users"}</td></tr>`;
+    $("rows").innerHTML = `<tr data-testid="admin-loading"><td colspan="11" class="adm-loading">${window.HQView ? HQView.markup("Loading users") : "Loading users"}</td></tr>`;
   }
   function failedRows(msg) {
-    $("rows").innerHTML = `<tr data-testid="admin-error"><td colspan="9" class="adm-loading"><span role="alert">${esc(msg)}</span>
+    $("rows").innerHTML = `<tr data-testid="admin-error"><td colspan="11" class="adm-loading"><span role="alert">${esc(msg)}</span>
       <button type="button" id="admRetry" data-testid="admin-retry">Retry</button></td></tr>`;
     $("admRetry").onclick = () => load();
   }
@@ -177,7 +331,7 @@
       const left = LOAD_MIN_MS - (Date.now() - t0); if (left > 0) await new Promise((r) => setTimeout(r, left));
       if (mine !== ctl || mine.signal.aborted) return;
       total = d.total; rows = d.users; overview(d.overview);
-      $("rows").innerHTML = d.users.map(row).join("") || `<tr><td colspan="9">No users.</td></tr>`;
+      $("rows").innerHTML = d.users.map(row).join("") || `<tr><td colspan="11">No users.</td></tr>`;
       $("page").textContent = total ? `${offset + 1}–${Math.min(offset + PER, total)} of ${total}` : "";
       $("prev").disabled = offset === 0; $("next").disabled = offset + PER >= total;
       try { usageDraw(await api("/api/admin/usage", { signal: ctl.signal })); }
@@ -205,6 +359,8 @@
         say("Unblocked.");
       } else if (kind === "tokens") {
         openTokens(id); return;
+      } else if (kind === "credit") {
+        openCredit(id); return;
       } else if (kind === "delete") {
         $("delId").textContent = id; $("delInput").value = ""; $("delOk").disabled = true; $("del").dataset.id = id;
         $("del").showModal(); return;
@@ -265,7 +421,7 @@
   function start() {                       // the session (CSRF token, who I am), then the list; a failure says so
     fetch("/api/session", { credentials: "same-origin" })
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((s) => { csrf = s.csrf || ""; me = (s.user && (s.user.id || s.user.account_id)) || ""; say(""); load(); })
+      .then((s) => { csrf = s.csrf || ""; me = (s.user && (s.user.id || s.user.account_id)) || ""; say(""); load(); loadGroups(); })
       .catch(() => {
         $("msg").innerHTML = 'Couldn\'t load your session. <button type="button" id="retry" data-testid="admin-retry">Try again</button>';
         $("retry").addEventListener("click", start);
