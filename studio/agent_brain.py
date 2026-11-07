@@ -1302,6 +1302,7 @@ class Brain:
             done = False
             tool_engs = [e for e in engs if e.get("tools")]
             tool_engs = self._honour_pick(a, rid, engs, tool_engs)
+            self._claude_out_note(a, rid, engs, tool_engs, tools.demo)
             # the person's chosen engine first; one that is out of credit or erroring hands over to the next (never a crash)
             for i, eng in enumerate(tool_engs):
                 nxt = brain_llm.label(tool_engs[i + 1]) if i + 1 < len(tool_engs) else "the standard plan"
@@ -1339,6 +1340,22 @@ class Brain:
             activity.end(tok)
             with _rlock:
                 _running.discard(rid)
+
+    def _claude_out_note(self, a, rid, engs: list[dict], tool_engs: list[dict], demo: bool) -> None:
+        """On Automatic, a person whose included Claude credit is used up gets one plain line saying which engine writes
+        the post instead (owner, 7 Nov 2026: Claude first, then NVIDIA). A pick of Claude is said by _honour_pick."""
+        from . import ai_engines
+        if demo or brain_llm.client_brain_active() or not brain_llm.operator_key() or any(e.get("id") == "claude" for e in engs):
+            return
+        try:
+            if ai_engines.get_pref(self.store, a.uid) != "auto" or not brain_llm.claude_out(self.store, a.uid):
+                return
+        except Exception:  # noqa: BLE001  the preference table is optional
+            return
+        who = f"{brain_llm.label(tool_engs[0])} is writing this" if tool_engs else "I'm using the standard plan"
+        line = f"Your included Claude credit is used up, so {who}. Add your own key in Settings > AI engine to keep Claude."
+        if line not in (self.h.run(a, rid)["result"].get("notes") or []):
+            self._note(a, rid, line)
 
     def _honour_pick(self, a, rid, engs: list[dict], tool_engs: list[dict]) -> list[dict]:
         """The engine the person picked in Make a post's Model switch runs, or the run says why not (owner, 3 Nov 2026:

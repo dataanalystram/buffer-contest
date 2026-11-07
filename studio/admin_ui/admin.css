@@ -33,3 +33,11 @@ dialog label{display:block;margin-top:10px}dialog input{display:block;width:100%
 .adm-switches div{border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:210px;display:flex;flex-direction:column;gap:6px}
 .adm-switches div.paused{border-color:var(--danger)}.adm-switches small{color:var(--muted)}
 .adm-loading{padding:32px 12px;text-align:center}.adm-loading .hq-vt-in{margin:0 auto}.adm-loading button{margin-left:12px}
+.adm-inline{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin:8px 0}
+.adm-inline input,.adm-inline select,dialog select{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit}
+.adm-inline label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.adm-inline input[type=number]{width:110px}
+.adm-left{justify-content:flex-start;margin-top:8px}
+dialog select{display:block;width:100%;margin-top:6px}
+#grpRows input{width:110px;font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit}
+.credit-out{color:var(--danger)}

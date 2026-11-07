@@ -4,14 +4,16 @@ Engines (ids are stable; REST, MCP and the UI use them):
   gemini-studio Gemini 2.5 Flash on Google AI Studio's free tier (GOOGLE_AI_STUDIO_KEY), free_engines.
   nvidia        NVIDIA NIM on its free developer credits (NVIDIA_API_KEY): Nemotron Ultra plans, Nemotron Lightning is fast.
   hf            Hugging Face Inference Providers on the free monthly credits (HF_TOKEN): Qwen3 235B.
-  claude        Claude (Anthropic) on HuhQueue's key: $1 allowance per signed-in user (budget.caps), app-wide pool.
+  claude        Claude (Anthropic) on HuhQueue's key: $5 allowance per signed-in user by default (budget.caps), or the
+                personal / group allowance an admin set (studio/credits.py), inside the app-wide pool.
   gemini-flash  Gemini 2.5 Flash via Oracle Cloud (OCI Generative AI), metered per user and app-wide on the Oracle ledger.
   gemini-pro    Gemini 2.5 Pro via Oracle Cloud: same Oracle credit, slower and stronger (only when chosen).
   own           Your own API key (Settings > AI engine > Bring your own key), when one is saved.
   free          The free starter model (no tool use: the agent follows the standard plan).
 
-Automatic order: the person's choice first, then the free engines (AI Studio, NVIDIA, Hugging Face), then Claude, the
-person's own key and the free starter model. A key the person saved for an engine (byo_keys: Anthropic, Google AI Studio,
+Automatic order (owner, 7 Nov 2026): Claude first while the person has included credit, then NVIDIA, then the other free
+engines (AI Studio, Hugging Face), the person's own key and the free starter model. A person who picked an engine keeps
+it first. A key the person saved for an engine (byo_keys: Anthropic, Google AI Studio,
 NVIDIA, Hugging Face) takes priority over HuhQueue's key for that engine. An engine that is out of credit or erroring hands
 over to the next one with a short note in the run (agent_brain._go). An engine that failed for a reason that will not
 clear in seconds (a 4xx, a zero quota, spent free credits) is marked down for a while so runs don't keep paying the
@@ -30,7 +32,7 @@ import time
 from . import free_engines as _fe
 
 ALL_IDS = ("gemini-studio", "nvidia", "hf", "claude", "gemini-flash", "gemini-pro", "own", "free")
-ALL_ORDER = ("gemini-studio", "nvidia", "hf", "gemini-flash", "claude", "own", "free")
+ALL_ORDER = ("claude", "nvidia", "gemini-studio", "hf", "gemini-flash", "own", "free")
 FREE_IDS = _fe.IDS
 ORACLE_IDS = ("gemini-flash", "gemini-pro")
 

@@ -288,6 +288,9 @@ PUBLIC = {  # path -> why it is open to anyone
     "/api/admin/usage": "404 unless HQ_ADMIN_IDS (credit and free-tier numbers only)",
     "/api/admin/users/{uid}/tokens": "404 unless HQ_ADMIN_IDS", "/api/admin/users/{uid}/tokens/{tid}/revoke": "404 unless HQ_ADMIN_IDS",
     "/api/admin/users/{uid}/tokens/{tid}/limit": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/users/{uid}/credit": "404 unless HQ_ADMIN_IDS (Claude credit, studio/credits.py)",
+    "/api/admin/groups": "404 unless HQ_ADMIN_IDS (credit groups)", "/api/admin/groups/{gid}": "404 unless HQ_ADMIN_IDS",
+    "/api/admin/groups/{gid}/members": "404 unless HQ_ADMIN_IDS", "/api/admin/groups/{gid}/delete": "404 unless HQ_ADMIN_IDS",
 }
 
 

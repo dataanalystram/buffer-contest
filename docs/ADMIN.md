@@ -82,6 +82,18 @@ studio/egress.py) counts **media only**: media bytes read from the database (the
 media bytes sent to clients (the part of Render bandwidth that matters), with R2 against its caps. Other traffic (pages,
 JSON, API calls) is not in these numbers; the provider dashboards have the full totals.
 
+## Claude credit per person and per group
+Each person's included Claude allowance (studio/credits.py), first match wins:
+1. a **personal** allowance you set on them (Credit button in the users table: set an amount, or +$5 / +$10),
+2. their **group's** allowance (Claude credit groups section; one group per person; changing a group's amount applies to
+   every member at once; Delete asks for a second click and sends members back to the default),
+3. the **default**, `AI_BUDGET_PER_USER_USD` on Render ($5 if unset).
+
+What they already spent always counts (raising $5 to $10 gives $5 more; lowering below the spend means out of credit).
+Testers in `HQ_BRAIN_TESTERS` keep the shared testing pool. Every call stays inside `AI_BUDGET_TOTAL_USD` (Render only).
+When a person's Claude credit is used up, the agent's Automatic order runs NVIDIA next, with one line in the thread.
+The users table shows "$x of $y left" and where $y comes from. Every change is in the admin log with the old and new values.
+
 ## Admin log
 `admin_audit`: time, the admin's account id, action, a hash of the subject's id (`sha256("hq-subject:" + id)`), detail
 (the block reason), ok. A deleted account's id and email never appear in it; when an admin's own account is erased,
@@ -101,6 +113,11 @@ All under a signed-in admin browser session; writes need the `X-HQ-CSRF` header 
 - `POST /api/admin/users/{id}/tokens/{tid}/limit` `{hourly_cap?: 1-100000|null, daily_cap?: 1-500}`
 - `GET /api/admin/switches` · `POST /api/admin/switches/{name}` `{paused: bool, reason?}`
 - `GET /api/admin/usage`
+- `GET /api/admin/users/{id}/credit` · `POST /api/admin/users/{id}/credit` with one of `{allowance_usd: 0-500|null}`,
+  `{add_usd: 0.01-100}`, `{group_id: <id>|null}`, plus optional `note`
+- `GET /api/admin/groups` · `POST /api/admin/groups` `{name, allowance_usd}` · `POST /api/admin/groups/{gid}` `{name?, allowance_usd?}`
+- `GET /api/admin/groups/{gid}/members` · `POST /api/admin/groups/{gid}/members` `{add?: [ids], remove?: [ids]}`
+- `POST /api/admin/groups/{gid}/delete` `{confirm: "<group name>"}`
 
 ## Requests to delete
 Someone who can still sign in uses Settings → Disconnect and delete. Someone who can't (lost Buffer access) asks through

@@ -11,7 +11,7 @@ UI = REST = MCP.
 | | In the app | Through Claude / ChatGPT (MCP) |
 |---|---|---|
 | Brain (planning, reading the research, slide text, captions) | HuhQueue's agent on our Anthropic key | **Your** model |
-| AI cost | Counts against your $1 allowance (then the free model) | **$0** to HuhQueue (render compute only) |
+| AI cost | Counts against your Claude allowance ($5 by default; then NVIDIA) | **$0** to HuhQueue (render compute only) |
 | Hands (read links and X posts, find official media, hero edit, render carousels and Reels, cut, caption, split, themes, brand check, Buffer drafts) | HuhQueue | HuhQueue, the same tools |
 
 Rules (owner decision, 1 Nov 2026):
@@ -263,7 +263,7 @@ that app's paid calls run without asking and each one is written to Activity.
 | `get_onboarding` | client brain * | The person's content types, channels, website, tone and X watchlist, with the options to choose from. |
 | `set_onboarding` | client brain * | Save onboarding choices: content_types (ai_news, product_launches, yc_startups, tutorials, dev_tools, memes, india_tech, research, funding, open_source), channel_ids, tone, website (builds the brand kit), x_watchlist (handles or… |
 | `get_recommendations` | client brain * | A feed tailored to the person's content types plus up to three ready-to-approve posts in their brand (cover + captions). |
-| `get_ai_engine` | client brain * | The in-app agent's AI engine (gemini-studio, nvidia, hf, claude, own, free or auto), which one will actually run, each engine's logo, free/paid tier, usage ("3 of 150 calls today", "$0.34 of $1") and the app-wide pools. A key you saved for an engine runs it. |
+| `get_ai_engine` | client brain * | The in-app agent's AI engine (gemini-studio, nvidia, hf, claude, own, free or auto), which one will actually run, each engine's logo, free/paid tier, usage ("3 of 150 calls today", "$0.34 of $5") and the app-wide pools. A key you saved for an engine runs it. |
 | `set_ai_engine` | client brain * | Choose the in-app agent's engine. Out of credit or erroring, it falls back to the next one automatically (a note in the run). |
 | `get_ai_logs` | read | Recent AI calls: time, engine, model, task, latency, tokens, cost, fallback reason, ok/error. Filters engine, status, task, q; paged. |
 | `list_ai_keys` | read | Your own AI keys per provider (Anthropic, OpenAI, Google AI Studio, NVIDIA, Hugging Face, Groq, OpenRouter, custom), masked. |

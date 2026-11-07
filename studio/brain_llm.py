@@ -118,7 +118,9 @@ def engines(store, uid: str, settings, http=None, demo: bool = False) -> list[di
                     pass
                 avail[eid] = free_engines.engine(eid)
     k = operator_key()
-    if k and server_ok and "claude" not in avail and not ai_engines.down("claude"):
+    # Claude on HuhQueue's key only while this person has allowance left (studio/credits.py): once it is used up the
+    # next engine (NVIDIA on Automatic) runs from the start instead of a refused Claude try on every run
+    if k and server_ok and "claude" not in avail and not ai_engines.down("claude") and not claude_out(store, uid):
         m = resolve_models(k, http)
         if m["plan"]:
             avail["claude"] = {"id": "claude", "source": "huhqueue claude", "provider": "anthropic", "base_url": ANTHROPIC, "api_key": k,
@@ -139,6 +141,15 @@ def engines(store, uid: str, settings, http=None, demo: bool = False) -> list[di
     except Exception:  # the preference table is optional: never let it stop the agent
         pref = "auto"
     return [{**avail[e], "id": e} for e in ai_engines.order(pref) if e in avail]  # id: which pick this is (Make a post's switch)
+
+
+def claude_out(store, uid: str) -> bool:
+    """True when this person's included Claude credit (or the app-wide Claude pool) is used up. A budget table that
+    isn't there yet means nothing is spent."""
+    try:
+        return bool(budget.claude_credit(store, uid)["out"])
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def label(engine: dict) -> str:

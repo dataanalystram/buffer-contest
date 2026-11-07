@@ -105,13 +105,19 @@ CREATE TABLE IF NOT EXISTS user_tombstones (
   id_hash TEXT PRIMARY KEY, at REAL, via TEXT);
 CREATE TABLE IF NOT EXISTS ops_switches (
   name TEXT PRIMARY KEY, paused INTEGER DEFAULT 0, at REAL, by_hash TEXT, reason TEXT);
+CREATE TABLE IF NOT EXISTS credit_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, allowance_usd REAL, created REAL, updated REAL);
+CREATE TABLE IF NOT EXISTS credit_group_members (
+  user_id TEXT PRIMARY KEY, group_id INTEGER, added REAL);
 """
 
 
 # Columns added after the first release: added in place on boot (SQLite and Postgres), never dropped.
 ADDED_COLUMNS = {
     # admin panel (studio/admin.py, docs/ADMIN.md): a reversible block, and when the person was last active
-    "users": (("blocked", "INTEGER"), ("blocked_at", "REAL"), ("blocked_by", "TEXT"), ("block_reason", "TEXT"), ("last_seen", "REAL")),
+    "users": (("blocked", "INTEGER"), ("blocked_at", "REAL"), ("blocked_by", "TEXT"), ("block_reason", "TEXT"), ("last_seen", "REAL"),
+              # an admin's personal Claude allowance for this person in USD (studio/credits.py), NULL = group or default
+              ("claude_allowance_usd", "REAL")),
     # media storage backend (studio/blobstore.py, docs/STORAGE.md): the object key when the bytes are in R2, and their hash
     "media": (("storage_key", "TEXT"), ("sha256", "TEXT")),
     "audit": (("category", "TEXT"), ("surface", "TEXT"), ("app", "TEXT"), ("client_id", "TEXT"), ("token_id", "INTEGER"),
@@ -144,7 +150,8 @@ ID_TABLES = ("admin_audit", "agent_tokens", "approvals", "audit", "feeds", "styl
              "style_edits", "style_suggestions", "review_links", "link_consents")  # Brand studio slots, Sources runs and brand kits (own schemas in brand_studio.py, sources_agent.py, brand_kits.py)
 TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_links", "feeds", "audit",
           "oauth_clients", "oauth_codes", "oauth_refresh", "brand_kits", "style_rules", "media", "agent_runs", "render_jobs",
-          "ai_settings", "blob_gc", "admin_audit", "user_tombstones", "r2_usage", "ops_switches")
+          "ai_settings", "blob_gc", "admin_audit", "user_tombstones", "r2_usage", "ops_switches", "credit_groups",
+          "credit_group_members")
 
 
 # Per-person tables created by other modules (each on first use). Disconnect and delete removes them too (found in the
@@ -155,7 +162,7 @@ OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "tem
                    "source_settings",
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
                    "thread_ids", "thread_deleted", "jev_usage", "link_consents", "take_prefs", "link_auto_approve",
-                   "link_probes")
+                   "link_probes", "credit_group_members")
 
 def _run_callbacks(fns) -> None:
     for fn in fns or ():

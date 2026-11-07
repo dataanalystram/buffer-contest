@@ -17,6 +17,9 @@ runs and posts, storage used, status), and three actions, each CSRF-checked and 
 
 An admin can't block or delete their own account.
 
+Claude credit (studio/credits.py): each person's allowance (personal, group or the default), what they spent and have
+left; set or add to one person's allowance, and groups with their own allowance. The app-wide cap stays on Render.
+
 Also (docs/ADMIN.md): one account's agent / MCP tokens with an hourly request cap, the daily cap and Revoke; the global
 kill switches (studio/opsctl.py); and the credit / free-tier meters. Every write is CSRF-checked and in ``admin_audit``.
 """
@@ -118,6 +121,8 @@ def users(store, q: str = "", limit: int = 100, offset: int = 0, include_demo: b
         for r in store.q(f"SELECT user_id, ts, ip, ua FROM audit WHERE id IN (SELECT MAX(id) FROM audit WHERE user_id IN ({marks}) "
                          f"AND action IN ('connect_buffer','device_signed_in') AND ok=1 GROUP BY user_id)", tuple(ids)):
             signin[r["user_id"]] = dict(r)
+    from . import credits
+    credit = credits.for_users(store, [r["id"] for r in rows])
     out = []
     for r in rows:
         s = signin.get(r["id"]) or {}
@@ -134,7 +139,7 @@ def users(store, q: str = "", limit: int = 100, offset: int = 0, include_demo: b
                     "last_signin_ua": coarse_ua(s.get("ua")), "last_seen": seen,
                     "runs": int(runs.get(r["id"]) or 0), "posts": int(posts.get(r["id"]) or 0),
                     "storage_bytes": int(media.get(r["id"]) or 0) + int(lib.get(r["id"]) or 0),
-                    "status": status, "blocked_at": r["blocked_at"]})
+                    "status": status, "blocked_at": r["blocked_at"], "credit": credit.get(r["id"])})
     return {"users": out, "total": total, "limit": limit, "offset": offset}
 
 
@@ -388,7 +393,8 @@ def usage(store) -> dict:
             return 0.0
     c, oc = budget.caps(), budget.oci_caps()
     out["claude"] = {"spent_usd": spent("global"), "cap_usd": c["global"], "testing_spent_usd": spent("testing"),
-                     "testing_cap_usd": c["testing"]}
+                     "testing_cap_usd": c["testing"], "default_user_usd": c["user"],
+                     "left_usd": round(max(0.0, c["global"] - spent("global")), 2)}
     out["oci"] = {"spent_usd": spent(budget.OCI_GLOBAL), "cap_usd": oc["global"]}
     free: dict = {}
     since = time.time() - 86400
@@ -526,6 +532,71 @@ def add_routes(app, store, studio, cookie: str) -> None:
         me = gate(request, write=True)
         b = await body_of(request)
         return await act(lambda: set_switch(store, me, name, b))
+
+    # ---- Claude credit (studio/credits.py): one person, and groups
+    async def credit_act(fn):
+        from . import credits
+        try:
+            return await run_in_threadpool(fn)
+        except (AdminError, credits.CreditError) as e:
+            return JSONResponse({"error": str(e)}, status_code=e.status)
+
+    @app.get("/api/admin/users/{uid}/credit", include_in_schema=False)
+    async def admin_credit(uid: str, request: Request):
+        gate(request)
+        from . import credits
+        def fn():
+            _target(store, uid)
+            return {**credits.view(store, uid), "groups": credits.groups(store)}
+        return await credit_act(fn)
+
+    @app.post("/api/admin/users/{uid}/credit", include_in_schema=False)
+    async def admin_set_credit(uid: str, request: Request):
+        me = gate(request, write=True)
+        b = await body_of(request)
+        from . import credits
+        return await credit_act(lambda: credits.set_user(store, me, uid, b))
+
+    @app.get("/api/admin/groups", include_in_schema=False)
+    def admin_groups(request: Request):
+        gate(request)
+        from . import credits
+        return JSONResponse({"items": credits.groups(store), "default_usd": credits.default_usd(), "max_usd": credits.MAX_USD},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/admin/groups", include_in_schema=False)
+    async def admin_create_group(request: Request):
+        me = gate(request, write=True)
+        b = await body_of(request)
+        from . import credits
+        return await credit_act(lambda: credits.create_group(store, me, b))
+
+    @app.get("/api/admin/groups/{gid}/members", include_in_schema=False)
+    async def admin_group_members(gid: str, request: Request):
+        gate(request)
+        from . import credits
+        return await credit_act(lambda: {"items": credits.group_members(store, gid)})
+
+    @app.post("/api/admin/groups/{gid}/members", include_in_schema=False)
+    async def admin_set_group_members(gid: str, request: Request):
+        me = gate(request, write=True)
+        b = await body_of(request)
+        from . import credits
+        return await credit_act(lambda: credits.set_members(store, me, gid, b))
+
+    @app.post("/api/admin/groups/{gid}/delete", include_in_schema=False)
+    async def admin_delete_group(gid: str, request: Request):
+        me = gate(request, write=True)
+        b = await body_of(request)
+        from . import credits
+        return await credit_act(lambda: credits.delete_group(store, me, gid, b))
+
+    @app.post("/api/admin/groups/{gid}", include_in_schema=False)
+    async def admin_update_group(gid: str, request: Request):
+        me = gate(request, write=True)
+        b = await body_of(request)
+        from . import credits
+        return await credit_act(lambda: credits.update_group(store, me, gid, b))
 
     @app.get("/api/admin/usage", include_in_schema=False)
     def admin_usage(request: Request):

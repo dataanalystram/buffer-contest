@@ -52,13 +52,13 @@ def _ok(text="", tool_calls=None, finish="stop"):
 
 
 # ------------------------------------------------------------------ order and choice
-def test_automatic_order_is_free_engines_then_claude(app, human, free_keys, claude_env):
+def test_automatic_order_is_claude_then_nvidia_then_free_engines(app, human, free_keys, claude_env):
     uid = _uid(app)
-    assert _ids(app, uid) == ["gemini-studio", "nvidia", "hf", "claude"]
-    ai_engines.set_pref(app.state.store, uid, "claude")  # the person's choice first, then the free engines
-    assert _ids(app, uid) == ["claude", "gemini-studio", "nvidia", "hf"]
-    ai_engines.set_pref(app.state.store, uid, "hf")
-    assert _ids(app, uid) == ["hf", "gemini-studio", "nvidia", "claude"]
+    assert _ids(app, uid) == ["claude", "nvidia", "gemini-studio", "hf"]  # owner, 7 Nov 2026: Claude first, NVIDIA next
+    ai_engines.set_pref(app.state.store, uid, "claude")
+    assert _ids(app, uid) == ["claude", "nvidia", "gemini-studio", "hf"]
+    ai_engines.set_pref(app.state.store, uid, "hf")  # the person's choice first, then the automatic order
+    assert _ids(app, uid) == ["hf", "claude", "nvidia", "gemini-studio"]
     assert _ids(app, uid, demo=True) == []  # the free sample never spends HuhQueue's keys, free or not
     tok = brain_llm.client_brain(True)
     try:
@@ -90,12 +90,12 @@ def test_picker_credit_lines_pools_and_ai_studio_link(app, human, monkeypatch, f
     g = by["gemini-studio"]
     assert not g["available"] and g["reason"] == "Add a free Google AI Studio key"
     assert g["link"] == {"url": "https://aistudio.google.com/apikey", "label": "Get a free key"}
-    assert st["runs"] == "nvidia" and st["selected"] == "auto"
-    assert by["claude"]["credit"]["label"] == "Claude: $0.00 of your $1 used"  # Claude keeps its $1 per person
+    assert st["runs"] == "claude" and st["selected"] == "auto"
+    assert by["claude"]["credit"]["label"] == "Claude: $0.00 of your $5 used"  # $5 per person by default
     assert any(p["label"].startswith("NVIDIA today: 1,500 of 1,500") for p in st["free_pools"])
     human.put("/api/ai/engine", json={"engine": "gemini-studio"})
     st = human.get("/api/ai/engine").json()
-    assert st["runs"] == "nvidia" and "Gemini (AI Studio) isn't available (add a free google ai studio key)" in st["note"]
+    assert st["runs"] == "claude" and "Gemini (AI Studio) isn't available (add a free google ai studio key)" in st["note"]
 
 
 def test_daily_call_caps_per_person_and_app_wide(app, human, monkeypatch, free_keys):
@@ -271,7 +271,7 @@ def test_oracle_probe_runs_at_most_every_six_hours(app, human, oci_set, monkeypa
     ai_engines._oracle["at"] -= ai_engines.ORACLE_RECHECK + 1  # six hours later: one new check, and it now answers
     monkeypatch.setattr(oci_genai, "chat", lambda *a, **k: calls.append("again") or {"text": "OK"})
     assert ai_engines.oracle_check(background=False)["ok"] is True and calls[-1] == "again"
-    assert _ids(app, _uid(app)) == ["gemini-flash", "claude"]
+    assert _ids(app, _uid(app)) == ["claude", "gemini-flash"]
     assert human.get("/api/ai/engine").json()["oracle"]["recheck_hours"] == 6
 
 
