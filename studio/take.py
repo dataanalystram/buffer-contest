@@ -23,6 +23,7 @@ Third-party pieces are called as libraries or separate programs and credited in 
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import math
@@ -516,6 +517,67 @@ def probe(path: str) -> dict:
             "audio": a is not None, "codec": v.get("codec_name"), "raw": j}
 
 
+SPEECH_GAP_MIN_S = 0.3      # shortest non-speech stretch worth listing (One take trims only pauses over ~0.6 s)
+SPEECH_GAP_CHUNK_S = 600.0  # audio is read and checked 10 minutes at a time (bounded memory on an hour-long take)
+SPEECH_GAP_MAX = 4000       # gaps kept per take (an hour of talk has ~1,500)
+
+
+def detect_speech_gaps(path: str, min_s: float = SPEECH_GAP_MIN_S, chunk_s: float = SPEECH_GAP_CHUNK_S,
+                       timeout: int = 1800) -> tuple[list[list[float]], str]:
+    """Stretches with no speech in them, by Silero VAD (the copy bundled with faster-whisper: no download, no key, no new
+    dependency). Unlike ffmpeg silencedetect this hears a pause UNDER background music, where the audio is never quiet
+    (a narrated demo over a music bed: silencedetect finds 0 silences, so One take used to trim no pause at all).
+    Returns (gaps, how); gaps [[s, e], ...] in seconds. Never raises: ([], why) when faster-whisper, numpy or the audio
+    isn't there, so a take analyses exactly as before. studio/media/cleancut uses the gaps only when HQ_TRIM_VAD is on."""
+    try:
+        import numpy as np
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+    except Exception as e:  # noqa: BLE001 - the slim worker / the web app: no VAD, nothing changes
+        return [], f"off ({e.__class__.__name__})"
+    from . import mediasafe
+    sr = 16000
+    opts = VadOptions(min_silence_duration_ms=int(min_s * 1000), speech_pad_ms=0)
+    speech: list[list[float]] = []
+    t_end = 0.0
+    proc = None
+    try:
+        proc = mediasafe.popen(["ffmpeg", "-v", "error", "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", str(sr),
+                                "-f", "s16le", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        t0 = time.time()
+        off = 0.0
+        need = int(chunk_s * sr) * 2
+        while True:
+            if time.time() - t0 > timeout:
+                raise TimeoutError("speech gaps took too long")
+            buf = proc.stdout.read(need)
+            if not buf:
+                break
+            a = np.frombuffer(buf[: len(buf) // 2 * 2], dtype=np.int16).astype(np.float32) / 32768.0
+            for seg in get_speech_timestamps(a, opts):
+                s, e = off + seg["start"] / sr, off + seg["end"] / sr
+                if speech and s - speech[-1][1] < 0.05:  # one stretch of speech across a chunk border
+                    speech[-1][1] = e
+                else:
+                    speech.append([s, e])
+            off += len(a) / sr
+        t_end = off
+    except Exception as e:  # noqa: BLE001 - fail open: a take never fails over its pause list
+        return [], f"failed ({e.__class__.__name__})"
+    finally:
+        if proc is not None:
+            with contextlib.suppress(Exception):
+                proc.kill()
+                proc.wait(timeout=10)
+    gaps, cur = [], 0.0
+    for s, e in speech:
+        if s - cur >= min_s:
+            gaps.append([round(cur, 2), round(s, 2)])
+        cur = max(cur, e)
+    if t_end - cur >= min_s:
+        gaps.append([round(cur, 2), round(t_end, 2)])
+    return gaps[:SPEECH_GAP_MAX], "Silero VAD (faster-whisper)"
+
+
 def detect_silences(path: str, noise_db: int = -32, min_s: float = 0.35) -> list[list[float]]:
     from . import mediasafe
     r = mediasafe.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vn", "-af", f"silencedetect=noise={noise_db}dB:d={min_s}",
@@ -687,6 +749,9 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
         silences = detect_silences(path)
         timings["silences"] = round(time.time() - t, 1)
         t = time.time()
+        speech_gaps, gaps_how = detect_speech_gaps(path)  # pauses under background music too (cheap: ~0.4 s per 2.5 min)
+        timings["speech_gaps"] = round(time.time() - t, 1)
+        t = time.time()
         if transcript and transcript.get("words"):
             words, lang = transcript["words"], transcript.get("language") or ""
             provider = f"reused captions: {transcript.get('detail') or transcript.get('source')} (no Whisper run)"
@@ -729,9 +794,9 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
     return {"probe": {k: info[k] for k in ("duration", "width", "height", "audio", "codec")}, "words": words, "language": lang,
             "transcript_source": (transcript or {}).get("source") if transcript and transcript.get("words") else "whisper",
             "burned_subs": burned, "face_detector": not face_how.startswith("none") or bool(jev_rec.get("used")),
-            "silences": silences, "scenes": scenes, "faces": faces, "jev": jev_rec, **({"jev_frames": jev_frames} if jev_frames else {}),
+            "silences": silences, "speech_gaps": speech_gaps, "scenes": scenes, "faces": faces, "jev": jev_rec, **({"jev_frames": jev_frames} if jev_frames else {}),
             "providers": {"stt": provider, "scenes": scene_how, "faces": face_how + jev_note, "vad": "Silero VAD (inside faster-whisper)"
-                          if "faster-whisper" in provider else "ffmpeg silencedetect"},
+                          if "faster-whisper" in provider else "ffmpeg silencedetect", "speech_gaps": gaps_how},
             "timings": {**timings, "total": round(time.time() - t0, 1)}}  # total: wall clock (stages overlap)
 
 
