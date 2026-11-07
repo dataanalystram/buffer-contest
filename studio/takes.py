@@ -47,6 +47,12 @@ THUMB_OFFSET = ("instagram", "tiktok", "pinterest")  # Buffer: metadata.thumbnai
 SOCIAL_PAGES = ("youtube.com", "youtu.be", "tiktok.com", "instagram.com", "facebook.com", "x.com", "twitter.com", "vimeo.com",
                 "linkedin.com", "twitch.tv")
 SAMPLE_DIR = Path(__file__).parent / "sample_take"
+# A clip's placement that is still a post in Buffer, and the Buffer statuses such a post can be in besides sent
+# (studio/buffer_api._just_created reads the same set). The take page re-checks these against Buffer (_reconcile).
+PLACEMENT_LIVE = ("draft", "scheduled", "queued")
+GONE_GRACE_S = 120  # a post saved this recently is never called deleted just because Buffer's list doesn't show it yet
+PLACED = PLACEMENT_LIVE + ("pending_approval", "sent")  # what "N placed" on a take card counts
+PLACEMENT_SYNC_STATUSES = ("draft", "scheduled", "sending", "needs_approval", "error")
 MAX_TAKE_SECS = int(os.environ.get("HQ_MAX_TAKE_SECS", "10800"))  # 3 h, as for a video link (link_ingest.MAX_LINK_SECS); was 30 min
 MAX_CAPTION_TEXT = 4 * 1024 * 1024  # an uploaded .srt/.vtt; checked before it is parsed (SECURITY_RULES 6)
 # Opus-style takes render each clip in the ratio its channel needs (Instagram is posted as a Reel here)
@@ -966,10 +972,128 @@ class Takes(TakeBin, TakeControl):
         self._step(steps, "ready", "done", "Spread them into the open slots of your week, as Buffer drafts")
         self._save(rid, steps, res, "ready")
 
+    # ------------------------------------------------------------------ placements vs Buffer's real state
+    def _buffer_index(self, a: Actor) -> dict | None:
+        """Every post in the account's Buffer, from the SAME cached reads the Planner and Inbox use (POSTS_TTL, our own
+        writes clear them), so opening takes costs at most one Buffer request per account per few minutes:
+        {"posts": {id: post}, "sent_complete": bool}. None when Buffer can't be read now (not connected, rate limited) or
+        a list came back full, so absence would prove nothing; then placements are left exactly as they were."""
+        u = self.store.user(a.uid) or {}
+        org = u.get("org_id")
+        if not org:
+            return None
+        from .buffer_api import POSTS_PAGE
+        buf = self.studio.buffer
+        try:
+            try:
+                buf.prefetch_posts(a.uid, org, PLACEMENT_SYNC_STATUSES + ("sent",))
+            except Exception:  # noqa: BLE001 - the per-status reads below surface any real error
+                pass
+            posts: dict = {}
+            for st in PLACEMENT_SYNC_STATUSES:
+                rows = buf.posts(a.uid, org, [st], first=POSTS_PAGE)
+                if len(rows) >= POSTS_PAGE:
+                    return None
+                for p in rows:
+                    posts[str(p.get("id"))] = {**p, "status": (p.get("status") or st).lower()}
+            sent = buf.posts(a.uid, org, ["sent"], first=POSTS_PAGE)
+            for p in sent:
+                posts[str(p.get("id"))] = {**p, "status": "sent"}
+        except Exception:  # noqa: BLE001 - a Buffer hiccup never breaks the take page; it just isn't re-checked this time
+            return None
+        return {"posts": posts, "sent_complete": len(sent) < POSTS_PAGE}
+
+    def _reconcile(self, a: Actor, res: dict, index: dict | None) -> bool:
+        """Bring each clip's placements in line with what really happened (owner, 7 Nov 2026: drafts deleted in Buffer
+        still showed as "Buffer draft" and "3 placed"). A post waiting for approval follows its approval (approved: the
+        Buffer post it became; rejected: gone). A Buffer post follows Buffer: draft / scheduled / sent / failed there, or
+        status "gone" when it is no longer in the account (deleted in Buffer). True when anything changed."""
+        changed = False
+        aps: dict = {}
+        for c in res.get("clips") or []:
+            for p in c.get("placements") or []:
+                if p.get("status") == "pending_approval" and p.get("approval_id"):
+                    aid = p["approval_id"]
+                    if aid not in aps:
+                        rows = self.store.q("SELECT status,result FROM approvals WHERE id=? AND user_id=?", (aid, a.uid))
+                        aps[aid] = dict(rows[0]) if rows else None
+                    ap = aps[aid]
+                    if ap and ap["status"] == "rejected":
+                        p.update(status="gone", gone="rejected")
+                        changed = True
+                    elif ap and ap["status"] == "approved":
+                        try:
+                            out = json.loads(ap["result"] or "{}")
+                        except ValueError:
+                            out = {}
+                        pid = (out.get("post") or {}).get("id")
+                        if pid:
+                            p.update(buffer_post_id=pid, status={"queue": "queued", "draft": "draft"}.get(out.get("mode"), "scheduled"))
+                            changed = True
+                if index is None or p.get("status") not in PLACEMENT_LIVE or not p.get("buffer_post_id"):
+                    continue
+                post = index["posts"].get(str(p["buffer_post_id"]))
+                if post is None:
+                    if time.time() - float(p.get("placed_at") or 0) < GONE_GRACE_S:  # just saved: Buffer may not list it yet
+                        continue
+                    p.update(status="gone", gone="deleted" if index["sent_complete"] else "deleted_or_sent", checked=time.time())
+                    changed = True
+                    continue
+                bst = post["status"]
+                new = {"draft": "draft", "sent": "sent", "error": "failed"}.get(bst) or \
+                    ("queued" if p["status"] == "queued" else "scheduled" if bst in ("scheduled", "sending") else p["status"])
+                when = post.get("dueAt") if bst != "sent" else (post.get("sentAt") or post.get("dueAt"))
+                upd = {"status": new}
+                if new == "failed":
+                    upd["error"] = "Buffer couldn't publish it: " + ((post.get("error") or {}).get("message") or "see Buffer.")
+                label = self._local_label(when, p["timezone"]) if when and p.get("timezone") else ""
+                if label and new != "queued" and _same_time(when, p.get("at")) is False:  # moved in Buffer
+                    upd.update(at=when, local=label)
+                if any(p.get(k) != v for k, v in upd.items()):
+                    p.update(upd)
+                    changed = True
+        return changed
+
+    @staticmethod
+    def _local_label(when: str, tz: str) -> str:
+        """The short "Sat 19:58" label, in the channel's own time zone, for a time Buffer moved ('' when unknown)."""
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone(ZoneInfo(tz)).strftime("%a %H:%M")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def sync_placements(self, a: Actor, rid: int, index: dict | None = None) -> bool:
+        """Re-check one take's placements against Buffer (and Approvals) under the take's lock and save what changed.
+        index: an already fetched _buffer_index (None reads it now). Quiet: never raises. True when it saved."""
+        try:
+            with self._take_lock(rid):
+                run = self._run(a, rid)
+                res = run["result"] or {}
+                live = _live(res)
+                if not live:
+                    return False
+                if index is None and any(p.get("buffer_post_id") for p in live):
+                    index = self._buffer_index(a)
+                if self._reconcile(a, res, index):
+                    self._save(rid, run["steps"], res)
+                    return True
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
     # ------------------------------------------------------------------ reads
     def get(self, a: Actor, rid: int) -> dict:
         self.h._sweep_quietly()  # a take whose worker went silent shows as failed, not running forever
         run = self._run(a, rid)
+        live = _live(run["result"] or {}) if run["status"] == "ready" else []
+        if live:  # drafts deleted / scheduled / sent in Buffer show as they really are (saved only when something changed)
+            try:
+                index = self._buffer_index(a) if any(p.get("buffer_post_id") for p in live) else None
+                if self._reconcile(a, run["result"], index):
+                    self.sync_placements(a, rid, index)
+            except Exception:  # noqa: BLE001 - the take page always opens
+                pass
         res = run["result"] or {}
         an = res.get("analysis") or {}
         words = an.get("words") or []
@@ -1041,14 +1165,21 @@ class Takes(TakeBin, TakeControl):
 
     def list(self, a: Actor, limit: int = 20) -> list[dict]:
         out = []
+        index: dict | None = None
+        fetched = False
         for r in self.store.q("SELECT id,input,status,result,created FROM agent_runs WHERE user_id=? AND kind='take' AND status<>'binned' "
                               "ORDER BY id DESC LIMIT ?",
                               (a.uid, limit)):
             inp, res = json.loads(r["input"]), json.loads(r["result"] or "{}")
+            if r["status"] == "ready" and _live(res):  # one shared Buffer read for every take with live placements
+                if not fetched and any(p.get("buffer_post_id") for p in _live(res)):
+                    index, fetched = self._buffer_index(a), True
+                if self._reconcile(a, res, index):  # only a take that really changed is re-read and saved
+                    self.sync_placements(a, r["id"], index)
             clips = [c for c in res.get("clips") or [] if c.get("status") != "binned"]
             out.append({"id": r["id"], "status": r["status"], "title": inp.get("name") or (res.get("source") or {}).get("title") or "Your take",
                         "sample": bool(inp.get("sample")), "clips": len(clips), "ready": sum(1 for c in clips if c["status"] == "ready"),
-                        "placed": sum(1 for c in clips for p in c.get("placements") or [] if p.get("status") in ("draft", "pending_approval")),
+                        "placed": sum(1 for c in clips for p in c.get("placements") or [] if p.get("status") in PLACED),
                         "cover": next((c.get("cover_url") for c in clips if c.get("cover_url")), ""), "created": r["created"]})
         return out
 
@@ -1326,7 +1457,9 @@ class Takes(TakeBin, TakeControl):
                 continue
             at = at or p["at"]
             item = {k: p[k] for k in ("clip_id", "channel_id", "service", "local", "channel_name")}
+            item["timezone"] = p.get("timezone")  # the channel's zone: a time moved in Buffer is shown in it (_reconcile)
             item.update(at=None if how == "queue" else at, mode=how)
+            item["placed_at"] = time.time()
             try:
                 if how != "queue" and datetime.fromisoformat(at.replace("Z", "+00:00")) <= datetime.now(timezone.utc) + timedelta(minutes=2):
                     raise ActionError("That slot has passed. Plan again.")
@@ -1635,3 +1768,18 @@ def _jev_view(rec) -> dict | None:
     return {"enabled": bool(rec.get("enabled")), "why": str(rec.get("why") or "")[:200], "model": str(rec.get("model") or "")[:40],
             "cap": rec.get("cap"), "calls": rec.get("calls", 0), "used": rec.get("used", 0), "errors": rec.get("errors", 0),
             "fallback": rec.get("fallback"), "frames": frames}
+
+
+def _same_time(a: str | None, b: str | None) -> bool | None:
+    """Whether two ISO times are the same minute (None when either can't be read)."""
+    try:
+        da, db = (datetime.fromisoformat(str(x).replace("Z", "+00:00")) for x in (a, b))
+    except (TypeError, ValueError):
+        return None
+    return abs((da - db).total_seconds()) < 60
+
+
+def _live(res: dict) -> list[dict]:
+    """A take's placements that may still change: posts in Buffer and posts waiting for approval."""
+    return [p for c in res.get("clips") or [] for p in c.get("placements") or []
+            if isinstance(p, dict) and p.get("status") in PLACEMENT_LIVE + ("pending_approval",)]
