@@ -13,6 +13,15 @@ captions, splits) at $0 AI spend. See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
 
 **Live:** https://huhqueue-studio.onrender.com · **Buffer Commit entry:** see [CONTEST.md](CONTEST.md) and [SUBMISSION.md](SUBMISSION.md)
 
+## Demo (2:00)
+
+[![Watch the 2-minute HuhQueue demo: the landing page, Paste one link. Approve one week.](docs/screenshots/demo-2min-poster.jpg)](https://github.com/dataanalystram/buffer-contest/blob/main/demo/huhqueue-buffer-commit-demo-2min.mp4)
+
+*The full product tour, narrated: Inbox, News, Make a post, brand kits, One take, bring your own AI over MCP, Library and
+the Planner. [Watch it](https://github.com/dataanalystram/buffer-contest/blob/main/demo/huhqueue-buffer-commit-demo-2min.mp4)
+· [download](https://github.com/dataanalystram/buffer-contest/raw/main/demo/huhqueue-buffer-commit-demo-2min.mp4)
+· [transcript](demo/huhqueue-buffer-commit-demo-2min.transcript.md)*
+
 > **The contest entry is Studio (`studio/`).** It signs users in with Buffer OAuth only (Authorization Code + PKCE S256,
 > `prompt=consent`, rotating `offline_access` refresh tokens) and never asks for a Buffer API key. The separate core app in
 > `huhqueue/` has paste-a-token options; those are for connecting LinkedIn and Instagram directly, not Buffer.

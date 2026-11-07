@@ -6,7 +6,9 @@
                                           inside a kept word, and keeps PAD (80 ms) next to it, except a pause the
                                           ASR stretched a word across ("kind" 16.5-18.1 s over 0.8 s of silence):
                                           cut only where the silence detector heard it AND the audio energy there
-                                          is quiet (``quiet_fn``, ffmpeg volumedetect).
+                                          is quiet (``quiet_fn``, ffmpeg volumedetect). With ``speech_gaps`` (Silero
+                                          VAD, only when the app sets HQ_TRIM_VAD=1) a pause counts as silence where
+                                          the speech detector heard no voice, so pauses under background music go too.
   remap / remap_words / remap_points      original time -> trimmed time, so captions, face samples and scene cuts stay
                                           in sync with the trimmed video.
   cut(path, keep, out)                    ffmpeg trim/atrim + concat (10 ms fades at every join: no clicks).
@@ -39,6 +41,8 @@ JOIN_FADE = 0.01
 QUIET_DB = -35.0      # an in-word pause must be at most this loud (mean volume) ...
 QUIET_BELOW = 12.0    # ... and this many dB under the span's own mean
 MAX_QUIET_CHECKS = 12  # energy checks per clip (one short ffmpeg read each)
+GAP_AFTER = 0.10      # a speech-detector gap starts this much later (a soft word ending: "channels", "API")...
+GAP_BEFORE = 0.05     # ... and ends this much earlier (a soft first sound); PAD is kept inside it on top of these
 FILLERS = frozenset({"um", "umm", "uh", "uhh", "uhm", "erm", "er", "hmm", "hm", "mm"})
 _NOT_FILLER_AFTER_LIKE = frozenset({"a", "an", "the", "this", "that", "these", "those", "to", "it", "him", "her", "them",
                                     "me", "you", "us", "my", "your", "his", "our", "their"})
@@ -87,12 +91,29 @@ def _intersect(a: float, b: float, sil: list[list[float]]) -> list[list[float]]:
     return [[max(a, s), min(b, e)] for s, e in sil if min(b, e) - max(a, s) > 0]
 
 
-def plan_cuts(words: list[dict], start: float, end: float, silences: list | None = None, quiet_fn=None) -> dict:
+def _spans(items) -> list[list[float]]:
+    out = []
+    for x in items or []:
+        if isinstance(x, (list, tuple)) and len(x) == 2:
+            try:
+                a, b = float(x[0]), float(x[1])
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(a) and math.isfinite(b) and b > a:
+                out.append([a, b])
+    return out
+
+
+def plan_cuts(words: list[dict], start: float, end: float, silences: list | None = None, quiet_fn=None,
+              speech_gaps: list | None = None) -> dict:
     """Keep segments (absolute seconds) for the span [start, end]. silences: [[s, e], ...] from ffmpeg silencedetect, or
     None when there is no detector output (then the word gaps alone decide). quiet_fn(a, b) -> bool: the audio energy
     check for a silence that falls INSIDE a word's timestamps (the ASR stretched the word over a pause); without it, or
-    without silences, such pauses are kept. Returns {keep, removed, pauses, fillers, skipped}; keep == [[start, end]]
-    when nothing is cut."""
+    without silences, such pauses are kept. speech_gaps: [[s, e], ...] where the speech detector (Silero VAD,
+    take.detect_speech_gaps) heard no speech; they count as silence even under background music, shrunk by
+    GAP_AFTER / GAP_BEFORE so a soft word ending or first sound is never cut, and an in-word pause inside one needs no
+    energy check (the detector already heard no voice there). Returns {keep, removed, pauses, fillers, skipped};
+    keep == [[start, end]] when nothing is cut."""
     start, end = float(start), float(end)
     span = end - start
     base = {"keep": [[round(start, 3), round(end, 3)]], "removed": 0.0, "pauses": 0, "fillers": 0, "skipped": ""}
@@ -108,17 +129,9 @@ def plan_cuts(words: list[dict], start: float, end: float, silences: list | None
     ws.sort(key=lambda w: (w["s"], w["e"]))
     if span <= 0 or not ws:
         return {**base, "skipped": "no words"}
-    sil = None
-    if silences is not None:
-        sil = []
-        for x in silences:
-            if isinstance(x, (list, tuple)) and len(x) == 2:
-                try:
-                    a, b = float(x[0]), float(x[1])
-                except (TypeError, ValueError):
-                    continue
-                if math.isfinite(a) and math.isfinite(b) and b > a:
-                    sil.append([a, b])
+    sil = None if silences is None else _spans(silences)
+    vad = [[a + GAP_AFTER, b - GAP_BEFORE] for a, b in _spans(speech_gaps) if b - a > GAP_AFTER + GAP_BEFORE]
+    heard = sil if sil is None or not vad else _merge(sil + vad)  # silence = either detector heard no speech there
     cuts: list[list[float]] = []
     pauses = fillers = 0
     filler_idx = {i for i in range(len(ws)) if _is_filler(ws, i, start, end)}
@@ -140,17 +153,34 @@ def plan_cuts(words: list[dict], start: float, end: float, silences: list | None
             continue
         a = g0 if k == 0 else g0 + PAD
         b = g1 if k + 1 == len(edges) - 1 else g1 - PAD
-        pieces = [[a, b]] if sil is None else _intersect(a, b, sil)
+        pieces = [[a, b]] if heard is None else _intersect(a, b, heard)
         got = False
         for pa, pb in pieces:
             if pb - pa >= MIN_CUT:
                 cuts.append([pa, pb])
                 got = True
         pauses += got
-    # pauses inside a word's span: the ASR stretched it across the silence; the detector AND the energy check must agree
+    # pauses inside a word's span: the ASR stretched it across the silence. Where the speech detector heard no voice
+    # that is enough (it hears speech under music); otherwise the silence detector AND the energy check must agree
+    vad_done = set()
+    if vad:
+        for i, w in enumerate(kept):
+            if w["e"] - w["s"] < MIN_PAUSE + 2 * PAD:
+                continue
+            got = False
+            for sa, sb in _intersect(w["s"] + PAD, w["e"] - PAD, vad):
+                if sb - sa < MIN_PAUSE - 2 * PAD:
+                    continue
+                a, b = sa + PAD, sb - PAD  # PAD of the gap stays next to the sound on both sides
+                if b - a >= MIN_CUT:
+                    cuts.append([a, b])
+                    got = True
+            if got:
+                pauses += 1
+                vad_done.add(i)
     if sil and quiet_fn is not None:
         checks = 0
-        for w in kept:
+        for i, w in enumerate(kept):
             if w["e"] - w["s"] < MIN_PAUSE + 2 * PAD:
                 continue
             for sa, sb in _intersect(w["s"] + PAD, w["e"] - PAD, sil):
@@ -166,7 +196,7 @@ def plan_cuts(words: list[dict], start: float, end: float, silences: list | None
                     ok = False
                 if ok:
                     cuts.append([a, b])
-                    pauses += 1
+                    pauses += i not in vad_done  # counted once when the speech detector cut this word's pause too
     cuts = [c for c in _merge(cuts) if c[1] - c[0] >= MIN_CUT]
     if not cuts:
         return {**base, "skipped": "nothing to trim"}
@@ -371,7 +401,8 @@ def prepare(path: str, m: dict, words: list[dict], faces: list[dict], scenes: li
     try:
         sil = m.get("silences") if isinstance(m.get("silences"), list) else None
         quiet = quiet_check(path, start, end) if sil and src.get("audio", True) else None  # in-word pauses: energy check
-        plan = plan_cuts(words, start, end, sil, quiet)
+        gaps = m.get("speech_gaps") if isinstance(m.get("speech_gaps"), list) else None  # only with HQ_TRIM_VAD (takes.py)
+        plan = plan_cuts(words, start, end, sil, quiet, gaps)
     except Exception as e:  # noqa: BLE001
         return {"stats": {**stats, "skipped": f"plan failed: {e.__class__.__name__}"}}
     if plan["skipped"]:
@@ -383,7 +414,7 @@ def prepare(path: str, m: dict, words: list[dict], faces: list[dict], scenes: li
     except Exception as e:  # noqa: BLE001 - fail open: the untrimmed span renders
         return {"stats": {**stats, "skipped": f"cut failed: {e.__class__.__name__}"}}
     new_dur = round(sum(b - a for a, b in keep), 3)
-    m2 = {k: v for k, v in m.items() if k != "silences"}
+    m2 = {k: v for k, v in m.items() if k not in ("silences", "speech_gaps")}
     m2.update(start=0.0, end=new_dur)
     if m.get("punch_in", True) is not False:  # punch-in emphasis (studio/media/reframe/punch.py) from the untrimmed words:
         m2["_punch_emph"] = punch_emphasis(words, keep)  # a pause the trim shortened still marks the word after it

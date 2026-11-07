@@ -231,3 +231,110 @@ def test_render_clip_never_takes_punch_times_from_the_job_spec(monkeypatch):
     monkeypatch.setattr(take, "_render_clip", lambda path, m, *a, **k: (seen.update(m=m), (b"", b"", {}))[1])
     take.render_clip("x.mp4", {"start": 0, "end": 3, "_punch_emph": [0.1]}, [], [], [], {"audio": False}, {}, {})
     assert "_punch_emph" not in seen["m"]
+
+
+# ---------------------------------------------------------------- pauses under background music (speech detector, HQ_TRIM_VAD)
+def test_music_bed_silencedetect_hears_nothing_so_only_speech_gaps_trim_the_pause():
+    words = [W("One", 0.0, 0.4), W("two", 2.0, 2.4), W("three", 2.45, 2.9), W("four.", 2.95, 4.0)]
+    # music under the voice: ffmpeg silencedetect finds no silence at all, so the old trim keeps every pause
+    assert cleancut.plan_cuts(words, 0.0, 4.0, silences=[])["skipped"] == "nothing to trim"
+    plan = cleancut.plan_cuts(words, 0.0, 4.0, silences=[], speech_gaps=[[0.42, 1.98]])
+    assert plan["pauses"] == 1 and 0.9 < plan["removed"] <= 1.45, plan
+    a, b = plan["keep"][0][1], plan["keep"][1][0]       # the one cut
+    assert a >= 0.42 + cleancut.GAP_AFTER - 1e-6        # a soft word ending keeps its tail ...
+    assert b <= 1.98 - cleancut.GAP_BEFORE + 1e-6       # ... and a soft first sound its start
+    for w in words:
+        assert _inside_one_keep(w, plan["keep"]), w
+    # no detector output at all: the word gaps decide, exactly as before (the gaps never narrow that)
+    assert cleancut.plan_cuts(words, 0.0, 4.0, silences=None, speech_gaps=[[0.42, 0.9]])["removed"] == \
+        cleancut.plan_cuts(words, 0.0, 4.0, silences=None)["removed"]
+
+
+def test_speech_gaps_trim_a_pause_the_asr_stretched_a_word_across_without_an_energy_check():
+    # Whisper often stretches "channels." over the pause after it; under music the energy check can never pass
+    words = [W("for", 0.0, 0.3), W("your", 0.3, 0.6), W("channels.", 0.6, 2.4), W("With", 2.4, 2.7), W("Make", 2.7, 3.0)]
+    loud = lambda a, b: False                                                          # noqa: E731 - music: never quiet
+    assert cleancut.plan_cuts(words, 0.0, 3.0, silences=[], quiet_fn=loud)["skipped"] == "nothing to trim"
+    plan = cleancut.plan_cuts(words, 0.0, 3.0, silences=[], quiet_fn=loud, speech_gaps=[[1.15, 2.38]])
+    assert plan["pauses"] == 1 and 0.7 < plan["removed"] < 1.0, plan
+    cut_start = plan["keep"][0][1]
+    assert cut_start >= 1.15 + cleancut.GAP_AFTER + cleancut.PAD - 1e-6  # the "s" of "channels" stays
+    # a gap too short to be a real pause is left alone
+    assert cleancut.plan_cuts(words, 0.0, 3.0, silences=[], speech_gaps=[[1.15, 1.6]])["skipped"] == "nothing to trim"
+
+
+def test_speech_gaps_change_nothing_for_speech_without_music():
+    words = [W("One", 0.0, 0.4), W("two", 2.0, 2.4), W("three", 2.45, 2.9), W("four.", 2.95, 4.0)]
+    old = cleancut.plan_cuts(words, 0.0, 4.0, silences=[[0.45, 1.95]])
+    new = cleancut.plan_cuts(words, 0.0, 4.0, silences=[[0.45, 1.95]], speech_gaps=[[0.42, 1.98]])
+    assert new["keep"] == old["keep"] and new["pauses"] == old["pauses"] == 1
+    junk = cleancut.plan_cuts(words, 0.0, 4.0, silences=[], speech_gaps=[["x", 1], [3, 2], None, [0.5]])
+    assert junk["skipped"] == "nothing to trim"                                          # bad input: fail open
+
+
+def test_speech_gaps_reach_the_worker_only_with_hq_trim_vad(monkeypatch):
+    run = {"input": {"style": "take", "trim_pauses": True}}
+    an = {"silences": [[10.0, 11.0]], "speech_gaps": [[1.0, 2.0], [12.0, 13.5], [50.0, 51.0]]}
+    cls = next(v for v in vars(takes).values() if isinstance(v, type) and hasattr(v, "_trim_spec"))
+    monkeypatch.delenv("HQ_TRIM_VAD", raising=False)
+    assert cls._trim_spec(run, an, {"start": 9.0, "end": 30.0}) == {"trim_pauses": True, "silences": [[10.0, 11.0]]}  # as before
+    monkeypatch.setenv("HQ_TRIM_VAD", "1")
+    assert cls._trim_spec(run, an, {"start": 9.0, "end": 30.0}) == {"trim_pauses": True, "silences": [[10.0, 11.0]],
+                                                                     "speech_gaps": [[12.0, 13.5]]}
+    assert cls._trim_spec(run, {"silences": []}, {"start": 0, "end": 5}) == {"trim_pauses": True, "silences": []}  # older takes
+    assert cls._trim_spec({"input": {"style": "opus", "trim_pauses": True}}, an, {"start": 0, "end": 5}) == {}
+    monkeypatch.setenv("HQ_TRIM_VAD", "0")
+    assert "speech_gaps" not in cls._trim_spec(run, an, {"start": 9.0, "end": 30.0})
+
+
+def test_detect_speech_gaps_fails_open_without_faster_whisper(tmp_path, monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def no_fw(name, *a, **k):
+        if name.startswith("faster_whisper"):
+            raise ImportError("not installed")
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_fw)
+    gaps, how = take.detect_speech_gaps(str(tmp_path / "missing.mp4"))
+    assert gaps == [] and how.startswith("off")
+
+
+def test_detect_speech_gaps_fails_open_on_a_bad_file(tmp_path):
+    pytest.importorskip("faster_whisper")
+    bad = tmp_path / "bad.mp4"
+    bad.write_bytes(b"not a video")
+    gaps, how = take.detect_speech_gaps(str(bad))
+    assert gaps == []
+
+
+@needs_ffmpeg
+def test_sample_talk_under_a_music_bed_gets_its_pauses_back(tmp_path):
+    """The real check: the bundled sample take (Buffer's own Q&A, real Whisper words) with a steady music bed mixed in
+    12 dB under the voice. silencedetect hears nothing, so the old trim cuts nothing; the speech detector finds the
+    pauses, and no cut piece contains a word the transcript has."""
+    pytest.importorskip("faster_whisper")
+    pytest.importorskip("numpy")
+    import json
+    from pathlib import Path
+    root = Path(take.__file__).resolve().parent / "sample_take"
+    sample = json.loads((root / "sample.json").read_text())
+    clip = next(c for c in sample["clips"] if c["source_window"]["file"] == "src3.mp4")
+    sw = clip["source_window"]
+    words = [{"w": w["w"], "s": w["s"] - sw["start"], "e": w["e"] - sw["start"]} for w in sample["analysis"]["words"]
+             if sw["start"] - 0.01 <= w["s"] <= sw["end"]]
+    mixed = tmp_path / "music.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(root / "src3.mp4"), "-filter_complex",
+                    "aevalsrc='0.2*sin(2*PI*220*t)+0.15*sin(2*PI*277.2*t)+0.12*sin(2*PI*329.6*t)+0.1*sin(2*PI*110*t)'"
+                    ":s=48000:d=45,volume=-12.4dB[bed];[0:a]aresample=48000[v];[v][bed]amix=inputs=2:duration=first:normalize=0[a]",
+                    "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", str(mixed)], check=True)
+    sil = take.detect_silences(str(mixed))
+    gaps, how = take.detect_speech_gaps(str(mixed))
+    assert sil == [] and len(gaps) >= 3 and how.startswith("Silero")
+    start, end = words[0]["s"] - 0.1, words[-1]["e"] + 0.1
+    assert cleancut.plan_cuts(words, start, end, sil)["removed"] == 0.0
+    plan = cleancut.plan_cuts(words, start, end, sil, None, gaps)
+    assert plan["removed"] > 2.0 and plan["pauses"] >= 3, plan
+    for w in words:
+        if w["e"] - w["s"] < 0.6:               # every word (stretched ones only lose the silence inside them)
+            assert _inside_one_keep(w, plan["keep"]), w
