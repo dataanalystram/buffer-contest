@@ -109,3 +109,11 @@ def test_the_ui_offers_looks_fine_remove_and_how_it_goes():
     assert "need${review === 1" in js and "Planned, not saved yet" in js and "choices, times" in js
     pl = (ROOT / "studio" / "static" / "planner.js").read_text()
     assert "window.plGhostOpen(i)" in pl and 'data-testid="planner-ghost-how"' in pl
+
+
+def test_a_new_planner_post_shows_no_error_before_anything_is_typed():
+    """Owner, 7 Nov 2026: opening New post in the Planner showed a red 'Post text is empty' at once. The check now waits
+    for a caption or a media link; the dashed posting-time marks say what they are."""
+    pl = (ROOT / "studio" / "static" / "planner.js").read_text()
+    assert 'if (mode === "new" && plDlgBlank()) return null;' in pl and "!(isNew && plDlgBlank())" in pl
+    assert pl.count('title="An open posting time in your Buffer schedule.') == 3
