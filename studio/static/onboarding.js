@@ -47,7 +47,7 @@ function shell(inner, step) {
   const top = step < 0 ? `<div class="onb-top"><span class="grow"></span><button class="link" type="button" data-onb="skip" data-testid="onboarding-skip">Skip setup</button></div>`
     : `<div class="onb-top"><div class="onb-prog"><span class="onb-count" data-testid="onboarding-progress">Step ${step + 1} of ${STEPS.length}<span class="muted"> · ${esc(STEPS[step])}</span></span>
         <div class="onb-steps" aria-hidden="true">${STEPS.map((_, i) => `<i class="${i < step ? "on" : i === step ? "on now" : ""}"></i>`).join("")}</div></div>
-      <button class="link" type="button" data-onb="skip" data-testid="onboarding-skip">Skip setup</button></div>`;
+      ${step === STEPS.length - 1 ? "" : `<button class="link" type="button" data-onb="skip" data-testid="onboarding-skip">Skip setup</button>`}</div>`;
   return `<div class="onb-card" role="dialog" aria-modal="true" aria-labelledby="onbH" data-testid="onboarding" data-step="${step}">${top}
     <div class="onb-pane ${O.dir < 0 ? "from-l" : "from-r"}">${inner}</div></div>`;
 }
@@ -141,7 +141,7 @@ function wire() {
     if (O.step === 0) picked0();
   }));
   const q = (a) => O.el.querySelector(`[data-onb=${a}]`);
-  q("skip").onclick = async () => { await save({ skipped: true, step: Math.max(0, O.step) }); close(); toast("Setup skipped. Your News has today's top tech stories. Open setup again any time from Settings."); };
+  if (q("skip")) q("skip").onclick = async () => { await save({ skipped: true, step: Math.max(0, O.step) }); close(); toast("Setup skipped. Your News has today's top tech stories. Open setup again any time from Settings."); };
   if (q("back")) q("back").onclick = () => go(O.step - 1);
   q("next").onclick = async (ev) => {
     const btn = ev.currentTarget;
@@ -200,7 +200,11 @@ function close() {
 }
 function keys(e) {
   if (!O.el || O.el.hidden) return;
-  if (e.key === "Escape") { e.preventDefault(); O.el.querySelector("[data-onb=skip]")?.click(); return; }
+  if (e.key === "Escape") {  // = Skip setup; on the last step setup is already complete, so Escape finishes it
+    e.preventDefault();
+    if (O.step === STEPS.length - 1) finish(true); else O.el.querySelector("[data-onb=skip]")?.click();
+    return;
+  }
   if (e.key === "Tab") {  // keep focus inside the dialog
     const f = [...O.el.querySelectorAll("button:not([disabled]),input,a[href],[tabindex='0']")].filter((x) => x.offsetParent !== null);
     if (!f.length) return;
