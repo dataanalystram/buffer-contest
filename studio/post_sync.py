@@ -134,6 +134,7 @@ def reconcile(store, a, res: dict, index: dict | None, lookup=None) -> bool:
                     gone = True
             if post is None:
                 if not gone:
+                    index["incomplete"] = True  # not looked up this time (lookup limit): unknown, not "checked"
                     continue
                 if pk.get("status") == "sent_to_buffer":
                     _reopen(pk, "deleted", pid)

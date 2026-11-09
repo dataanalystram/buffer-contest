@@ -189,7 +189,8 @@ function withVideo(el, au) {
     if (on() && ok) { if (mine == null) mine = v.volume; v.volume = Math.max(0, Math.min(1, (au.original_volume ?? 100) / 100)); } };
   const sync = () => { if (isFinite(a.duration) && a.duration > 0) a.currentTime = v.currentTime % a.duration; };
   const play = () => { if (!ok || !on()) return; if (CUR && CUR !== own) CUR.stop(); CUR = own; mix(); sync();
-    a.play().catch(() => { own.stop(); if (tg) tg.checked = false;  // the browser refused: say so, the video plays as it is
+    a.play().catch((e) => { if (e && e.name === "AbortError") return;  // stopped on purpose (the Reel paused): not a failure
+      own.stop(); if (tg) tg.checked = false;  // the browser refused: say so, the video plays as it is
       note("The browser didn't play the track preview here. The track still goes to Buffer with the Reel."); }); };
   a.onerror = () => { ok = false; own.stop(); if (tg) { tg.checked = false; tg.disabled = true; } note("Instagram's preview of this track has expired here, but the track still goes to Buffer with the Reel."); };
   v.addEventListener("play", play);

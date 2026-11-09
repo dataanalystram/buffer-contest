@@ -256,3 +256,12 @@ def test_a_lookup_that_fails_leaves_the_check_incomplete():
         raise RuntimeError("Buffer busy")
     assert not post_sync.reconcile(None, Actor("u1"), res, index, boom)
     assert index["incomplete"] and res["packages"][0]["status"] == "sent_to_buffer"
+
+
+def test_a_post_left_unlooked_up_leaves_the_check_incomplete():
+    from studio import post_sync
+    pks = [{"channel_id": f"c{i}", "status": "sent_to_buffer",
+            "sent": {"mode": "draft", "buffer_post_id": f"bp_{i}", "at": time.time() - 3600}} for i in range(post_sync.MAX_LOOKUPS + 1)]
+    index = {"posts": {}, "sent_complete": False}
+    post_sync.reconcile(None, Actor("u1"), {"packages": pks}, index, lambda pid: {"id": pid, "status": "sent"})
+    assert index["incomplete"]  # the one past the lookup limit wasn't checked
