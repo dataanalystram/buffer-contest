@@ -19,6 +19,7 @@ rate limited: nothing changes.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 import time
@@ -183,14 +184,19 @@ def sync_run(house, a, run: dict, refresh: bool = False) -> bool:
             buf.refresh(a.uid)
         linked = any(_linked(p) for p in res.get("packages") or [] if isinstance(p, dict))
         index = buffer_index(house.store, buf, a) if linked else None
+        if linked:  # the card's "Check Buffer" says whether Buffer was really read this time
+            run["buffer_check"] = "ok" if index is not None else "unavailable"
         lookup = getattr(buf, "post_status", None)
         fn = (lambda pid: lookup(a.uid, pid)) if lookup else None
-        if not reconcile(house.store, a, res, index, fn):
+        work = copy.deepcopy(res)  # reconciled on a copy: the answer shows it only once it is saved
+        if not reconcile(house.store, a, work, index, fn):
             return False
         fresh = house.store.q("SELECT status, updated FROM agent_runs WHERE id=? AND user_id=?", (run["id"], a.uid))
         if not fresh or fresh[0]["status"] in ("running", "rendering") or fresh[0]["updated"] != run.get("updated"):
-            return False  # the agent or an edit saved it meanwhile (Buffer was being read): that save wins, the next open re-checks
-        house._save(run["id"], run["steps"], res)
+            run.pop("buffer_check", None)  # the agent or an edit saved it meanwhile: that save wins, the next open re-checks
+            return False
+        house._save(run["id"], run["steps"], work)
+        run["result"] = work
         return True
     except Exception:  # noqa: BLE001 - the run always opens
         return False

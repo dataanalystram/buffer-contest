@@ -49,7 +49,9 @@ def _sent(pid, mode="draft", age=3600, **kw):
 # ------------------------------------------------------------------ Buffer -> Make a post
 def test_a_draft_deleted_in_buffer_comes_back_editable(human, fake):
     rid = _run(human, **_sent("bp_gone"))
-    pk = _pk(human, rid)
+    out = human.get(f"/api/agent/runs/{rid}").json()
+    pk = out["result"]["packages"][0]
+    assert out["buffer_check"] == "ok"
     assert pk["status"] == "ready" and "sent" not in pk
     assert pk["buffer_sync"]["event"] == "deleted" and pk["buffer_sync"]["buffer_post_id"] == "bp_gone"
     assert _saved(human, rid)["status"] == "ready"  # stored, so every surface agrees
@@ -97,8 +99,10 @@ def test_an_edit_saved_while_buffer_was_read_wins(human, fake, monkeypatch):
         st.x("UPDATE agent_runs SET updated=? WHERE id=?", (time.time() + 5, rid))
         return out
     monkeypatch.setattr(post_sync, "reconcile", slow)
-    _pk(human, rid)
+    out = human.get(f"/api/agent/runs/{rid}").json()
     assert _saved(human, rid)["status"] == "sent_to_buffer"  # not overwritten; the next open re-checks
+    assert out["result"]["packages"][0]["status"] == "sent_to_buffer"  # and not shown as if it had been
+    assert "buffer_check" not in out
 
 
 def test_published_and_failed_in_buffer(human, fake):
@@ -125,8 +129,10 @@ def test_buffer_unreachable_changes_nothing(human, fake):
     rid = _run(human, **_sent("bp_gone"))
     fake.gql_error = {"message": "Internal", "extensions": {"code": "INTERNAL_SERVER_ERROR"}}
     human.app.state.studio.buffer.refresh(_uid(human))
-    pk = _pk(human, rid)
+    out = human.get(f"/api/agent/runs/{rid}?refresh_buffer=1").json()
+    pk = out["result"]["packages"][0]
     assert pk["status"] == "sent_to_buffer" and "buffer_sync" not in pk
+    assert out["buffer_check"] == "unavailable"  # the card doesn't say "Checked with Buffer"
 
 
 def test_rejected_in_approvals_comes_back(human):
