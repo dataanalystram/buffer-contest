@@ -264,6 +264,15 @@ class DemoBuffer:
                 for i, (t, art, cu, d, ty) in enumerate(self.SAMPLE_AUDIO) if not q or any(w in t.lower() for w in q.split())]
         return {"audio": rows, "needs_facebook": False, "failed_types": []}
 
+    def instagram_audio(self, uid: str, channel_id: str, audio_id: str) -> dict:
+        """Buffer's track check for the sample tracks: every sample track loads."""
+        for i, (t, art, cu, d, ty) in enumerate(self.SAMPLE_AUDIO):
+            if str(900000000000001 + i) == str(audio_id):
+                return {"audio": {"id": str(audio_id), "title": t, "displayArtist": art, "creatorUsername": cu, "duration": d,
+                                  "type": ty, "previewUrl": None, "coverArtworkUrl": None}}
+        from .buffer_api import BufferError
+        raise BufferError("Buffer could not complete the request (NOT_FOUND: no such Instagram audio)")
+
     def create_idea(self, uid: str, org_id: str, title: str, text: str) -> dict:
         return {"id": "demo_idea", "content": {"title": title, "text": text}}
 
@@ -316,3 +325,6 @@ class BufferRouter:
 
     def search_instagram_audio(self, uid, *a, **k):
         return self._pick(uid).search_instagram_audio(uid, *a, **k)
+
+    def instagram_audio(self, uid, *a, **k):
+        return self._pick(uid).instagram_audio(uid, *a, **k)

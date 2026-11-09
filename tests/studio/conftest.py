@@ -61,6 +61,7 @@ class FakeBuffer:
         self.gql_error = None   # e.g. {"message": ..., "extensions": {"code": "INSUFFICIENT_SCOPE"}}
         self.daily = None  # e.g. {"limit": 3, "scheduled": 3, "sent": 0, "isAtLimit": True}
         self.plan = None   # e.g. {"scheduledPosts": 10, "channels": 3}
+        self.unloadable_audio = set()  # Meta audio ids Buffer's instagramAudio check refuses ("Couldn't load track")
         # media the preflight "downloads" (url -> bytes); anything else counts as unreachable
         self.reject_message, self.rejected = "", []  # Buffer's typed MutationError: HTTP 200 with createPost.message
         self.media = {"https://cdn.example.com/a.png": image_bytes(1200, 627),
@@ -142,6 +143,20 @@ class FakeBuffer:
             self.deleted.append(v["input"]["id"])
             self.posts = [n for n in self.posts if n["id"] != v["input"]["id"]]
             return httpx.Response(200, headers=h, json={"data": {"deletePost": {"id": v["input"]["id"]}}})
+        if "instagramAudio(" in q:
+            aid = str(v["i"]["audioId"])
+            if aid in self.unloadable_audio:
+                return httpx.Response(200, headers=h, json={"errors": [{"message": "Audio asset is not available",
+                                                                        "extensions": {"code": "NOT_FOUND"}}], "data": None})
+            return httpx.Response(200, headers=h, json={"data": {"r": {"__typename": "InstagramAudioSuccess", "audio": {
+                "id": aid, "title": "Track " + aid, "displayArtist": None, "creatorUsername": None, "duration": 30000,
+                "type": "music", "previewUrl": None, "coverArtworkUrl": None}}}})
+        if "post(input" in q:  # one post by id (post_sync confirms a delete with it)
+            node = next((n for n in self.posts if n["id"] == v["i"]["id"]), None)
+            if not node:
+                return httpx.Response(200, headers=h, json={"errors": [{"message": "Post not found",
+                                                                        "extensions": {"code": "NOT_FOUND"}}], "data": None})
+            return httpx.Response(200, headers=h, json={"data": {"post": node}})
         if "posts(" in q:
             want = set(v["i"]["filter"]["status"])
             return httpx.Response(200, headers=h, json={"data": {"posts": {"edges": [{"node": n} for n in self.posts if n["status"] in want]}}})

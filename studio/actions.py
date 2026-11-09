@@ -170,6 +170,9 @@ def clean_audio(raw) -> dict | None:
                                        "cover_url": "coverArtworkUrl"}[k]) or "").strip()
         if v:
             out[k] = v[:500] if k == "cover_url" else v[:200]
+    pv = str(raw.get("preview_url") or raw.get("previewUrl") or "").strip()
+    if pv.startswith("https://") and len(pv) <= 2000:  # Meta's short-lived preview: the card plays it with the video (never sent)
+        out["preview_url"] = pv
     try:
         st = int(raw.get("start_ms") or 0)
     except (TypeError, ValueError):
@@ -674,6 +677,8 @@ class Studio:
                 raise ActionError("Music can only be added to Instagram Reels.")
             if not any(u.lower().split("?")[0].endswith(VIDEO_EXT) for u in ([media] if media else []) + media_urls):
                 raise ActionError("Music goes on a Reel: this Instagram post has no video, so remove the music or add a video.")
+            from . import audio_check  # Buffer must be able to load the track, or its draft says "Couldn't load track"
+            audio_check.ensure_playable(self, a, ch["id"], opts["ig_audio"])
         override = bool(p.get("override_warnings"))
         urls0 = media_urls or ([media] if media else [])
         pf = self._preflight(ch, text, urls0, mode, opts)
