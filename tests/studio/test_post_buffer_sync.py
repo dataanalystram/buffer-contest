@@ -229,6 +229,7 @@ def test_ui_shows_buffer_state_and_the_way_back():
     for tid in ("pkg-buffer-sync", "pkg-buffer-check", "pkg-buffer-error", "pkg-buffer-edited"):
         assert f'data-testid="{tid}"' in js
     assert "refresh_buffer=1" in js and "Deleted in Buffer" in js
+    assert 'n.buffer_check === "ok"' in js  # "Checked with Buffer" only for a finished check (missing = not finished)
 
 
 def test_the_card_can_play_the_track_with_the_reel(human, fake):

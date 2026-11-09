@@ -681,8 +681,9 @@ function wirePackages(r) {
       bc.disabled = true; bc.textContent = "Checking…";
       try { const n = await api(`/api/agent/runs/${r.id}?refresh_buffer=1`); showIfOn(r.id, n);
         const np = ((n.result || {}).packages || []).find((p) => p.channel_id === ch) || {};
-        toast(n.buffer_check === "unavailable" ? "Buffer didn't answer for this post, so what you see may be out of date."
-          : np.buffer_sync && !np.sent && !np.buffer_draft ? "It's no longer in Buffer, so you can edit it again" : "Checked with Buffer", n.buffer_check === "unavailable" ? 6000 : 4000); }
+        const done = n.buffer_check === "ok";  // anything else (Buffer didn't answer, or the post was saved meanwhile) isn't a finished check
+        toast(!done ? "The check with Buffer didn't finish, so what you see may be out of date."
+          : np.buffer_sync && !np.sent && !np.buffer_draft ? "It's no longer in Buffer, so you can edit it again" : "Checked with Buffer", done ? 4000 : 6000); }
       catch (e) { toast(e.message, 6000); bc.disabled = false; bc.textContent = "Check Buffer"; }
     };
     ta.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
