@@ -107,6 +107,22 @@ studio/fonts/Figtree-ExtraBold.ttf, studio/fonts/Figtree-Medium.ttf  (copied, un
   Licence:  SIL Open Font License 1.1 (https://openfontlicense.org)
   What:     headline and body font of the Buffer concept example brand and an option in the Brand studio.
 
+studio/fonts/NotoSans*-Bold.ttf  (copied, unmodified; renamed)
+  Source:   Noto Sans, Noto Sans Arabic / Bengali / Devanagari / Gujarati / Gurmukhi / Hebrew / Kannada / Malayalam /
+            Tamil / Telugu / Thai by the Noto Project Authors (https://github.com/notofonts), static Bold builds as
+            served by Google Fonts (fonts.googleapis.com css2, wght 700)
+  Licence:  SIL Open Font License 1.1 (full text in studio/fonts/OFL-Noto.txt)
+  What:     burned-in captions in non-Latin scripts: studio/media/fontcover.py swaps a caption style's font for the
+            Noto font that draws the words.
+
+studio/media/fontcover.py, studio/media/subtitles.py snap_to_timing  (ideas only)
+  Source:   harry0703/MoneyPrinterTurbo  https://github.com/harry0703/MoneyPrinterTurbo  (app/services/video.py
+            subtitle_font_supports_text, app/services/subtitle.py correct)
+  Licence:  MIT, Copyright (c) 2024 Harry
+  What:     checking that the subtitle font covers the text before rendering, and correcting recognised subtitle
+            text against the known script. No code copied; our implementations differ (cmap coverage + Noto swap;
+            difflib alignment of a creator's caption track onto an automatic track's word times).
+
 studio/brand_examples/buffer/mark.png  (third-party trademark, used for a labelled concept example)
   Source:   https://buffer.com/img/logos/buffer-logo.png; palette read from buffer.com's public CSS tokens.
   What:     the "Buffer (concept example)" brand in the sample workspace. Every render says "Concept example, not
