@@ -4,4 +4,4 @@
 # Licences: rembg MIT (code). Models, always named in code (rembg's default bria-rmbg is non-commercial and refused):
 # isnet-general-use Apache-2.0 (xuebinqin/DIS), birefnet-general-lite MIT (ZhengPeng7/BiRefNet). See NOTICE.
 rembg[cpu]==2.0.86
-onnxruntime>=1.23.2,<2
+onnxruntime>=1.24.3,<2
