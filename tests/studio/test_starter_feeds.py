@@ -59,6 +59,21 @@ def test_unfollowed_starter_feed_is_not_added_back_and_cap_holds(human, live):
     assert sf.BY_TYPE["india_tech"][0] in got  # every interest gets its best feed first
 
 
+def test_existing_account_with_interests_and_a_feed_gets_matching_feeds_once(human, live, app):
+    """Accounts that finished setup before starter feeds existed: the next open of For you adds their interests' feeds."""
+    from studio import onboarding
+    human.post("/api/radar/feeds", json={"url": "https://mine.example.com/feed"})
+    uid = app.state.store.q("SELECT user_id FROM feeds")[0]["user_id"]
+    onboarding.ensure(app.state.store)
+    app.state.store.x("INSERT INTO user_profiles(user_id,data,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data",
+                      (uid, '{"content_types": ["research"], "done": true}', 1.0))
+    got = urls(human)
+    assert got[0] == "https://mine.example.com/feed" and sf.BY_TYPE["research"][0] in got
+    gone = [f for f in human.get("/api/radar").json()["feeds"] if f["url"] == sf.BY_TYPE["research"][0]][0]
+    human.delete(f"/api/radar/feeds/{gone['id']}")
+    assert sf.BY_TYPE["research"][0] not in urls(human)  # only once
+
+
 def test_switch_off_and_agents_never_seed(human, monkeypatch):
     monkeypatch.setattr(radar, "fetch", _feed)
     assert urls(human) == []  # HQ_STARTER_FEEDS=0 (tests default)

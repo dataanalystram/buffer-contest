@@ -104,7 +104,7 @@ def _save(store, uid: str, data: dict) -> None:
 
 def sync(store, uid: str, types: list[str] | None = None, first_run_only: bool = False) -> dict:
     """Follow the starter feeds for these interests (None -> the interests saved in setup). first_run_only: only when
-    the account has never had starter feeds and follows nothing (the For you feed's first open). Returns
+    the account has never had starter feeds (the For you feed's first open; feeds it already follows are kept). Returns
     {"added": [...], "removed": [...]}; never raises (the feed must still open)."""
     out = {"added": [], "removed": []}
     if not enabled() or demo_guard.is_demo(uid):
@@ -114,8 +114,8 @@ def sync(store, uid: str, types: list[str] | None = None, first_run_only: bool =
         onboarding.ensure(store)
         prof = _profile(store, uid)
         feeds = [dict(r) for r in store.q("SELECT id,url FROM feeds WHERE user_id=? ORDER BY id", (uid,))]
-        if first_run_only and ("starter_feeds" in prof or feeds):
-            return out
+        if first_run_only and "starter_feeds" in prof:  # once per account; accounts from before this (with or without
+            return out                                      # feeds of their own) get their interests' feeds on that first open
         if types is None:
             types = [t for t in prof.get("content_types") or [] if t in onboarding.CONTENT_TYPES]
         mine = set(prof.get("starter_feeds") or [])
