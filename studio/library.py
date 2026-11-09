@@ -10,7 +10,7 @@ Storage is the app's own database for now (Supabase Postgres in production, SQLi
                       own token works everywhere a media token does (the agent, the render worker, Buffer's /m/ fetch).
 
 Generated media already live in the ``media`` table (the renderer writes them there); their library row points at
-those tokens instead of copying the bytes. Caps: 100 MB a file, 200 MB a person (uploads and renders together), both
+those tokens instead of copying the bytes. Caps: 100 MB a file, 200 MB a person by default (uploads and renders together), both
 checked before a byte is read (SECURITY_RULES 6). The free sample workspace sees bundled sample items, read-only.
 """
 from __future__ import annotations
@@ -40,6 +40,9 @@ CHUNK = MB
 CHUNK_DATA = "CASE WHEN storage_key IS NULL THEN data END AS data"
 FILE_MAX = int(os.environ.get("HQ_LIBRARY_FILE_MB", "100")) * MB
 QUOTA = int(os.environ.get("HQ_LIBRARY_QUOTA_MB", "200")) * MB
+# R2 refused a chunk (the app-wide storage cap or the bucket is down): the upload is refused, never kept in the database
+STORAGE_FULL = ("File storage is full or unavailable right now, so this upload wasn't saved. Try again later, or delete "
+                "files you no longer need in Library.")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS library_items (
@@ -353,7 +356,10 @@ class Library:
 
     def _put_chunk(self, uid: str, iid: int, n: int, data: bytes) -> None:
         """One 1 MB chunk: its bytes in the row (db backend) or in R2 under the owner's prefix (studio/blobstore.py)."""
-        inline, key, digest = blobstore.put("lib", uid, data)
+        try:
+            inline, key, digest = blobstore.put("lib", uid, data, strict=not blobstore.db_fallback_allowed())
+        except blobstore.StorageFull:
+            raise ActionError(STORAGE_FULL, 507) from None
         try:
             self.store.x("INSERT INTO library_chunks(item_id,n,data,storage_key,sha256,nbytes) VALUES(?,?,?,?,?,?)",
                          (iid, n, inline, key, digest, len(data)))
