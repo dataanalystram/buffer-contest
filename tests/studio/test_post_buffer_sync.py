@@ -265,3 +265,31 @@ def test_a_post_left_unlooked_up_leaves_the_check_incomplete():
     index = {"posts": {}, "sent_complete": False}
     post_sync.reconcile(None, Actor("u1"), {"packages": pks}, index, lambda pid: {"id": pid, "status": "sent"})
     assert index["incomplete"]  # the one past the lookup limit wasn't checked
+
+
+def test_a_miss_in_a_cached_list_is_confirmed_before_reopening():
+    """The list read right after a save can miss the new post and stay cached past the grace: only Buffer's by-id answer
+    reopens a package (otherwise it could be sent twice)."""
+    from studio import post_sync
+    res = {"packages": [{"channel_id": "c", "status": "sent_to_buffer", "text": "Hello",
+                         "sent": {"mode": "draft", "buffer_post_id": "bp_x", "at": time.time() - 3600}}]}
+    index = {"posts": {}, "sent_complete": True}
+    post_sync.reconcile(None, Actor("u1"), res, index, lambda pid: {"id": pid, "status": "draft", "text": "Hello"})
+    assert res["packages"][0]["status"] == "sent_to_buffer" and "buffer_sync" not in res["packages"][0]
+    assert not post_sync.reconcile(None, Actor("u1"), res, {"posts": {}, "sent_complete": True}, None)  # no way to confirm
+    assert post_sync.reconcile(None, Actor("u1"), res, {"posts": {}, "sent_complete": True}, lambda pid: None)
+    assert res["packages"][0]["status"] == "ready"
+
+
+def test_a_shortened_caption_is_an_edit_but_a_thread_first_part_is_not():
+    from studio import post_sync
+
+    def one(text, buffer_text):
+        res = {"packages": [{"channel_id": "c", "status": "sent_to_buffer", "text": text,
+                             "sent": {"mode": "draft", "buffer_post_id": "bp", "at": time.time() - 3600, "buffer_status": "draft"}}]}
+        post_sync.reconcile(None, Actor("u1"), res, {"posts": {"bp": {"id": "bp", "status": "draft", "text": buffer_text}}})
+        return res["packages"][0]
+    short = one("A new model shipped today, and it is fast", "A new model shipped today")
+    assert short["text"] == "A new model shipped today" and short["sent"].get("edited_in_buffer")
+    thread = one("Part one of the thread\n---\nPart two", "Part one of the thread")
+    assert thread["text"].startswith("Part one") and "---" in thread["text"] and not thread["sent"].get("edited_in_buffer")

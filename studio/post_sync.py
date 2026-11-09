@@ -13,8 +13,9 @@ no extra Buffer request inside the window.
 * caption edited in Buffer -> the package takes Buffer's caption (``sent.edited_in_buffer``)
 * Approvals: approved -> the Buffer post it became; rejected -> ready again
 
-Absence only counts when it proves something: a post saved in the last 2 minutes is never called deleted, and when the
-account's sent list is full (100+), a missing id is looked up once by id before anything changes. Buffer unreachable or
+Absence only counts when it proves something: a post saved in the last 2 minutes is never called deleted, and a post
+missing from the (possibly cached) lists is looked up once by id before anything changes; Buffer saying "no such post"
+is the only proof of a delete. Buffer unreachable or
 rate limited: nothing changes.
 """
 from __future__ import annotations
@@ -26,7 +27,8 @@ import time
 
 GRACE_S = 120  # a post saved this recently is never called deleted just because Buffer's list doesn't show it yet
 SYNC_STATUSES = ("draft", "scheduled", "sending", "needs_approval", "error")
-MAX_LOOKUPS = 3  # direct by-id reads per open, only when the sent list is full
+MAX_LOOKUPS = 3  # direct by-id reads per open, only for a post missing from the lists
+THREAD_SPLIT = re.compile(r"\n[ \t]*---[ \t]*\n")  # thread parts, as studio/drafter.py splits them
 STATE = {"draft": "draft", "scheduled": "scheduled", "sending": "scheduled", "needs_approval": "needs_approval",
          "sent": "sent", "error": "failed"}
 
@@ -119,23 +121,20 @@ def reconcile(store, a, res: dict, index: dict | None, lookup=None) -> bool:
         if post is None:
             if time.time() - float(sent.get("at") or (pk.get("buffer_draft") or {}).get("at") or 0) < GRACE_S:
                 continue  # just saved: Buffer may not list it yet
-            gone = bool(index["sent_complete"])
-            if not gone and lookup and lookups < MAX_LOOKUPS:
-                lookups += 1
-                try:
-                    found = lookup(pid)
-                except Exception:  # noqa: BLE001 - unknown: leave it, and say the check didn't finish
-                    index["incomplete"] = True
-                    continue
-                if found:
-                    post = {**found, "status": str(found.get("status") or "").lower()}
-                    index["posts"][pid] = post
-                else:
-                    gone = True
-            if post is None:
-                if not gone:
-                    index["incomplete"] = True  # not looked up this time (lookup limit): unknown, not "checked"
-                    continue
+            # missing from a list that may be cached (POSTS_TTL outlasts the grace): only Buffer's by-id answer proves deleted
+            if not lookup or lookups >= MAX_LOOKUPS:
+                index["incomplete"] = True  # not confirmed this time (lookup limit): unknown, not "checked"
+                continue
+            lookups += 1
+            try:
+                found = lookup(pid)
+            except Exception:  # noqa: BLE001 - unknown: leave it, and say the check didn't finish
+                index["incomplete"] = True
+                continue
+            if found:
+                post = {**found, "status": str(found.get("status") or "").lower()}
+                index["posts"][pid] = post
+            else:
                 if pk.get("status") == "sent_to_buffer":
                     _reopen(pk, "deleted", pid)
                 else:  # a draft that changed here after it was saved, and is now gone from Buffer: nothing to update
@@ -160,7 +159,9 @@ def reconcile(store, a, res: dict, index: dict | None, lookup=None) -> bool:
             upd["error"] = "Buffer couldn't publish it: " + (((post.get("error") or {}).get("message")) or "see Buffer.")
         bt = _norm(post.get("text"))
         mine = _norm(pk.get("text"))
-        edited = bool(bt and bt != mine and not mine.startswith(bt))  # a thread's first part is a prefix: not an edit
+        parts = [x for x in THREAD_SPLIT.split(str(pk.get("text") or "")) if x.strip()]
+        first = _norm(parts[0]) if len(parts) > 1 else None  # a thread: Buffer's text is its first part, unchanged
+        edited = bool(bt and bt != mine and bt != first)  # anything else that differs (a shortened caption too) is an edit
         if edited:  # edited in Buffer
             pk["text"] = post["text"]
             upd["edited_in_buffer"] = time.time()

@@ -463,7 +463,7 @@ class BufferClient:
 
     def post_status(self, uid: str, post_id: str) -> dict | None:
         """One post by id (status, text, times), or None when Buffer says there is no such post (deleted). Used only when
-        a post is missing from the account's lists and the sent list is too long to prove it was deleted (post_sync)."""
+        a post is missing from the account's (cached) lists: Buffer's "no such post" is what proves a delete (post_sync)."""
         q = "query($i: PostInput!) { post(input: $i) { id text status dueAt sentAt channelId externalLink error { message } } }"
         try:
             return self.gql(q, {"i": {"id": post_id}}, uid=uid).get("post") or None

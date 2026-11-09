@@ -151,6 +151,12 @@ class FakeBuffer:
             return httpx.Response(200, headers=h, json={"data": {"r": {"__typename": "InstagramAudioSuccess", "audio": {
                 "id": aid, "title": "Track " + aid, "displayArtist": None, "creatorUsername": None, "duration": 30000,
                 "type": "music", "previewUrl": None, "coverArtworkUrl": None}}}})
+        if "post(input" in q:  # one post by id (post_sync confirms a delete with it)
+            node = next((n for n in self.posts if n["id"] == v["i"]["id"]), None)
+            if not node:
+                return httpx.Response(200, headers=h, json={"errors": [{"message": "Post not found",
+                                                                        "extensions": {"code": "NOT_FOUND"}}], "data": None})
+            return httpx.Response(200, headers=h, json={"data": {"post": node}})
         if "posts(" in q:
             want = set(v["i"]["filter"]["status"])
             return httpx.Response(200, headers=h, json={"data": {"posts": {"edges": [{"node": n} for n in self.posts if n["status"] in want]}}})
