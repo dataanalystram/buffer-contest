@@ -40,7 +40,8 @@ Use `pg_dump` / `pg_restore` for any move, with writes stopped first: stop new v
 ingest kill switches in /admin, and start no takes or renders), wait for running jobs to report back, then suspend the Render web service and dump, and switch `DATABASE_URL` before you resume. The dump carries the paused switches over, so after the new database is live set the AI and Video link ingest switches in /admin back to how they were before the move. A
 dump is a snapshot, so anything written after it starts is not copied, and matching row counts do not prove that
 updated rows match. The old project is a rollback copy only: it misses everything written after the cutover, so
-switching back loses those writes. To go back without losing them, dump the new project the same way and restore it into a fresh, empty project (not over the old copy, which already has the tables and rows, so a plain `pg_restore` would hit existing objects and duplicate keys); switch `DATABASE_URL` only after that restore finishes with no errors. Delete it once the
-move is confirmed (the privacy policy says so). `MIGRATE_FROM_URL` (`Store.copy_from`) copies only the core tables in
+switching back loses those writes. To go back without losing them, dump the new project the same way and restore it into a fresh, empty project (not over the old copy, which already has the tables and rows, so a plain `pg_restore` would hit existing objects and duplicate keys); switch `DATABASE_URL` only after that restore finishes with no errors. A free Supabase organization can have only two
+active free projects (paused ones don't count), so pause one you don't need first if there is no free slot. Once the
+move is confirmed, delete the frozen old project (the privacy policy says so), never the one `DATABASE_URL` points at. `MIGRATE_FROM_URL` (`Store.copy_from`) copies only the core tables in
 `store.TABLES`, not the tables other modules create (Library, takes, threads, templates and more), so it is not a
 full copy.
