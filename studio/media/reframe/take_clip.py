@@ -105,8 +105,10 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         plan = rr.render(path, start, end, words, src, str(out), kit=kit, p=p, preset=preset, logo_png=str(tmp / "logo.png"),
                          plan=plan, audio=audio, cover=str(tmp / "cover.jpg"), cover_s=take.COVER_SECS, end_card=end_jpg,
                          end_s=take.END_SECS if has_end else 0.0, punch_in=m.get("punch_in", True) is not False,
-                         punch_emph=m.get("_punch_emph"))
-        fs_qa = facesafe.main_qa(str(out), plan["sidecar"], fs_place, offset=take.COVER_SECS)
+                         punch_emph=m.get("_punch_emph"), captions=not m.get("_source_captions"))
+        # no captions of ours (the source keeps its own): nothing of ours can cover the face, so the QA has no line to check
+        fs_qa = facesafe.main_qa(str(out), plan["sidecar"] if plan.get("ass") else [],
+                                 fs_place if plan.get("ass") else {**fs_place, "blocked": []}, offset=take.COVER_SECS)
         fs_qa.update(placement={k: fs_place[k] for k in ("moved_for_text", "moved_for_face")}, blocked=fs_place["blocked"][:10])
         if fs_qa["status"] != "ok":
             print(f"face-safe: clip {m.get('id', '')}: {fs_qa.get('reason')}", flush=True)
@@ -116,7 +118,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         pf = parse_ffprobe(info["raw"])
         pf.update(kind="video", bytes=len(data))
         modes = [s["layout"] for s in plan["shots"]]
-        ys = [captions_ass.band_y(s, H) for s in plan["sidecar"]]
+        ys = [captions_ass.band_y(s, H) for s in plan["sidecar"]] if plan.get("ass") else []
         meta = {"type": "video", "width": W, "height": H, "duration": round(info["duration"], 2), "params": stills._pub(p),
                 "has_logo": True, "has_end_card": has_end, "headline": m.get("hook", ""), "credit": "own video",
                 "cover_offset_ms": int(take.COVER_SECS * 1000 / 2),

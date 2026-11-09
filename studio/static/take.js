@@ -54,10 +54,20 @@ async function tkUpCfg() {
   if (!T.file) $("#tkDropTxt").textContent = `Drop an MP4 or MOV here, or choose a file (up to ${lim}${cfg.multipart ? ", resumes if the connection drops" : "; use a link for longer talks"})`;
   return { ...cfg, lim };
 }
+// A full Library refuses new takes (the server says so too: its clips are saved there). Asked fresh each time, so a
+// delete in Library lets the next pick through.
+function tkFull(c) {
+  const l = c && c.library;
+  if (!l || !l.quota || l.used < l.quota) return "";
+  return `Your Library is full (${Math.round(l.quota / 1048576)} MB used of ${Math.round(l.quota / 1048576)} MB). One take saves its clips there. Delete files you no longer need in Library, then try again.`;
+}
 tkUpCfg().catch(() => {});  // prefetch, so the drop zone and the form errors name the real limit
 async function tkPick(f) {
   if (!/^video\//.test(f.type) && !/\.(mp4|mov|m4v|webm)$/i.test(f.name)) return toast("Choose a video file (MP4, MOV or WebM)");
+  TK_UP = null;  // fresh: the Library meter may have moved since the page opened
   const c = await tkUpCfg();
+  const full = tkFull(c);
+  if (full) { $("#tkErr").textContent = full; return toast(full, 7000); }
   if (f.size > c.max_bytes) return toast(`Uploads here go up to ${c.lim}; this one is ${(f.size / 1048576).toFixed(0)} MB. Export a shorter cut, or paste a direct link to the file.`, 7000);
   T.file = f; $("#tkDropTxt").textContent = `${f.name} · ${(f.size / 1048576).toFixed(1)} MB`;
 }
@@ -309,7 +319,7 @@ function clipRow(c, n, k) {
     <span class="clip-n" aria-hidden="true">${n}</span>
     <div class="clip-body">
       <p class="clip-hook" data-testid="clip-hook">${esc(c.hook)}</p>
-      <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.trimmed_s > 0 ? ` · <span data-testid="clip-trimmed" title="Long pauses and filler words cut from this clip">trimmed ${(+c.trimmed_s).toFixed(1)} s</span>` : ""}</p>
+      <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.trimmed_s > 0 ? ` · <span data-testid="clip-trimmed" title="Long pauses and filler words cut from this clip">trimmed ${(+c.trimmed_s).toFixed(1)} s</span>` : ""}${c.source_captions ? ` · <span data-testid="clip-own-captions" title="This part of the video already has captions burned in, so no second layer was added">kept the video's own captions</span>` : ""}</p>
       ${tkScoreLine(c)}
       ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${escUrl(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}

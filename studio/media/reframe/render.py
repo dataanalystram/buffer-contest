@@ -461,11 +461,11 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
            p: dict | None = None, preset: str | None = None, logo_png: str | None = None, plan: dict | None = None,
            scenes: list[float] | None = None, fallback_faces: list[dict] | None = None, pins=None, prefs: dict | None = None,
            audio: str | None = None, cover: str | None = None, cover_s: float = 0.0, end_card: str | None = None,
-           end_s: float = 0.0, punch_in: bool = False, punch_emph: list[float] | None = None) -> dict:
+           end_s: float = 0.0, punch_in: bool = False, punch_emph: list[float] | None = None, captions: bool = True) -> dict:
     """Render the clip [start, end] to `out` (1080x1920). Returns {plan, sidecar, timings, ass, punch}.
     punch_in: the gentle zoom in/out on face-tracked shots (studio/media/reframe/punch.py); off renders as before.
     punch_emph: emphasis times already on this clip's timeline (a trimmed clip's, studio/media/cleancut), else found on
-    `words`."""
+    `words`. captions False: none burned in (the source already has its own, studio/takes.source_captions)."""
     from .. import captions_ass
     t0 = time.time()
     plan = plan or plan_clip(path, start, end, words, scenes, src, fallback_faces, pins_from(pins), prefs)
@@ -474,7 +474,7 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         colors = (p or {}).get("colors") or (kit or {}).get("colors") or {}
         accent = colors.get("accent") or ACCENT
         brand_bg = colors.get("primary") or "#0B0B12"
-        ass = captions_ass.build(words, start, kit, p, preset, plan["sidecar"], bg_luma=plan.get("caption_bg")) if words else ""
+        ass = captions_ass.build(words, start, kit, p, preset, plan["sidecar"], bg_luma=plan.get("caption_bg")) if (words and captions) else ""
         ass_path = None
         if ass:
             ass_path = str(tmp / "cap.ass")

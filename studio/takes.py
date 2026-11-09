@@ -212,6 +212,7 @@ class Takes(TakeBin, TakeControl):
         if demo_guard.is_demo(a.uid):
             raise ActionError("In the sample workspace, One take runs on the bundled sample talk (Try the sample take). "
                               "Connect Buffer to cut your own videos.", 403)
+        self.h.library.require_room(a, "One take saves its clips there. ")  # every source: upload, bucket upload, link
         from .media.find import platform_of
         owns, rights = bool(body.get("owns")), bool(body.get("rights_confirmed"))
         punch_in = body.get("punch_in", True)  # the gentle auto zoom on face-tracked shots (media/reframe/punch.py): on by default
@@ -922,7 +923,10 @@ class Takes(TakeBin, TakeControl):
                                               + (f"; no face found, centered crop used on {len(nofaces)}" if nofaces else "")
                                               + (f" (face kept in frame {min(cov) * 100:.0f}%+ of the time)" if cov else "")
                                               + (f"; blurred-pad layout on {layouts.count('pad')}" if layouts.count("pad") else "")))
-        self._step(steps, "captions", "done", "Word-by-word captions in your brand font, clear of the bottom 20%")
+        kept = [c["id"] for c in ok if (c.get("meta") or {}).get("source_captions")]
+        self._step(steps, "captions", "done", ("Word-by-word captions in your brand font, clear of the bottom 20%" if not kept else
+                   f"The video already has captions burned in, so it keeps its own on {len(kept)} of {len(ok)} clips (no second layer)"
+                   + ("; word-by-word captions in your brand font on the rest" if len(kept) < len(ok) else "")))
         self._step(steps, "covers", "done", "A branded cover frame (thumbnailOffset) and your end card on every clip"
                    + (f" · {len(failed)} clip(s) failed: {failed[0]['error'][:120]}" if failed else ""))
         self._save(rid, steps, res)
@@ -1141,6 +1145,7 @@ class Takes(TakeBin, TakeControl):
             d["trim"] = {k: tr.get(k) for k in ("trimmed_s", "pauses", "fillers", "skipped")} if tr else None
             o = m.get("ocr") if isinstance(m.get("ocr"), dict) else {}
             d["screen_text"] = str(o.get("text") or "")[:500]
+            d["source_captions"] = bool(m.get("source_captions"))  # the source's own burned-in captions kept, none added
             d["watermarks"] = [str(x)[:40] for x in (o.get("watermarks") or [])[:10]]
             rd = o.get("readable")  # filtered with Tesseract's confidence at render time (studio/media/ocr.readable_text)
             d["alt_text"] = _alt_text(c.get("hook") or "", rd if isinstance(rd, str) else d["screen_text"], isinstance(rd, str))
@@ -1647,6 +1652,18 @@ def ocr_clip(src: str, spec: dict, c: dict) -> dict:
         return {"ok": False, "frames": [], "text": "", "watermarks": [], "skipped": f"ocr failed: {e.__class__.__name__}"}
 
 
+def source_captions(src: str, c: dict) -> dict | None:
+    """Captions already burned into the source over this clip's span (compose.detect_burned_captions: centred text at one
+    height whose words change frame to frame), or None. When they are there the clip keeps them and gets none of ours:
+    two caption layers on one picture (owner bug, 9 Nov 2026, take 108). Never raises: a failed check adds our captions."""
+    try:
+        from .media.compose import detect_burned_captions
+        return detect_burned_captions(src, float(c["start"]), float(c["end"]))
+    except Exception as e:  # noqa: BLE001
+        print(f"source captions check: {e.__class__.__name__}: {str(e)[:120]}", flush=True)
+        return None
+
+
 # Layout & captions > Caption look on a shorts-style clip: the closest caption style of the shorts render (studio/media/captions)
 OPUS_CAPTION_STYLE = {"bold_pop": "opus", "lower_third": "minimal", "two_tone": "slam", "typewriter": "mono"}
 
@@ -1675,10 +1692,14 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
         seen = ocr_clip(src, spec, c)
         if seen.get("frames"):
             c["_ocr_frames"] = seen["frames"]
+        own = source_captions(src, c)
+        if own:
+            c["_source_captions"] = own
         data, cover, meta = take.render_clip(src, c, c["words"], c["faces"], spec.get("scenes") or [], spec["src"],
                                              spec["kit"], spec["params"], logo=logo)
         meta["ocr"] = {k: seen.get(k) for k in ("ok", "version", "text", "readable", "watermarks", "ms", "skipped")}
         meta["ocr"]["frames"] = len(seen.get("frames") or [])
+        meta["source_captions"] = own
         yield c["id"], data, cover, meta
         return
     from .media import longform
@@ -1693,13 +1714,14 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
         sz = (int(spec["src"].get("width") or 1920), int(spec["src"].get("height") or 1080))
         framing, cap_style = opus_choices(c)
         hook_mode = opus_hook_mode(c)
+        own = source_captions(src, c)  # once per clip, for every ratio
         for i, r in enumerate(spec.get("ratios") or ["9:16"]):
             out = tmp / f"{c['id']}_{r.replace(':', 'x')}.mp4"
             t0 = time.time()
             got = longform.render_moment(src, c, c["words"], ratio=r, brand=b, credit=spec.get("credit") or "", out=str(out),
                                          faces=c.get("faces"), scenes=spec.get("scenes"), detector=spec.get("face_detector", True),
                                          burned_subs=bool(spec.get("burned_subs")), src_size=sz, framing=framing,
-                                         captions_style=cap_style, hook_mode=hook_mode)
+                                         captions_style=cap_style, hook_mode=hook_mode, source_captions=own)
             t1 = time.time()
             cover = tmp / f"{c['id']}_{i}.jpg"
             take.frame_at(str(out), 0.4, str(cover))  # the hook opener is fully in from 0.3 s
@@ -1711,7 +1733,8 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
                     "face_coverage": rf.get("face_coverage"), "captions": got["captions"], "burned_subs": got["burned_subs"],
                     "caption_problems": got["caption_problems"], "cover_offset_ms": 400, "credit": spec.get("credit") or "",
                     "face_safe": got.get("face_safe"), "timings": tms, "framing": framing or "auto", "caption_style": cap_style,
-                    "hook_mode": got.get("hook_mode") or hook_mode, "hook_secs": got.get("hook_secs")}
+                    "hook_mode": got.get("hook_mode") or hook_mode, "hook_secs": got.get("hook_secs"),
+                    "source_captions": own, "brand_pass": got.get("brand_pass") or []}
             yield (c["id"] if i == 0 else f"{c['id']}@{r}"), out.read_bytes(), cover.read_bytes(), meta
     finally:
         import shutil
