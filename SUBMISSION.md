@@ -3,8 +3,7 @@
 - **App:** https://huhqueue-studio.onrender.com
 - **Code (open source, MIT):** https://github.com/dataanalystram/buffer-contest
 - **Buffer app client ID:** `BFQSCDAPoD-hJ0cmZtncSW-kLqnDwPfQ511K35AcVmj`
-- **Demo video (1:26):** [demo/huhqueue-buffer-commit-demo-16x9.mp4](https://github.com/dataanalystram/buffer-contest/blob/main/demo/huhqueue-buffer-commit-demo-16x9.mp4) ([direct download](https://github.com/dataanalystram/buffer-contest/raw/main/demo/huhqueue-buffer-commit-demo-16x9.mp4)); 9:16 cut on YouTube: https://www.youtube.com/watch?v=iBFgP1GOMlU
-- **Full product tour (2:00):** [demo/huhqueue-buffer-commit-demo-2min.mp4](https://github.com/dataanalystram/buffer-contest/blob/main/demo/huhqueue-buffer-commit-demo-2min.mp4) ([direct download](https://github.com/dataanalystram/buffer-contest/raw/main/demo/huhqueue-buffer-commit-demo-2min.mp4)), [transcript](demo/huhqueue-buffer-commit-demo-2min.transcript.md)
+- **Demo video (2:00):** https://youtu.be/1DwcEoPNsrI (same video in the repo: [demo/huhqueue-buffer-commit-demo-2min.mp4](https://github.com/dataanalystram/buffer-contest/blob/main/demo/huhqueue-buffer-commit-demo-2min.mp4), [transcript](demo/huhqueue-buffer-commit-demo-2min.transcript.md))
 - **What was built in the window vs. before it:** [CONTEST.md](CONTEST.md)
 - **What is the entry:** Studio (`studio/`). It signs users in with **Buffer OAuth only** (Authorization Code + PKCE S256, `prompt=consent`, rotating `offline_access` refresh tokens) and never asks for a Buffer API key. The core `huhqueue/` app's paste-a-token options are for connecting LinkedIn and Instagram directly, not Buffer.
 - **Build-in-public posts (9 Nov, the 2-minute demo):**
@@ -31,3 +30,5 @@
 **Next steps.** Group multi-channel sends with `createContentItem`, tags, and team approvals.
 
 HuhQueue is an independent open-source project built on the Buffer API; it is not affiliated with Buffer.
+
+*About the demo: the Raven YC launch in the "Bring your own AI" part is only an example link we gave the agent to show the flow. HuhQueue credits the source video on the post, and Raven is not connected with this project.*
