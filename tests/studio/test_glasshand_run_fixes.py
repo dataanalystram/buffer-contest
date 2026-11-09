@@ -64,3 +64,10 @@ def test_two_formats_in_one_sentence_split_per_network():
     assert channel_formats("a reel on instagram and facebook, and for linkedin a carousel") == {
         "instagram": "reel", "facebook": "reel", "linkedin": "carousel"}
     assert channel_formats("carousel on linkedin and a reel on instagram") == {"linkedin": "carousel", "instagram": "reel"}
+
+
+def test_words_around_a_network_name_are_not_typos():
+    from studio import intake
+    assert intake._typo_services("interest rates youtuber tiktoks") == set()
+    chans = [{"id": "a", "service": "linkedin"}, {"id": "b", "service": "pinterest"}]
+    assert intake.parse("Big interest rates news, post it", chans)["channel_ids"] == ["a", "b"]

@@ -72,7 +72,7 @@ def urls(text: str) -> list[str]:
 # misspelt network names still count (owner bug, 9 Nov 2026: "a reel on sintagram, youtube and facebook" dropped Instagram
 # because only exact spellings matched). Twitter is left out: "twister" is a word, and X has its own pattern.
 _FUZZY_SERVICES = ("instagram", "linkedin", "facebook", "youtube", "tiktok", "pinterest", "bluesky", "mastodon")
-_NOT_TYPOS = {"linked", "instant", "faceboo"}
+_NOT_TYPOS = {"linked", "instant", "faceboo", "interests", "pinterests"}
 
 
 def _typo_services(t: str) -> set[str]:
@@ -81,6 +81,8 @@ def _typo_services(t: str) -> set[str]:
         if w in _NOT_TYPOS or w in _FUZZY_SERVICES:
             continue
         for svc in _FUZZY_SERVICES:
+            if svc in w or w in svc:
+                continue  # a real word inside or around the name ("interest", "youtuber"), not a typo of it
             if difflib.SequenceMatcher(None, w, svc).ratio() >= 0.85:
                 out.add(svc)
     return out
