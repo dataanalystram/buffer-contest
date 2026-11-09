@@ -9,6 +9,7 @@ removed. Pure functions, no network, so the demo and the tests are deterministic
 """
 from __future__ import annotations
 
+import difflib
 import re
 from urllib.parse import urlparse
 
@@ -68,12 +69,65 @@ def urls(text: str) -> list[str]:
     return out
 
 
+# misspelt network names still count (owner bug, 9 Nov 2026: "a reel on sintagram, youtube and facebook" dropped Instagram
+# because only exact spellings matched). Twitter is left out: "twister" is a word, and X has its own pattern.
+_FUZZY_SERVICES = ("instagram", "linkedin", "facebook", "youtube", "tiktok", "pinterest", "bluesky", "mastodon")
+_NOT_TYPOS = {"linked", "instant", "faceboo"}
+
+
+def _typo_services(t: str) -> set[str]:
+    out = set()
+    for w in set(re.findall(r"[a-z]{6,12}", t)):
+        if w in _NOT_TYPOS or w in _FUZZY_SERVICES:
+            continue
+        for svc in _FUZZY_SERVICES:
+            if difflib.SequenceMatcher(None, w, svc).ratio() >= 0.85:
+                out.add(svc)
+    return out
+
+
+def _carousel_typo(t: str) -> bool:
+    """"caraosul", "carasoul", "carousal": the person asked for a carousel."""
+    return any(difflib.SequenceMatcher(None, w, "carousel").ratio() >= 0.7 for w in re.findall(r"\bcar[a-z]{4,6}\b", t))
+
+
+def _services_in(t: str) -> set[str]:
+    return {svc for svc, pat in SERVICE_WORDS.items() if re.search(pat, t)} | _typo_services(t)
+
+
+def channel_formats(text: str) -> dict[str, str]:
+    """{service: "carousel" | "reel"} when the person tied a format to some networks ("a reel on Instagram, YouTube and
+    Facebook; next, on LinkedIn I need a carousel"). Read clause by clause; a clause that names networks and one format
+    sets it for those networks. Later clauses win. Nothing tied -> {} (owner bug, 9 Nov 2026: LinkedIn was asked for a
+    carousel and got the 4:5 video)."""
+    t = URL_RE.sub(" ", text or "").lower()
+    out: dict[str, str] = {}
+    def fmt(c: str) -> tuple[bool, bool]:
+        return (bool(re.search(r"\bcarousel|\bslides\b|\bswipe", c) or _carousel_typo(c)),
+                bool(re.search(r"\b(?:reels?|shorts?)\b", c)))
+
+    for clause in re.split(r"[.;!?\n]+|\b(?:next|then|also|plus|but|while|whereas)\b", t):
+        car, reel = fmt(clause)
+        # both formats in one sentence ("a reel on instagram, and for linkedin a carousel"): read its comma / "and for" parts
+        parts = re.split(r",|\band\s+(?=(?:for|on|in|to|an?)\b)", clause) if car and reel else [clause]
+        for part in parts:
+            svcs = _services_in(part)
+            if not svcs:
+                continue
+            car, reel = fmt(part)
+            if car != reel:
+                for svc in svcs:
+                    out[svc] = "carousel" if car else "reel"
+    return out
+
+
 def _channels(t: str, connected: list[dict]) -> tuple[list[str], str]:
     """(channel ids, why). Default and "all my channels" -> every connected channel."""
     ids_all = [c["id"] for c in connected]
     if re.search(r"\ball (?:of )?(?:my |the )?(?:channels|networks|platforms|socials|accounts)\b|\beverywhere\b|\bevery (?:channel|network)\b", t):
         return ids_all, "all connected channels (you said all)"
     named = [svc for svc, pat in SERVICE_WORDS.items() if re.search(pat, t)]
+    named += sorted(_typo_services(t) - set(named))
     if named and re.search(r"\b(?:on|to|for|in|post|share|only|just)\b", t):
         ids = [c["id"] for c in connected if c["service"] in named]
         if ids:
@@ -95,7 +149,7 @@ def parse(prompt: str, connected: list[dict] | None = None) -> dict:
     fmt = "auto"
     if re.search(r"\b(?:reel|video|tiktok)s?\b", t) and not re.search(r"\bno (?:reel|video)", t):
         fmt = "reel"
-    if re.search(r"\bcarousel|\bslides\b|\bswipe", t):
+    if re.search(r"\bcarousel|\bslides\b|\bswipe", t) or _carousel_typo(t):
         fmt = "carousel"
     if re.search(r"\b(?:single|one) (?:image|card|photo)\b|\bjust an image\b", t):
         fmt = "photo"
@@ -108,7 +162,7 @@ def parse(prompt: str, connected: list[dict] | None = None) -> dict:
     topic = topic_of(raw.replace(style["text"], " ") if style else raw, rules)
     return {"style": style,"prompt": raw, "truncated": len((prompt or "").strip()) > MAX_PROMPT, "urls": found,
             "source_url": found[0] if found else "", "extra_urls": found[1:], "channel_ids": chan_ids, "channels_why": chan_why,
-            "format": fmt, "seconds": secs, "tone": tone, "rules": rules, "topic": topic[:200], "research": asks_research(raw),
+            "format": fmt, "formats": channel_formats(raw), "seconds": secs, "tone": tone, "rules": rules, "topic": topic[:200], "research": asks_research(raw),
             "kind": "link" if found else ("topic" if topic else "empty")}
 
 

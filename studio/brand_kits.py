@@ -548,6 +548,31 @@ class BrandKits:
                 self._insert(a, example_kit("huhbyte"))
             self.bs.update_extras(a, {"seeded_huhbyte": True})
 
+    def ensure_default(self, a) -> dict:
+        """Every signed-in workspace starts on the Buffer kit (owner, 9 Nov 2026: "when any user signs in I want the default
+        template to be Buffer"). Once per workspace: the Buffer example kit joins the library, and it becomes the ACTIVE
+        kit only when the workspace has no brand of its own yet (no active kit, no saved house kit), so a person's own
+        brand is never switched. Deleting or switching away from it afterwards is respected. The sample workspace keeps
+        its own seed (Nothing + HuhByte AI)."""
+        eid = os.environ.get("HQ_DEFAULT_KIT", "buffer").strip().lower()  # "off" turns it off without a deploy
+        if eid not in brand_examples.EXAMPLES or demo_guard.is_demo(a.uid) or self.bs.extras(a).get("seeded_buffer"):
+            return {"seeded": False}
+        from .userlocks import held
+        with held(a.uid):
+            if self.bs.extras(a).get("seeded_buffer"):
+                return {"seeded": False}
+            rows = self._rows(a)
+            name = brand_examples.EXAMPLES[eid]["kit"]["name"].casefold()
+            kid = next((r["id"] for r in rows if (r["name"] or "").strip().casefold() == name), None)
+            if kid is None and len(rows) < MAX_KITS:
+                kid = self._insert(a, example_kit(eid))
+            own = self._active(a) or self.house.kit(a).get("is_set")
+            self.bs.update_extras(a, {"seeded_buffer": True})
+        if kid and not own:
+            self.activate(a, kid)
+            return {"seeded": True, "activated": kid}
+        return {"seeded": bool(kid), "activated": None}
+
     def _insert(self, a, k: dict) -> int:
         from .userlocks import held
         with held(a.uid):  # B3: the cap is checked and the row inserted under one lock (no 13th kit from a race)
@@ -619,6 +644,7 @@ class BrandKits:
         if demo_guard.is_demo(a.uid):
             self._seed_demo(a)
         else:
+            self.ensure_default(a)
             self._seed_huhbyte(a)
         act = self._active(a)
         rows = self._rows(a)

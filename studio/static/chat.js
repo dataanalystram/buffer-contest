@@ -31,6 +31,7 @@
     check: '<path d="M20 6 9 17l-5-5"/>',
     key: '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>',
   };
+  const AGENT_FACE = '<img src="/static/agent-avatar.webp" alt="" width="28" height="28" decoding="async">';
   // the threads column: inline (and hideable, kept in localStorage hq_threads) on a wide screen, an overlay below 1101 px
   const TKEY = "hq_threads", overlayMq = matchMedia("(max-width:1100px)"), docEl = document.documentElement;
   const isOverlay = () => overlayMq.matches;
@@ -686,13 +687,14 @@
   window.addEventListener("popstate", () => mmClose(false));
   api("/api/ai/engine").then((st) => { HC.eng = st; if (run()) drawModel(); }).catch(() => {});
 
-  // ------------------------------------------------------------ avatars: one icon each for the agent and you (Lucide)
+  // ------------------------------------------------------------ avatars: the agent is "Hux", a small chibi character (owner,
+  // 9 Nov 2026: "a small anime character" instead of the robot icon); you keep the Lucide person icon
   function avatars() {
     document.querySelectorAll("#agentThread .msg > b:first-child").forEach((n) => {
       if (n.querySelector(":scope > .hc-av")) return;
       const agent = !!n.closest(".agent");
       const av = el("span", "hc-av " + (agent ? "a" : "u"), { "aria-hidden": "true", "data-testid": "chat-avatar" });
-      av.innerHTML = ic(agent ? I.bot : I.user);
+      av.innerHTML = agent ? AGENT_FACE : ic(I.user);
       n.prepend(av);
     });
   }
@@ -705,7 +707,7 @@
   // A run the server cut off shows house.js's Resume card instead (status "interrupted").
   const wk = el("div", "msg agent hc-work", { id: "hcWork", "data-testid": "chat-working" });
   wk.hidden = true;
-  wk.innerHTML = `<b><span class="hc-av a" aria-hidden="true">${ic(I.bot)}</span>Agent</b>
+  wk.innerHTML = `<b><span class="hc-av a" aria-hidden="true">${AGENT_FACE}</span>Agent</b>
     <span class="hc-work-b"><span class="hc-dots" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="hc-work-t" data-testid="chat-working-step" role="status" aria-live="polite">Thinking…</span>
       <span class="hc-work-s muted xs" data-testid="chat-working-time" aria-hidden="true"></span>

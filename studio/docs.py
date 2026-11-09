@@ -23,7 +23,8 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <ol><li>Open <b>Make a post</b>, stay on <b>With the agent</b> and choose <b>Research a topic</b>, <b>From a link</b> or <b>My photo or video</b>.</li>
 <li>Pick the channels and a format, or let the agent pick, then choose <b>Make it</b>.</li>
 <li>Watch the timeline: it opens the source, checks it against other outlets, renders the media in your brand and writes a caption per channel.</li>
-<li>Say what to change ("logo smaller", "no hashtags"). Each correction becomes a rule in your Style Ledger.</li></ol>
+<li>Say what to change ("logo smaller", "no hashtags"). Each correction becomes a rule in your Style Ledger.</li>
+<li>Tell it what you want per network in plain words ("a reel on Instagram, and for LinkedIn a carousel", "use this hook word for word"). It keeps a running list of everything you asked, and later messages win. The <b>What you asked</b> card above the posts shows each network next to what exists now; a channel you asked for that has no post yet gets a dashed tab with <b>Make it</b>.</li></ol>
 <p>For a fast text-only post from a link, switch to <b>Quick text posts</b> on the same screen.</p>
 <h2 id="plan">4. Plan and approve</h2>
 <p>Ready posts land in the <a href="/docs/planner">Planner</a>, and anything waiting for a person shows in the <a href="/docs/inbox">Inbox</a> under <b>Waiting for your approval</b>. Approve, and it goes to Buffer at its time.</p>
@@ -59,7 +60,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
     ("brand-kit", "Brand: kit, templates and Style Ledger", "Logo, colours, fonts, front and end cards, six templates for every channel, two example brands and the Style Ledger.", "brandstudio", """
 <p><b>Brand</b> makes one brand look the same on every channel without redesigning anything per network. Set the kit once; every template, cover and Reel follows it. It has three tabs: <b>Kit</b> (website import, logo, colours, fonts, voice, front and end cards), <b>Templates</b> (templates, examples and recurring slots) and <b>Style Ledger</b>. There is one kit: every tab and every render reads the same one.</p>
 <h2 id="first-run">First run</h2>
-<p>Four steps sit at the top of the <b>Kit</b> tab: <b>upload your logo</b>, <b>pick a style</b>, <b>see examples</b>, <b>connect Buffer</b>. The live preview redraws the selected template at the selected channel's frame a moment after each edit, with your unsaved changes laid over the saved kit. Nothing is stored until you save.</p>
+<p>A new workspace starts on the <b>Buffer</b> example kit, so the first post already looks finished. It never replaces a kit of your own: switch or delete it any time in <b>Brand</b>. Four steps sit at the top of the <b>Kit</b> tab: <b>upload your logo</b>, <b>pick a style</b>, <b>see examples</b>, <b>connect Buffer</b>. The live preview redraws the selected template at the selected channel's frame a moment after each edit, with your unsaved changes laid over the saved kit. Nothing is stored until you save.</p>
 <h2 id="kit">The kit</h2>
 <p>Logo, name, handle, four colours (ground, accent, text, second), a headline font (Anton, Poppins, Inter or Figtree) and a body font, headline case, a <b>front card</b> and an <b>end card</b>. Each card is an image you upload or one of four styles:</p>
 <div class="dk-table"><table><thead><tr><th>Style</th><th>Look</th></tr></thead><tbody>

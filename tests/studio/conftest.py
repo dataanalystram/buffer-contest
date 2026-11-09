@@ -13,7 +13,8 @@ from studio import drafter
 # The per-IP rate limit for anonymous and sample traffic (SECURITY_RULES 3) is tested on its own in test_security_audit;
 # every other test talks to the app from one TestClient "IP", so lift it here.
 os.environ.setdefault("HQ_ANON_RPM", "1000000")
-os.environ.setdefault("HQ_STARTER_FEEDS", "0")  # no live feed reads in tests; test_starter_feeds turns it on with fetch mocked
+os.environ.setdefault("HQ_STARTER_FEEDS", "0")
+os.environ.setdefault("HQ_DEFAULT_KIT", "off")  # fresh workspaces keep the plain default kit; test_default_buffer_kit turns it on  # no live feed reads in tests; test_starter_feeds turns it on with fetch mocked
 os.environ.setdefault("HQ_AUTH_PER_MIN", "1000000")
 os.environ.setdefault("HQ_DEMO_PER_MIN", "1000000")
 import tempfile as _tempfile  # noqa: E402

@@ -198,7 +198,10 @@
 #agentThread{display:flex;flex-direction:column;gap:12px}
 #agentThread[hidden]{display:none}
 #agentThread .msg{margin:0}
-#agentThread .msg>b:first-child{display:inline-flex;align-items:center;gap:6px;margin-bottom:2px;font-size:13px}
+/* the name row sits on its own line above the text: inline-flex let a short reply run on beside it and the label
+   rode up like superscript over the text (owner, 9 Nov 2026) */
+#agentThread .msg>b:first-child{display:flex;width:fit-content;align-items:center;gap:6px;margin-bottom:4px;font-size:13px;line-height:24px}
+#agentThread .msg>span.md,#agentThread .msg>b:first-child+span{display:block}
 #agentThread .md>:first-child{margin-top:0}
 #agentThread .md>:last-child{margin-bottom:0}
 #agentThread .md p,#agentThread .md ul,#agentThread .md ol{margin:.35em 0}
@@ -206,6 +209,9 @@
 .hc-av{flex:none;display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--hc-lav-soft);color:var(--hc-lav-ink)}
 .hc-av.a{background:var(--hc-lav);color:var(--hc-black)}
 .hc-av .ic{width:15px;height:15px}
+.hc-av.a{width:28px;height:28px;background:none;overflow:hidden}
+.hc-av img,.mp-av.face img{display:block;width:100%;height:100%;border-radius:50%}
+#runView.hc .mp-av.face,.mp-av.face{background:none;padding:0;overflow:hidden}
 .hc-work{display:flex;flex-direction:column;gap:4px;margin:12px 0;padding:10px 12px;border:1px solid color-mix(in oklab,var(--hc-lav) 60%,transparent);border-radius:14px;background:var(--hc-lav-soft)}
 .hc-work[hidden]{display:none}
 .hc-work>b{display:inline-flex;align-items:center;gap:6px;font-size:13px}
@@ -222,3 +228,27 @@
 .hc-jump[hidden]{display:none}
 .hc-jump .ic{width:16px;height:16px}
 @media (prefers-reduced-motion:reduce){.hc-dots i{animation:none;opacity:.8}}
+
+/* ---------------------------------------------------------------- "What you asked" (asks.js, owner 9 Nov 2026)
+   One accent rule: the rubine accent marks only what needs the person (a channel not made, a format that changed). */
+.ask-card{border:1px solid var(--line);border-radius:12px;background:var(--raised);padding:12px 14px;margin:0 0 12px}
+.ask-card h3{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 8px;font-size:14px;font-weight:600}
+.ask-card h3 small{font-weight:400;font-size:12px;color:var(--muted)}
+.ask-list{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
+.ask-pill{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:2px 4px 2px 12px;border:1px solid var(--line);border-radius:999px;background:var(--paper);font-size:13px}
+.ask-pill:not(.need){padding-right:12px}
+.ask-pill.need{border-color:var(--accent);background:var(--accent-soft)}
+.ask-ok{color:var(--ok);font-weight:600}.ask-need{color:var(--accent);font-weight:600}.ask-off{color:var(--muted);font-weight:600}
+.ask-pill .btn,.ask-pill .btn2{min-height:30px;padding:0 10px;font-size:12px;border-radius:999px}
+.ask-meta{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:10px;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.ask-meta b{color:var(--ink);font-weight:600}
+.ask-miss{display:inline-flex;align-items:center;gap:10px;flex:none;min-height:52px;padding:6px 8px 6px 12px;border:1.5px dashed var(--accent);border-radius:12px;font-size:13px}
+.ask-miss>span{display:flex;flex-direction:column;min-width:0}.ask-miss small{color:var(--accent)}
+.ask-miss .btn{min-height:32px;padding:0 12px;font-size:12px}
+.ask-miss-solo{margin:0 0 12px}
+.ask-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.ask-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;min-height:28px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--sunken);
+  color:var(--ink);font-size:12px;white-space:nowrap}
+.ask-chip span{overflow:hidden;text-overflow:ellipsis;max-width:42ch}
+button.ask-chip{cursor:pointer}button.ask-chip:hover{border-color:var(--line-strong)}
+@media (max-width:600px){.ask-pill{flex-wrap:wrap;border-radius:14px}.ask-chip span{max-width:24ch}}

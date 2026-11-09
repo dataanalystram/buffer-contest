@@ -28,7 +28,8 @@ RECAP_WAIT = int(os.environ.get("HQ_RECAP_WAIT", "1800"))  # the recap fetches 5
 RECAP_CAROUSEL = {"instagram", "threads"}  # networks whose carousels take video slides; everyone else posts the Reel
 
 S = {"type": "string"}
-IDS = {"type": "array", "items": {"type": "string"}, "description": "Channel ids; omit for every channel in the run"}
+IDS = {"type": "array", "items": {"type": "string"}, "description": "Channel ids or services (\"instagram\"); omit for every channel in the run. "
+                                                                 "A connected channel that is not in the run yet joins it (the person asked for it)"}
 SPECS = [
     {"name": "read_url", "description": "Read a link the person gave: an article (direct read, Firecrawl fallback) or an X post (public oEmbed; media only with the person's X API key). The link is THE source; never replace it with a search.",
      "input_schema": {"type": "object", "required": ["url"], "properties": {"url": S}}},
@@ -238,6 +239,23 @@ def cap_hashtags(text: str, n: int = 5) -> str:
     return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
+def with_hook(text: str, hook: str) -> str:
+    """The caption with ``hook`` as its first line, word for word. A first line that already is the hook (any case or
+    end punctuation) is kept; a first line that paraphrases it (most of its words) is replaced; otherwise the hook goes
+    on top."""
+    h, t = (hook or "").strip(), (text or "").strip()
+    if not h:
+        return t
+    first, _, rest = t.partition("\n")
+    norm = lambda x: re.sub(r"[^\w]+", " ", x.lower()).strip()  # noqa: E731
+    if norm(first) == norm(h):
+        return t
+    hw, fw = set(norm(h).split()), set(norm(first).split())
+    if fw and len(hw & fw) >= max(2, len(fw) // 2):
+        return h + ("\n" + rest if rest.strip() else "")
+    return f"{h}\n\n{t}"
+
+
 def keyword_first(text: str, keyword: str) -> str:
     """The first line leads with the keyword (the company / product people search for) when there is one: it is kept when it
     is already in the first four words, else the line becomes 'keyword: line'."""
@@ -365,7 +383,29 @@ class Tools(EditorialTools):
             raise ActionError(why, 403)
 
     def channels(self, run: dict, ids=None) -> list[dict]:
+        if ids:
+            self._join_channels(run, ids)
         return [c for c in run["input"]["channels"] if not ids or c["id"] in ids or c["service"] in ids]
+
+    def _join_channels(self, run: dict, ids) -> None:
+        """A tool asked for a channel that isn't in the run yet ("make it for my Instagram as well"): if it is one of the
+        account's connected channels, it joins the run, so the render lands there. Before this the render matched no
+        channel, attached to nothing, and the brain then picked another channel by mistake (owner bug, 9 Nov 2026: an
+        Instagram Reel went to Facebook). Unknown or disconnected ids still match nothing."""
+        ids = [str(i) for i in (ids if isinstance(ids, (list, tuple)) else [ids]) if i]
+        have = run["input"].setdefault("channels", [])
+        missing = [i for i in ids if not any(i in (c["id"], c["service"]) for c in have)]
+        if not missing:
+            return
+        try:
+            conn = [c for c in self.studio.channels(self.a) if not c.get("isDisconnected")]
+        except Exception:
+            return
+        added = [c for c in conn if (c["id"] in missing or c["service"] in missing) and not any(c["id"] == h["id"] for h in have)]
+        if not added:
+            return
+        have.extend({"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in added)
+        self.store.x("UPDATE agent_runs SET input=? WHERE id=?", (json.dumps(run["input"]), self.rid))
 
     def run_tool(self, name: str, args: dict) -> dict:
         if name not in {s["name"] for s in SPECS} | {"check"}:
@@ -441,6 +481,15 @@ class Tools(EditorialTools):
         res["source"] = {k: art.get(k) for k in ("url", "title", "description", "image", "site", "via", "post", "media", "media_note")}
         res["source"]["paragraphs"] = (art.get("paragraphs") or [])[:10]
         res["source"]["requested_url"] = url  # the link as given (the page may redirect to another spelling)
+        st = res.get("story")
+        theirs = [u for m in res.get("thread") or [] if m.get("role") == "user" for u in intake.urls(m.get("text") or "")]
+        if isinstance(st, dict) and st.get("source") and not same_source(st.get("url") or "", url) \
+                and any(same_source(u, url) for u in theirs):
+            # a later link replaced the source (their X post with the video, after a YouTube link): the cover's
+            # "Source:" line follows it, instead of naming the first link's maker (owner bug, 9 Nov 2026)
+            post = art.get("post") or {}
+            st["source"] = f"X @{post['handle']}" if post.get("handle") else (art.get("site") or st["source"])
+            st["url"] = art.get("url") or url
         self.save(run)
         out = {"site": art["site"], "title": art["title"], "via": art.get("via"), "words": len(" ".join(art.get("paragraphs") or []).split())}
         if art.get("post"):
@@ -1636,6 +1685,13 @@ class Tools(EditorialTools):
         credit = credit or (f"Video: @{handle} on X" if clip_tok and handle else
                   (cand or {}).get("credit") or (f"Video: {st.get('source')}" if clip_tok and st.get("source") else "")) if (clip_tok or cand) else gen[0]["credit"]
         official = bool(cand and cand.get("official"))
+        if credit and (clip_tok or cand) and not res.get("clip_owned") and res.get("video_credit") != credit:
+            # the credit follows the video actually used: an earlier find_video (the YouTube copy) left its maker here,
+            # and the thread then credited them for @tsrkeith's X video (owner bug, 9 Nov 2026)
+            res["video_credit"] = credit
+            if isinstance(res.get("rights"), dict) and res["rights"].get("mode") == "news_credit":
+                res["rights"]["credit"] = credit
+            self.save(run)
         if (clip_tok or cand) and not (official or rights_confirmed):
             ask = (f"This Reel uses someone else's video ({credit or 'no credit found'}). I'll credit it on screen and in the caption. "
                    "Do you have the right to repost it (or is it fair commentary)?")
@@ -2132,8 +2188,10 @@ class Tools(EditorialTools):
         for c in chans:
             if tone:
                 tones[c["id"]] = tone
+        exact_hook = ""
         if hook:
-            st["headline"] = tidy(safe_headline(hook, (run.get("input") or {}).get("prompt", ""), [st["headline"]]) or st["headline"], st)
+            exact_hook = tidy(safe_headline(hook, (run.get("input") or {}).get("prompt", "")) or "", st).strip()
+            st["headline"] = exact_hook or st["headline"]
         article = {"url": src.get("url") or st["url"], "title": st["headline"], "description": st.get("why") or src.get("description", ""),
                    "site": src.get("site") or st["source"], "image": "", "paragraphs": st["facts"] + (src.get("paragraphs") or [])[:3]}
         eng = llm.resolve(self.store, self.a.uid, self.s)
@@ -2175,10 +2233,14 @@ class Tools(EditorialTools):
                                         **({"constraints": "Honour exactly: " + ", ".join(k.replace("_", " ") for k, v in
                                                            intent.constraints(prompt).items() if v)}
                                            if any(intent.constraints(prompt).values()) else {}),
-                                        "format": "Return JSON {network: caption}. Every caption opens with a hook line, never a plain "
-                                                  "restatement of the headline. The first line is keyword-first: it starts with the "
-                                                  "key search term (the keyword when given, else the company, product or topic). At "
-                                                  "most 5 hashtags per caption. Brand rules win over conventions."}),
+                                        **({"hook": exact_hook} if exact_hook else {}),
+                                        "format": ("Return JSON {network: caption}. The first line of every caption is the hook "
+                                                   "given, word for word; write the rest after it. At most 5 hashtags per caption. "
+                                                   "Brand rules win over conventions." if exact_hook else
+                                                   "Return JSON {network: caption}. Every caption opens with a hook line, never a plain "
+                                                   "restatement of the headline. The first line is keyword-first: it starts with the "
+                                                   "key search term (the keyword when given, else the company, product or topic). At "
+                                                   "most 5 hashtags per caption. Brand rules win over conventions.")}),
                             max_tokens=2400)
         truncated = self.truncated
         if isinstance(d, dict) and all(isinstance(d.get(c["service"]), str) and d.get(c["service"]).strip() for c in chans):
@@ -2195,7 +2257,11 @@ class Tools(EditorialTools):
         cons = (((run.get("input") or {}).get("intent") or {}).get("constraints") or
                 intent.constraints((run.get("input") or {}).get("prompt", "")))
         for d in drafts:
-            raw = brand.apply_text_rules(cap_hashtags(keyword_first(tidy(d["text"], st), keyword)), brand.for_channel(rules, d["service"]), trace)
+            body = tidy(d["text"], st)
+            # a hook the person (or the brain on their behalf) gave is the first line verbatim: the writer used to paraphrase
+            # it and keyword_first prefixed it (owner bug, 9 Nov 2026: "make the hook stronger" never showed the new hook)
+            body = with_hook(body, exact_hook) if exact_hook else keyword_first(body, keyword)
+            raw = brand.apply_text_rules(cap_hashtags(body), brand.for_channel(rules, d["service"]), trace)
             if d["service"] == "youtube":
                 raw = dedupe_youtube(raw, st["headline"])
             if cons.get("no_hashtags") or cons.get("no_link"):
@@ -2204,6 +2270,8 @@ class Tools(EditorialTools):
             caps[d["channel_id"]] = {"text": text, "engine": d["engine"], "tone": tones.get(d["channel_id"], "") or default_tone,
                                      "trimmed": text != raw}
         res["story"] = st
+        if exact_hook:
+            res["hook"] = exact_hook  # the run view shows it as the post's hook chip
         self.save(run)
         self.h.ledger.record_examples(self.a.uid, trace)  # the Style Ledger shows what each rule really changed
         # the full saved text: a 160-character preview made the brain report a "cut off" caption that was complete
@@ -2312,9 +2380,15 @@ class Tools(EditorialTools):
             self.thread(run, "agent", ask["text"])  # the search is over and there is still no video: ask for the upload now
         src = res.get("source") or {}
         want = run["input"].get("source_url") or ""
+        # "your link" is any link the person gave in this thread: a later message's link (an X post with the video, after
+        # the first YouTube link) is theirs too (owner bug, 9 Nov 2026: flagged on every check after they sent it)
+        theirs = [want, *((run["input"].get("intake") or {}).get("urls") or [])]
+        theirs += [u for m in res.get("thread") or [] if m.get("role") == "user" for u in intake.urls(m.get("text") or "")]
+        theirs = [u for u in theirs if u]
         # the story came from the link when the link read IS the source, whatever its spelling (owner, 3 Nov 2026: a
         # youtu.be link read as youtube.com/watch?v= was "the story isn't from your link")
-        about = not want or any(same_source(u, want) for u in (src.get("url"), src.get("requested_url"), src.get("video_url")) if u)
+        about = not want or any(same_source(u, w) for u in (src.get("url"), src.get("requested_url"), src.get("video_url")) if u
+                                for w in theirs)
         if not about:
             problems.append("the story isn't from your link")
         res["checks"] = {"about_source": about, "problems": problems, "conflicts": len(res.get("conflicts") or []), "skipped": skipped}

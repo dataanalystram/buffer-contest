@@ -313,6 +313,7 @@ function showRun(r) {
     catch (e) { toast(e.message, 6000); sd.disabled = false; }
   };
   wirePackages(r);
+  if (window.hqAsks) window.hqAsks(r);  // "What you asked" card, missing-channel tabs, hook / credit chips (asks.js)
 }
 
 function agentExtras(r, busy) {

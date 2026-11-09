@@ -273,7 +273,10 @@
     if (window.hqThreadUrl && r.thread_id) window.hqThreadUrl(r.thread_id);  // the address bar names the open thread
     setStep(busy || !pk.length ? "create" : "review");
     const inp = r.input || {}, up = res.upload;
-    const said = inp.prompt || inp.brief || inp.query || inp.url || "(your file)";
+    // the thread's first message is what the person said first; the run's prompt can be a later message (their link,
+    // after an opening request the agent asked about), and the thread under the bubble skips message 1 (owner, 9 Nov 2026)
+    const t0 = (res.thread || [])[0];
+    const said = (t0 && t0.role === "user" && t0.text) || inp.prompt || inp.brief || inp.query || inp.url || "(your file)";
     $("#mpUser").innerHTML = `<div class="mp-bubble"><p>${esc(said)}</p>${up ? `<span class="mp-att">${up.type === "video" ? `<video src="${esc(up.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${esc(up.url)}" alt="">`}<small>${esc(up.name || "Your " + up.type)}${up.duration ? " · " + fmtDur(up.duration) : ""}</small></span>` : ""}</div>`;
     const steps = r.steps || [], cur = steps.find((s) => s.status === "running"), done = steps.filter((s) => ["done", "warn"].includes(s.status)).length;
     $("#mpTraceSum").textContent = busy ? `Working · ${done} of ${Math.max(steps.length, done + 1)} steps` : `${steps.length} step${steps.length === 1 ? "" : "s"} · ${r.status === "failed" ? "stopped" : "done"}`;
