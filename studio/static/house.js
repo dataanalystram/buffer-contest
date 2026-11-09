@@ -255,6 +255,17 @@ function watch(id) {
 // leaving the thread's screen stops the poll; coming back to a run that is still working starts it again
 function resumeWatch() { if (H.run && H.watching == null && ["running", "rendering"].includes(H.run.status) && !$("#tab-agent").hidden) watch(H.run.id); }
 window.stopWatch = stopWatch; window.resumeWatch = resumeWatch;
+// back on the tab after changing something in Buffer: a finished post re-reads its run, which re-checks Buffer
+// (studio/post_sync.py, from the cached post lists), at most every 20 s
+let bufSeen = 0;
+document.addEventListener("visibilitychange", async () => {
+  const r = H.run;
+  if (document.hidden || !r || r.kind === "take" || ["running", "rendering"].includes(r.status) || $("#tab-agent").hidden) return;
+  const linked = ((r.result || {}).packages || []).some((p) => p.sent || p.buffer_draft);
+  if (!linked || Date.now() - bufSeen < 20000) return;
+  bufSeen = Date.now();
+  try { const n = await api(`/api/agent/runs/${r.id}`); if (H.run && H.run.id === r.id && !["running", "rendering"].includes(H.run.status)) showIfOn(r.id, n); } catch (_) { /* the next open re-checks */ }
+});
 
 // ---------------------------------------------------------------- run view
 function showRun(r) {
@@ -418,7 +429,7 @@ function drawReady(r, busy) {
   const box = $("#mpReady"); if (!box) return;
   const pk = (r.result || {}).packages || [];
   if (!pk.length || busy) { box.hidden = true; box.innerHTML = ""; return; }
-  const word = (p) => (p.sent ? (p.status === "pending_approval" ? "Waiting for approval" : "In Buffer") : p.status === "hold" ? "On hold" : p.changed_since_sent ? "Changed since saved" : "Ready");
+  const word = (p) => (p.sent ? (p.status === "pending_approval" ? "Waiting for approval" : BUF_WORD[p.sent.buffer_status] || "In Buffer") : p.status === "hold" ? "On hold" : p.changed_since_sent ? "Changed since saved" : p.buffer_sync && p.buffer_sync.event === "deleted" ? "Deleted in Buffer" : "Ready");
   box.hidden = false;
   box.innerHTML = `<span class="mp-ready-h">Your posts</span>` + pk.map((p) => { const f = pkgFiles(p)[0];
     const th = f ? (f.type === "video" ? `<video src="${escUrl(f.url)}#t=0.5" muted playsinline preload="metadata" aria-hidden="true"></video>` : `<img src="${escUrl(f.url)}" alt="">`) : `<span class="mp-ready-ph" aria-hidden="true"></span>`;
@@ -575,12 +586,27 @@ function pkgCovers(p, sent) {
 
 // what a saved post says, once, on its card (owner, 6 Nov 2026, B3/B7): "Saved to Buffer as draft · <id>" with a link to
 // the channel in Buffer; nothing reaches Buffer before the person presses the button on this card
+// what the post is in Buffer right now (studio/post_sync.py re-checks it whenever the run opens: owner, 9 Nov 2026)
+const BUF_WORD = { draft: "Draft in Buffer", scheduled: "Scheduled in Buffer", needs_approval: "Waiting for approval in Buffer", sent: "Published", failed: "Failed in Buffer" };
+const BUF_LINE = { draft: "Draft in Buffer (not posted)", scheduled: "Scheduled in Buffer", needs_approval: "Waiting for approval in Buffer", sent: "Published by Buffer", failed: "Buffer couldn't publish it" };
 function sentLine(p) {
   if (p.status === "pending_approval") return "Waiting in Approvals" + (p.sent && p.sent.due_at ? " · " + esc(fmtWhen(p.sent.due_at)) : "");
   const s = p.sent || {}, id = s.buffer_post_id ? String(s.buffer_post_id) : "";
-  const href = `https://publish.buffer.com/channels/${encodeURIComponent(p.channel_id || "")}/schedule`;
-  return `${s.mode === "draft" ? "Saved to Buffer as draft (not posted)" : "In Buffer"}${id ? ` · <code data-testid="pkg-buffer-id">${esc(id)}</code>` : ""}`
-    + `${s.due_at ? " · " + esc(fmtWhen(s.due_at)) : ""} · <a class="link sm" href="${escUrl(href)}" target="_blank" rel="noopener" data-testid="pkg-buffer-link">Open in Buffer</a>`;
+  const href = s.link || `https://publish.buffer.com/channels/${encodeURIComponent(p.channel_id || "")}/schedule`;
+  const head = BUF_LINE[s.buffer_status] || (s.mode === "draft" ? "Saved to Buffer as draft (not posted)" : "In Buffer");
+  const when = s.buffer_status === "sent" ? s.sent_at : s.buffer_status === "draft" ? "" : s.due_at;
+  return `${head}${id ? ` · <code data-testid="pkg-buffer-id">${esc(id)}</code>` : ""}`
+    + `${when ? " · " + esc(fmtWhen(when)) : ""} · <a class="link sm" href="${escUrl(href)}" target="_blank" rel="noopener" data-testid="pkg-buffer-link">${s.buffer_status === "sent" && s.link ? "Open the post" : "Open in Buffer"}</a>`
+    + `${s.buffer_status === "failed" && s.error ? `<br><small data-testid="pkg-buffer-error">${esc(s.error)}</small>` : ""}`
+    + `${s.edited_in_buffer ? `<br><small class="muted" data-testid="pkg-buffer-edited">The caption was edited in Buffer; this is Buffer's version.</small>` : ""}`
+    + ` <button type="button" class="link sm" data-testid="pkg-buffer-check" title="Read this post from Buffer again">Check Buffer</button>`;
+}
+// a post that came back from Buffer (deleted there, or rejected in Approvals): editable again, and it says why
+function syncLine(p) {
+  const b = p.buffer_sync;
+  if (!b || ["sent_to_buffer", "pending_approval"].includes(p.status)) return "";
+  const what = b.event === "rejected" ? "It was rejected in Approvals" : `The ${b.mode === "draft" ? "draft" : "post"} was deleted in Buffer`;
+  return `<div class="st warn" role="status" data-testid="pkg-buffer-sync">${what}, so it's back here to edit. Save or schedule it again when it's ready.</div>`;
 }
 function pkgCard(p) {
   const ch = chOf(p.channel_id), sent = ["sent_to_buffer", "pending_approval"].includes(p.status);
@@ -592,6 +618,7 @@ function pkgCard(p) {
     <header>${window.chMark ? window.chMark(ch && ch.id ? ch : { service: p.service }, true) : avatar(ch)}<div><b>${esc(p.channel_name || netName(p.service))}</b><small>${esc(netName(p.service))}</small></div><span class="cnt ${len > lim ? "over" : ""}" data-testid="pkg-count">${len}/${lim}</span></header>
     ${pkgMedia(p)}
     <div class="pkg-side">
+    ${syncLine(p)}
     ${sent ? "" : pkgMissing(p)}
     ${pkgCovers(p, sent)}
     ${window.hqPkgControls ? window.hqPkgControls.card(p, sent) : window.pkgMusic ? window.pkgMusic(p, sent) : ""}
@@ -641,6 +668,14 @@ function wirePackages(r) {
     const ch = el.dataset.ch, ta = el.querySelector("textarea"), mode = el.querySelector("[data-testid=pkg-mode]"), when = el.querySelector("[data-testid=pkg-when]");
     const pk = (r.result.packages || []).find((p) => p.channel_id === ch) || {};
     let t;
+    const bc = el.querySelector("[data-testid=pkg-buffer-check]");
+    if (bc) bc.onclick = async () => {  // read this post from Buffer now (not the few-minute cache): deleted / scheduled / edited there
+      bc.disabled = true; bc.textContent = "Checking…";
+      try { const n = await api(`/api/agent/runs/${r.id}?refresh_buffer=1`); showIfOn(r.id, n);
+        const np = ((n.result || {}).packages || []).find((p) => p.channel_id === ch) || {};
+        toast(np.buffer_sync && !np.sent ? "It's no longer in Buffer, so you can edit it again" : "Checked with Buffer", 4000); }
+      catch (e) { toast(e.message, 6000); bc.disabled = false; bc.textContent = "Check Buffer"; }
+    };
     ta.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
       try { const p = await api(`/api/agent/runs/${r.id}/packages/${ch}`, { method: "POST", body: { text: ta.value } });
         el.querySelector("[data-testid=pkg-count]").textContent = `${p.length}/${p.limit}`;

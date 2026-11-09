@@ -744,6 +744,18 @@ class Brain:
                    r"phonk|synthwave|trending (?:song|sound|audio))")
     MUSIC_ADD_RE = re.compile(r"\b(?:add|use|put|pick|play|with|give (?:it|the reel)|set|try|change (?:the )?(?:music|song|track) to)\b"
                               r"[^.?!]{0,40}?\b" + MUSIC_WORDS + r"\b", re.I)
+    # "i added the music, instagram didn't pick it?" / "why is there no music" / "the music isn't in the video": a question
+    # about the music already on the post, answered from the package (owner, 9 Nov 2026: the brain re-rendered with
+    # music "auto", which bakes in nothing, and said it added background music)
+    MUSIC_STATUS_RE = re.compile(
+        r"\b(?:music|song|track|sound|audio)\b[^.!]{0,60}?\b(?:didn'?t|did not|not|isn'?t|wasn'?t|never|no)\b[^.!]{0,25}?"
+        r"\b(?:pick|picked|appl\w*|work\w*|show\w*|play\w*|there|added|come|came|carr\w*|load\w*|hear\w*|in the video)"
+        r"|\b(?:why|where)\b[^.!?]{0,30}\b(?:no|is the|the)\s+(?:music|song|track|sound)\b"
+        r"|\b(?:didn'?t|did not|not|never)\b[^.!]{0,20}\b(?:pick|apply|applied|add|added|load|play)\b[^.!]{0,30}\b(?:music|song|track)\b"
+        r"|\bi (?:added|picked|chose|selected|put)\b[^.!]{0,40}\b(?:music|song|track|sound)\b", re.I)
+    # music mixed INTO the video file (render_reel music: cinematic | pulse), not Instagram music: the brain renders it
+    MUSIC_BED_RE = re.compile(r"\bmusic bed\b|\b(?:cinematic|pulse) (?:music|bed)\b|\b(?:music|song|track)\b[^.!?]{0,20}\b(?:in|into|inside) "
+                              r"the (?:video|file)\b|\bbake[ds]?\b[^.!?]{0,20}\bmusic\b", re.I)
     SLIDES_RE = re.compile(r"\buse slides\b|\bslides instead\b|\bno,? (?:use )?(?:the )?(?:slides|carousel)\b|\bcarousel instead\b", re.I)
 
     def _answer(self, a, rid, run, text: str, focus: str | None = None) -> dict:
@@ -854,7 +866,10 @@ class Brain:
                 return post_controls.undo_package_media(self.h, a, rid, "")
             except ActionError as e:
                 return self._answer(a, rid, self.h.run(a, rid), str(e))
-        if self.MUSIC_NONE_RE.search(text) or self.MUSIC_ADD_RE.search(text):
+        if self.MUSIC_STATUS_RE.search(text) and not self.MUSIC_NONE_RE.search(text):
+            self.h._save(rid, run["steps"], res)
+            return self._music_status(a, rid)
+        if (self.MUSIC_NONE_RE.search(text) or self.MUSIC_ADD_RE.search(text)) and not self.MUSIC_BED_RE.search(text):
             self.h._save(rid, run["steps"], res)
             return self._music_reply(a, rid, text)
         if self.KIT_LIST_RE.search(text):
@@ -924,6 +939,58 @@ class Brain:
                    (f" Other picks: {alt}. Say “use <title> music” or open **Music** on the card." if alt else ""))
         else:
             msg = out.get("message") or "Music can't be added here."
+        return self._answer(a, rid, run, msg)
+
+    def _music_status(self, a, rid) -> dict:
+        """Where the post's music really is, checked with Buffer: Instagram music is attached by Instagram when the Reel is
+        posted (it is never inside the video file or its preview here); a track Buffer can't load is taken off and the
+        person picks another (the ask card); a post without music says so and offers tracks."""
+        from . import post_controls, reel_audio
+        run = self.h.run(a, rid)
+        res = run["result"]
+        reels = [p for p in res.get("packages") or [] if post_controls.music_support(p) == "instagram"]
+        withm = [p for p in reels if (p.get("options") or {}).get("ig_audio")]
+        if not reels:
+            pk = res.get("packages") or []
+            note = post_controls.music_note(pk[0]) if pk else "This post has no video, so there's nothing to put music on."
+            return self._answer(a, rid, run, "No music is on this post. " + note)
+        if not withm:
+            try:
+                return self._music_reply(a, rid, "add music")
+            except Exception:  # noqa: BLE001
+                return self._answer(a, rid, self.h.run(a, rid), "No music is on this Reel yet. Open Music on the card to pick a track.")
+        pk = withm[0]
+        au = pk["options"]["ig_audio"]
+        chk = reel_audio.check_track(self.h.studio, a, pk["channel_id"], au, fresh=True)
+        title = au.get("title") or "the track"
+        sent = pk.get("status") in ("sent_to_buffer", "pending_approval")
+        if chk["state"] == "unavailable":
+            if not sent:
+                try:
+                    reel_audio.set_reel_audio(self.h, a, rid, pk["channel_id"], None)
+                except ActionError:
+                    pass
+            lead = reel_audio.UNLOADABLE.format(title=title) + (
+                " I took it off the Reel. " if not sent else " That post is already in Buffer, so change the track there. ")
+            try:
+                out = self._music_reply(a, rid, "add music")  # trending tracks to pick from (the ask card)
+            except Exception:  # noqa: BLE001 - Buffer's catalog didn't answer: the plain answer still goes out
+                return self._answer(a, rid, self.h.run(a, rid), lead + "Open Music on the card to pick another track.")
+            run = self.h.run(a, rid)
+            th = run["result"].setdefault("thread", [])
+            if th and th[-1].get("role") == "agent":
+                th[-1]["text"] = (lead + th[-1]["text"])[:1500]
+                self.h._save(rid, run["steps"], run["result"])
+                return self.h.run(a, rid)
+            return out
+        why = ("Instagram music isn't mixed into the video file: Buffer sends the track with the Reel and Instagram adds it when it "
+               "posts, so the preview here and the video in Buffer play without it.")
+        state = {"ok": " Buffer can load it, so it will go out with the Reel.",
+                 "needs_facebook": " But Buffer can't add music to this Instagram channel: " + reel_audio.NEEDS_FACEBOOK,
+                 "unknown": " I couldn't reach Buffer to check the track just now."}[chk["state"]]
+        msg = f"**{title}** is on your Instagram Reel as Instagram music. {why}{state}"
+        if not sent:
+            msg += " If you want music inside the video itself on every network, say “add a cinematic music bed” or “pulse music bed”."
         return self._answer(a, rid, run, msg)
 
     def _bg(self, a, rid, body) -> None:

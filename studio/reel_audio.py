@@ -18,7 +18,7 @@ from .actions import ActionError, Actor, clean_audio
 from .buffer_api import BufferError
 
 HELP_URL = "https://support.buffer.com/en-us/articles/getting-instagram-locations-facebook-authorization-required-acaC8V633l"
-NEEDS_FACEBOOK = "Connect Instagram through a Facebook Page in Buffer to add music."
+from .audio_check import NEEDS_FACEBOOK  # noqa: E402  (one wording for the search and the check)
 SEARCH_TTL = 300  # one Buffer call per channel + query every 5 minutes, whoever asks (the API budget is shared)
 VIDEO = (".mp4", ".mov", ".m4v", ".webm")
 
@@ -64,6 +64,9 @@ def search(studio, a: Actor, channel_id: str, query: str = "") -> dict:
     return out
 
 
+from .audio_check import CHECK_TTL, UNLOADABLE, check_track, ensure_playable  # noqa: E402,F401  (fastapi-free: actions.py uses it)
+
+
 def set_reel_audio(house, a: Actor, rid: int, channel_id: str, audio: dict | None, music_volume: Any = None,
                    original_volume: Any = None, start_ms: Any = None) -> dict:
     """Put a track on one Instagram Reel package (or take it off with audio=None). Saved with the package; it reaches
@@ -92,6 +95,7 @@ def set_reel_audio(house, a: Actor, rid: int, channel_id: str, audio: dict | Non
     au = clean_audio(raw)
     if not au:
         raise ActionError("That music choice is incomplete: pass the track's audio_id, title, type and duration_ms from search_instagram_audio.")
+    au = ensure_playable(house.studio, a, channel_id, au)  # never save a track Buffer can't load
     opts.update(ig_audio=au, ig_type="reel")
     house._save(rid, run["steps"], res)
     house.store.audit(a.uid, a.label, "set_reel_audio", "write", {"run": rid, "type": au["type"], "music_volume": au["music_volume"],

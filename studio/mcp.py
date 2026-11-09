@@ -78,8 +78,8 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "edit_media", "description": "Edit the user's own photo or video (public https URL) to their brand kit: crop to the network frame, logo bug, hook headline, end card, captions, brand check. Returns a run id like run_agent.",
      "inputSchema": {"type": "object", "required": ["media_url"], "properties": {"media_url": {"type": "string"}, "brief": {"type": "string", "description": "What the post is about; used for the hook and captions"},
          "channel_ids": {"type": "array", "items": {"type": "string"}}, "format": {"type": "string", "enum": ["auto", "photo", "reel"]}}}},
-    {"name": "get_run", "description": "An agent run: every step with what it did, the rendered media URLs, and one ready package per channel (caption, media, brand check).",
-     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}}}},
+    {"name": "get_run", "description": "An agent run: every step with what it did, the rendered media URLs, and one ready package per channel (caption, media, brand check). Packages follow Buffer: one deleted there is ready again (buffer_sync says why); sent.buffer_status says draft / scheduled / sent / failed as Buffer has it, and a caption edited in Buffer is taken over. refresh_buffer: true reads Buffer fresh instead of the few-minute cache.",
+     "inputSchema": {"type": "object", "required": ["run_id"], "properties": {"run_id": {"type": "integer"}, "refresh_buffer": {"type": "boolean"}}}},
     {"name": "revise", "description": "Give a correction in plain words (\"logo smaller, top left\", \"no hype\", \"use #FF5A1F\"). It becomes a permanent Style Ledger rule, then the run re-renders, re-captions and re-checks. Show the user before/after.",
      "inputSchema": {"type": "object", "required": ["run_id", "correction"], "properties": {"run_id": {"type": "integer"}, "correction": {"type": "string"}}}},
     {"name": "remember_rule", "description": "Save a brand rule to the Style Ledger without a run (e.g. from the user's feedback on past posts). Every later render and caption follows it.",
@@ -349,7 +349,10 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
         return h.start_run(actor, {"media_token": up["token"], "brief": args.get("brief", ""), "channel_ids": args.get("channel_ids"),
                                    "format": args.get("format")})
     if name == "get_run":
-        return h.run(actor, int(args.get("run_id") or 0))
+        out = h.run(actor, int(args.get("run_id") or 0))
+        from . import post_sync  # the same Buffer re-check as the run page (deleted / scheduled / edited in Buffer)
+        post_sync.sync_run(h, actor, out, refresh=bool(args.get("refresh_buffer")))
+        return out
     if name == "revise":
         return h.revise(actor, int(args.get("run_id") or 0), args.get("correction", ""))
     if name == "remember_rule":

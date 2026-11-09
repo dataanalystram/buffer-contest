@@ -1921,7 +1921,7 @@ class House:
         out = self.studio.submit_post(a, prev["confirm_token"])
         self.mark_package(a, rid, channel_id, out["status"], {"mode": mode, "due_at": prev["preview"].get("due_at"),
                                                                "buffer_post_id": (out.get("post") or {}).get("id"),
-                                                               "approval_id": out.get("approval_id")})
+                                                               "approval_id": out.get("approval_id"), "at": time.time()})
         return {**out, "warnings": prev["warnings"]}
 
     def update_package_draft(self, a: Actor, rid: int, channel_id: str) -> dict:
@@ -1956,6 +1956,7 @@ class House:
                 p["sent"] = {"mode": "draft", "buffer_post_id": pid, "key": p.get("idempotency_key"), "at": time.time(), "updated": True}
                 p.pop("changed_since_sent", None)
                 p.pop("buffer_draft", None)
+                p.pop("buffer_sync", None)
         self._save(rid, run["steps"], run["result"])
         return {"status": "sent_to_buffer", "draft": "updated", "post": out.get("post"), "warnings": out.get("warnings") or []}
 
@@ -1965,6 +1966,7 @@ class House:
             if pk["channel_id"] == channel_id:
                 pk["status"] = status
                 pk["sent"] = info
+                pk.pop("buffer_sync", None)  # "deleted in Buffer" is history once it is sent again
         self._save(rid, run["steps"], run["result"])
 
     # ================================================================ calendar / Planner

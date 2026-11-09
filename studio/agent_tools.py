@@ -58,7 +58,10 @@ SPECS = [
                                                        "ratio": {"type": "string", "enum": ["9:16", "4:5", "1:1"],
                                                                  "description": "9:16 for Instagram/YouTube/TikTok; 4:5 (or 1:1) for LinkedIn/Facebook feeds"},
                                                        "style": {"type": "string", "enum": ["news"] + media_styles.ALL_IDS},
-                                                       "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"]},
+                                                       "music": {"type": "string", "enum": ["auto", "cinematic", "pulse", "none"],
+                                                                 "description": "A royalty-free music bed mixed INTO the video file: cinematic or pulse. "
+                                                                                "auto and none add NO music (never say music was added with them). "
+                                                                                "Instagram music the person picked is separate: it rides with the Reel to Buffer and Instagram adds it when it posts."},
                                                        "rights_confirmed": {"type": "boolean", "description": "The person confirmed they may repost this video (with credit)"}}}},
     {"name": "add_end_card", "description": "Set the end card line for every future video (a Style Ledger rule), e.g. 'Follow @huhbyte'.",
      "input_schema": {"type": "object", "required": ["text"], "properties": {"text": S}}},
@@ -1725,7 +1728,9 @@ class Tools(EditorialTools):
         if captions_mode in ("on", "off", "auto", "replace"):
             spec["captions_mode"], spec["captions"] = captions_mode, captions_mode != "off"
         frames = [] if (clip_tok or cand) else gen
-        media, note = self._video_job(run, spec, frames, f" Style: {sid}.")
+        bed = {"hype": "pulse", "energetic": "pulse"}.get(str(music or "").lower(), str(music or "").lower())
+        mnote = f" Music: a {bed} bed mixed into the video." if bed in ("cinematic", "pulse") else " No music in the video file."
+        media, note = self._video_job(run, spec, frames, f" Style: {sid}." + mnote)
         return media, note, ""
 
     def _cover_image_token(self, run) -> str:

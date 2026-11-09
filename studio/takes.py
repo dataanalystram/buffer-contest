@@ -996,30 +996,8 @@ class Takes(TakeBin, TakeControl):
         writes clear them), so opening takes costs at most one Buffer request per account per few minutes:
         {"posts": {id: post}, "sent_complete": bool}. None when Buffer can't be read now (not connected, rate limited) or
         a list came back full, so absence would prove nothing; then placements are left exactly as they were."""
-        u = self.store.user(a.uid) or {}
-        org = u.get("org_id")
-        if not org:
-            return None
-        from .buffer_api import POSTS_PAGE
-        buf = self.studio.buffer
-        try:
-            try:
-                buf.prefetch_posts(a.uid, org, PLACEMENT_SYNC_STATUSES + ("sent",))
-            except Exception:  # noqa: BLE001 - the per-status reads below surface any real error
-                pass
-            posts: dict = {}
-            for st in PLACEMENT_SYNC_STATUSES:
-                rows = buf.posts(a.uid, org, [st], first=POSTS_PAGE)
-                if len(rows) >= POSTS_PAGE:
-                    return None
-                for p in rows:
-                    posts[str(p.get("id"))] = {**p, "status": (p.get("status") or st).lower()}
-            sent = buf.posts(a.uid, org, ["sent"], first=POSTS_PAGE)
-            for p in sent:
-                posts[str(p.get("id"))] = {**p, "status": "sent"}
-        except Exception:  # noqa: BLE001 - a Buffer hiccup never breaks the take page; it just isn't re-checked this time
-            return None
-        return {"posts": posts, "sent_complete": len(sent) < POSTS_PAGE}
+        from .post_sync import buffer_index  # one reader for One take and Make a post
+        return buffer_index(self.store, self.studio.buffer, a)
 
     def _reconcile(self, a: Actor, res: dict, index: dict | None) -> bool:
         """Bring each clip's placements in line with what really happened (owner, 7 Nov 2026: drafts deleted in Buffer

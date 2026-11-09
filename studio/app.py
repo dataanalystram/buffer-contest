@@ -1047,7 +1047,7 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         return house.runs(actor(request), max(1, min(int(limit), 100)))
 
     @app.get("/api/agent/runs/{rid}")
-    def run_get(rid: int, request: Request):
+    def run_get(rid: int, request: Request, refresh_buffer: int = 0):
         # a busy run carries an ETag: an open thread's live poll sends If-None-Match and an unchanged run answers 304 with
         # no body, read from md5s only (house.run_tag). The tag is taken BEFORE the read, so a change in between is never
         # hidden (the next poll sees a different tag). A finished, stale, foreign or missing run always takes the full read.
@@ -1057,6 +1057,8 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         if tag and not_modified(request, tag):
             return Response(status_code=304, headers={"ETag": tag, "Cache-Control": "private, no-cache"})
         out = house.run(a, rid)  # carries thread_id (house.run): the address bar's /threads/thr_...
+        from . import post_sync  # posts deleted / scheduled / edited in Buffer show as they really are (owner, 9 Nov 2026)
+        post_sync.sync_run(house, a, out, refresh=bool(refresh_buffer))
         return JSONResponse(jsonable_encoder(out), headers={"ETag": tag, "Cache-Control": "private, no-cache"}) if tag else out
 
     @app.post("/api/agent/runs/{rid}/revise")

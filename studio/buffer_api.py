@@ -461,6 +461,31 @@ class BufferClient:
             return {"audio": [], "needs_facebook": True, "message": r.get("message") or ""}
         return {"audio": r.get("audio") or [], "needs_facebook": False, "failed_types": r.get("failedAudioTypes") or []}
 
+    def post_status(self, uid: str, post_id: str) -> dict | None:
+        """One post by id (status, text, times), or None when Buffer says there is no such post (deleted). Used only when
+        a post is missing from the account's lists and the sent list is too long to prove it was deleted (post_sync)."""
+        q = "query($i: PostInput!) { post(input: $i) { id text status dueAt sentAt channelId externalLink error { message } } }"
+        try:
+            return self.gql(q, {"i": {"id": post_id}}, uid=uid).get("post") or None
+        except BufferError as e:
+            if type(e) is BufferError and re.search(r"NOT_FOUND|not found|does not exist|no post", str(e), re.I):
+                return None
+            raise
+
+    def instagram_audio(self, uid: str, channel_id: str, audio_id: str) -> dict:
+        """Buffer's own check of one track (instagramAudio: "refresh metadata and preview availability"), the same check
+        Buffer's composer runs when it shows the track: {"audio": InstagramAudio} when Buffer can load it,
+        {"needs_facebook": True} for an Instagram-Login channel. Buffer's error (a track it can't load, the "Couldn't load
+        track" in its composer, owner 9 Nov 2026) is raised as a BufferError."""
+        q = ("query($i: InstagramAudioInput!) { r: instagramAudio(input: $i) { __typename "
+             "... on InstagramAudioSuccess { audio { %s } } ... on ChannelRefreshRequired { message } } }") % self.AUDIO_FIELDS
+        r = self.gql(q, {"i": {"channelId": channel_id, "audioId": str(audio_id)}}, uid=uid)["r"] or {}
+        if r.get("__typename") == "ChannelRefreshRequired":
+            return {"needs_facebook": True, "message": r.get("message") or ""}
+        if not r.get("audio"):
+            raise BufferError("Buffer could not complete the request (NOT_FOUND: no such Instagram audio)")
+        return {"audio": r["audio"]}
+
     def post_audio(self, uid: str, post_id: str) -> dict | None:
         """The music Buffer stored on a post (InstagramSelectedAudio), or None. Buffer answers FORBIDDEN on this field for
         personal API keys (checked 2 Nov 2026), so None also means "Buffer won't say"."""

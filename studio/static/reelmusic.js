@@ -153,7 +153,7 @@ window.openMusicPicker = function (r, pk) {
       <button type="button" class="btn sm" data-testid="music-save" ${au ? "" : "disabled"}>Use this music</button></span></div></div>`;
   document.body.append(dlg);
   const save = dlg.querySelector("[data-testid=music-save]");
-  const picker = mount(dlg.querySelector("[data-testid=music-picker]"), { channelId: pk.channel_id, value: au ? { ...au, preview_url: "" } : null,
+  const picker = mount(dlg.querySelector("[data-testid=music-picker]"), { channelId: pk.channel_id, value: au ? { ...au } : null,
     onChange: (v) => { save.disabled = !v && !au; dlg.querySelector("[data-testid=music-picked]").textContent = v ? "Picked: " + v.title : (au ? "Music will be removed" : "Pick a track"); } });
   D = { dlg, picker };
   dlg.querySelector("[data-testid=music-close]").onclick = close;
@@ -164,7 +164,7 @@ window.openMusicPicker = function (r, pk) {
     try {
       await api(`/api/agent/runs/${r.id}/packages/${encodeURIComponent(pk.channel_id)}/audio`, { method: "POST",
         body: v ? { audio: v, music_volume: v.music_volume, original_volume: v.original_volume } : { audio: null } });
-      close(); toast(v ? "Music added to the Reel. It goes to Buffer with the post." : "Music removed", 4000);
+      close(); toast(v ? "Music added. Instagram adds it when the Reel is posted; play the Reel here to hear it with the track." : "Music removed", 5000);
       showRun(await api(`/api/agent/runs/${r.id}`));
     } catch (e) { toast(e.message, 6000); save.disabled = false; }
   };
@@ -173,11 +173,32 @@ window.openMusicPicker = function (r, pk) {
   picker.search("");
 };
 
+// "I selected the music but it didn't get attached to the video" (owner, 9 Nov 2026): Instagram music is never inside the
+// file (Buffer sends the track id and Instagram adds it when it posts), so the card plays Instagram's preview of the track
+// along with the Reel, at the chosen levels, to show what the post will sound like. The file itself stays as it is.
+function withVideo(el, au) {
+  const v = el.querySelector("[data-testid=pkg-video]"), tg = el.querySelector("[data-testid=music-with-video]");
+  if (!v || !au || !au.preview_url) return;
+  const a = new Audio(au.preview_url); a.preload = "none"; a.loop = true;
+  let ok = true;
+  const on = () => !tg || tg.checked;
+  const mix = () => { a.volume = Math.max(0, Math.min(1, (au.music_volume ?? 100) / 100)); v.volume = on() ? Math.max(0, Math.min(1, (au.original_volume ?? 100) / 100)) : 1; };
+  const sync = () => { if (isFinite(a.duration) && a.duration > 0) a.currentTime = v.currentTime % a.duration; };
+  const play = () => { if (!ok || !on()) return; if (CUR && CUR !== a) CUR.pause(); CUR = a; mix(); sync(); a.play().catch(() => {}); };
+  a.onerror = () => { ok = false; const n = el.querySelector("[data-testid=music-how]"); if (n) n.textContent = "Instagram's preview of this track has expired here, but the track still goes to Buffer with the Reel."; };
+  v.addEventListener("play", play);
+  v.addEventListener("pause", () => a.pause());
+  v.addEventListener("ended", () => a.pause());
+  v.addEventListener("seeked", () => { sync(); });
+  if (tg) tg.onchange = () => { mix(); if (on() && !v.paused) play(); else a.pause(); };
+}
+
 window.wireMusic = function (el, r, pk) {
   const add = el.querySelector("[data-testid=music-add]"), ch = el.querySelector("[data-testid=music-change]"), rm = el.querySelector("[data-testid=music-remove]");
   if (add) add.onclick = () => window.openMusicPicker(r, pk, el);
   if (ch) ch.onclick = () => window.openMusicPicker(r, pk, el);
   const box = el.querySelector("[data-testid=pkg-music]"); if (box) noBroken(box);
+  withVideo(el, (pk.options || {}).ig_audio);
   if (rm) rm.onclick = async () => {
     rm.disabled = true;
     try { await api(`/api/agent/runs/${r.id}/packages/${encodeURIComponent(pk.channel_id)}/audio`, { method: "POST", body: { audio: null } });

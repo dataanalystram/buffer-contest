@@ -38,7 +38,10 @@ function music(p, sent) {
       <button type="button" role="radio" aria-checked="${!au}" class="${au ? "" : "on"}" data-testid="music-off">None</button>
       <button type="button" role="radio" aria-checked="${!!au}" class="${au ? "on" : ""}" data-testid="music-add">Instagram music</button></div>`;
   const chip = au && window.HQMusicChip ? window.HQMusicChip(au, { actions: !sent }) : "";
-  return `<div class="pc-music pkg-music" data-testid="pkg-music"><small class="muted sm">Music</small>${seg}${chip}
+  // where the track really goes (owner, 9 Nov 2026: "I selected the music but it didn't get attached to the video")
+  const how = au ? `<small class="muted xs" data-testid="music-how">Instagram adds this track when the Reel is posted, so the video file has no music in it.${au.preview_url ? " Play the Reel to hear it with the track." : ""}</small>
+    ${au.preview_url ? `<label class="row sm"><input type="checkbox" data-testid="music-with-video" checked> Hear the music with the video</label>` : ""}` : "";
+  return `<div class="pc-music pkg-music" data-testid="pkg-music"><small class="muted sm">Music</small>${seg}${chip}${how}
     ${au ? "" : `<small class="muted xs">Nothing is added unless you pick it.</small>`}</div>`;
 }
 function card(p, sent) { return changed(p) + music(p, sent) + (undo(p, sent) ? `<div class="pc-row">${undo(p, sent)}</div>` : ""); }
