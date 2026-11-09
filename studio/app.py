@@ -528,6 +528,11 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
             buffer._cache.pop(k, None)  # a fresh sign-in re-reads channels and posts; the account it just read stays cached
         store.update_session(sid, user_id=acct["id"], oauth=None)
         store.audit(acct["id"], "you", "connect_buffer", "auth", {"scopes": tokens.get("scope", "")})
+        try:  # the Buffer kit is the default brand for every signed-in workspace (owner, 9 Nov 2026); never blocks a sign-in
+            if getattr(house, "brand_kits", None):
+                house.brand_kits.ensure_default(Actor(acct["id"]))
+        except Exception as e:
+            print("default Buffer kit skipped:", e.__class__.__name__, flush=True)
         return True
 
     def _pending_signin(sid: str, sess: dict) -> dict | None:

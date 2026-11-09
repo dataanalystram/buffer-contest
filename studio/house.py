@@ -745,6 +745,12 @@ class House:
             self._save(rid, d["steps"], d["result"], "failed")
         if isinstance(d.get("result"), dict):
             self.annotate_media(d["result"])
+            if isinstance(d.get("input"), dict) and d["input"].get("channels"):
+                try:  # the run view's "What you asked" card (owner, 9 Nov 2026): per-network formats from all their messages
+                    from .chat_context import asks
+                    d["asks"] = {**asks(d), "channels": [c.get("service") for c in d["input"]["channels"]]}
+                except Exception:  # noqa: BLE001  a nicety: the run still opens
+                    traceback.print_exc()
         try:  # the thread's public id on EVERY run answer (start, reply, resume, poll...): the page keeps it in the address
             # bar (/threads/thr_...) so a reload stays on it. A start used to come back without it (only GET added it).
             from .thread_bin import public_id

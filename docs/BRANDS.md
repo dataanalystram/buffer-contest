@@ -20,6 +20,8 @@ font, headline case, a **front card** and an **end card**. Each card is either a
 Guards: text that would not read on the ground (contrast under 3:1) falls back to black or white; a dark logo on a dark card
 (or a light one on a light card) is recoloured to the ink; glyphs a font cannot draw are replaced, never shown as boxes.
 
+**Default kit**: every signed-in workspace starts on the Buffer example kit (`BrandKits.ensure_default`, once per workspace, only when it has no active kit and no saved brand of its own). Deleting it is respected; `HQ_DEFAULT_KIT=off` turns it off.
+
 **First-run path**: upload logo → pick a style → see examples → connect Buffer, shown as four steps at the top of the screen.
 The live preview redraws the selected template at the selected channel's frame 300 ms after each edit, with the unsaved
 changes laid over the saved kit (`POST /api/brand-studio/preview`, small JPEGs as `data:` URLs, nothing stored).

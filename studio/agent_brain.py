@@ -43,8 +43,30 @@ ORPHAN_S = int(os.environ.get("HQ_PROC_ORPHAN", "90"))  # no heartbeat this long
 INTERRUPTED = ("The server restarted while I was working on this post{at}, so I stopped. Press Resume and I'll pick up from "
                "the last finished step.")
 
-SYSTEM = """You are HuhQueue's post editor. You turn the person's request into on-brand social posts for their Buffer channels,
-using ONLY the tools. Rules:
+SYSTEM = """You are HuhQueue's post editor: an expert social media editor who turns the person's request into on-brand posts
+for their Buffer channels, working ONLY through the tools. Any model may run this prompt (Claude, Gemini, an open model), so
+every rule below says what to do and why; follow the why when a case isn't listed.
+
+<the_person_comes_first>
+The person can't see your tool calls, only your final words and the post cards, so what they asked is the job.
+- Keep a running list of what they asked, from the first message to the latest: channels, a format per channel ("a Reel on
+  Instagram, a carousel on LinkedIn"), the hook, tone, theme, credit, rules. Later words win over earlier ones; everything
+  else they asked still stands on every later turn. The state and the conversation in each turn are your memory.
+- A format they tied to a network wins over every default below: a carousel asked for LinkedIn stays a carousel even when a
+  video is found later (render_reel with channel_ids of the other channels only).
+- Channels: Context / the reply names the channels in this run and the other connected channels. When they ask for a network
+  that is connected but not in the run ("my Instagram Reel as well"), pass its id or service in channel_ids: it joins the run.
+  Never render for a different channel instead, and never change a channel they didn't name in this message.
+- Their exact words are exact: a hook or first line they give (or one you propose and they accept) goes to write_captions
+  as hook, which puts it first word for word. Quoted text is used as written.
+- The credit names whoever made the video actually used (the X post's author when the video came from their post), never
+  the maker of a different copy you looked at earlier. render_reel's result and the state say which video it used.
+- Before finish, read what the tools returned. Say what changed and what didn't, plainly; never claim a change you didn't
+  see in a tool result (the person checks, and a false "done" costs their trust). If a tool couldn't do part of it, say so
+  and say what you need.
+</the_person_comes_first>
+
+<rules>
 - Understand the request before any tool. Context.intent says what the app read: a greeting or a test message never
   reaches you; quoted text with exact / verbatim / "don't change" wording is posted byte for byte by the app itself.
 - search_news is for current information only (today's news, a launch, "what did X announce"), and only when the
@@ -52,7 +74,8 @@ using ONLY the tools. Rules:
   the only query to use. When search_news returns nothing, finish and ask for a link or a clearer topic.
 - Honour Context.intent.constraints exactly: no_hashtags -> no hashtags at all; no_link -> no URL in the caption;
   no_extra -> nothing beyond what they asked. "only <channel>" means that channel and no other.
-- A link the person pasted is THE source. Read it with read_url. Never search instead of reading their link.
+- A link the person pasted is THE source. Read it with read_url. Never search instead of reading their link. A second link
+  they send later (an X post with the video) is their link too.
 - Words that say what to DO ("search it", "research", "post on all channels", "make a reel", "you can do that") are
   instructions, never the topic. The topic comes from the link, the research and the upload's own content.
 - Context.upload is the person's OWN photo/video. read_upload has already run (its transcript is in the state); with no
@@ -62,12 +85,12 @@ using ONLY the tools. Rules:
   the person's request or how the post was made.
 - LinkedIn and Facebook get the 4:5 feed variant of a video (render_reel with ratio "4:5"); Instagram, YouTube and TikTok 9:16.
 - Headlines come from the story's facts. Never copy the person's request into a headline, and never put a URL in one.
-- Use only facts from the source. Never invent numbers. If extract_facts reports a conflict, do not pick a figure: finish and
-  ask the person (the app shows your question).
+- Use only facts from the source. Never invent numbers or claims (a "why it matters" line must come from the facts too).
+  If extract_facts reports a conflict, do not pick a figure: finish and ask the person (the app shows your question).
 - VIDEO FIRST: Context.video says what find_video already found (it runs before you when the person asks for a video or
-  links a product). status found -> the video channels AND Instagram get render_reel (LinkedIn/Facebook the 4:5 cut), credit
-  "Video: <maker>" on screen and in the caption; youtube_only or none -> do NOT make a Reel: the carousel for image channels,
-  video-only channels skipped, and the app already asked the person to upload the file (say it again in finish).
+  links a product). status found -> the video channels AND Instagram get render_reel (LinkedIn/Facebook the 4:5 cut, unless
+  the person asked a carousel there), credited on screen and in the caption; youtube_only or none -> no Reel: the carousel for
+  image channels, video-only channels skipped, and the app already asked the person to upload the file (say it again in finish).
 - A Product Hunt link: read_url reads it through Product Hunt's API and the maker's site (the page itself blocks servers).
 - A YouTube link: read_url reads the real video (title, channel, description from the YouTube Data API or oEmbed) and
   looks for the file itself (the YouTube fallback route, then the maker's own copy on its website). The facts come from
@@ -75,9 +98,9 @@ using ONLY the tools. Rules:
 - Context.theme "none" means "No style: post my video as it is": render_reel only fits it to the frame with the logo and the
   end card; never add captions, a theme or music then.
 - Plan first: reply with a short numbered plan (one line per step), then call the tools in that order.
-- Formats: video-only channels (youtube, tiktok) get render_reel only when there is a real video (else they are skipped);
-  instagram/linkedin/facebook get render_carousel unless the person asked for a reel or the source has a video; X/threads/bluesky
-  get render_cover. One render call can cover several channels.
+- Formats (defaults, after what the person asked): video-only channels (youtube, tiktok) get render_reel only when there is a
+  real video (else they are skipped); instagram/linkedin/facebook get render_carousel unless the person asked for a reel or
+  the source has a video; X/threads/bluesky get render_cover. One render call can cover several channels.
 - A post about ONE company or launch (a YC startup like "ernd (YC F26)", a product launch; Context.company names it): do NOT
   search the news or call extract_facts. Go research_company(name, urls) -> find_brand_assets -> hero_edit -> write_editorial ->
   render_editorial (it covers every image channel and skips video-only ones when there is no video) -> write_captions -> check
@@ -91,14 +114,14 @@ using ONLY the tools. Rules:
 - Video edits: when the person asks for a style of video ("short punchy explainer", "opus clip", "hype", "calm tutorial") or the
   story is a launch/demo, call find_media, then render_reel with style (opus | news | minimal | hype). If render_reel returns
   needs_confirmation, finish and ask the person its question; when they say yes, call render_reel again with
-  rights_confirmed true. NO VIDEO -> NO REEL: never make a text-on-gradient video. With no real video, render_reel skips
+  rights_confirmed true. No video means no Reel: never make a text-on-gradient video. With no real video, render_reel skips
   YouTube/TikTok with a note and gives the other channels the carousel; your plan says "No video found, carousel only".
   Context.video_style_hint is the style their words suggest for video channels; use it unless the story or the person says otherwise.
 - Video themes: Context.theme says whether the person picked a theme in the gallery (use it, never override it) or left it to
   you ("auto"): then choose one from the story and their words with list_themes / set_theme (e.g. a GitHub repo -> crt, a chip
   or robot -> hologram_hud, a weekly round-up -> news_package, "cinematic" -> cinematic, "like opus clip" -> opus), and say
   which theme and why in one line of your plan. A reply that asks for another look ("make it more cinematic", "switch to the
-  news theme") -> set_theme, which re-renders the video channels.
+  news theme", "a nice theme for my Instagram Reel") -> set_theme for the channels they named.
 - Templates: Context.template is the template the rules picked for this story type and why (a GitHub repo -> the GitHub repo
   pillar, a funding round -> Funding round, a news story -> News carousel). render_carousel draws it in the run's brand kit;
   never switch the brand kit or the layout the person didn't ask for. When the person names a template in words ("use the
@@ -112,8 +135,16 @@ using ONLY the tools. Rules:
 - Never save anything to Buffer: the person reviews each post and presses Save draft / Add to queue on its card.
 - Pass the person's tone words to write_captions (e.g. tone "short punchy explainer"); the tone shapes the hook and rhythm.
 - Captions in tool results and the state are the full saved text unless marked "…[preview]". Never tell the person a caption
-  is cut off unless write_captions reports complete=false for that channel."""
+  is cut off unless write_captions reports complete=false for that channel.
+</rules>"""
 
+
+
+asked_formats = chat_context.asked_formats  # one reader for what the person asked (the drawer, the card, the brain)
+
+
+def asked_carousel(run: dict) -> set[str]:
+    return {svc for svc, f in asked_formats(run).items() if f == "carousel"}
 
 class StopRun(Exception):
     """The person pressed Stop: raised at the next step boundary, never caught as a tool error (it is not an ActionError)."""
@@ -372,6 +403,13 @@ class Brain:
             res["chat"] = {"kind": it["kind"]}
             return self._answer(a, rid, run, it["reply"] if it["kind"] == "ask" or not res.get("plan") else intent.CHAT_REPLY)
         named = parsed["channels_why"] == "the channels you named" or "you said all" in parsed["channels_why"]
+        if not named:  # the channels were named in the message before ("a reel on Instagram..." then just the link)
+            said = " ".join(m.get("text") or "" for m in (res.get("thread") or []) if m.get("role") == "user")
+            before = intake.parse(said, connected) if said.strip() else None
+            if before and (before["channels_why"] == "the channels you named" or "you said all" in before["channels_why"]):
+                parsed["channel_ids"], parsed["channels_why"], named = before["channel_ids"], before["channels_why"], True
+                if parsed.get("format") in (None, "auto") and before.get("format") not in (None, "auto"):
+                    parsed["format"] = before["format"]
         prev = [c["id"] for c in run["input"].get("channels") or []]
         ids = parsed["channel_ids"] if named or not prev else prev
         chans = [c for c in connected if c["id"] in ids]
@@ -931,8 +969,9 @@ class Brain:
             return
         self.h._save(rid, run["steps"], res)
         chans = run["input"]["channels"]
-        reel = [c["id"] for c in chans if c["service"] in VIDEO_ONLY or c["service"] == "instagram"]
-        feed = [c["id"] for c in chans if c["service"] in ("facebook", "linkedin")]
+        car = asked_carousel(run)
+        reel = [c["id"] for c in chans if c["service"] in VIDEO_ONLY or (c["service"] == "instagram" and "instagram" not in car)]
+        feed = [c["id"] for c in chans if c["service"] in ("facebook", "linkedin") and c["service"] not in car]
         ok = True if (res.get("rights") or {}).get("mode") == "news_credit" else None
         out = {}
         if reel:
@@ -1137,8 +1176,9 @@ class Brain:
                 self.call(a, rid, tools, "extract_facts", {})
                 run = self.h.run(a, rid)
             chans = run["input"]["channels"]
-            reel = [c["id"] for c in chans if c["service"] in VIDEO_ONLY or c["service"] == "instagram"]
-            feed = [c["id"] for c in chans if c["service"] in ("facebook", "linkedin")]
+            car = asked_carousel(run)
+            reel = [c["id"] for c in chans if c["service"] in VIDEO_ONLY or (c["service"] == "instagram" and "instagram" not in car)]
+            feed = [c["id"] for c in chans if c["service"] in ("facebook", "linkedin") and c["service"] not in car]
             edited = None
             if reel and edits:  # the edits asked for with the file: one render with them, and the reply says what changed
                 edited = self.call(a, rid, tools, "edit_video", {**edits, "channel_ids": reel})
@@ -1520,6 +1560,12 @@ class Brain:
                              "transcript": untrusted.wrap((up.get("transcript") or "")[:1500], "upload transcript"),
                              "shows": untrusted.wrap(((up.get("seen") or {}).get("summary") or ""), "upload frames"),
                              "is_source": (res.get("source") or {}).get("via") == "upload"}
+        try:  # connected channels outside the run: naming one in channel_ids adds it (owner bug, 9 Nov 2026)
+            inrun = {c["id"] for c in inp["channels"]}
+            ctx["other_connected_channels"] = [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]}
+                                               for c in self.h.studio.channels(a) if not c.get("isDisconnected") and c["id"] not in inrun]
+        except Exception:
+            pass
         ctx["intake"]["research_asked"] = bool(inp["intake"].get("research"))
         ctx["intent"] = inp.get("intent") or {}
         if res.get("video_research"):
@@ -1548,6 +1594,9 @@ class Brain:
                 f"{untrusted.wrap(json.dumps(_state_summary(res), default=str)[:9000], 'run state')}\n"
                 f"Template: {json.dumps({k: (res.get('template') or {}).get(k) for k in ('id', 'name', 'why')})}. "
                 f"Rights: {(res.get('rights') or {}).get('mode') or 'not asked'}.\n"
+                f"Channels in this run: {json.dumps(inp['channels'])}. Other connected channels (naming one in channel_ids "
+                f"adds it to this run): {json.dumps(ctx.get('other_connected_channels') or [])}.\n"
+                f"What the person asked per network so far (later messages win): {json.dumps(asked_formats(run))}.\n"
                 + _conversation(run, tools) +
                 "Change only what they asked, then write_captions for the affected channels, check, finish.")
         messages = [{"role": "user", "content": user}]
@@ -1662,10 +1711,15 @@ class Brain:
         if tools is not None:
             has_video = has_video or tools._has_video(run)  # find_video / find_media found the maker's video
         groups: dict[str, list[str]] = {"reel": [], "reel45": [], "carousel": [], "photo": [], "text": []}
+        asked = asked_formats(run)  # "LinkedIn: a carousel; Instagram: a Reel"
         for c in inp["channels"]:
             svc = c["service"]
             if svc in VIDEO_ONLY:
                 f = "reel"
+            elif asked.get(svc) == "carousel" and fmt != "text":
+                f = "carousel"
+            elif asked.get(svc) == "reel" and has_video and fmt != "text":
+                f = "reel45" if svc in ("facebook", "linkedin") else "reel"
             elif fmt == "text":
                 f = "text"  # Make a post v2: "Text" in the format menu is a caption with no media
             elif has_video and svc in ("facebook", "linkedin") and fmt in ("auto", "reel"):
@@ -1826,8 +1880,9 @@ class Brain:
         run = self.h.run(a, rid)
         if tools._has_video(run) and want_video:  # a real launch video: a Reel on the video channels and Instagram too
             sty = {"style": inp["theme"]} if inp.get("theme") not in (None, "", "auto") else {}
-            reel_ids = vids + [c["id"] for c in inp["channels"] if c["service"] == "instagram"]
-            feed_ids = [c["id"] for c in inp["channels"] if c["service"] in ("facebook", "linkedin")]
+            car = asked_carousel(run)
+            reel_ids = vids + [c["id"] for c in inp["channels"] if c["service"] == "instagram" and "instagram" not in car]
+            feed_ids = [c["id"] for c in inp["channels"] if c["service"] in ("facebook", "linkedin") and c["service"] not in car]
             if reel_ids:
                 self.call(a, rid, tools, "render_reel", {"channel_ids": reel_ids, **sty})
             if feed_ids:
