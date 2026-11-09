@@ -243,3 +243,15 @@ def test_the_card_can_play_the_track_with_the_reel(human, fake):
     assert pk["options"]["ig_audio"]["preview_url"] == "https://old.example/p.mp4"  # Buffer's check had no newer link
     js, pc = (ST / "reelmusic.js").read_text(), (ST / "pkgcontrols.js").read_text()
     assert "function withVideo" in js and 'data-testid="music-how"' in pc and 'data-testid="music-with-video"' in pc
+
+
+def test_a_lookup_that_fails_leaves_the_check_incomplete():
+    from studio import post_sync
+    res = {"packages": [{"channel_id": "c", "status": "sent_to_buffer",
+                         "sent": {"mode": "draft", "buffer_post_id": "bp_x", "at": time.time() - 3600}}]}
+    index = {"posts": {}, "sent_complete": False}  # the sent list was full: absence proves nothing
+
+    def boom(pid):
+        raise RuntimeError("Buffer busy")
+    assert not post_sync.reconcile(None, Actor("u1"), res, index, boom)
+    assert index["incomplete"] and res["packages"][0]["status"] == "sent_to_buffer"

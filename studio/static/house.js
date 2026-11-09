@@ -681,7 +681,7 @@ function wirePackages(r) {
       bc.disabled = true; bc.textContent = "Checking…";
       try { const n = await api(`/api/agent/runs/${r.id}?refresh_buffer=1`); showIfOn(r.id, n);
         const np = ((n.result || {}).packages || []).find((p) => p.channel_id === ch) || {};
-        toast(n.buffer_check === "unavailable" ? "Buffer couldn't be reached just now, so this may be out of date. Try again in a minute."
+        toast(n.buffer_check === "unavailable" ? "Buffer didn't answer for this post, so what you see may be out of date."
           : np.buffer_sync && !np.sent && !np.buffer_draft ? "It's no longer in Buffer, so you can edit it again" : "Checked with Buffer", n.buffer_check === "unavailable" ? 6000 : 4000); }
       catch (e) { toast(e.message, 6000); bc.disabled = false; bc.textContent = "Check Buffer"; }
     };

@@ -124,7 +124,8 @@ def reconcile(store, a, res: dict, index: dict | None, lookup=None) -> bool:
                 lookups += 1
                 try:
                     found = lookup(pid)
-                except Exception:  # noqa: BLE001 - unknown: leave it
+                except Exception:  # noqa: BLE001 - unknown: leave it, and say the check didn't finish
+                    index["incomplete"] = True
                     continue
                 if found:
                     post = {**found, "status": str(found.get("status") or "").lower()}
@@ -184,12 +185,13 @@ def sync_run(house, a, run: dict, refresh: bool = False) -> bool:
             buf.refresh(a.uid)
         linked = any(_linked(p) for p in res.get("packages") or [] if isinstance(p, dict))
         index = buffer_index(house.store, buf, a) if linked else None
-        if linked:  # the card's "Check Buffer" says whether Buffer was really read this time
-            run["buffer_check"] = "ok" if index is not None else "unavailable"
         lookup = getattr(buf, "post_status", None)
         fn = (lambda pid: lookup(a.uid, pid)) if lookup else None
         work = copy.deepcopy(res)  # reconciled on a copy: the answer shows it only once it is saved
-        if not reconcile(house.store, a, work, index, fn):
+        moved = reconcile(house.store, a, work, index, fn)
+        if linked:  # the card's "Check Buffer" says whether Buffer really answered for every post this time
+            run["buffer_check"] = "ok" if index is not None and not index.get("incomplete") else "unavailable"
+        if not moved:
             return False
         fresh = house.store.q("SELECT status, updated FROM agent_runs WHERE id=? AND user_id=?", (run["id"], a.uid))
         if not fresh or fresh[0]["status"] in ("running", "rendering") or fresh[0]["updated"] != run.get("updated"):
