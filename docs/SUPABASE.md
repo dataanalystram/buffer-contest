@@ -27,3 +27,15 @@ the Supabase SQL editor (Database › Extensions: enable `pg_cron` and `pg_net` 
 select cron.schedule('ping-huhqueue', '*/10 * * * *',
   $$ select net.http_get('https://huhqueue-studio.onrender.com/healthz') $$);
 ```
+
+## Moving to another Supabase project
+
+On 9 Nov 2026 the live database moved to a new free project (Frankfurt, `eu-central-1`, session pooler) after the old
+project hit its free egress cap, which old in-database media reads had used up before media moved to R2
+([STORAGE.md](STORAGE.md)). The move was a plain `pg_dump` / `pg_restore` of the whole database, then a row count of
+every table on both sides, then a new `DATABASE_URL` on Render and the `ping-huhqueue` cron job above on the new project.
+The old project stays frozen as a rollback copy.
+
+Use `pg_dump` / `pg_restore` for any move. `MIGRATE_FROM_URL` (`Store.copy_from`) copies only the core tables in
+`store.TABLES`, not the tables other modules create (Library, takes, threads, templates and more), so it is not a
+full copy.
