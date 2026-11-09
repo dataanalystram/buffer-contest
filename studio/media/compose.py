@@ -862,6 +862,11 @@ def render_style(source: str | None, style: str, *, out: str, ratio: str = "9:16
         _t = time.time()
         ass_path = None
         cap_problems: list[str] = []
+        if caps_on and cfg["captions"] == "opus" and brand.get("caption_family") in captions.FONTS:
+            # One take's word captions in the kit's headline font (owner bug 9 Nov 2026: a take "didn't apply my branding")
+            from dataclasses import replace as _with
+            cap_style = _with(cap_style if isinstance(cap_style, captions.CapStyle) else captions.STYLES["opus"],
+                              family=brand["caption_family"])
         if caps_on:
             ass = captions.build_ass(cw, cfg["captions"], W=W, H=H, accent=brand["accent"], text=brand["text"],
                                      outline=brand["bg"], band=(L["cap_band"][1], L["cap_band"][3]) if "cap_band" in L else None,

@@ -672,3 +672,27 @@ def test_link_puts_count_at_their_cap_until_stored_and_an_open_upload_isnt_count
     r = human.post(f"/api/takes/uploads/{up['upload_id']}/parts", json={"parts": [1, 2]})
     assert r.status_code == 200 and len(r.json()["urls"]) == 2
     assert r2usage._reserved() == 0                                      # settled: the rows carry the bytes
+
+
+def test_a_full_library_refuses_new_one_take_videos_on_every_path(human, app, s3, monkeypatch):
+    """Owner bug 9 Nov 2026: "when the 200mb limit is reached still the user is able to upload". One take's large
+    uploads go to the bucket, not through the Library upload's quota check, and a link take never uploads at all; both
+    still saved their clips into a full Library. Now the bucket upload, the take start (upload, upload_id or link) and
+    the form's config all say the Library is full, before a byte moves."""
+    from studio import library
+    lib = app.state.house.library
+    up = human.post("/api/takes/uploads", json={"name": "ok.mp4", "size": 100}).json()   # room left: uploads work
+    assert up["upload_id"]
+    cfg = human.get("/api/takes/uploads/config").json()
+    assert cfg["library"]["quota"] == library.QUOTA and cfg["library"]["used"] < library.QUOTA
+    monkeypatch.setattr(type(lib), "used", lambda self, uid: library.QUOTA)
+    assert human.get("/api/takes/uploads/config").json()["library"]["used"] == library.QUOTA
+    r = human.post("/api/takes/uploads", json={"name": "t.mp4", "size": 100})
+    assert r.status_code == 413 and "Library is full" in r.json()["error"] and "One take" in r.json()["error"]
+    n = len(s3.uploads)
+    for body in ({"upload_id": up["upload_id"], "owns": True}, {"url": "https://example.com/talk.mp4", "owns": True},
+                 {"media_token": "nope.mp4", "owns": True}):
+        r = human.post("/api/takes", json=body)
+        assert r.status_code == 413 and "Library is full" in r.json()["error"], (body, r.text)
+    assert len(s3.uploads) == n
+    assert not app.state.store.q("SELECT id FROM agent_runs WHERE kind='take'")

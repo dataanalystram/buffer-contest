@@ -347,6 +347,17 @@ class Library:
             raise ActionError(f"Your Library is full ({QUOTA // MB} MB). Delete files you no longer need in Library.", 413)
 
     # ---------------------------------------------------------------- uploads (chunked bytes)
+    FULL = "Your Library is full ({cap} MB used of {cap} MB). {why}Delete files you no longer need in Library, then try again."
+
+    def require_room(self, a: Actor, why: str = "") -> None:
+        """Refuse new work that saves into the Library once the person's quota is used up (owner bug, 9 Nov 2026: One take
+        still took uploads and links at a full Library, because its large uploads go to the bucket, not through
+        check_room). The demo workspace is read-only and is refused by its own guards."""
+        if demo_guard.is_demo(a.uid):
+            return
+        if self.used(a.uid) >= QUOTA:
+            raise ActionError(self.FULL.format(cap=QUOTA // MB, why=why), 413)
+
     def _new_item(self, a: Actor, source: str, name: str) -> tuple[int, str]:
         tok = secrets.token_urlsafe(18)
         iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created,agent_id)"
