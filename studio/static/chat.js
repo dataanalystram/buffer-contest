@@ -549,19 +549,24 @@
     const host = (u) => (typeof hostOf === "function" ? hostOf(u) : "");
     const src = f.source && f.source.url ? `<a href="${escUrl(f.source.url)}" target="_blank" rel="noopener">${esc(f.source.title || f.source.site || host(f.source.url))}</a><small>${esc(f.source.site || host(f.source.url) || "")}</small>` : `<span class="muted">No source yet</span>`;
     const net = (s) => (typeof netName === "function" ? netName(s) : s);
+    const ak = f.asked || {}, FMT = { carousel: "Carousel", reel: "Reel / video" };
     body.innerHTML = `<dl class="hc-dl">
         ${row("Source", src, "ctx-source")}
         ${row("Rights", esc(RIGHTS[f.rights] || f.rights || "Not needed"), "ctx-rights")}
         ${row("Brand kit", esc([f.kit && f.kit.name, f.kit && f.kit.handle].filter(Boolean).join(" · ") || "Your brand kit"), "ctx-kit")}
         ${row("Template", f.template && f.template.name ? `${esc(f.template.name)}${f.template.why ? `<small>${esc(f.template.why)}</small>` : ""}` : `<span class="muted">Picked when the post is made</span>`, "ctx-template")}
         ${row("Channels", (f.channels || []).map((ch) => `<span class="hc-tag">${esc(ch.name || ch.service)}<small>${esc(net(ch.service))}</small></span>`).join("") || "None", "ctx-channels")}
+        ${row("You asked", Object.keys(ak.formats || {}).length ? Object.entries(ak.formats).map(([svc, fm]) => `<span class="hc-tag">${esc(net(svc))}<small>${esc(FMT[fm] || fm)}</small></span>`).join("") : `<span class="muted">No format per network yet</span>`, "ctx-asked")}
+        ${ak.hook ? row("Hook, word for word", `“${esc(ak.hook)}”`, "ctx-hook") : ""}
+        ${ak.credit ? row("Video credit", esc(ak.credit), "ctx-credit") : ""}
+        ${(ak.links || []).length ? row("Your links", ak.links.map((u) => `<a href="${escUrl(u)}" target="_blank" rel="noopener">${esc(host(u) || u)}</a>`).join("<br>"), "ctx-links") : ""}
         ${row("Format and look", esc(`${f.format || "auto"} · ${f.theme || "auto"}`), "ctx-format")}
         ${row("Rules applied", (f.rules || []).length ? `<ul class="hc-rules">${f.rules.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : `<span class="muted">None yet</span>`, "ctx-rules")}
       </dl>
       <section class="hc-conv" data-testid="ctx-compaction"><h3 class="hc-h3">Conversation</h3>
         <p class="sm">${cp.summarized ? `${esc(cp.summarized)} earlier message${cp.summarized === 1 ? "" : "s"} summarized · the last ${esc(cp.kept)} kept word for word.` : `All ${esc(cp.total || 0)} message${cp.total === 1 ? "" : "s"} kept word for word. Summarizing starts after ${esc(cp.threshold || 10)}.`}</p>
         ${cp.summary ? `<details><summary>The summary the agent reads</summary><pre class="hc-sum" data-testid="ctx-summary">${esc(cp.summary)}</pre></details>` : ""}
-        <p class="muted xs">The facts above are always sent in full, however long the thread gets.</p></section>`;
+        <p class="muted xs">The facts above, including what you asked, are always sent in full, however long the thread gets. Later messages win.</p></section>`;
   }
   function openCtx() {
     const r = run(); if (r) HC.ctxKey = `${r.id}:${((r.result || {}).thread || []).length}:${r.status}:${((r.result || {}).packages || []).length}`;

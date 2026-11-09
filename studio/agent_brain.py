@@ -140,16 +140,7 @@ The person can't see your tool calls, only your final words and the post cards, 
 
 
 
-def asked_formats(run: dict) -> dict[str, str]:
-    """{service: format} the person tied to networks, from the run's prompt and every message of theirs in the thread,
-    in order (a later message wins). A video found later never replaces an asked carousel (owner bug, 9 Nov 2026:
-    "on LinkedIn I need a carousel" got the 4:5 video)."""
-    said = [(run.get("input") or {}).get("prompt") or ""]
-    said += [m.get("text") or "" for m in ((run.get("result") or {}).get("thread") or []) if m.get("role") == "user"]
-    out: dict[str, str] = {}
-    for t in said:
-        out.update(intake.channel_formats(t))
-    return out
+asked_formats = chat_context.asked_formats  # one reader for what the person asked (the drawer, the card, the brain)
 
 
 def asked_carousel(run: dict) -> set[str]:

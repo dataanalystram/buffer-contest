@@ -182,3 +182,19 @@ def test_compaction_cuts_the_tokens_of_a_reply_in_a_long_thread():
     assert r["after"]["total"] < r["naive"]["total"] * 0.5        # and far fewer than sending the thread verbatim
     assert sum(r["after"]["per_call"][:3]) < sum(r["before"]["per_call"][:3])  # already cheaper by the third model call
     assert r["after"]["first_call"] - r["before"]["first_call"] < 500  # the conversation block itself stays small
+
+
+def test_what_the_person_asked_is_pinned_even_after_folding():
+    """Owner, 9 Nov 2026: the asks of the first message (a format per network, links) stay in the pinned facts after the
+    thread is long enough to fold them into the summary, and a later message still wins."""
+    thread = [{"role": "user", "text": "a reel on instagram and facebook, and for linkedin a carousel https://github.com/a/b"}]
+    thread += [{"role": "agent" if i % 2 == 0 else "user", "text": f"turn {i}"} for i in range(14)]
+    thread += [{"role": "user", "text": "actually a carousel on facebook too"}]
+    run = {"input": {"prompt": "", "channels": []}, "result": {"thread": thread, "hook": "Agents can use your computer"}}
+    assert chat_context.compact(thread)["summarized"]
+    asked = chat_context.pinned(run)["asked"]
+    assert asked["formats"] == {"instagram": "reel", "facebook": "carousel", "linkedin": "carousel"}
+    assert asked["links"] == ["https://github.com/a/b"] and asked["hook"] == "Agents can use your computer"
+    pf = chat_context.prompt_facts(run)["asked"]
+    assert pf["formats"]["linkedin"] == "carousel" and "links" not in pf
+    assert '"asked"' in chat_context.prompt_block(run)

@@ -21,6 +21,8 @@ from typing import Any
 
 from fastapi import Body, Request
 
+from . import intake
+
 KEEP_LAST = 6        # turns kept word for word
 THRESHOLD = 10       # compaction starts once the thread is longer than this
 TURN_CHARS = 140     # each folded turn keeps at most this many characters
@@ -56,6 +58,35 @@ def compact(thread: list[dict], keep: int = KEEP_LAST, threshold: int = THRESHOL
     return {"summarized": len(old), "summary": head + "\n" + "\n".join(lines), "kept": kept, "total": len(thread)}
 
 
+def asked_formats(run: dict) -> dict[str, str]:
+    """{service: format} the person tied to networks, from the run's prompt and every message of theirs in the thread,
+    in order (a later message wins). A video found later never replaces an asked carousel (owner bug, 9 Nov 2026:
+    "on LinkedIn I need a carousel" got the 4:5 video)."""
+    said = [(run.get("input") or {}).get("prompt") or ""]
+    said += [m.get("text") or "" for m in ((run.get("result") or {}).get("thread") or []) if m.get("role") == "user"]
+    out: dict[str, str] = {}
+    for t in said:
+        out.update(intake.channel_formats(t))
+    return out
+
+
+def asks(run: dict) -> dict:
+    """What the person asked for, from ALL their messages (owner, 9 Nov 2026): the format per network, the hook they gave
+    word for word, the credit for the video actually used and every link they sent. Pinned, so a long thread whose early
+    messages are folded into the summary still tells the agent (and the context drawer) what was asked."""
+    res, inp = run.get("result") or {}, run.get("input") or {}
+    links: list[str] = []
+    for u in [inp.get("source_url") or "", *((inp.get("intake") or {}).get("urls") or []),
+              *[u for m in res.get("thread") or [] if m.get("role") == "user" for u in intake.urls(m.get("text") or "")]]:
+        if u and u not in links:
+            links.append(u)
+    try:
+        fm = asked_formats(run)
+    except Exception:  # noqa: BLE001  a nicety: never breaks the drawer or a reply
+        fm = {}
+    return {"formats": fm, "hook": res.get("hook") or "", "credit": res.get("video_credit") or "", "links": links[:6]}
+
+
 def pinned(run: dict, kit: dict | None = None) -> dict:
     """The facts every turn keeps, compacted or not: they decide what the post is and what it may use."""
     res, inp = run.get("result") or {}, run.get("input") or {}
@@ -80,6 +111,7 @@ def pinned(run: dict, kit: dict | None = None) -> dict:
         "format": intake.get("format") or "auto",
         "theme": inp.get("theme") or "auto",
         "rules": rules[:20],
+        "asked": asks(run),
     }
 
 
@@ -96,7 +128,8 @@ def prompt_facts(run: dict, kit: dict | None = None) -> dict:
     f = pinned(run, kit)
     return {"rights": f["rights"] or "not asked", "kit": f["kit"]["name"], "template": f["template"].get("name") or f["template"].get("id") or "",
             "template_id": f["template"].get("id") or "", "channels": [c["service"] for c in f["channels"]], "format": f["format"],
-            "theme": f["theme"], "rules": f["rules"]}
+            "theme": f["theme"], "rules": f["rules"],
+            "asked": {k2: v for k2, v in f["asked"].items() if v and k2 != "links"}}
 
 
 def prompt_block(run: dict, kit: dict | None = None) -> str:
