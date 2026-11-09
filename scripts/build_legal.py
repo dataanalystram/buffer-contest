@@ -5,7 +5,10 @@ Bin, Send a file and MCP call log (studio/library.py TRASH_DAYS and purge_trash,
 studio/metastrip.py, studio/send.py TTL / MAX_FILES / code hashing, studio/mcp_runs.py KEEP_UNCLAIMED, studio/activity.py
 AUDIT_RETENTION_DAYS and SIGNIN_IP_DAYS, /m/ Cache-Control in studio/app.py). Change the code, then change this file.
 
-    python scripts/build_legal.py"""
+    python scripts/build_legal.py
+
+OUT OF DATE since 5 Nov 2026: studio/static/privacy.html and terms.html have been edited by hand since then (#116, #151,
+#173), so running this would remove those changes. Edit the HTML files directly until this script is brought back in step."""
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[1] / "studio" / "static"
