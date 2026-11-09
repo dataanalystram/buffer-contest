@@ -8,7 +8,10 @@ Order (``resolve_transcript``):
 1. **An uploaded caption file** (``.srt`` / ``.vtt``) the person attached with the video.
 2. **The platform's own track** for a YouTube / Vimeo / X / ... link: the creator's manual captions first, then the
    platform's automatic ones (YouTube auto-captions carry per-word timings). Read with yt-dlp, metadata only, ONLY
-   that platform's extractor enabled, no video download (``platform_captions``).
+   that platform's extractor enabled, no video download (``platform_captions``). Only tracks in the language the
+   video is SPOKEN in count (``choose_track``): an auto-translated English track on a Hindi talk is never burned.
+   When the creator's track has only cue times and the automatic track in that language has per-word times, the
+   creator's words are put on those times (``snap_to_timing``): right spelling AND the word pop in sync.
 3. **A caption stream inside the file** (MP4 ``mov_text``, MKV SRT/ASS), extracted by our FFmpeg.
 4. **Whisper** (``studio.media.transcribe``), the only branch that costs CPU minutes.
 
@@ -176,6 +179,16 @@ def has_punctuation(words: list[dict]) -> bool:
 PREFERRED_LANGS = ("en", "en-US", "en-GB", "en-orig")
 
 
+def _base(code: str | None) -> str:
+    return str(code or "").split("-")[0].lower()
+
+
+def _vtt(fmts) -> dict | None:
+    fmts = fmts or []
+    f = next((f for f in fmts if f.get("ext") == "vtt"), None) or next((f for f in fmts if f.get("ext") == "srt"), None)
+    return f if f and f.get("url") else None
+
+
 def _pick_track(tracks: dict, lang: str | None) -> tuple[str, dict] | None:
     if not tracks:
         return None
@@ -184,21 +197,115 @@ def _pick_track(tracks: dict, lang: str | None) -> tuple[str, dict] | None:
     for want in order:
         for k in keys:
             if k == want or k.split("-")[0] == want:
-                fmts = tracks[k] or []
-                vtt = next((f for f in fmts if f.get("ext") == "vtt"), None) or next((f for f in fmts if f.get("ext") == "srt"), None)
-                if vtt and vtt.get("url"):
+                vtt = _vtt(tracks[k])
+                if vtt:
                     return k, vtt
     return None
 
 
+def spoken_language(info: dict) -> str:
+    """The language the video is SPOKEN in, as far as the platform says: yt-dlp's ``language`` (YouTube's audio
+    language), else the automatic track marked ``-orig`` (the platform's own speech recognition; every other automatic
+    track is a machine translation of it). "" when the platform doesn't say."""
+    lang = _base(info.get("language"))
+    if lang:
+        return lang
+    orig = [k for k in (info.get("automatic_captions") or {}) if str(k).endswith("-orig")]
+    return _base(orig[0]) if orig else ""
+
+
+def _in_language(tracks: dict, lang: str, auto: bool) -> tuple[str, dict] | None:
+    """A track in ``lang`` only, never a translation into it: for automatic captions the ``-orig`` track first."""
+    keys = list(tracks or {})
+    first = [k for k in keys if auto and k == f"{lang}-orig"]
+    rest = [k for k in keys if _base(k) == lang and k not in first and not (auto and k.endswith("-orig"))]
+    for k in first + rest:
+        vtt = _vtt(tracks[k])
+        if vtt:
+            return k, vtt
+    return None
+
+
 def choose_track(info: dict, lang: str | None = None) -> dict | None:
-    """Manual captions beat automatic ones. Returns {"lang", "kind": manual|auto, "url", "ext"} or None."""
+    """Manual captions beat automatic ones. Returns {"lang", "kind": manual|auto, "url", "ext"} or None.
+
+    The track must be in the language the video is spoken in (``lang`` when the caller knows it, else
+    ``spoken_language``). A Hindi talk on YouTube also lists auto-TRANSLATED English captions; burning those would put
+    English words (with no per-word timing) over Hindi speech, so they are never picked: the creator's Hindi captions,
+    the Hindi automatic track, or Whisper (None). Only when the platform doesn't say what was spoken do English tracks
+    win, as before."""
+    spoken = _base(lang) or spoken_language(info)
     for kind, key in (("manual", "subtitles"), ("auto", "automatic_captions")):
-        hit = _pick_track(info.get(key) or {}, lang)
+        tracks = info.get(key) or {}
+        hit = _in_language(tracks, spoken, kind == "auto") if spoken else _pick_track(tracks, None)
         if hit:
             k, f = hit
             return {"lang": k, "kind": kind, "url": f["url"], "ext": f.get("ext", "vtt")}
     return None
+
+
+def timing_track(info: dict, chosen: dict | None) -> dict | None:
+    """The automatic track in the same language as a chosen MANUAL track, whose per-word times can carry the creator's
+    words (``snap_to_timing``). None when there is none."""
+    if not chosen or chosen.get("kind") != "manual":
+        return None
+    hit = _in_language(info.get("automatic_captions") or {}, _base(chosen.get("lang")), True)
+    if not hit:
+        return None
+    k, f = hit
+    return {"lang": k, "kind": "auto", "url": f["url"], "ext": f.get("ext", "vtt")}
+
+
+# ------------------------------------------------------------------------------------------------ creator's words on exact timing
+SNAP_MIN_MATCH = 0.5      # share of the creator's words that must line up with the timed words, else keep the spread
+SNAP_MAX_WORDS = 40000    # ~4 hours of speech; difflib on two transcripts this long stays around a second
+
+
+def _norm(w: str) -> str:
+    return re.sub(r"[^\w']", "", str(w).lower())
+
+
+def snap_to_timing(text_words: list[dict], timed_words: list[dict]) -> tuple[list[dict], float]:
+    """Keep the WORDS of ``text_words`` (a human-made track: right spelling, names and punctuation, but only cue-level
+    times spread by length) and take their TIMES from ``timed_words`` (an automatic track with exact per-word times).
+
+    Matched words take the timed word's start/end. A stretch the two disagree on ("HuhByte" vs "who bite") spreads the
+    creator's words over the timed span it replaces. Words only the creator wrote keep their own time, held inside the
+    gap their neighbours leave. Words only the machine heard are dropped. Returns (words, share of the creator's words
+    matched); below ``SNAP_MIN_MATCH`` (a different edit, another language) the input comes back unchanged.
+    Same idea as MoneyPrinterTurbo's ``subtitle.correct`` (MIT, credited in NOTICE) and takes.apply_transcript."""
+    import difflib
+    if not text_words or not timed_words or max(len(text_words), len(timed_words)) > SNAP_MAX_WORDS:
+        return text_words, 0.0
+    a = [_norm(w["w"]) for w in timed_words]
+    b = [_norm(w["w"]) for w in text_words]
+    ops = difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes()
+    ratio = sum(j2 - j1 for tag, _i1, _i2, j1, j2 in ops if tag == "equal") / len(b)
+    if ratio < SNAP_MIN_MATCH:
+        return text_words, round(ratio, 3)
+    out: list[dict] = []
+    for tag, i1, i2, j1, j2 in ops:
+        if tag == "delete":
+            continue
+        if tag == "equal":
+            out += [{"w": text_words[j1 + k]["w"], "s": timed_words[i1 + k]["s"], "e": timed_words[i1 + k]["e"]}
+                    for k in range(i2 - i1)]
+            continue
+        toks = [w["w"] for w in text_words[j1:j2]]
+        if tag == "replace":
+            s0, e0 = float(timed_words[i1]["s"]), float(timed_words[i2 - 1]["e"])
+        else:  # insert
+            lo = float(timed_words[i1 - 1]["e"]) if i1 > 0 else 0.0
+            hi = float(timed_words[i1]["s"]) if i1 < len(timed_words) else float("inf")
+            s0 = min(max(float(text_words[j1]["s"]), lo), hi)
+            e0 = min(max(float(text_words[j2 - 1]["e"]), s0), hi)
+        out += _spread(toks, s0, max(e0, s0 + 0.12 * len(toks)))
+    return _monotonic(out), round(ratio, 3)
+
+
+def has_word_timing(text: str) -> bool:
+    """True when a VTT carries per-word ``<00:00:01.234>`` marks (YouTube's automatic captions do)."""
+    return bool(_INLINE.search(text or ""))
 
 
 def platform_captions(url: str, lang: str | None = None) -> dict | None:
@@ -219,7 +326,8 @@ def platform_captions(url: str, lang: str | None = None) -> dict | None:
     try:
         with yt_dlp.YoutubeDL(opts) as y:
             info = y.extract_info(watch_url(url), download=False)
-            tr = choose_track(info or {}, lang)
+            info = info or {}
+            tr = choose_track(info, lang)
             if not tr:
                 return None
         # The track URL comes from the platform's answer, so it is fetched like any other link (SECURITY_RULES 1): https
@@ -229,11 +337,35 @@ def platform_captions(url: str, lang: str | None = None) -> dict | None:
         return None
     if len(raw) > MAX_CAPTION_BYTES:
         return None
+    body = raw.decode("utf-8", "replace")
     try:
-        words = parse_captions(raw.decode("utf-8", "replace"))
+        words = parse_captions(body)
     except CaptionError:
         return None
-    return {"words": words, "kind": tr["kind"], "lang": tr["lang"], "platform": plat} if words else None
+    if not words:
+        return None
+    out = {"words": words, "kind": tr["kind"], "lang": tr["lang"], "platform": plat, "timing": "track"}
+    if tr["kind"] == "manual" and not has_word_timing(body):
+        out.update(_snap_manual(words, timing_track(info, tr), netguard))
+    return out
+
+
+def _snap_manual(words: list[dict], timing: dict | None, netguard) -> dict:
+    """The creator's words on the automatic track's per-word times (one more small caption fetch, no Whisper). {} when
+    there is no usable automatic track: the creator's cue-level times stay."""
+    if not timing:
+        return {}
+    try:
+        body = netguard.safe_get(str(timing.get("url") or ""), https_only=True, limit=MAX_CAPTION_BYTES,
+                                 timeout=30).content.decode("utf-8", "replace")
+        if not has_word_timing(body):
+            return {}
+        snapped, ratio = snap_to_timing(words, parse_captions(body))
+    except Exception:  # noqa: BLE001 - timing is a bonus: the creator's captions stand on their own
+        return {}
+    if ratio < SNAP_MIN_MATCH:
+        return {}
+    return {"words": snapped, "timing": "snapped", "snap_match": ratio}
 
 
 def embedded_captions(path: str) -> list[dict] | None:
@@ -265,6 +397,8 @@ def resolve_transcript(path: str | None, *, url: str | None = None, caption_text
         got = platform(url, lang) if platform else None
         if got and got.get("words"):
             label = {"manual": "the creator's captions", "auto": "automatic captions"}.get(got.get("kind"), "captions")
+            if got.get("timing") == "snapped":
+                label += " (word timing from the automatic captions)"
             return _out(got["words"], "platform", f"{label} on {got.get('platform', 'the platform')}", got.get("lang") or lang,
                         kind=got.get("kind"))
     if path and embedded:

@@ -453,7 +453,11 @@ def captions_ass(words: list[dict], clip_start: float, offset: float, kit: dict,
     colors = p.get("colors") or kit.get("colors") or {}
     txt, acc, ground = colors.get("text", "#FFFFFF"), colors.get("accent", "#C9ACFA"), colors.get("primary", "#111114")
     font = ASS_FONT.get(p.get("font") or kit.get("font") or "anton", "Anton")
-    size = int(H * 0.066)
+    from .media import fontcover  # Hindi / Tamil / Arabic ... words: the Noto font that draws them, not empty boxes
+    own = {"Anton": "Anton.ttf", "Poppins": "Poppins-Bold.ttf", "Inter": "Inter-Bold.ttf"}[font]
+    swap = fontcover.pick(" ".join(str(w.get("w", "")) for w in words), own)
+    font = swap[0] if swap else font
+    size = int(H * 0.066 * (fontcover.size_ratio(swap[1], own) if swap else 1.0))
     margin_v = int(H * (SAFE_BOTTOM + 0.07))
     upper = (p.get("headline_case", "upper") == "upper") if upper is None else upper
     head = (f"[Script Info]\nScriptType: v4.00+\nPlayResX: {W}\nPlayResY: {H}\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n"

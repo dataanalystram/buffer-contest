@@ -114,11 +114,13 @@ def _font(file: str, size: int):
     return ImageFont.truetype(str(FONT_DIR / file), size)
 
 
-def text_width(text: str, preset: str = DEFAULT_PRESET, H: int = REF_H) -> float:
-    """Pixel width of one caption line in the preset's font at the frame height H (outline included)."""
+def text_width(text: str, preset: str = DEFAULT_PRESET, H: int = REF_H, file: str | None = None,
+               size: float | None = None) -> float:
+    """Pixel width of one caption line in the preset's font at the frame height H (outline included). ``file`` and
+    ``size`` (at REF_H): a Noto swap's font and size (script_preset)."""
     pr = PRESETS[preset]
-    size = max(8, int(round(pr["size"] * H / REF_H)))
-    f = _font(pr["file"], size)
+    size = max(8, int(round((size or pr["size"]) * H / REF_H)))
+    f = _font(file or pr["file"], size)
     return f.getlength(text) + 2 * pr["outline"] * H / REF_H
 
 
@@ -174,7 +176,7 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
     background under the captions (0-1); a light one gets the heavy stroke and shadow (see the contrast note above)."""
     kit, p = kit or {}, p or {}
     pid = clean_preset(preset) or DEFAULT_PRESET
-    pr = PRESETS[pid]
+    pr = script_preset(PRESETS[pid], words)
     colors = p.get("colors") or kit.get("colors") or {}
     txt = colors.get("text") or "#FFFFFF"
     acc = colors.get("accent") or "#C9ACFA"
@@ -217,7 +219,7 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
         toks = [_esc(str(w["w"]).strip()) for w in g]
         if pr["upper"]:
             toks = [t.upper() for t in toks]
-        width = text_width(" ".join(toks), pid, H)
+        width = text_width(" ".join(toks), pid, H, file=pr["file"], size=pr["size"])
         fit = min(100, int(100 * max_w / width)) if width > max_w else 100
         y = band_y(layout_at(sidecar, s + 0.01), H)
         body = []
@@ -240,9 +242,27 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
     return head + "\n".join(ev) + ("\n" if ev else "")
 
 
+def script_preset(pr: dict, words: list[dict] | None) -> dict:
+    """The preset with a Noto family + file when its font can't draw the words (Hindi, Tamil, Arabic ...;
+    studio/media/fontcover). Same size, colours and motion; Bold, the weight of the bundled Noto files."""
+    from . import fontcover
+    swap = fontcover.pick(" ".join(str(w.get("w", "")) for w in words or []), pr["file"], pr["family"])
+    if not swap:
+        return pr
+    k = fontcover.size_ratio(swap[1], pr["file"])  # same letter size as the preset's own font
+    return {**pr, "family": swap[0], "file": swap[1], "bold": True, "size": int(round(pr["size"] * k))}
+
+
 def line_boxes(ass: str, preset: str = DEFAULT_PRESET, W: int = REF_W, H: int = REF_H) -> list[dict]:
     """[{text, width, y, scale}] for every Dialogue line: the effective drawn width after the fit scale (for tests and
     the render's self-check)."""
+    from . import fontcover
+    fam = re.search(r"^Style: Cap,([^,]+),", ass, re.M)
+    file = fontcover.NOTO.get(fam.group(1).strip()) if fam else None  # measured in the Noto font it draws with
+    size = None
+    if file:
+        st = re.search(r"^Style: Cap,[^,]+,(\d+),", ass, re.M)
+        size = int(st.group(1)) * REF_H / H if st else None
     out = []
     for ln in ass.splitlines():
         if not ln.startswith("Dialogue:"):
@@ -252,6 +272,6 @@ def line_boxes(ass: str, preset: str = DEFAULT_PRESET, W: int = REF_W, H: int = 
         sc = re.search(r"\\t\(0,\d+,\\fscx(\d+)", text)
         plain = re.sub(r"\{[^}]*\}", "", text)
         scale = int(sc.group(1)) if sc else 100
-        out.append({"text": plain, "width": text_width(plain, preset, H) * scale / 100, "y": int(m.group(2)) if m else None,
+        out.append({"text": plain, "width": text_width(plain, preset, H, file=file, size=size) * scale / 100, "y": int(m.group(2)) if m else None,
                     "scale": scale})
     return out

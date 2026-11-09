@@ -21,13 +21,14 @@ import difflib
 import re
 from dataclasses import dataclass
 
-from . import textfit
+from . import fontcover, textfit
 
 FONTS = {  # family name libass matches -> file in studio/fonts
     "Anton": "Anton.ttf", "Figtree Light ExtraBold": "Figtree-ExtraBold.ttf", "Poppins": "Poppins-Bold.ttf",
     "Inter SemiBold": "Inter-SemiBold.ttf", "Inter": "Inter-Bold.ttf", "Oswald SemiBold": "Oswald-SemiBold.ttf",
     "DM Serif Display": "DMSerifDisplay-Regular.ttf", "VT323": "VT323-Regular.ttf",
     "IBM Plex Mono SemiBold": "IBMPlexMono-SemiBold.ttf",
+    **fontcover.NOTO,  # non-Latin captions: the style's font is swapped for the Noto that draws them (script_style)
 }
 
 
@@ -196,6 +197,31 @@ def _role(v: str, pal: dict) -> str:
     return pal.get(v, v) if v and not v.startswith("#") else (v or "#FFFFFF")
 
 
+def script_style(st: CapStyle, words: list[dict]) -> CapStyle:
+    """``st`` with a Noto family when its own font can't draw the words (Hindi, Tamil, Arabic ...; studio/media/fontcover).
+    Same size, colours and motion. Bold, because the bundled Noto files are the Bold weight."""
+    import dataclasses
+    file = FONTS.get(st.family)
+    if not file:
+        return st
+    swap = fontcover.pick(" ".join(str(w.get("w", "")) for w in words or []), file, st.family)
+    if not swap:
+        return st
+    k = fontcover.size_ratio(swap[1], file)  # same letter size as the style's own font, not the same line height
+    return dataclasses.replace(st, family=swap[0], bold=True, size_frac=st.size_frac * k, min_frac=st.min_frac * k)
+
+
+def caption_font_note(ass: str) -> str:
+    """A plain note when some caption characters have no font at all (emoji, Chinese ...), else ""."""
+    m = re.search(r"^Style: Cap,([^,]+),", ass, re.M)
+    file = FONTS.get(m.group(1).strip()) if m else None
+    if not file:
+        return ""
+    body = " ".join(re.sub(r"\{[^}]*\}", "", ln.split(",,", 1)[-1].split(",", 4)[-1]).replace("\\N", " ")
+                    for ln in re.findall(r"^Dialogue: .*$", ass, re.M))
+    return fontcover.note(body, file)
+
+
 def _pil_size_for_line_height(file: str, line_h: int) -> int:
     f = textfit.font(file, 100)
     a, d = f.getmetrics()
@@ -235,7 +261,7 @@ def build_ass(words: list[dict], style: str = "opus", *, W: int = 1080, H: int =
     x of flush-left styles (defaults to the safe margin). center_y_at(t) -> a pixel centre or None: the caption block of
     the chunk starting at t (caption time, offset included) moves there (studio/media/facesafe: clear of the face).
     cap_style: a CapStyle used instead of STYLES[style] (facesafe.compact_style: one smaller line under the chin)."""
-    st = cap_style if isinstance(cap_style, CapStyle) else STYLES[style]
+    st = script_style(cap_style if isinstance(cap_style, CapStyle) else STYLES[style], words)
     pal = {"text": text, "accent": accent, "bg": outline, "on_accent": outline, "muted": "#A0A0A8", **(palette or {})}
     text, accent, outline = _role(st.text_role, pal), _role(st.accent_role, pal), _role(st.outline_role, pal)
     on_acc = pal.get("on_accent") or outline
@@ -316,7 +342,7 @@ def check_ass_fits(ass: str, W: int, H: int, margin: int = 24) -> list[str]:
     family = re.search(r"^Style: Cap,([^,]+),", ass, re.M).group(1)
     named = re.search(r"^; huhqueue-style: (\w+)", ass, re.M)
     st = STYLES[named.group(1)] if named and named.group(1) in STYLES else next(v for v in STYLES.values() if v.family == family)
-    file = FONTS[st.family]
+    file = FONTS.get(family) or FONTS[st.family]  # a Noto swap (script_style) is measured in the font it draws with
     probs = []
     for ln in re.findall(r"^Dialogue: .*$", ass, re.M):
         fs = int(re.search(r"\\fs(\d+)", ln).group(1))
@@ -330,4 +356,5 @@ def check_ass_fits(ass: str, W: int, H: int, margin: int = 24) -> list[str]:
             x0, x1 = (x - pad / 2, x + w - pad / 2) if left else (x - w / 2, x + w / 2)
             if x0 < margin or x1 > W - margin:
                 probs.append(f"{row!r} is {w:.0f}px wide at x={x} (frame {W}px)")
-    return probs
+    gone = caption_font_note(ass)
+    return probs + ([gone] if gone else [])
