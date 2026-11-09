@@ -36,10 +36,11 @@ project hit its free egress cap, which old in-database media reads had used up b
 every table on both sides, then a new `DATABASE_URL` on Render and the `ping-huhqueue` cron job above on the new project.
 The old project stays frozen as a rollback copy.
 
-Use `pg_dump` / `pg_restore` for any move, with writes stopped first: suspend the Render web service and wait for
-running video jobs to finish (or pause the worker) before the dump, and switch `DATABASE_URL` before you resume. A
+Use `pg_dump` / `pg_restore` for any move, with writes stopped first: stop new video jobs from starting (pause the AI and Video link
+ingest kill switches in /admin, and start no takes or renders), wait for running jobs to report back, then suspend the Render web service and dump, and switch `DATABASE_URL` before you resume. A
 dump is a snapshot, so anything written after it starts is not copied, and matching row counts do not prove that
-updated rows match. The old project is a rollback copy only: delete it once the move is confirmed (the privacy
-policy says so). `MIGRATE_FROM_URL` (`Store.copy_from`) copies only the core tables in
+updated rows match. The old project is a rollback copy only: it misses everything written after the cutover, so
+switching back loses those writes unless you dump the new project and restore it there first. Delete it once the
+move is confirmed (the privacy policy says so). `MIGRATE_FROM_URL` (`Store.copy_from`) copies only the core tables in
 `store.TABLES`, not the tables other modules create (Library, takes, threads, templates and more), so it is not a
 full copy.
