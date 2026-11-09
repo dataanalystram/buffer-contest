@@ -287,11 +287,21 @@ def reframe_plan(faces: list[dict] | None, start: float, end: float, src_w: int,
 
 
 # ====================================================================== render (worker)
+BRAND_BUG = {"hook": False, "lower": False, "bug": True}  # the opus layout has its own hook box and credit chip
+
+
+def caption_family(brand: dict | None) -> str | None:
+    """The captions.FONTS family of the kit's headline font (Anton, Poppins, Inter, Figtree), or None (a font word
+    captions don't carry, such as a serif or the dot font: the opus style's own font stays)."""
+    from .captions import FONTS
+    f = str((brand or {}).get("head_font") or "")
+    return next((fam for fam, file in FONTS.items() if file == f), None)
 def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16", brand: dict | None = None, credit: str = "",
                   out: str, faces: list[dict] | None = None, scenes: list[float] | None = None, detector: bool = True,
                   burned_subs: bool | None = None, names: list[str] | None = None, music: str = "auto",
                   src_size: tuple[int, int] | None = None, face_safe: bool = True, qa_keep: str | None = None,
-                  framing: str | None = None, captions_style: str | None = None, hook_mode: str = "opener") -> dict:
+                  framing: str | None = None, captions_style: str | None = None, hook_mode: str = "opener",
+                  source_captions: dict | None = None) -> dict:
     """One finished clip in one ratio: opus style (hook, word captions, credit, end card), reframed.
 
     face_safe (default on): the hook box, captions and credit are placed clear of the faces (studio/media/facesafe:
@@ -301,24 +311,34 @@ def render_moment(source: str, m: dict, words: list[dict], *, ratio: str = "9:16
     keep the QA's rendered frames (review only).
     framing: the clip's Layout & captions choice: "fit" shows the whole frame over a blurred copy, "track" follows the
     face, None is automatic. captions_style: a captions.STYLES id (the Caption look). hook_mode: "opener" (the hook box
-    and credit for the first 3 s, the credit on the end card too) or "keep" (both on screen all clip long)."""
+    and credit for the first 3 s, the credit on the end card too) or "keep" (both on screen all clip long).
+    source_captions: captions already burned into the source over this span (compose.detect_burned_captions): the clip
+    keeps them, adds none of its own and never crops the bottom of the frame (that would cut the source's captions off).
+    Every clip carries the brand (owner bug 9 Nov 2026, take 108 "didn't apply my branding"): the logo bug all clip long
+    (compose brand_pass, bug only) and word captions in the kit's headline font (brand["caption_family"])."""
     from ..headline import render_hook
     from . import facesafe, ff
     from .compose import SIZES, _keep, detect_burned_subs, render_style
     m = {**m, "hook": render_hook(m.get("hook") or "")}  # the headline guard on every render path (owner P0)
+    fam = caption_family(brand)
+    if fam:
+        brand = {**(brand or {}), "caption_family": fam}
     pr = None
     if src_size is None:
         pr = ff.probe(source)
         src_size = (pr["width"] or 1920, pr["height"] or 1080)
         if burned_subs is None:
             burned_subs = detect_burned_subs(source, pr["duration"])
+    if source_captions:
+        burned_subs = False
     plan = reframe_plan(faces, m["start"], m["end"], src_size[0], src_size[1], ratio, scenes, bool(burned_subs),
                         detector or framing == "track")
     if framing == "fit":  # Layout & captions > Full frame: the whole picture over a blurred copy of itself
         plan = {"mode": "pad", "crop_w": int(src_size[0]), "keys": [(0.0, 0)], "framing": "fit"}
     kw = dict(out=out, ratio=ratio, hook=m["hook"], brand=brand, words=words, credit=credit, clip=(m["start"], m["end"]),
               music_mood=music, names=names, burned_subs=bool(burned_subs), reframe=plan, captions_style=captions_style,
-              hook_mode=hook_mode if hook_mode in ("opener", "keep") else "opener")
+              hook_mode=hook_mode if hook_mode in ("opener", "keep") else "opener",
+              captions_mode="off" if source_captions else "auto", brand_pass=dict(BRAND_BUG))
     fs = None
     if face_safe:
         try:

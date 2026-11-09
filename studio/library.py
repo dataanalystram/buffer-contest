@@ -10,7 +10,7 @@ Storage is the app's own database for now (Supabase Postgres in production, SQLi
                       own token works everywhere a media token does (the agent, the render worker, Buffer's /m/ fetch).
 
 Generated media already live in the ``media`` table (the renderer writes them there); their library row points at
-those tokens instead of copying the bytes. Caps: 100 MB a file, 200 MB a person (uploads and renders together), both
+those tokens instead of copying the bytes. Caps: 100 MB a file, 200 MB a person by default (uploads and renders together), both
 checked before a byte is read (SECURITY_RULES 6). The free sample workspace sees bundled sample items, read-only.
 """
 from __future__ import annotations
@@ -40,6 +40,9 @@ CHUNK = MB
 CHUNK_DATA = "CASE WHEN storage_key IS NULL THEN data END AS data"
 FILE_MAX = int(os.environ.get("HQ_LIBRARY_FILE_MB", "100")) * MB
 QUOTA = int(os.environ.get("HQ_LIBRARY_QUOTA_MB", "200")) * MB
+# R2 refused a chunk (the app-wide storage cap or the bucket is down): the upload is refused, never kept in the database
+STORAGE_FULL = ("File storage is full or unavailable right now, so this upload wasn't saved. Try again later. "
+                "To free space, permanently delete files you no longer need in Library or its Bin.")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS library_items (
@@ -344,6 +347,17 @@ class Library:
             raise ActionError(f"Your Library is full ({QUOTA // MB} MB). Delete files you no longer need in Library.", 413)
 
     # ---------------------------------------------------------------- uploads (chunked bytes)
+    FULL = "Your Library is full ({cap} MB used of {cap} MB). {why}Delete files you no longer need in Library, then try again."
+
+    def require_room(self, a: Actor, why: str = "") -> None:
+        """Refuse new work that saves into the Library once the person's quota is used up (owner bug, 9 Nov 2026: One take
+        still took uploads and links at a full Library, because its large uploads go to the bucket, not through
+        check_room). The demo workspace is read-only and is refused by its own guards."""
+        if demo_guard.is_demo(a.uid):
+            return
+        if self.used(a.uid) >= QUOTA:
+            raise ActionError(self.FULL.format(cap=QUOTA // MB, why=why), 413)
+
     def _new_item(self, a: Actor, source: str, name: str) -> tuple[int, str]:
         tok = secrets.token_urlsafe(18)
         iid = self.store.x("INSERT INTO library_items(user_id,token,name,mime,kind,source,size,sha256,storage,meta,run_id,created,agent_id)"
@@ -353,7 +367,10 @@ class Library:
 
     def _put_chunk(self, uid: str, iid: int, n: int, data: bytes) -> None:
         """One 1 MB chunk: its bytes in the row (db backend) or in R2 under the owner's prefix (studio/blobstore.py)."""
-        inline, key, digest = blobstore.put("lib", uid, data)
+        try:
+            inline, key, digest = blobstore.put("lib", uid, data, strict=not blobstore.db_fallback_allowed())
+        except blobstore.StorageFull:
+            raise ActionError(STORAGE_FULL, 507) from None
         try:
             self.store.x("INSERT INTO library_chunks(item_id,n,data,storage_key,sha256,nbytes) VALUES(?,?,?,?,?,?)",
                          (iid, n, inline, key, digest, len(data)))

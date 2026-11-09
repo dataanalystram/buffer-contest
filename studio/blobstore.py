@@ -41,6 +41,18 @@ class StorageError(Exception):
     pass
 
 
+class StorageFull(StorageError):
+    """A strict write (``put(..., strict=True)``) that R2 refused: the cap is reached or the bucket is down. Nothing was
+    stored anywhere, so the caller refuses the upload instead of filling the database (Ram, 9 Nov 2026: the Supabase
+    egress outage came from blobs kept in the database)."""
+
+
+def db_fallback_allowed() -> bool:
+    """``HQ_LIBRARY_DB_FALLBACK=1`` brings back the old behaviour for Library uploads (bytes kept in the database when
+    R2 refuses). Off by default."""
+    return os.environ.get("HQ_LIBRARY_DB_FALLBACK", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def set_http(client) -> None:
     global _HTTP
     _HTTP = client
@@ -95,14 +107,20 @@ def new_key(kind: str, uid: str) -> str:
     return f"{kind}/{owner_prefix(uid)}/{secrets.token_urlsafe(24)}"
 
 
-def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream") -> tuple[bytes | None, str | None, str]:
+def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream",
+        strict: bool = False) -> tuple[bytes | None, str | None, str]:
     """Store bytes: (what goes in the row's ``data``, its ``storage_key``, sha256). With R2 the row gets no bytes; when the
-    bucket refuses or is down the bytes stay in the row (the upload never fails because the bucket did) and it's logged."""
+    bucket refuses or is down the bytes stay in the row (the upload never fails because the bucket did) and it's logged.
+    ``strict`` (Library uploads): with R2 configured, a refusal raises StorageFull instead, so nothing lands in the
+    database. Without a bucket (local SQLite, HQ_MEDIA_STORAGE=db) the database is the store, as before."""
     digest = hashlib.sha256(data).hexdigest()
     b = bucket(write=True)
     if not b:
         return data, None, digest
     capped = r2usage.reserve(len(data))
+    if capped and strict:
+        print(f"storage: {capped}; refused this {kind} blob (not kept in the database)", flush=True)
+        raise StorageFull(capped)
     if capped:  # the free tier is never exceeded (studio/r2usage.py): new bytes stay in the database instead
         print(f"storage: {capped}; kept this {kind} blob in the database", flush=True)
         return data, None, digest
@@ -111,6 +129,9 @@ def put(kind: str, uid: str, data: bytes, mime: str = "application/octet-stream"
         b.put(key, data, mime)
     except r2.R2Error as e:
         r2usage.release(len(data))
+        if strict:
+            print(f"storage: R2 put failed ({e}); refused this {kind} blob (not kept in the database)", flush=True)
+            raise StorageFull(f"R2 put failed: {e}") from None
         print(f"storage: R2 put failed ({e}); kept this {kind} blob in the database", flush=True)
         return data, None, digest
     return None, key, digest

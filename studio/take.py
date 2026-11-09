@@ -980,7 +980,7 @@ def _render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scene
         framed = tmp / "framed.mp4"
         run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(framed)])
         # 2) captions + logo over the reframed video, with the original audio of the span
-        ass = captions_ass(words, start, 0.0, kit, p, W, H)
+        ass = captions_ass([] if m.get("_source_captions") else words, start, 0.0, kit, p, W, H)  # their own captions: none of ours
         (tmp / "cap.ass").write_text(ass, encoding="utf-8")
         ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         render.place_logo(ov, render.load_logo(logo), p, kit)
