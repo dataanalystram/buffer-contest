@@ -171,25 +171,82 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
 .set-acct .row{flex-wrap:wrap}
 
 /* ---------------------------------------------------------------- onboarding */
-.onb{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:16px;background:var(--scrim,rgba(10,10,12,.45))}
+/* ---------------------------------------------------------------- setup (onboarding.js): calm, one column, Apple-like
+   A frosted scrim, a roomy sheet, light 36px headings, a slim progress line, chips that tick. Each step slides in from
+   the side it came from; the sheet rises on open and fades on close. transform/opacity only, <300 ms, off when reduced. */
+.onb{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:16px;background:rgba(10,10,12,.42);
+  -webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2)}
 .onb[hidden]{display:none}
-.onb-card{width:min(720px,100%);max-height:calc(100dvh - 32px);overflow:auto;background:var(--raised);border:1px solid var(--line);border-radius:var(--r-sheet,16px);box-shadow:var(--float);padding:28px}
-.onb-top{display:flex;align-items:center;gap:12px;margin-bottom:20px}
-.onb-steps{display:flex;gap:6px;flex:1}
-.onb-steps i{height:4px;flex:1;border-radius:4px;background:var(--line)}
-.onb-steps i.on{background:var(--accent)}
-.onb h2{font-size:24px;line-height:1.2;font-weight:600;letter-spacing:-.01em;margin-bottom:6px}
-.onb .lead{color:var(--muted);margin-bottom:20px}
+.onb-card{width:min(680px,100%);max-height:calc(100dvh - 32px);overflow:auto;background:var(--raised);border:1px solid var(--line);
+  border-radius:20px;box-shadow:var(--float);padding:32px 40px 32px;overscroll-behavior:contain}
+.onb-top{display:flex;align-items:center;gap:16px;margin-bottom:28px;min-height:36px}
+.onb-top .grow{flex:1}
+.onb-prog{flex:1;display:grid;gap:8px;min-width:0}
+.onb-count{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.onb-steps{display:flex;gap:4px}
+.onb-steps i{height:3px;flex:1;border-radius:3px;background:var(--line);transform-origin:left center}
+.onb-steps i.on{background:var(--ink)}
+.onb h2{font-size:36px;line-height:1.1;font-weight:300;letter-spacing:-.02em;margin-bottom:10px}
+.onb .lead{color:var(--muted);font-size:16px;line-height:1.5;margin-bottom:24px;max-width:56ch}
+.onb-note{color:var(--muted);font-size:13px;margin-top:14px;min-height:20px}
 .onb-chips{display:flex;flex-wrap:wrap;gap:8px}
-.onb-chips button{min-height:40px;padding:0 14px;border:1px solid var(--line-strong);border-radius:999px;background:var(--raised);color:var(--ink);font:inherit;font-size:14px;cursor:pointer}
+.onb-chips button{display:inline-flex;align-items:center;gap:0;min-height:44px;padding:0 16px;border:1px solid var(--line);border-radius:999px;
+  background:var(--raised);color:var(--ink);font:inherit;font-size:15px;cursor:pointer}
+.onb-chips button:hover{border-color:var(--line-strong)}
 .onb-chips button[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
-.onb-act{display:flex;align-items:center;gap:8px;margin-top:24px}
+.onb-tick{display:inline-flex;width:0;overflow:hidden;opacity:0}
+.onb-tick .ic{width:16px;height:16px;stroke-width:2.25}
+.onb-chips button[aria-pressed=true] .onb-tick{width:22px;opacity:1}
+.onb-act{display:flex;align-items:center;gap:12px;margin-top:32px}
 .onb-act .grow{flex:1}
+.onb-act.center{justify-content:center}
 .onb-brand{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
-.onb-or{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin:4px 0}
-.onb-kit{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:10px;margin-top:12px}
+.onb-kit{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:12px;margin-top:16px}
 .onb-kit img{width:44px;height:44px;object-fit:contain;border-radius:8px;background:var(--sunken)}
-.onb-kit .sw{display:flex;gap:4px}.onb-kit .sw i{width:18px;height:18px;border-radius:4px;border:1px solid var(--line)}
+.onb-kit > div{flex:1;min-width:0}.onb-kit .sw{display:flex;gap:4px;flex:none;width:auto;height:auto}.onb-kit .sw i{flex:none;width:18px;height:18px;border-radius:999px;border:1px solid var(--line)}
+.onb-ol{margin-top:16px}
+.onb-up{width:100%;cursor:pointer}
+.onb-brand .sr:focus-visible + .onb-up{outline:2px solid var(--focus);outline-offset:2px}
+.onb-follow{margin-top:20px}
+.onb-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.onb-pills .pill{gap:6px;height:28px;padding:0 10px;font-size:12px;color:var(--ink)}
+.onb-pills .fav{width:14px;height:14px}
+/* the welcome */
+.onb-hello{text-align:center;padding:8px 0 4px}
+.onb-mark{width:56px;height:56px;border-radius:14px;display:block;margin:0 auto 20px}
+.onb-eyebrow{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px}
+.onb h2.onb-hero{font-size:44px;line-height:1.05;letter-spacing:-.025em;margin-bottom:14px}
+.onb-hello .lead{margin:0 auto 28px}
+.onb-why{list-style:none;margin:0 auto;padding:0;display:grid;gap:14px;max-width:460px;text-align:left}
+.onb-why li{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--muted);line-height:1.45}
+.onb-why li b{color:var(--ink);font-weight:600}
+.onb-why .ic{width:20px;height:20px;margin-top:1px;color:var(--ink)}
+.onb-hello .onb-act{margin-top:32px}
+.onb-hello .btn.big{min-width:220px}
+/* skeletons while a step's data loads (the step itself is drawn at once) */
+.onb-sk{display:grid;gap:10px}
+.onb-sk.feed{grid-template-columns:repeat(2,minmax(0,1fr))}
+.onb-sk span{display:block;height:96px;border-radius:12px;background:var(--sunken)}
+.onb-sk.kit span{height:70px;margin-top:16px}
+@media (prefers-reduced-motion:no-preference){
+  .onb{transition:opacity 200ms ease-out}
+  .onb:not(.in){opacity:0}
+  .onb.out{opacity:0;transition-duration:160ms}
+  .onb-card{transition:transform 260ms cubic-bezier(.2,.8,.2,1),opacity 260ms ease-out}
+  .onb:not(.in) .onb-card{transform:translateY(12px) scale(.98);opacity:0}
+  .onb.out .onb-card{transform:scale(.98)}
+  .onb-pane{animation:onb-r 260ms cubic-bezier(.2,.8,.2,1) both}
+  .onb-pane.from-l{animation-name:onb-l}
+  @keyframes onb-r{from{opacity:0;transform:translateX(24px)}}
+  @keyframes onb-l{from{opacity:0;transform:translateX(-24px)}}
+  .onb-steps i.now{animation:onb-grow 300ms ease-out both}
+  @keyframes onb-grow{from{transform:scaleX(.2)}}
+  .onb-chips button{transition:background-color 150ms ease-out,color 150ms ease-out,border-color 150ms ease-out,transform 120ms ease-out}
+  .onb-chips button:active{transform:scale(.97)}
+  .onb-tick{transition:width 180ms ease-out,opacity 180ms ease-out}
+  .onb-sk span{animation:onb-pulse 1.2s ease-in-out infinite}
+  @keyframes onb-pulse{50%{opacity:.55}}
+}
 .onb-feed{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 
 /* ---------------------------------------------------------------- phone and tablet */
@@ -203,7 +260,8 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
   .row3,.onb-brand,.onb-feed{grid-template-columns:minmax(0,1fr)}
   .sa-head{flex-direction:column}.sa-go{align-items:stretch}
   .ax-row{grid-template-columns:32px minmax(0,1fr)}.ax-acts{grid-column:2;justify-content:flex-start;gap:4px 12px}.ax-acts .link{padding:4px 0}.ax-revoke{margin-left:auto}
-  .onb-card{padding:20px}
+  .onb-card{padding:20px;border-radius:16px}.onb h2{font-size:28px}.onb h2.onb-hero{font-size:34px}.onb-sk.feed{grid-template-columns:minmax(0,1fr)}
+  .onb-act{flex-wrap:wrap}.onb-act .btn.big{flex:1 1 auto}
   .pg-tabs{display:flex;width:100%}.pg-tabs button{flex:1}
 }
 
@@ -211,7 +269,6 @@ button.ib-tile{cursor:pointer}button.ib-tile:hover{border-color:var(--line-stron
 .quick:not(:has(.row)){flex-direction:row;align-items:center;flex-wrap:wrap}
 .quick > input{flex:1 1 320px;height:48px;min-height:48px;max-height:48px}
 @media (max-width:600px){.quick > input{flex-basis:100%}}
-.onb{background:rgba(10,10,12,.5);backdrop-filter:blur(2px)}
 .onb h2:focus{outline:none}
 /* touch widths: a story's headline link and the Brand first-run "Connect Buffer" step are at least 44 px to tap */
 @media (max-width:1023px){

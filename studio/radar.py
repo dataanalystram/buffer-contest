@@ -108,11 +108,22 @@ def fetch(feed_url: str, http: httpx.Client | None = None, check_host: bool = Tr
 def stories(feeds: list[dict], http: httpx.Client | None = None, limit: int = 15) -> dict:
     """Newest stories across the user's feeds, plus which feeds failed and why."""
     out, errors = [], []
-    for f in feeds:
+
+    def one(f):
         try:
-            feed = fetch(f["url"], http)
+            return f, fetch(f["url"], http), None
         except FetchError as e:
-            errors.append({"feed": f["url"], "error": str(e)})
+            return f, None, str(e)
+
+    if len(feeds) > 1:  # read side by side, so a new account's first open isn't N fetches in a row (cached ones return at once)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(6, len(feeds))) as ex:
+            got = list(ex.map(one, feeds))
+    else:
+        got = [one(f) for f in feeds]
+    for f, feed, err in got:
+        if err:
+            errors.append({"feed": f["url"], "error": err})
             continue
         out += [dict(s, source=feed["title"], feed_id=f["id"]) for s in feed["stories"]]
     out.sort(key=lambda s: s["published"], reverse=True)
