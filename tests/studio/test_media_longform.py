@@ -211,3 +211,62 @@ def test_rights_gate_and_credit_line():
     out = L.split_video("x.mp4", out_dir="/tmp/never", credit="Video: someone on YouTube")
     assert out["needs_confirmation"] and "right to repost" in out["question"]
     assert "credit line" in L.split_video("x.mp4", out_dir="/tmp/never", rights_confirmed=True)["error"]
+
+
+# ------------------------------------------------------------------ owner bugs 9 Nov 2026 (take 108)
+def _captioned_talk(path: Path, secs: float = 8.0) -> None:
+    """A talk with Opus-style word captions already burned in: two or three words centred at ~68% of the height,
+    changing every half second (the YouTube video of take 108)."""
+    words = ["OKAY I'M", "OVERDOING IT", "A LITTLE", "BIT BUT", "YOU GET", "WHAT I'M", "SAYING JUST", "REDO THE"]
+    vf = ["drawbox=x=1150:y=200:w=260:h=300:color=0xF0C8A0:t=fill"]
+    for i in range(int(secs / 0.5)):
+        w = words[i % len(words)].replace("'", "")
+        vf.append(f"drawtext=text='{w}':fontcolor=white:fontsize=64:borderw=4:bordercolor=black:x=(w-tw)/2:y=720:"
+                  f"enable='between(t,{i * 0.5:.2f},{i * 0.5 + 0.49:.2f})'")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c=0x203040:s=1920x1080:d={secs}:r=30",
+                    "-f", "lavfi", "-i", f"sine=frequency=220:duration={secs}", "-vf", ",".join(vf), "-c:v", "libx264",
+                    "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(path)], check=True)
+
+
+@needs_ffmpeg
+def test_a_video_that_already_has_captions_keeps_them_and_gets_none_of_ours(tmp_path):
+    """Owner bug 9 Nov 2026: "if the video already has transcript on the video why to show it again". One take checks
+    each clip's span for captions burned into the source; found, the clip adds none and never crops them off."""
+    from studio.takes import source_captions
+    src, plain = tmp_path / "cap.mp4", tmp_path / "plain.mp4"
+    _captioned_talk(src)
+    _talk(plain, secs=8.0)
+    m = {"id": "c1", "start": 0.5, "end": 7.0, "hook": "Why word word"}
+    own = source_captions(str(src), m)
+    assert own and 0.55 <= own["top"] <= 0.75, own
+    assert source_captions(str(plain), m) is None
+    assert source_captions(str(tmp_path / "missing.mp4"), m) is None          # a failed check never fails the clip
+    r = L.render_moment(str(src), m, _words(8), ratio="9:16", out=str(tmp_path / "o.mp4"), faces=_faces([0.66] * 16),
+                        detector=True, burned_subs=True, credit="Video: Test", face_safe=False, source_captions=own)
+    assert r["captions"] is False and r["burned_subs"] is False
+
+
+@needs_ffmpeg
+def test_one_take_clips_carry_the_brand_logo_and_caption_font(tmp_path, monkeypatch):
+    """Owner bug 9 Nov 2026, take 108 "didn't apply my branding at all": a link take renders the Opus look, which had no
+    logo and set its captions in Figtree whatever the kit said. Now: the logo bug all clip long and the kit's headline
+    font on the word captions."""
+    from PIL import Image
+
+    from studio.media import captions as C
+    from studio.media.worker import brand_from_kit
+    logo = tmp_path / "logo.png"
+    Image.new("RGBA", (200, 80), (201, 172, 250, 255)).save(logo)
+    brand = brand_from_kit({"name": "HuhByte AI", "handle": "huhbyte.ai", "font": "anton", "body_font": "poppins",
+                            "colors": {"primary": "#000000", "accent": "#C9ACFA", "text": "#FFFFFF"}}, str(logo))
+    seen = []
+    real = C.build_ass
+    monkeypatch.setattr(C, "build_ass", lambda *a, **k: seen.append(k.get("cap_style")) or real(*a, **k))
+    src = tmp_path / "talk.mp4"
+    _talk(src, secs=8.0)
+    m = {"id": "c1", "start": 0.5, "end": 7.0, "hook": "Why word word"}
+    r = L.render_moment(str(src), m, _words(8), ratio="9:16", brand=brand, out=str(tmp_path / "b.mp4"),
+                        faces=_faces([0.66] * 16), detector=True, burned_subs=False, credit="Video: Test", face_safe=False)
+    assert "bug" in r["brand_pass"] and r["captions"] is True
+    assert seen and seen[-1] is not None and seen[-1].family == "Anton"
+    assert L.caption_family({"head_font": "Doto-Black.ttf"}) is None and L.caption_family(None) is None

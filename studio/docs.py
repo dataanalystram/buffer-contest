@@ -196,7 +196,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <p>Claude.ai and ChatGPT run their code in a sandbox that can't reach outside hosts, so they can't upload a file to HuhQueue themselves. Two ways that work:</p>
 <ul><li><b>Send a file:</b> the app calls <code>create_send_code</code> and gives you a short code and a link. Open <a href="/send">/send</a> on any device (your phone works: scan the QR code), drop the file in, and the app finds it with <code>list_recent_uploads</code>. In HuhQueue: Library, <b>Send from a device</b>.</li>
 <li><b>A share link:</b> share the file from Google Drive, Dropbox, OneDrive or iCloud with "anyone with the link" and give the link to the app (<code>import_from_link</code>), or paste it in Library, <b>From a link</b>.</li></ul>
-<p>Files up to 100 MB each, in a 200 MB Library. Apps that can run curl (Claude Code, Codex, Cursor) use <code>create_upload</code> instead.</p>
+<p>Files up to 100 MB each; Library shows how much room your account has. Apps that can run curl (Claude Code, Codex, Cursor) use <code>create_upload</code> instead.</p>
 <p><b>How a send code is kept.</b> A code lasts 30 minutes and takes up to 10 files, and HuhQueue stores only its hash. <b>Stop receiving</b> or <b>New code</b> ends it at once. A code an AI app made also stops when that app's token is revoked or expires, or while the kill switch is on.</p>
 <h2 id="rest">REST</h2>
 <p>The endpoints the interface uses accept the same token as <code>Authorization: Bearer hq_…</code>. The reference is at <a href="/docs/api">/docs/api</a>.</p>"""),
@@ -360,7 +360,7 @@ _DESC = {
     "POST /api/buffer/drafts/{post_id}/media": "replace_draft_media: new media on any Buffer draft (edit in place, or a new draft with the same caption; the old one is deleted only with delete_old and confirm)",
     "GET /api/agent/pages": "get_page_context: what each app page shows and which MCP tools do the same things there",
     "GET /api/library": "List your Library: uploads and generated media, with search and filters (type, created_by agent|you|sample|one_take, used_in, run, date)",
-    "POST /api/library/upload": "Upload a video or image to your Library (100 MB per file, 200 MB per account)",
+    "POST /api/library/upload": "Upload a video or image to your Library (100 MB per file; the account quota is in GET /api/uploads/limits)",
     "POST /api/uploads": "create_upload: a one-time upload URL (PUT /u/<token>, 15 minutes, one use) and the curl command",
     "POST /api/uploads/chunk": "upload_media_chunk: one base64 chunk (at most 2 MB decoded) of a file, in order, under an upload_id",
     "POST /api/uploads/{upload_id}/finish": "finish_upload: join the chunks into one Library item",

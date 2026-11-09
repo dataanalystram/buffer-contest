@@ -213,7 +213,8 @@ class TakeUploads:
     def info(self, a: Actor) -> dict:
         on = bool(config())
         return {"multipart": on, "max_bytes": max_bytes() if on else FALLBACK_MAX, "part_size": PART,
-                "fallback": None if on else {"path": "/api/library/upload?source=take", "max_bytes": FALLBACK_MAX}}
+                "fallback": None if on else {"path": "/api/library/upload?source=take", "max_bytes": FALLBACK_MAX},
+                "library": self.h.library.usage(a.uid)}  # the form refuses a new video at a full Library before any byte
 
     def create(self, a: Actor, body: dict) -> dict:
         self.h.studio._guard_write(a, "upload_take_source")
@@ -221,6 +222,7 @@ class TakeUploads:
         if demo_guard.is_demo(a.uid):
             raise ActionError("The sample workspace runs One take on the bundled sample talk. Connect Buffer to upload your own video.", 403)
         self._cfg()
+        self.h.library.require_room(a, "One take saves its clips there. ")
         name = re.sub(r"[^\w .()-]", "_", str(body.get("name") or "video.mp4"))[:120].strip() or "video.mp4"
         size, ctype = body.get("size"), str(body.get("content_type") or "").lower().split(";")[0].strip()
         # The browser's file identity (name, size and lastModified). Without it an upload never resumes: the same name and

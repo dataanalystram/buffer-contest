@@ -516,7 +516,7 @@ HuhQueue instead:
    `upload_media_chunk {"index": 0, "data": "<base64>", "name": "logo.png", "total_size": 812345}` -> `upload_id`, then
    `upload_media_chunk {"upload_id": "up_…", "index": 1, "data": "…"}` and so on, then `finish_upload {"upload_id": "up_…"}`.
 
-Uploads, sent files and link imports count against the Library's caps (100 MB a file, 200 MB a person; `GET
+Uploads, sent files and link imports count against the Library's caps (100 MB a file and a per-person quota, 200 MB by default; `GET
 /api/uploads/limits` has the live numbers). The type is read from the bytes, so a web page
 saved as `.mp4` is refused with a message that says it is a web page.
 

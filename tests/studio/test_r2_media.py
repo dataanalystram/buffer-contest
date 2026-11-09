@@ -487,3 +487,50 @@ def test_counts_being_flushed_still_count_and_unconfirmed_link_puts_stay_counted
             ("tl_old", "acc_1", "link", 777, 0, 1, "link_put", "takes/x/tl_old.mp4", "", 1, 0.0, 0.0, None))
     r2usage.forget_cache()
     assert r2usage.stored_bytes(store) >= 777                # a day-old unconfirmed link PUT still counts
+
+
+# ------------------------------------------------------------------ Library uploads never fall back to the database
+def test_library_upload_is_refused_not_kept_in_the_database_when_r2_is_full(app, human, s3, monkeypatch, capsys):
+    """Past the R2 storage cap a Library upload answers 507 and leaves nothing behind: no item, no chunk, no bytes in the
+    database (Ram, 9 Nov 2026: blobs kept in the database drove the Supabase egress outage)."""
+    monkeypatch.delenv("HQ_LIBRARY_DB_FALLBACK", raising=False)
+    monkeypatch.setenv("HQ_R2_MAX_BYTES", "100")
+    store = app.state.store
+    r = human.post("/api/library/upload?name=big.png", content=image_bytes(120, 80),
+                   headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 507, r.text
+    assert "storage is full" in r.text
+    assert not store.q("SELECT id FROM library_items WHERE storage IN ('chunks','pending')")
+    assert not store.q("SELECT item_id FROM library_chunks") and not s3.objects
+    assert "not kept in the database" in capsys.readouterr().out
+
+
+def test_library_upload_is_refused_when_the_bucket_is_down(app, human, s3, monkeypatch):
+    monkeypatch.delenv("HQ_LIBRARY_DB_FALLBACK", raising=False)
+
+    def down(*a, **k):
+        raise r2.R2Error("bucket down")
+    monkeypatch.setattr(r2.Bucket, "put", down)
+    r = human.post("/api/library/upload?name=a.png", content=image_bytes(30, 30),
+                   headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 507
+    assert not app.state.store.q("SELECT item_id FROM library_chunks")
+
+
+def test_library_db_fallback_switch_keeps_the_old_behaviour(app, human, s3, monkeypatch):
+    monkeypatch.setenv("HQ_LIBRARY_DB_FALLBACK", "1")
+    monkeypatch.setenv("HQ_R2_MAX_BYTES", "100")
+    data = image_bytes(120, 80)
+    r = human.post("/api/library/upload?name=big.png", content=data, headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 200, r.text
+    rows = app.state.store.q("SELECT data, storage_key FROM library_chunks")
+    assert rows and all(x["storage_key"] is None and x["data"] is not None for x in rows) and not s3.objects
+
+
+def test_library_upload_goes_to_r2_under_the_cap(app, human, s3, monkeypatch):
+    monkeypatch.delenv("HQ_LIBRARY_DB_FALLBACK", raising=False)
+    r = human.post("/api/library/upload?name=ok.png", content=image_bytes(30, 30),
+                   headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 200, r.text
+    rows = app.state.store.q("SELECT data, storage_key FROM library_chunks")
+    assert rows and all(x["storage_key"] and x["data"] is None for x in rows)
