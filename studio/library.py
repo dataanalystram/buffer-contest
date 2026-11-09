@@ -41,8 +41,8 @@ CHUNK_DATA = "CASE WHEN storage_key IS NULL THEN data END AS data"
 FILE_MAX = int(os.environ.get("HQ_LIBRARY_FILE_MB", "100")) * MB
 QUOTA = int(os.environ.get("HQ_LIBRARY_QUOTA_MB", "200")) * MB
 # R2 refused a chunk (the app-wide storage cap or the bucket is down): the upload is refused, never kept in the database
-STORAGE_FULL = ("File storage is full or unavailable right now, so this upload wasn't saved. Try again later, or delete "
-                "files you no longer need in Library.")
+STORAGE_FULL = ("File storage is full or unavailable right now, so this upload wasn't saved. Try again later. "
+                "To free space, permanently delete files you no longer need in Library or its Bin.")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS library_items (
