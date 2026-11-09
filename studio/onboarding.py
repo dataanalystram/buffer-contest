@@ -79,7 +79,14 @@ class Onboarding:
                 "options": {"content_types": [{"id": k, "label": v["label"]} for k, v in CONTENT_TYPES.items()], "tones": TONES,
                             "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]},
                 "brand": {k: v for k, v in self.h.kit(a).items() if k in ("name", "handle", "colors", "font", "logo_url", "is_set")},
-                "x_key": bool(self._x_bearer(a))}
+                "x_key": bool(self._x_bearer(a)), "following": self._following(a)}
+
+    def _following(self, a) -> list[dict]:
+        from . import starter_feeds
+        try:
+            return starter_feeds.following(self.store, a.uid)
+        except Exception:  # noqa: BLE001
+            return []
 
     def _x_bearer(self, a) -> str:
         try:
@@ -122,6 +129,9 @@ class Onboarding:
         self.store.x("INSERT INTO user_profiles(user_id,data,updated) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data, "
                      "updated=excluded.updated, recs_at=0", (a.uid, json.dumps(cur), time.time()))
         self.store.audit(a.uid, a.label, "onboarding", "read", {"fields": sorted(k for k in body if k != "website"), "website": bool(body.get("website"))})
+        if "content_types" in body or body.get("done"):  # News follows the interests: matching starter feeds (studio/starter_feeds.py)
+            from . import starter_feeds
+            out["feeds"] = starter_feeds.sync(self.store, a.uid, cur.get("content_types") or [])
         return {**self.get(a), **out}
 
     # ---------------------------------------------------------------- appearance (light / dark / system), owner 1 Nov 2026
@@ -324,7 +334,7 @@ def interests(store, uid: str) -> list[str]:
     return [t for t in d.get("content_types") or [] if t in CONTENT_TYPES]
 
 
-def rank_stories(stories: list[dict], types: list[str], limit: int = 30) -> dict:
+def rank_stories(stories: list[dict], types: list[str], limit: int = 30, via: dict | None = None) -> dict:
     """The For you feed, following the accepted interests: stories that match a chosen content type (by its words),
     closest match first, then newest; the same input always gives the same order, so a refresh never reshuffles or
     drops the interests. With no interests the newest stories stand. Nothing matching -> the newest, with a note."""
@@ -335,8 +345,11 @@ def rank_stories(stories: list[dict], types: list[str], limit: int = 30) -> dict
     for st in stories:
         txt = f" {st.get('title', '')} {st.get('summary', '')} ".lower()
         hits = [t for t, ws in words.items() if any(re.search(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", txt) for w in ws)]
-        if hits:
-            out.append({**st, "match": len(hits), "why_for_you": "Matches " + ", ".join(CONTENT_TYPES[t]["label"] for t in hits[:2])})
+        # a story from a starter feed picked for an interest counts for it too (an arXiv title rarely says "paper")
+        extra = [t for t in (via or {}).get(st.get("feed_id"), ()) if t in words and t not in hits]
+        if hits or extra:
+            out.append({**st, "match": len(hits) + 0.5 * len(extra),
+                        "why_for_you": ("Matches " if hits else "Picked for ") + ", ".join(CONTENT_TYPES[t]["label"] for t in (hits + extra)[:2])})
     out.sort(key=lambda x: (-x["match"], -(x.get("published") or 0), x.get("url") or ""))
     lab = [{"id": t, "label": CONTENT_TYPES[t]["label"]} for t in types]
     if not out:

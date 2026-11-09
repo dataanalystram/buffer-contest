@@ -505,12 +505,18 @@ class Studio:
     def radar(self, a: Actor) -> dict:
         """The For you feed: the newest stories from the feeds you follow, filtered and ranked by the interests you
         accepted in setup (onboarding content types, kept per account), the same way on every refresh."""
-        from . import onboarding
+        from . import onboarding, starter_feeds
+        if a.kind == "human":  # a new account's first open: follow the starter feeds so News is never empty
+            starter_feeds.sync(self.store, a.uid, first_run_only=True)
         feeds = self.feeds(a)
         out = {"feeds": feeds, **radar.stories(feeds, limit=80)}
+        if out["stories"] and out["errors"]:  # a starter feed that's down is not the person's problem; their own feeds' errors stay
+            mine = set(starter_feeds.mine(self.store, a.uid))
+            out["errors"] = [e for e in out["errors"] if e["feed"] not in mine]
         if demo_guard.is_demo(a.uid) and not out.get("stories"):  # the sample's feeds couldn't be read: show sample stories
             out["stories"], out["sample"] = [dict(s) for s in demo.SAMPLE_STORIES], True
-        out.update(onboarding.rank_stories(out["stories"], onboarding.interests(self.store, a.uid)))
+        via = {f["id"]: starter_feeds.TYPES_OF.get(f["url"], ()) for f in feeds}
+        out.update(onboarding.rank_stories(out["stories"], onboarding.interests(self.store, a.uid), via=via))
         return out
 
     def add_feed(self, a: Actor, url: str) -> dict:
@@ -534,6 +540,9 @@ class Studio:
     def remove_feed(self, a: Actor, feed_id: int) -> dict:
         if a.kind != "human":
             raise ActionError("Only a human can change which feeds you follow.", 403)
+        from . import starter_feeds
+        for r in self.store.q("SELECT url FROM feeds WHERE id=? AND user_id=?", (feed_id, a.uid)):
+            starter_feeds.forget(self.store, a.uid, r["url"])  # a starter feed they unfollowed is never added back
         self.store.x("DELETE FROM feeds WHERE id=? AND user_id=?", (feed_id, a.uid))
         return {"removed": feed_id}
 
