@@ -129,6 +129,9 @@ def test_bulk_select_bin_restore_and_permanent_delete(live, chromium, close_cont
     page.get_by_test_id("ask-ok").click()
     page.get_by_test_id("bin-empty").wait_for()
     st = app.state.store
+    # the Bin is redrawn empty at once (binDrop) while the purge request is still running, so wait for the server's
+    # answer (the "Deleted permanently" toast) before reading the database
+    page.get_by_text("Deleted permanently").first.wait_for()
     assert st.q("SELECT COUNT(*) n FROM library_items WHERE user_id='acc_1' AND storage='trash'")[0]["n"] == 0
     assert st.q("SELECT COUNT(*) n FROM library_items WHERE user_id='acc_1' AND storage<>'trash'")[0]["n"] == 5
     assert not errors, errors

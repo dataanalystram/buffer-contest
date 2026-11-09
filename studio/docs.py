@@ -129,7 +129,7 @@ PAGES: list[tuple[str, str, str, str | None, str]] = [
 <h2 id="sample">In the sample</h2>
 <p>The <a href="/demo">demo</a> uses recorded sources from 31 October 2026 (YC Launches, the HN front page and four lab feeds; Product Hunt and X items are made up and titled "Sample:"). It makes no live calls, its clusters are always the same, drafts go to the sample's pretend Buffer, and it shows <b>0 Buffer requests</b>.</p>
 <h2 id="radar">For you and Sources</h2>
-<p><b>For you</b> shows the newest stories from the RSS or Atom feeds you follow (up to 12), each a card with the site's icon, the headline, one line on why it matters and <b>Make post</b>; agents read it with <code>list_stories</code>. <b>Sources</b> is the one feed list both For you and Story scan read. Story scan adds many sources at once, clustering, judging and per-channel drafts on top.</p>
+<p><b>For you</b> shows the newest stories from the RSS or Atom feeds you follow (up to 12), each a card with the site's icon, the headline, one line on why it matters and <b>Make post</b>; agents read it with <code>list_stories</code>. A new account is never empty: when you finish setup, HuhQueue follows starter feeds that match the interests you picked (general tech news if you skip), and you can unfollow any of them; one you unfollow is not added back. <b>Sources</b> is the one feed list both For you and Story scan read. Story scan adds many sources at once, clustering, judging and per-channel drafts on top.</p>
 <h2 id="api">API and MCP</h2>
 <div class="dk-table"><table><thead><tr><th>In the app</th><th>REST</th><th>MCP</th></tr></thead><tbody>
 <tr><td>Settings</td><td><code>GET /api/sources</code>, <code>POST /api/sources/settings</code></td><td><code>sources_settings</code></td></tr>

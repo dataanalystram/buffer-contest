@@ -162,7 +162,8 @@ OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "tem
                    "source_settings",
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
                    "thread_ids", "thread_deleted", "jev_usage", "link_consents", "take_prefs", "link_auto_approve",
-                   "link_probes", "credit_group_members")
+                   "link_probes", "credit_group_members",
+                   "user_profiles")  # setup answers, interests, starter-feed list (onboarding.py; found 9 Nov 2026)
 
 def _run_callbacks(fns) -> None:
     for fn in fns or ():

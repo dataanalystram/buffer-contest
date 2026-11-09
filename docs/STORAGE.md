@@ -28,7 +28,7 @@ kept in the database are what drove the Supabase egress outage of 9 Nov 2026. `H
 old fallback for Library uploads. Without a bucket at all (local SQLite, `HQ_MEDIA_STORAGE=db`) the database is the store,
 as before.
 
-Per-person Library caps: `HQ_LIBRARY_QUOTA_MB` (default 200) and `HQ_LIBRARY_FILE_MB` (default 100). The quota is shared
+Per-person Library caps: `HQ_LIBRARY_QUOTA_MB` (default 200; the hosted app sets 400) and `HQ_LIBRARY_FILE_MB` (default 100). The quota is shared
 by everyone under `HQ_R2_MAX_BYTES`: at 400 MB a person, 20 full Libraries reach the 8 GB cap. A read of an R2 object that fails answers 503.
 
 ## Deleting

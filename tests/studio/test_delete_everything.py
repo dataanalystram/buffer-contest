@@ -58,3 +58,18 @@ def test_delete_user_clears_the_retired_product_tables_rows(app):
     assert left == {"u:someone_else", "global"}, left
     assert st.q(f"SELECT COUNT(*) AS n FROM {pre}user_day WHERE user_id=?", (uid,))[0]["n"] == 0
     assert st.q(f"SELECT COUNT(*) AS n FROM {pre}links WHERE user_id=?", (uid,))[0]["n"] == 0
+
+
+def test_delete_user_clears_setup_answers(app):
+    """Setup answers (user_profiles: interests, tone, website, X watch list, starter-feed list) go with the account; the
+    privacy page lists them under Disconnect and delete (found 9 Nov 2026)."""
+    st = app.state.store
+    uid = "acc_del_4"
+    st.upsert_user(uid, "d@example.com", "D", "org", "Org", {"access_token": "x", "refresh_token": "y", "expires_at": 0})
+    from studio import onboarding
+    st.x(onboarding.SCHEMA)
+    for who in (uid, "someone_else"):
+        st.x("INSERT INTO user_profiles(user_id,data,updated) VALUES(?,?,?)", (who, '{"content_types": ["ai"]}', 0.0))
+    st.delete_user(uid)
+    assert st.q("SELECT COUNT(*) AS n FROM user_profiles WHERE user_id=?", (uid,))[0]["n"] == 0
+    assert st.q("SELECT COUNT(*) AS n FROM user_profiles WHERE user_id=?", ("someone_else",))[0]["n"] == 1
