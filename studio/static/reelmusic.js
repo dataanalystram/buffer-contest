@@ -82,7 +82,7 @@ function mount(box, opts) {
     ul.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => play(+b.dataset.play)));
     ul.querySelectorAll("[data-pick]").forEach((b) => (b.onclick = () => { M.pick = { ...M.tracks[+b.dataset.pick] }; paintSel(); drawTracks(); changed(); }));
   }
-  function stop() { if (M.audio) { M.audio.pause(); M.audio = null; } M.playing = -1; box.querySelectorAll("[data-play]").forEach((b) => (b.textContent = "Preview")); }
+  function stop() { if (M.audio) { M.audio.pause(); M.audio = null; } M.playing = -1; if (CUR && CUR.stop === stop) CUR = null; box.querySelectorAll("[data-play]").forEach((b) => (b.textContent = "Preview")); }
   function play(i) {
     const t = M.tracks[i];
     if (M.audio && M.playing === i) { stop(); return; }
@@ -181,16 +181,20 @@ function withVideo(el, au) {
   if (!v || !au || !au.preview_url) return;
   const a = new Audio(au.preview_url); a.preload = "none"; a.loop = true;
   let ok = true;
+  const own = { stop: () => { a.pause(); if (CUR === own) CUR = null; } };  // the same stop() the picker's preview has
   const on = () => !tg || tg.checked;
+  const note = (t) => { const n = el.querySelector("[data-testid=music-how]"); if (n) n.textContent = t; };
   const mix = () => { a.volume = Math.max(0, Math.min(1, (au.music_volume ?? 100) / 100)); v.volume = on() ? Math.max(0, Math.min(1, (au.original_volume ?? 100) / 100)) : 1; };
   const sync = () => { if (isFinite(a.duration) && a.duration > 0) a.currentTime = v.currentTime % a.duration; };
-  const play = () => { if (!ok || !on()) return; if (CUR && CUR !== a) CUR.pause(); CUR = a; mix(); sync(); a.play().catch(() => {}); };
-  a.onerror = () => { ok = false; const n = el.querySelector("[data-testid=music-how]"); if (n) n.textContent = "Instagram's preview of this track has expired here, but the track still goes to Buffer with the Reel."; };
+  const play = () => { if (!ok || !on()) return; if (CUR && CUR !== own) CUR.stop(); CUR = own; mix(); sync();
+    a.play().catch(() => { own.stop(); v.volume = 1; if (tg) tg.checked = false;  // the browser refused: say so, the video plays as it is
+      note("The browser didn't play the track preview here. The track still goes to Buffer with the Reel."); }); };
+  a.onerror = () => { ok = false; note("Instagram's preview of this track has expired here, but the track still goes to Buffer with the Reel."); };
   v.addEventListener("play", play);
-  v.addEventListener("pause", () => a.pause());
-  v.addEventListener("ended", () => a.pause());
+  v.addEventListener("pause", () => own.stop());
+  v.addEventListener("ended", () => own.stop());
   v.addEventListener("seeked", () => { sync(); });
-  if (tg) tg.onchange = () => { mix(); if (on() && !v.paused) play(); else a.pause(); };
+  if (tg) tg.onchange = () => { mix(); if (on() && !v.paused) play(); else own.stop(); };
 }
 
 window.wireMusic = function (el, r, pk) {

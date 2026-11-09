@@ -78,6 +78,29 @@ def test_scheduled_and_edited_in_buffer_show_as_they_are(human, fake):
     assert pk["text"] == "Edited in Buffer by hand" and pk["sent"]["edited_in_buffer"]
 
 
+def test_a_caption_edit_alone_is_marked_edited_in_buffer(human, fake):
+    fake.posts += [{"id": "bp_c", "text": "Only the caption changed", "status": "draft", "channelId": "ch_ig"}]
+    rid = _run(human, **_sent("bp_c", buffer_status="draft"))
+    pk = _pk(human, rid)
+    assert pk["text"] == "Only the caption changed" and pk["sent"]["edited_in_buffer"]
+    assert _saved(human, rid)["sent"]["edited_in_buffer"]  # stored, not only in this answer
+
+
+def test_an_edit_saved_while_buffer_was_read_wins(human, fake, monkeypatch):
+    from studio import post_sync
+    rid = _run(human, **_sent("bp_gone"))
+    st = human.app.state.store
+    real = post_sync.reconcile
+
+    def slow(*a, **k):  # the person saves a caption while Buffer is being read
+        out = real(*a, **k)
+        st.x("UPDATE agent_runs SET updated=? WHERE id=?", (time.time() + 5, rid))
+        return out
+    monkeypatch.setattr(post_sync, "reconcile", slow)
+    _pk(human, rid)
+    assert _saved(human, rid)["status"] == "sent_to_buffer"  # not overwritten; the next open re-checks
+
+
 def test_published_and_failed_in_buffer(human, fake):
     fake.posts += [{"id": "bp_ok", "text": "A new model shipped today", "status": "sent", "dueAt": "2030-01-05T19:58:00.000Z",
                     "channelId": "ch_ig", "externalLink": "https://instagram.com/p/x"},
@@ -143,6 +166,25 @@ def test_a_saved_track_buffer_no_longer_loads_is_not_sent(human, fake):
     r = human.post(f"/api/agent/runs/{rid}/packages/ch_ig/schedule", json={"mode": "draft", "override_warnings": True})
     assert r.status_code == 409 and "Couldn't load track" in r.json()["error"]
     assert len(fake.created) == n  # nothing reached Buffer
+
+
+def test_only_buffer_answers_about_the_track_count():
+    from types import SimpleNamespace
+    from studio import audio_check
+    from studio.buffer_api import BufferError
+
+    def studio_raising(msg):
+        def fn(uid, ch, aid):
+            raise BufferError(msg)
+        return SimpleNamespace(buffer=SimpleNamespace(instagram_audio=fn))
+    a = Actor("u1")
+    for msg in ("Buffer could not complete the request (FORBIDDEN: Not authorized)",
+                "Buffer could not complete the request (UNAUTHENTICATED: sign in)",
+                "Buffer could not complete the request (RATE_LIMIT_EXCEEDED: slow down)",
+                "Buffer could not complete the request (502: )"):
+        assert audio_check.check_track(studio_raising(msg), a, "ch", GIFT)["state"] == "unknown", msg
+    gone = "Buffer could not complete the request (NOT_FOUND: Audio asset is not available to generate)"
+    assert audio_check.check_track(studio_raising(gone), a, "ch", GIFT)["state"] == "unavailable"
 
 
 def test_the_check_can_be_turned_off(human, fake, monkeypatch):

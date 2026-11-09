@@ -5,11 +5,14 @@ Kept free of FastAPI: actions.py (which the render worker imports) calls it.
 from __future__ import annotations
 
 import os
+import re
 
 from .actions import ActionError, Actor
 from .buffer_api import BufferError
 
 NEEDS_FACEBOOK = "Connect Instagram through a Facebook Page in Buffer to add music."
+# Buffer error codes that say nothing about the track itself (sign-in, scope, rate limits, outages): never "unloadable"
+NOT_ABOUT_TRACK = ("FORBIDDEN", "UNAUTH", "RATE_LIMIT", "TOO_MANY", "INTERNAL", "TIMEOUT", "UNAVAILABLE", "VALIDATION_FAILED")
 CHECK_TTL = 600  # one Buffer check per track and channel every 10 minutes, whoever asks
 UNLOADABLE = ("Buffer can't load “{title}” for this Instagram account (Buffer shows it as “Couldn't load track” and "
               "Instagram won't attach it), so it isn't used. Pick another track: licensed music usually works best.")
@@ -34,8 +37,9 @@ def check_track(studio, a: Actor, channel_id: str, au: dict, fresh: bool = False
             # only Buffer's own GraphQL answer about this track counts (gql raises those as "Buffer could not complete the
             # request (CODE: message)"); rate limits, HTTP 5xx, sign-in and scope problems say nothing about the track
             m = str(e)
-            if type(e) is not BufferError or not m.startswith("Buffer could not complete") or "Cannot query field" in m \
-                    or "RATE" in m.upper() or "INTERNAL" in m.upper():
+            code = (re.match(r"Buffer could not complete the request \(([^:]*):", m) or [None, ""])[1].strip().upper()
+            if type(e) is not BufferError or not code or code.isdigit() or "Cannot query field" in m \
+                    or any(w in code for w in NOT_ABOUT_TRACK):
                 raise  # never cached
             return {"state": "unavailable", "why": m[:300]}
     key = ("audio_ok", a.uid, channel_id, aid)

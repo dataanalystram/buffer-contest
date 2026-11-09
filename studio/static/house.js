@@ -264,7 +264,15 @@ document.addEventListener("visibilitychange", async () => {
   const linked = ((r.result || {}).packages || []).some((p) => p.sent || p.buffer_draft);
   if (!linked || Date.now() - bufSeen < 20000) return;
   bufSeen = Date.now();
-  try { const n = await api(`/api/agent/runs/${r.id}`); if (H.run && H.run.id === r.id && !["running", "rendering"].includes(H.run.status)) showIfOn(r.id, n); } catch (_) { /* the next open re-checks */ }
+  try {
+    const n = await api(`/api/agent/runs/${r.id}`);
+    if (!H.run || H.run.id !== r.id || ["running", "rendering"].includes(H.run.status)) return;
+    // redraw only when Buffer changed something, and never under a caption or field the person is typing in
+    if (JSON.stringify((n.result || {}).packages || []) === JSON.stringify((H.run.result || {}).packages || [])) return;
+    const f = document.activeElement;
+    if (f && f.closest && f.closest("#runView") && (f.matches("input, textarea, select") || f.isContentEditable)) return;
+    showIfOn(r.id, n);
+  } catch (_) { /* the next open re-checks */ }
 });
 
 // ---------------------------------------------------------------- run view
@@ -630,7 +638,7 @@ function pkgCard(p) {
     ${window.ledgerDraft ? window.ledgerDraft(p) : ""}
     ${p.status === "hold" ? `<div class="st warn" data-testid="pkg-hold">On hold: answer the question above first</div>` : sent ? `<div class="st ok" data-testid="pkg-sent">${sentLine(p)}</div>`
       : `<div class="pkg-act"><select data-testid="pkg-mode" aria-label="What to do with this post">${PKG_MODES.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select><input type="datetime-local" data-testid="pkg-when" hidden aria-label="When">
-        <button class="btn sm" data-testid="pkg-send"${p.media_state && p.media_state !== "ok" ? ` disabled title="${esc(MEDIA_GONE)}"` : ""}>${PKG_MODES[0][3]}</button></div><small class="muted sm pkg-help" data-testid="pkg-help">${esc(help)}</small>`}
+        <button class="btn sm" data-testid="pkg-send"${p.media_state && p.media_state !== "ok" ? ` disabled title="${esc(MEDIA_GONE)}"` : ""}>${PKG_MODES[0][3]}</button></div><small class="muted sm pkg-help" data-testid="pkg-help">${esc(help)}</small>${p.buffer_draft && p.buffer_draft.buffer_post_id ? ` <button type="button" class="link sm" data-testid="pkg-buffer-check" title="Is the saved draft still in Buffer?">Check Buffer</button>` : ""}`}
     </div>
   </article>`;
 }
@@ -673,7 +681,7 @@ function wirePackages(r) {
       bc.disabled = true; bc.textContent = "Checking…";
       try { const n = await api(`/api/agent/runs/${r.id}?refresh_buffer=1`); showIfOn(r.id, n);
         const np = ((n.result || {}).packages || []).find((p) => p.channel_id === ch) || {};
-        toast(np.buffer_sync && !np.sent ? "It's no longer in Buffer, so you can edit it again" : "Checked with Buffer", 4000); }
+        toast(np.buffer_sync && !np.sent && !np.buffer_draft ? "It's no longer in Buffer, so you can edit it again" : "Checked with Buffer", 4000); }
       catch (e) { toast(e.message, 6000); bc.disabled = false; bc.textContent = "Check Buffer"; }
     };
     ta.oninput = () => { clearTimeout(t); t = setTimeout(async () => {

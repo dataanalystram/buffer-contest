@@ -157,11 +157,12 @@ def reconcile(store, a, res: dict, index: dict | None, lookup=None) -> bool:
             upd["error"] = "Buffer couldn't publish it: " + (((post.get("error") or {}).get("message")) or "see Buffer.")
         bt = _norm(post.get("text"))
         mine = _norm(pk.get("text"))
-        if bt and bt != mine and not mine.startswith(bt):  # edited in Buffer (a thread's first part is a prefix: not an edit)
+        edited = bool(bt and bt != mine and not mine.startswith(bt))  # a thread's first part is a prefix: not an edit
+        if edited:  # edited in Buffer
             pk["text"] = post["text"]
             upd["edited_in_buffer"] = time.time()
             changed = True
-        if any(sent.get(k) != v for k, v in upd.items() if k != "edited_in_buffer"):
+        if edited or any(sent.get(k) != v for k, v in upd.items() if k != "edited_in_buffer"):
             pk["sent"] = {**sent, **upd}
             pk.pop("buffer_sync", None)
             changed = True
@@ -186,9 +187,9 @@ def sync_run(house, a, run: dict, refresh: bool = False) -> bool:
         fn = (lambda pid: lookup(a.uid, pid)) if lookup else None
         if not reconcile(house.store, a, res, index, fn):
             return False
-        fresh = house.store.q("SELECT status FROM agent_runs WHERE id=? AND user_id=?", (run["id"], a.uid))
-        if not fresh or fresh[0]["status"] in ("running", "rendering"):
-            return False  # the agent started working on it meanwhile: its save wins, the next open re-checks
+        fresh = house.store.q("SELECT status, updated FROM agent_runs WHERE id=? AND user_id=?", (run["id"], a.uid))
+        if not fresh or fresh[0]["status"] in ("running", "rendering") or fresh[0]["updated"] != run.get("updated"):
+            return False  # the agent or an edit saved it meanwhile (Buffer was being read): that save wins, the next open re-checks
         house._save(run["id"], run["steps"], res)
         return True
     except Exception:  # noqa: BLE001 - the run always opens
