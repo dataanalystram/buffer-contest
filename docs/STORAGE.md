@@ -22,8 +22,14 @@ With R2 on, a new media row or Library chunk keeps `data` NULL and gets `storage
 `/m/<token>`, `/ms/<exp>/<sig>/<token>` (signed, 15 min) and `/api/library/...`, with every ownership check as before;
 the app reads the object (whole, or the 1 MB chunks a Range needs). `studio/r2.py` can also issue short-lived presigned GETs.
 
-If the bucket refuses or is down when a file is written, that file stays in the database (logged), so uploads never fail
-because R2 did. A read of an R2 object that fails answers 503.
+If the bucket refuses or is down when a file is written, a generated file (renders, the `media` table) stays in the
+database (logged). A **Library upload** is refused instead with a 507 and a plain message, and nothing is kept: blobs
+kept in the database are what drove the Supabase egress outage of 9 Nov 2026. `HQ_LIBRARY_DB_FALLBACK=1` brings back the
+old fallback for Library uploads. Without a bucket at all (local SQLite, `HQ_MEDIA_STORAGE=db`) the database is the store,
+as before.
+
+Per-person Library caps: `HQ_LIBRARY_QUOTA_MB` (default 200) and `HQ_LIBRARY_FILE_MB` (default 100). The quota is shared
+by everyone under `HQ_R2_MAX_BYTES`: at 400 MB a person, 20 full Libraries reach the 8 GB cap. A read of an R2 object that fails answers 503.
 
 ## Deleting
 A delete never removes an object inline. `blobstore.release()` copies the rows' keys into `blob_gc` and deletes the rows in
@@ -110,7 +116,7 @@ month; the code stops 20% short of each:
 
 | Setting | Default | Past it |
 |---|---|---|
-| `HQ_R2_MAX_BYTES` | 8 GB stored (rows with a `storage_key`, plus open/ready One take uploads) | new media stays in the database; migration stops; large uploads answer 507 |
+| `HQ_R2_MAX_BYTES` | 8 GB stored (rows with a `storage_key`, plus open/ready One take uploads) | new generated media stays in the database; Library uploads answer 507; migration stops; large uploads answer 507 |
 | `HQ_R2_MAX_CLASS_A` | 800,000 a month (UTC) | no new R2 writes (database fallback); a rewrite of an R2 object (GPS blanking) fails closed with 503 |
 | `HQ_R2_MAX_CLASS_B` | 8,000,000 a month (UTC) | reads use the row's database copy when it has one, else a clear 503 until the month turns (for everyone but the file's owner); no redirects |
 | `HQ_R2_HARD_CLASS_B` | 9,500,000 (clamped to 9,900,000) | the owner's signed-in browser may still read their own R2-only file between the Class B cap and this ceiling; past it, 503 for everyone. Buffer and the worker are not owners |
