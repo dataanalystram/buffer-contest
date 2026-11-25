@@ -717,6 +717,7 @@ class Takes(TakeBin, TakeControl):
                           "faces": [f for f in an.get("faces") or [] if c["start"] - 1 <= f["t"] <= c["end"] + 1],
                           "layout_overrides": c.get("layout_overrides") or {}, "caption_preset": c.get("caption_preset"),
                           "hook_mode": c.get("hook_mode"),
+                          "hook_fx": c.get("hook_fx") or "none", "hook_words": c.get("hook_words") or "",
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
                           "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else [],
@@ -1678,6 +1679,13 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
         meta["ocr"] = {k: seen.get(k) for k in ("ok", "version", "text", "readable", "watermarks", "ms", "skipped")}
         meta["ocr"]["frames"] = len(seen.get("frames") or [])
         meta["source_captions"] = own
+        if c.get("hook_fx") == "behind":  # Words behind you (beta, HQ_HOOK_BEHIND=1): fails open, the reason in the meta
+            from .media import behind
+            if behind.enabled():
+                data, meta["hook_fx"] = behind.on_clip(data, c.get("hook") or "", c.get("hook_words"), spec.get("kit"),
+                                                       start=take.COVER_SECS)
+            else:
+                meta["hook_fx"] = {"on": False, "why": "Words behind you isn't switched on on this server (HQ_HOOK_BEHIND)."}
         yield c["id"], data, cover, meta
         return
     from .media import longform

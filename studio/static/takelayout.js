@@ -16,6 +16,7 @@ const IC = {  // Lucide icons (ISC): scan-face, maximize, rows-2, monitor, spark
 const icon = (k) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IC[k] || ""}</svg>`;
 const NAMES = { auto: "Auto", track: "Follow face", fit: "Full frame", split: "Split", screen: "Screen + face" };
 const HOOKS = { opener: "Opener (first 3 s)", keep: "Keep on screen" };
+const FX = { none: "Cover only", behind: "Words behind you (beta)" };
 let L = null;
 const $l = (id) => document.getElementById(id);
 const clock = (s) => { s = Math.max(0, +s || 0); return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`; };
@@ -37,6 +38,7 @@ function sheet() {
     <p class="muted xs" id="tlNote"></p>
     <ol class="tl-scenes" id="tlScenes" data-testid="layout-scenes"></ol>
     <fieldset class="tl-caps" id="tlHookSet" hidden><legend>${icon("hook")} Hook</legend><p class="muted xs">The hook and the credit pop in at the start and fade by 3 s (the credit is on the end card too), or stay on screen for the whole clip.</p><div class="tl-chips" id="tlHook" role="radiogroup" aria-label="Hook"></div></fieldset>
+    <fieldset class="tl-caps" id="tlFxSet" hidden><legend>${icon("hook")} Hook</legend><p class="muted xs">Words behind you puts 1 to 3 words of the hook, huge, behind your head for the first seconds. Leave the words empty for the hook's strongest word.</p><div class="tl-chips" id="tlFx" role="radiogroup" aria-label="Hook effect"></div><label class="xs" id="tlFxWordsRow" hidden>Words from the hook<br><input type="text" id="tlFxWords" maxlength="40" data-testid="layout-hook-words" autocomplete="off"></label><p class="muted xs" id="tlFxLast" data-testid="layout-hook-fx-last" hidden></p></fieldset>
     <fieldset class="tl-caps"><legend>${icon("captions")} Caption look</legend><div class="tl-chips" id="tlCaps" role="radiogroup" aria-label="Caption look"></div></fieldset>
     <label class="tl-smart"><input type="checkbox" id="tlSmart" data-testid="layout-smart"> <span><b>Smart layout (beta)</b> · lets a free vision model suggest layouts from up to 12 still frames of each clip (no audio). Free endpoints may log what they receive. Applies to every take in your account.</span></label>
     <p class="st err xs" id="tlErr" role="alert" data-testid="layout-error" hidden></p>
@@ -70,6 +72,16 @@ function draw() {
   $l("tlHookSet").hidden = !hooks.length;
   $l("tlHook").innerHTML = hooks.map((k) => `<button type="button" role="radio" class="chip sm" data-hook="${esc(k)}" aria-checked="${L.hook === k}" data-testid="layout-hook-${esc(k)}">${esc(HOOKS[k] || k)}</button>`).join("");
   $l("tlHook").querySelectorAll("[data-hook]").forEach((b) => (b.onclick = () => { L.hook = b.dataset.hook; draw(); }));
+  const fx = v.hook_fx_choices || [];
+  $l("tlFxSet").hidden = !fx.length;
+  $l("tlFx").innerHTML = fx.map((k) => `<button type="button" role="radio" class="chip sm" data-fx="${esc(k)}" aria-checked="${L.fx === k}" data-testid="layout-hook-fx-${esc(k)}">${esc(FX[k] || k)}</button>`).join("");
+  $l("tlFx").querySelectorAll("[data-fx]").forEach((b) => (b.onclick = () => { L.words = $l("tlFxWords").value; L.fx = b.dataset.fx; draw(); }));
+  $l("tlFxWordsRow").hidden = L.fx !== "behind";
+  $l("tlFxWords").value = L.words || "";
+  $l("tlFxWords").placeholder = v.hook ? `From: ${v.hook}` : "";
+  const last = v.hook_fx_result;
+  $l("tlFxLast").hidden = !last;
+  if (last) $l("tlFxLast").textContent = last.on ? `Last render: "${last.text}" behind you for ${(+last.secs).toFixed(1)} s.` : `Last render: no words behind you. ${last.why || ""}`;
 }
 
 window.openClipLayout = async function (id) {
@@ -77,7 +89,7 @@ window.openClipLayout = async function (id) {
   if (L && L.ctl) L.ctl.abort();
   const d = sheet();
   const list = t.clips || [];
-  L = { id, take: t.id, n: list.findIndex((c) => c.id === id) + 1, ctl: new AbortController(), pick: {}, orig: {}, cap: null, hook: null, view: null };
+  L = { id, take: t.id, n: list.findIndex((c) => c.id === id) + 1, ctl: new AbortController(), pick: {}, orig: {}, cap: null, hook: null, fx: null, words: "", view: null };
   const my = L;
   say(""); $l("tlScenes").innerHTML = `<li class="muted xs"><span class="spin" aria-hidden="true"></span> Loading…</li>`;
   if (!d.open) d.showModal();
@@ -85,7 +97,7 @@ window.openClipLayout = async function (id) {
     const [v, s] = await Promise.all([api(`/api/takes/${t.id}/clips/${encodeURIComponent(id)}/layout`, { signal: my.ctl.signal }),
       api("/api/takes/settings/smart-layout", { signal: my.ctl.signal })]);
     if (L !== my) return;  // the sheet moved on: drop this late answer
-    my.view = v; my.cap = v.caption_preset; my.hook = v.hook_mode || null;
+    my.view = v; my.cap = v.caption_preset; my.hook = v.hook_mode || null; my.fx = v.hook_fx || null; my.words = v.hook_words || "";
     Object.entries(v.overrides || {}).forEach(([k, o]) => { my.pick[+k] = o.layout; my.orig[+k] = o; });
     $l("tlSmart").checked = !!s.smart_layout;
     draw();
@@ -104,7 +116,7 @@ async function save() {
   }
   b.disabled = true; say("");
   try {
-    await api(`/api/takes/${my.take}/clips/${encodeURIComponent(my.id)}/layout`, { method: "POST", body: { scenes, caption_preset: my.cap, ...(my.hook ? { hook_mode: my.hook } : {}) }, signal: my.ctl.signal });
+    await api(`/api/takes/${my.take}/clips/${encodeURIComponent(my.id)}/layout`, { method: "POST", body: { scenes, caption_preset: my.cap, ...(my.hook ? { hook_mode: my.hook } : {}), ...(my.fx ? { hook_fx: my.fx, hook_words: my.fx === "behind" ? $l("tlFxWords").value.trim() : "" } : {}) }, signal: my.ctl.signal });
     if (L !== my) return;
     toast("Re-rendering the clip with its new layout…");
     $l("clipLayoutDialog").close();

@@ -73,6 +73,10 @@ studio/take.py, studio/takes.py, studio/render_worker.py  One take -> a week (li
   - MediaPipe (Tasks Face Detector) and the BlazeFace short-range model  https://github.com/google-ai-edge/mediapipe
       Licence: Apache License 2.0, Copyright The MediaPipe Authors. The model file is downloaded at run time from
       storage.googleapis.com/mediapipe-models; not redistributed. Used for the 9:16 face-tracked reframe.
+  - MediaPipe (Tasks Image Segmenter) and the Selfie Segmenter model  https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter
+      Licence: Apache License 2.0, Copyright The MediaPipe Authors. Downloaded at run time from
+      storage.googleapis.com/mediapipe-models; not redistributed. Person masks for Words behind you
+      (studio/media/behind.py). The look follows the owner's own reel-kit notes; no third-party code copied.
   - FFmpeg with libass and libx264  https://ffmpeg.org  (LGPL-2.1+, GPL-2.0+ when built with GPL parts such as x264)
       Invoked as a separate executable (subprocess) for cutting, cropping, burning in ASS captions and encoding;
       not linked or bundled. Source: https://ffmpeg.org/download.html

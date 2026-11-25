@@ -21,7 +21,8 @@ LAYOUT_CHOICES = ("auto", "track", "fit", "split", "screen")
 OPUS_LAYOUTS = ("auto", "track", "fit")  # a shorts-style clip (a pasted link) has one framing for the whole clip
 BG_CHOICES = ("blur", "brand")
 STYLE_CHOICES = ("pip", "stack")
-HOOK_MODES = ("opener", "keep")  # clips from a link: the hook + credit as a 3 s opener (default) or on screen all clip long
+HOOK_MODES = ("opener", "keep")
+HOOK_FX = ("none", "behind")  # One take clips from your upload: "behind" = Words behind you (beta, HQ_HOOK_BEHIND=1)  # clips from a link: the hook + credit as a 3 s opener (default) or on screen all clip long
 MAX_SCENES = 200
 TOOLS = [
     {"name": "get_clip_layout", "description": "One take: a clip's layout plan, scene by scene ({scene, start, end, layout: "
@@ -35,6 +36,9 @@ TOOLS = [
      "screen (screen with the face, style: pip | stack) or auto (back to the automatic choice). caption_preset: "
      "bold_pop | lower_third | two_tone | typewriter. hook_mode (clips from a link): opener (the hook box and credit pop in "
      "for the first 3 s, the credit is on the end card too; the default) or keep (both stay on screen for the whole clip). "
+     "hook_fx (One take clips from your upload, when the server has it switched on): behind (Words behind you: 1-3 words of "
+     "the hook drawn huge behind the speaker's head for the first 2.6 s) or none; hook_words picks those words (said in the "
+     "hook; default its strongest word). "
      "The clip re-renders on the video worker (poll list_clips).",
      "inputSchema": {"type": "object", "required": ["take_id", "clip_id"], "properties": {
          "take_id": {"type": "integer"}, "clip_id": {"type": "string"},
@@ -43,7 +47,9 @@ TOOLS = [
                     "additionalProperties": {"type": ["string", "object"]}},
          "bg": {"type": "string", "enum": list(BG_CHOICES)}, "style": {"type": "string", "enum": list(STYLE_CHOICES)},
          "caption_preset": {"type": "string", "enum": ["bold_pop", "lower_third", "two_tone", "typewriter"]},
-         "hook_mode": {"type": "string", "enum": list(HOOK_MODES)}}}},
+         "hook_mode": {"type": "string", "enum": list(HOOK_MODES)},
+         "hook_fx": {"type": "string", "enum": list(HOOK_FX)},
+         "hook_words": {"type": "string", "maxLength": 40, "description": "1-3 words of the hook to put behind the speaker"}}}},
 ]
 READ_ONLY = {"get_clip_layout"}
 NAMES = {t["name"] for t in TOOLS}
@@ -134,7 +140,15 @@ def view(takes, a: Actor, rid, clip_id) -> dict:
             "layouts": list(OPUS_LAYOUTS if run["input"].get("style") == "opus" else LAYOUT_CHOICES),
             "style": run["input"].get("style") or "take",
             **({"hook_mode": "keep" if clip.get("hook_mode") == "keep" else "opener", "hook_modes": list(HOOK_MODES)}
-               if run["input"].get("style") == "opus" else {})}
+               if run["input"].get("style") == "opus" else {}),
+            **({"hook": clip.get("hook") or "", "hook_fx": clip.get("hook_fx") or "none", "hook_fx_choices": list(HOOK_FX),
+                "hook_words": clip.get("hook_words") or "", "hook_fx_result": m.get("hook_fx")}
+               if (run["input"].get("style") or "take") == "take" and _behind_on() else {})}
+
+
+def _behind_on() -> bool:
+    from .media import behind
+    return behind.enabled()
 
 
 def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
@@ -143,6 +157,7 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         raise ActionError("Send a JSON object.")
     lay, scene, bg, style, preset = (body.get(k) for k in ("layout", "scene", "bg", "style", "caption_preset"))
     hook_mode = body.get("hook_mode")
+    hook_fx, hook_words = body.get("hook_fx"), body.get("hook_words")
     scenes = body.get("scenes")
     batch: dict[int, dict | str] = {}
     if scenes is not None:  # several scenes at once (the UI's Save): {"0": "track", "1": {"layout": "fit", "bg": "brand"}}
@@ -172,8 +187,12 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         raise ActionError(f"caption_preset must be one of: {', '.join(captions_ass.PRESETS)}.")
     if hook_mode is not None and hook_mode not in HOOK_MODES:
         raise ActionError("hook_mode must be opener or keep.")
-    if lay is None and preset is None and not batch and hook_mode is None:
-        raise ActionError("Nothing to change: give layout (with an optional scene), caption_preset and/or hook_mode.")
+    if hook_fx is not None and hook_fx not in HOOK_FX:
+        raise ActionError("hook_fx must be behind or none.")
+    if hook_words is not None and (not isinstance(hook_words, str) or len(hook_words) > 40):
+        raise ActionError("hook_words must be text (1-3 words of the hook).")
+    if lay is None and preset is None and not batch and hook_mode is None and hook_fx is None and hook_words is None:
+        raise ActionError("Nothing to change: give layout (with an optional scene), caption_preset, hook_mode and/or hook_fx.")
     takes.h.studio._guard_write(a, "adjust_clip")
     rid = _take_id(rid)
     with takes._take_lock(rid):
@@ -187,6 +206,16 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
             raise ActionError(f"This take's style ({str(style)[:20]}) has no layout choices.", 409)
         if hook_mode is not None and style != "opus":
             raise ActionError("hook_mode is for clips from a link (the hook box); a One take clip from your upload has none.", 409)
+        if (hook_fx is not None or hook_words is not None) and style != "take":
+            raise ActionError("Words behind you is for One take clips from your upload; a clip from a link has its hook box.", 409)
+        if (hook_fx == "behind" or hook_words) and not _behind_on():
+            raise ActionError("Words behind you isn't switched on on this server yet.", 409)
+        if hook_words:
+            from .media import behind
+            try:
+                behind.pick_words(clip.get("hook") or "", hook_words)
+            except behind.BehindError as e:
+                raise ActionError(str(e)) from None
         if style == "opus":  # a pasted link: one framing for the whole clip, Follow face or Full frame
             if any(i != 0 for i in ([scene] if scene is not None else []) + list(batch)):
                 raise ActionError("Clips from a link have one layout for the whole clip: use scene 0, or no scene.")
@@ -226,10 +255,15 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
             clip["caption_preset"] = preset
         if hook_mode is not None:
             clip["hook_mode"] = hook_mode
+        if hook_fx is not None:
+            clip["hook_fx"] = hook_fx
+        if hook_words is not None:
+            clip["hook_words"] = hook_words.strip()
         clip["status"] = "rendering"
         takes._save(rid, run["steps"], res, "rendering")
         takes.store.audit(a.uid, a.label, "set_clip_layout", "write", {"take": rid, "clip": clip_id, "layout": lay, "scene": scene,
-                                                                       "caption_preset": preset, "hook_mode": hook_mode})
+                                                                       "caption_preset": preset, "hook_mode": hook_mode,
+                                                                       "hook_fx": hook_fx})
     takes._render(a, rid, [clip_id])
     out = view(takes, a, rid, clip_id)
     out["rerendering"] = True
@@ -253,4 +287,5 @@ def call_tool(studio, actor, name: str, args: dict):
     if name == "get_clip_layout":
         return view(t, actor, args.get("take_id"), args.get("clip_id"))
     return set_layout(t, actor, args.get("take_id"), args.get("clip_id"),
-                      {k: args[k] for k in ("layout", "scene", "scenes", "bg", "style", "caption_preset", "hook_mode") if k in args})
+                      {k: args[k] for k in ("layout", "scene", "scenes", "bg", "style", "caption_preset", "hook_mode",
+                                                    "hook_fx", "hook_words") if k in args})
