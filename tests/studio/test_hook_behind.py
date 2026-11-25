@@ -68,6 +68,20 @@ def test_composite_puts_the_word_under_the_person():
     assert behind.composite(frame, rgb, a, 20, 10, person, 0.0) is frame
 
 
+def test_settle_keeps_the_word_readable():
+    person = np.zeros((1280, 720), np.float32)
+    person[400:, 260:460] = 1.0                 # a head whose top is at y=400, in the middle of the frame
+    a = np.ones((200, 400), np.float32)         # the word's ink, centred on the head
+    x, y = behind.place(720, 1280, 400, 400, 200, 360)
+    assert behind.hidden_share(a, x, y, person) > behind.MAX_HIDDEN      # as placed, the head eats the middle letters
+    (x2, y2), hid = behind.settle(1280, (x, y), a, person)
+    assert x2 == x and y2 < y and hid <= behind.MAX_HIDDEN and y2 >= int(1280 * behind.TOP_SAFE)
+    assert behind.settle(1280, (x, y2), a, person)[0] == (x, y2)           # already readable: not moved
+    tall = np.ones((1280, 720), np.float32)     # the person fills the frame: nowhere to read it
+    with pytest.raises(behind.BehindError):
+        behind.settle(1280, (x, y), a, tall)
+
+
 def test_head_top_and_centre_from_the_mask():
     m = np.zeros((200, 100), np.float32)
     m[60:, 30:70] = 1
@@ -114,7 +128,7 @@ def test_real_render_on_a_portrait(tmp_path):
         got = behind.apply(str(src), str(out), "MOON", start=0.2, kit_font="anton", seg=seg)
     finally:
         seg.close()
-    assert got["on"] and got["frames"] == 78 and got["head_top"] is not None
+    assert got["on"] and got["frames"] == 78 and got["head_top"] is not None and got["hidden"] <= behind.MAX_HIDDEN
     info_in, info_out = behind._probe(str(src)), behind._probe(str(out))
     assert (info_out["w"], info_out["h"]) == (720, 1280) and abs(info_out["duration"] - info_in["duration"]) < 0.05
     assert _audio_md5(src) == _audio_md5(out)          # the sound is copied byte for byte

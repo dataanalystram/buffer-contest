@@ -31,6 +31,7 @@ WINDOW_S = 2.6          # how long the word stays (after the cover frame)
 FADE_IN, FADE_OUT = 0.22, 0.35
 RISE = 0.035            # the word rises this share of the frame height while it fades in
 TOP_SAFE = 0.07         # Reels / TikTok top UI
+MAX_HIDDEN = 0.22       # at most this share of the word's ink may sit behind the person, or it stops reading ("H...W")
 MAX_WORDS, MAX_CHARS = 3, 18
 STOP = {"a", "an", "the", "and", "but", "or", "so", "to", "of", "in", "on", "at", "for", "is", "it", "its", "it's",
         "i", "we", "you", "my", "our", "your", "this", "that", "was", "are", "be", "with", "just", "really", "very"}
@@ -94,6 +95,33 @@ def place(W: int, H: int, top: int | None, text_w: int, text_h: int, cx: int | N
     x = max(0, min(x, W - text_w)) if text_w <= W else (W - text_w) // 2
     y = int(H * 0.18) if top is None else int(top - text_h * 0.45)
     return x, max(int(H * TOP_SAFE), min(y, int(H * 0.45)))
+
+
+def hidden_share(layer_a, x: int, y: int, person) -> float:
+    """The share of the word's ink (alpha) that the person covers when the word's box is at (x, y)."""
+    import numpy as np
+    H, W = person.shape[:2]
+    h, w = layer_a.shape[:2]
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + w), min(H, y + h)
+    ink = float(layer_a.sum())
+    if ink <= 0 or x1 <= x0 or y1 <= y0:
+        return 0.0
+    a = layer_a[y0 - y:y1 - y, x0 - x:x1 - x]
+    return float((a * np.clip(person[y0:y1, x0:x1], 0, 1)).sum()) / ink
+
+
+def settle(H: int, pos: tuple[int, int], layer_a, person, max_hidden: float = MAX_HIDDEN) -> tuple[tuple[int, int], float]:
+    """Raise the word until the person hides at most ``max_hidden`` of it, so it still reads (the head may only
+    overlap its lower edge). Raises BehindError when even the highest safe place hides too much."""
+    x, y = pos
+    floor, step = int(H * TOP_SAFE), max(2, int(H * 0.01))
+    hid = hidden_share(layer_a, x, y, person)
+    while hid > max_hidden and y > floor:
+        y = max(floor, y - step)
+        hid = hidden_share(layer_a, x, y, person)
+    if hid > max_hidden:
+        raise BehindError("The person would hide too much of the word to read it, so the clip was left as it was.")
+    return (x, y), round(hid, 3)
 
 
 def fit_size(font_path: str, text: str, W: int, H: int) -> int:
@@ -241,7 +269,7 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
                             "-r", f"{fps:.6f}", "-i", "-", "-i", src, "-map", "0:v", "-map", "1:a?", "-c:v", "libx264",
                             "-preset", "veryfast", "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "copy",
                             "-movflags", "+faststart", out], stdin=subprocess.PIPE)
-    n, masked, prev, pos, tops = 0, 0, None, None, []
+    n, masked, prev, pos, tops, hid = 0, 0, None, None, [], None
     size_b = W * H * 3
     try:
         while True:
@@ -257,6 +285,7 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
                         raise BehindError("No person was found at the start of the clip, so there is nothing to go behind.")
                     tops.append(head_top(prev))
                     pos = place(W, H, tops[0], lw, lh, head_x(prev, tops[0]))
+                    pos, hid = settle(H, pos, la, np.clip(prev, 0, 1))
                 t = n / fps
                 a = alpha_at(t, start, dur)
                 rise = int(H * RISE * (1 - min(1.0, (t - start) / FADE_IN)) ** 2) if FADE_IN else 0
@@ -282,6 +311,7 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
         raise BehindError("The clip ended before the words behind you could start.")
     return {"on": True, "text": text, "start": round(start, 3), "secs": round(dur, 3), "frames": masked,
             "font": Path(font).stem, "size": size, "xy": list(pos) if pos else None, "head_top": tops[0] if tops else None,
+            "hidden": hid,
             "mask": "mediapipe selfie_segmenter", "ms": int((time.time() - t0) * 1000)}
 
 
