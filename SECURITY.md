@@ -13,7 +13,6 @@ Include what you found, the steps to reproduce it, and the impact you expect. Yo
 
 - The hosted app (`studio/`) at https://huhqueue-studio.onrender.com and its `/demo` sample workspace.
 - The video worker workflows (`.github/workflows/render.yml`, `take.yml`) and the InstaBox worker path.
-- The self-hosted app (`huhqueue/`).
 
 Out of scope: denial of service by volume, findings that need a compromised device or browser, reports from automated
 scanners without a working proof, and the third-party services HuhQueue connects to (report those to their owners).

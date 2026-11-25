@@ -25,8 +25,7 @@ the Planner. [Watch it](https://github.com/dataanalystram/buffer-contest/blob/ma
 · [transcript](demo/huhqueue-buffer-commit-demo-2min.transcript.md)*
 
 > **The contest entry is Studio (`studio/`).** It signs users in with Buffer OAuth only (Authorization Code + PKCE S256,
-> `prompt=consent`, rotating `offline_access` refresh tokens) and never asks for a Buffer API key. The separate core app in
-> `huhqueue/` has paste-a-token options; those are for connecting LinkedIn and Instagram directly, not Buffer.
+> `prompt=consent`, rotating `offline_access` refresh tokens) and never asks for a Buffer API key.
 > **Buffer scopes:** enable a new scope on the Buffer app client *before* deploying code that requests it, or every sign-in
 > fails with `invalid_scope`. Users who signed in earlier see "Reconnect Buffer to allow …" until they consent again.
 
@@ -251,10 +250,5 @@ python scripts/responsive_audit.py http://127.0.0.1:8899   # every screen at 360
 STUDIO_TEST_PG=postgresql://... python -m pytest tests/studio -q   # same suite on Postgres
 scripts/secret_scan.sh                      # gitleaks on full history + working tree (run before every push)
 ```
-
-## Self-hosted mode
-
-The pre-existing HuhQueue scheduler with native connectors (no Buffer needed) is in `huhqueue/` — see [docs/SELF_HOST.md](docs/SELF_HOST.md).
-It is not part of the contest edition.
 
 MIT licensed. Built fast with AI coding agents; any agent can read, edit and run this repo.

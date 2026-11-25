@@ -28,8 +28,8 @@ Earlier posts with the 1:26 demo are listed in [SUBMISSION.md](SUBMISSION.md).
 Commit `81b568e` — *"Import pre-existing HuhQueue base"* (imported 28 Oct 2026) — is a snapshot of
 [dataanalystram/bufferopensource@243ef81](https://github.com/dataanalystram/bufferopensource): the self-hosted
 HuhQueue scheduler with its own native Instagram/YouTube/X/TikTok/LinkedIn connectors (`huhqueue/`, `web/`,
-`tests/*.py` outside `tests/studio/`, `docs/` except files named below). It is kept as an optional self-host mode and is
-**not** part of the hosted contest app. Its README now lives at [docs/SELF_HOST.md](docs/SELF_HOST.md).
+`tests/*.py` outside `tests/studio/`, `docs/` except files named below). It was **not** part of the hosted contest app,
+and it was removed from this repo on 25 Nov 2026 (it stays in a private repo).
 
 ## Built during Buffer Commit (every commit after `81b568e`)
 
