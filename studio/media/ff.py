@@ -65,6 +65,30 @@ def ffprobe_bin() -> str | None:
     return p
 
 
+@lru_cache(maxsize=4)
+def ffmpeg_major(exe: str = "ffmpeg") -> int | None:
+    """The major version of ``exe`` (7 for "ffmpeg version 7.1.1", 9 for "9.0.2"), or None when it can't be read
+    (a git build such as "N-11234-g..." or no ffmpeg at all)."""
+    import re
+    import subprocess
+    try:
+        out = subprocess.run([exe, "-hide_banner", "-version"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.match(r"ffmpeg version n?(\d+)\.", out or "")
+    return int(m.group(1)) if m else None
+
+
+def filter_graph_file_args(path: str, exe: str = "ffmpeg") -> list[str]:
+    """Arguments that load a -filter_complex graph from a file. ffmpeg 7 added the "-/option file" form and ffmpeg 9
+    removed -filter_complex_script; 6.x (Ubuntu 24.04, the live workers) only knows the script form. Unknown versions
+    (git builds) get the new form when the major can't be read but the binary is new enough to print no "version x.y"."""
+    major = ffmpeg_major(exe)
+    if major is not None and major < 7:
+        return ["-filter_complex_script", path]
+    return ["-/filter_complex", path]
+
+
 def have_ffmpeg() -> bool:
     try:
         ffmpeg_bin()
