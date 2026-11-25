@@ -29,7 +29,7 @@ Report a vulnerability privately through GitHub's "Report a vulnerability" (Secu
 - App to Buffer: OAuth 2.0 Authorization Code with PKCE and rotating refresh tokens.
 
 **Out of scope**
-- `huhqueue/` (the optional self-host package, which this deploy does not run), `web/src`, `scripts/` and `demo/`.
+- `scripts/` and `demo/`.
 
 ## The rules every change follows
 
