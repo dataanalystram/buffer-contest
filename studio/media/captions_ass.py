@@ -124,6 +124,39 @@ def text_width(text: str, preset: str = DEFAULT_PRESET, H: int = REF_H, file: st
     return f.getlength(text) + 2 * pr["outline"] * H / REF_H
 
 
+_JOIN = ("-", "'", "’")          # an ASR piece that continues the word before it: "re" + "-render", "don" + "'t"
+
+
+def _norm(t: str) -> str:
+    return re.sub(r"[^\w']+", "", t.lower())
+
+
+def clean_words(words: list[dict]) -> list[dict]:
+    """The words captions draw, repaired where speech-to-text splits or repeats them:
+
+    * a piece that starts with a hyphen or apostrophe and follows the word before it within 0.15 s is joined to it
+      ("RE -RENDER" -> "RE-RENDER"); a free-standing dash ("well - no") is left alone;
+    * the same word again, starting before the previous one has ended (a recogniser repeating the word at the seam of
+      its windows) is dropped. Real repeats ("no, no") are said one after the other, so they stay."""
+    out: list[dict] = []
+    for w in words or []:
+        t = str(w.get("w", "")).strip()
+        if not t:
+            continue
+        if out:
+            prev = out[-1]
+            pt = str(prev["w"]).strip()
+            gap = float(w["s"]) - float(prev["e"])
+            if t.startswith(_JOIN) and len(t) > 1 and gap < 0.15 and not pt.endswith((".", ",", "?", "!", ":", ";", "-")):
+                out[-1] = {**prev, "w": pt + t, "e": max(float(prev["e"]), float(w["e"]))}
+                continue
+            if _norm(t) and _norm(t) == _norm(pt) and float(w["s"]) < float(prev["e"]) - 0.01:
+                out[-1] = {**prev, "e": max(float(prev["e"]), float(w["e"]))}
+                continue
+        out.append({**w, "w": t})
+    return out
+
+
 def lines(words: list[dict]) -> list[list[dict]]:
     """Caption lines: <= 3 words, <= ~18 characters, broken at punctuation or after 0.8 s."""
     out, cur = [], []
@@ -207,7 +240,7 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
             "MarginR, MarginV, Encoding\n" + style + "\n\n"
             "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
     ev = []
-    groups = lines(words)
+    groups = lines(clean_words(words))
     base = clip_start - offset
     for gi, g in enumerate(groups):
         s = float(g[0]["s"]) - base
