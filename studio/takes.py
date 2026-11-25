@@ -472,6 +472,9 @@ class Takes(TakeBin, TakeControl):
         tmp = Path(tempfile.mkdtemp(prefix="hq_takejob_"))
         fetched = None
         try:
+            if spec["kind"] != "take_analyze":  # a clear error up front, not "No such filter: 'ass'" mid-render
+                from .media import selfcheck
+                selfcheck.local_ffmpeg(spec["kind"])
             src = tmp / "source.mp4"
             if spec.get("sample_window"):
                 win = (SAMPLE_DIR / spec["sample_window"]).resolve()

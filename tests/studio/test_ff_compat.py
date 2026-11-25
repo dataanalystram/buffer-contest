@@ -36,3 +36,20 @@ def test_the_installed_ffmpeg_accepts_the_chosen_form(tmp_path):
     r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.2",
                         *ff.filter_graph_file_args(str(g)), "-map", "[v]", "-f", "null", "-"], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_local_render_names_missing_libass(monkeypatch):
+    from studio.media import selfcheck
+    monkeypatch.setattr(selfcheck, "_LOCAL_OK", set())
+    monkeypatch.setattr(selfcheck.shutil, "which", lambda n: "/usr/bin/" + n)
+    flt = "\n".join(f" ..C {f} V->V x" for f in selfcheck.FILTERS if f not in ("ass", "subtitles"))
+    enc = "\n".join(f" V..... {e} x" for e in selfcheck.ENCODERS)
+    monkeypatch.setattr(selfcheck, "_ff", lambda args: flt if args == ["-filters"] else enc)
+    with pytest.raises(selfcheck.CapabilityError) as e:
+        selfcheck.local_ffmpeg("take_render")
+    assert "'ass'" in str(e.value) and "ffmpeg-full" in str(e.value)
+    selfcheck.local_ffmpeg("take_analyze")      # analysis renders nothing: not held to it
+    full = flt + "\n ..C ass V->V x\n ..C subtitles V->V x"
+    monkeypatch.setattr(selfcheck, "_ff", lambda args: full if args == ["-filters"] else enc)
+    selfcheck.local_ffmpeg("take_render")
+    assert "take_render" in selfcheck._LOCAL_OK

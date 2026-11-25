@@ -107,8 +107,38 @@ def check(kind: str = "take_render", load_model: bool = False) -> dict:
         except Exception as e:  # noqa: BLE001
             missing.append(f"faster-whisper doesn't load ({e.__class__.__name__}: {str(e)[:80]})")
     if missing:
-        raise CapabilityError("The video worker is missing what this job needs: " + "; ".join(missing) + ".")
+        raise CapabilityError("The video worker is missing what this job needs: " + "; ".join(missing) + "." + _hint(missing))
     return have
+
+
+LIBASS_HINT = (" This FFmpeg was built without libass, which burns in the captions. On a Mac, install the full build "
+               "(brew install ffmpeg-full) and put it first on PATH; on Ubuntu the distribution's ffmpeg package has it.")
+
+
+def _hint(missing: list[str]) -> str:
+    return LIBASS_HINT if any("'ass'" in m or "'subtitles'" in m for m in missing) else ""
+
+
+_LOCAL_OK: set[str] = set()
+
+
+def local_ffmpeg(kind: str) -> None:
+    """The FFmpeg part of check() for an in-process job (self-host, a Mac): a render on an FFmpeg without libass used to
+    fail deep inside the render with "No such filter: 'ass'". Checked once per kind per process while it passes."""
+    if kind == "take_analyze" or kind in _LOCAL_OK:
+        return
+    missing = []
+    if not shutil.which("ffmpeg"):
+        missing.append("FFmpeg isn't installed")
+    else:
+        flt, enc = _ff(["-filters"]), _ff(["-encoders"])
+        names = {ln.split()[1] for ln in flt.splitlines() if len(ln.split()) > 2 and len(ln.split()[0]) <= 4}
+        encs = {ln.split()[1] for ln in enc.splitlines() if len(ln.split()) > 1 and len(ln.split()[0]) == 6}
+        missing += [f"FFmpeg filter '{f}' is missing" for f in FILTERS if f not in names]
+        missing += [f"FFmpeg encoder '{e}' is missing" for e in ENCODERS if e not in encs]
+    if missing:
+        raise CapabilityError("This server's FFmpeg can't render clips: " + "; ".join(missing) + "." + _hint(missing))
+    _LOCAL_OK.add(kind)
 
 
 def main(argv=None) -> int:
