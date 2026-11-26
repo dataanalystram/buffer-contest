@@ -242,6 +242,32 @@ def _probe(path: str) -> dict:
             "duration": float((j.get("format") or {}).get("duration") or 0)}
 
 
+def reach(src: str, seg, start: float, dur: float, W: int, H: int, fps: float, every: int = 3, timeout: int = 300):
+    """(first, union): the person mask on the window's first frame and the union of the masks over the whole window
+    (every few frames). The word is placed against the union, so a head that moves during the hook still leaves it
+    readable (26 Nov Mac run: a nod hid "IOU" in "SERIOUSLY" mid-window though the first frame was clear). Mask
+    timestamps run 0..dur*1000 ms; the render pass continues after them (MediaPipe VIDEO mode needs them rising)."""
+    import numpy as np
+    dec = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}", "-f", "rawvideo",
+                            "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    first, union, k = None, None, 0
+    size_b = W * H * 3
+    t0 = time.time()
+    try:
+        while time.time() - t0 < timeout:
+            buf = dec.stdout.read(size_b)
+            if len(buf) < size_b:
+                break
+            if k % every == 0:
+                m = person_mask(seg, np.frombuffer(buf, np.uint8).reshape(H, W, 3), int(k * 1000 / fps))
+                first = m if first is None else first
+                union = m if union is None else np.maximum(union, m)
+            k += 1
+    finally:
+        dec.kill()
+    return first, union
+
+
 def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S, kit_font: str | None = None,
           color: str = "#FFFFFF", seg=None, crf: int = 20, timeout: int = 900) -> dict:
     """Writes `out`: `src` with `text` behind the person from `start` for `dur` seconds. Returns what was done."""
@@ -263,13 +289,27 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
     la = np.asarray(layer.getchannel("A"), dtype=np.float32) / 255.0
     lh, lw = la.shape
     f0, f1 = int(round(start * fps)), int(round((start + dur) * fps))
+    try:
+        first, union = reach(src, seg, start, dur, W, H, fps)
+        if first is None or (first > 0.5).mean() < MIN_PERSON:
+            raise BehindError("No person was found at the start of the clip, so there is nothing to go behind.")
+        top = head_top(first)
+        pos, hid = settle(H, place(W, H, top, lw, lh, head_x(first, top)), la, np.clip(union, 0, 1))
+    except BaseException:
+        if own:
+            try:
+                seg.close()
+            except Exception:  # noqa: BLE001
+                pass
+        raise
+    ts_off = int(dur * 1000) + 1000   # the render pass's mask timestamps carry on after reach()'s
     dec = subprocess.Popen(["ffmpeg", "-v", "error", "-i", src, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                            stdout=subprocess.PIPE)
     enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
                             "-r", f"{fps:.6f}", "-i", "-", "-i", src, "-map", "0:v", "-map", "1:a?", "-c:v", "libx264",
                             "-preset", "veryfast", "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "copy",
                             "-movflags", "+faststart", out], stdin=subprocess.PIPE)
-    n, masked, prev, pos, tops, hid = 0, 0, None, None, [], None
+    n, masked, prev, tops = 0, 0, None, [top]
     size_b = W * H * 3
     try:
         while True:
@@ -278,14 +318,8 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
                 break
             frame = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
             if f0 <= n < f1:
-                m = person_mask(seg, frame, int(n * 1000 / fps))
+                m = person_mask(seg, frame, ts_off + int((n - f0) * 1000 / fps))
                 prev = m if prev is None else prev * 0.35 + m * 0.65   # a little temporal smoothing: no edge shimmer
-                if pos is None:
-                    if (prev > 0.5).mean() < MIN_PERSON:
-                        raise BehindError("No person was found at the start of the clip, so there is nothing to go behind.")
-                    tops.append(head_top(prev))
-                    pos = place(W, H, tops[0], lw, lh, head_x(prev, tops[0]))
-                    pos, hid = settle(H, pos, la, np.clip(prev, 0, 1))
                 t = n / fps
                 a = alpha_at(t, start, dur)
                 rise = int(H * RISE * (1 - min(1.0, (t - start) / FADE_IN)) ** 2) if FADE_IN else 0

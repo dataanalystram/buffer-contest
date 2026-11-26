@@ -214,3 +214,22 @@ def test_render_spec_applies_it_and_fails_open(monkeypatch):
     assert data == b"MP4" and meta["hook_fx"]["on"] is False
     (cid, data, cover, meta), = list(takes.render_spec_clip("src.mp4", spec, {**c, "hook_fx": "none"}, None))
     assert data == b"MP4" and "hook_fx" not in meta
+
+
+def test_the_word_is_placed_against_the_person_over_the_whole_window(tmp_path, monkeypatch):
+    """26 Nov Mac run: the first frame was clear but a nod later hid "IOU" in "SERIOUSLY". reach() unions the masks over
+    the window, so a head that rises mid-hook is counted."""
+    if not shutil.which("ffmpeg"):
+        pytest.skip("needs FFmpeg")
+    src = tmp_path / "in.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=64x96:r=10:d=2", "-pix_fmt",
+                    "yuv420p", str(src)], check=True)
+
+    def mask(seg, rgb, ts_ms):
+        m = np.zeros(rgb.shape[:2], np.float32)
+        m[60 if ts_ms < 500 else 30:, 20:44] = 1.0       # the head rises half a second in
+        return m
+
+    monkeypatch.setattr(behind, "person_mask", mask)
+    first, union = behind.reach(str(src), object(), 0.0, 1.5, 64, 96, 10.0, every=1)
+    assert first[40, 30] == 0 and union[40, 30] == 1
