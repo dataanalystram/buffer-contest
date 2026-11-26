@@ -123,7 +123,11 @@ def _route(monkeypatch, app_client):
     real = httpx.Client
 
     def handler(req):
-        return appt.handle_request(req) if req.url.host == "hq.test" else httpx.Response(404, request=req)
+        if req.url.host != "hq.test":
+            return httpx.Response(404, request=req)
+        r = appt.handle_request(req)   # starlette >= 1.x answers with its own httpx fork's Response: copy it over
+        return r if isinstance(r, httpx.Response) else httpx.Response(r.status_code, headers=list(r.headers.items()),
+                                                                      content=r.read(), request=req)
     monkeypatch.setattr(render_worker.httpx, "Client",
                         lambda **kw: real(transport=httpx.MockTransport(handler), **{k: v for k, v in kw.items() if k != "transport"}))
 
