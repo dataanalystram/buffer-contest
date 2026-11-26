@@ -133,6 +133,8 @@ def _norm(t: str) -> str:
 
 SEAM_GAP = 0.08   # s: a repeat this close to the word before it is the recogniser, not the speaker ...
 SEAM_LONG = 5     # ... when it ends a sentence or has this many letters
+EMPHASIS = {"really", "never", "please", "again", "faster", "harder", "bigger", "better", "slowly", "little",
+            "thank", "sorry", "twenty", "thirty", "forty", "fifty", "hundred", "thousand", "million", "there", "where"}
 
 
 def clean_words(words: list[dict]) -> list[dict]:
@@ -156,8 +158,9 @@ def clean_words(words: list[dict]) -> list[dict]:
             if t.startswith(_JOIN) and len(t) > 1 and gap < 0.15 and not pt.endswith((".", ",", "?", "!", ":", ";", "-")):
                 out[-1] = {**prev, "w": pt + t, "e": max(float(prev["e"]), float(w["e"]))}
                 continue
-            seam = float(w["s"]) < float(prev["e"]) - 0.01 or (
-                gap <= SEAM_GAP and (pt.endswith((".", "?", "!")) or len(_norm(t)) >= SEAM_LONG))
+            said_twice = pt.endswith(",") or _norm(t) in EMPHASIS   # "really, really", "never never": the speaker
+            seam = float(w["s"]) < float(prev["e"]) - 0.01 or (not said_twice and gap <= SEAM_GAP and (
+                pt.endswith((".", "?", "!")) or len(_norm(t)) >= SEAM_LONG))
             if _norm(t) and _norm(t) == _norm(pt) and seam:
                 out[-1] = {**prev, "e": max(float(prev["e"]), float(w["e"]))}
                 continue

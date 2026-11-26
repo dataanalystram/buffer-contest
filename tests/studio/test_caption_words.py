@@ -35,3 +35,11 @@ def test_a_repeat_right_after_a_sentence_end_or_of_a_long_word_is_the_recogniser
           {"w": "complaints", "s": 1.0, "e": 1.5}, {"w": "complaints", "s": 1.53, "e": 2.0}, {"w": "with", "s": 2.0, "e": 2.2},
           {"w": "no,", "s": 3.0, "e": 3.2}, {"w": "no", "s": 3.22, "e": 3.4}]
     assert [w["w"] for w in ca.clean_words(ws)] == ["this", "week.", "complaints", "with", "no,", "no"]
+
+
+def test_genuine_repeats_stay():
+    from studio.media import captions_ass as ca
+    ws = [{"w": "really", "s": 0.0, "e": 0.3}, {"w": "really", "s": 0.32, "e": 0.6}, {"w": "good,", "s": 0.6, "e": 0.9},
+          {"w": "faster,", "s": 1.0, "e": 1.3}, {"w": "faster!", "s": 1.32, "e": 1.6},
+          {"w": "seriously,", "s": 2.0, "e": 2.5}, {"w": "seriously.", "s": 2.52, "e": 3.0}]
+    assert [w["w"] for w in ca.clean_words(ws)] == [w["w"] for w in ws]
