@@ -53,7 +53,7 @@ def available() -> str | None:
     """None when templates can render here, else why not."""
     try:
         import playwright.sync_api  # noqa: F401
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         return f"Playwright isn't installed on this worker ({e.__class__.__name__})."
     return None
 
@@ -82,7 +82,10 @@ def render(name: str, props: dict, out_dir: str, *, W: int = 1080, H: int | None
     why = available()
     if why:
         raise TemplateError(why)
-    from playwright.sync_api import sync_playwright
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:   # optional on the worker: no Playwright keeps the plain motion moment
+        raise TemplateError(f"Playwright isn't installed on this worker ({e.__class__.__name__}).") from e
     page_file = HERE / tpl["file"]
     H = int(H or tpl.get("h") or 640)
     dur = float(dur or tpl["dur"])
@@ -110,15 +113,29 @@ def render(name: str, props: dict, out_dir: str, *, W: int = 1080, H: int | None
                 page.evaluate("document.fonts.ready")
                 # words longer than the template's sample ("20 MINUTES" on a card made for "20 min") shrink to fit
                 # their card rather than run off it
-                page.evaluate("""(sels) => {
+                page.evaluate("""async ([sels, fam]) => {
+                    // measure in the brand font itself: fonts.ready can settle before the face has even started loading
+                    try { await document.fonts.load(`800 100px '${fam}'`); await document.fonts.load(`700 100px '${fam}'`); } catch (e) {}
+                    await document.fonts.ready;
+                    window.__hqFrame(60);   // the last frame: counted-up numbers at their full width
+                    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                    const docW = document.documentElement.clientWidth;
                     for (const sel of sels) {
                         const el = document.querySelector(sel); if (!el) continue;
-                        const box = el.parentElement; if (!box) continue;
-                        const room = box.clientWidth * 0.9;
+                        // what is drawn can be a copy beside the element (count-ups, letter effects): measure the
+                        // element's own line box too, and keep it inside its card and the frame (26 Nov: "0 PEOPL")
+                        const line = el.closest('.ln') || el;
+                        const card = el.parentElement && el.parentElement !== line ? el.parentElement : null;
+                        const room = Math.min(card ? card.clientWidth : docW, docW) * 0.88;
+                        const wide = () => Math.max(el.getBoundingClientRect().width, line.getBoundingClientRect().width,
+                                                    ...Array.from(line.children).map(c => c.getBoundingClientRect().width));
                         let fs = parseFloat(getComputedStyle(el).fontSize);
-                        for (let i = 0; i < 30 && el.scrollWidth > room && fs > 8; i++) { fs *= 0.93; el.style.fontSize = fs + 'px'; }
+                        for (let i = 0; i < 40 && wide() > room && fs > 8; i++) {
+                            fs *= 0.93; el.style.fontSize = fs + 'px';
+                            await new Promise(r => requestAnimationFrame(r));
+                        }
                     }
-                }""", list(sets))
+                }""", [list(sets), font if font in FONT_FILES else "Poppins"])
                 for k in range(n):
                     if time.time() - t0 > timeout:
                         raise TemplateError("The template took too long to draw.")

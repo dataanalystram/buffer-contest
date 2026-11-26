@@ -55,7 +55,7 @@ def test_two_people_in_a_wide_shot_get_the_real_cause_and_split_not_track():
     clip = {"hook": "Here's the thing.", "transcript": "Here's the thing. We all saw it coming.", "duration": 30.0,
             "layout_plan": [{"start": 0, "end": 5.2, "layout": "fit", "rule": "R8"}, {"start": 5.2, "end": 30, "layout": "track", "rule": "R7"}]}
     r = review.review(clip)
-    two = [i for i in r["issues"] if "Two people" in i["what"]]
+    two = [i for i in r["issues"] if "wide shot stays full frame" in i["what"]]
     assert two and "Split" in two[0]["fix"] and not any("Pin that scene to Track" in i["fix"] for i in r["issues"])
 
 
@@ -63,3 +63,8 @@ def test_the_brands_own_handle_is_not_someone_elses_watermark():
     from studio.media import ocr
     assert ocr.watermarks("follow @huhbyte.ai for more", "huhbyteai") == []
     assert ocr.watermarks("follow @someone for more", "huhbyteai") == ["@someone"]
+
+
+def test_a_connected_channel_name_is_the_persons_own_handle_too():
+    from studio.media import ocr
+    assert ocr.watermarks("by @huhbyte.ai", ["", "HuhByte AI", "huhbyte.ai"]) == []

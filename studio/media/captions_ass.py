@@ -289,9 +289,11 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
     if fx:
         from . import motion
 
-        def fit(text: str, scale: float) -> float:
-            width = text_width(text, pid, H, file=pr["file"], size=pr["size"]) * scale
-            return round(min(scale, scale * max_w / width) if width > 0 else scale, 3)
+        room = 0.92 * max_w   # big text: a margin for the heavier stroke, the shadow and libass's own rounding
+
+        def fit(text: str, scale: float) -> float:   # (26 Nov Mac run: the line's last word ran off the right edge)
+            width = (text_width(text, pid, H, file=pr["file"], size=pr["size"]) + 2 * (outline + shadow)) * scale
+            return round(min(scale, scale * room / width) if width > 0 else scale, 3)
         ev += motion.events(fx, lambda t: band_y(layout_at(sidecar, t), H), W, _color(acc), _color(txt), pr["upper"], fit)
     return head + "\n".join(ev) + ("\n" if ev else "")
 

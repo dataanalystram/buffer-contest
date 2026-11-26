@@ -103,9 +103,10 @@ def review(clip: dict, meta: dict | None = None) -> dict:
             # R8 is two (or more) people too far apart for one 9:16 crop, or faces too unsure to crop: pinning Track
             # would cut one of them out (26 Nov Mac run: the notes said "too small" on the Waid podcast)
             s = two[0]
-            issue(f"Two people share a full-frame shot ({_fmt(s['start'])}-{_fmt(s['end'])}), so both look small.",
-                  "They sit too far apart for one 9:16 crop, so the frame shows the whole wide shot.",
-                  "Switch that scene to Split in Layout so each speaker gets half the frame (Track would cut one out).")
+            # R8 also covers a crowd and faces too unsure to crop (26 Nov Mac run: "two people" on a group of six)
+            issue(f"The wide shot stays full frame ({_fmt(s['start'])}-{_fmt(s['end'])}), so the people in it look small.",
+                  "More than one person is in it, too far apart or too unsure to crop to 9:16 without cutting someone out.",
+                  "If two people are talking, switch that scene to Split in Layout; for a group, keep the wide shot.")
         elif small:
             s = small[0]
             issue(f"The speaker stays small in a full-frame shot ({_fmt(s['start'])}-{_fmt(s['end'])}).",

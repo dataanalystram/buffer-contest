@@ -737,7 +737,10 @@ class Takes(TakeBin, TakeControl):
                 "scenes": an.get("scenes") or [], "src": an["probe"], "clips": clips,
                 "style": run["input"].get("style") or "take", "ratios": run["input"].get("ratios") or ["9:16"],
                 "credit": run["input"].get("credit") or "", "burned_subs": bool(an.get("burned_subs")),
-                "face_detector": an.get("face_detector", True)}
+                "face_detector": an.get("face_detector", True),
+                # the person's own names (brand kit, connected channels): never "someone else's handle" in OCR
+                "own_handles": [str(x)[:60] for x in [kit.get("handle"), kit.get("name")]
+                                + [c.get("name") for c in run["input"].get("channels") or [] if isinstance(c, dict)] if x][:12]}
         self._queue(a, rid, spec, "reframe", f"Rendering {len(clips)} clips on the video worker")
 
     @staticmethod
@@ -1655,7 +1658,8 @@ def ocr_clip(src: str, spec: dict, c: dict) -> dict:
         budget = spec.setdefault("_ocr_budget", ocr.Budget())
         st = spec.setdefault("_ocr_status", ocr.status())
         got = ocr.scan(src, float(c["start"]), float(c["end"]), budget, st)
-        got["watermarks"] = ocr.watermarks(got.get("text") or "", str((spec.get("kit") or {}).get("handle") or ""))
+        got["watermarks"] = ocr.watermarks(got.get("text") or "", [str((spec.get("kit") or {}).get("handle") or "")]
+                                           + [str(x) for x in spec.get("own_handles") or []])
         return got
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "frames": [], "text": "", "watermarks": [], "skipped": f"ocr failed: {e.__class__.__name__}"}
