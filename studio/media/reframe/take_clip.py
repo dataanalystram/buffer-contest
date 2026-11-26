@@ -133,6 +133,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
                 "audio": {"loudnorm": take.LOUDNESS, "fade_in": take.FADE_IN, "fade_out": take.FADE_OUT} if audio else None,
                 "punch_in": plan.get("punch") or {"on": False, "shots": 0},
                 "motion": plan.get("motion"),
+                "hook_fx": "headline" if (m.get("hook_fx") == "headline" and m.get("hook") and plan.get("ass")) else None,
                 "face_fallback": "no face found, full frame used" if any(s.get("rule") == "R8-noface" for s in plan["shots"]) else None}
         if meta["face_fallback"]:
             print(f"render: clip {m.get('id', '')} {meta['face_fallback']}", flush=True)

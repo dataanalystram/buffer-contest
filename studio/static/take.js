@@ -412,6 +412,28 @@ function tkScoreLine(c) {
     : `<p class="xs clip-why none" data-testid="clip-why">${SPARK}<span>${s == null ? "Not scored: this take was saved before clips kept their scorer's reason." : "No reason saved for this clip."}</span></p>`;
   return `<div class="clip-scoreline">${pill}${line}</div>`;
 }
+const THUMB = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.5 21H7V10l4-8a3 3 0 0 1 4 3.9z"/></svg>`;  // Lucide thumbs-up
+function tkRate(c, n) {
+  const b = (v, label) => `<button type="button" class="tk-rate ${v}" id="clip-${esc(c.id)}-rate-${v}" data-act="rate_${v}" data-clip="${esc(c.id)}"
+    data-testid="clip-rate-${v}" aria-pressed="${c.rating === v}" aria-label="${label} clip ${n}" title="${label}">${THUMB}</button>`;
+  return `<span class="tk-rates" role="group" aria-label="Rate clip ${n}">${b("up", "More like this")}${b("down", "Less like this")}</span>`;
+}
+async function rateClip(id, v) {
+  const c = ((T.take && T.take.clips) || []).find((x) => x.id === id); if (!c) return;
+  const next = c.rating === v ? null : v;
+  try {
+    await api(`/api/takes/${encodeURIComponent(T.take.id)}/clips/${encodeURIComponent(id)}`, { method: "PATCH", body: { rating: next } });
+    c.rating = next;
+    document.querySelectorAll(`[data-clip="${CSS.escape(id)}"].tk-rate`).forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.act === "rate_" + next)));
+  } catch (e) { toast(e.message, 6000); }
+}
+// The receipt: what the render actually did to this clip (takes.applied_edits reads it from the render meta)
+function tkApplied(c) {
+  const a = (c.applied || []).filter((x) => x && x.label);
+  if (!a.length) return "";
+  return `<ul class="clip-applied" data-testid="clip-applied" aria-label="Edits applied to this clip">${a.map((x) =>
+    `<li data-testid="clip-applied-${esc(x.key)}"${x.skipped ? ` class="skip" title="${esc(x.skipped)}"` : ""}>${esc(x.label)}${x.detail ? ` <span>${esc(x.detail)}</span>` : ""}${x.skipped ? ` <span>skipped</span>` : ""}</li>`).join("")}</ul>`;
+}
 // Editor's notes on the rendered clip (studio/media/review.py): what works, what looks wrong, why, and the edit to make
 function tkReview(c) {
   const r = c.review;
@@ -438,6 +460,7 @@ function clipRow(c, n, k) {
       <p class="clip-hook" data-testid="clip-hook">${esc(c.hook)}</p>
       <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.trimmed_s > 0 ? ` · <span data-testid="clip-trimmed" title="Long pauses and filler words cut from this clip">trimmed ${(+c.trimmed_s).toFixed(1)} s</span>` : ""}${c.source_captions ? ` · <span data-testid="clip-own-captions" title="This part of the video already has captions burned in, so no second layer was added">kept the video's own captions</span>` : ""}</p>
       ${tkScoreLine(c)}
+      ${tkApplied(c)}
       ${tkReview(c)}
       ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${escUrl(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
@@ -446,7 +469,7 @@ function clipRow(c, n, k) {
       ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${{ draft: "Buffer draft", scheduled: "scheduled in Buffer", queued: "in your Buffer queue", sent: "posted by Buffer" }[p.status] || "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
     </div>
-    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button>${T.take && !T.take.sample ? `<button type="button" class="btn2 sm" data-act="layout" data-clip="${esc(c.id)}" data-testid="clip-layout">${LAYOUT_IC}<span>Layout</span></button>` : ""}<a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
+    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button>${T.take && !T.take.sample ? `<button type="button" class="btn2 sm" data-act="layout" data-clip="${esc(c.id)}" data-testid="clip-layout">${LAYOUT_IC}<span>Layout</span></button>` : ""}<a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>${T.take && !T.take.sample ? tkRate(c, n) : ""}` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
   </li>`;
 }
 
@@ -456,6 +479,7 @@ function clipAct(act, id) {
   if (act === "layout" && window.openClipLayout) window.openClipLayout(id);  // takelayout.js
   if (act === "delete") deleteClip(id);
   if (act === "review_ok") reviewOk(id);
+  if (act === "rate_up" || act === "rate_down") rateClip(id, act.slice(5));
 }
 // "Looks fine, use it": a person watched a Needs review clip and it's fine, so it counts as ready for the Spread
 async function reviewOk(id) {

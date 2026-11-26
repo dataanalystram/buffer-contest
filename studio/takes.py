@@ -1189,6 +1189,8 @@ class Takes(TakeBin, TakeControl):
             lo, hi = self._bounds(res, c)
             d["trim_min"], d["trim_max"] = lo, hi
             d["music"] = c.get("music")
+            d["applied"] = applied_edits(m) if c.get("url") else []
+            d["rating"] = (c.get("rating") or {}).get("v")
             d["rendered_at"] = c.get("rendered_at")
             d["post_captions"] = {ch["service"]: self.caption(a, c, ch["service"], kit, rules) for ch in run["input"]["channels"]}
             if c.get("url"):  # the editor's notes on the rendered clip: what works, what looks wrong, why, the fix
@@ -1356,8 +1358,17 @@ class Takes(TakeBin, TakeControl):
             clip.update(status="ready", review_ok={"by": a.label, "at": round(_now()), "reason": clip.get("review_reason")})
             clip.pop("review_reason", None)
             changed.append("review_ok")
+        if "rating" in body:  # thumbs up/down on a clip: kept on the clip (and in the view) so picks can learn from it
+            r = body["rating"]
+            if r not in ("up", "down", None):
+                raise ActionError("rating must be \"up\", \"down\" or null.")
+            if r is None:
+                clip.pop("rating", None)
+            else:
+                clip["rating"] = {"v": r, "by": a.label, "at": round(_now())}
+            changed.append("rating")
         if not changed:
-            raise ActionError("Nothing to change: give start_ms/end_ms, transcript, hook, caption(s), music or review_ok.")
+            raise ActionError("Nothing to change: give start_ms/end_ms, transcript, hook, caption(s), music, rating or review_ok.")
         if rerender and not self._can_rerender(a, res):
             from . import demo_guard
             why = ("the view-only sample workspace doesn't run. Sign in to trim the sample, or edit its captions here."
@@ -1799,6 +1810,41 @@ def reframe_summary(ok: list[dict], layouts: list, nofaces: list, fb_note: str) 
     return (f"Face-tracked on {layouts.count('track')} of {len(ok)} clips"
             + (f"; {fb_note} on {len(nofaces)}" if nofaces else "")
             + (f"; blurred-pad layout on {layouts.count('pad')}" if layouts.count("pad") else ""))
+
+
+_SHOT_NAMES = {"track": "Follows the speaker", "split": "Split for two speakers", "screen": "Screen zoom", "pad": "Full frame",
+               "fit": "Full frame", "center": "Centre crop"}
+
+
+def applied_edits(meta: dict) -> list[dict]:
+    """What the render actually did to one clip, read from its meta (never from the settings asked for): the receipt
+    on each clip card. [{key, label, detail}]; a skipped edit with a reason comes back as {key, label, skipped}."""
+    meta = meta if isinstance(meta, dict) else {}
+    out = []
+    co = meta.get("cold_open") if isinstance(meta.get("cold_open"), dict) else None
+    if co:
+        out.append({"key": "cold_open", "label": "Opens on your best line", "detail": f"{co.get('joined_s', 0)} s said earlier"})
+    if meta.get("hook_fx") == "headline":
+        out.append({"key": "headline", "label": "Headline card", "detail": ""})
+    tr = meta.get("trim") if isinstance(meta.get("trim"), dict) else {}
+    if tr.get("trimmed_s"):
+        out.append({"key": "trim", "label": "Pauses cut", "detail": f"{tr['trimmed_s']} s shorter"})
+    modes = []
+    for s in meta.get("shots") or []:
+        if isinstance(s, dict) and s.get("mode") in _SHOT_NAMES and s["mode"] not in modes:
+            modes.append(s["mode"])
+    for md in modes:
+        out.append({"key": "layout_" + md, "label": _SHOT_NAMES[md], "detail": ""})
+    pi = meta.get("punch_in") if isinstance(meta.get("punch_in"), dict) else {}
+    if pi.get("on") and pi.get("shots"):
+        out.append({"key": "punch_in", "label": "Auto zoom", "detail": f"{pi['shots']} shot{'s' if pi['shots'] != 1 else ''}"})
+    mo = meta.get("motion") if isinstance(meta.get("motion"), dict) else {}
+    fx = [f for f in (mo.get("fx") or []) if isinstance(f, dict)]
+    if fx:
+        out.append({"key": "motion", "label": "Motion moments", "detail": ", ".join(sorted({str(f.get("kind", "")) for f in fx}))[:80]})
+    elif mo.get("on") and mo.get("skipped"):
+        out.append({"key": "motion", "label": "Motion moments", "skipped": str(mo["skipped"][0])[:160]})
+    return out
 
 
 def clip_words(words: list[dict], clip: dict, s: float, e: float) -> list[dict]:

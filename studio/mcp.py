@@ -131,6 +131,7 @@ TOOLS: list[dict[str, Any]] = [
          "captions": {"type": "object", "additionalProperties": {"type": "string"}, "description": "{service: caption} for several networks at once"},
          "music": {"type": ["object", "null"], "description": "Instagram Reel music: a track from search_instagram_audio (audio_id, title, type, duration_ms), or null to remove"},
          "music_volume": {"type": "integer", "minimum": 0, "maximum": 100}, "original_volume": {"type": "integer", "minimum": 0, "maximum": 100},
+         "rating": {"type": ["string", "null"], "enum": ["up", "down", None], "description": "Thumbs up/down on the clip (null clears it)"},
          "review_ok": {"type": "boolean", "description": "true clears a Needs review flag (a person only: agents get 403)"}}}},
     {"name": "rewrite_clip_caption", "description": "An AI rewrite of one clip's post caption for one of the take's networks, using only what was said in the clip. Returns the suggestion with its character count and the network limit; nothing is saved until you pass it to adjust_clip.",
      "inputSchema": {"type": "object", "required": ["take_id", "clip_id", "service"], "properties": {"take_id": {"type": "integer"}, "clip_id": {"type": "string"},
@@ -403,7 +404,7 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "adjust_clip":
         t = h.takes.adjust(actor, int(args.get("take_id") or 0), args.get("clip_id", ""),
                            {k: args[k] for k in ("start_ms", "end_ms", "hook", "caption", "service", "captions", "transcript", "music",
-                                                 "music_volume", "original_volume", "review_ok") if k in args})
+                                                 "music_volume", "original_volume", "rating", "review_ok") if k in args})
         for c in t["clips"]:
             c.pop("words", None)
         return t

@@ -133,3 +133,31 @@ def test_the_cold_open_is_joined_in_front_of_the_clip_with_its_words(tmp_path):
     assert [w["w"] for w in got["words"]] == ["What", "if?", "Body", "words."]
     assert got["words"][2]["s"] >= 0.95 and got["m"]["end"] == 5.0 and "cold_open" not in got["m"]
     assert 1.0 in got["scenes"]
+
+
+def test_applied_receipt_reads_the_render_meta_not_the_settings():
+    from studio import takes
+    meta = {"cold_open": {"s": 1.0, "e": 5.0, "joined_s": 4.0}, "hook_fx": "headline", "trim": {"trimmed_s": 2.4},
+            "shots": [{"mode": "split"}, {"mode": "track"}, {"mode": "split"}], "punch_in": {"on": True, "shots": 2},
+            "motion": {"on": True, "fx": [], "skipped": ["No number worth showing."]}}
+    got = {x["key"]: x for x in takes.applied_edits(meta)}
+    assert list(got) == ["cold_open", "headline", "trim", "layout_split", "layout_track", "punch_in", "motion"]
+    assert got["trim"]["detail"] == "2.4 s shorter" and got["motion"]["skipped"] == "No number worth showing."
+    assert takes.applied_edits({"trim": {"trimmed_s": 0}, "punch_in": {"on": True, "shots": 0}}) == []
+    assert takes.applied_edits(None) == []
+
+
+def test_thumbs_rating_on_a_clip_over_rest_and_mcp(human, app, fake, monkeypatch):
+    from .conftest import agent_token, mcp_call
+    from .test_spread_choices import _take_with_a_review_clip
+    t = _take_with_a_review_clip(human, app, monkeypatch)
+    cid = t["clips"][1]["id"]
+    assert all("applied" in c for c in t["clips"])
+    assert human.patch(f"/api/takes/{t['id']}/clips/{cid}", json={"rating": "meh"}).status_code == 400
+    r = human.patch(f"/api/takes/{t['id']}/clips/{cid}", json={"rating": "up"})
+    assert r.status_code == 200 and r.json()["changed"] == ["rating"]
+    assert next(c for c in r.json()["clips"] if c["id"] == cid)["rating"] == "up"
+    tok = agent_token(human, "trusted", cap=50)
+    _, out = mcp_call(human, tok, "adjust_clip", {"take_id": t["id"], "clip_id": cid, "rating": None})
+    assert out["changed"] == ["rating"], out
+    assert next(c for c in human.get(f"/api/takes/{t['id']}").json()["clips"] if c["id"] == cid)["rating"] is None
