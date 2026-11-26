@@ -124,7 +124,7 @@ def take_job(c: httpx.Client, base: str, h: dict, jid: int, j: dict) -> int:
             tr = reuse_captions(str(src), spec)  # existing captions first; Whisper only when there are none
             print("captions:", f"reused {tr['source']} ({tr['count']} words)" if tr else "none, transcribing")
             analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=float(os.environ.get("HQ_MAX_TAKE_SECS", "10800")),
-                                    transcript=tr, jev=spec.get("jev") is True)
+                                    transcript=tr, jev=spec.get("jev") is True, names=spec.get("names") or None)
             if fetched is not None:
                 analysis["fetch"] = fetched
             analysis.setdefault("timings", {})["download"] = dl

@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import recipes
 from . import brand, demo, drafter, llm, netguard, sources, take
 from .actions import CONFIRM_TTL, ActionError, Actor
 from .take_bin import TakeBin
@@ -187,6 +188,15 @@ class Takes(TakeBin, TakeControl):
     def _step(self, steps, key, status, detail="", data=None):
         self.h._step(steps, key, status, detail, data)
 
+    def _own_names(self, a: Actor, chans: list[dict] | None) -> list[str]:
+        """The person's brand and channel names, for the transcriber's spelling (take.names_prompt). Never fails."""
+        try:
+            kit = self.h.kit(a) or {}
+        except Exception:  # noqa: BLE001
+            kit = {}
+        out = [kit.get("name"), kit.get("handle")] + [c.get("displayName") or c.get("name") for c in chans or [] if isinstance(c, dict)]
+        return [str(x)[:40] for x in dict.fromkeys(x for x in out if x)][:8]
+
     def _channels(self, a: Actor, ids: list[str] | None) -> list[dict]:
         chans = [c for c in self.studio.channels(a) if not c.get("isDisconnected") and c["service"] in TAKES_VIDEO]
         if ids:
@@ -308,7 +318,12 @@ class Takes(TakeBin, TakeControl):
                "punch_in": punch_in,
                "trim_pauses": trim_pauses,
                "consent_id": consent_id, "licence_hint": licence,
-               "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions), "name": (body.get("name") or "")[:80],
+               "prompt": str(body.get("prompt") or "")[:500], "captions_given": bool(captions),
+               "recipe": recipes.clean(body.get("recipe")), "focus": str(body.get("focus") or "")[:200],
+               "split": bool(body["split"]) if isinstance(body.get("split"), bool) else recipes.RECIPES[recipes.clean(body.get("recipe"))]["split"],
+               "headline": body.get("headline") is True,
+               "cold_open": bool(body["cold_open"]) if isinstance(body.get("cold_open"), bool) else recipes.RECIPES[recipes.clean(body.get("recipe"))]["cold_open"],
+               "length": recipes.clean_length(body.get("length")) or recipes.RECIPES[recipes.clean(body.get("recipe"))]["length"], "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
                "channels": [{"id": c["id"], "service": c["service"], "name": c.get("displayName") or c["name"]} for c in chans]}
         rid = self.store.x("INSERT INTO agent_runs(user_id,kind,input,status,steps,result,created,updated) VALUES(?,?,?,?,?,?,?,?)",
@@ -329,7 +344,8 @@ class Takes(TakeBin, TakeControl):
                    + (f" · {credit}" if credit and not owns else ""), {"source": self.media_url(token) if token else ("upload" if upload_id else (url or platform_url))})
         self._save(rid, run["steps"], run["result"])
         self._queue(a, rid, {"kind": "take_analyze", "source": token, "source_upload": upload_id, "source_url": url, "platform_url": platform_url,
-                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small"), "jev": jev},
+                             "captions": captions, "model": os.environ.get("HQ_STT_MODEL", "small"), "jev": jev,
+                             "names": self._own_names(a, chans)},
                     "transcribe", "Reading captions, else transcribing on the video worker (faster-whisper, CPU)")
         out = self.get(a, rid)
         return {**out, "rights": rights_basis} if rights_basis and isinstance(out, dict) else out
@@ -498,7 +514,8 @@ class Takes(TakeBin, TakeControl):
                 fetched = {"via": "direct"}
             if spec["kind"] == "take_analyze":
                 analysis = take.analyze(str(src), spec.get("model", "small"), max_secs=MAX_TAKE_SECS,
-                                        transcript=reuse_captions(str(src), spec), jev=spec.get("jev") is True)
+                                        transcript=reuse_captions(str(src), spec), jev=spec.get("jev") is True,
+                                        names=spec.get("names") or None)
                 if fetched is not None:
                     analysis["fetch"] = fetched
                 self.on_analysis(jid, analysis, "")
@@ -643,7 +660,9 @@ class Takes(TakeBin, TakeControl):
             for m in mined["moments"]:
                 m["why"] = m["reason"]
             return mined
-        return take.mine_moments(analysis, run["input"].get("count"), eng, chat)
+        return take.mine_moments(analysis, run["input"].get("count"), eng, chat, length=run["input"].get("length"),
+                                 prompt=run["input"].get("focus"),
+                                 cold_opens=run["input"].get("cold_open") is True and run["input"].get("style", "take") == "take")
 
     def _on_analysis(self, jid: int, analysis: dict | None, error: str = "") -> dict:
         """The locked first half of on_analysis: {"done": answer} when it ends here, else {"ctx": ...} to pick moments."""
@@ -693,7 +712,8 @@ class Takes(TakeBin, TakeControl):
                    {"moments": [{k: m[k] for k in ("id", "start", "end", "hook", "score")} for m in mined["moments"]]})
         res["clips"] = [{"id": f"c{i + 1}", "moment_id": m["id"], "status": "rendering", "start": m["start"], "end": m["end"],
                          "hook": m["hook"], "text": m["text"], "score": m["score"], "why": m.get("why", ""), "rank": m.get("rank"),
-                         "reasons": m.get("reasons") or [], "captions": {}, "placements": []} for i, m in enumerate(mined["moments"])]
+                         "reasons": m.get("reasons") or [], "captions": {}, "placements": [],
+                         **({"cold_open": m["cold_open"]} if m.get("cold_open") else {})} for i, m in enumerate(mined["moments"])]
         self._save(rid, steps, res)
         self._render(a, rid, [c["id"] for c in res["clips"]])
         return {"ok": True}
@@ -716,11 +736,17 @@ class Takes(TakeBin, TakeControl):
             c["status"] = "rendering"
             ratios = run["input"].get("ratios") or ["9:16"]
             clips.append({"id": c["id"], "start": c["start"], "end": c["end"], "hook": c["hook"],
-                          "words": clip_words(an["words"], c, c["start"], c["end"]),
-                          "faces": [f for f in an.get("faces") or [] if c["start"] - 1 <= f["t"] <= c["end"] + 1],
-                          "layout_overrides": c.get("layout_overrides") or {}, "caption_preset": c.get("caption_preset"),
+                          "words": (take.words_in(an["words"], c["cold_open"]["s"], c["cold_open"]["e"]) if c.get("cold_open") else [])
+                          + clip_words(an["words"], c, c["start"], c["end"]),
+                          "faces": [f for f in an.get("faces") or [] if c["start"] - 1 <= f["t"] <= c["end"] + 1
+                                    or (c.get("cold_open") and c["cold_open"]["s"] - 1 <= f["t"] <= c["cold_open"]["e"] + 1)],
+                          **({"cold_open": {"s": float(c["cold_open"]["s"]), "e": float(c["cold_open"]["e"])}} if c.get("cold_open") else {}),
+                          "layout_overrides": c.get("layout_overrides") or {},
+                          "caption_preset": c.get("caption_preset") or recipes.RECIPES[recipes.clean(run["input"].get("recipe"))]["caption"],
+                          "layout_prefs": {"split": True} if run["input"].get("split") else {},
                           "hook_mode": c.get("hook_mode"),
-                          "hook_fx": c.get("hook_fx") or "none", "hook_words": c.get("hook_words") or "",
+                          "hook_fx": c.get("hook_fx") or ("headline" if run["input"].get("headline") else "none"),
+                          "hook_words": c.get("hook_words") or "",
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
                           "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else [],
@@ -1136,6 +1162,8 @@ class Takes(TakeBin, TakeControl):
                                        "error", "placements", "preflight", "captions", "rank", "reasons", "rerender_error",
                                        "review_reason", "review_ok")}
             d["score"], d["why"] = _clip_score(c, moments)
+            if isinstance(c.get("cold_open"), dict):   # the line said earlier that opens this clip (take.cold_open)
+                d["cold_open"] = {k: c["cold_open"].get(k) for k in ("s", "e", "text")}
             d["variants"] = {r: v["url"] for r, v in (c.get("variants") or {}).items()}
             m = c.get("meta") or {}
             d["duration"] = m.get("duration") or round((c["end"] - c["start"]) + take.COVER_SECS + take.END_SECS, 2)

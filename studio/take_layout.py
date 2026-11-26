@@ -22,7 +22,7 @@ OPUS_LAYOUTS = ("auto", "track", "fit")  # a shorts-style clip (a pasted link) h
 BG_CHOICES = ("blur", "brand")
 STYLE_CHOICES = ("pip", "stack")
 HOOK_MODES = ("opener", "keep")
-HOOK_FX = ("none", "behind")  # One take clips from your upload: "behind" = Words behind you (beta, HQ_HOOK_BEHIND=1)  # clips from a link: the hook + credit as a 3 s opener (default) or on screen all clip long
+HOOK_FX = ("none", "behind", "headline")  # headline: the hook line boxed over the first 2.8 s (any server)  # One take clips from your upload: "behind" = Words behind you (beta, HQ_HOOK_BEHIND=1)  # clips from a link: the hook + credit as a 3 s opener (default) or on screen all clip long
 MAX_SCENES = 200
 TOOLS = [
     {"name": "get_clip_layout", "description": "One take: a clip's layout plan, scene by scene ({scene, start, end, layout: "
@@ -36,7 +36,8 @@ TOOLS = [
      "screen (screen with the face, style: pip | stack) or auto (back to the automatic choice). caption_preset: "
      "bold_pop | lower_third | two_tone | typewriter. hook_mode (clips from a link): opener (the hook box and credit pop in "
      "for the first 3 s, the credit is on the end card too; the default) or keep (both stay on screen for the whole clip). "
-     "hook_fx (One take clips from your upload, when the server has it switched on): behind (Words behind you: 1-3 words of "
+     "hook_fx (One take clips from your upload): headline (the hook line in a box over the first 2.8 s, on any server), "
+     "behind (when the server has it switched on: Words behind you, 1-3 words of "
      "the hook drawn huge behind the speaker's head for the first 2.6 s) or none; hook_words picks those words (said in the "
      "hook; default its strongest word). "
      "The clip re-renders on the video worker (poll list_clips).",
@@ -188,7 +189,7 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
     if hook_mode is not None and hook_mode not in HOOK_MODES:
         raise ActionError("hook_mode must be opener or keep.")
     if hook_fx is not None and hook_fx not in HOOK_FX:
-        raise ActionError("hook_fx must be behind or none.")
+        raise ActionError("hook_fx must be behind, headline or none.")
     if hook_words is not None and (not isinstance(hook_words, str) or len(hook_words) > 40):
         raise ActionError("hook_words must be text (1-3 words of the hook).")
     if lay is None and preset is None and not batch and hook_mode is None and hook_fx is None and hook_words is None:

@@ -395,9 +395,24 @@ def loudnorm_filter(path: str, start: float, dur: float) -> str:
 
 def prepare(path: str, m: dict, words: list[dict], faces: list[dict], scenes: list[float], src: dict, workdir: str) -> dict:
     """The trim step for one clip. Returns {"stats": {...}} always, plus path/m/words/faces/scenes/src for the trimmed
-    file when something was cut. Any failure keeps the span as it is (stats.skipped says why)."""
+    file when something was cut. Any failure keeps the span as it is (stats.skipped says why).
+    m["cold_open"] = {s, e}: a line said earlier goes first (take.cold_open), then the clip's span; with
+    m["trim_pauses"] off the span is kept whole behind it. stats.cold_open says whether it was joined."""
     start, end = float(m["start"]), float(m["end"])
     stats = {"on": True, "trimmed_s": 0.0, "pauses": 0, "fillers": 0, "skipped": ""}
+    co = m.get("cold_open") if isinstance(m.get("cold_open"), dict) else None
+    lead = None
+    if co:
+        try:
+            cs, ce = float(co["s"]), float(co["e"])
+            if 0 <= cs < ce <= start - 0.2 and ce - cs <= 8.0:
+                lead = [round(cs, 3), round(ce, 3)]
+        except (KeyError, TypeError, ValueError):
+            lead = None
+    if lead and m.get("trim_pauses") is False:   # cold open only: the span stays whole behind the line
+        stats["on"] = False
+        plan = {"skipped": "", "keep": [[start, end]], "removed": 0.0, "pauses": 0, "fillers": 0}
+        return _join(path, m, words, faces, scenes, src, workdir, plan, lead, start, stats)
     try:
         sil = m.get("silences") if isinstance(m.get("silences"), list) else None
         quiet = quiet_check(path, start, end) if sil and src.get("audio", True) else None  # in-word pauses: energy check
@@ -406,8 +421,15 @@ def prepare(path: str, m: dict, words: list[dict], faces: list[dict], scenes: li
     except Exception as e:  # noqa: BLE001
         return {"stats": {**stats, "skipped": f"plan failed: {e.__class__.__name__}"}}
     if plan["skipped"]:
-        return {"stats": {**stats, "skipped": plan["skipped"]}}
-    keep = plan["keep"]
+        if not lead:
+            return {"stats": {**stats, "skipped": plan["skipped"]}}
+        stats["skipped"] = plan["skipped"]
+        plan = {"skipped": "", "keep": [[start, end]], "removed": 0.0, "pauses": 0, "fillers": 0}
+    return _join(path, m, words, faces, scenes, src, workdir, plan, lead, start, stats)
+
+
+def _join(path, m, words, faces, scenes, src, workdir, plan, lead, start, stats) -> dict:
+    keep = ([lead] if lead else []) + plan["keep"]
     out = str(Path(workdir) / "trimmed.mp4")
     try:
         cut(path, keep, out, audio=bool(src.get("audio", True)))
@@ -420,6 +442,11 @@ def prepare(path: str, m: dict, words: list[dict], faces: list[dict], scenes: li
         m2["_punch_emph"] = punch_emphasis(words, keep)  # a pause the trim shortened still marks the word after it
     if m.get("_ocr_frames"):  # on-screen text boxes for caption placement follow the cut (studio/media/ocr)
         m2["_ocr_frames"] = remap_frames(m["_ocr_frames"], keep, start)
+    m2.pop("cold_open", None)
+    sc = remap_points(scenes, keep)
+    if lead:
+        sc = sorted(set(sc) | {round(lead[1] - lead[0], 3)})   # the jump is a cut: the layout may change there
     return {"path": out, "m": m2, "words": remap_words(words, keep), "faces": remap_points(faces, keep, "t"),
-            "scenes": remap_points(scenes, keep), "src": {**src, "duration": new_dur}, "keep": keep,
-            "stats": {**stats, "trimmed_s": plan["removed"], "pauses": plan["pauses"], "fillers": plan["fillers"]}}
+            "scenes": sc, "src": {**src, "duration": new_dur}, "keep": keep,
+            "stats": {**stats, "trimmed_s": plan["removed"], "pauses": plan["pauses"], "fillers": plan["fillers"],
+                      **({"cold_open": {"s": lead[0], "e": lead[1], "joined_s": round(lead[1] - lead[0], 2)}} if lead else {})}}

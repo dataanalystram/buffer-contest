@@ -179,7 +179,7 @@ def audio_chunks(path: str, tmp: Path, chunk_s: float = CHUNK_S) -> list[tuple[f
 
 
 # ---------------------------------------------------------------------- Groq
-def groq_post(data: bytes, name: str, key: str, http=None) -> tuple[list[dict], str]:
+def groq_post(data: bytes, name: str, key: str, http=None, prompt: str | None = None) -> tuple[list[dict], str]:
     """ONE request to Groq (no budget here: callers reserve first). Words in chunk seconds, language. Raises
     GroqUnavailable (GroqRateLimited on a 429) instead of ever retrying. Used by the worker with its own key and by
     the app's proxy (studio/free_proxy.py)."""
@@ -188,7 +188,7 @@ def groq_post(data: bytes, name: str, key: str, http=None) -> tuple[list[dict], 
     try:
         r = client.post(GROQ_URL, headers={"Authorization": f"Bearer {key}"},
                         data={"model": GROQ_MODEL, "response_format": "verbose_json", "timestamp_granularities[]": "word",
-                              "temperature": "0"},
+                              "temperature": "0", **({"prompt": prompt[:400]} if prompt else {})},
                         files={"file": (name, data, "audio/flac")})
     except Exception as e:  # noqa: BLE001 - network, closed client, anything: local takes over
         raise GroqUnavailable(f"Groq unreachable ({e.__class__.__name__})")
@@ -230,7 +230,7 @@ def clean_words(raw, groq: bool = False) -> list[dict]:
     return out
 
 
-def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> tuple[list[dict], str]:
+def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None, prompt: str | None = None) -> tuple[list[dict], str]:
     """One chunk through Groq with THIS machine's key (a self-hoster's worker). Raises GroqUnavailable."""
     ok, why = budget.reserve(secs)  # counted before the call: a timeout still used the request
     if not ok:
@@ -240,7 +240,7 @@ def groq_chunk(flac: Path, secs: float, key: str, budget: Budget, http=None) -> 
     if not ok:
         raise GroqUnavailable(why)
     try:
-        return groq_post(flac.read_bytes(), flac.name, key, http)
+        return groq_post(flac.read_bytes(), flac.name, key, http, prompt=prompt)
     except GroqRateLimited as e:
         budget.block(e.wait)
         raise
@@ -263,20 +263,21 @@ def proxy_chunk(flac: Path, secs: float, proxy) -> tuple[list[dict], str]:
     return words, lang
 
 
-def _local_chunk(flac: Path, model: str) -> tuple[list[dict], str]:
+def _local_chunk(flac: Path, model: str, prompt: str | None = None) -> tuple[list[dict], str]:
     try:
         from faster_whisper import WhisperModel  # MIT
     except ImportError:
         raise RuntimeError("faster-whisper isn't installed on this worker")
     wm = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 2)
     segs, info = wm.transcribe(str(flac), word_timestamps=True, vad_filter=True, vad_parameters={"min_silence_duration_ms": 400},
-                               beam_size=1, condition_on_previous_text=False)
+                               beam_size=1, condition_on_previous_text=False, initial_prompt=prompt)
     words = [{"w": w.word.strip(), "s": round(w.start, 2), "e": round(w.end, 2), "p": round(w.probability, 2)}
              for seg in segs for w in seg.words or []]
     return words, info.language
 
 
-def free_first(path: str, key: str | None = None, budget: Budget | None = None, http=None, local=None):
+def free_first(path: str, key: str | None = None, budget: Budget | None = None, http=None, local=None,
+               prompt: str | None = None):
     """(words, language, provider) with Groq doing every chunk it can inside the free limits and the rest local, or
     None when Groq can't do even the first chunk (no key, a limit, an error): the caller's local path runs then.
     On the video worker (``free_quota.PROXY`` set, no explicit ``key``) the app makes each Groq call with its key."""
@@ -298,7 +299,8 @@ def free_first(path: str, key: str | None = None, budget: Budget | None = None, 
             got = None
             if not why:
                 try:
-                    got = proxy_chunk(f, n, proxy) if proxy is not None else groq_chunk(f, n, key, budget, http)
+                    got = proxy_chunk(f, n, proxy) if proxy is not None else (
+                        groq_chunk(f, n, key, budget, http, prompt=prompt) if prompt else groq_chunk(f, n, key, budget, http))
                     groq_n += 1
                 except GroqUnavailable as e:
                     why = str(e)
@@ -306,7 +308,7 @@ def free_first(path: str, key: str | None = None, budget: Budget | None = None, 
                     if groq_n == 0:
                         return None
             if got is None:
-                got = (local or _local_chunk)(f, local_model())
+                got = local(f, local_model()) if local else _local_chunk(f, local_model(), prompt)
                 local_n += 1
             ws, lg = got
             lang = lang or lg

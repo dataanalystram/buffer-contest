@@ -16,7 +16,7 @@ const IC = {  // Lucide icons (ISC): scan-face, maximize, rows-2, monitor, spark
 const icon = (k) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IC[k] || ""}</svg>`;
 const NAMES = { auto: "Auto", track: "Follow face", fit: "Full frame", split: "Split", screen: "Screen + face" };
 const HOOKS = { opener: "Opener (first 3 s)", keep: "Keep on screen" };
-const FX = { none: "Cover only", behind: "Words behind you (beta)" };
+const FX = { none: "Cover only", headline: "Headline card", behind: "Words behind you (beta)" };
 let L = null;
 const $l = (id) => document.getElementById(id);
 const clock = (s) => { s = Math.max(0, +s || 0); return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`; };

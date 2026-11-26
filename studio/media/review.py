@@ -36,6 +36,9 @@ def review(clip: dict, meta: dict | None = None) -> dict:
         issues.append({"what": what, "why": why, "fix": fix})
 
     text = str(clip.get("transcript") or clip.get("text") or "")
+    co = clip.get("cold_open") if isinstance(clip.get("cold_open"), dict) else None
+    if co and co.get("text") and (meta.get("cold_open") or not meta):   # the opening line was joined in front
+        text = f"{co['text']} {text}"
     hook = str(clip.get("hook") or "")
     tw, hw = _words(text), _words(hook)
 
@@ -127,6 +130,9 @@ def review(clip: dict, meta: dict | None = None) -> dict:
             elif isinstance(cov, (int, float)):
                 works.append(f"The speaker stays in frame ({cov * 100:.0f}% of the time).")
 
+    if co and meta.get("cold_open"):
+        checked.append("cold open")
+        works.append(f"Opens on \"{co.get('text', '')[:70]}\", said earlier in the video, then cuts to the moment.")
     # ---- polish: trims, the hook effect, captions
     tr = clip.get("trim") or {}
     if isinstance(tr, dict) and tr.get("trimmed_s"):

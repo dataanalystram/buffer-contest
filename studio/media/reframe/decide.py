@@ -138,7 +138,7 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
         if ml is not None and mr is not None and (ml + mr) > 0:
             share_l = ml / (ml + mr)
             both_talk = min(ml, mr) >= MOTION_MIN and min(share_l, 1 - share_l) >= TALK_MIN
-            if both_talk and split_enabled() and sig.get("dur", 0) >= SPLIT_MIN_SHOT:
+            if both_talk and (split_enabled() or prefs.get("split")) and sig.get("dur", 0) >= SPLIT_MIN_SHOT:
                 return {"layout": "split", "rule": "R6", "faces": [l["id"], r["id"]]}
             solo = l if share_l >= TALK_SOLO else (r if share_l <= 1 - TALK_SOLO else None)
             if solo is not None and max(ml, mr) >= MOTION_MIN and solo["h"] >= FACE_MIN_H:

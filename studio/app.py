@@ -1120,6 +1120,13 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
     def take_sample(request: Request, body: dict = Body(default={})):
         return house.takes.start_sample(actor(request, write=True), body)
 
+    @app.get("/api/takes/recipes")
+    def take_recipes(request: Request):
+        """The One take recipes and clip lengths the setup card offers (studio/recipes.py)."""
+        actor(request)
+        from . import recipes
+        return recipes.public()
+
     @app.get("/api/takes")
     def take_list(request: Request):
         return house.takes.list(actor(request))

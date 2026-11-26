@@ -297,22 +297,59 @@
             <button type="button" role="tab" class="on" data-tsrc="upload" data-testid="take-src-upload" aria-selected="true">Upload</button>
             <button type="button" role="tab" data-tsrc="link" data-testid="take-src-link" aria-selected="false">Link to the file</button>
           </div>
-          <form id="takeForm" class="agent-form take-form">
+          <form id="takeForm" class="agent-form take-form tk-setup">
+            <div class="tk-main">
             <div class="field grow" id="tkUploadF"><label class="label" for="tkFile">Your video</label>
               <div class="drop" id="tkDrop" data-testid="take-drop"><input id="tkFile" data-testid="take-file" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm"><span id="tkDropTxt">Drop an MP4 or MOV here, or choose a file (up to 100 MB; use a link for longer talks)</span></div>
               <div class="tk-prog" id="tkProgBox" hidden><progress id="tkProg" data-testid="take-upload-progress" max="100" value="0" aria-label="Upload progress"></progress><small id="tkProgTxt" data-testid="take-upload-status" aria-live="polite"></small></div></div>
             <div class="field grow" id="tkLinkF" hidden><label class="label" for="tkUrl">Link to your video</label><input id="tkUrl" data-testid="take-url" type="url" placeholder="https://youtu.be/… or https://your-storage.example.com/talk.mp4"><span class="muted xs" data-testid="take-url-hint">A YouTube, Vimeo or X video post, or a video file link. Our video worker fetches it once you confirm the rights below (no account or cookies used; up to 4 GB and 3 h).</span></div>
-            <div class="field"><label class="label" for="tkCount">Clips</label><select id="tkCount" data-testid="take-count"><option value="">Let it decide (3–7)</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></div>
-            <label class="chk" data-testid="take-punch" title="A gentle zoom in and back out (up to 12%, eased) at scene starts and emphasised words, centred on the speaker. Off renders the shots still."><input type="checkbox" id="tkPunch" data-testid="take-punch-in" checked> Auto zoom on the speaker (gentle punch-in)</label>
-            <label class="chk" data-testid="take-trim"><input type="checkbox" id="tkTrim" data-testid="take-trim-pauses" checked> Trim long pauses and filler words (um, uh)</label>
-            <div class="take-go-row">
+            <fieldset class="tk-sec" data-testid="take-recipes-box">
+              <legend class="tk-sec-h">Recipe <span class="muted xs">Decides which edits run. Your brand kit decides the look.</span></legend>
+              <div class="tk-recipes" id="tkRecipes" role="radiogroup" aria-label="Recipe" data-testid="take-recipes"></div>
+            </fieldset>
+            <div class="tk-sec tk-row2">
+              <div class="field"><span class="label" id="tkLenLbl">Clip length</span>
+                <div class="tk-chips" id="tkLens" role="radiogroup" aria-labelledby="tkLenLbl" data-testid="take-lengths"></div></div>
+              <div class="field"><label class="label" for="tkCount">Clips</label><select id="tkCount" data-testid="take-count"><option value="">Let it decide (3–7)</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></div>
+            </div>
+            <div class="field tk-sec"><label class="label" for="tkFocus">Moments to include <span class="muted xs">optional</span></label>
+              <input id="tkFocus" data-testid="take-focus" type="text" maxlength="200" placeholder="e.g. pricing, the outage, our first customer">
+              <span class="muted xs">Clips that talk about these rank first. Only words you actually said are used.</span></div>
+            <fieldset class="tk-sec" data-testid="take-edits">
+              <legend class="tk-sec-h">Edits</legend>
+              <div class="tk-edit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h6v6H4zM14 12h6v6h-6z"/><path d="M10 9h2a2 2 0 0 1 2 2v1"/></svg><label for="tkCold"><b>Open on your best line</b><small>A clip may start on a stronger line you said earlier, then cut to the moment. Your words only.</small></label>
+                <span class="sw" data-testid="take-cold"><input type="checkbox" id="tkCold" data-testid="take-cold-open" checked><span></span></span></div>
+              <div class="tk-edit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="7" rx="1.5"/><path d="M4 15h16M4 19h10"/></svg><label for="tkHeadOn"><b>Headline card</b><small>The hook line, in a box in your brand colours, over the first seconds.</small></label>
+                <span class="sw" data-testid="take-headline"><input type="checkbox" id="tkHeadOn" data-testid="take-headline-on"><span></span></span></div>
+              <div class="tk-edit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h6"/><path d="M17 14l4 4M21 14l-4 4"/></svg><label for="tkTrim"><b>Trim pauses and filler words</b><small>Cuts long pauses and um, uh from each clip.</small></label>
+                <span class="sw" data-testid="take-trim"><input type="checkbox" id="tkTrim" data-testid="take-trim-pauses" checked><span></span></span></div>
+              <div class="tk-edit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/></svg><label for="tkPunch"><b>Auto zoom on the speaker</b><small>A gentle punch-in at scene starts and strong words, never cropping the face.</small></label>
+                <span class="sw" data-testid="take-punch"><input type="checkbox" id="tkPunch" data-testid="take-punch-in" checked><span></span></span></div>
+              <div class="tk-edit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/></svg><label for="tkSplit"><b>Split for two speakers</b><small>Two people talking each get half the frame. On with the Podcast recipe.</small></label>
+                <span class="sw" data-testid="take-split"><input type="checkbox" id="tkSplit" data-testid="take-split-on"><span></span></span></div>
+            </fieldset>
+            <div class="tk-sec"><div class="chips-head"><span class="label" id="tkChLbl">Channels for the clips</span></div>
+            <div class="chips" id="takeChips" data-testid="take-chips" role="group" aria-labelledby="tkChLbl"></div></div>
+            <div class="take-go-row tk-foot">
               <label class="chk" data-testid="take-attest"><input type="checkbox" id="tkOwns" data-testid="take-owns"> I own this video or have permission to use it (e.g. my own content, a licence, or Creative Commons); I'm responsible for rights.</label>
               <span class="row"><button class="btn2" id="tkSample" data-testid="take-sample" type="button">Try the sample take</button>
-              <button class="btn" id="tkGo" data-testid="take-go" type="submit">Make clips</button></span></div>
-          <p class="st-err" id="tkErr" data-testid="take-error" role="alert"></p>
+              <button class="btn big" id="tkGo" data-testid="take-go" type="submit">Make clips</button></span></div>
+            </div>
+            <aside class="tk-aside" data-testid="take-preview" aria-labelledby="tkPvH">
+              <h2 class="tk-sec-h" id="tkPvH">Your clips will look like this</h2>
+              <div class="tk-phone" id="tkPhone" data-testid="take-preview-phone" data-mode="solo" aria-hidden="true">
+                <span class="tk-ph-logo" id="tkPhLogo" data-testid="take-preview-logo">Your logo</span>
+                <span class="tk-ph-head" data-testid="take-preview-headline">Your best line, as a headline</span>
+                <span class="tk-ph-shot a"><i></i></span><span class="tk-ph-shot b"><i></i></span>
+                <span class="tk-ph-screen"><i></i><i></i><i></i></span>
+                <span class="tk-ph-cap" data-testid="take-preview-caption">ONLY <em>YOUR</em> WORDS</span>
+              </div>
+              <div class="tk-tl" id="tkTl" data-testid="take-preview-timeline" role="img" aria-label="How each clip is cut"></div>
+              <ul class="tk-sum" id="tkSum" data-testid="take-summary" aria-live="polite"></ul>
+              <script type="application/json" id="tkAgentCtx" data-testid="take-agent-context">{}</script>
+            </aside>
+            <p class="st-err" id="tkErr" data-testid="take-error" role="alert"></p>
             </form>
-          <div class="chips-head"><span class="label" id="tkChLbl">Channels for the clips</span></div>
-          <div class="chips" id="takeChips" data-testid="take-chips" role="group" aria-labelledby="tkChLbl"></div>
         </div>
         <section id="takeView" data-testid="take-view" aria-labelledby="tkRunTitle" hidden>
           <div class="tk-runbar" id="tkRunBar" data-testid="take-runbar">

@@ -19,9 +19,9 @@ function takeChips() {
   for (const c of chans) {
     const el = document.createElement("button");
     el.type = "button"; el.className = "chip svc-" + c.service + (T.sel.has(c.id) ? " on" : "");
-    el.setAttribute("data-testid", "take-chip"); el.setAttribute("aria-pressed", T.sel.has(c.id)); el.dataset.ch = c.id;
+    el.setAttribute("data-testid", "take-chip"); el.setAttribute("aria-pressed", T.sel.has(c.id)); el.dataset.ch = c.id; el.id = "take-chip-" + c.id;  // one id per channel for agents; the testid names the kind
     el.innerHTML = `${avatar(c)}<span>${esc(c.displayName || c.name)}</span><small>${esc(netName(c.service))}</small>`;
-    el.onclick = () => { T.sel.has(c.id) ? T.sel.delete(c.id) : T.sel.add(c.id); el.classList.toggle("on"); el.setAttribute("aria-pressed", T.sel.has(c.id)); if (T.take) takeTargets(T.take); };
+    el.onclick = () => { T.sel.has(c.id) ? T.sel.delete(c.id) : T.sel.add(c.id); el.classList.toggle("on"); el.setAttribute("aria-pressed", T.sel.has(c.id)); if (T.take) takeTargets(T.take); tkPreview(); };
     box.appendChild(el);
   }
 }
@@ -29,8 +29,115 @@ function setTakeSrc(src) {
   T.src = src;
   document.querySelectorAll("[data-tsrc]").forEach((b) => { const on = b.dataset.tsrc === src; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
   $("#tkUploadF").hidden = src !== "upload"; $("#tkLinkF").hidden = src !== "link";
+  if (typeof tkAgentContext === "function") tkAgentContext();
 }
 document.querySelectorAll("[data-tsrc]").forEach((b) => (b.onclick = () => setTakeSrc(b.dataset.tsrc)));
+
+// ---- recipes: one tap sets the edits a kind of video needs (studio/recipes.py, GET /api/takes/recipes)
+const TK_RECIPE_IC = {
+  auto: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/>',
+  podcast: '<rect x="2.5" y="6" width="8" height="12" rx="2"/><rect x="13.5" y="6" width="8" height="12" rx="2"/>',
+  talking: '<circle cx="12" cy="9" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+  tutorial: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M8 9l2 2-2 2M13 13h3"/>',
+  product: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>',
+};
+const TK_RECIPES_FALLBACK = {
+  recipes: [
+    { id: "auto", label: "Let it decide", about: "Reads each shot and picks the framing, length and style.", length: "", punch_in: true, trim_pauses: true, split: false },
+    { id: "podcast", label: "Podcast or interview", about: "Two people talking: each speaker gets half the frame, 30-60 s clips.", length: "mid", punch_in: false, trim_pauses: true, split: true },
+    { id: "talking", label: "Talking head", about: "One person to camera: tight crop, gentle zoom on the strong words.", length: "", punch_in: true, trim_pauses: true, split: false },
+    { id: "tutorial", label: "Screen tutorial", about: "A screen recording: zooms in where you type, longer clips, clean captions.", length: "long", punch_in: false, trim_pauses: true, split: false, cold_open: false },
+    { id: "product", label: "Product demo", about: "A product on camera or on screen: zooms in on it, short punchy clips.", length: "short", punch_in: true, trim_pauses: true, split: false },
+  ],
+  lengths: [{ id: "", label: "Auto (20-60 s)" }, { id: "short", label: "15-30 s" }, { id: "mid", label: "30-60 s" }, { id: "long", label: "60-90 s" }],
+};
+T.recipe = "auto"; T.length = "";
+function tkRadio(box, items, cur, pick, card) {
+  box.innerHTML = "";
+  items.forEach((it) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.setAttribute("role", "radio"); b.dataset.id = it.id;
+    b.className = card ? "tk-recipe" : "tk-chip";
+    b.dataset.testid = card ? `take-recipe-${it.id}` : `take-length-${it.id || "auto"}`;
+    b.setAttribute("aria-checked", String(it.id === cur));
+    b.tabIndex = it.id === cur ? 0 : -1;
+    if (card) {
+      b.innerHTML = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${TK_RECIPE_IC[it.id] || TK_RECIPE_IC.auto}</svg><b></b><small></small>`;
+      b.querySelector("b").textContent = it.label; b.querySelector("small").textContent = it.about;
+    } else b.textContent = it.label;
+    b.onclick = () => pick(it);
+    b.onkeydown = (e) => {  // arrow keys move within the group, like native radios
+      const k = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      if (!k) return;
+      e.preventDefault();
+      const all = [...box.children], i = (all.indexOf(b) + k + all.length) % all.length;
+      all[i].focus(); all[i].click();
+    };
+    box.appendChild(b);
+  });
+}
+function tkDrawSetup(data) {
+  const pickRecipe = (r) => {
+    T.recipe = r.id;
+    // the recipe's defaults land on the switches; the person can still change each one
+    $("#tkTrim").checked = !!r.trim_pauses; $("#tkPunch").checked = !!r.punch_in; $("#tkSplit").checked = !!r.split;
+    $("#tkCold").checked = r.cold_open !== false;
+    T.length = r.length || "";
+    tkDrawSetup(data);
+  };
+  tkRadio($("#tkRecipes"), data.recipes, T.recipe, pickRecipe, true);
+  tkRadio($("#tkLens"), data.lengths, T.length, (l) => { T.length = l.id; tkDrawSetup(data); }, false);
+  tkPreview();
+}
+// The live preview beside the setup: a sketch of one clip plus the cut it gets. It only reflects the switches; it never
+// claims a result (the real clip is checked after rendering).
+// The setup as the request Make clips sends (POST /api/takes; MCP clips_from_video takes the same fields). One builder for
+// both, so the agent context below can never drift from what the button does.
+function tkSetupBody() {
+  const body = { channel_ids: [...(T.sel || [])], punch_in: !!$("#tkPunch").checked, trim_pauses: !!$("#tkTrim").checked,
+                 recipe: T.recipe || "auto", length: T.length || "", split: !!$("#tkSplit").checked,
+                 cold_open: !!$("#tkCold").checked, headline: !!$("#tkHeadOn").checked };
+  const focus = $("#tkFocus").value.trim(); if (focus) body.focus = focus;
+  const n = $("#tkCount").value; if (n) body.count = +n;
+  return body;
+}
+function tkAgentContext() {
+  const el = $("#tkAgentCtx"); if (!el) return;
+  el.textContent = JSON.stringify({ rest: "POST /api/takes", mcp: "clips_from_video", source: T.src,
+    body: tkSetupBody(), needs: ["owns: true (the rights box)", T.src === "link" ? "url" : "upload_id or media_token"] });
+}
+function tkPreview() {
+  tkAgentContext();
+  const ph = $("#tkPhone"); if (!ph) return;
+  const on = (id) => !!($(id) && $(id).checked);
+  const data = T.recipes || TK_RECIPES_FALLBACK;
+  const r = data.recipes.find((x) => x.id === T.recipe) || data.recipes[0];
+  const len = data.lengths.find((x) => x.id === (T.length || "")) || data.lengths[0];
+  const cold = on("#tkCold"), head = on("#tkHeadOn"), trim = on("#tkTrim"), punch = on("#tkPunch"), split = on("#tkSplit");
+  ph.dataset.mode = split ? "split" : (T.recipe === "tutorial" ? "screen" : "solo");
+  ph.classList.toggle("head", head); ph.classList.toggle("punch", punch);
+  // the cut: [best line] | the moment, with trimmed pauses shown as gaps that close up
+  const seg = (cls, label, tid) => `<span class="tk-tl-${cls}" data-testid="take-preview-${tid}"><b>${esc(label)}</b></span>`;
+  $("#tkTl").innerHTML = (cold ? seg("cold", "Best line", "cold") + `<span class="tk-tl-jump" aria-hidden="true"></span>` : "")
+    + seg("moment", trim ? "The moment, pauses cut" : "The moment", "moment");
+  $("#tkTl").setAttribute("aria-label", cold ? "Each clip opens on your best line, then cuts to the moment" : "Each clip is the moment as you said it");
+  const n = $("#tkCount") && $("#tkCount").value ? `${$("#tkCount").value} clips` : "3 to 7 clips";
+  const edits = [cold && "opens on your best line", head && "headline card", trim && "pauses trimmed", punch && "auto zoom",
+                 split && "split for two speakers"].filter(Boolean);
+  const chans = T.sel ? T.sel.size : 0;
+  const li = (k, v, tid) => `<li data-testid="take-summary-${tid}"><span>${esc(k)}</span><b>${esc(v)}</b></li>`;
+  $("#tkSum").innerHTML = li("Recipe", r.label, "recipe") + li("Clips", `${n}, ${len.label.replace(/^Auto \((.*)\)$/, "$1")} each`, "clips")
+    + li("Edits", edits.length ? edits.join(", ") : "none, just the cut and captions", "edits")
+    + li("Goes to", chans ? `${chans} channel${chans > 1 ? "s" : ""} as Buffer drafts` : "pick a channel", "goes-to")
+    + `<li class="tk-sum-note" data-testid="take-summary-note">Nothing posts until you approve it.</li>`;
+}
+$("#takeForm").addEventListener("change", tkPreview);
+$("#tkFocus").addEventListener("input", tkAgentContext);
+(async () => {
+  let data = TK_RECIPES_FALLBACK;
+  try { const d = await api("/api/takes/recipes"); if (d && d.recipes && d.recipes.length) data = d; } catch (e) { /* the built-in list */ }
+  T.recipes = data; tkDrawSetup(data);
+})();
 const tdrop = $("#tkDrop");
 ["dragover", "dragenter"].forEach((e) => tdrop.addEventListener(e, (ev) => { ev.preventDefault(); tdrop.classList.add("over"); }));
 ["dragleave", "drop"].forEach((e) => tdrop.addEventListener(e, () => tdrop.classList.remove("over")));
@@ -150,8 +257,7 @@ $("#takeForm").addEventListener("submit", async (ev) => {
     const u = $("#tkUrl").value.trim();
     if (!/^https:\/\/[^\s/]+\.[^\s/]+\/\S+/.test(u)) return say("Paste an https:// link to the video: a YouTube, Vimeo or X post, or the video file.");
   }
-  const body = { owns: true, channel_ids: [...T.sel], punch_in: !!$("#tkPunch").checked, trim_pauses: !!$("#tkTrim").checked };
-  const n = $("#tkCount").value; if (n) body.count = +n;
+  const body = { owns: true, ...tkSetupBody() };
   const b = $("#tkGo"); b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Starting…`;
   try {
     if (T.src === "upload") {

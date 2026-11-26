@@ -151,7 +151,19 @@ def candidates(sents: list[dict], min_s: float = MIN_CLIP, max_s: float = MAX_CL
     return out
 
 
-def heuristic_score(sents: list[dict], a: int, b: int, scenes: list[float] | None = None) -> float:
+def focus_terms(prompt: str | None) -> list[str]:
+    """The words a person asked for in "Moments to include" ("pricing, the outage"), lower-case, stop words left out."""
+    words = re.findall(r"[a-z0-9']{3,}", (prompt or "").lower())
+    return [w for w in dict.fromkeys(words) if w not in FOCUS_STOP][:12]
+
+
+FOCUS_STOP = {"the", "and", "about", "with", "that", "this", "where", "when", "what", "moments", "moment", "clips",
+              "clip", "talk", "talks", "part", "parts", "any", "all", "from", "for", "our", "their", "some", "find", "want"}
+FOCUS_BONUS = 14.0      # a span that says what the person asked for ranks above an equally strong one that doesn't
+
+
+def heuristic_score(sents: list[dict], a: int, b: int, scenes: list[float] | None = None,
+                    target: float | None = None, focus: list[str] | None = None) -> float:
     """Deterministic score 0-100: a strong first line, standalone start, clean end, pace, little filler, length near
     the sweet spot. Same input -> same output (the fallback when no model is configured)."""
     first = norm(sents[a]["text"]).split()
@@ -173,7 +185,10 @@ def heuristic_score(sents: list[dict], a: int, b: int, scenes: list[float] | Non
     score -= 120 * filler
     wps = len(text) / max(dur, 1)
     score += max(-10, min(8, (wps - 2.0) * 8))
-    score -= abs(dur - TARGET_CLIP) * 0.35
+    score -= abs(dur - (target or TARGET_CLIP)) * 0.35
+    if focus:
+        hits = sum(1 for f in focus if any(w.startswith(f) for w in text))
+        score += FOCUS_BONUS * min(2, hits)
     if scenes:
         if any(abs(sc - sents[a]["s"]) < 0.8 for sc in scenes):
             score += 3
@@ -332,14 +347,15 @@ def reason(sents: list[dict], a: int, b: int, hook: str, notes: list[str]) -> st
     return (", ".join(bits)[:1].upper() + ", ".join(bits)[1:] + ".")[:200]
 
 
-def heuristic_moments(sents: list[dict], n: int, scenes: list[float] | None = None) -> list[dict]:
+def heuristic_moments(sents: list[dict], n: int, scenes: list[float] | None = None, lo: float = MIN_CLIP,
+                      hi: float = MAX_CLIP, focus: list[str] | None = None) -> list[dict]:
     picks, seen = [], set()
-    for a0, b0 in candidates(sents):
-        a, b, notes = tidy_span(sents, a0, b0)
-        if (a, b) in seen or not (MIN_CLIP <= sents[b]["e"] - sents[a]["s"] <= MAX_CLIP):
+    for a0, b0 in candidates(sents, lo, hi):
+        a, b, notes = tidy_span(sents, a0, b0, max_s=hi)
+        if (a, b) in seen or not (lo <= sents[b]["e"] - sents[a]["s"] <= hi):
             continue
         seen.add((a, b))
-        score = heuristic_score(sents, a, b, scenes)
+        score = heuristic_score(sents, a, b, scenes, (lo + hi) / 2, focus)
         if needs_setup(sents, a):
             score -= 18                     # still leans on something before it: rank it below clips that stand alone
         if sents[b]["text"].strip().endswith("?"):
@@ -348,9 +364,9 @@ def heuristic_moments(sents: list[dict], n: int, scenes: list[float] | None = No
         picks.append({"a": a, "b": b, "s": sents[a]["s"], "e": sents[b]["e"], "score": round(max(0.0, score), 1),
                       "hook": hook, "why": reason(sents, a, b, hook, notes)})
     chosen = _non_overlapping(picks, n)
-    if not chosen and sents:  # a short take: offer the whole thing (up to MAX_CLIP)
+    if not chosen and sents:  # a short take: offer the whole thing (up to the longest clip asked for)
         b = 0
-        while b + 1 < len(sents) and sents[b + 1]["e"] - sents[0]["s"] <= MAX_CLIP:
+        while b + 1 < len(sents) and sents[b + 1]["e"] - sents[0]["s"] <= hi:
             b += 1
         chosen = [{"a": 0, "b": b, "s": sents[0]["s"], "e": sents[b]["e"], "score": heuristic_score(sents, 0, b, scenes),
                    "hook": best_line(sents, 0, b), "why": "The take is short, so the whole span."}]
@@ -364,16 +380,18 @@ MINER_SYSTEM = ("You are a short-form video editor. You find the moments in a cr
                 "vertical clips. You never invent words: hooks are quoted exactly from the transcript.")
 
 
-def miner_prompt(sents: list[dict], n: int) -> str:
+def miner_prompt(sents: list[dict], n: int, lo: float = MIN_CLIP, hi: float = MAX_CLIP, focus: list[str] | None = None) -> str:
     lines = [f"[{s['i']}] ({s['s']:.1f}-{s['e']:.1f}s) {s['text']}" for s in sents]
-    return (f"Pick the {n} best moments for {int(MIN_CLIP)}-{int(MAX_CLIP)} second clips. A moment is a run of whole sentences "
+    ask = (f"The creator asked for moments about: {', '.join(focus)}. Prefer those when they are as strong as the rest. "
+           if focus else "")
+    return (f"Pick the {n} best moments for {int(lo)}-{int(hi)} second clips. {ask}A moment is a run of whole sentences "
             "[start..end] that makes sense on its own, opens with a strong line and ends cleanly. Moments must not overlap. "
             "Return JSON {\"moments\": [{\"start\": <sentence index>, \"end\": <sentence index>, \"hook\": <an exact quote of "
             "3-14 words from those sentences>, \"why\": <one short reason>, \"score\": <0-100>}]}.\nTRANSCRIPT:\n"
             + untrusted.wrap("\n".join(lines), "video transcript", limit=60000))
 
 
-def validate_llm(data, sents: list[dict], n: int) -> list[dict]:
+def validate_llm(data, sents: list[dict], n: int, lo: float = 15.0, hi: float = 75.0) -> list[dict]:
     """Keep only spans that exist in the transcript, last 15-75 s, don't overlap, and whose hook is verbatim."""
     items = data.get("moments") if isinstance(data, dict) else data
     out = []
@@ -384,9 +402,9 @@ def validate_llm(data, sents: list[dict], n: int) -> list[dict]:
             continue
         if not (0 <= a <= b < len(sents)):
             continue
-        a, b, notes = tidy_span(sents, a, b, max_s=75)
+        a, b, notes = tidy_span(sents, a, b, max_s=hi)
         dur = sents[b]["e"] - sents[a]["s"]
-        if not (15 <= dur <= 75):
+        if not (lo <= dur <= hi):
             continue
         text = span_text(sents, a, b)
         hook = str(m.get("hook") or "").strip().strip('"“”')
@@ -425,7 +443,63 @@ def finalize(m: dict, sents: list[dict], silences: list[list[float]], scenes: li
             "text": span_text(sents, m["a"], m["b"])}
 
 
-def mine_moments(analysis: dict, want: int | None = None, engine: dict | None = None, chat_json=None) -> dict:
+LENGTHS = {"short": (15.0, 30.0), "mid": (30.0, 60.0), "long": (60.0, 90.0)}   # the setup's clip length chips
+
+# ---- cold open: open a clip on the video's strongest line said earlier, then jump to the body (26 Nov: OpusClip
+# opened our demo clip on its real first line, "What if one idea could become a week of content?", and we didn't)
+COLD_MAX_S = 6.5        # the borrowed line is short: a hook, not a second clip
+COLD_GAP_S = 4.0        # only from before the clip, with a real jump (not the sentence right before it)
+COLD_MARGIN = 4.0       # it must be clearly stronger than the clip's own opening line
+COLD_INTRO_S = 30.0     # the video's own intro lines may open any clip; later lines must share the clip's subject
+_SUBJECT_STOP = FOCUS_STOP | {"have", "just", "really", "they", "them", "your", "you", "what", "will", "would", "could",
+                              "there", "here", "into", "then", "than", "every", "because", "which", "been", "were"}
+
+
+def _content(text: str) -> set:
+    return {w for w in norm(text).split() if len(w) > 3 and w not in _SUBJECT_STOP}
+
+
+def cold_open(sents: list[dict], m: dict, used: set) -> dict | None:
+    """{s, e, text, i} for a line said before the clip that opens it better than its own first line, or None. Verbatim
+    (a whole sentence the speaker said), stands alone, short, clearly stronger, and either from the video's intro or about
+    the same subject. Each line opens at most one clip (`used`)."""
+    a = m["a"]
+    own = line_strength(sents[a]) + (4 if sents[a]["text"].strip().endswith("?") else 0)
+    body = _content(span_text(sents, a, m["b"]))
+    best, best_sc = None, own + COLD_MARGIN
+    for i in range(0, a):
+        st = sents[i]
+        if i in used or st["e"] > sents[a]["s"] - COLD_GAP_S or st["e"] - st["s"] > COLD_MAX_S:
+            continue
+        if needs_setup(sents, i) or not st["text"].strip().endswith((".", "!", "?")):
+            continue
+        sc = line_strength(st)
+        if sc < best_sc:
+            continue
+        if st["s"] > COLD_INTRO_S and len(_content(st["text"]) & body) < 2:
+            continue   # a strong line about something else would mislead
+        best, best_sc = i, sc
+    if best is None:
+        return None
+    st = sents[best]
+    return {"i": best, "s": round(max(0.0, st["s"] - 0.08), 2), "e": round(st["e"] + 0.12, 2), "text": clean_hook(st["text"].strip())}
+
+
+def add_cold_opens(moments: list[dict], sents: list[dict]) -> None:
+    """In place: the strongest moments first get first pick of the lines (m["cold_open"]); the hook becomes that line."""
+    used: set = set()
+    for m in sorted(moments, key=lambda x: -float(x.get("score") or 0)):
+        co = cold_open(sents, m, used)
+        if not co:
+            continue
+        used.add(co["i"])
+        m["cold_open"] = {k: co[k] for k in ("s", "e", "text")}
+        m["hook"] = co["text"][:120]
+        m["why"] = (f"Opens on \"{co['text'][:60]}\" (said at {co['s']:.0f} s), then cuts to the moment. " + str(m.get("why") or ""))[:240]
+
+
+def mine_moments(analysis: dict, want: int | None = None, engine: dict | None = None, chat_json=None,
+                 length: str | None = None, prompt: str | None = None, cold_opens: bool = False) -> dict:
     """Pick the best moments. With an engine (the app's provider abstraction) the model scores and picks; every span it
     returns is validated against the transcript, and anything invalid falls back to the deterministic scorer."""
     words = analysis.get("words") or []
@@ -435,25 +509,30 @@ def mine_moments(analysis: dict, want: int | None = None, engine: dict | None = 
     duration = float((analysis.get("probe") or {}).get("duration") or sents[-1]["e"])
     n = target_count(duration, want)
     picks, how = [], "built-in scorer"
+    lo, hi = LENGTHS.get(length or "", (MIN_CLIP, MAX_CLIP))
+    focus = focus_terms(prompt)
     if engine and chat_json:
         try:
-            data = chat_json(engine, MINER_SYSTEM, miner_prompt(sents, n))
-            picks = validate_llm(data, sents, n)
+            data = chat_json(engine, MINER_SYSTEM, miner_prompt(sents, n, lo, hi, focus))
+            picks = validate_llm(data, sents, n, max(12.0, lo - 5), hi + 15)
             how = engine.get("source", "AI model")
         except Exception as e:  # noqa: BLE001 - any model failure falls back to the deterministic scorer
             print(f"take moments: model failed, built-in scorer used: {str(e)[:200]}", flush=True)  # server log only
             how = SCORER_FALLBACK  # never the engine's raw error on screen
             picks = []
     if len(picks) < min(n, 3):
-        extra = heuristic_moments(sents, n, analysis.get("scenes"))
+        extra = heuristic_moments(sents, n, analysis.get("scenes"), lo, hi, focus)
         merged = _non_overlapping(picks + [x for x in extra if all(x["e"] <= p["s"] or x["s"] >= p["e"] for p in picks)], n)
         if picks and how != "built-in scorer":
             how += " + built-in scorer"
         picks = merged
     moments = [finalize(m, sents, analysis.get("silences") or [], analysis.get("scenes") or [], duration) for m in picks]
+    if cold_opens:
+        add_cold_opens(moments, sents)
     for i, m in enumerate(moments):
         m["id"] = f"m{i + 1}"
-    return {"moments": moments, "picked_by": how, "sentences": len(sents), "target": n}
+    return {"moments": moments, "picked_by": how, "sentences": len(sents), "target": n,
+            **({"length": [lo, hi]} if length in LENGTHS else {}), **({"focus": focus} if focus else {})}
 
 
 # ====================================================================== reframe (9:16 crop plan)
@@ -759,11 +838,19 @@ def detect_scenes(path: str) -> tuple[list[float], str]:
 TRANSCRIBER = None  # tests and self-hosters can plug in their own: fn(path) -> (words, language, provider)
 
 
-def transcribe(path: str, model: str = "small") -> tuple[list[dict], str, str]:
+def names_prompt(names: list[str] | None) -> str | None:
+    """Whisper's initial prompt from the person's own names (brand kit, channels): small models and Groq spell a brand
+    the way it sounds otherwise (26 Nov: both OpusClip and we heard "HuhQueue" as "Hucu" / "Huckube")."""
+    ns = [str(n).strip().lstrip("@")[:40] for n in names or [] if str(n or "").strip()]
+    ns = list(dict.fromkeys(ns))[:8]
+    return ("Names: " + ", ".join(ns) + ".") if ns else None
+
+
+def transcribe(path: str, model: str = "small", names: list[str] | None = None) -> tuple[list[dict], str, str]:
     if TRANSCRIBER:
         return TRANSCRIBER(path)
     from .media import asr  # Groq's free tier first (GROQ_API_KEY set, inside the free limits), else faster-whisper here
-    got = asr.free_first(path)
+    got = asr.free_first(path, prompt=names_prompt(names))
     if got:
         return got
     model = asr.local_model(model)
@@ -779,7 +866,7 @@ def transcribe(path: str, model: str = "small") -> tuple[list[dict], str, str]:
     audio = np.frombuffer(pcm, dtype=np.float32)
     wm = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 2)
     segs, info = wm.transcribe(audio, word_timestamps=True, vad_filter=True, vad_parameters={"min_silence_duration_ms": 400},
-                               beam_size=1, condition_on_previous_text=False)
+                               beam_size=1, condition_on_previous_text=False, initial_prompt=names_prompt(names))
     words = []
     for seg in segs:
         for w in seg.words or []:
@@ -864,7 +951,7 @@ def _face_track_cv2(path: str, fps: float, why: str) -> tuple[list[dict], str]:
 
 
 def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, transcript: dict | None = None,
-            jev: bool | None = None) -> dict:
+            jev: bool | None = None, names: list[str] | None = None) -> dict:
     """transcript: captions that already exist (studio.media.subtitles.resolve_transcript: an uploaded .srt/.vtt, the
     platform's track, a caption stream in the file). When it has words, Whisper is skipped entirely.
     jev: the job's consent for Jev's second opinion on a few keyframes (studio/media/jev_faces.py). The worker only picks
@@ -905,7 +992,7 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
             words, lang = transcript["words"], transcript.get("language") or ""
             provider = f"reused captions: {transcript.get('detail') or transcript.get('source')} (no Whisper run)"
         else:
-            words, lang, provider = transcribe(path, model)
+            words, lang, provider = transcribe(path, model, names) if names else transcribe(path, model)
         timings["transcribe"] = round(time.time() - t, 1)
         log(f"transcribe: {len(words)} words in {timings['transcribe']}s ({provider})")
         if not any(str(w.get("w", "")).strip() for w in words):  # say so now: don't wait for the face track and scene
@@ -1069,11 +1156,16 @@ def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes
     orig = {k: m.get(k) for k in ("start", "end")}
     work = tempfile.mkdtemp(prefix="hq_trim_")
     try:
-        if m.get("trim_pauses") is True:
-            got = cleancut.prepare(path, m, words, faces, scenes, src, work)
+        if m.get("trim_pauses") is True or m.get("cold_open"):
+            got = cleancut.prepare(path, {**m, "trim_pauses": m.get("trim_pauses") is True}, words, faces, scenes,
+                                   src, work)
             trim = got["stats"]
             if got.get("path"):
                 path, m, words, faces, scenes, src = got["path"], got["m"], got["words"], got["faces"], got["scenes"], got["src"]
+            elif m.get("cold_open"):   # the opening line couldn't be joined: the span alone, without its words
+                words = [w for w in words if float(w["s"]) >= float(m["start"]) - 0.05]
+                m = {k: v for k, v in m.items() if k != "cold_open"}
+            if trim.get("on"):
                 print(f"render: clip {m.get('id', '')} trimmed {trim['trimmed_s']} s ({trim['pauses']} pauses, "
                       f"{trim['fillers']} fillers)", flush=True)
         if src.get("audio", True):
@@ -1082,8 +1174,11 @@ def render_clip(path: str, m: dict, words: list[dict], faces: list[dict], scenes
     finally:
         shutil.rmtree(work, ignore_errors=True)
     if trim is not None:
-        meta["trim"] = trim
-        if trim.get("trimmed_s"):
+        if trim.get("cold_open"):
+            meta["cold_open"] = trim.pop("cold_open")
+        if trim.get("on"):
+            meta["trim"] = trim
+        if trim.get("trimmed_s") or meta.get("cold_open"):
             meta["moment"] = orig  # the span in the source; the video itself is trimmed_s shorter
     if meta.get("audio") and m.get("_loud"):
         meta["audio"] = {**meta["audio"], "loudnorm": m["_loud"], "two_pass": "measured_I=" in m["_loud"]}
