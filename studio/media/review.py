@@ -96,13 +96,22 @@ def review(clip: dict, meta: dict | None = None) -> dict:
         span = lambda s: max(0.0, float(s.get("end", 0)) - float(s.get("start", 0)))  # noqa: E731
         total = sum(span(s) for s in plan) or 1.0
         fit = sum(span(s) for s in plan if s.get("layout") == "fit")
-        small = [s for s in plan if s.get("rule") in ("R4", "R3-upscale", "R5-upscale", "R8")]
-        if small:
+        two = [s for s in plan if s.get("layout") == "fit" and str(s.get("rule") or "").split("+")[0] == "R8"
+               and span(s) >= 2.0]
+        small = [s for s in plan if str(s.get("rule") or "").split("+")[0] in ("R4", "R3-upscale", "R5-upscale")]
+        if two:
+            # R8 is two (or more) people too far apart for one 9:16 crop, or faces too unsure to crop: pinning Track
+            # would cut one of them out (26 Nov Mac run: the notes said "too small" on the Waid podcast)
+            s = two[0]
+            issue(f"Two people share a full-frame shot ({_fmt(s['start'])}-{_fmt(s['end'])}), so both look small.",
+                  "They sit too far apart for one 9:16 crop, so the frame shows the whole wide shot.",
+                  "Switch that scene to Split in Layout so each speaker gets half the frame (Track would cut one out).")
+        elif small:
             s = small[0]
             issue(f"The speaker stays small in a full-frame shot ({_fmt(s['start'])}-{_fmt(s['end'])}).",
                   "The face was too small or too unsure to crop to 9:16 without going soft, so the frame shows the whole wide shot.",
                   "Pin that scene to Track in Layout if the face is clear enough, or accept the wide shot as context.")
-        elif fit / total > 0.8 and not any(s.get("rule") in ("R2", "R8-noface") for s in plan):
+        if not two and not small and fit / total > 0.8 and not any(s.get("rule") in ("R2", "R8-noface") for s in plan):
             issue("Most of the clip is the full wide frame.", "On a phone the people are small; the clip feels like a landscape video.",
                   "Pin the main scene to Track in Layout.")
         switches = sum(1 for a, b in zip(plan, plan[1:]) if a.get("layout") != b.get("layout"))
@@ -116,8 +125,6 @@ def review(clip: dict, meta: dict | None = None) -> dict:
                       "Switch the moving scene to full frame or Screen + face in Layout.")
             elif isinstance(cov, (int, float)):
                 works.append(f"The speaker stays in frame ({cov * 100:.0f}% of the time).")
-        if any(s.get("rule") == "R2" for s in plan):
-            works.append("Screen shots keep the screen whole and zoom in where the action is when that reads better.")
 
     # ---- polish: trims, the hook effect, captions
     tr = clip.get("trim") or {}

@@ -354,13 +354,13 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
 
 
 def opening_ok(layout_plan: list | None, window: float = WINDOW_S) -> str | None:
-    """None when the clip's opening seconds are a close shot of the speaker (a tracked crop), else why not: over a
-    full-frame card, a split or a screen the word lands on the blurred background or the content, not behind anyone
+    """None when the clip's opening seconds are a close shot of the speaker (a tracked crop or a split), else why not:
+    over a full-frame card or a screen the word lands on the blurred background or the content, not behind anyone
     (26 Nov Mac run: "SENSITIVE" sat on the card edge of the podcast)."""
     for s in layout_plan or []:
         if not isinstance(s, dict) or float(s.get("start", 0)) >= window:
             continue
-        if s.get("layout") != "track":
+        if s.get("layout") not in ("track", "split"):   # a split is two close shots, one per speaker (26 Nov Mac run)
             return "The clip doesn't open on a close shot of the speaker, so there is no one to put the word behind."
     return None
 

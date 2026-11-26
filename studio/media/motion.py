@@ -33,6 +33,7 @@ UNITS = {"percent", "%", "x", "times", "million", "billion", "thousand", "k", "m
          "people", "followers", "subscribers", "views", "dollars", "euros", "pounds", "downloads", "sales", "orders"}
 TURN = {"never", "nobody", "wrong", "mistake", "secret", "stop", "nothing", "everyone", "zero", "lost", "won", "failed",
         "broke", "free", "always", "only", "best", "worst", "first", "truth", "biggest", "impossible"}
+FILLER_OPEN = {"so", "and", "but", "um", "uh", "like", "well", "or", "because"}
 NO_FX_LAYOUTS = {"screen", "split"}
 NO_FX_RULES = {"R2"}   # a fit over a screen recording
 
@@ -50,9 +51,19 @@ def _clean(w: str) -> str:
 
 def _stat_at(words: list[dict], i: int) -> dict | None:
     """The statistic starting at word i: {text, prefix, value, decimals, suffix, s, e, n} or None."""
-    m = _NUM.match(_clean(words[i]["w"]))
+    tok, j = _clean(words[i]["w"]), i + 1
+    # the recogniser sometimes splits thousands into their own word: "$2" ",000" or "$2," "000" is "$2,000"
+    # (26 Nov Mac run: the card said "$2")
+    while j < len(words) and re.fullmatch(r"[$€£]?\d[\d,]*", tok or ""):
+        nxt = str(words[j]["w"]).strip()
+        joined = re.match(r"^,?(\d{3})(?!\d)", nxt) if (nxt.startswith(",") or str(words[j - 1]["w"]).strip().endswith(",")) else None
+        if not joined:
+            break
+        tok, j = tok + "," + joined.group(1) + _clean(nxt[joined.end():]), j + 1
+    m = _NUM.match(tok)
     if not m:
         return None
+    i0, i = i, j - 1   # the number's last word
     raw = m.group(2).replace(",", "")
     try:
         value = float(raw)
@@ -71,7 +82,7 @@ def _stat_at(words: list[dict], i: int) -> dict | None:
     if 1900 <= value <= 2100 and not suffix.strip() and not m.group(1):
         return None
     return {"prefix": m.group(1), "value": value, "decimals": dec, "suffix": suffix,
-            "s": float(words[i]["s"]), "e": float(words[i + n - 1]["e"]), "n": n}
+            "s": float(words[i0]["s"]), "e": float(words[i + n - 1]["e"]), "n": i + n - i0}
 
 
 def _sentences(words: list[dict]) -> list[list[dict]]:
@@ -139,6 +150,8 @@ def plan(words: list[dict], clip_start: float, sidecar: list[dict] | None = None
         low = [re.sub(r"[^\w']", "", t).lower() for t in toks]
         if not (2 <= len(toks) <= 7) or not (set(low) & TURN or toks[-1].endswith("!")):
             continue
+        if toks[-1].endswith("?") or low[0] in FILLER_OPEN:
+            continue   # a question or a lead-in ("So when you broke in?") sets up the point; it isn't the point
         t, e = float(sent[0]["s"]) - clip_start, float(sent[-1]["e"]) - clip_start
         if e - t > LINE_MAX_S:
             continue

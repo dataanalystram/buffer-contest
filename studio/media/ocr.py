@@ -232,7 +232,8 @@ def watermarks(text: str, own_handle: str = "") -> list[str]:
     OCR of a moving watermark reads pieces of the handle: a short fragment is completed from the other reads, a fragment
     nothing completes is dropped, and a handle that is the start of a longer one found too is folded into it."""
     low = (text or "").lower()
-    own = (own_handle or "").lower().lstrip("@").strip()
+    norm = lambda x: re.sub(r"[^a-z0-9]", "", x.lower())  # noqa: E731 - "@huhbyte.ai" is the brand's "huhbyteai"
+    own = norm(own_handle or "")
     hits = [m for m in PLATFORM_MARKS if re.search(rf"(?<![a-z]){m}(?![a-z])", low)]
     handles: list[str] = []
     for h in HANDLE_RX.findall(text or ""):
@@ -240,7 +241,7 @@ def watermarks(text: str, own_handle: str = "") -> list[str]:
         if not full:
             continue
         hl = full.lower()
-        if hl != own and hl not in handles:
+        if (not own or norm(hl) != own) and hl not in handles:
             handles.append(hl)
     handles = [h for h in handles if not any(o != h and o.startswith(h) for o in handles)]
     hits += [f"@{h}" for h in handles if f"@{h}" not in hits]

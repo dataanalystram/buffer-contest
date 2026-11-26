@@ -256,5 +256,7 @@ def test_words_behind_needs_a_close_shot_of_the_speaker_at_the_start():
     assert behind.opening_ok([{"start": 0, "end": 5, "layout": "track"}]) is None
     assert "close shot" in behind.opening_ok([{"start": 0, "end": 1.2, "layout": "track"}, {"start": 1.2, "end": 9, "layout": "fit"}])
     assert behind.opening_ok([{"start": 0, "end": 3, "layout": "track"}, {"start": 3, "end": 9, "layout": "fit"}]) is None
+    assert behind.opening_ok([{"start": 0, "end": 2.2, "layout": "split"}, {"start": 2.2, "end": 9, "layout": "track"}]) is None
+    assert "close shot" in behind.opening_ok([{"start": 0, "end": 4, "layout": "screen"}])
     data, meta = behind.on_clip(b"x", "We shipped it", None, None, 0.0, layout_plan=[{"start": 0, "end": 9, "layout": "fit"}])
     assert data == b"x" and meta["on"] is False and "close shot" in meta["why"]

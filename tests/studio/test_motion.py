@@ -61,3 +61,15 @@ def test_sound_accents_are_made_by_ffmpeg_and_sit_well_under_the_voice(tmp_path)
         peak = float(r.stderr.split("max_volume:")[1].split("dB")[0])
         assert -30 < peak < -15            # there, and well under a voice normalised to -14 LUFS
     assert motion.sfx_graph([], "[x]", "[y]") == ["[x]anull[y]"]
+
+
+def test_thousands_split_by_the_recogniser_stay_one_number_and_a_question_is_not_a_punchline(monkeypatch):
+    """26 Nov Mac run (third): "$2 ,000" became a "$2" card; "So when you broke in?" got kinetic type."""
+    monkeypatch.setenv("HQ_MOTION", "1")
+    p = motion.plan(W("It cost me $2 ,000 to start.", 5), 0.0)
+    assert [f["text"] for f in p["fx"]] == ["$2,000"]
+    p = motion.plan(W("It cost me $2, 000 dollars back then.", 5), 0.0)
+    assert p["fx"][0]["text"] == "$2,000 DOLLARS"
+    q = motion.plan(W("So when you broke in?", 5) + W("Okay sure.", 8), 0.0)
+    assert q["fx"] == []
+    assert motion.plan(W("We never stopped.", 5), 0.0)["fx"][0]["kind"] == "line"
