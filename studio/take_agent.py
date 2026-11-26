@@ -119,7 +119,8 @@ def chat(takes, a: Actor, rid, body: dict) -> dict:
                 reply = ("I can edit these clips for you: a stronger opening, words behind your head, numbers that pop, caption "
                          "styles, fewer effects, moving the logo or captions, and B-roll. Tell me what you want, and which clip.")
             else:
-                actions = [{"do": "direct", "clip": cid, "instruction": msg} for cid in _target(msg, ctx["clips"], hint)][:MAX_ACTIONS]
+                only_render = wants_render and len(msg.split()) <= 6 and not re.search(r"\b(and|then|with|but)\b", msg.lower())
+                actions = [] if only_render else [{"do": "direct", "clip": cid, "instruction": msg} for cid in _target(msg, ctx["clips"], hint)][:MAX_ACTIONS]
         if wants_render and not any(x["do"] == "render" for x in actions):
             actions += [{"do": "render", "clip": x["clip"]} for x in actions if x["do"] == "direct"][:MAX_ACTIONS]
             if not actions:

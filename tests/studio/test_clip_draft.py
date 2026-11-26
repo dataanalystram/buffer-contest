@@ -147,3 +147,13 @@ def test_director_knows_zoom_pauses_split_and_length(draft_clip):
     out = human.post(u, json={"instruction": "make it 8 seconds", "ai": False}).json()
     assert abs((out["draft"]["end"] - out["draft"]["start"]) - 8) < 0.1
     assert human.post(f"/api/takes/{rid}/clips/{cid}/draft/render").status_code in (200, 409)
+
+
+def test_stronger_opening_says_so_when_it_changes_nothing_and_render_alone_is_not_an_edit(draft_clip):
+    human, rid, cid, rendered, app = draft_clip
+    u = f"/api/takes/{rid}/clips/{cid}/direct"
+    out = human.post(u, json={"instruction": "make the opening stronger", "ai": False}).json()
+    out2 = human.post(u, json={"instruction": "make the opening stronger", "ai": False}).json()
+    assert out2["not_yet"] or out2["ops"] == []      # second time nothing new: it says so, no fake edit
+    r = human.post(f"/api/takes/{rid}/chat", json={"message": "render clip 1"}).json()
+    assert "didn't find an edit" not in r["reply"] and rendered

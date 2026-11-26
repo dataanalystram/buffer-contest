@@ -68,7 +68,8 @@ async function loadClip() {
       rendered: null, dirty: false, log: [], can_render: false, hook_fx_choices: ["none", "headline"], err: e.message };
   }
   C.draft = JSON.parse(JSON.stringify(C.state.draft));
-  const h = C.hist[c.id] || (C.hist[c.id] = { undo: [], redo: [] }); void h;
+  const h = C.hist[c.id] || (C.hist[c.id] = { undo: [], redo: [] });
+  if (C.state.dirty && C.state.rendered && !h.undo.length) h.undo.push(JSON.parse(JSON.stringify(C.state.rendered)));   // edits made elsewhere (the agent chat): Undo goes back to what's rendered
   drawAll();
   fitTl();
   loadWave(c);

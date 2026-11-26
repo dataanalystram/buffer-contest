@@ -225,3 +225,8 @@ body.cst-on #toast{z-index:330}
 .tkc-m.err{border-color:var(--focus)}.tkc-did{display:block;margin-top:4px;color:var(--muted)}
 .tkc-sugg{display:flex;flex-wrap:wrap;gap:6px}.tkc-form{display:flex;gap:8px;align-items:flex-end}.tkc-form textarea{flex:1;resize:vertical;min-height:44px}
 .cst-msg.notyet{border:1px dashed var(--focus);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;font-size:12px}
+@media (max-width:760px){
+  .take-head{flex-wrap:wrap;min-width:0}.take-head .pill,.take-head>*{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+  #takeView{min-width:0;max-width:100%}
+  .cst-tl{overflow-x:auto}.cst-right{min-height:0;max-height:70vh}
+}

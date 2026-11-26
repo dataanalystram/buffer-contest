@@ -415,7 +415,13 @@ def rules(instruction: str, d: dict, ws: list[dict], sel, behind_ok: bool) -> tu
             ch["hook"] = line
         if d.get("hook_fx") == "none" and "hook_fx" not in ch:
             ch["hook_fx"] = "headline"
-        ops.append({"what": f"Hook: \"{(line or d.get('hook') or '')[:60]}\"", "why": "The strongest line said in the first "
+        if not ch:
+            nope.append("The opening already uses the strongest line from the first seconds. Say which words to open on, or ask for words behind your head")
+            line = ""
+        short = (line or d.get("hook") or "")
+        short = short if len(short) <= 60 else short[:60].rsplit(" ", 1)[0] + "…"
+        if line:
+          ops.append({"what": f"Hook: \"{short}\"", "why": "The strongest line said in the first "
                     "seconds, boxed over the opening so the viewer knows why to stay.", "focus": {"element": "headline"}})
     if re.search(r"\bheadline\b", t) and "hook_fx" not in ch and not re.search(r"\bno headline|remove (the )?headline", t):
         ch["hook_fx"] = "headline"
