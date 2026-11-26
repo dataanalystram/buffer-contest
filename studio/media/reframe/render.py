@@ -481,7 +481,10 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         colors = (p or {}).get("colors") or (kit or {}).get("colors") or {}
         accent = colors.get("accent") or ACCENT
         brand_bg = colors.get("primary") or "#0B0B12"
-        ass = captions_ass.build(words, start, kit, p, preset, plan["sidecar"], bg_luma=plan.get("caption_bg")) if (words and captions) else ""
+        from .. import motion
+        plan["motion"] = motion.plan(words, start, plan["sidecar"], plan["shots"], captions=bool(words and captions))
+        ass = captions_ass.build(words, start, kit, p, preset, plan["sidecar"], bg_luma=plan.get("caption_bg"),
+                                 fx=plan["motion"]["fx"]) if (words and captions) else ""
         ass_path = None
         if ass:
             ass_path = str(tmp / "cap.ass")

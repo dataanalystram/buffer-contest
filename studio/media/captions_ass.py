@@ -215,9 +215,10 @@ def _keyword(t: str) -> bool:
 # ---------------------------------------------------------------------- the ASS file
 def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict | None = None, preset: str | None = None,
           sidecar: list[dict] | None = None, W: int = REF_W, H: int = REF_H, offset: float = 0.0,
-          bg_luma: float | None = None) -> str:
+          bg_luma: float | None = None, fx: list[dict] | None = None) -> str:
     """ASS for the clip's words (source seconds; the clip's first frame is clip_start - offset). bg_luma: the lightest
-    background under the captions (0-1); a light one gets the heavy stroke and shadow (see the contrast note above)."""
+    background under the captions (0-1); a light one gets the heavy stroke and shadow (see the contrast note above).
+    fx: motion moments (studio/media/motion.plan, clip seconds): each replaces the caption lines it overlaps."""
     kit, p = kit or {}, p or {}
     pid = clean_preset(preset) or DEFAULT_PRESET
     pr = script_preset(PRESETS[pid], words)
@@ -260,6 +261,8 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
         e = min(e_said, nxt) if nxt is not None else e_said     # one line on screen at a time
         if e <= s + 0.05:
             e = s + 0.3 if nxt is None else max(s + 0.05, nxt)
+        if any(s < f["e"] and e > f["s"] for f in fx or []):
+            continue   # a motion moment shows these words instead
         toks = [_esc(str(w["w"]).strip()) for w in g]
         if pr["upper"]:
             toks = [t.upper() for t in toks]
@@ -283,6 +286,13 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
         grow = f"\\fscx{int(fit * 0.92)}\\fscy{int(fit * 0.92)}\\t(0,{ENTER_MS},\\fscx{fit}\\fscy{fit})"
         intro = f"{{\\an5\\pos({W // 2},{y})\\fad({ENTER_MS},{EXIT_MS}){grow}}}"
         ev.append(f"Dialogue: 0,{_time(s)},{_time(e)},Cap,,0,0,0,,{intro}{' '.join(body)}")
+    if fx:
+        from . import motion
+
+        def fit(text: str, scale: float) -> float:
+            width = text_width(text, pid, H, file=pr["file"], size=pr["size"]) * scale
+            return round(min(scale, scale * max_w / width) if width > 0 else scale, 3)
+        ev += motion.events(fx, lambda t: band_y(layout_at(sidecar, t), H), W, _color(acc), _color(txt), pr["upper"], fit)
     return head + "\n".join(ev) + ("\n" if ev else "")
 
 
