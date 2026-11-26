@@ -60,3 +60,23 @@ def test_reasons_differ_between_clips():
     r1 = take.reason(ss, 0, 1, take.best_line(ss, 0, 1), [])
     r2 = take.reason(ss, 2, 3, take.best_line(ss, 2, 3), [])
     assert r1 != r2 and "question" in r1 and "number" in r2
+
+
+def test_no_speech_fails_without_waiting_for_the_face_track(monkeypatch, tmp_path):
+    import threading
+    import pytest
+    from studio import mediasafe
+    gate = threading.Event()
+    monkeypatch.setattr(mediasafe, "check_source", lambda p: None)
+    monkeypatch.setattr(take, "probe", lambda p: {"audio": True, "duration": 60.0, "width": 1920, "height": 1080})
+    monkeypatch.setattr(take, "face_track", lambda p, d: (gate.wait(30), ([], "x"))[1])   # would hold 30 s
+    monkeypatch.setattr(take, "detect_scenes", lambda p: ([], "x"))
+    monkeypatch.setattr(take, "detect_silences", lambda p: [])
+    monkeypatch.setattr(take, "detect_speech_gaps", lambda p: ([], "x"))
+    monkeypatch.setattr(take, "transcribe", lambda p, m: ([], "", "test"))
+    import time
+    t = time.time()
+    with pytest.raises(take.TakeError, match="No speech found"):
+        take.analyze(str(tmp_path / "v.mp4"))
+    gate.set()
+    assert time.time() - t < 5

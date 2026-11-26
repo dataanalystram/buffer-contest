@@ -334,6 +334,8 @@ def heuristic_moments(sents: list[dict], n: int, scenes: list[float] | None = No
     return chosen
 
 
+NO_SPEECH = ("No speech found in this video, so there is nothing to clip. One take works on talks, podcasts, tutorials "
+             "and interviews; picking moments from the picture and sound alone isn't available yet.")
 SCORER_FALLBACK = "built-in scorer (the AI engine couldn't answer this time)"
 MINER_SYSTEM = ("You are a short-form video editor. You find the moments in a creator's own talk that work as standalone "
                 "vertical clips. You never invent words: hooks are quoted exactly from the transcript.")
@@ -401,8 +403,7 @@ def mine_moments(analysis: dict, want: int | None = None, engine: dict | None = 
     words = analysis.get("words") or []
     sents = sentences(words)
     if not sents:
-        raise TakeError("No speech found in this video, so there is nothing to clip. One take works on talks, "
-                        "podcasts, tutorials and interviews.")
+        raise TakeError(NO_SPEECH)
     duration = float((analysis.get("probe") or {}).get("duration") or sents[-1]["e"])
     n = target_count(duration, want)
     picks, how = [], "built-in scorer"
@@ -879,6 +880,8 @@ def analyze(path: str, model: str = "small", log=print, max_secs: float = 3600, 
             words, lang, provider = transcribe(path, model)
         timings["transcribe"] = round(time.time() - t, 1)
         log(f"transcribe: {len(words)} words in {timings['transcribe']}s ({provider})")
+        if not any(str(w.get("w", "")).strip() for w in words):  # say so now: don't wait for the face track and scene
+            raise TakeError(NO_SPEECH)                            # cuts of a video that can't give any clip (25 Nov)
         (scenes, scene_how), timings["scenes"] = f_scenes.result()
         (faces, face_how), timings["faces"] = f_faces.result()
     finally:
