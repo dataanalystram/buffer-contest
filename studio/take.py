@@ -229,12 +229,18 @@ def tidy_span(sents: list[dict], a: int, b: int, max_s: float = MAX_CLIP) -> tup
     or line an opening answers or reacts to (up to two sentences, if the clip still fits), and finish the answer when
     it would end on a new question. Returns (a, b, notes)."""
     notes = []
-    while a < b and len(norm(sents[a]["text"]).split()) <= 2 and not sents[a]["text"].strip().endswith("?"):
+
+    def fragment(i: int) -> bool:
+        return len(norm(sents[i]["text"]).split()) <= 2 and not sents[i]["text"].strip().endswith("?")
+
+    while a < b and fragment(a):
         a += 1
         notes.append("skips a stray fragment")
     for _ in range(2):
         why = needs_setup(sents, a)
-        if not why or a == 0 or sents[b]["e"] - sents[a - 1]["s"] > max_s or sents[a]["s"] - sents[a - 1]["e"] > 3.0:
+        # never reach back onto a fragment: that put the stray "it." straight back (26 Nov Mac run, the podcast's clip 4)
+        if not why or a == 0 or fragment(a - 1) or sents[b]["e"] - sents[a - 1]["s"] > max_s \
+                or sents[a]["s"] - sents[a - 1]["e"] > 3.0:
             break
         a -= 1
         notes.append({"answer": "starts at the question so the answer makes sense",
@@ -280,10 +286,16 @@ def line_strength(sent: dict) -> float:
     return sc
 
 
+HOOK_WINDOW = 6.0  # s: the hook is a line spoken this early in the clip
+
+
 def best_line(sents: list[dict], a: int, b: int, max_chars: int = 90) -> str:
-    """The hook for the cover: the strongest line of the span, not just its first sentence (the opening line wins a tie
-    and gets a small edge, since it is what the viewer hears first). Always verbatim, cut on a word boundary."""
-    best = max(range(a, b + 1), key=lambda i: (line_strength(sents[i]) + (2 if i == a else 0), -i))
+    """The hook for the cover: the strongest line the viewer hears in the clip's first HOOK_WINDOW seconds, not just its
+    first sentence (the opening line wins a tie and gets a small edge). A line from later in the clip would put words on
+    screen that nobody is saying yet (26 Nov Mac run: "SERIOUSLY" over "Here is the truth..."). Always verbatim, cut on
+    a word boundary."""
+    near = [i for i in range(a, b + 1) if i == a or sents[i]["s"] - sents[a]["s"] < HOOK_WINDOW]
+    best = max(near, key=lambda i: (line_strength(sents[i]) + (2 if i == a else 0), -i))
     t = clean_hook(sents[best]["text"].strip())
     if len(t) <= max_chars:
         return t

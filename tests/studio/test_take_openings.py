@@ -90,3 +90,16 @@ def test_reframe_line_says_what_the_scenes_used():
     assert line == "Layouts across 4 scenes: following a face in 1, full frame in 3" and "centered" not in line
     old = [{"id": "c1", "meta": {"layout": "pad"}}]
     assert reframe_summary(old, ["pad"], ["c1"], "no face found, centered crop used").startswith("Face-tracked on 0 of 1")
+
+
+def test_the_hook_is_a_line_the_viewer_hears_in_the_first_seconds():
+    ss = sents(("Here is the truth about pricing.", 0, 3), ("Most people never ask.", 3.2, 6),
+               ("Why did we lose 3 million but never lose a customer?", 20, 24))
+    assert take.best_line(ss, 0, 2) != "Why did we lose 3 million but never lose a customer?"  # said 20 s in
+    assert take.best_line(ss, 0, 2) in ("Here is the truth about pricing.", "Most people never ask.")
+
+
+def test_reaching_back_for_setup_never_brings_the_stray_fragment_back():
+    ss = sents(("it.", 0, 0.4), ("They kept every customer after that.", 0.6, 4), ("Not one left.", 4.3, 7))
+    a, b, notes = take.tidy_span(ss, 0, 2)
+    assert a == 1 and not ss[a]["text"].startswith("it.")
