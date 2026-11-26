@@ -341,12 +341,21 @@ function select(s) {
   drawInspector();
   if (s) rtab("inspect");
 }
-function selKey(s) { return s.el ? "el:" + s.el : s.fx != null ? "fx:" + s.fx : ""; }
+function selKey(s) { return s.el ? "el:" + s.el : s.fx != null ? "fx:" + s.fx : s.broll != null ? "br:" + s.broll : ""; }
 
 // ------------------------------------------------------------------------------------------------ right: inspector
 function drawInspector() {
   const box = $s("cstInspect"), s = C.sel, d = C.draft;
   if (!s) { box.innerHTML = `<p class="cst-muted">Select an element on the frame or a block on the timeline.</p>`; return; }
+  if (s.broll != null) {
+    const b = (d.broll || [])[s.broll];
+    if (!b) { box.innerHTML = `<p class="cst-muted">That cutaway is gone.</p>`; return; }
+    box.innerHTML = `<h3 class="cst-ih">B-roll</h3><p class="cst-quote">${b.thumb ? `<img class="cst-brthumb" src="${E(b.thumb)}" alt="" loading="lazy"> ` : ""}${E(b.query || "Stock footage")}</p>
+      <p class="cst-muted">${(b.e - b.s).toFixed(1)} s from ${b.s.toFixed(1)} s. Your voice plays over it. ${E(b.credit || "")}</p>
+      <button type="button" class="btn2 sm danger" id="cstBrDel" data-testid="cst-broll-delete">Remove this B-roll</button>`;
+    $s("cstBrDel").onclick = () => { C.sel = null; edit((n) => n.broll.splice(s.broll, 1), "Removed the B-roll"); };
+    return;
+  }
   if (s.fx != null) {
     const f = (d.fx || [])[s.fx];
     if (!f) { box.innerHTML = `<p class="cst-muted">This graphic was chosen automatically by the last render. Pick graphics yourself with the director or below.</p>`; return; }
@@ -402,7 +411,7 @@ function drawReview() {
 
 // ------------------------------------------------------------------------------------------------ right: director
 const SUGG = ["Make the number pop without covering my face", "Make the opening stronger", "Put the words behind my head with an orbit ring",
-  "Use more cinematic captions", "Fewer effects", "Move the captions higher"];
+  "Use more cinematic captions", "Add b-roll", "Fewer effects", "Move the captions higher"];
 function drawSugg() {
   const list = C.wsel ? ["Make this pop", "Use this as the hook", "Cut this from the clip", "Put these words behind my head"] : SUGG;
   $s("cstSugg").innerHTML = list.map((s, k) => `<button type="button" class="cst-chip" id="cst-sugg-${k}" data-testid="cst-suggestion" data-s="${E(s)}">${E(s)}</button>`).join("");
@@ -503,6 +512,8 @@ function tick() {
   if (!approx()) C.words.forEach((w, k) => { if (src >= w.s && src < w.e) hit = k; });
   document.querySelectorAll("#cstScript .cst-w.now, #cstTracks .cst-wt.now").forEach((x) => x.classList.remove("now"));
   if (hit >= 0) { const a = document.getElementById(`cst-w-${hit}`), b = document.getElementById(`cst-wt-${hit}`); if (a) a.classList.add("now"); if (b) b.classList.add("now"); }
+  const bp = $s("cstBrPrev"), bhit = (C.draft.broll || []).find((b) => v.currentTime >= b.s && v.currentTime < b.e);
+  if (bp) { bp.hidden = !bhit; if (bhit) { bp.style.backgroundImage = bhit.thumb ? `url("${bhit.thumb.replace(/"/g, "")}")` : ""; bp.textContent = bhit.thumb ? "" : "B-roll"; bp.dataset.q = bhit.query || ""; } }
   // the layers show over the moments they're on screen (hook: the opening; the rest: all clip long)
   const hookOn = v.currentTime < lead() + 2.9;
   ["headline", "behind"].forEach((k) => { const el = document.getElementById(`cst-layer-${k}`); if (el) el.classList.toggle("off", !hookOn && !(C.sel && C.sel.el === k)); });
@@ -561,14 +572,17 @@ function drawTimeline() {
   const shots = (tr.shots || []).map((x) => blk(x.s, x.e, "shot", { track: "Speaker", fit: "Whole frame", split: "Split", screen: "Screen", content: "Screen" }[x.mode] || x.mode || "Shot")).join("");
   const wave = C.wave[c.id];
   const audio = wave ? `<canvas class="cst-wave" id="cstWave" data-testid="cst-waveform" width="${Math.round(W)}" height="36"></canvas>` : "";
+  const brl = (d.broll || []).map((b, k) => blk(b.s, b.e, `fx${changed("broll") ? " draft" : ""}`, `B-roll: ${b.query || "footage"}`, `data-sel="br:${k}" data-br="${k}" data-testid="cst-blk-broll"`)).join("");
   $s("cstTracks").innerHTML = lane("hook", "Hook", hook, "No hook graphic")
     + lane("words", "Words", words, "No words saved")
     + lane("captions", "Captions", caps)
     + lane("graphics", "Graphics", fx, Array.isArray(d.fx) ? "None (your choice)" : "None in the last render")
+    + lane("broll", "B-roll", brl, "None. Ask the director: “add b-roll of …”")
     + lane("layout", "Framing", shots, "Not recorded for this render")
     + lane("audio", "Audio", audio, C.wave[c.id] === null ? "Waveform unavailable" : "Reading the audio…");
   if (wave) paintWave(wave, W);
   $s("cstTracks").querySelectorAll("[data-el]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); select({ el: b.dataset.el }); }));
+  $s("cstTracks").querySelectorAll("[data-br]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const k = +b.dataset.br; select({ broll: k }); seek(d.broll[k].s); }));
   $s("cstTracks").querySelectorAll("[data-fx]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const k = +b.dataset.fx; select({ fx: k >= 0 ? k : null, auto: k < 0 }); seek(fxSpans().find((f) => f.k === k).s); }));
   $s("cstTracks").querySelectorAll(".cst-wt").forEach((b) => {
     b.onclick = (e) => { e.stopPropagation(); const k = +b.dataset.k; if (e.shiftKey && C.wsel) selWords(Math.min(C.wsel[0], k), Math.max(C.wsel[1], k)); else { selWords(k, k); seek(tOf(C.words[k].s)); } };

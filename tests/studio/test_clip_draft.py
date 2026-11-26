@@ -70,7 +70,7 @@ def test_director_makes_the_number_pop_as_a_real_edit_and_rules_need_no_model(dr
     out = human.post(f"/api/takes/{rid}/clips/{cid}/direct", json={"instruction": "use more cinematic captions", "ai": False}).json()
     assert out["draft"]["caption_preset"] == "cinematic" and out["ops"][0]["focus"] == {"element": "captions"}
     out = human.post(f"/api/takes/{rid}/clips/{cid}/direct", json={"instruction": "add b-roll and a whoosh", "ai": False}).json()
-    assert "B-roll" in out["not_yet"] and "Sound effects" in out["not_yet"] and not out["ops"]
+    assert any("B-roll" in x for x in out["not_yet"]) and "Sound effects" in out["not_yet"] and not out["ops"]
 
 
 def test_render_commits_the_draft_in_one_rerender_and_mcp_shares_it(draft_clip):
@@ -100,3 +100,21 @@ def test_chosen_motion_picks_replace_the_automatic_plan():
     assert [(f["kind"], f["s"]) for f in p["fx"]] == [("line", 2.0), ("stat", 2.5)] and p["chosen"]
     assert "isn't said" in p["skipped"][0]
     assert motion.plan(ws, 0.0, picks=[])["fx"] == []
+
+
+def test_director_adds_and_removes_broll_and_says_so_without_a_key(draft_clip, monkeypatch):
+    from studio.media import broll
+    human, rid, cid, rendered, app = draft_clip
+    u = f"/api/takes/{rid}/clips/{cid}/direct"
+    monkeypatch.delenv("PEXELS_API_KEY", raising=False)
+    out = human.post(u, json={"instruction": "add b-roll of a busy kitchen", "ai": False}).json()
+    assert not out["ops"] and any("Pexels key" in x for x in out["not_yet"]) and out["draft"]["broll"] == []
+    monkeypatch.setenv("PEXELS_API_KEY", "k")
+    hit = {"url": "https://videos.pexels.com/a.mp4", "thumb": "", "credit": "Video by Ann on Pexels", "query": "busy kitchen"}
+    monkeypatch.setattr(broll, "search", lambda q, **kw: [{**hit, "query": q}])
+    out = human.post(u, json={"instruction": "add b-roll of a busy kitchen", "ai": False}).json()
+    b = out["draft"]["broll"]
+    assert len(b) == 1 and "busy kitchen" in b[0]["query"] and out["ops"][0]["focus"]["track"] == "broll"
+    assert 1.0 <= b[0]["s"] and 1.5 <= b[0]["e"] - b[0]["s"] <= 5 and rendered == []
+    out = human.post(u, json={"instruction": "remove the b-roll", "ai": False}).json()
+    assert out["draft"]["broll"] == []

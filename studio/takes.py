@@ -805,6 +805,7 @@ class Takes(TakeBin, TakeControl):
                           "hook_fx": c.get("hook_fx") or ("headline" if run["input"].get("headline") else "none"),
                           "hook_words": c.get("hook_words") or "",
                           "fx": c.get("fx") if isinstance(c.get("fx"), list) else None,  # edit room picks (None: automatic)
+                          "broll": c.get("broll") if isinstance(c.get("broll"), list) else [],
                           "place": c.get("place") or {},  # the edit room: where each element sits (take_layout.clean_place)
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
                           "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on

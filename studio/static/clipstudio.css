@@ -212,3 +212,7 @@ body.cst-on{overflow:hidden}
 @media (prefers-reduced-motion:reduce){.cst-cursor{transition:opacity 80ms}.cst-flash{animation-duration:1ms}.cst-layer{transition:none}}
 body.cst-on #toast{z-index:330}
 .cst-askrow textarea{flex:1;min-width:0;width:auto}.cst-askrow .btn{flex:none}
+
+.cst-brprev{position:absolute;inset:0;background:var(--sunken) center/cover no-repeat;display:grid;place-items:center;color:var(--muted);font-size:12px;z-index:1;pointer-events:none}
+.cst-brprev::after{content:"B-roll: " attr(data-q);position:absolute;left:8px;top:8px;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:2px 6px;font-size:11px}
+.cst-brthumb{width:48px;height:64px;object-fit:cover;border-radius:4px;vertical-align:middle}

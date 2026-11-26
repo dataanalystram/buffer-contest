@@ -415,9 +415,10 @@ def pins_from(overrides) -> dict[int, dict]:
 def render_body_cmd(path: str, start: float, dur: float, shots: list[dict], src: tuple[int, int], ass_path: str | None,
                     logo_png: str | None, out: str, tmp: Path, accent: str, brand_bg: str, audio: str | None,
                     cover: str | None = None, cover_s: float = 0.0, end: str | None = None, end_s: float = 0.0,
-                    sfx: list[dict] | None = None, overlays: list[dict] | None = None) -> list[str]:
+                    sfx: list[dict] | None = None, overlays: list[dict] | None = None, broll: list[dict] | None = None) -> list[str]:
     """The ffmpeg arguments for [cover] + body + [end card] in one encode. sfx: [{kind, s}] sound accents (body s).
-    overlays: transparent PNG sequences (studio/media/openfilm.prepare: {dir, s, e, w, h, y}) laid over the body."""
+    overlays: transparent PNG sequences (studio/media/openfilm.prepare: {dir, s, e, w, h, y}) laid over the body.
+    broll: [{path, s, e}] full-frame cutaways (studio/media/broll) over the picture, the speaker's audio playing on."""
     ins = []
     idx = 0
     if cover:
@@ -440,6 +441,11 @@ def render_body_cmd(path: str, start: float, dur: float, shots: list[dict], src:
         ins += ["-framerate", "30", "-i", str(Path(o["dir"]) / "f_%05d.png")]
         ov_idx.append(idx)
         idx += 1
+    br_idx = []
+    for b in broll or []:
+        ins += ["-stream_loop", "-1", "-t", f"{float(b['e']) - float(b['s']):.3f}", "-i", str(b["path"])]
+        br_idx.append(idx)
+        idx += 1
     g = Graph()
     n = len(shots)
     parts = [f"[{si}:v]fps=30,setpts=PTS-STARTPTS,split={n}" + "".join(f"[r{k}]" for k in range(n)) if n > 1 else
@@ -449,6 +455,14 @@ def render_body_cmd(path: str, start: float, dur: float, shots: list[dict], src:
         parts.append(seg_graph(g, k, s, src, idx, tmp, accent, brand_bg))
     parts.append("".join(f"[o{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0,format=yuv420p[body0]")
     cur = "[body0]"
+    for k, (b, bi) in enumerate(zip(broll or [], br_idx)):   # cutaways sit under the captions and graphics
+        d = float(b["e"]) - float(b["s"])
+        parts.append(f"[{bi}:v]fps=30,scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},setsar=1,"
+                     f"format=yuva420p,fade=t=in:st=0:d=0.15:alpha=1,fade=t=out:st={max(0.0, d - 0.15):.3f}:d=0.15:alpha=1,"
+                     f"setpts=PTS-STARTPTS+{float(b['s']):.3f}/TB[bv{k}]")
+        parts.append(f"{cur}[bv{k}]overlay=x=0:y=0:eof_action=pass:enable='between(t,{float(b['s']):.3f},{float(b['e']):.3f})',"
+                     f"format=yuv420p[bodyb{k}]")
+        cur = f"[bodyb{k}]"
     if ass_path:
         fonts = _esc_path(Path(__file__).resolve().parents[2] / "fonts")
         parts.append(f"{cur}ass=filename='{_esc_path(ass_path)}':fontsdir='{fonts}'[body1]")
@@ -497,7 +511,7 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
            audio: str | None = None, cover: str | None = None, cover_s: float = 0.0, end_card: str | None = None,
            end_s: float = 0.0, punch_in: bool = False, punch_emph: list[float] | None = None, captions: bool = True,
            headline: str | None = None, motion_ok: bool = True, headline_at: dict | None = None,
-           fx_picks: list[dict] | None = None) -> dict:
+           fx_picks: list[dict] | None = None, broll: list[dict] | None = None) -> dict:
     """Render the clip [start, end] to `out` (1080x1920). Returns {plan, sidecar, timings, ass, punch}.
     punch_in: the gentle zoom in/out on face-tracked shots (studio/media/reframe/punch.py); off renders as before.
     punch_emph: emphasis times already on this clip's timeline (a trimmed clip's, studio/media/cleancut), else found on
@@ -527,7 +541,8 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         t1 = time.time()
         _ff(render_body_cmd(path, start, end - start, plan["shots"], (int(src.get("width") or 1920), int(src.get("height") or 1080)),
                             ass_path, logo_png, out, tmp, accent, brand_bg, audio, cover, cover_s, end_card, end_s,
-                            sfx=[f for f in (plan.get("motion") or {}).get("fx") or [] if ass], overlays=overlays))
+                            sfx=[f for f in (plan.get("motion") or {}).get("fx") or [] if ass], overlays=overlays,
+                            broll=broll))
         plan["timings"] = {**plan.get("timings", {}), "render": round(time.time() - t1, 2), "total": round(time.time() - t0, 2)}
         plan["ass"] = ass
         return plan

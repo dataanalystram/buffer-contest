@@ -21,7 +21,7 @@ import time
 from .actions import ActionError, Actor
 from .take_layout import HOOK_FX, PLACE_Y, _behind_on, _clip, _take_id, clean_place
 
-FIELDS = ("hook", "hook_fx", "hook_words", "place", "caption_preset", "fx", "start", "end")
+FIELDS = ("hook", "hook_fx", "hook_words", "place", "caption_preset", "fx", "start", "end", "broll")
 FX_KINDS = ("stat", "line")
 MAX_FX, LOG_MAX = 4, 40
 
@@ -66,6 +66,7 @@ def committed(clip: dict, run: dict | None = None) -> dict:
     return {"hook": clip.get("hook") or "", "hook_fx": hook_fx if hook_fx in HOOK_FX else "none",
             "hook_words": clip.get("hook_words") or "", "place": clip.get("place") or {}, "caption_preset": preset,
             "fx": clip.get("fx") if isinstance(clip.get("fx"), list) else None,
+            "broll": clip.get("broll") if isinstance(clip.get("broll"), list) else [],
             "start": round(float(clip.get("start") or 0), 2), "end": round(float(clip.get("end") or 0), 2)}
 
 
@@ -141,6 +142,14 @@ def clean_draft(raw, clip: dict, res: dict, base: dict) -> dict:
                     raise ActionError("nth must be 0, 1, 2 ... (which time the words are said).")
                 out.append({"kind": f["kind"], "text": text, "nth": nth})
             d["fx"] = out
+    if "broll" in raw or "start" in raw or "end" in raw:
+        from .media import broll
+        try:
+            d["broll"] = broll.clean(raw.get("broll", d.get("broll")), d["end"] - d["start"]) if d.get("broll") or "broll" in raw else []
+        except ValueError as e:
+            if "broll" in raw:
+                raise ActionError(str(e)) from None
+            d["broll"] = [b for b in d["broll"] if b["e"] <= d["end"] - d["start"] - 0.3]   # trimmed past it: it goes
     return d
 
 
@@ -213,9 +222,65 @@ def put(takes, a: Actor, rid, clip_id, body: dict) -> dict:
 CAPTION_WORDS = [("cinematic", "cinematic"), ("film", "cinematic"), ("documentary", "documentary"), ("editorial", "documentary"),
                  ("minimal", "minimal"), ("clean", "clean"), ("lower third", "lower_third"), ("typewriter", "typewriter"),
                  ("two tone", "two_tone"), ("two-tone", "two_tone"), ("bold", "bold_pop"), ("creator", "bold_pop")]
-NOT_YET = [("b-roll", "B-roll"), ("broll", "B-roll"), ("b roll", "B-roll"), ("music", "Music"), ("sound effect", "Sound effects"),
+NOT_YET = [("music", "Music"), ("sound effect", "Sound effects"),
            ("sfx", "Sound effects"), ("whoosh", "Sound effects"), ("transition", "Transitions"), ("voiceover", "Voiceover"),
            ("three different openings", "Several openings at once"), ("3 different openings", "Several openings at once")]
+
+
+BROLL_WORDS = ("b-roll", "broll", "b roll", "cutaway", "stock footage", "stock video")
+
+
+def broll_rule(instruction: str, d: dict, ws: list[dict], sel) -> tuple[dict, list, list]:
+    """"add b-roll of a busy kitchen" / "remove the b-roll": (changes, ops, not_yet). One Pexels cutaway of about 3 seconds
+    in the middle of the clip (or over the selected words), the speaker's audio playing on. Searches here, on the web
+    server: the worker only downloads the file chosen."""
+    from .media import broll
+    t = " " + re.sub(r"\s+", " ", instruction.lower()) + " "
+    if not any(w in t for w in BROLL_WORDS):
+        return {}, [], []
+    if re.search(r"\b(remove|delete|no|without|drop|clear|take out|get rid of)\b", t):
+        if d.get("broll"):
+            return {"broll": []}, [{"what": "Removed the B-roll", "why": "You asked for it gone.", "focus": {"track": "broll"}}], []
+        return {}, [], ["There's no B-roll on this clip to remove"]
+    m = re.search(r"(?:b-?\s?roll|cutaways?|stock (?:footage|video))\s+(?:of|showing|with|about|for|on)\s+(.+?)(?:[.!?]|$| and (?:make|add|put|move|also)\b)", instruction, re.I)
+    query = " ".join((m.group(1) if m else "").split()).strip(" ,.;")[:60]
+    if not query:   # no subject given: the most visual words said in the clip
+        stop = set("the a an and or but so to of in on at for with is are was were be been it this that these those you your we our i my "
+                   "they them he she his her not no yes just very really like then than there here what when where which who how all "
+                   "can will would could should about from into over out up down have has had do does did get got make made".split())
+        words = [re.sub(r"[^a-z]", "", str(w["w"]).lower()) for w in ws]
+        freq: dict[str, int] = {}
+        for w in words:
+            if len(w) > 4 and w not in stop:
+                freq[w] = freq.get(w, 0) + 1
+        top = sorted(freq, key=lambda k: (-freq[k], -len(k)))[:2]
+        query = " ".join(top)
+    if not query:
+        return {}, [], ["B-roll needs a subject: say what it should show, e.g. \"b-roll of a busy kitchen\""]
+    dur = d["end"] - d["start"]
+    taken = [(b["s"], b["e"]) for b in d.get("broll") or []]
+    picked = _sel(ws, sel)
+    if picked:   # over the selected words
+        s0 = float(ws[picked[0]]["s"]) - d["start"]
+        e0 = float(ws[picked[0] + picked[1] - 1]["e"]) - d["start"]
+        win = (round(max(broll.LEAD_IN, s0), 2), round(min(dur - 0.3, max(e0, s0 + broll.MIN_LEN)), 2))
+        if win[1] - win[0] > broll.MAX_LEN:
+            win = (win[0], round(win[0] + broll.MAX_LEN, 2))
+    else:
+        win = broll.slots(ws, d["start"], d["end"], taken)
+    if not win or win[1] - win[0] < broll.MIN_LEN - 0.01:
+        return {}, [], ["This clip is too short for a B-roll cutaway"]
+    if len(taken) >= broll.MAX_ITEMS:
+        return {}, [], [f"A clip can carry {broll.MAX_ITEMS} cutaways: remove one first"]
+    try:
+        found = broll.search(query)
+    except broll.BrollError as e:
+        return {}, [], [str(e)]
+    f = found[0]
+    item = {"s": win[0], "e": win[1], "url": f["url"], "thumb": f["thumb"], "credit": f["credit"], "query": query}
+    return ({"broll": [*(d.get("broll") or []), item]},
+            [{"what": f"Added B-roll of {query}", "why": f"{win[1] - win[0]:.1f}s cutaway; your voice plays over it. {f['credit']}.",
+              "focus": {"s": d["start"] + win[0], "e": d["start"] + win[1], "track": "broll"}}], [])
 
 
 def _clip_words(res, clip, d):
@@ -394,7 +459,7 @@ AI_SYSTEM = ("You are the creative director in a video clip editor. Turn the per
              "hook_words (1-3 words of the hook), caption_preset (clean|minimal|bold_pop|cinematic|documentary|lower_third|"
              "two_tone|typewriter), fx (list of {kind: stat|line, text: words said in the clip, nth: 0}; [] = none), "
              "place ({headline|behind|logo|tag: {x, y, scale}, captions: {y}}; shares of a 9:16 frame, y 0.04-0.92), "
-             "start/end (source seconds). Never invent words. Doing nothing is a valid answer. You can't add B-roll, music, "
+             "start/end (source seconds). Never invent words. Doing nothing is a valid answer. B-roll is added by the server, not by you. You can't add music, "
              "sound effects or transitions yet.")
 
 
@@ -427,6 +492,11 @@ def direct(takes, a: Actor, rid, clip_id, body: dict) -> dict:
     ws = _clip_words(res, clip, cur)
     ch, ops, nope, reply = rules(instruction, cur, ws, sel, _behind_on())
     read_by = "rules"
+    bch, bops, bnope = broll_rule(instruction, cur, ws, sel)
+    if bops or bnope:
+        ch = {**ch, **bch}
+        ops += bops
+        nope += bnope
     if not ops and body.get("ai") is not False:
         picked = _sel(ws, sel)
         seltext = " ".join(str(w["w"]) for w in ws[picked[0]:picked[0] + picked[1]]) if picked else ""
@@ -484,6 +554,10 @@ def render(takes, a: Actor, rid, clip_id) -> dict:
             clip["place"] = d["place"]
         else:
             clip.pop("place", None)
+        if d.get("broll"):
+            clip["broll"] = d["broll"]
+        else:
+            clip.pop("broll", None)
         if d["fx"] is None:
             clip.pop("fx", None)
         else:
