@@ -202,7 +202,7 @@ def test_render_spec_applies_it_and_fails_open(monkeypatch):
     monkeypatch.setattr(takes, "source_captions", lambda src, c: None)
     monkeypatch.setattr(take, "render_clip", lambda *a, **k: (b"MP4", b"JPG", {"layout": "track"}))
     calls = []
-    monkeypatch.setattr(behind, "on_clip", lambda data, hook, words, kit, start: (calls.append((hook, words, start)) or
+    monkeypatch.setattr(behind, "on_clip", lambda data, hook, words, kit, start, layout_plan=None: (calls.append((hook, words, start)) or
                                                                                   (b"MP4+", {"on": True, "text": "X"})))
     spec = {"style": "take", "scenes": [], "src": {}, "kit": {"font": "anton"}, "params": {}}
     c = {"id": "c1", "words": [], "faces": [], "hook": "We shipped it", "hook_fx": "behind", "hook_words": "shipped"}
@@ -233,3 +233,28 @@ def test_the_word_is_placed_against_the_person_over_the_whole_window(tmp_path, m
     monkeypatch.setattr(behind, "person_mask", mask)
     first, union = behind.reach(str(src), object(), 0.0, 1.5, 64, 96, 10.0, every=1)
     assert first[40, 30] == 0 and union[40, 30] == 1
+
+
+def test_a_quick_nod_does_not_push_the_word_away(tmp_path, monkeypatch):
+    if not shutil.which("ffmpeg"):
+        pytest.skip("needs FFmpeg")
+    src = tmp_path / "in.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=64x96:r=10:d=2", "-pix_fmt",
+                    "yuv420p", str(src)], check=True)
+
+    def mask(seg, rgb, ts_ms):
+        m = np.zeros(rgb.shape[:2], np.float32)
+        m[30 if 600 <= ts_ms < 800 else 60:, 20:44] = 1.0  # the head bobs up for a fifth of a second
+        return m
+
+    monkeypatch.setattr(behind, "person_mask", mask)
+    _, where = behind.reach(str(src), object(), 0.0, 1.5, 64, 96, 10.0, every=1)
+    assert where[40, 30] == 0 and where[70, 30] == 1
+
+
+def test_words_behind_needs_a_close_shot_of_the_speaker_at_the_start():
+    assert behind.opening_ok([{"start": 0, "end": 5, "layout": "track"}]) is None
+    assert "close shot" in behind.opening_ok([{"start": 0, "end": 1.2, "layout": "track"}, {"start": 1.2, "end": 9, "layout": "fit"}])
+    assert behind.opening_ok([{"start": 0, "end": 3, "layout": "track"}, {"start": 3, "end": 9, "layout": "fit"}]) is None
+    data, meta = behind.on_clip(b"x", "We shipped it", None, None, 0.0, layout_plan=[{"start": 0, "end": 9, "layout": "fit"}])
+    assert data == b"x" and meta["on"] is False and "close shot" in meta["why"]

@@ -1695,7 +1695,7 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
             from .media import behind
             if behind.enabled():
                 data, meta["hook_fx"] = behind.on_clip(data, c.get("hook") or "", c.get("hook_words"), spec.get("kit"),
-                                                       start=take.COVER_SECS)
+                                                       start=take.COVER_SECS, layout_plan=meta.get("layout_plan"))
             else:
                 meta["hook_fx"] = {"on": False, "why": "Words behind you isn't switched on on this server (HQ_HOOK_BEHIND)."}
         yield c["id"], data, cover, meta

@@ -31,6 +31,7 @@ WINDOW_S = 2.6          # how long the word stays (after the cover frame)
 FADE_IN, FADE_OUT = 0.22, 0.35
 RISE = 0.035            # the word rises this share of the frame height while it fades in
 TOP_SAFE = 0.07         # Reels / TikTok top UI
+STAY = 0.3              # share of the hook window the person must cover a pixel for it to count as covered
 MAX_HIDDEN = 0.22       # at most this share of the word's ink may sit behind the person, or it stops reading ("H...W")
 MAX_WORDS, MAX_CHARS = 3, 18
 STOP = {"a", "an", "the", "and", "but", "or", "so", "to", "of", "in", "on", "at", "for", "is", "it", "its", "it's",
@@ -243,14 +244,14 @@ def _probe(path: str) -> dict:
 
 
 def reach(src: str, seg, start: float, dur: float, W: int, H: int, fps: float, every: int = 3, timeout: int = 300):
-    """(first, union): the person mask on the window's first frame and the union of the masks over the whole window
-    (every few frames). The word is placed against the union, so a head that moves during the hook still leaves it
+    """(first, where): the person mask on the window's first frame and where the person is for at least STAY of the
+    window (every few frames; the plain union declined a normal talking head, 26 Nov Mac run). The word is placed against the union, so a head that moves during the hook still leaves it
     readable (26 Nov Mac run: a nod hid "IOU" in "SERIOUSLY" mid-window though the first frame was clear). Mask
     timestamps run 0..dur*1000 ms; the render pass continues after them (MediaPipe VIDEO mode needs them rising)."""
     import numpy as np
     dec = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", f"{start:.3f}", "-i", src, "-t", f"{dur:.3f}", "-f", "rawvideo",
                             "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
-    first, union, k = None, None, 0
+    first, union, k, n_masks = None, None, 0, 0
     size_b = W * H * 3
     t0 = time.time()
     try:
@@ -261,10 +262,13 @@ def reach(src: str, seg, start: float, dur: float, W: int, H: int, fps: float, e
             if k % every == 0:
                 m = person_mask(seg, np.frombuffer(buf, np.uint8).reshape(H, W, 3), int(k * 1000 / fps))
                 first = m if first is None else first
-                union = m if union is None else np.maximum(union, m)
+                union = (m > 0.5).astype(np.float32) if union is None else union + (m > 0.5)
+                n_masks += 1
             k += 1
     finally:
         dec.kill()
+    if union is not None:  # where the person is for at least STAY of the window: a quick nod doesn't push the word away
+        union = (union / max(1, n_masks) >= STAY).astype(np.float32)
     return first, union
 
 
@@ -349,8 +353,24 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
             "mask": "mediapipe selfie_segmenter", "ms": int((time.time() - t0) * 1000)}
 
 
-def on_clip(data: bytes, hook: str, words: str | None, kit: dict | None, start: float) -> tuple[bytes, dict]:
+def opening_ok(layout_plan: list | None, window: float = WINDOW_S) -> str | None:
+    """None when the clip's opening seconds are a close shot of the speaker (a tracked crop), else why not: over a
+    full-frame card, a split or a screen the word lands on the blurred background or the content, not behind anyone
+    (26 Nov Mac run: "SENSITIVE" sat on the card edge of the podcast)."""
+    for s in layout_plan or []:
+        if not isinstance(s, dict) or float(s.get("start", 0)) >= window:
+            continue
+        if s.get("layout") != "track":
+            return "The clip doesn't open on a close shot of the speaker, so there is no one to put the word behind."
+    return None
+
+
+def on_clip(data: bytes, hook: str, words: str | None, kit: dict | None, start: float,
+            layout_plan: list | None = None) -> tuple[bytes, dict]:
     """The worker's entry point: the rendered clip's bytes in, (new bytes, meta) out. Fails open with the reason."""
+    why = opening_ok(layout_plan) if layout_plan is not None else None
+    if why:
+        return data, {"on": False, "why": why}
     try:
         text = pick_words(hook, words)
         with tempfile.TemporaryDirectory(prefix="hq_behind_") as d:
