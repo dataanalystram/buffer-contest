@@ -115,3 +115,26 @@ def test_a_product_shot_zooms_in_but_a_busy_wide_shot_stays_full_frame():
     thumbs = {t: th[i % 3] for i, t in enumerate((0.75, 1.5, 2.25, 3.75, 4.5, 5.25))}
     rr.apply_focus(shots, thumbs, 1920, 1080)
     assert "focus" in shots[0] and "focus" not in shots[1]   # crowds and low-confidence shots keep the full frame
+
+
+def test_a_title_card_wider_than_the_crop_stays_full_frame():
+    """26 Nov Mac run: the 1.6x screen zoom cut the demo's "MAKE A POST" card to "AKE A PO". Big still text that runs
+    past the crop keeps the plain fit; typing inside a crop still zooms even when the code lines run on."""
+    card = []
+    for _ in range(3):
+        g = np.full((173, 320), 20, np.uint8)
+        for k in range(9):                                   # nine big "letters" across 80% of the width
+            x = 32 + k * 29
+            g[60:110, x:x + 6] = 240
+            g[60:66, x:x + 20] = 240
+            g[104:110, x:x + 20] = 240
+        card.append(g)
+    assert screen.focus_box(card, 1376, 744) is None
+    code = []
+    for k in range(3):
+        g = np.full((173, 320), 235, np.uint8)
+        for y in range(30, 160, 6):
+            g[y:y + 2, 10:310] = 30                          # code lines across the whole editor
+        g[80:88, 150 + 12 * k:162 + 12 * k] = 0              # the cursor typing in the middle
+        code.append(g)
+    assert screen.focus_box(code, 1376, 744) is not None
