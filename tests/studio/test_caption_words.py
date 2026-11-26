@@ -27,3 +27,11 @@ def test_build_draws_the_repaired_words():
     ass = ca.build([W("we", 0.0, 0.3), W("re", 0.3, 0.5), W("-render", 0.5, 0.9), W("re-render", 0.8, 1.0)], 0.0)
     body = "".join(x for x in ass.splitlines() if x.startswith("Dialogue"))
     assert "RE-RENDER" in body and "RE -RENDER" not in body and body.count("RE-RENDER") == 1
+
+
+def test_a_repeat_right_after_a_sentence_end_or_of_a_long_word_is_the_recogniser():
+    from studio.media import captions_ass as ca
+    ws = [{"w": "this", "s": 0.0, "e": 0.2}, {"w": "week.", "s": 0.2, "e": 0.5}, {"w": "week,", "s": 0.52, "e": 0.8},
+          {"w": "complaints", "s": 1.0, "e": 1.5}, {"w": "complaints", "s": 1.53, "e": 2.0}, {"w": "with", "s": 2.0, "e": 2.2},
+          {"w": "no,", "s": 3.0, "e": 3.2}, {"w": "no", "s": 3.22, "e": 3.4}]
+    assert [w["w"] for w in ca.clean_words(ws)] == ["this", "week.", "complaints", "with", "no,", "no"]
