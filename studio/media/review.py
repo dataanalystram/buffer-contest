@@ -130,6 +130,11 @@ def review(clip: dict, meta: dict | None = None) -> dict:
             works.append(f"\"{fx.get('text', '')}\" sits behind the speaker in the opening seconds.")
         elif fx.get("why"):
             works.append(f"Words behind you was left off: {fx['why']}")
+    mo = meta.get("motion") if isinstance(meta.get("motion"), dict) else None
+    if mo and mo.get("on"):
+        checked.append("motion")
+        for f in mo.get("fx") or []:
+            works.append(f"{'Animated stat' if f.get('kind') == 'stat' else 'Kinetic line'} \"{f.get('text', '')}\": {f.get('why', '')}")
     if clip.get("source_captions"):
         works.append("The video's own burned-in captions are kept, with no second layer on top.")
     return {"works": works[:6], "issues": issues[:6], "checked": checked}
