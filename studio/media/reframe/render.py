@@ -407,8 +407,9 @@ def pins_from(overrides) -> dict[int, dict]:
 def render_body_cmd(path: str, start: float, dur: float, shots: list[dict], src: tuple[int, int], ass_path: str | None,
                     logo_png: str | None, out: str, tmp: Path, accent: str, brand_bg: str, audio: str | None,
                     cover: str | None = None, cover_s: float = 0.0, end: str | None = None, end_s: float = 0.0,
-                    sfx: list[dict] | None = None) -> list[str]:
-    """The ffmpeg arguments for [cover] + body + [end card] in one encode. sfx: [{kind, s}] sound accents (body s)."""
+                    sfx: list[dict] | None = None, overlays: list[dict] | None = None) -> list[str]:
+    """The ffmpeg arguments for [cover] + body + [end card] in one encode. sfx: [{kind, s}] sound accents (body s).
+    overlays: transparent PNG sequences (studio/media/openfilm.prepare: {dir, s, e, w, h, y}) laid over the body."""
     ins = []
     idx = 0
     if cover:
@@ -426,6 +427,11 @@ def render_body_cmd(path: str, start: float, dur: float, shots: list[dict], src:
         ins += ["-i", logo_png]
         li = idx
         idx += 1
+    ov_idx = []
+    for o in overlays or []:
+        ins += ["-framerate", "30", "-i", str(Path(o["dir"]) / "f_%05d.png")]
+        ov_idx.append(idx)
+        idx += 1
     g = Graph()
     n = len(shots)
     parts = [f"[{si}:v]fps=30,setpts=PTS-STARTPTS,split={n}" + "".join(f"[r{k}]" for k in range(n)) if n > 1 else
@@ -439,6 +445,13 @@ def render_body_cmd(path: str, start: float, dur: float, shots: list[dict], src:
         fonts = _esc_path(Path(__file__).resolve().parents[2] / "fonts")
         parts.append(f"{cur}ass=filename='{_esc_path(ass_path)}':fontsdir='{fonts}'[body1]")
         cur = "[body1]"
+    for k, (o, oi) in enumerate(zip(overlays or [], ov_idx)):
+        d = max(0.3, float(o["e"]) - float(o["s"]))
+        parts.append(f"[{oi}:v]format=rgba,fade=t=in:st=0:d=0.12:alpha=1,fade=t=out:st={max(0.0, d - 0.25):.3f}:d=0.25:alpha=1,"
+                     f"setpts=PTS-STARTPTS+{float(o['s']):.3f}/TB[tp{k}]")
+        parts.append(f"{cur}[tp{k}]overlay=x={(OUT_W - int(o['w'])) // 2}:y={int(o['y'])}:eof_action=pass:"
+                     f"enable='between(t,{float(o['s']):.3f},{float(o['e']):.3f})',format=yuv420p[bodyt{k}]")
+        cur = f"[bodyt{k}]"
     if logo_png:
         parts.append(f"{cur}[{li}:v]overlay=0:0,format=yuv420p[body2]")
         cur = "[body2]"
@@ -489,6 +502,9 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         brand_bg = colors.get("primary") or "#0B0B12"
         from .. import motion
         plan["motion"] = motion.plan(words, start, plan["sidecar"], plan["shots"], captions=bool(words and captions))
+        overlays = []
+        if plan["motion"]["fx"] and words and captions:
+            overlays = template_overlays(plan, tmp, kit, p, preset, accent)
         ass = captions_ass.build(words, start, kit, p, preset, plan["sidecar"], bg_luma=plan.get("caption_bg"),
                                  fx=plan["motion"]["fx"]) if (words and captions) else ""
         ass_path = None
@@ -499,12 +515,31 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         t1 = time.time()
         _ff(render_body_cmd(path, start, end - start, plan["shots"], (int(src.get("width") or 1920), int(src.get("height") or 1080)),
                             ass_path, logo_png, out, tmp, accent, brand_bg, audio, cover, cover_s, end_card, end_s,
-                            sfx=[f for f in (plan.get("motion") or {}).get("fx") or [] if ass]))
+                            sfx=[f for f in (plan.get("motion") or {}).get("fx") or [] if ass], overlays=overlays))
         plan["timings"] = {**plan.get("timings", {}), "render": round(time.time() - t1, 2), "total": round(time.time() - t0, 2)}
         plan["ass"] = ass
         return plan
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def template_overlays(plan: dict, tmp: Path, kit: dict | None, p: dict | None, preset: str | None, accent: str) -> list[dict]:
+    """OpenFilm cards for the clip's stat / comparison moments (HQ_TEMPLATES=1), placed on the caption band they
+    replace and kept above the platform's bottom UI. Fails open: no Chromium leaves the plain motion moment."""
+    from .. import captions_ass, motion, openfilm
+    if not openfilm.enabled():
+        return []
+    pid = captions_ass.clean_preset(preset or (p or {}).get("caption_preset")) or captions_ass.DEFAULT_PRESET
+    font = captions_ass.PRESETS[pid]["family"]
+    try:
+        ovs = openfilm.prepare(plan["motion"]["fx"], str(tmp), font=font, accent=accent)
+    except Exception as e:  # noqa: BLE001 - an effect is never a failure
+        print(f"templates: skipped ({e.__class__.__name__})", flush=True)
+        return []
+    for o in ovs:
+        cy = captions_ass.band_y(captions_ass.layout_at(plan["sidecar"], o["s"] + 0.01), OUT_H)
+        o["y"] = int(max(0, min(cy - o["h"] // 2, motion.BOTTOM_SAFE - o["h"])))
+    return ovs
 
 
 def apply_punch(plan: dict, words: list[dict] | None, start: float, src: dict, on: bool,

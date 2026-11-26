@@ -85,6 +85,52 @@ def _stat_at(words: list[dict], i: int) -> dict | None:
             "s": float(words[i0]["s"]), "e": float(words[i + n - 1]["e"]), "n": i + n - i0}
 
 
+COMPARE_HOLD = 1.6      # s the comparison card stays after the second figure is said
+JOIN = {"to", "vs", "versus", "instead", "than", "compared", "against", "into"}
+
+
+def templates_on() -> bool:
+    return os.environ.get("HQ_TEMPLATES", "").strip() == "1"
+
+
+def _label(st: dict) -> str:
+    return f"{st['prefix']}{st['value']:,.{st['decimals']}f}{st['suffix']}"
+
+
+def _compare_in(sent: list[dict]) -> dict | None:
+    """Two statistics of the same kind (same currency, or same unit family) in one sentence with a joining word
+    between them: {left, right, from_to, mark, s, e, stat}. The words are the speaker's own: never a label invented."""
+    stats, i = [], 0
+    while i < len(sent):
+        st = _stat_at(sent, i)
+        if st:
+            stats.append((i, st))
+            i += st["n"]
+        else:
+            i += 1
+    for (i, a), (j, b) in zip(stats, stats[1:]):
+        between = [re.sub(r"[^\w']", "", str(w["w"])).lower() for w in sent[i + a["n"]:j]]
+        if not between or len(between) > 4 or not (set(between) & JOIN):
+            continue
+        same = (a["prefix"] and a["prefix"] == b["prefix"]) or (_unit(a) and _unit(a) == _unit(b))
+        if not same or a["value"] == b["value"]:
+            continue
+        before = [re.sub(r"[^\w']", "", str(w["w"])).lower() for w in sent[max(0, i - 2):i]]
+        from_to = "from" in before and "to" in between
+        return {"left": _label(a), "right": _label(b), "from_to": from_to, "mark": None if from_to else "VS",
+                "s": a["s"], "e": b["e"], "stat": {"kind": "stat", **{k: b[k] for k in ("prefix", "value", "decimals", "suffix")},
+                                                     "text": _label(b)}}
+    return None
+
+
+def _unit(st: dict) -> str:
+    u = st["suffix"].strip().lower()
+    fam = {"minute": "time", "minutes": "time", "hour": "time", "hours": "time", "day": "time", "days": "time",
+           "week": "time", "weeks": "time", "month": "time", "months": "time", "year": "time", "years": "time",
+           "seconds": "time", "million": "count", "billion": "count", "thousand": "count", "k": "count", "m": "count"}
+    return fam.get(u, u)
+
+
 def _sentences(words: list[dict]) -> list[list[dict]]:
     out, cur = [], []
     for w in words:
@@ -130,14 +176,33 @@ def plan(words: list[dict], clip_start: float, sidecar: list[dict] | None = None
             return "too close to another effect"
         return None
 
+    # a visual comparison: two figures of the same kind in one sentence, joined by "to" / "vs" / "instead of" ...
+    # ("from 3 hours to 20 minutes"). Needs the template renderer (HQ_TEMPLATES=1); otherwise the stat pop below.
+    if templates_on():
+        for sent in _sentences(ws):
+            cmp_ = _compare_in(sent)
+            if not cmp_:
+                continue
+            t = cmp_["s"] - clip_start
+            why = blocked(t)
+            if why:
+                skipped.append(f"Comparison \"{cmp_['left']} / {cmp_['right']}\" at {t:.1f} s left as a caption: {why}.")
+                continue
+            fx.append({"kind": "compare", "s": round(t, 3), "e": round(max(cmp_["e"] - clip_start, t) + COMPARE_HOLD, 3),
+                       "text": f"{cmp_['left']} {cmp_['mark'] or '/'} {cmp_['right']}", **{k: cmp_[k] for k in ("left", "right", "from_to", "mark")},
+                       "fallback": cmp_["stat"],
+                       "why": f"Two figures side by side (\"{cmp_['left']}\" and \"{cmp_['right']}\"): a comparison card shows the change at a glance."})
+            break
     # stat pops: the first number with a unit that has room
     for i in range(len(ws)):
         st = _stat_at(ws, i)
         if not st:
             continue
         t = st["s"] - clip_start
+        if any(f["kind"] == "compare" and f["s"] - 0.2 <= t <= f["e"] for f in fx):
+            continue   # already on the comparison card
         why = blocked(t)
-        label = f"{st['prefix']}{st['value']:,.{st['decimals']}f}{st['suffix']}"
+        label = _label(st)
         if why:
             skipped.append(f"Stat \"{label}\" at {t:.1f} s left as a caption: {why}.")
             continue
@@ -187,6 +252,8 @@ def events(fx: list[dict], y_at, W: int, accent_ass: str, text_ass: str, upper: 
     fit = fit or (lambda text, scale: scale)
     out = []
     for f in fx:
+        if f.get("template"):
+            continue   # drawn by an OpenFilm template overlay instead (studio/media/openfilm, render.render)
         y = y_at(f["s"] + 0.01)
         if f["kind"] == "stat":
             big = int(100 * fit(f["text"].upper() if upper else f["text"], STAT_SCALE))
@@ -242,7 +309,7 @@ def sfx_graph(fx: list[dict], src: str, out: str) -> list[str]:
     g = 10 ** (SFX_DB / 20)
     for i, f in enumerate(fx[:4]):
         ms = max(0, int(float(f["s"]) * 1000))
-        if f.get("kind") == "stat":
+        if f.get("kind") in ("stat", "compare"):
             parts.append(f"anoisesrc=d=0.32:c=pink:a=1,highpass=f=900,lowpass=f=6000,afade=t=in:d=0.24,afade=t=out:st=0.24:d=0.08,"
                          f"aformat=sample_rates=44100:channel_layouts=stereo,volume={g * 4.5:.4f},adelay={max(0, ms - 240)}|{max(0, ms - 240)}[sx{i}a]")
             parts.append(f"sine=f=1760:d=0.06,afade=t=out:d=0.06,aformat=sample_rates=44100:channel_layouts=stereo,"

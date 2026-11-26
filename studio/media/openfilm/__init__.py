@@ -108,6 +108,17 @@ def render(name: str, props: dict, out_dir: str, *, W: int = 1080, H: int | None
                     for (const sel of hide) { const el = document.querySelector(sel); if (el) el.style.visibility = 'hidden'; }
                 }""", [sets, hide])
                 page.evaluate("document.fonts.ready")
+                # words longer than the template's sample ("20 MINUTES" on a card made for "20 min") shrink to fit
+                # their card rather than run off it
+                page.evaluate("""(sels) => {
+                    for (const sel of sels) {
+                        const el = document.querySelector(sel); if (!el) continue;
+                        const box = el.parentElement; if (!box) continue;
+                        const room = box.clientWidth * 0.9;
+                        let fs = parseFloat(getComputedStyle(el).fontSize);
+                        for (let i = 0; i < 30 && el.scrollWidth > room && fs > 8; i++) { fs *= 0.93; el.style.fontSize = fs + 'px'; }
+                    }
+                }""", list(sets))
                 for k in range(n):
                     if time.time() - t0 > timeout:
                         raise TemplateError("The template took too long to draw.")
@@ -135,3 +146,55 @@ def render_tmp(name: str, props: dict, **kw) -> tuple[str, dict]:
 
 def describe() -> str:
     return json.dumps({k: list(v["props"]) for k, v in TEMPLATES.items()})
+
+
+def _props(f: dict) -> tuple[str, dict] | None:
+    """The template and its words for one planned motion moment (studio/media/motion.plan), or None. Only the
+    speaker's own figures go on the card: a missing label stays hidden rather than invented."""
+    if f.get("kind") == "stat":
+        return "info-count", {"number": f.get("text")}
+    if f.get("kind") == "compare":
+        props = {"left": f.get("left"), "right": f.get("right")}
+        if f.get("from_to"):
+            props.update(left_label="FROM", right_label="TO")
+        else:
+            props["mark"] = f.get("mark") or "VS"
+        return "info-compare", props
+    return None
+
+
+def prepare(fx: list[dict], tmp_dir: str, *, font: str | None = None, accent: str | None = None,
+            text: str | None = None, budget_s: float = 45.0) -> list[dict]:
+    """Draw a template for each stat / comparison in `fx` (in place: f["template"] = {template, ms, frames, w, h, dir}).
+    A comparison whose template can't be drawn turns back into the plain stat pop of its second figure, and the reason
+    is kept in f["template_skipped"]. Returns the overlays to composite: [{dir, s, e, w, h, frames}]. Never raises."""
+    out, t0 = [], time.time()
+    if not enabled():
+        return out
+    for k, f in enumerate(list(fx)):
+        pick = _props(f)
+        if not pick:
+            continue
+        name, props = pick
+        why = None
+        if time.time() - t0 > budget_s:
+            why = "the template budget for this clip was used up"
+        else:
+            try:
+                d = str(Path(tmp_dir) / f"tpl_{k}")
+                meta = render(name, props, d, font=font, accent=accent, text=text,
+                              timeout=max(5.0, budget_s - (time.time() - t0)))
+                f["template"] = {"template": name, "ms": meta["ms"], "frames": meta["frames"], "w": meta["w"], "h": meta["h"]}
+                f["e"] = round(max(float(f["e"]), float(f["s"]) + meta["dur"]), 3)
+                out.append({"dir": d, "s": float(f["s"]), "e": float(f["e"]), "w": meta["w"], "h": meta["h"],
+                            "frames": meta["frames"]})
+                continue
+            except TemplateError as e:
+                why = str(e)
+        f["template_skipped"] = why
+        if f.get("kind") == "compare" and isinstance(f.get("fallback"), dict):
+            fb = {**f["fallback"], "s": f["s"], "e": round(float(f["s"]) + 1.8, 3), "template_skipped": why,
+                  "why": f"\"{f['fallback'].get('text')}\" is a concrete number: counted up so it lands "
+                         f"(the comparison card couldn't be drawn: {why})."}
+            fx[fx.index(f)] = fb
+    return out

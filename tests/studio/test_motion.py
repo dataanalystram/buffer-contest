@@ -73,3 +73,20 @@ def test_thousands_split_by_the_recogniser_stay_one_number_and_a_question_is_not
     q = motion.plan(W("So when you broke in?", 5) + W("Okay sure.", 8), 0.0)
     assert q["fx"] == []
     assert motion.plan(W("We never stopped.", 5), 0.0)["fx"][0]["kind"] == "line"
+
+
+def test_two_figures_joined_in_one_sentence_become_a_comparison_and_fall_back_without_chromium(monkeypatch, tmp_path):
+    from studio.media import openfilm
+    monkeypatch.setenv("HQ_MOTION", "1")
+    monkeypatch.setenv("HQ_TEMPLATES", "1")
+    ws = W("Editing went from 3 hours to 20 minutes.", 5)
+    p = motion.plan(ws, 0.0)
+    assert [f["kind"] for f in p["fx"]] == ["compare"]
+    c = p["fx"][0]
+    assert (c["left"], c["right"], c["from_to"]) == ("3 HOURS", "20 MINUTES", True)
+    assert motion.plan(W("We grew from 3 hours of work and 20 customers.", 5), 0.0)["fx"][0]["kind"] != "compare"  # not the same kind
+    monkeypatch.setattr(openfilm, "available", lambda: "Playwright isn't installed on this worker.")
+    assert openfilm.prepare(p["fx"], str(tmp_path)) == []
+    assert p["fx"][0]["kind"] == "stat" and p["fx"][0]["text"] == "20 MINUTES" and "Playwright" in p["fx"][0]["template_skipped"]
+    monkeypatch.setenv("HQ_TEMPLATES", "0")
+    assert motion.plan(ws, 0.0)["fx"][0]["kind"] == "stat"   # no templates: the plain stat pop, as before
