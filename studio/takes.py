@@ -885,6 +885,23 @@ class Takes(TakeBin, TakeControl):
             self._save(rid, steps, res)
             return {"ok": True, "token": tok}
 
+    def _note_fx(self, uid: str, rid: str, clips: list[dict]) -> None:
+        """The editor's motion/template choices for the clips just rendered, into the fx store (studio/fxstore.py: the
+        app's database, or Cloudflare D1 with HQ_FX_STORE=d1), off the request path. Never fails the take."""
+        from . import fxstore
+        rows = [r for c in clips for r in fxstore.rows_from_motion(uid, rid, c["id"], (c.get("meta") or {}).get("motion"))]
+        if not rows:
+            return
+        try:
+            be = fxstore.backend(self.store)
+        except Exception as e:  # noqa: BLE001
+            print(f"fx store unavailable ({e.__class__.__name__})", flush=True)
+            return
+        if be is not None and be.name == "d1":
+            threading.Thread(target=fxstore.record, args=(be, rows), daemon=True, name="fx-store").start()
+        else:
+            fxstore.record(be, rows)
+
     def on_render_done(self, jid: int, error: str = "") -> dict:
         with self._job_lock(jid):
             return self._on_render_done(jid, error)
@@ -928,6 +945,7 @@ class Takes(TakeBin, TakeControl):
             res["face_fallback"] = {"clips": nofaces, "note": fb_note}
         else:  # a later render that found faces clears an earlier render's note
             res.pop("face_fallback", None)
+        self._note_fx(j["user_id"], rid, [c for c in ok if c["id"] in ids])
         summary = reframe_summary(ok, layouts, nofaces, fb_note)
         self._step(steps, "reframe", "done", summary + (f" (face kept in frame {min(cov) * 100:.0f}%+ of the time)" if cov else ""))
         kept = [c["id"] for c in ok if (c.get("meta") or {}).get("source_captions")]

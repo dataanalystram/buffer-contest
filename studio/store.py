@@ -20,6 +20,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+import os
 import time
 from typing import Any
 
@@ -158,7 +159,7 @@ TABLES = ("users", "sessions", "agent_tokens", "confirms", "approvals", "device_
 # 2 Nov 2026 privacy review: brand kits, templates, sources and upload/send sessions outlived the account). Not here, on
 # purpose: the per-day usage counters (brain_tokens, classifier_usage) and demo_owners, which hold no content and keep
 # a reconnect from resetting an allowance.
-OWNED_ELSEWHERE = ("brand_kit_library", "brand_studio", "custom_templates", "template_slots", "template_slot_runs", "source_runs",
+OWNED_ELSEWHERE = ("fx_events", "brand_kit_library", "brand_studio", "custom_templates", "template_slots", "template_slot_runs", "source_runs",
                    "source_settings",
                    "source_refresh", "send_codes", "upload_sessions", "ai_engine_pref", "chat_titles", "mcp_calls", "mcp_idem",
                    "thread_ids", "thread_deleted", "jev_usage", "link_consents", "take_prefs", "link_auto_approve",
@@ -488,6 +489,12 @@ class Store:
                 if t in have:
                     self.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
             self.x("DELETE FROM users WHERE id=?", (uid,))
+        if os.environ.get("HQ_FX_STORE", "").strip().lower() == "d1":  # the editor's fx notes kept in Cloudflare D1
+            from . import fxstore
+            try:
+                fxstore.forget_user(fxstore.backend(self), uid)
+            except Exception as e:  # noqa: BLE001 - logged loudly: the rows are notes, the account itself is gone
+                print(f"fx store: couldn't erase {uid}'s rows in D1 ({e.__class__.__name__}); run fxstore.forget_user", flush=True)
 
     # ---- sessions
     def new_session(self, sid: str, csrf: str, ttl: float = 30 * 86400) -> None:

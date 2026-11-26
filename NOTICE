@@ -424,3 +424,10 @@ studio/media/ocr.py, scripts/worker_tesseract.sh  (separate program, not linked;
 
 SCOWL word lists (studio/media/lexicon/words_en.txt.gz): Copyright 2000-2011 Kevin Atkinson and others, a permissive
 licence (full text in studio/media/lexicon/SCOWL-LICENSE.txt). Used only to keep OCR noise out of clip alt text.
+
+--------------------------------------------------------------------------------------------------------------
+studio/media/openfilm/info-count.html, studio/media/openfilm/info-compare.html  (vendored unchanged)
+  Source:   OpenFilm  https://github.com/openfilm/openfilm  (commit 69489069aefb547e6bc9f8fd6a750f66aedd14a8, 25 Nov 2026)
+  Licence:  the template library is CC0 1.0 (public domain dedication); credited here as a courtesy, not as a requirement
+  What:     motion-graphics template pages drawn frame by frame in headless Chromium (studio/media/openfilm/__init__.py,
+            our own host code) into a transparent overlay for One take clips. Behind HQ_TEMPLATES=1.
