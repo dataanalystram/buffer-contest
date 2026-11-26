@@ -80,7 +80,7 @@ def test_trim_and_caption_rerenders_the_sample_clip(live, chromium, close_contex
     scores = [float(x.inner_text().split()[-1]) for x in page.get_by_test_id("clip-score").all()]
     assert scores == sorted(scores, reverse=True)  # sorted by score
     assert page.get_by_test_id("take-target").count() == 3  # every channel of the take, with its Spread switch
-    assert page.locator("[data-testid=take-step][data-status=done]").count() == 8
+    assert page.locator("[data-testid=take-step][data-status=done]").count() == 9  # 9 stages since "Selecting hooks" (26 Nov)
     if shots:
         os.makedirs(shots, exist_ok=True)
         page.locator("#takeView").scroll_into_view_if_needed()

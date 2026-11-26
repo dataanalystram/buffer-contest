@@ -39,9 +39,22 @@ from .store import sha
 
 MOMENTS_AI = "AI engine"  # placeholder source while the engine order runs; replaced by the engine that answered
 
-STEPS = [("upload", "Read your video"), ("transcribe", "Transcribe"), ("moments", "Find the best moments"),
-         ("reframe", "Reframe to 9:16"), ("captions", "Burn in brand captions"), ("covers", "Branded covers + end card"),
-         ("preflight", "Preflight every clip"), ("ready", "Ready to spread")]
+# The stages a person watches (26 Nov wording). Keys stay as they were: stored takes, the worker and take_control use them.
+STEPS = [("upload", "Reading your video"), ("transcribe", "Understanding the video"), ("moments", "Finding interesting moments"),
+         ("hooks", "Selecting hooks"), ("reframe", "Framing the footage"), ("captions", "Designing captions and graphics"),
+         ("covers", "Rendering clips"), ("preflight", "Reviewing results"), ("ready", "Ready to spread")]
+
+
+def hooks_detail(moments: list[dict], headline: bool = False) -> str:
+    """What the hook step decided, counted from the moments (never estimated)."""
+    n = len(moments or [])
+    cold = sum(1 for m in moments or [] if m.get("cold_open"))
+    parts = [f"{n} hook{'s' if n != 1 else ''}, each a line said in the video"]
+    if cold:
+        parts.append(f"{cold} open{'s' if cold == 1 else ''} on a stronger line said earlier")
+    if headline:
+        parts.append("headline card on the opening")
+    return " · ".join(parts)
 VIDEO_FIRST = ("instagram", "tiktok", "youtube")
 TAKES_VIDEO = ("instagram", "tiktok", "youtube", "twitter", "linkedin", "threads", "facebook", "bluesky")
 THUMB_OFFSET = ("instagram", "tiktok", "pinterest")  # Buffer: metadata.thumbnailOffset is honoured on these only
@@ -440,6 +453,7 @@ class Takes(TakeBin, TakeControl):
         res["picked_by"] = sm.get("picked_by", "built-in scorer")
         self._step(steps, "moments", "done", f"{len(sm['moments'])} moments · picked by {res['picked_by']}",
                    {"moments": [{k: m[k] for k in ("id", "start", "end", "hook", "score")} for m in sm["moments"]]})
+        self._step(steps, "hooks", "done", hooks_detail(sm["moments"]))
         clips = []
         for c in sm["clips"]:
             m = next(x for x in sm["moments"] if x["id"] == c["moment_id"])
@@ -747,6 +761,7 @@ class Takes(TakeBin, TakeControl):
             res.setdefault("timings", {})["moments"] = secs
         self._step(steps, "moments", "done", f"{len(mined['moments'])} moments from {mined['sentences']} sentences · picked by {mined['picked_by']}",
                    {"moments": [{k: m[k] for k in ("id", "start", "end", "hook", "score")} for m in mined["moments"]]})
+        self._step(steps, "hooks", "done", hooks_detail(mined["moments"], bool((self._run(a, rid).get("input") or {}).get("headline"))))
         res["clips"] = [{"id": f"c{i + 1}", "moment_id": m["id"], "status": "rendering", "start": m["start"], "end": m["end"],
                          "hook": m["hook"], "text": m["text"], "score": m["score"], "why": m.get("why", ""), "rank": m.get("rank"),
                          "reasons": m.get("reasons") or [], "captions": {}, "placements": [],

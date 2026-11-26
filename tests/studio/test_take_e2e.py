@@ -50,7 +50,7 @@ def test_sample_take_spread_and_save_as_drafts(live, chromium):
     page = ctx.new_page()
     _open_sample(page, live)
     assert page.get_by_test_id("clip-card").count() == CLIPS
-    assert page.locator("[data-testid=take-step][data-status=done]").count() == 8
+    assert page.locator("[data-testid=take-step][data-status=done]").count() == 9  # 9 stages since "Selecting hooks" (26 Nov)
     # one preflight chip per clip per selected channel; the default is Make a post's (setup's channels, else every
     # connected one) minus channels without video
     chans = page.locator("[data-testid=take-chip][aria-pressed=true]").count()

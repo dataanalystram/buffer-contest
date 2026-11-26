@@ -375,13 +375,22 @@ function tkStopWatch() {
 }
 
 // ---------------------------------------------------------------- the take: timeline + clips
+function tkDur(sec) { sec = Math.round(sec); return sec < 60 ? `${sec} s` : `${Math.floor(sec / 60)} min ${String(sec % 60).padStart(2, "0")} s`; }
 function showTake(t) {
   T.take = t; tkRunMode(true); $("#takeView").hidden = false;
   $("#takeView").setAttribute("aria-busy", "false"); $("#tkRunErr").hidden = true;
   tkRunBar(t);
-  $("#tkTimeline").innerHTML = t.steps.map((s) => `<li class="step ${s.status}" data-testid="take-step" data-key="${s.key}" data-status="${s.status}">
+  // measured only: a finished stage shows how long it took (from the server's own step times); the running one says
+  // "Now" and its real count ("2 of 5 clips"). No percentages or ETAs we can't calculate.
+  let prevAt = t.created || null;
+  $("#tkTimeline").innerHTML = t.steps.map((s) => {
+    const took = s.status === "done" && s.at && prevAt && s.at - prevAt >= 1 && s.at - prevAt < 6 * 3600 ? tkDur(s.at - prevAt) : "";
+    if (s.at && s.status !== "pending") prevAt = s.at;
+    const now = s.status === "running" ? `<span class="tk-now" data-testid="take-step-now">Now</span>` : "";
+    return `<li class="step ${s.status}" data-testid="take-step" data-key="${s.key}" data-status="${s.status}"${s.status === "running" ? ' aria-current="step"' : ""}>
       <span class="dot" aria-hidden="true">${STATUS_ICON[s.status] || ""}</span>
-      <div><b>${esc(s.label)}</b>${s.detail ? `<small>${esc(s.detail)}</small>` : ""}</div></li>`).join("");
+      <div><b>${esc(s.label)}</b>${now}${took ? `<span class="tk-took" data-testid="take-step-took">${took}</span>` : ""}${s.detail ? `<small>${esc(s.detail)}</small>` : ""}</div></li>`;
+  }).join("");
   const src = t.source || {};
   $("#tkHead").innerHTML = ""
     + (src.duration ? `<span class="muted sm">${secs(src.duration)} long</span>` : "")
