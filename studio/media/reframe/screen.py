@@ -170,3 +170,61 @@ def pick_thumbs(thumbs: dict, a: float, b: float) -> list:
         if a - 0.3 <= t <= b + 0.3 and (not out or out[-1] is not thumbs[t]):
             out.append(thumbs[t])
     return out
+
+
+CONTENT_PAD = 0.03     # margin kept around the content box (share of the screen width)
+CONTENT_GAIN = 1.25    # use the content box only when it shows the UI at least this much larger than the plain fit
+CONTENT_ON = 0.06      # a row / column counts as content above this share of the busiest one
+
+
+def content_box(thumbs: list, src_w: int, src_h: int, out_w: int = FOCUS_OUT_W) -> tuple[int, int, int, int] | None:
+    """The box (x, y, w, h in source pixels) around everything a screen shows, empty margins trimmed off: an app with
+    its content in a centred column, a title card, a slide. Unlike focus_box it never cuts content (it holds every
+    edge), so titles and comparison graphics stay whole; it only drops the empty space the plain fit would shrink
+    with them (26 Nov: the demo's app filled a third of the 9:16 frame and read small on a phone). None when the
+    content already spans most of the screen."""
+    import cv2
+    import numpy as np
+    if not thumbs or src_w <= 0 or src_h <= 0:
+        return None
+    th, tw = thumbs[0].shape[:2]
+    edges = np.mean([cv2.Canny(g, 60, 140) / 255.0 for g in thumbs], axis=0)
+    cols, rows = edges.mean(axis=0), edges.mean(axis=1)
+    if float(cols.max()) <= 1e-4:
+        return None
+    on_r = np.where(rows >= CONTENT_ON * float(rows.max()))[0]
+    if not len(on_r):
+        return None
+    # bands of rows split by empty gaps: the busiest band is the content; a thin full-width app bar or a burned-in
+    # caption strip is its own band and only joins when it sits inside the content's columns
+    gap = max(2, th // 40)
+    bands = np.split(on_r, np.where(np.diff(on_r) > gap)[0] + 1)
+
+    def colspan(band):
+        c = edges[band[0]:band[-1] + 1].mean(axis=0)
+        on = np.where(c >= CONTENT_ON * float(c.max()))[0] if float(c.max()) > 0 else np.array([], int)
+        return (on[0], on[-1]) if len(on) else None
+
+    main = max(bands, key=lambda b: float(edges[b[0]:b[-1] + 1].sum()))
+    span = colspan(main)
+    if span is None:
+        return None
+    r0, r1, c0, c1 = main[0], main[-1], span[0], span[1]
+    for b in bands:
+        sp = colspan(b)
+        if b is main or sp is None:
+            continue
+        if sp[0] >= c0 - tw // 40 and sp[1] <= c1 + tw // 40 and (b[0] - r1 <= th // 6 and b[0] > r1 or r0 - b[-1] <= th // 6 and b[-1] < r0):
+            r0, r1 = min(r0, b[0]), max(r1, b[-1])   # a heading or a note right above / below, inside the same columns
+    on_c, on_r = np.arange(c0, c1 + 1), np.arange(r0, r1 + 1)
+    pad_x, pad_y = int(CONTENT_PAD * tw), int(CONTENT_PAD * tw)
+    x0, x1 = max(0, on_c[0] - pad_x), min(tw, on_c[-1] + 1 + pad_x)
+    y0, y1 = max(0, on_r[0] - pad_y), min(th, on_r[-1] + 1 + pad_y)
+    x, w = round(x0 / tw * src_w), round((x1 - x0) / tw * src_w)
+    y, h = round(y0 / th * src_h), round((y1 - y0) / th * src_h)
+    if w < 0.2 * src_w or h < 0.1 * src_h:
+        return None   # a speck (a cursor, one icon): nothing to frame
+    if src_w / w < CONTENT_GAIN:
+        return None   # the content already spans the screen: the plain fit is as large as it gets
+    x, y = max(0, min(src_w - w, x)), max(0, min(src_h - h, y))
+    return x - x % 2, y - y % 2, w - w % 2, h - h % 2

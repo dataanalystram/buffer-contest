@@ -702,3 +702,22 @@ def test_an_app_with_a_video_playing_in_it_is_a_screen_even_when_the_frame_chang
     assert decide.rule(wall, src)["rule"] == "R3"
     quiet = {**_sig([_face(0, 0.5, 0.12, motion=6.0)], False, 0.9, 0.02), "flat": 0.8}  # few edges: not an app
     assert decide.rule(quiet, src)["rule"] == "R3"
+
+
+def test_content_box_drops_empty_margins_but_never_cuts_the_content():
+    """26 Nov: an app with its content in a centred column read small on a phone; the box holds all of it."""
+    import numpy as np
+    from studio.media.reframe import screen
+    g = np.full((180, 320), 245, np.uint8)
+    g[2:10, 5:315] = 40          # a thin app bar across the top
+    g[40:120, 80:240] = 255      # the content card ...
+    g[40:42, 80:240] = 30; g[118:120, 80:240] = 30; g[40:120, 80:82] = 30; g[40:120, 238:240] = 30
+    for y in range(55, 110, 10):
+        g[y:y + 3, 95:225] = 60  # ... with lines of text
+    box = screen.content_box([g, g], 1920, 1080)
+    assert box is not None
+    x, y, w, h = box
+    assert x <= 80 * 6 and x + w >= 240 * 6 and y <= 40 * 6 and y + h >= 120 * 6   # all of the card
+    assert w < 0.75 * 1920                                                       # the margins are gone
+    full = np.full((180, 320), 245, np.uint8); full[20:160, 4:316:6] = 30          # content edge to edge
+    assert screen.content_box([full], 1920, 1080) is None

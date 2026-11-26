@@ -185,6 +185,14 @@ def apply_focus(shots: list[dict], thumbs: dict | None, sw: int, sh: int) -> int
                                        min_share=PRODUCT_SHARE if rule == "R8-noface" else 0.0)
         except Exception:  # noqa: BLE001 - a focus is an improvement, never a failure
             box = None
+        if not box and rule == "R2":
+            # no single active region (or it would cut a title): frame everything the screen shows, margins dropped
+            try:
+                box = screen_mod.content_box(screen_mod.pick_thumbs(thumbs, s["start"], s["end"]), sw, sh)
+            except Exception:  # noqa: BLE001
+                box = None
+            if box:
+                s["focus_kind"] = "content"
         if box:
             s["focus"] = box
             n += 1
