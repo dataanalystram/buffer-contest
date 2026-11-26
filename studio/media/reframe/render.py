@@ -166,16 +166,23 @@ def _focus(v, sw: int, sh: int) -> tuple[int, int, int, int] | None:
     return x, y, w, h
 
 
+PRODUCT_SHARE = 0.55   # a no-face shot zooms in only when this share of its detail and motion sits in the crop
+
+
 def apply_focus(shots: list[dict], thumbs: dict | None, sw: int, sh: int) -> int:
     """Give each screen-recording shot (fit by rule R2: screen content, no face, not pinned) a readable crop of its
-    active region (screen.focus_box), in place. Returns how many shots got one. Never raises: the plain fit stays."""
+    active region (screen.focus_box), in place; and each shot with no face and no screen (R8-noface: a product held
+    up, an object on a desk) the same crop when one thing in it holds most of the detail and motion (25 Nov baseline:
+    the phone filled a third of a full-frame clip). Returns how many shots got one. Never raises: the plain fit stays."""
     n = 0
     for s in shots:
         s.pop("focus", None)
-        if s.get("layout") != "fit" or s.get("rule") != "R2" or s.get("pinned") or not thumbs:
+        rule = s.get("rule")
+        if s.get("layout") != "fit" or rule not in ("R2", "R8-noface") or s.get("pinned") or not thumbs:
             continue
         try:
-            box = screen_mod.focus_box(screen_mod.pick_thumbs(thumbs, s["start"], s["end"]), sw, sh)
+            box = screen_mod.focus_box(screen_mod.pick_thumbs(thumbs, s["start"], s["end"]), sw, sh,
+                                       min_share=PRODUCT_SHARE if rule == "R8-noface" else 0.0)
         except Exception:  # noqa: BLE001 - a focus is an improvement, never a failure
             box = None
         if box:

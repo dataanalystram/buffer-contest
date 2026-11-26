@@ -95,3 +95,23 @@ def test_caption_background_is_measured_under_the_band():
     half = np.full((180, 320), 10, np.uint8)
     half[110:140, :] = 245                                           # light only where the track caption sits
     assert rr.caption_bg_luma(track, {1.0: half}, 1920, 1080) > 0.8
+
+
+def test_a_product_shot_zooms_in_but_a_busy_wide_shot_stays_full_frame():
+    import numpy as np
+    from studio.media.reframe import render as rr
+    th = []
+    for k in range(3):                                   # a phone (striped, moving a little) on a plain table
+        g = np.full((180, 320), 90, np.uint8)
+        g[50:140, 200 + k:240 + k] = 30
+        g[55:135:6, 204 + k:236 + k] = 220
+        th.append(g)
+    box = screen.focus_box(th, 1920, 1080, min_share=rr.PRODUCT_SHARE)
+    assert box and box[0] <= 1200 <= box[0] + box[2]
+    rng = np.random.default_rng(1)
+    busy = [rng.integers(0, 255, (180, 320), dtype=np.uint8) for _ in range(3)]   # detail everywhere: a landscape
+    assert screen.focus_box(busy, 1920, 1080, min_share=rr.PRODUCT_SHARE) is None
+    shots = [{"start": 0, "end": 3, "layout": "fit", "rule": "R8-noface"}, {"start": 3, "end": 6, "layout": "fit", "rule": "R8"}]
+    thumbs = {t: th[i % 3] for i, t in enumerate((0.75, 1.5, 2.25, 3.75, 4.5, 5.25))}
+    rr.apply_focus(shots, thumbs, 1920, 1080)
+    assert "focus" in shots[0] and "focus" not in shots[1]   # crowds and low-confidence shots keep the full frame

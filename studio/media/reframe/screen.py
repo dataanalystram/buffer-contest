@@ -62,7 +62,7 @@ def _best_window(profile, n: int) -> int:
     return int(np.argmax(sums)) if len(sums) else 0
 
 
-def focus_box(thumbs: list, src_w: int, src_h: int) -> tuple[int, int, int, int] | None:
+def focus_box(thumbs: list, src_w: int, src_h: int, min_share: float = 0.0) -> tuple[int, int, int, int] | None:
     """A readable crop (x, y, w, h in source pixels) of a screen recording's active region: where its text/UI edges
     and its changes between frames (typing, the cursor, scrolling) are densest, sized so the UI is shown at about
     FOCUS_SCALE x on the 9:16 clip. None when there is nothing to go on or the crop would be nearly the whole screen."""
@@ -89,6 +89,8 @@ def focus_box(thumbs: list, src_w: int, src_h: int) -> tuple[int, int, int, int]
     cx = float((cols * np.arange(tw)).sum() / cols.sum()) if cols.sum() > 0 else tw / 2
     x0 = int(min(tw - nw, max(0, round(cx - nw / 2))))
     y0 = _best_window(act[:, x0:x0 + nw].sum(axis=1), nh)
+    if min_share and float(act[y0:y0 + nh, x0:x0 + nw].sum()) < min_share * float(act.sum()):
+        return None   # the detail is spread over the frame (a landscape, a room): no single thing to zoom in on
     x = int(min(src_w - cw, max(0, round(x0 / tw * src_w))))
     y = int(min(src_h - ch, max(0, round(y0 / th * src_h))))
     return x - x % 2, y - y % 2, cw - cw % 2, ch - ch % 2
