@@ -138,3 +138,18 @@ def test_a_title_card_wider_than_the_crop_stays_full_frame():
         g[80:88, 150 + 12 * k:162 + 12 * k] = 0              # the cursor typing in the middle
         code.append(g)
     assert screen.focus_box(code, 1376, 744) is not None
+
+
+def test_a_side_by_side_comparison_graphic_is_not_cropped_to_one_side():
+    """26 Nov Mac run: the review's comparison graphic came out cut off. Two panels of text across the frame keep the
+    plain fit when nothing moves inside the crop, on the screen path and on the no-face (product) path."""
+    graphic = []
+    for k in range(3):
+        g = np.full((180, 320), 15, np.uint8)
+        for x0 in (20, 175):                                  # two panels, "iPhone 17" | "iPhone 16"
+            g[30:150, x0:x0 + 125] = 40
+            for y in range(45, 140, 12):
+                g[y:y + 4, x0 + 10:x0 + 115] = 230            # rows of specs in each panel
+        graphic.append(g)
+    assert screen.focus_box(graphic, 1920, 1080) is None
+    assert screen.focus_box(graphic, 1920, 1080, min_share=rr.PRODUCT_SHARE) is None

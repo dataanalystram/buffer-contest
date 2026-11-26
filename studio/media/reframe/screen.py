@@ -10,16 +10,20 @@ corner logo spans ~15% and survives any crop, a spreadsheet spans ~100% and can'
 """
 from __future__ import annotations
 
+import math
+
 EDGE_MIN = 0.08
 STATIC_MAX = 2.0
 FLAT_MIN = 0.40
 COL_MIN = 0.05  # a column counts as content when this share of its pixels are edges
 FOCUS_OUT_W = 1064     # the focus card's width on the 1080-wide clip (the fit layout's gutters)
-FOCUS_SCALE = 1.6      # aim: UI text shown at 1.6x its source size (fit shows a 1376 px screen at 0.77x)
-FOCUS_MIN_W = 0.40     # never crop narrower than 40% of the screen ...
+FOCUS_SCALE = 2.0      # aim: UI text shown at 2x its source size (fit shows a 1376 px screen at 0.77x; 1.6x still read small, 26 Nov)
+FOCUS_MIN_W = 0.30     # never crop narrower than 30% of the screen ...
+FIT_READS = 1.4        # a screen the plain fit already shows at this scale reads fine as it is
 FOCUS_MAX_W = 0.85     # ... and a crop wider than this isn't worth it (the plain fit is kept)
 FOCUS_ASPECT = 1.0     # crop height / width (a square card leaves the caption band below it free)
 CUT_SHARE = 0.5        # text just past a crop edge at half the density inside means the crop cuts through it ...
+CUT_SHARE_OBJECT = 0.8  # (a product crop: the room behind may carry on, a graphic's rows of text may not)
 MOVE_SHARE = 0.6       # ... which is fine only when this share of what moves is inside the crop
 
 
@@ -75,8 +79,8 @@ def focus_box(thumbs: list, src_w: int, src_h: int, min_share: float = 0.0) -> t
     th, tw = thumbs[0].shape[:2]
     cw = min(src_w, max(int(FOCUS_MIN_W * src_w), int(FOCUS_OUT_W / FOCUS_SCALE)))
     ch = min(src_h, int(cw * FOCUS_ASPECT))
-    if cw >= FOCUS_MAX_W * src_w:
-        return None
+    if cw >= FOCUS_MAX_W * src_w or FOCUS_OUT_W / src_w >= FIT_READS:
+        return None   # nearly the whole screen, or the plain fit already shows a small screen large enough
     edges = np.mean([cv2.Canny(g, 80, 160) / 255.0 for g in thumbs], axis=0)
     chg = (np.mean([np.abs(a.astype("int16") - b.astype("int16")) > 12 for a, b in zip(thumbs, thumbs[1:])], axis=0)
            if len(thumbs) > 1 else np.zeros_like(edges))
@@ -92,16 +96,32 @@ def focus_box(thumbs: list, src_w: int, src_h: int, min_share: float = 0.0) -> t
     cx = float((cols * np.arange(tw)).sum() / cols.sum()) if cols.sum() > 0 else tw / 2
     x0 = int(min(tw - nw, max(0, round(cx - nw / 2))))
     y0 = _best_window(act[:, x0:x0 + nw].sum(axis=1), nh)
+    # when the busy block (columns with real activity in these rows) fits in the crop, slide the crop to hold all of it
+    # rather than shave its edge off
+    prof = np.convolve(act[y0:y0 + nh].sum(axis=0).astype("float64"), np.ones(3) / 3, mode="same")
+    on = np.where(prof >= 0.25 * float(prof.max()))[0] if prof.max() > 0 else np.array([], int)
+    runs = np.split(on, np.where(np.diff(on) > 1)[0] + 1) if len(on) else []
+    busy = np.concatenate([r for r in runs if len(r) >= max(3, tw // 30)] or [np.array([], int)])  # not a scrollbar
+    hold = None
+    if len(busy) and busy[-1] - busy[0] + 1 <= nw:
+        if not (x0 <= busy[0] and busy[-1] < x0 + nw):
+            x0 = int(min(tw - nw, max(0, busy[0] if busy[0] < x0 else busy[-1] + 1 - nw)))
+        hold = (busy[0] / tw * src_w, (busy[-1] + 1) / tw * src_w)   # in source px, so rounding can't shave it
     if min_share and float(act[y0:y0 + nh, x0:x0 + nw].sum()) < min_share * float(act.sum()):
         return None   # the detail is spread over the frame (a landscape, a room): no single thing to zoom in on
-    if not min_share and _cuts_content(edges, chg, x0, y0, nw, nh):  # screens only: a product crop cuts the room on purpose
+    if _cuts_content(edges, chg, x0, y0, nw, nh, CUT_SHARE_OBJECT if min_share else CUT_SHARE):
         return None   # a title card or a line of big text runs past the crop ("AKE A PO"): the plain fit shows it whole
     x = int(min(src_w - cw, max(0, round(x0 / tw * src_w))))
+    if hold and x + cw < hold[1]:
+        x = int(min(src_w - cw, max(0, math.ceil(hold[1]) - cw + 2)))
+        x += x % 2   # the even rounding below must not undo it
+    elif hold and x > hold[0]:
+        x = int(max(0, math.floor(hold[0]) - 2))
     y = int(min(src_h - ch, max(0, round(y0 / th * src_h))))
     return x - x % 2, y - y % 2, cw - cw % 2, ch - ch % 2
 
 
-def _cuts_content(edges, chg, x0: int, y0: int, nw: int, nh: int) -> bool:
+def _cuts_content(edges, chg, x0: int, y0: int, nw: int, nh: int, share: float = CUT_SHARE) -> bool:
     """Would the crop [x0, x0+nw) x [y0, y0+nh) cut through what the shot is showing? True when text/UI carries on just
     past a side edge about as densely as inside the crop, unless most of what moves (typing, the cursor) is inside it:
     zooming in on where someone types is fine even when the code lines run on, cutting a still title card is not
@@ -113,7 +133,7 @@ def _cuts_content(edges, chg, x0: int, y0: int, nw: int, nh: int) -> bool:
     if inside <= 1e-4:
         return False
     sides = [rows[:, max(0, x0 - strip):x0], rows[:, x0 + nw:min(tw, x0 + nw + strip)]]
-    cut = any(sd.size and float(sd.mean()) >= CUT_SHARE * inside for sd in sides)
+    cut = any(sd.size and float(sd.mean()) >= share * inside for sd in sides)
     if not cut:
         return False
     total = float(chg.sum())
