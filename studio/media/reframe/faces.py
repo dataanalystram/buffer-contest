@@ -5,6 +5,10 @@
 * Detection runs at 640 px wide on every sample. Where that finds no face, or only a small one (a webcam bubble in a
   screen recording is ~110 px tall at 1080p and ~37 px at 640), it runs again at full resolution once a second.
 * Only the clip span is decoded, never the whole source.
+* YuNet is trained on faces seen from the front. A sample with no sure face takes a less sure one (three-quarter view)
+  or, failing that, a side-on face from OpenCV's bundled profile Haar cascade (26 Nov Mac run: the two-person podcast,
+  speakers facing each other, got no face in any of its 35 scenes). Those boxes have no landmarks; their mouth patch
+  is the lower part of the box.
 * Without OpenCV (or with a bad model file) the analysis' face samples (MediaPipe / Haar, 2 fps) are used instead.
 
 A sample is ``{"t": clip seconds, "faces": [{"x","y","w","h" (0-1 of the frame), "score", "mouth": patch|None}]}``.
@@ -24,6 +28,8 @@ MAX_W = 1920           # "full resolution" is capped at 1920 wide (4K sources de
 LOOK_W = 1280          # the second, 1 fps look for small faces runs at most this wide
 THUMB_W = 320          # grey thumbnails kept for the screen signals
 MIN_SCORE = 0.7
+SIDE_SCORE = 0.5       # where nothing clears MIN_SCORE, a YuNet face this sure still counts (a three-quarter view) ...
+PROFILE_SCORE = 0.8    # ... and else OpenCV's profile cascade looks for a side-on face (both ways round)
 
 
 class FaceModelError(RuntimeError):
@@ -62,9 +68,39 @@ def _boxes(det, img, sx: float, sy: float, W: int, H: int) -> list[dict]:
     return out
 
 
-def _mouth(gray, f: dict, W: int, H: int):
-    """A small grey patch around the mouth (between the two mouth-corner landmarks), for frame-to-frame motion."""
+_PROFILE = None
+
+
+def side_faces(gray, W: int, H: int) -> list[dict]:
+    """Side-on faces (OpenCV's profile cascade, run on the frame and its mirror image, so faces turned either way)."""
     import cv2
+    global _PROFILE
+    if _PROFILE is None:
+        _PROFILE = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_profileface.xml"))
+    if _PROFILE.empty():
+        return []
+    m = max(24, int(H * 0.08))
+    out = []
+    for flip in (False, True):
+        g = cv2.flip(gray, 1) if flip else gray
+        for x, y, w, h in _PROFILE.detectMultiScale(g, scaleFactor=1.1, minNeighbors=6, minSize=(m, m)):
+            x = W - x - w if flip else x
+            box = {"x": x / W, "y": y / H, "w": w / W, "h": h / H, "score": PROFILE_SCORE, "side": True}
+            if all(iou(box, o) < 0.3 for o in out):
+                out.append(box)
+    return out
+
+
+def _mouth(gray, f: dict, W: int, H: int):
+    """A small grey patch around the mouth (between the two mouth-corner landmarks), for frame-to-frame motion. A box
+    without landmarks (a side-on face) uses the middle of its lower third."""
+    import cv2
+    if not f.get("lm"):
+        x0, x1 = int(f["x"] * W + f["w"] * W * 0.25), int(f["x"] * W + f["w"] * W * 0.75)
+        y0, y1 = int(f["y"] * H + f["h"] * H * 0.65), int(min(H, f["y"] * H + f["h"] * H * 0.9))
+        if x1 - x0 < 4 or y1 - y0 < 3:
+            return None
+        return cv2.resize(gray[y0:y1, x0:x1], (24, 12), interpolation=cv2.INTER_AREA).astype("float32")
     (rx, ry), (lx, ly) = f["lm"][3], f["lm"][4]
     cx, cy = (rx + lx) / 2, (ry + ly) / 2
     half = max(4.0, abs(lx - rx) * 0.75)
@@ -114,15 +150,18 @@ def sample(path: str, start: float, end: float, src_w: int, src_h: int, fps: flo
     # the fast pass decodes at min(source, 640) wide (frames() never upscales): measure faces on THAT frame
     fw = min(src_w, DET_W) - min(src_w, DET_W) % 2
     dh = int(round(fw * src_h / max(1, src_w) / 2)) * 2
-    fast = detector(fw, dh)
+    fast = detector(fw, dh, score=SIDE_SCORE)
     out, thumbs = [], {}
     th = int(round(THUMB_W * H / W / 2)) * 2
     small_or_none = 0
     for t, img in frames(path, start, end, fps, DET_W, src_w, src_h):
-        found = [f for f in _boxes(fast, img, 1.0, 1.0, fw, dh) if f["score"] >= MIN_SCORE]
+        rows = _boxes(fast, img, 1.0, 1.0, fw, dh)
+        found = [f for f in rows if f["score"] >= MIN_SCORE]
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if not found:
+            found = [f for f in rows if f["score"] >= SIDE_SCORE] or side_faces(gray, fw, dh)
         if not found or max(f["h"] for f in found) * dh < SMALL_PX:
             small_or_none += 1
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         for f in found:
             f["mouth"] = _mouth(gray, f, fw, dh)
             f.pop("lm", None)

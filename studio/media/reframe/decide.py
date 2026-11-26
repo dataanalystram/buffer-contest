@@ -36,7 +36,9 @@ PRESENT = 0.6          # a track counts in a shot when it's in >= 60% of the sho
 FACE_MIN_H = 0.10      # R3 / R4
 WEBCAM_MAX_H = 0.18
 WEBCAM_TALK = 1.5      # a webcam face's mouth moves while the words are spoken; a face in an app thumbnail doesn't
-BIG_FACE_H = 0.25      # a face this large means a person on camera, not a screen
+BIG_FACE_H = 0.25      # a face this large means a person on camera, not a screen ...
+HUGE_FACE_H = 0.45     # ... unless the frame around it is plainly an app; this large is a person on camera anyway
+UI_EDGE, UI_FLAT = 0.08, 0.40   # "plainly an app": screen.EDGE_MIN edges outside the faces and screen.FLAT_MIN flat
 CONTENT_MIN = 0.5      # screen content spans at least half the width
 EDGE_SCREEN = 0.04     # and is text/UI dense (edge density outside faces)
 UPSCALE_MAX = 2.5
@@ -44,6 +46,7 @@ TALK_MIN = 0.20        # R6
 TALK_SOLO = 0.80       # R7
 MOTION_MIN = 4.0       # mouth motion (mean grey-level change) that counts as talking; deliberately high
 SPLIT_MIN_SHOT = 2.5
+LOW_CONF = 0.6         # two faces whose median score is under this: too unsure to crop (three-quarter views score 0.6-0.7)
 
 
 # ---------------------------------------------------------------------- per-shot signals (pure)
@@ -83,13 +86,16 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
     sw, sh = src
     faces = [t for t in sig["faces"] if t["presence"] >= PRESENT]
     bg = prefs.get("bg") if prefs.get("bg") in ("blur", "brand") else "blur"
-    big_face = any(t["h"] >= BIG_FACE_H for t in faces)
+    # a big face over a frame that is plainly an app (dense UI edges around it and flat UI backgrounds) is a video
+    # playing inside the app (a clip preview), not a person on camera (26 Nov Mac run: the demo followed the preview)
+    ui = float(sig.get("edge") or 0) >= UI_EDGE and float(sig.get("flat") or 0) >= UI_FLAT
+    big_face = any(t["h"] >= BIG_FACE_H and (not ui or t["h"] >= HUGE_FACE_H) for t in faces)
     screen = (bool(sig.get("screen")) and float(sig.get("edge") or 0) >= EDGE_SCREEN
               and float(sig.get("content_width") or 0) >= CONTENT_MIN and not big_face)
     webcams = [t for t in faces if is_webcam(t)] if screen else []   # a corner face is a webcam only over a screen
     # any other smallish face over a screen is part of what's shown (a video thumbnail, a profile picture, a clip preview
     # in an app), not someone talking to camera: it never drives the crop (25 Nov baseline, the demo's c2)
-    shown = [t for t in faces if t not in webcams and t["h"] < BIG_FACE_H] if screen else []
+    shown = [t for t in faces if t not in webcams and t["h"] < (HUGE_FACE_H if ui else BIG_FACE_H)] if screen else []
     people = [t for t in faces if t not in webcams and t not in shown]
     if screen and webcams and not people:
         cam = max(webcams, key=lambda t: t["h"])
@@ -271,7 +277,7 @@ def signals_for(shots: list[tuple[float, float]], samples: list[dict], tracks: l
             sp = [(max(a, s), min(b, e)) for s, e in speech or [] if e > a and s < b]
             t["motion"] = mouth_motion({"points": t["points"]}, sp if speech is not None else None)
         sig = {"start": round(a, 3), "end": round(b, 3), "dur": round(shot_dur[k] if shot_dur else b - a, 3), "faces": faces, "screen": False, "content_width": 0.0,
-               "low_conf": bool(faces) and min(t["score"] for t in faces) < 0.75 and len(faces) >= 2}
+               "low_conf": bool(faces) and min(t["score"] for t in faces) < LOW_CONF and len(faces) >= 2}
         if screen_sig is not None:
             boxes = [f for s in samples if a <= s["t"] < b for f in s["faces"]]
             sig.update(screen_sig(a, b, boxes))

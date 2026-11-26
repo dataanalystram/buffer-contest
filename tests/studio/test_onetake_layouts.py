@@ -661,3 +661,14 @@ def test_local_free_counters_check_and_count_in_one_step(tmp_path):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert got.count(True) == vision.RPM and len(lim.stamps(prov["name"])) == vision.RPM
+
+
+def test_a_big_face_playing_inside_an_app_is_a_preview_not_a_person_on_camera():
+    src = (1920, 1080)
+    preview = _face(0, 0.55, 0.3, cy=0.45, motion=6.0)        # a clip preview's face, big, in the middle of the app
+    app = {**_sig([preview], True, 0.9, 0.2), "flat": 0.6}
+    assert decide.rule(app, src)["rule"] == "R2"
+    room = {**_sig([preview], True, 0.9, 0.05), "flat": 0.2}  # a person in a room: few UI edges, no flat UI
+    assert decide.rule(room, src)["rule"] == "R3"
+    close = {**_sig([_face(0, 0.5, 0.5)], True, 0.9, 0.2), "flat": 0.6}
+    assert decide.rule(close, src)["rule"] == "R3"           # a face filling half the frame is on camera anyway
