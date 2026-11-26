@@ -1098,7 +1098,8 @@ def cover_image(frame: bytes, plan: dict, src_w: int, hook: str, kit: dict, p: d
         bg.paste(fg, ((W - fg.width) // 2, (H - fg.height) // 2))
         canvas = bg
     render._gradient(canvas, render.hex_to_rgb(p["colors"]["primary"]), 0.42, 0.85)
-    if behind_word:   # the thumbnail with the word BEHIND the person (same look as the clip's opening); fails open to the headline
+    if behind_word and plan["mode"] == "track":   # (a wide or padded opening has no close person to go behind: the boxed headline)
+        # the thumbnail with the word BEHIND the person (same look as the clip's opening); fails open to the headline
         try:
             from .media import behind
             canvas = behind.on_still(canvas, behind_word, kit_font=p.get("font"), place=behind_place)

@@ -356,7 +356,7 @@ def rules(instruction: str, d: dict, ws: list[dict], sel, behind_ok: bool) -> tu
         ops.append({"what": "Split screen off", "why": "One frame follows the speaker.", "focus": {"track": "layout"}})
     elif re.search(r"\bsplit[- ]?screen\b|\bsplit (the )?(screen|frame)\b|\btwo speakers?\b", t):
         ch["split"] = True
-        ops.append({"what": "Split screen for two speakers", "why": "Each speaker gets half the frame when two are on screen.", "focus": {"track": "layout"}})
+        ops.append({"what": "Split screen for two speakers", "why": "Each speaker gets half the frame wherever two people are apart in a shot of 2.5 s or more; other shots stay as they are, and the clip's layout list says why.", "focus": {"track": "layout"}})
     m = re.search(r"\b(\d{1,2})\s*(?:-|\s)?(?:s|sec|secs|seconds?)\b", t)
     if m and re.search(r"\b(make|shorten|trim|cut|length|long|shorter|down to|about|around|under|exactly)\b", t) and 3 <= int(m.group(1)) <= 90:
         want = int(m.group(1))

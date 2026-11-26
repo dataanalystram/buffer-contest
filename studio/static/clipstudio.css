@@ -244,5 +244,8 @@ body.cst-on #toast{z-index:330}
 .cst-sys time{opacity:.7}
 .cst-ask{background:var(--paper)}.cst-askrow{align-items:flex-end}.cst-askrow textarea{border-radius:10px}
 /* bigger covers: the cover (with the words behind the person when it worked) is the thumbnail people choose by */
-.clip-thumb{width:96px}.cst-thumb{width:84px}
-@media (max-width:760px){.clip-thumb{width:72px}.cst-thumb{width:68px}}
+.clip-thumb{width:76px}.cst-thumb{width:64px}
+@media (max-width:760px){.clip-thumb{width:64px}.cst-thumb{width:56px}}
+.cst-turn.ai.notyet{border-style:dashed;border-color:var(--focus)}
+.cst-clips .cst-cl{min-width:0;flex:1}.cst-clip{display:flex;gap:10px;align-items:flex-start;text-align:left}.cst-clip .cst-thumb{flex:none}
+.cst-cl b{display:block;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;white-space:normal}

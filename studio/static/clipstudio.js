@@ -79,7 +79,7 @@ function drawAll() { drawState(); drawLayers(); drawScript(); drawStyles(); draw
 // ------------------------------------------------------------------------------------------------ draft and history
 function rendered() { return (C.state && C.state.rendered) || {}; }
 function changed(k) { return JSON.stringify(C.draft[k] ?? null) !== JSON.stringify(rendered()[k] ?? null); }
-function dirtyN() { return ["hook", "hook_fx", "hook_words", "place", "caption_preset", "fx", "start", "end"].filter(changed).length; }
+function dirtyN() { return ["hook", "hook_fx", "hook_words", "place", "caption_preset", "fx", "start", "end", "broll", "punch_in", "trim_pauses", "split"].filter(changed).length; }
 function drawState() {
   const c = clip(), n = dirtyN(), h = C.hist[c.id] || { undo: [], redo: [] };
   const busy = c.status === "rendering" || C.busy;
@@ -427,15 +427,13 @@ function drawLog() {
   const turns = [...fold.map((e) => ({ at: e.at, e })), ...((C.qa && C.qa[clip().id]) || []).map((q) => ({ at: q.at, q }))].sort((x, y) => x.at - y.at);
   const tm = (at) => new Date(at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   $s("cstLog").innerHTML = turns.length ? turns.map(({ e, q }) => {
-    if (q) return `<li class="cst-turn me" data-testid="cst-chat-msg" data-role="user"><p>${E(q.text)}</p></li><li class="cst-turn ai" data-testid="cst-chat-msg" data-role="agent"><p>${E(q.reply)}</p></li>`;
+    if (q) return `<li class="cst-turn me" data-testid="cst-chat-msg" data-role="user"><p>${E(q.text)}</p></li><li class="cst-turn ai${q.notyet ? " notyet" : ""}" data-testid="cst-chat-msg" data-role="agent"><p>${E(q.reply)}</p></li>`;
     if (e.by === "agent") {
       const ops = (e.ops || []).filter((o) => o.what);
       return `<li class="cst-turn me" data-testid="cst-chat-msg" data-role="user"><p>${E(e.what)}</p></li><li class="cst-turn ai" data-testid="cst-log-entry" data-role="agent" data-by="agent">${e.reply ? `<p>${E(e.reply)}</p>` : ""}${ops.length ? `<ul class="cst-ops">${ops.map((o) => `<li><b>${E(o.what)}</b>${o.why ? `<span>${E(o.why)}</span>` : ""}</li>`).join("")}</ul>` : ""}<time class="cst-muted">${tm(e.at)}</time></li>`;
     }
     return `<li class="cst-sys" data-testid="cst-log-entry" data-by="${E(e.by)}"><span>${E(e.what)}${e.n > 1 ? ` ×${e.n}` : ""}</span><time>${tm(e.at)}</time></li>`;
   }).join("") : `<li class="cst-empty"><b>Chat about this clip</b><span>Ask a question or tell me what to change: the opening, captions, graphics, words behind your head, B-roll, zoom, length. My edits are drafts you can undo.</span></li>`;
-  const ny = (C.notyet && C.notyet[clip().id]) || [];
-  if (ny.length) $s("cstLog").insertAdjacentHTML("beforeend", `<li class="cst-msg notyet" data-testid="cst-notyet" role="status"><b>Can't do yet</b><span>${ny.map(E).join("; ")}</span></li>`);
   $s("cstLog").scrollTop = 1e6;
 }
 $s("cstAsk").onsubmit = (e) => { e.preventDefault(); ask($s("cstAskIn").value); };
@@ -458,9 +456,7 @@ async function ask(text) {
     drawAll();
     const last = ops[ops.length - 1];
     if (last && last.focus && last.focus.element) select({ el: last.focus.element }); else rtab("director");
-    if ((out.not_yet || []).length) { (C.notyet = C.notyet || {})[c.id] = out.not_yet.slice(0, 4); drawLog(); toast(`Not yet: ${out.not_yet.join("; ")}`, 7000); }
-    else if (C.notyet) delete C.notyet[c.id];
-    else if (!ops.length) { ((C.qa = C.qa || {})[c.id] = (C.qa[c.id] || [])).push({ at: Date.now() / 1000, text, reply: out.reply }); drawLog(); }
+    if (!ops.length) { ((C.qa = C.qa || {})[c.id] = (C.qa[c.id] || [])).push({ at: Date.now() / 1000, text, reply: out.reply, notyet: (out.not_yet || []).length > 0 }); drawLog(); }
   } catch (e) { toast(e.message, 6000); drawLog(); }
   finally { pend.remove(); C.busy = false; $s("cstAskGo").disabled = false; hideCursor(); drawState(); }
 }

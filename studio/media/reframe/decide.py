@@ -134,6 +134,10 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
             if crop_scale(sh) > UPSCALE_MAX and min(l["h"], r["h"]) < 0.15:
                 return {"layout": "fit", "rule": "R5-upscale", "bg": bg}
             return {"layout": "track", "rule": "R5", "faces": [l["id"], r["id"]]}
+        if prefs.get("split") and min(l["h"], r["h"]) >= FACE_MIN_H and sig.get("dur", 0) >= SPLIT_MIN_SHOT:
+            # the person asked for Split: two people apart in a long enough shot are stacked whether or not both talk
+            # (a podcast host who mostly listens still belongs in the frame; 26 Nov Mac run: 3 of 3 clips refused it)
+            return {"layout": "split", "rule": "R6", "faces": [l["id"], r["id"]], "why": "Split asked for: two people apart"}
         ml, mr = l.get("motion"), r.get("motion")
         if ml is not None and mr is not None and (ml + mr) > 0:
             share_l = ml / (ml + mr)
@@ -143,7 +147,7 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
             solo = l if share_l >= TALK_SOLO else (r if share_l <= 1 - TALK_SOLO else None)
             if solo is not None and max(ml, mr) >= MOTION_MIN and solo["h"] >= FACE_MIN_H:
                 return {"layout": "track", "rule": "R7", "faces": [solo["id"]]}
-        return {"layout": "fit", "rule": "R8", "bg": bg}
+        return {"layout": "fit", "rule": "R8", "bg": bg, "why": "Two people apart, but the shot is too short or a face too small to split" if prefs.get("split") else "Two people apart, not both talking"}
     if not faces and not screen:
         return {"layout": "fit", "rule": "R8-noface", "bg": bg}
     return {"layout": "fit", "rule": "R8", "bg": bg}
