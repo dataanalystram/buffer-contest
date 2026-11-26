@@ -510,6 +510,11 @@ def mine_moments(analysis: dict, want: int | None = None, engine: dict | None = 
     n = target_count(duration, want)
     picks, how = [], "built-in scorer"
     lo, hi = LENGTHS.get(length or "", (MIN_CLIP, MAX_CLIP))
+    relaxed = False
+    if length in LENGTHS and duration < min(n, 3) * lo * 1.1:
+        # a short video can't hold several clips of that length (26 Nov run 5: a 2 min tutorial at 60-90 s gave 1 clip):
+        # the length gives way to the clip count, never the other way round
+        lo, hi, relaxed = min(lo, max(12.0, duration / (min(n, 3) * 1.25))), max(hi, MIN_CLIP), True
     focus = focus_terms(prompt)
     if engine and chat_json:
         try:
@@ -532,7 +537,8 @@ def mine_moments(analysis: dict, want: int | None = None, engine: dict | None = 
     for i, m in enumerate(moments):
         m["id"] = f"m{i + 1}"
     return {"moments": moments, "picked_by": how, "sentences": len(sents), "target": n,
-            **({"length": [lo, hi]} if length in LENGTHS else {}), **({"focus": focus} if focus else {})}
+            **({"length": [lo, hi]} if length in LENGTHS else {}), **({"length_relaxed": True} if relaxed else {}),
+            **({"focus": focus} if focus else {})}
 
 
 # ====================================================================== reframe (9:16 crop plan)

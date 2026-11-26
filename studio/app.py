@@ -1127,6 +1127,11 @@ def create_app(settings: Settings | None = None, http: httpx.Client | None = Non
         from . import recipes
         return recipes.public()
 
+    @app.post("/api/takes/plan")
+    def take_plan(request: Request, body: dict = Body(...)):
+        """plan_take: a creative instruction in plain words -> the One take settings it asks for (nothing is saved)."""
+        return house.takes.plan_instruction(actor(request, write=True), body)
+
     @app.get("/api/takes")
     def take_list(request: Request):
         return house.takes.list(actor(request))

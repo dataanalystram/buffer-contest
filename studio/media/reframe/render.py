@@ -488,7 +488,7 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
            scenes: list[float] | None = None, fallback_faces: list[dict] | None = None, pins=None, prefs: dict | None = None,
            audio: str | None = None, cover: str | None = None, cover_s: float = 0.0, end_card: str | None = None,
            end_s: float = 0.0, punch_in: bool = False, punch_emph: list[float] | None = None, captions: bool = True,
-           headline: str | None = None) -> dict:
+           headline: str | None = None, motion_ok: bool = True) -> dict:
     """Render the clip [start, end] to `out` (1080x1920). Returns {plan, sidecar, timings, ass, punch}.
     punch_in: the gentle zoom in/out on face-tracked shots (studio/media/reframe/punch.py); off renders as before.
     punch_emph: emphasis times already on this clip's timeline (a trimmed clip's, studio/media/cleancut), else found on
@@ -502,7 +502,8 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         accent = colors.get("accent") or ACCENT
         brand_bg = colors.get("primary") or "#0B0B12"
         from .. import motion
-        plan["motion"] = motion.plan(words, start, plan["sidecar"], plan["shots"], captions=bool(words and captions))
+        plan["motion"] = (motion.plan(words, start, plan["sidecar"], plan["shots"], captions=bool(words and captions))
+                          if motion_ok else {"on": False, "fx": [], "skipped": ["Motion graphics were switched off for this take."]})
         overlays = []
         if plan["motion"]["fx"] and words and captions:
             overlays = template_overlays(plan, tmp, kit, p, preset, accent)

@@ -307,3 +307,47 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .tk-rate.down .ic{transform:scaleY(-1)}
 .tk-rate:hover{border-color:var(--line)}
 .tk-rate[aria-pressed="true"]{color:var(--ink);border-color:var(--ink)}
+/* caption gallery: real renders of each style (studio/static/captions, scripts/make_caption_previews.py) */
+.tk-caps{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tk-cap{display:flex;flex-direction:column;gap:6px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--raised);
+  text-align:left;cursor:pointer;color:var(--ink);font:inherit;transition:border-color .15s ease}
+.tk-cap img{display:block;width:100%;height:auto;aspect-ratio:360/164;border-radius:6px;background:#26282b}
+.tk-cap b{font-size:13px;font-weight:600;padding:0 2px 2px}
+.tk-cap:hover{border-color:var(--line-strong)}
+.tk-cap[aria-checked="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.tk-cap:active{transform:scale(.98)}
+/* the creative instruction */
+.tk-ask textarea{min-height:64px;resize:vertical;font:inherit;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--paper);color:var(--ink)}
+.tk-ask-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.tk-ask-out{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+.tk-ask-out ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.tk-ask-out b{font-weight:600}
+.tk-ask-out .tk-ask-not{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.tk-ask-out .not{color:var(--muted)}
+.tk-ask-out p{margin:8px 0 0}
+/* Advanced: secondary settings, closed by default */
+.tk-adv{border:1px solid var(--line);border-radius:10px;padding:0}
+.tk-adv > summary{list-style:none;cursor:pointer;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;padding:14px 16px;min-height:48px}
+.tk-adv > summary::-webkit-details-marker{display:none}
+.tk-adv > summary::before{content:"";width:8px;height:8px;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);
+  transform:rotate(-45deg);align-self:center;transition:transform .2s ease}
+.tk-adv[open] > summary::before{transform:rotate(45deg)}
+.tk-adv-in{display:flex;flex-direction:column;gap:24px;padding:4px 16px 16px}
+@media (prefers-reduced-motion:reduce){.tk-cap,.tk-adv > summary::before{transition:none}.tk-cap:active{transform:none}}
+/* phone: one thumb, one column. Recipes and caption styles scroll sideways; Make clips stays in reach above the tab bar */
+@media (max-width:700px){
+  .tk-recipes,.tk-caps{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:8px;margin:0 -16px;padding:2px 16px 8px;
+    scrollbar-width:none;overscroll-behavior-x:contain}
+  .tk-recipes::-webkit-scrollbar,.tk-caps::-webkit-scrollbar{display:none}
+  .tk-recipe{flex:0 0 72%;scroll-snap-align:start;min-height:96px}
+  .tk-cap{flex:0 0 58%;scroll-snap-align:start}
+  .tk-chip,.tk-recipe,.tk-cap,.tk-adv > summary{min-height:44px}
+  .tk-setup .tk-foot{position:sticky;bottom:calc(69px + env(safe-area-inset-bottom));z-index:5;background:var(--paper);
+    padding:10px 0;gap:8px;box-shadow:0 0 0 100vmax var(--paper);clip-path:inset(0 -100vmax);border-top:1px solid var(--line)}
+  .tk-setup .tk-foot .row{display:grid;grid-template-columns:auto 1fr;gap:8px;width:100%}
+  .tk-setup .tk-foot .btn.big{width:100%;min-height:48px}
+  .tk-setup .tk-foot .btn2{min-height:48px;font-size:14px}
+  .tk-setup .tk-foot label.chk{font-size:12px;line-height:1.35;gap:8px}
+}
+@media (max-width:860px) and (min-width:701px){.tk-setup .tk-foot{position:sticky;bottom:calc(69px + env(safe-area-inset-bottom));z-index:5;
+  background:var(--paper);padding:12px 0;box-shadow:0 0 0 100vmax var(--paper);clip-path:inset(0 -100vmax)}}

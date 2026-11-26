@@ -50,18 +50,26 @@ const TK_RECIPES_FALLBACK = {
     { id: "product", label: "Product demo", about: "A product on camera or on screen: zooms in on it, short punchy clips.", length: "short", punch_in: true, trim_pauses: true, split: false },
   ],
   lengths: [{ id: "", label: "Auto (20-60 s)" }, { id: "short", label: "15-30 s" }, { id: "mid", label: "30-60 s" }, { id: "long", label: "60-90 s" }],
+  captions: [{ id: "clean", label: "Clean" }, { id: "minimal", label: "Minimal" }, { id: "bold_pop", label: "Bold pop" },
+             { id: "cinematic", label: "Cinematic editorial" }, { id: "documentary", label: "Documentary" },
+             { id: "lower_third", label: "Clean lower third" }, { id: "two_tone", label: "Two-tone keyword" }, { id: "typewriter", label: "Typewriter" }],
 };
-T.recipe = "auto"; T.length = "";
+T.recipe = "auto"; T.length = ""; T.caption = "bold_pop"; T.capWhy = "Reads well on a phone for most talking videos."; T.capPicked = false;
 function tkRadio(box, items, cur, pick, card) {
   box.innerHTML = "";
   items.forEach((it) => {
     const b = document.createElement("button");
     b.type = "button"; b.setAttribute("role", "radio"); b.dataset.id = it.id;
-    b.className = card ? "tk-recipe" : "tk-chip";
-    b.dataset.testid = card ? `take-recipe-${it.id}` : `take-length-${it.id || "auto"}`;
+    b.className = card === "cap" ? "tk-cap" : card ? "tk-recipe" : "tk-chip";
+    b.dataset.testid = card === "cap" ? `take-caption-${it.id}` : card ? `take-recipe-${it.id}` : `take-length-${it.id || "auto"}`;
+    b.id = b.dataset.testid;
     b.setAttribute("aria-checked", String(it.id === cur));
     b.tabIndex = it.id === cur ? 0 : -1;
-    if (card) {
+    if (card === "cap") {  // a real render of the style (scripts/make_caption_previews.py), animated, muted by nature
+      b.innerHTML = `<img src="/static/captions/${encodeURIComponent(it.id)}.webp" alt="" loading="lazy" width="360" height="164"><b></b>`;
+      b.querySelector("b").textContent = it.label;
+      if (it.about) b.title = it.about;
+    } else if (card) {
       b.innerHTML = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${TK_RECIPE_IC[it.id] || TK_RECIPE_IC.auto}</svg><b></b><small></small>`;
       b.querySelector("b").textContent = it.label; b.querySelector("small").textContent = it.about;
     } else b.textContent = it.label;
@@ -83,10 +91,17 @@ function tkDrawSetup(data) {
     $("#tkTrim").checked = !!r.trim_pauses; $("#tkPunch").checked = !!r.punch_in; $("#tkSplit").checked = !!r.split;
     $("#tkCold").checked = r.cold_open !== false;
     T.length = r.length || "";
+    if (!T.capPicked && r.caption) { T.caption = r.caption; T.capWhy = `Suits a ${r.label.toLowerCase()}.`; }
     tkDrawSetup(data);
   };
+  T.pickRecipe = pickRecipe;
   tkRadio($("#tkRecipes"), data.recipes, T.recipe, pickRecipe, true);
   tkRadio($("#tkLens"), data.lengths, T.length, (l) => { T.length = l.id; tkDrawSetup(data); }, false);
+  tkRadio($("#tkCaps"), data.captions || TK_RECIPES_FALLBACK.captions, T.caption, (c) => {
+    T.caption = c.id; T.capPicked = true; T.capWhy = "Your pick."; tkDrawSetup(data);
+  }, "cap");
+  $("#tkCapWhy").textContent = T.capWhy ? `Suggested: ${T.capWhy}` : "";
+  if (T.capPicked) $("#tkCapWhy").textContent = "";
   tkPreview();
 }
 // The live preview beside the setup: a sketch of one clip plus the cut it gets. It only reflects the switches; it never
@@ -96,8 +111,10 @@ function tkDrawSetup(data) {
 function tkSetupBody() {
   const body = { channel_ids: [...(T.sel || [])], punch_in: !!$("#tkPunch").checked, trim_pauses: !!$("#tkTrim").checked,
                  recipe: T.recipe || "auto", length: T.length || "", split: !!$("#tkSplit").checked,
-                 cold_open: !!$("#tkCold").checked, headline: !!$("#tkHeadOn").checked };
+                 cold_open: !!$("#tkCold").checked, headline: !!$("#tkHeadOn").checked, caption: T.caption || "bold_pop",
+                 motion: !!$("#tkMotion").checked };
   const focus = $("#tkFocus").value.trim(); if (focus) body.focus = focus;
+  const ask = $("#tkAsk").value.trim(); if (ask) body.instruction = ask;
   const n = $("#tkCount").value; if (n) body.count = +n;
   return body;
 }
@@ -123,15 +140,52 @@ function tkPreview() {
   $("#tkTl").setAttribute("aria-label", cold ? "Each clip opens on your best line, then cuts to the moment" : "Each clip is the moment as you said it");
   const n = $("#tkCount") && $("#tkCount").value ? `${$("#tkCount").value} clips` : "3 to 7 clips";
   const edits = [cold && "opens on your best line", head && "headline card", trim && "pauses trimmed", punch && "auto zoom",
-                 split && "split for two speakers"].filter(Boolean);
+                 split && "split for two speakers", on("#tkMotion") && "motion graphics"].filter(Boolean);
+  const cap = (data.captions || TK_RECIPES_FALLBACK.captions).find((c) => c.id === T.caption);
+  ph.dataset.cap = T.caption || "bold_pop";
   const chans = T.sel ? T.sel.size : 0;
   const li = (k, v, tid) => `<li data-testid="take-summary-${tid}"><span>${esc(k)}</span><b>${esc(v)}</b></li>`;
   $("#tkSum").innerHTML = li("Recipe", r.label, "recipe") + li("Clips", `${n}, ${len.label.replace(/^Auto \((.*)\)$/, "$1")} each`, "clips")
+    + li("Captions", cap ? cap.label : "Bold pop", "captions")
     + li("Edits", edits.length ? edits.join(", ") : "none, just the cut and captions", "edits")
     + li("Goes to", chans ? `${chans} channel${chans > 1 ? "s" : ""} as Buffer drafts` : "pick a channel", "goes-to")
     + `<li class="tk-sum-note" data-testid="take-summary-note">Nothing posts until you approve it.</li>`;
 }
 $("#takeForm").addEventListener("change", tkPreview);
+// "Describe the result you want": the server reads it (AI, rules fallback) into the switches above; the person sees
+// what changed and why, and what One take can't do yet. Nothing starts until Make clips.
+const TK_SET_LABEL = { recipe: "Recipe", length: "Clip length", caption: "Captions", headline: "Headline card", cold_open: "Open on your best line",
+  trim_pauses: "Trim pauses", punch_in: "Auto zoom", split: "Split for two speakers", motion: "Motion graphics" };
+async function tkApplyAsk() {
+  const text = $("#tkAsk").value.trim(), out = $("#tkAskOut"), b = $("#tkAskGo");
+  if (text.length < 3) { $("#tkAsk").focus(); return; }
+  b.disabled = true; b.innerHTML = `<span class="spin" aria-hidden="true"></span>Reading…`;
+  try {
+    const r = await api("/api/takes/plan", { method: "POST", body: { instruction: text } });
+    const st = r.settings || {}, data = T.recipes || TK_RECIPES_FALLBACK;
+    if (st.recipe) { const rc = data.recipes.find((x) => x.id === st.recipe); if (rc) T.pickRecipe(rc); }
+    if (st.length !== undefined) T.length = st.length;
+    const sw = { headline: "#tkHeadOn", cold_open: "#tkCold", trim_pauses: "#tkTrim", punch_in: "#tkPunch", split: "#tkSplit", motion: "#tkMotion" };
+    for (const [k, sel] of Object.entries(sw)) if (typeof st[k] === "boolean") $(sel).checked = st[k];
+    if (st.caption) { T.caption = st.caption; T.capPicked = true; }
+    else if (r.caption_suggestion && !T.capPicked) { T.caption = r.caption_suggestion.id; T.capWhy = r.caption_suggestion.why; }
+    tkDrawSetup(data);
+    if (st.caption) $("#tkCapWhy").textContent = "From your description.";
+    const rows = Object.keys(st).map((k) => {
+      const v = st[k], val = typeof v === "boolean" ? (v ? "on" : "off") : (k === "caption" ? ((data.captions || []).find((c) => c.id === v) || { label: v }).label
+        : k === "recipe" ? ((data.recipes.find((x) => x.id === v) || { label: v }).label) : (v || "auto"));
+      return `<li data-testid="take-instruction-set-${esc(k)}"><b>${esc(TK_SET_LABEL[k] || k)}: ${esc(val)}</b>${r.why && r.why[k] ? ` <span class="muted">${esc(r.why[k])}</span>` : ""}</li>`;
+    });
+    const nots = (r.not_yet || []).map((m) => `<li class="not" data-testid="take-instruction-not-yet">${esc(m)}</li>`);
+    out.innerHTML = (rows.length ? `<ul>${rows.join("")}</ul>` : `<p class="muted xs">Nothing in that maps to a setting yet; the clips use the settings below.</p>`)
+      + (nots.length ? `<ul class="tk-ask-not">${nots.join("")}</ul>` : "") + `<p class="muted xs">Read by ${esc(r.read_by === "rules" ? "the built-in reader" : r.read_by)}.</p>`;
+    out.hidden = false;
+    if (["length", "trim_pauses", "punch_in", "split", "motion", "cold_open", "headline"].some((k) => k in st)) $("#tkAdv").open = true;
+  } catch (e) { toast(e.message, 6000); }
+  finally { b.disabled = false; b.textContent = "Apply to settings"; }
+}
+$("#tkAskGo").addEventListener("click", tkApplyAsk);
+$("#tkAsk").addEventListener("input", tkAgentContext);
 $("#tkFocus").addEventListener("input", tkAgentContext);
 (async () => {
   let data = TK_RECIPES_FALLBACK;

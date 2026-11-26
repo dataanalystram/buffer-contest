@@ -182,6 +182,40 @@ class Takes(TakeBin, TakeControl):
             raise llm.LLMError("No AI engine answered.")
         return {"source": MOMENTS_AI}, chat, used
 
+    def plan_instruction(self, a: Actor, body: dict) -> dict:
+        """A creative instruction in plain words -> the One take settings it asks for, each with its reason, plus what it
+        asks for that One take can't do yet. The AI reads it when an engine answers; the rules reading is the fallback and
+        always supplies not_yet (said, never silently dropped). Nothing is saved: the setup applies it."""
+        text = " ".join(str(body.get("instruction") or "").split())[:600]
+        if len(text) < 3:
+            raise ActionError("Describe the result you want, e.g. \"a premium tech explainer, bold captions, keep the demo readable\".")
+        rules = recipes.interpret_rules(text)
+        out = {"instruction": text, "settings": rules["settings"], "why": rules["why"], "not_yet": rules["not_yet"],
+               "read_by": "rules"}
+        if body.get("ai", True) is not False:
+            try:
+                engine, chat, used = self._moment_chat(a)
+                if chat:
+                    data = chat(engine, recipes.AI_SYSTEM, f"Description: {text}")
+                    got = recipes.clean_settings((data or {}).get("settings"))
+                    if got:
+                        why = (data or {}).get("why") if isinstance((data or {}).get("why"), dict) else {}
+                        out.update(settings=got, why={k: str(why.get(k) or rules["why"].get(k) or "")[:160] for k in got},
+                                   read_by=used.get("label") or "AI")
+            except Exception as e:  # noqa: BLE001 - the rules reading stands
+                print(f"take plan: AI reading failed, rules used: {str(e)[:160]}", flush=True)
+        kit = {}
+        try:
+            kit = self.h.kit(a) or {}
+        except Exception:  # noqa: BLE001
+            kit = {}
+        if "caption" not in out["settings"]:
+            rec = recipes.recommend_caption(out["settings"].get("recipe") or "auto", kit, "")
+            out["caption_suggestion"] = rec
+        if out["settings"].get("motion") and not __import__("studio.media.motion", fromlist=["enabled"]).enabled():
+            out["not_yet"].append("Motion graphics are switched off on this server, so none will be added yet.")
+        return out
+
     def _save(self, rid, steps, res, status=None):
         self.h._save(rid, steps, res, status)
 
@@ -322,6 +356,9 @@ class Takes(TakeBin, TakeControl):
                "recipe": recipes.clean(body.get("recipe")), "focus": str(body.get("focus") or "")[:200],
                "split": bool(body["split"]) if isinstance(body.get("split"), bool) else recipes.RECIPES[recipes.clean(body.get("recipe"))]["split"],
                "headline": body.get("headline") is True,
+               "instruction": " ".join(str(body.get("instruction") or "").split())[:600],
+               "caption": recipes.clean_caption(body.get("caption")),
+               "motion": body.get("motion") is not False,
                "cold_open": bool(body["cold_open"]) if isinstance(body.get("cold_open"), bool) else recipes.RECIPES[recipes.clean(body.get("recipe"))]["cold_open"],
                "length": recipes.clean_length(body.get("length")) or recipes.RECIPES[recipes.clean(body.get("recipe"))]["length"], "name": (body.get("name") or "")[:80],
                "ratios": ratios_for([c["service"] for c in chans]) if style == "opus" else ["9:16"],
@@ -742,7 +779,9 @@ class Takes(TakeBin, TakeControl):
                                     or (c.get("cold_open") and c["cold_open"]["s"] - 1 <= f["t"] <= c["cold_open"]["e"] + 1)],
                           **({"cold_open": {"s": float(c["cold_open"]["s"]), "e": float(c["cold_open"]["e"])}} if c.get("cold_open") else {}),
                           "layout_overrides": c.get("layout_overrides") or {},
-                          "caption_preset": c.get("caption_preset") or recipes.RECIPES[recipes.clean(run["input"].get("recipe"))]["caption"],
+                          "caption_preset": c.get("caption_preset") or run["input"].get("caption")
+                          or recipes.RECIPES[recipes.clean(run["input"].get("recipe"))]["caption"],
+                          "motion": run["input"].get("motion", True) is not False,
                           "layout_prefs": {"split": True} if run["input"].get("split") else {},
                           "hook_mode": c.get("hook_mode"),
                           "hook_fx": c.get("hook_fx") or ("headline" if run["input"].get("headline") else "none"),

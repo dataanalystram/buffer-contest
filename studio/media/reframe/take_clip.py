@@ -106,7 +106,8 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
                          plan=plan, audio=audio, cover=str(tmp / "cover.jpg"), cover_s=take.COVER_SECS, end_card=end_jpg,
                          end_s=take.END_SECS if has_end else 0.0, punch_in=m.get("punch_in", True) is not False,
                          punch_emph=m.get("_punch_emph"), captions=not m.get("_source_captions"),
-                         headline=(m.get("hook") or None) if m.get("hook_fx") == "headline" else None)
+                         headline=(m.get("hook") or None) if m.get("hook_fx") == "headline" else None,
+                         motion_ok=m.get("motion") is not False)
         # no captions of ours (the source keeps its own): nothing of ours can cover the face, so the QA has no line to check
         fs_qa = facesafe.main_qa(str(out), plan["sidecar"] if plan.get("ass") else [],
                                  fs_place if plan.get("ass") else {**fs_place, "blocked": []}, offset=take.COVER_SECS)

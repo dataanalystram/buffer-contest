@@ -13,14 +13,14 @@ def _ws(rows):
     return words
 
 
-def _talk():
+def _talk(reps=3):
     rows, t = [], 0.0
     lines = ["Here is the honest story of our first year.", "We had no idea what we were doing at the start.",
              "Pricing was the hardest call we made all year.", "We doubled the price and nobody left at all.",
              "That taught us that customers pay for outcomes.", "Then the outage hit us in the middle of launch week.",
              "Every dashboard went dark for six full hours.", "We called every single customer that same night.",
              "Not one of them cancelled after that call.", "So that is what I would tell any new founder today."]
-    for _ in range(3):
+    for _ in range(reps):
         for ln in lines:
             rows.append((ln, t, t + 3.6))
             t += 4.0
@@ -28,11 +28,18 @@ def _talk():
 
 
 def test_clip_length_chips_set_the_span_of_every_clip():
-    an = _talk()
+    an = _talk(6)
     for key, (lo, hi) in take.LENGTHS.items():
         got = take.mine_moments(an, 3, length=key)
         assert got["length"] == [lo, hi]
         assert all(lo - 1 <= m["e"] - m["s"] <= hi + 1 for m in got["moments"]), (key, [m["e"] - m["s"] for m in got["moments"]])
+
+
+def test_a_short_video_relaxes_the_recipe_length_instead_of_making_one_clip():
+    an = _talk(3)   # 2 minutes: three 60-90 s clips can't fit (26 Nov Mac run 5: tutorial and podcast gave 1 clip)
+    got = take.mine_moments(an, None, length="long")
+    assert got["length_relaxed"] and len(got["moments"]) >= 2
+    assert "length_relaxed" not in take.mine_moments(_talk(6), None, length="long")
 
 
 def test_moments_to_include_rank_first_and_never_invent_words():
@@ -161,3 +168,37 @@ def test_thumbs_rating_on_a_clip_over_rest_and_mcp(human, app, fake, monkeypatch
     _, out = mcp_call(human, tok, "adjust_clip", {"take_id": t["id"], "clip_id": cid, "rating": None})
     assert out["changed"] == ["rating"], out
     assert next(c for c in human.get(f"/api/takes/{t['id']}").json()["clips"] if c["id"] == cid)["rating"] is None
+
+
+def test_creative_instruction_maps_to_settings_and_says_what_it_cannot_do(human, app):
+    from .conftest import agent_token, mcp_call
+    ask = ("Make this look like a premium technology explainer. Use bold typography, relevant motion graphics and subtle "
+           "sound effects. Keep the product demonstration readable.")
+    rules = recipes.interpret_rules(ask)
+    assert rules["settings"]["caption"] == "bold_pop" and rules["settings"]["motion"] is True
+    assert rules["settings"]["punch_in"] is False   # "readable": no punch-in over the demo
+    assert any("Sound effects" in m for m in rules["not_yet"])
+    assert recipes.interpret_rules("a calm podcast with my cofounder")["settings"]["split"] is True
+    assert recipes.clean_settings({"recipe": "nope", "caption": "cinematic", "motion": "yes", "split": True}) == \
+        {"caption": "cinematic", "split": True}
+    r = human.post("/api/takes/plan", json={"instruction": ask, "ai": False})
+    assert r.status_code == 200 and r.json()["settings"]["caption"] == "bold_pop" and r.json()["not_yet"]
+    assert human.post("/api/takes/plan", json={"instruction": ""}).status_code == 400
+    tok = agent_token(human, "trusted", cap=50)
+    _, out = mcp_call(human, tok, "plan_take", {"instruction": "short punchy clips, documentary captions"})
+    assert out["settings"]["length"] == "short" and out["settings"]["caption"] == "documentary"
+
+
+def test_caption_styles_are_offered_with_a_real_preview_each():
+    from pathlib import Path
+    from studio.media import captions_ass
+    pub = recipes.public()
+    ids = [c["id"] for c in pub["captions"]]
+    assert {"clean", "minimal", "bold_pop", "cinematic", "documentary", "lower_third"} <= set(ids)
+    for c in pub["captions"]:
+        assert c["about"] and (Path(__file__).resolve().parents[2] / "studio/static/captions" / f"{c['id']}.webp").exists()
+    assert set(ids) == set(recipes.CAPTION_IDS) == set(captions_ass.PRESETS)
+    assert recipes.recommend_caption("tutorial", {}, "")["id"] == "lower_third"
+    assert recipes.recommend_caption("auto", {"heading_font": "Playfair Display serif"}, "")["id"] == "cinematic"
+    ass = captions_ass.build([{"w": "Hello", "s": 0.0, "e": 0.4}, {"w": "there", "s": 0.5, "e": 0.9}], 0.0, preset="typewriter")
+    assert "\\alpha&HFF&\\t(500,580,\\alpha&H00&)" in ass   # typewriter: a word (and its outline) appears when said

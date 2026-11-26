@@ -110,6 +110,9 @@ TOOLS: list[dict[str, Any]] = [
          "punch_in": {"type": "boolean", "description": "Gentle auto zoom (1.0 to 1.12, eased over 0.4 s) on face-tracked shots at scene starts and emphasised words; faces are never cropped out. Default true; false renders without it."},
          "jev": {"type": "boolean", "description": "Ask TypeSafe Jev for a second opinion on the speaker's face on a few keyframes (paid, HuhQueue's key): answers needs_user_approval until the person approves. Off by default for apps; local face detection always runs."},
          "trim_pauses": {"type": "boolean", "description": "Cut long pauses and filler words (um, uh) from each clip, from the transcript's word timings (free, on the worker). On by default for One take; false keeps every pause."},
+         "caption": {"type": "string", "enum": ["clean", "minimal", "bold_pop", "cinematic", "documentary", "lower_third", "two_tone", "typewriter"], "description": "Caption style for every clip (default: the recipe's)"},
+         "motion": {"type": "boolean", "description": "Motion graphics where the words support them (stats, lists, contrasts). Default true; false keeps clips plain."},
+         "instruction": {"type": "string", "description": "The person's creative instruction in their words, kept with the take. Turn it into settings first with plan_take."},
          "recipe": {"type": "string", "enum": ["auto", "podcast", "talking", "tutorial", "product"], "description": "A One take recipe: auto (default) decides per shot; podcast gives two talking people Split (one per half) and 30-60 s clips; talking = one person to camera; tutorial = screen recording, 60-90 s clips; product = short punchy clips. The brand kit still decides the look."},
          "length": {"type": "string", "enum": ["", "short", "mid", "long"], "description": "Clip length: short 15-30 s, mid 30-60 s, long 60-90 s; empty = auto (20-60 s) or the recipe's."},
          "headline": {"type": "boolean", "description": "Show each clip's hook line (the speaker's own words) as a boxed headline over its first 2.8 s, in the brand's colours. Off by default."},
@@ -122,6 +125,8 @@ TOOLS: list[dict[str, Any]] = [
          "count": {"type": "integer", "minimum": 1, "maximum": 7}, "name": {"type": "string"}, "prompt": {"type": "string"},
          "owns": {"type": "boolean", "description": "true when it is the person's own video (no credit line needed)"},
          "credit": {"type": "string"}}}},
+    {"name": "plan_take", "description": "Turn the person's creative instruction (\"a premium tech explainer, bold captions, subtle sound effects, keep the demo readable\") into One take settings for clips_from_video: recipe, length, caption, headline, cold_open, trim_pauses, punch_in, split, motion, each with the words that asked for it, plus not_yet: what it asked for that One take can't do yet (tell the person). Saves nothing.",
+     "inputSchema": {"type": "object", "required": ["instruction"], "properties": {"instruction": {"type": "string"}}}},
     {"name": "list_clips", "description": "Without take_id: the user's takes. With take_id: the take's progress steps and its clips (video and cover URLs, start/end in the source, hook, transcript, layout, preflight per channel, the caption per network, where each clip was placed, and review: the editor's notes on the rendered clip, works[] and issues[{what, why, fix}] read from what the render measured; act on a fix with adjust_clip or set_clip_layout)).",
      "inputSchema": {"type": "object", "properties": {"take_id": {"type": "integer"}}}},
     {"name": "adjust_clip", "description": "Trim & caption one clip of a take (the same edits as the UI's Trim & caption window). Any of: in/out (start_ms/end_ms in the source video; the sample take only inside its moment), transcript (the clip's corrected words: fixes the burned-in captions, timings follow the voice), hook (the cover line: at least 3 words quoted from the clip), caption + service or captions {service: text} (post caption per network; only the take's channels, each within its network's limit), music (an Instagram track from search_instagram_audio for the Reel, with music_volume / original_volume 0-100; null removes it; Instagram picks which part of the track plays). Timing, transcript and hook re-render the clip on the video worker (poll list_clips until the clip is ready: it gets a new url); captions and music save at once. Returns the take with changed and rerendering.",
@@ -375,11 +380,14 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
                                   bool(args.get("override_warnings")), on_duplicate=args.get("on_duplicate") or None)
     if name == "list_calendar":
         return h.calendar(actor)
+    if name == "plan_take":
+        return h.takes.plan_instruction(actor, {"instruction": args.get("instruction")})
     if name == "clips_from_video":
         if args.get("sample"):
             return h.takes.start_sample(actor, {"channel_ids": args.get("channel_ids")})
         body = {k: args.get(k) for k in ("url", "media_url", "owns", "channel_ids", "count", "name", "upload_id", "approval_id", "credit", "jev",
-                                     "trim_pauses", "recipe", "length", "focus", "split", "cold_open", "headline")}
+                                     "trim_pauses", "recipe", "length", "focus", "split", "cold_open", "headline",
+                                     "caption", "motion", "instruction")}
         if "punch_in" in args:
             body["punch_in"] = args["punch_in"]
         return h.takes.start(actor, {**body, "_tool": "clips_from_video"})

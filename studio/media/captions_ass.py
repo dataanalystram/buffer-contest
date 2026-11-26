@@ -39,7 +39,25 @@ PRESETS = {
                  "outline": 5, "shadow": 2, "box": False, "mode": "keywords"},
     "typewriter": {"label": "Typewriter", "family": "IBM Plex Mono", "file": "IBMPlexMono-SemiBold.ttf", "bold": True, "size": 66,
                    "upper": False, "outline": 5, "shadow": 0, "box": False, "mode": "reveal"},
+    # 26 Nov caption gallery: clean, minimal, cinematic editorial, documentary (plain = one colour, no word highlight)
+    "clean": {"label": "Clean", "family": "Inter", "file": "Inter-Bold.ttf", "bold": True, "size": 70, "upper": False,
+              "outline": 4, "shadow": 2, "box": False, "mode": "karaoke"},
+    "minimal": {"label": "Minimal", "family": "Inter", "file": "Inter-SemiBold.ttf", "bold": False, "size": 56, "upper": False,
+                "outline": 2, "shadow": 2, "box": False, "mode": "plain"},
+    "cinematic": {"label": "Cinematic editorial", "family": "DM Serif Display", "file": "DMSerifDisplay-Regular.ttf", "bold": False,
+                  "size": 80, "upper": False, "outline": 2, "shadow": 4, "box": False, "mode": "plain"},
+    "documentary": {"label": "Documentary", "family": "Source Serif 4", "file": "SourceSerif4-SemiBold.ttf", "bold": False,
+                    "size": 58, "upper": False, "outline": 12, "shadow": 0, "box": True, "mode": "plain"},
 }
+# what each style is for: the gallery's line and the hint the AI recommendation reads
+PRESET_ABOUT = {"bold_pop": "Bold creator: big uppercase words, the said word lights up.",
+                "lower_third": "Educational: a clean box low in the frame, easy to follow.",
+                "two_tone": "Punchy: tall uppercase, key words in your accent colour.",
+                "typewriter": "Technical: words type on as they are said.",
+                "clean": "Clean: sentence case, the said word in your accent colour.",
+                "minimal": "Minimal: small, quiet, one colour. Lets the picture lead.",
+                "cinematic": "Cinematic editorial: a serif, soft shadow, no highlight.",
+                "documentary": "Documentary: serif subtitles on a dark bar."}
 DEFAULT_PRESET = "bold_pop"
 STOP = {"the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "at", "for", "is", "it", "that", "this", "with", "as",
         "be", "are", "was", "so", "we", "i", "you", "they", "he", "she", "my", "your", "our", "its", "by", "from", "do", "just"}
@@ -53,7 +71,7 @@ BAND_Y = {"split": 960, "screen_stack": 960, "screen_pip": 1030, "track": 1330, 
 
 
 def presets() -> list[dict]:
-    return [{"id": k, "label": v["label"]} for k, v in PRESETS.items()]
+    return [{"id": k, "label": v["label"], "about": PRESET_ABOUT.get(k, "")} for k, v in PRESETS.items()]
 
 
 def clean_preset(v) -> str | None:
@@ -231,12 +249,13 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
     max_w = W - 2 * SIDE * W / REF_W
     if pr["mode"] == "reveal":
         primary, secondary = _color(txt), _color(txt, 0xFF)       # unsaid words invisible until their \k starts
-    elif pr["mode"] == "keywords":
+    elif pr["mode"] in ("keywords", "plain"):
         primary, secondary = _color(txt), _color(txt)
     else:
         primary, secondary = _color(acc), _color(txt)              # said words take the accent
-    back = _color("#000000", 0x99) if pr["box"] else _color("#000000", 0x80)
-    out_c = _color("#000000", 0x99) if pr["box"] else _color("#000000")
+    # a box style: near-opaque, so the per-word boxes libass draws don't show darker seams where they overlap
+    back = _color("#000000", 0x30) if pr["box"] else _color("#000000", 0x80)
+    out_c = _color("#000000", 0x30) if pr["box"] else _color("#000000")
     if needs_stroke([txt, acc], bg_luma):  # light background: a heavier solid stroke and a firmer shadow
         if pr["box"]:
             out_c, back = _color(STROKE_COLOR, 0x22), _color(STROKE_COLOR, 0x22)
@@ -280,7 +299,10 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
                 gap = max(0, int(round((float(w["s"]) - float(g[0]["s"])) * 100)))
                 lead = f"{{\\k{gap}}}" if gap else ""
             tag = f"\\k{dur_cs}"
-            if pr["mode"] == "keywords" and _keyword(t):
+            if pr["mode"] == "reveal":  # type on: each word (fill AND outline) appears as it is said; \k alone left
+                off = int(round((float(w["s"]) - float(g[0]["s"])) * 1000))  # the outline of unsaid words showing
+                lead, tag = "", f"\\alpha&HFF&\\t({off},{off + 80},\\alpha&H00&)"
+            elif pr["mode"] == "keywords" and _keyword(t):
                 tag += f"\\c{_color(acc)}"
             elif pr["mode"] == "keywords":
                 tag += f"\\c{_color(txt)}"

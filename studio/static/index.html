@@ -307,6 +307,20 @@
               <legend class="tk-sec-h">Recipe <span class="muted xs">Decides which edits run. Your brand kit decides the look.</span></legend>
               <div class="tk-recipes" id="tkRecipes" role="radiogroup" aria-label="Recipe" data-testid="take-recipes"></div>
             </fieldset>
+            <div class="field tk-sec tk-ask"><label class="label" for="tkAsk">Describe the result you want <span class="muted xs">optional</span></label>
+              <textarea id="tkAsk" data-testid="take-instruction" rows="2" maxlength="600" placeholder="e.g. A premium tech explainer: bold captions, motion graphics where they help, keep the product demo readable."></textarea>
+              <div class="tk-ask-row"><button type="button" class="btn2 sm" id="tkAskGo" data-testid="take-instruction-apply">Apply to settings</button>
+                <span class="muted xs">The settings below change to match; you can still change each one.</span></div>
+              <div class="tk-ask-out" id="tkAskOut" data-testid="take-instruction-result" aria-live="polite" hidden></div></div>
+            <fieldset class="tk-sec" data-testid="take-captions-box">
+              <legend class="tk-sec-h">Caption style <span class="muted xs" id="tkCapWhy" data-testid="take-caption-why"></span></legend>
+              <div class="tk-caps" id="tkCaps" role="radiogroup" aria-label="Caption style" data-testid="take-captions"></div>
+            </fieldset>
+            <div class="tk-sec"><div class="chips-head"><span class="label" id="tkChLbl">Channels for the clips</span></div>
+            <div class="chips" id="takeChips" data-testid="take-chips" role="group" aria-labelledby="tkChLbl"></div></div>
+            <details class="tk-adv" id="tkAdv" data-testid="take-advanced">
+              <summary data-testid="take-advanced-toggle"><b>Advanced</b> <span class="muted xs">Clip length, moments to include, edits</span></summary>
+              <div class="tk-adv-in">
             <div class="tk-sec tk-row2">
               <div class="field"><span class="label" id="tkLenLbl">Clip length</span>
                 <div class="tk-chips" id="tkLens" role="radiogroup" aria-labelledby="tkLenLbl" data-testid="take-lengths"></div></div>
@@ -327,9 +341,11 @@
                 <span class="sw" data-testid="take-punch"><input type="checkbox" id="tkPunch" data-testid="take-punch-in" checked><span></span></span></div>
               <div class="tk-edit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/></svg><label for="tkSplit"><b>Split for two speakers</b><small>Two people talking each get half the frame. On with the Podcast recipe.</small></label>
                 <span class="sw" data-testid="take-split"><input type="checkbox" id="tkSplit" data-testid="take-split-on"><span></span></span></div>
+              <div class="tk-edit"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18l5-6 4 3 7-9"/><path d="M15 6h5v5"/></svg><label for="tkMotion"><b>Motion graphics</b><small>Counters, lists and contrasts drawn over the clip, only where your words support them.</small></label>
+                <span class="sw" data-testid="take-motion"><input type="checkbox" id="tkMotion" data-testid="take-motion-on" checked><span></span></span></div>
             </fieldset>
-            <div class="tk-sec"><div class="chips-head"><span class="label" id="tkChLbl">Channels for the clips</span></div>
-            <div class="chips" id="takeChips" data-testid="take-chips" role="group" aria-labelledby="tkChLbl"></div></div>
+              </div>
+            </details>
             <div class="take-go-row tk-foot">
               <label class="chk" data-testid="take-attest"><input type="checkbox" id="tkOwns" data-testid="take-owns"> I own this video or have permission to use it (e.g. my own content, a licence, or Creative Commons); I'm responsible for rights.</label>
               <span class="row"><button class="btn2" id="tkSample" data-testid="take-sample" type="button">Try the sample take</button>
