@@ -196,20 +196,134 @@ def _non_overlapping(picks: list[dict], n: int) -> list[dict]:
     return sorted(chosen, key=lambda x: x["s"])
 
 
+REACTION = {"wow", "yeah", "yes", "yep", "right", "exactly", "oh", "okay", "ok", "sure", "totally", "absolutely", "true",
+            "really", "huh", "hmm", "mm", "mhm", "no", "nope", "ah"}
+BACK_PRONOUN = {"it", "it's", "they", "they're", "them", "he", "he's", "she", "she's", "him", "her", "those", "these"}
+BACK_REF = ("as i said", "like i said", "as i mentioned", "like i mentioned", "going back to", "as we said", "earlier i")
+PUNCH_WORDS = {"but", "never", "nobody", "wrong", "mistake", "secret", "stop", "nothing", "everyone", "zero", "lost",
+               "won", "failed", "broke", "free", "million", "thousand", "hundred", "percent"}
+
+
+def needs_setup(sents: list[dict], a: int) -> str | None:
+    """Why sentence a can't open a clip on its own, or None: it answers the question just before it, reacts to what was
+    just said ("Wow, what did you do then?"), points back at something unnamed ("It broke on day two"), or refers to
+    earlier in the video. A leading "so" or "and" alone is fine when the sentence still stands."""
+    t = norm(sents[a]["text"])
+    w = t.split()
+    if not w:
+        return None
+    if a > 0 and sents[a - 1]["text"].strip().endswith("?") and not sents[a]["text"].strip().endswith("?") \
+            and sents[a]["s"] - sents[a - 1]["e"] < 3.0:
+        return "answer"
+    if w[0] in REACTION:
+        return "reaction"
+    if w[0] in BACK_PRONOUN or (w[0] in ("that", "that's") and len(w) > 1 and w[1] in ("why", "how", "what", "because", "is", "was")):
+        return "reference"
+    if any(t.startswith(r) or f" {r} " in f" {t} " for r in BACK_REF):
+        return "back-reference"
+    return None
+
+
+def tidy_span(sents: list[dict], a: int, b: int, max_s: float = MAX_CLIP) -> tuple[int, int, list[str]]:
+    """Move a clip's edges so it stands alone: drop a stray fragment at the start ("it."), reach back for the question
+    or line an opening answers or reacts to (up to two sentences, if the clip still fits), and finish the answer when
+    it would end on a new question. Returns (a, b, notes)."""
+    notes = []
+    while a < b and len(norm(sents[a]["text"]).split()) <= 2 and not sents[a]["text"].strip().endswith("?"):
+        a += 1
+        notes.append("skips a stray fragment")
+    for _ in range(2):
+        why = needs_setup(sents, a)
+        if not why or a == 0 or sents[b]["e"] - sents[a - 1]["s"] > max_s or sents[a]["s"] - sents[a - 1]["e"] > 3.0:
+            break
+        a -= 1
+        notes.append({"answer": "starts at the question so the answer makes sense",
+                      "reaction": "keeps the line it reacts to"}.get(why, "keeps the setup it refers to"))
+    if sents[b]["text"].strip().endswith("?") and b + 1 < len(sents) and sents[b + 1]["e"] - sents[a]["s"] <= max_s \
+            and sents[b + 1]["s"] - sents[b]["e"] < 3.0:
+        b += 1
+        notes.append("ends on the answer, not a new question")
+    return a, b, notes
+
+
+def clean_hook(t: str) -> str:
+    """Drop a stutter at the start of a hook ("How did how did that prep you" -> "How did that prep you"). What is left is
+    still words the speaker said, in order."""
+    toks = t.split()
+    cap = bool(toks) and toks[0][:1].isupper()
+    changed = True
+    while changed:
+        changed = False
+        for n in (3, 2, 1):
+            if len(toks) >= 2 * n + 2 and [norm(x) for x in toks[:n]] == [norm(x) for x in toks[n:2 * n]]:
+                toks = toks[n:]
+                changed = True
+                break
+    out = " ".join(toks)
+    return out[:1].upper() + out[1:] if cap else out
+
+
+def line_strength(sent: dict) -> float:
+    """How well one sentence works as the hook on screen: a question, a number, a stake or a turn, short enough to read,
+    and not leaning on what came before."""
+    raw = sent["text"].strip()
+    w = norm(raw).split()
+    if len(w) < 3:
+        return -10.0
+    sc = 3.0 * min(3, sum(1 for x in w if x in HOOK_WORDS)) + 2.0 * min(3, sum(1 for x in w if x in PUNCH_WORDS))
+    sc += 4 if raw.endswith("?") else 0
+    sc += 4 if any(ch.isdigit() for ch in raw) else 0
+    sc += 3 if 5 <= len(w) <= 16 else (-2 if len(w) > 24 else 0)
+    if w[0] in WEAK_START or w[0] in REACTION or w[0] in BACK_PRONOUN:
+        sc -= 6
+    sc -= 6 * sum(1 for x in w if x in FILLER) / len(w) * 10
+    return sc
+
+
 def best_line(sents: list[dict], a: int, b: int, max_chars: int = 90) -> str:
-    """The hook for the cover: the first sentence of the span, cut on a word boundary. Always verbatim."""
-    t = sents[a]["text"].strip()
+    """The hook for the cover: the strongest line of the span, not just its first sentence (the opening line wins a tie
+    and gets a small edge, since it is what the viewer hears first). Always verbatim, cut on a word boundary."""
+    best = max(range(a, b + 1), key=lambda i: (line_strength(sents[i]) + (2 if i == a else 0), -i))
+    t = clean_hook(sents[best]["text"].strip())
     if len(t) <= max_chars:
         return t
     cut = t[:max_chars].rsplit(" ", 1)[0].rstrip(",;:-")
     return cut + "…"
 
 
+def reason(sents: list[dict], a: int, b: int, hook: str, notes: list[str]) -> str:
+    """Why this moment, in words a person can check (the offline scorer used to give every clip the same sentence)."""
+    first = sents[a]["text"].strip()
+    bits = []
+    if first.endswith("?"):
+        bits.append("opens on a question")
+    elif any(ch.isdigit() for ch in first):
+        bits.append("opens with a number")
+    elif norm(first).split()[:1] and norm(first).split()[0] not in WEAK_START:
+        bits.append("opens on a line that stands alone")
+    if norm(hook) != norm(first) and not hook.startswith(first[:20]):
+        bits.append(f"hook line \"{hook[:60]}\" comes from inside the clip")
+    bits += notes
+    bits.append("ends on a full sentence" if sents[b]["text"].strip().endswith((".", "!")) else "ends mid-thought")
+    bits.append(f"{sents[b]['e'] - sents[a]['s']:.0f} s")
+    return (", ".join(bits)[:1].upper() + ", ".join(bits)[1:] + ".")[:200]
+
+
 def heuristic_moments(sents: list[dict], n: int, scenes: list[float] | None = None) -> list[dict]:
-    picks = []
-    for a, b in candidates(sents):
-        picks.append({"a": a, "b": b, "s": sents[a]["s"], "e": sents[b]["e"], "score": heuristic_score(sents, a, b, scenes),
-                      "hook": best_line(sents, a, b), "why": "Strong opening line, clean ending, steady pace (built-in scorer)."})
+    picks, seen = [], set()
+    for a0, b0 in candidates(sents):
+        a, b, notes = tidy_span(sents, a0, b0)
+        if (a, b) in seen or not (MIN_CLIP <= sents[b]["e"] - sents[a]["s"] <= MAX_CLIP):
+            continue
+        seen.add((a, b))
+        score = heuristic_score(sents, a, b, scenes)
+        if needs_setup(sents, a):
+            score -= 18                     # still leans on something before it: rank it below clips that stand alone
+        if sents[b]["text"].strip().endswith("?"):
+            score -= 8                      # leaves a question hanging
+        hook = best_line(sents, a, b)
+        picks.append({"a": a, "b": b, "s": sents[a]["s"], "e": sents[b]["e"], "score": round(max(0.0, score), 1),
+                      "hook": hook, "why": reason(sents, a, b, hook, notes)})
     chosen = _non_overlapping(picks, n)
     if not chosen and sents:  # a short take: offer the whole thing (up to MAX_CLIP)
         b = 0
@@ -245,11 +359,13 @@ def validate_llm(data, sents: list[dict], n: int) -> list[dict]:
             continue
         if not (0 <= a <= b < len(sents)):
             continue
+        a, b, notes = tidy_span(sents, a, b, max_s=75)
         dur = sents[b]["e"] - sents[a]["s"]
         if not (15 <= dur <= 75):
             continue
         text = span_text(sents, a, b)
         hook = str(m.get("hook") or "").strip().strip('"“”')
+        hook = clean_hook(hook)
         if not verbatim(hook, text):
             hook = best_line(sents, a, b)
         try:
@@ -257,7 +373,7 @@ def validate_llm(data, sents: list[dict], n: int) -> list[dict]:
         except (TypeError, ValueError):
             score = 70.0
         out.append({"a": a, "b": b, "s": sents[a]["s"], "e": sents[b]["e"], "score": round(max(0, min(100, score)), 1),
-                    "hook": hook[:120], "why": str(m.get("why") or "")[:200]})
+                    "hook": hook[:120], "why": (str(m.get("why") or "").strip() + (" (" + ", ".join(notes) + ")" if notes else ""))[:200]})
     return _non_overlapping(out, n)
 
 
