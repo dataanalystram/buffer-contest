@@ -429,6 +429,10 @@
               <div class="cs-tracks" id="csTracks" data-testid="cs-tracks"></div>
             </div>
           </section>
+          <details class="panel tk-agent" id="tkAgent" data-testid="take-agent" open>
+            <summary data-testid="take-agent-toggle"><b>Chat with your One take agent</b> <span class="muted xs">Ask, edit and render by talking. Edits are drafts.</span></summary>
+            <div id="tkAgentHost"></div>
+          </details>
           <div class="take-grid" id="tkGridWrap">
             <ol class="timeline" id="tkTimeline" data-testid="take-timeline" aria-label="Progress"></ol>
             <div class="tk-clips">
@@ -956,6 +960,7 @@
         <button type="button" role="tab" data-rtab="director" id="cstTabDir" data-testid="cst-tab-director" aria-selected="true">Director</button>
         <button type="button" role="tab" data-rtab="inspect" id="cstTabIns" data-testid="cst-tab-inspector" aria-selected="false">Inspector</button>
         <button type="button" role="tab" data-rtab="review" id="cstTabRev" data-testid="cst-tab-review" aria-selected="false">Review</button>
+        <button type="button" role="tab" data-rtab="agent" id="cstTabAgent" data-testid="cst-tab-agent" aria-selected="false">Agent</button>
       </div>
       <div class="cst-rp" data-rpane="director">
         <ol class="cst-log" id="cstLog" data-testid="cst-log" aria-live="polite"></ol>
@@ -968,6 +973,7 @@
       </div>
       <div class="cst-rp" data-rpane="inspect" hidden><div id="cstInspect" data-testid="cst-inspector"></div></div>
       <div class="cst-rp" data-rpane="review" hidden><div id="cstReview" data-testid="cst-review"></div></div>
+      <div class="cst-rp" data-rpane="agent" hidden><div id="cstAgentHost" data-testid="cst-agent"></div></div>
     </aside>
   </div>
   <div class="cst-hsplit" id="cstSplitB" data-testid="cst-split-bottom" role="separator" aria-orientation="horizontal" aria-label="Resize the timeline" tabindex="0"></div>
@@ -1019,6 +1025,7 @@
 <script src="/static/chat.js"></script>
 <script src="/static/library.js"></script>
 <script src="/static/planner.js"></script>
+<script src="/static/takechat.js"></script>
 <script src="/static/take.js"></script>
 <script src="/static/takeedit.js"></script>
 <script src="/static/clipstudio.js"></script>

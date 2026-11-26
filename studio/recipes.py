@@ -83,7 +83,7 @@ _RULES = [  # (words that ask for it, setting, value, why)
 _NOT_YET = [
     (("sound effect", "sfx", "whoosh", "swoosh"), "Sound effects aren't in One take yet, so none will be added."),
     (("music", "soundtrack", "background track"), "Music: add an Instagram track per clip in Trim & caption; One take doesn't pick music yet."),
-    (("b-roll", "broll", "b roll", "stock footage"), "B-roll isn't in One take yet, so none will be added."),
+    (("b-roll", "broll", "b roll", "stock footage"), "B-roll is added after the clips are made: chat with the One take agent (\"add b-roll of …\") or use Clip Studio. It needs the server's free Pexels key."),
     (("transition", "wipe", "glitch"), "Transitions between scenes aren't in One take yet."),
     (("voiceover", "voice over", "ai voice", "narration"), "One take only uses your own words; it never adds a voice."),
 ]

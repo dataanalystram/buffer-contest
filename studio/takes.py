@@ -800,7 +800,7 @@ class Takes(TakeBin, TakeControl):
                           "caption_preset": c.get("caption_preset") or run["input"].get("caption")
                           or recipes.RECIPES[recipes.clean(run["input"].get("recipe"))]["caption"],
                           "motion": run["input"].get("motion", True) is not False,
-                          "layout_prefs": {"split": True} if run["input"].get("split") else {},
+                          "layout_prefs": {"split": True} if (c["split"] if isinstance(c.get("split"), bool) else run["input"].get("split")) else {},
                           "hook_mode": c.get("hook_mode"),
                           "hook_fx": c.get("hook_fx") or ("headline" if run["input"].get("headline") else "none"),
                           "hook_words": c.get("hook_words") or "",
@@ -808,7 +808,7 @@ class Takes(TakeBin, TakeControl):
                           "broll": c.get("broll") if isinstance(c.get("broll"), list) else [],
                           "place": c.get("place") or {},  # the edit room: where each element sits (take_layout.clean_place)
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
-                          "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on
+                          "punch_in": (c["punch_in"] if isinstance(c.get("punch_in"), bool) else run["input"].get("punch_in", True) is not False),  # takes made before the switch: on
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else [],
                           **self._trim_spec(run, an, c)})
         for k in ("reframe", "captions", "covers"):
@@ -851,7 +851,8 @@ class Takes(TakeBin, TakeControl):
         inside the clip, so a pause is only cut where the silence detector agrees. With HQ_TRIM_VAD=1 the clip also
         gets the speech detector's gaps (take.detect_speech_gaps), so pauses under background music are trimmed too;
         off (the default) the spec is byte for byte what it was."""
-        if run["input"].get("style", "take") != "take" or run["input"].get("trim_pauses") is not True:
+        want = c["trim_pauses"] if isinstance(c.get("trim_pauses"), bool) else run["input"].get("trim_pauses") is True
+        if run["input"].get("style", "take") != "take" or not want:
             return {}
         s, e = float(c["start"]), float(c["end"])
         spec = {"trim_pauses": True, "silences": Takes._spans_in(an.get("silences"), s, e)}

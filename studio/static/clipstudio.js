@@ -151,8 +151,10 @@ function watchRender(cid) {
   };
   setTimeout(tick, 3000);
 }
-$s("cstSpread").onclick = () => {
+$s("cstSpread").onclick = async () => {
+  const id = C.take && C.take.id;
   closeStudio();
+  if (id && typeof tkShowIfOpen === "function") { try { await tkShowIfOpen(id); } catch (e) { /* the bar below may still be there */ } }
   const bar = document.getElementById("spreadBar");
   if (bar && !bar.hidden) { bar.scrollIntoView({ block: "center" }); const g = document.getElementById("spreadGo"); if (g && !g.hidden) g.focus(); }
   toast("The Spread makes Buffer drafts or queue slots. Nothing posts by itself.", 5000);
@@ -175,7 +177,21 @@ function ltab(k) {
   document.querySelectorAll("#cstudio [data-lpane]").forEach((x) => (x.hidden = x.dataset.lpane !== k));
 }
 document.querySelectorAll("#cstudio [data-rtab]").forEach((b) => (b.onclick = () => rtab(b.dataset.rtab)));
+let agentChat = null;
+function mountAgent() {
+  if (agentChat || !window.HQTakeChat) return;
+  agentChat = HQTakeChat.mount($s("cstAgentHost"), { prefix: "cst", take: () => C.take, clip: () => (C.open && C.clips.length ? clip().id : null),
+    onDone: async (out) => {
+      const cid = clip().id;
+      if ((out.did || []).some((d) => d.clip === cid && (d.ops || []).some((x) => /Rendering/.test(x)))) { clip().status = "rendering"; C.hist[cid] = { undo: [], redo: [] }; try { C.state = await api(base() + "/draft"); } catch (e) { /* shown below */ } drawState(); watchRender(cid); return; }
+      if ((out.did || []).some((d) => d.clip === cid && d.ops && d.ops.length)) {
+        const prev = JSON.parse(JSON.stringify(C.draft));
+        try { C.state = await api(base() + "/draft"); C.draft = JSON.parse(JSON.stringify(C.state.draft)); const h = C.hist[cid]; if (h) { h.undo.push(prev); h.redo = []; } drawAll(); } catch (e) { toast(e.message, 5000); }
+      }
+    } });
+}
 function rtab(k) {
+  if (k === "agent") mountAgent();
   document.querySelectorAll("#cstudio [data-rtab]").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.rtab === k)));
   document.querySelectorAll("#cstudio [data-rpane]").forEach((x) => (x.hidden = x.dataset.rpane !== k));
 }
@@ -351,7 +367,7 @@ function drawInspector() {
     const b = (d.broll || [])[s.broll];
     if (!b) { box.innerHTML = `<p class="cst-muted">That cutaway is gone.</p>`; return; }
     box.innerHTML = `<h3 class="cst-ih">B-roll</h3><p class="cst-quote">${b.thumb ? `<img class="cst-brthumb" src="${E(b.thumb)}" alt="" loading="lazy"> ` : ""}${E(b.query || "Stock footage")}</p>
-      <p class="cst-muted">${(b.e - b.s).toFixed(1)} s from ${b.s.toFixed(1)} s. Your voice plays over it. ${E(b.credit || "")}</p>
+      <p class="cst-muted">${(b.e - b.s).toFixed(1)} s long, starting at ${b.s.toFixed(1)} s. Your voice plays over it. ${E(b.credit || "")}</p>
       <button type="button" class="btn2 sm danger" id="cstBrDel" data-testid="cst-broll-delete">Remove this B-roll</button>`;
     $s("cstBrDel").onclick = () => { C.sel = null; edit((n) => n.broll.splice(s.broll, 1), "Removed the B-roll"); };
     return;
@@ -429,6 +445,8 @@ function drawLog() {
         : `<p class="cst-hline"><span>${E(e.what)}${e.n > 1 ? ` <span class="cst-muted">×${e.n}</span>` : ""}</span><time class="cst-muted">${new Date(e.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></p>`}
       ${agent ? `<time class="cst-muted">Director · ${new Date(e.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>` : ""}</li>`;
   }).join("") : `<li class="cst-empty"><b>Your director</b><span>Ask for a change in plain words. It edits this clip's draft, shows you where, and every edit can be undone.</span></li>`;
+  const ny = (C.notyet && C.notyet[clip().id]) || [];
+  if (ny.length) $s("cstLog").insertAdjacentHTML("beforeend", `<li class="cst-msg notyet" data-testid="cst-notyet" role="status"><b>Can't do yet</b><span>${ny.map(E).join("; ")}</span></li>`);
   $s("cstLog").scrollTop = 1e6;
 }
 $s("cstAsk").onsubmit = (e) => { e.preventDefault(); ask($s("cstAskIn").value); };
@@ -451,7 +469,8 @@ async function ask(text) {
     drawAll();
     const last = ops[ops.length - 1];
     if (last && last.focus && last.focus.element) select({ el: last.focus.element }); else rtab("director");
-    if ((out.not_yet || []).length) toast(`Not yet: ${out.not_yet.join("; ")}`, 7000);
+    if ((out.not_yet || []).length) { (C.notyet = C.notyet || {})[c.id] = out.not_yet.slice(0, 4); drawLog(); toast(`Not yet: ${out.not_yet.join("; ")}`, 7000); }
+    else if (C.notyet) delete C.notyet[c.id];
     else if (!ops.length) toast(out.reply, 7000);
   } catch (e) { toast(e.message, 6000); drawLog(); }
   finally { pend.remove(); C.busy = false; $s("cstAskGo").disabled = false; hideCursor(); drawState(); }

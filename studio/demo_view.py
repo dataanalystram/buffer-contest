@@ -43,7 +43,7 @@ ALLOW = [
     ("POST", r"/api/takes/sample"),
     ("POST", r"/api/takes/plan"),   # reads a creative instruction into settings; saves nothing
     # Clip Studio on the sample: the draft and the director's edits (the demo's own sample take; rendering is refused)
-    ("PUT", r"/api/takes/\d+/clips/[^/]+/draft"), ("POST", r"/api/takes/\d+/clips/[^/]+/direct"),
+    ("PUT", r"/api/takes/\d+/clips/[^/]+/draft"), ("POST", r"/api/takes/\d+/clips/[^/]+/direct"), ("POST", r"/api/takes/\d+/chat"),
     ("POST", r"/api/draft"), ("POST", r"/api/link/preview"), ("POST", r"/api/check"),
     ("POST", r"/api/posts/preview"), ("POST", r"/api/preflight"), ("POST", r"/api/preflight/fix"),
     ("POST", r"/api/brand/preview"), ("POST", r"/api/brand/themes-preview"), ("POST", r"/api/brand-kits/preview"),

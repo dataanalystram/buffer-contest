@@ -205,6 +205,9 @@ READ_ONLY |= _take_layout.READ_ONLY
 from . import clip_draft as _clip_draft  # noqa: E402  Clip Studio drafts + the AI director (get/edit/direct/render)
 TOOLS += _clip_draft.TOOLS
 READ_ONLY |= _clip_draft.READ_ONLY
+from . import take_agent as _take_agent  # noqa: E402  the One take agent (chat for a whole take)
+TOOLS += _take_agent.TOOLS
+READ_ONLY |= _take_agent.READ_ONLY
 from . import thread_bin as _thread_bin  # noqa: E402  list_threads, get_thread, delete_thread, restore_thread, list/purge_thread_bin
 
 TOOLS += _thread_bin.TOOLS
@@ -433,6 +436,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if extra is not NotImplemented:
         return extra
     extra = _clip_draft.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _take_agent.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     extra = _brand_routes.call_tool(studio, actor, name, args)

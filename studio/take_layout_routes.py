@@ -2,7 +2,7 @@
 through takes.py and its venv has no FastAPI."""
 from fastapi import Body, Request
 
-from . import clip_draft
+from . import clip_draft, take_agent
 from .take_layout import set_layout, set_smart_layout, smart_layout_info, view
 
 
@@ -41,3 +41,12 @@ def add_routes(app, house, actor) -> None:
     @app.post("/api/takes/{rid}/clips/{clip_id}/draft/render")
     def take_clip_draft_render(rid: str, clip_id: str, request: Request):
         return clip_draft.render(t, actor(request, write=True), rid, clip_id)
+
+    # the One take agent (studio/take_agent.py): a chat for the whole take; its edits are drafts
+    @app.get("/api/takes/{rid}/chat")
+    def take_chat_get(rid: str, request: Request):
+        return take_agent.get(t, actor(request), rid)
+
+    @app.post("/api/takes/{rid}/chat")
+    def take_chat_post(rid: str, request: Request, body=Body(default={})):
+        return take_agent.chat(t, actor(request, write=True), rid, body)

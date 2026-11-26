@@ -21,7 +21,7 @@ import time
 from .actions import ActionError, Actor
 from .take_layout import HOOK_FX, PLACE_Y, _behind_on, _clip, _take_id, clean_place
 
-FIELDS = ("hook", "hook_fx", "hook_words", "place", "caption_preset", "fx", "start", "end", "broll")
+FIELDS = ("hook", "hook_fx", "hook_words", "place", "caption_preset", "fx", "start", "end", "broll", "punch_in", "trim_pauses", "split")
 FX_KINDS = ("stat", "line")
 MAX_FX, LOG_MAX = 4, 40
 
@@ -34,7 +34,8 @@ TOOLS = [
     {"name": "edit_clip_draft", "description": "One take Clip Studio: change a clip's draft (no render). Give only the "
      "fields to change: hook (a line said in the clip), hook_fx (none | headline | behind), hook_words (1-3 words of the "
      "hook for behind), place (see set_clip_layout), caption_preset, fx (null = automatic motion graphics; [] = none; or "
-     "up to 4 picks {kind: stat | line, text: words said in the clip, nth: which time}), start/end (source seconds). "
+     "up to 4 picks {kind: stat | line, text: words said in the clip, nth: which time}), start/end (source seconds), "
+     "punch_in / trim_pauses / split (true | false | null = the take's own setting). "
      "note: one line on why (shown in the studio's history).",
      "inputSchema": {"type": "object", "required": ["take_id", "clip_id", "draft"], "properties": {
          "take_id": {"type": "integer"}, "clip_id": {"type": "string"}, "draft": {"type": "object"},
@@ -67,6 +68,9 @@ def committed(clip: dict, run: dict | None = None) -> dict:
             "hook_words": clip.get("hook_words") or "", "place": clip.get("place") or {}, "caption_preset": preset,
             "fx": clip.get("fx") if isinstance(clip.get("fx"), list) else None,
             "broll": clip.get("broll") if isinstance(clip.get("broll"), list) else [],
+            "punch_in": clip.get("punch_in") if isinstance(clip.get("punch_in"), bool) else None,
+            "trim_pauses": clip.get("trim_pauses") if isinstance(clip.get("trim_pauses"), bool) else None,
+            "split": clip.get("split") if isinstance(clip.get("split"), bool) else None,
             "start": round(float(clip.get("start") or 0), 2), "end": round(float(clip.get("end") or 0), 2)}
 
 
@@ -142,6 +146,11 @@ def clean_draft(raw, clip: dict, res: dict, base: dict) -> dict:
                     raise ActionError("nth must be 0, 1, 2 ... (which time the words are said).")
                 out.append({"kind": f["kind"], "text": text, "nth": nth})
             d["fx"] = out
+    for k in ("punch_in", "trim_pauses", "split"):   # None = the take's own setting
+        if k in raw:
+            if raw[k] is not None and not isinstance(raw[k], bool):
+                raise ActionError(f"{k} is true, false or null (the take's setting).")
+            d[k] = raw[k]
     if "broll" in raw or "start" in raw or "end" in raw:
         from .media import broll
         try:
@@ -322,7 +331,32 @@ def rules(instruction: str, d: dict, ws: list[dict], sel, behind_ok: bool) -> tu
         if k in t and label not in nope:
             nope.append(label)
     # make something pop / land / stand out: a graphic on the selected words, or on the clip's first number
-    if re.search(r"\b(pop|stand out|emphasi[sz]e|highlight|land|bigger|punch)\b", t) and not re.search(r"\bcaption", t):
+    # the pipeline's own switches, per clip: zoom, pauses, split, length
+    if re.search(r"\b(no|stop|less|without|don'?t|do not|turn off|disable)\b.{0,14}\b(zoom\w*|punch[- ]?ins?)\b|\bkeep (it|the (screen|demo|product)) (readable|still|steady)\b", t):
+        ch["punch_in"] = False
+        ops.append({"what": "Zoom off", "why": "The picture stays steady, no zooms on strong words.", "focus": {"track": "layout"}})
+    elif re.search(r"\b(zoom\w*|punch[- ]?ins?|push[- ]?in|dynamic)\b", t) and not re.search(r"\b(product|screen)\b.{0,20}\bzoom|zoom\b.{0,20}\b(product|screen)", t):
+        ch["punch_in"] = True
+        ops.append({"what": "Gentle zooms on", "why": "The picture eases in on strong words, then back.", "focus": {"track": "layout"}})
+    if re.search(r"\b(cut|trim|remove|tighten|tighter|no)\b.{0,14}\b(pauses?|silences?|filler|dead air|ums?)\b|\bfast[- ]?paced\b|\btighter\b", t):
+        ch["trim_pauses"] = True
+        ops.append({"what": "Pauses and filler cut", "why": "Silences the detector found are taken out when it renders.", "focus": {"track": "words"}})
+    elif re.search(r"\b(keep|leave)\b.{0,12}\b(pauses?|silences?)\b|\b(natural|relaxed) pace\b|\buncut\b", t):
+        ch["trim_pauses"] = False
+        ops.append({"what": "Pauses kept", "why": "The natural pace stays.", "focus": {"track": "words"}})
+    if re.search(r"\bno split\b|\b(without|turn off|stop)\b.{0,10}\bsplit", t):
+        ch["split"] = False
+        ops.append({"what": "Split screen off", "why": "One frame follows the speaker.", "focus": {"track": "layout"}})
+    elif re.search(r"\bsplit[- ]?screen\b|\bsplit (the )?(screen|frame)\b|\btwo speakers?\b", t):
+        ch["split"] = True
+        ops.append({"what": "Split screen for two speakers", "why": "Each speaker gets half the frame when two are on screen.", "focus": {"track": "layout"}})
+    m = re.search(r"\b(\d{1,2})\s*(?:-|\s)?(?:s|sec|secs|seconds?)\b", t)
+    if m and re.search(r"\b(make|shorten|trim|cut|length|long|shorter|down to|about|around|under|exactly)\b", t) and 3 <= int(m.group(1)) <= 90:
+        want = int(m.group(1))
+        ch["end"] = round(float(d["start"]) + want, 2)
+        ops.append({"what": f"Clip length about {want} s", "why": "The end moves to keep that length; it stays on the nearest word when it renders.",
+                    "focus": {"track": "words"}})
+    if re.search(r"\b(pop|stand out|emphasi[sz]e|highlight|land|bigger)\b", t) and not re.search(r"\bcaption", t):
         i, n = (picked if picked else (None, 0))
         if i is None:
             for j in range(len(ws)):
@@ -459,7 +493,7 @@ AI_SYSTEM = ("You are the creative director in a video clip editor. Turn the per
              "hook_words (1-3 words of the hook), caption_preset (clean|minimal|bold_pop|cinematic|documentary|lower_third|"
              "two_tone|typewriter), fx (list of {kind: stat|line, text: words said in the clip, nth: 0}; [] = none), "
              "place ({headline|behind|logo|tag: {x, y, scale}, captions: {y}}; shares of a 9:16 frame, y 0.04-0.92), "
-             "start/end (source seconds). Never invent words. Doing nothing is a valid answer. B-roll is added by the server, not by you. You can't add music, "
+             "start/end (source seconds), punch_in / trim_pauses / split (true, false or null = the take's setting). Never invent words. Doing nothing is a valid answer. B-roll is added by the server, not by you. You can't add music, "
              "sound effects or transitions yet.")
 
 
@@ -554,6 +588,11 @@ def render(takes, a: Actor, rid, clip_id) -> dict:
             clip["place"] = d["place"]
         else:
             clip.pop("place", None)
+        for k in ("punch_in", "trim_pauses", "split"):
+            if d.get(k) is None:
+                clip.pop(k, None)
+            else:
+                clip[k] = d[k]
         if d.get("broll"):
             clip["broll"] = d["broll"]
         else:

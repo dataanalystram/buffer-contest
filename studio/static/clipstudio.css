@@ -216,3 +216,12 @@ body.cst-on #toast{z-index:330}
 .cst-brprev{position:absolute;inset:0;background:var(--sunken) center/cover no-repeat;display:grid;place-items:center;color:var(--muted);font-size:12px;z-index:1;pointer-events:none}
 .cst-brprev::after{content:"B-roll: " attr(data-q);position:absolute;left:8px;top:8px;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:2px 6px;font-size:11px}
 .cst-brthumb{width:48px;height:64px;object-fit:cover;border-radius:4px;vertical-align:middle}
+
+.tk-agent{margin:12px 0;padding:10px 14px}.tk-agent>summary{cursor:pointer;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.tkc{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.tkc-log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto}
+.tkc-m{max-width:92%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;line-height:1.45}
+.tkc-m p{margin:0;white-space:pre-wrap}.tkc-m.me{align-self:flex-end;background:var(--sunken)}.tkc-m.agent{align-self:flex-start;background:var(--paper)}
+.tkc-m.err{border-color:var(--focus)}.tkc-did{display:block;margin-top:4px;color:var(--muted)}
+.tkc-sugg{display:flex;flex-wrap:wrap;gap:6px}.tkc-form{display:flex;gap:8px;align-items:flex-end}.tkc-form textarea{flex:1;resize:vertical;min-height:44px}
+.cst-msg.notyet{border:1px dashed var(--focus);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;font-size:12px}

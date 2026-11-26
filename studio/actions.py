@@ -556,7 +556,7 @@ class Studio:
                "remember_rule", "revise", "draft_from_link", "autofix_post", "place_clips_in_week", "save_brand_kit",
                "upload_media", "import_media", "brand_from_website", "follow_feed",
                "fetch_image", "cutout_product", "edit_image",
-               "set_clip_layout", "render_clip_draft")  # One take per-scene layouts (studio/take_layout.py): each re-renders a clip; image tools (studio/image_edit.py): compose_product_card is an edit_image
+               "set_clip_layout", "render_clip_draft", "take_chat")  # One take per-scene layouts (studio/take_layout.py): each re-renders a clip; image tools (studio/image_edit.py): compose_product_card is an edit_image
 
     def kill_switch_check(self, a: Actor, action: str) -> None:
         """The kill switch alone (any agent request that changes something, counted or not)."""

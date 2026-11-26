@@ -118,3 +118,32 @@ def test_director_adds_and_removes_broll_and_says_so_without_a_key(draft_clip, m
     assert 1.0 <= b[0]["s"] and 1.5 <= b[0]["e"] - b[0]["s"] <= 5 and rendered == []
     out = human.post(u, json={"instruction": "remove the b-roll", "ai": False}).json()
     assert out["draft"]["broll"] == []
+
+
+def test_take_agent_chats_edits_drafts_and_renders_only_when_asked(draft_clip):
+    human, rid, cid, rendered, app = draft_clip
+    u = f"/api/takes/{rid}/chat"
+    r = human.post(u, json={"message": "make the number pop in clip 1", "clip_id": cid})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["did"][0]["clip"] == cid and out["did"][0]["ops"] and "draft" in out["reply"].lower() and rendered == []
+    assert human.get(f"/api/takes/{rid}/clips/{cid}/draft").json()["draft"]["fx"]
+    r = human.post(u, json={"message": "what can you do?"}).json()
+    assert r["did"] == [] and "B-roll" in r["reply"]
+    msgs = human.get(u).json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "agent", "user", "agent"]
+    out = human.post(u, json={"message": "use cinematic captions and render it", "clip_id": cid}).json()
+    assert rendered and out["did"][-1]["ops"] == ["Rendering the draft on the video worker"]
+    assert human.post(u, json={"message": ""}).status_code == 400
+
+
+def test_director_knows_zoom_pauses_split_and_length(draft_clip):
+    human, rid, cid, rendered, app = draft_clip
+    u = f"/api/takes/{rid}/clips/{cid}/direct"
+    d = human.post(u, json={"instruction": "no zoom, cut the pauses and make it split screen", "ai": False}).json()["draft"]
+    assert d["punch_in"] is False and d["trim_pauses"] is True and d["split"] is True
+    d = human.post(u, json={"instruction": "add gentle zooms and keep the pauses", "ai": False}).json()["draft"]
+    assert d["punch_in"] is True and d["trim_pauses"] is False
+    out = human.post(u, json={"instruction": "make it 8 seconds", "ai": False}).json()
+    assert abs((out["draft"]["end"] - out["draft"]["start"]) - 8) < 0.1
+    assert human.post(f"/api/takes/{rid}/clips/{cid}/draft/render").status_code in (200, 409)

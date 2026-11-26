@@ -436,6 +436,8 @@ _DESC = {
     "GET /api/takes/{rid}/clips/{clip_id}/draft": "get_clip_draft: Clip Studio's draft (edits not rendered yet), what's rendered and the edit history",
     "PUT /api/takes/{rid}/clips/{clip_id}/draft": "edit_clip_draft: change the draft (no render); {discard: true} goes back to what's rendered",
     "POST /api/takes/{rid}/clips/{clip_id}/direct": "direct_clip: the AI director turns a request into edits on the draft",
+    "GET /api/takes/{rid}/chat": "get_take_chat: the conversation with the One take agent",
+    "POST /api/takes/{rid}/chat": "take_chat: talk to the One take agent; it answers and edits the clips' drafts (renders only when asked)",
     "POST /api/takes/{rid}/clips/{clip_id}/draft/render": "render_clip_draft: render the draft on the video worker",
     "POST /api/takes/{rid}/clips/{clip_id}/layout": "set_clip_layout: pin a scene's (or the clip's) layout and/or the caption preset; re-renders",
     "GET /api/takes/settings/smart-layout": "Smart layout (beta): whether keyframes may go to a free vision model",
