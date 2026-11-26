@@ -919,14 +919,17 @@ class Takes(TakeBin, TakeControl):
         layouts = [c["meta"].get("layout") for c in ok if c.get("meta")]
         cov = [c["meta"].get("face_coverage") for c in ok if c.get("meta", {}).get("layout") == "track"]
         nofaces = [c["id"] for c in ok if (c.get("meta") or {}).get("layout") in ("pad", "center") or (c.get("meta") or {}).get("face_fallback")]
+        # what the clips really used: the per-scene plan when there is one (25 Nov: the note said "centered crop" for
+        # scenes that were rendered full frame)
+        fb = {str((c.get("meta") or {}).get("face_fallback") or "") for c in ok if c["id"] in nofaces} - {""}
+        fb_note = fb.pop() if len(fb) == 1 else "no face found, centered crop used"
+        fb_note = fb_note if fb_note.startswith("no face found") else "no face found, centered crop used"
         if nofaces:  # said on the take, never a silent fallback (owner ask, 4 Nov 2026)
-            res["face_fallback"] = {"clips": nofaces, "note": "no face found, centered crop used"}
+            res["face_fallback"] = {"clips": nofaces, "note": fb_note}
         else:  # a later render that found faces clears an earlier render's note
             res.pop("face_fallback", None)
-        self._step(steps, "reframe", "done", (f"Face-tracked on {layouts.count('track')} of {len(ok)} clips"
-                                              + (f"; no face found, centered crop used on {len(nofaces)}" if nofaces else "")
-                                              + (f" (face kept in frame {min(cov) * 100:.0f}%+ of the time)" if cov else "")
-                                              + (f"; blurred-pad layout on {layouts.count('pad')}" if layouts.count("pad") else "")))
+        summary = reframe_summary(ok, layouts, nofaces, fb_note)
+        self._step(steps, "reframe", "done", summary + (f" (face kept in frame {min(cov) * 100:.0f}%+ of the time)" if cov else ""))
         kept = [c["id"] for c in ok if (c.get("meta") or {}).get("source_captions")]
         self._step(steps, "captions", "done", ("Word-by-word captions in your brand font, clear of the bottom 20%" if not kept else
                    f"The video already has captions burned in, so it keeps its own on {len(kept)} of {len(ok)} clips (no second layer)"
@@ -1728,6 +1731,18 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
     finally:
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def reframe_summary(ok: list[dict], layouts: list, nofaces: list, fb_note: str) -> str:
+    """The reframe step's line on the take, from what the clips really used: the per-scene plan when there is one."""
+    scenes = [x.get("layout") for c in ok for x in ((c.get("meta") or {}).get("layout_plan") or []) if isinstance(x, dict)]
+    if scenes:
+        names = {"track": "following a face", "fit": "full frame", "screen": "screen + face", "split": "split"}
+        parts = [f"{names.get(k, k)} in {scenes.count(k)}" for k in ("track", "screen", "split", "fit") if scenes.count(k)]
+        return f"Layouts across {len(scenes)} scenes: " + ", ".join(parts)
+    return (f"Face-tracked on {layouts.count('track')} of {len(ok)} clips"
+            + (f"; {fb_note} on {len(nofaces)}" if nofaces else "")
+            + (f"; blurred-pad layout on {layouts.count('pad')}" if layouts.count("pad") else ""))
 
 
 def clip_words(words: list[dict], clip: dict, s: float, e: float) -> list[dict]:

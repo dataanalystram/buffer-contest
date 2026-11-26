@@ -80,3 +80,13 @@ def test_no_speech_fails_without_waiting_for_the_face_track(monkeypatch, tmp_pat
         take.analyze(str(tmp_path / "v.mp4"))
     gate.set()
     assert time.time() - t < 5
+
+
+def test_reframe_line_says_what_the_scenes_used():
+    from studio.takes import reframe_summary
+    ok = [{"id": "c1", "meta": {"layout": "mixed", "layout_plan": [{"layout": "fit"}, {"layout": "fit"}, {"layout": "track"}]}},
+          {"id": "c2", "meta": {"layout": "fit", "layout_plan": [{"layout": "fit"}]}}]
+    line = reframe_summary(ok, ["mixed", "fit"], ["c2"], "no face found, full frame used")
+    assert line == "Layouts across 4 scenes: following a face in 1, full frame in 3" and "centered" not in line
+    old = [{"id": "c1", "meta": {"layout": "pad"}}]
+    assert reframe_summary(old, ["pad"], ["c1"], "no face found, centered crop used").startswith("Face-tracked on 0 of 1")
