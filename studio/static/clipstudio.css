@@ -230,3 +230,8 @@ body.cst-on #toast{z-index:330}
   #takeView{min-width:0;max-width:100%}
   .cst-tl{overflow-x:auto}.cst-right{min-height:0;max-height:70vh}
 }
+@media (max-width:760px){
+  .clip-row{flex-wrap:wrap;min-width:0;max-width:100%}.clip-body{min-width:0;flex:1 1 60%}
+  .clip-act,.clip-pf,.clip-meta{flex-wrap:wrap;min-width:0;max-width:100%;gap:6px}
+  .clip-row .btn,.clip-row .btn2{max-width:100%}
+}
