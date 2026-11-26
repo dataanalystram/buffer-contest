@@ -208,3 +208,7 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
   .tk-run-id{grid-column:1 / -1;grid-row:2}
   .tk-run-t{font-size:16px}
 }
+/* Editor's notes (studio/media/review.py): a quiet hairline disclosure under the score line */
+.clip-row .clip-review{margin:6px 0 0;border-top:1px solid var(--line, rgba(0,0,0,.08));padding-top:6px;color:var(--ink)}
+.clip-row .clip-review summary{cursor:pointer;color:var(--muted)}
+.clip-row .clip-review p{margin:4px 0 0;line-height:1.45}

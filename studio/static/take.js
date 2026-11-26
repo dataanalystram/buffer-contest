@@ -306,6 +306,17 @@ function tkScoreLine(c) {
     : `<p class="xs clip-why none" data-testid="clip-why">${SPARK}<span>${s == null ? "Not scored: this take was saved before clips kept their scorer's reason." : "No reason saved for this clip."}</span></p>`;
   return `<div class="clip-scoreline">${pill}${line}</div>`;
 }
+// Editor's notes on the rendered clip (studio/media/review.py): what works, what looks wrong, why, and the edit to make
+function tkReview(c) {
+  const r = c.review;
+  if (!r || (!(r.works || []).length && !(r.issues || []).length)) return "";
+  const n = (r.issues || []).length;
+  const sum = n ? `${n} thing${n === 1 ? "" : "s"} to look at` : "Looks good";
+  return `<details class="xs clip-review" data-testid="clip-review"><summary data-testid="clip-review-toggle">Editor's notes · ${esc(sum)}</summary>
+    ${(r.issues || []).map((i) => `<p class="clip-review-issue" data-testid="clip-review-issue"><b>${esc(i.what)}</b> ${esc(i.why)} <span class="muted">Try: ${esc(i.fix)}</span></p>`).join("")}
+    ${(r.works || []).length ? `<p class="muted" data-testid="clip-review-works">Works: ${(r.works || []).map(esc).join(" ")}</p>` : ""}
+  </details>`;
+}
 const LAYOUT_IC = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M9 21V9"/></svg>`;  // Lucide layout-template
 const SCISSORS = `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg>`;
 function clipRow(c, n, k) {
@@ -321,6 +332,7 @@ function clipRow(c, n, k) {
       <p class="clip-hook" data-testid="clip-hook">${esc(c.hook)}</p>
       <p class="muted xs clip-meta"><span data-testid="clip-dur">${((c.end || 0) - (c.start || 0)).toFixed(1)} s</span> · <span data-testid="clip-span">${secs(c.start)}–${secs(c.end)} in the take</span>${c.trimmed_s > 0 ? ` · <span data-testid="clip-trimmed" title="Long pauses and filler words cut from this clip">trimmed ${(+c.trimmed_s).toFixed(1)} s</span>` : ""}${c.source_captions ? ` · <span data-testid="clip-own-captions" title="This part of the video already has captions burned in, so no second layer was added">kept the video's own captions</span>` : ""}</p>
       ${tkScoreLine(c)}
+      ${tkReview(c)}
       ${Object.keys(c.variants || {}).length ? `<p class="muted xs" data-testid="clip-variants">Also in ${Object.entries(c.variants).map(([r, u]) => `<a class="link" href="${escUrl(u)}" target="_blank" rel="noopener">${esc(r)}</a>`).join(" · ")} for the channels that need it</p>` : ""}
       ${c.music ? `<p class="xs clip-music" data-testid="clip-music-chip">Music: ${esc(c.music.title)}${c.music.display_artist ? " · " + esc(c.music.display_artist) : ""}</p>` : ""}
       ${st}${c.rerender_error ? `<span class="st err xs" data-testid="clip-rerender-error">Re-render failed: ${esc(c.rerender_error)} The previous video is kept.</span>` : ""}

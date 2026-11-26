@@ -1142,6 +1142,12 @@ class Takes(TakeBin, TakeControl):
             d["music"] = c.get("music")
             d["rendered_at"] = c.get("rendered_at")
             d["post_captions"] = {ch["service"]: self.caption(a, c, ch["service"], kit, rules) for ch in run["input"]["channels"]}
+            if c.get("url"):  # the editor's notes on the rendered clip: what works, what looks wrong, why, the fix
+                try:
+                    from .media import review as review_mod
+                    d["review"] = review_mod.review(d, m)
+                except Exception:  # noqa: BLE001 - notes are a help, never a failure of the take view
+                    d["review"] = None
             clips.append(d)
         return {"id": run["id"], "kind": "take", "status": run["status"], "steps": run["steps"], "input": run["input"],
                 "style": run["input"].get("style") or "take", "transcript_source": an.get("transcript_source"),
