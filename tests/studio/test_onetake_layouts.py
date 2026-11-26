@@ -686,3 +686,19 @@ def test_a_face_inside_a_web_page_is_not_a_webcam_bubble():
     src = (1920, 1080)
     page_face = _face(0, 0.7, 0.12, cy=0.33, motion=5.0)        # a video thumbnail on a page, away from the edges
     assert decide.rule(_sig([page_face], True, 0.9, 0.2), src)["layout"] != "screen"
+
+
+def test_an_app_with_a_video_playing_in_it_is_a_screen_even_when_the_frame_changes():
+    """26 Nov Mac run (third): the demo tracked a face inside an app's clip preview (screen vote missed: the preview
+    plays, so the frame changes) and a review's screenshot stayed small for a 2%-tall face in it. Mostly flat UI with
+    dense UI edges and no face 15% tall is a screen; the same flat frame with a real person in it stays a person."""
+    src = (1920, 1080)
+    demo = {**_sig([_face(3, 0.23, 0.028, motion=2.5), _face(7, 0.36, 0.114, motion=4.8)], False, 0.975, 0.0615),
+            "flat": 0.91, "diff": 7.6}
+    assert decide.rule(demo, src)["rule"] == "R2"
+    shot = {**_sig([_face(2, 0.11, 0.022, motion=5.9, cy=0.74)], False, 0.828, 0.0549), "flat": 0.741, "diff": 4.7}
+    assert decide.rule(shot, src)["rule"] == "R2"
+    wall = {**_sig([_face(0, 0.5, 0.3, motion=6.0)], False, 0.9, 0.06), "flat": 0.8}   # a speaker against a plain wall
+    assert decide.rule(wall, src)["rule"] == "R3"
+    quiet = {**_sig([_face(0, 0.5, 0.12, motion=6.0)], False, 0.9, 0.02), "flat": 0.8}  # few edges: not an app
+    assert decide.rule(quiet, src)["rule"] == "R3"

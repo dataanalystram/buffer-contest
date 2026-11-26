@@ -165,3 +165,18 @@ def test_a_title_card_with_no_face_is_never_cut_but_a_product_in_a_room_still_zo
             g[78:112, x + 5:x + 13] = 12
         card.append(g)
     assert screen.focus_box(card, 1920, 1080, min_share=rr.PRODUCT_SHARE) is None
+
+
+def test_an_animated_title_card_is_not_cut_even_when_its_letters_move():
+    """26 Nov Mac run (third): "ONE TAKE" (45% of the width, letters scaling in) still came out "NE TAK": the title's
+    own motion sat inside the crop, so the typing exception let the crop cut it."""
+    card = []
+    for f in range(3):
+        g = np.full((180, 320), 12, np.uint8)
+        grow = 2 * f                                          # the letters scale in over the shot
+        for k in range(8):                                    # 8 letters across x 88..232 (45% of 320)
+            x = 88 + k * 18
+            g[80 - grow:112 + grow, x:x + 12] = 235
+            g[86:106, x + 4:x + 8] = 12
+        card.append(g)
+    assert screen.focus_box(card, 1920, 1080, min_share=rr.PRODUCT_SHARE) is None

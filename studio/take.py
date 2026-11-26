@@ -416,9 +416,10 @@ def finalize(m: dict, sents: list[dict], silences: list[list[float]], scenes: li
     e2 = min(duration or e + 1, max(e2, e + 0.05))
     # the snap must not reach back over the word before (26 Nov Mac run: a stray "it." skipped by tidy_span came back
     # because the start snapped to the pause before it) or on into the next sentence
-    if m["a"] > 0 and sents[m["a"] - 1]["e"] < s:
+    # (<=: on the Mac the word before often ends exactly where the first word starts, with no gap at all)
+    if m["a"] > 0 and sents[m["a"] - 1]["e"] <= s:
         s2 = max(s2, min(s - 0.02, sents[m["a"] - 1]["e"] + 0.05))
-    if m["b"] + 1 < len(sents) and sents[m["b"] + 1]["s"] > e:
+    if m["b"] + 1 < len(sents) and sents[m["b"] + 1]["s"] >= e:
         e2 = min(e2, max(e + 0.05, sents[m["b"] + 1]["s"] - 0.05))
     return {**m, "start": round(s2, 2), "end": round(e2, 2), "duration": round(e2 - s2, 2),
             "text": span_text(sents, m["a"], m["b"])}

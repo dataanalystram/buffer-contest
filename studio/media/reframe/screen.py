@@ -114,6 +114,8 @@ def focus_box(thumbs: list, src_w: int, src_h: int, min_share: float = 0.0) -> t
     card = float(np.sort(hist / max(1.0, hist.sum()))[-2:].sum()) >= FLAT_MIN
     if (not min_share or card) and _cuts_content(edges, chg, x0, y0, nw, nh, CUT_SHARE):
         return None   # a title card or a line of big text runs past the crop ("AKE A PO"): the plain fit shows it whole
+    if min_share and card and not _holds_text(edges, x0, y0, nw, nh):
+        return None   # an animated title: its own motion is inside the crop, but its letters still run past it ("NE TAK")
     x = int(min(src_w - cw, max(0, round(x0 / tw * src_w))))
     if hold and x + cw < hold[1]:
         x = int(min(src_w - cw, max(0, math.ceil(hold[1]) - cw + 2)))
@@ -141,6 +143,19 @@ def _cuts_content(edges, chg, x0: int, y0: int, nw: int, nh: int, share: float =
         return False
     total = float(chg.sum())
     return total <= 1e-4 or float(chg[y0:y0 + nh, x0:x0 + nw].sum()) < MOVE_SHARE * total
+
+
+def _holds_text(edges, x0: int, y0: int, nw: int, nh: int) -> bool:
+    """On a flat card: does the crop hold every column of text in its rows (with a small margin)? Unlike
+    _cuts_content, motion doesn't excuse a cut here: on a card the moving thing is the title itself."""
+    import numpy as np
+    th, tw = edges.shape
+    cols = edges[y0:y0 + nh].mean(axis=0)
+    if not len(cols) or float(cols.max()) <= 1e-4:
+        return True
+    on = np.where(cols >= 0.1 * float(cols.max()))[0]
+    m = max(1, tw // 80)
+    return bool(on[0] >= max(0, x0 - m) and on[-1] < min(tw, x0 + nw + m)) if len(on) else True
 
 
 def pick_thumbs(thumbs: dict, a: float, b: float) -> list:

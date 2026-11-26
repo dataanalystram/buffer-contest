@@ -111,6 +111,15 @@ def test_snapping_the_start_to_a_pause_never_brings_the_word_before_back():
     assert m["start"] > 10.3
 
 
+def test_no_gap_before_the_first_word_still_keeps_the_word_before_out():
+    # Waid clip 4 on the Mac: "Oh, try it." ends at 261.58 and "As editor in chief..." starts at 261.58
+    rows = [("Oh, try it.", 261.04, 261.58), ("As editor in chief, how would you have responded?", 261.58, 263.66),
+            ("Here's the thing.", 264.14, 264.66)]
+    ss = [{"i": i, "s": s, "e": e, "text": t, "words": S(t, s, e)} for i, (t, s, e) in enumerate(rows)]
+    m = take.finalize({"a": 1, "b": 2}, ss, [], [], 600.0)
+    assert m["start"] >= 261.55
+
+
 def test_a_doubled_word_leaves_the_hook_but_a_meant_repeat_stays():
     assert take.clean_hook("Most of my complaints complaints with it are small.") == "Most of my complaints with it are small."
     assert take.clean_hook("It was really really good.") == "It was really really good."

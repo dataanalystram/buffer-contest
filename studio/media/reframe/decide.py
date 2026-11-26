@@ -42,6 +42,10 @@ BIG_FACE_H = 0.25      # a face this large means a person on camera, not a scree
 HUGE_FACE_H = 0.45     # ... unless the frame around it is plainly an app; this large is a person on camera anyway
 UI_EDGE, UI_FLAT = 0.08, 0.40   # "plainly an app": screen.EDGE_MIN edges outside the faces and screen.FLAT_MIN flat
 CONTENT_MIN = 0.5      # screen content spans at least half the width
+APP_FLAT, APP_EDGE, APP_FACE_H = 0.70, 0.05, 0.15   # a frame mostly flat UI tones with dense UI edges and no face this
+                       # tall is a screen recording even when a video plays inside it (screen.signals' votes miss it:
+                       # the playing preview makes the frame change) -- 26 Nov Mac run: demo c2 tracked a face in an app
+                       # preview; a review's screenshot was shown small for a 2%-tall face in it
 EDGE_SCREEN = 0.04     # and is text/UI dense (edge density outside faces)
 UPSCALE_MAX = 2.5
 TALK_MIN = 0.20        # R6
@@ -95,7 +99,9 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
     # playing inside the app (a clip preview), not a person on camera (26 Nov Mac run: the demo followed the preview)
     ui = float(sig.get("edge") or 0) >= UI_EDGE and float(sig.get("flat") or 0) >= UI_FLAT
     big_face = any(t["h"] >= BIG_FACE_H and (not ui or t["h"] >= HUGE_FACE_H) for t in faces)
-    screen = (bool(sig.get("screen")) and float(sig.get("edge") or 0) >= EDGE_SCREEN
+    app = (float(sig.get("flat") or 0) >= APP_FLAT and float(sig.get("edge") or 0) >= APP_EDGE
+           and all(t["h"] < APP_FACE_H for t in faces))
+    screen = ((bool(sig.get("screen")) or app) and float(sig.get("edge") or 0) >= EDGE_SCREEN
               and float(sig.get("content_width") or 0) >= CONTENT_MIN and not big_face)
     webcams = [t for t in faces if is_webcam(t)] if screen else []   # a corner face is a webcam only over a screen
     # any other smallish face over a screen is part of what's shown (a video thumbnail, a profile picture, a clip preview
