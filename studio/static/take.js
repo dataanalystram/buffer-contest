@@ -427,7 +427,7 @@ T.mode = "list"; T.cs = 0;
 function csSync(t) {
   const clips = (t.clips || []).filter((c) => c.url);
   $("#tkModes").hidden = !clips.length;
-  const studio = T.mode === "studio" && clips.length;
+  const studio = false;  // the inline view gave way to the full-screen Clip studio (clipstudio.js)
   $("#tkStudio").hidden = !studio; $("#tkGridWrap").hidden = !!studio;
   document.querySelectorAll("#tkModes [data-tkmode]").forEach((b) => {
     const on = b.dataset.tkmode === (studio ? "studio" : "list");
@@ -435,9 +435,10 @@ function csSync(t) {
   });
   if (studio) csShow(T.cs);
 }
+// "Clip studio" opens the full-screen editor (clipstudio.js) on the first clip; the list stays as it is behind it
 document.querySelectorAll("#tkModes [data-tkmode]").forEach((b) => (b.onclick = () => {
-  T.mode = b.dataset.tkmode; if (T.take) csSync(T.take);
-  if (T.mode === "studio") $("#tkStudio").scrollIntoView({ block: "nearest" });
+  if (b.dataset.tkmode === "studio" && window.openClipStudio) { const first = csList()[0]; window.openClipStudio(first && first.c.id); return; }
+  T.mode = "list"; if (T.take) csSync(T.take);
 }));
 function csList() { return T.take ? sortedClips(T.take).filter(({ c }) => c.url) : []; }
 function csShow(k) {
@@ -449,6 +450,8 @@ function csShow(k) {
   $("#csPrev").disabled = T.cs === 0; $("#csNext").disabled = T.cs === rows.length - 1;
   $("#csTrim").onclick = () => clipAct("edit", c.id);
   $("#csLayout").hidden = sample; $("#csLayout").onclick = () => clipAct("layout", c.id);
+  $("#csPlace").onclick = () => (csPlaceOn() ? csPlaceClose() : csPlaceOpen(c));
+  if (CSP && CSP.id !== c.id) csPlaceClose();
   $("#csOpen").href = c.url;
   $("#csRate").innerHTML = sample ? "" : tkRate(c, i);
   $("#csRate").querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => clipAct(b.dataset.act, b.dataset.clip)));
@@ -522,6 +525,144 @@ function csTimeline(c) {
     $("#csWords").querySelectorAll(".cs-w").forEach((b, k) => { const w = words[k]; const hit = !approx && w && t >= w.s && t < w.e; b.classList.toggle("now", hit); });
   };
   head.style.left = "var(--cs-l)";
+}
+// ---------------------------------------------------------------- Edit room: place every element on the frame
+// Owner ask (26 Nov 2026): put the headline, the words behind you (with its orbit ring), the caption band, the logo and the
+// brand's own words wherever they like. Same call as set_clip_layout's "place" (REST POST .../layout, MCP set_clip_layout):
+// x = the element's centre, y = its top edge (the caption band: its middle), as shares of the 1080x1920 frame.
+const CS_EL = {
+  headline: { label: "Headline", def: { x: 0.5, y: 0.13 }, w: 0.8, h: 0.12, text: (c) => (c.hook || "").toUpperCase() },
+  behind: { label: "Words behind you", def: { x: 0.5, y: 0.18 }, w: 0.85, h: 0.14, text: (c, L) => (L.hook_words || (c.hook || "").split(/\s+/).sort((a, b) => b.length - a.length)[0] || "").toUpperCase() },
+  captions: { label: "Caption band", def: { y: 0.693 }, w: 0.82, h: 0.07, mid: true, text: () => "Captions" },
+  logo: { label: "Logo", def: { x: 0.89, y: 0.033 }, w: 0.13, h: 0.07, text: () => "Logo" },
+  tag: { label: "Brand words", def: { x: 0.5, y: 0.86 }, w: 0.42, h: 0.05, text: (c, L) => L.place.tag && L.place.tag.text || "Your brand words" },
+};
+const CS_Y = [0.04, 0.92];
+let CSP = null;  // {clip, place, hook_fx, choices, hook_words}
+function csPlaceOn() { return !!CSP; }
+async function csPlaceOpen(c) {
+  const t = T.take; if (!t) return;
+  $("#csPlace").setAttribute("aria-pressed", "true"); $("#csEls").hidden = false; $("#csOv").hidden = false;
+  const v = $("#csVideo"); v.pause(); v.controls = false;
+  CSP = { id: c.id, place: {}, hook_fx: c.hook_fx || "none", choices: ["none", "headline"], hook_words: "", hook: c.hook || "" };
+  $("#csPlaceMsg").textContent = "";
+  if (!t.sample) {
+    try {
+      const L = await api(`/api/takes/${encodeURIComponent(t.id)}/clips/${encodeURIComponent(c.id)}/layout`);
+      if (!CSP || CSP.id !== c.id) return;
+      Object.assign(CSP, { place: JSON.parse(JSON.stringify(L.place || {})), hook_fx: L.hook_fx || (((c.tracks || {}).headline) ? "headline" : "none"),
+        choices: L.hook_fx_choices || ["none", "headline"], hook_words: L.hook_words || "", style: L.style });
+    } catch (e) { $("#csPlaceMsg").textContent = e.message; }
+  } else CSP.hook_fx = (c.tracks || {}).headline ? "headline" : "none";
+  csPlaceDraw(c);
+}
+function csPlaceClose() {
+  CSP = null; $("#csPlace").setAttribute("aria-pressed", "false"); $("#csEls").hidden = true; $("#csOv").hidden = true;
+  $("#csVideo").controls = true;
+}
+function csElOn(k) {
+  const P = CSP.place[k] || {};
+  if (k === "headline") return CSP.hook_fx === "headline";
+  if (k === "behind") return CSP.hook_fx === "behind";
+  if (k === "logo" || k === "tag") return P.on !== false && (k !== "tag" || !!(P.text || "").trim());
+  return true;
+}
+function csPos(k) { return { ...CS_EL[k].def, ...(CSP.place[k] || {}) }; }
+function csPlaceDraw(c) {
+  const sample = !!(T.take && T.take.sample);
+  const canBehind = CSP.choices.includes("behind");
+  $("#csElsNote").textContent = sample ? "The sample can't re-render: drag to try it, then start a take from your own video to keep it."
+    : "Drag an element on the frame, or focus it and use the arrow keys. Saving re-renders this clip on the video worker.";
+  const ov = $("#csOv");
+  ov.innerHTML = `<span class="cs-safe top" aria-hidden="true"></span><span class="cs-safe bot" aria-hidden="true"></span>` + Object.keys(CS_EL).filter(csElOn).map((k) => {
+    const d = CS_EL[k], p = csPos(k), sc = p.scale || 1;
+    const w = Math.min(0.96, d.w * sc), h = d.h * sc;
+    const left = k === "captions" ? 0.5 - w / 2 : p.x - w / 2, top = d.mid ? p.y - h / 2 : p.y;
+    const ring = k === "behind" && p.ring ? `<span class="cs-ring" aria-hidden="true"></span>` : "";
+    return `<button type="button" class="cs-el k-${k}" id="cs-el-${k}" data-testid="cs-el-${k}" data-el="${k}" aria-label="${d.label}: drag or use the arrow keys"
+      style="left:${(left * 100).toFixed(2)}%;top:${(top * 100).toFixed(2)}%;width:${(w * 100).toFixed(2)}%;height:${(h * 100).toFixed(2)}%">${ring}<span>${esc(d.text(c, CSP))}</span></button>`;
+  }).join("");
+  ov.querySelectorAll("[data-el]").forEach((b) => csDrag(b, c));
+  const fx = (v, label) => `<label class="cs-radio"><input type="radio" name="csHookFx" value="${v}" id="cs-hookfx-${v}" data-testid="cs-hookfx-${v}" ${CSP.hook_fx === v ? "checked" : ""}> ${label}</label>`;
+  const size = (k) => `<label class="cs-size">Size <input type="range" min="0.5" max="2" step="0.05" value="${csPos(k).scale || 1}" id="cs-size-${k}" data-testid="cs-size-${k}" data-size="${k}"></label>`;
+  const P = CSP.place;
+  $("#csElsList").innerHTML = `
+    <fieldset class="cs-el-row" data-testid="cs-el-row-hook"><legend>Hook look</legend>
+      ${fx("none", "None")}${fx("headline", "Headline")}${canBehind ? fx("behind", "Words behind you") : ""}
+      ${CSP.hook_fx === "headline" ? size("headline") : ""}
+      ${CSP.hook_fx === "behind" ? `${size("behind")}<label class="cs-check"><input type="checkbox" id="cs-ring" data-testid="cs-ring" ${P.behind && P.behind.ring ? "checked" : ""}> Orbit ring around you</label>
+        <label class="cs-text">Words (said in the hook) <input type="text" maxlength="40" id="cs-hook-words" data-testid="cs-hook-words" value="${esc(CSP.hook_words)}" placeholder="Strongest word"></label>` : ""}
+      ${!canBehind ? `<p class="muted xs">Words behind you isn't switched on on this server.</p>` : ""}
+    </fieldset>
+    <fieldset class="cs-el-row" data-testid="cs-el-row-logo"><legend>Logo</legend>
+      <label class="cs-check"><input type="checkbox" id="cs-logo-on" data-testid="cs-logo-on" ${(P.logo || {}).on !== false ? "checked" : ""}> Show the logo</label>${size("logo")}</fieldset>
+    <fieldset class="cs-el-row" data-testid="cs-el-row-tag"><legend>Brand words</legend>
+      <label class="cs-text">Your name, handle or tagline <input type="text" maxlength="40" id="cs-tag-text" data-testid="cs-tag-text" value="${esc((P.tag || {}).text || "")}" placeholder="@yourbrand"></label>${size("tag")}</fieldset>
+    <fieldset class="cs-el-row" data-testid="cs-el-row-captions"><legend>Caption band</legend><p class="muted xs">Drag it up or down. The face check still runs after the render.</p></fieldset>`;
+  const L = $("#csElsList");
+  L.querySelectorAll("input[name=csHookFx]").forEach((r) => (r.onchange = () => { CSP.hook_fx = r.value; csPlaceDraw(c); }));
+  L.querySelectorAll("[data-size]").forEach((r) => (r.oninput = () => { csSet(r.dataset.size, { scale: +r.value }); csPlaceRedrawOv(c); }));
+  const ring = $("#cs-ring"); if (ring) ring.onchange = () => { csSet("behind", { ring: ring.checked }); csPlaceRedrawOv(c); };
+  const hw = $("#cs-hook-words"); if (hw) hw.oninput = () => { CSP.hook_words = hw.value; csPlaceRedrawOv(c); };
+  $("#cs-logo-on").onchange = (e) => { csSet("logo", { on: e.target.checked }); csPlaceRedrawOv(c); };
+  $("#cs-tag-text").oninput = (e) => { csSet("tag", { text: e.target.value, on: true }); csPlaceRedrawOv(c); };
+  $("#csPlaceSave").disabled = sample;
+  $("#csPlaceSave").onclick = () => csPlaceSave(c);
+  $("#csPlaceReset").onclick = () => { CSP.place = {}; csPlaceDraw(c); $("#csPlaceMsg").textContent = "Back to the automatic places. Save to re-render."; };
+}
+// only the frame's boxes change while typing or dragging (the panel keeps focus)
+function csPlaceRedrawOv(c) {
+  const keep = document.activeElement && document.activeElement.id;
+  const list = $("#csElsList").innerHTML;
+  csPlaceDraw(c);
+  const el = keep && document.getElementById(keep);
+  if (el) { el.focus(); if (el.setSelectionRange && el.value != null) { const n = el.value.length; try { el.setSelectionRange(n, n); } catch (e) { /* range input */ } } }
+  return list;
+}
+function csSet(k, v) { CSP.place[k] = { ...(CSP.place[k] || {}), ...v }; }
+function csClampPos(k, x, y) {
+  const d = CS_EL[k], sc = csPos(k).scale || 1, w = Math.min(0.96, d.w * sc);
+  const out = {};
+  if (k !== "captions") out.x = +Math.max(Math.max(0.05, w / 2), Math.min(Math.min(0.95, 1 - w / 2), x)).toFixed(4);
+  out.y = +Math.max(k === "captions" ? 0.151 : CS_Y[0], Math.min(k === "captions" ? 0.765 : CS_Y[1] - (d.h * sc) * 0.2, y)).toFixed(4);
+  return out;
+}
+function csDrag(b, c) {
+  const k = b.dataset.el;
+  const move = (x, y) => { csSet(k, csClampPos(k, x, y)); const p = csPos(k), d = CS_EL[k], sc = p.scale || 1, w = Math.min(0.96, d.w * sc), h = d.h * sc;
+    b.style.left = `${((k === "captions" ? 0.5 - w / 2 : p.x - w / 2) * 100).toFixed(2)}%`; b.style.top = `${((d.mid ? p.y - h / 2 : p.y) * 100).toFixed(2)}%`; };
+  b.onpointerdown = (e) => {
+    e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add("drag");
+    const r = $("#csOv").getBoundingClientRect(), p = csPos(k), d = CS_EL[k];
+    const ox = (e.clientX - r.left) / r.width - (p.x ?? 0.5), oy = (e.clientY - r.top) / r.height - p.y;
+    b.onpointermove = (ev) => move((ev.clientX - r.left) / r.width - ox, (ev.clientY - r.top) / r.height - oy);
+    b.onpointerup = b.onpointercancel = () => { b.onpointermove = null; b.classList.remove("drag"); };
+    void d;
+  };
+  b.onkeydown = (e) => {
+    const st = e.shiftKey ? 0.05 : 0.01, p = csPos(k);
+    const dx = { ArrowLeft: -st, ArrowRight: st }[e.key] || 0, dy = { ArrowUp: -st, ArrowDown: st }[e.key] || 0;
+    if (!dx && !dy) return;
+    e.preventDefault(); move((p.x ?? 0.5) + dx, p.y + dy);
+  };
+}
+async function csPlaceSave(c) {
+  const t = T.take; if (!t || t.sample || !CSP) return;
+  const place = {};
+  Object.entries(CSP.place).forEach(([k, v]) => {
+    const keep = {}; Object.entries(v || {}).forEach(([a, b]) => { if (b !== undefined && b !== "") keep[a] = b; });
+    if (k === "captions") delete keep.x;
+    if (Object.keys(keep).length) place[k] = keep;
+  });
+  const body = { place: Object.keys(place).length ? place : null, hook_fx: CSP.hook_fx };
+  if (CSP.hook_fx === "behind") body.hook_words = (CSP.hook_words || "").trim();
+  $("#csPlaceSave").disabled = true; $("#csPlaceMsg").textContent = "Saving…";
+  try {
+    await api(`/api/takes/${encodeURIComponent(t.id)}/clips/${encodeURIComponent(c.id)}/layout`, { method: "POST", body });
+    $("#csPlaceMsg").textContent = "Saved. The clip is re-rendering with your places.";
+    csPlaceClose(); await tkShowIfOpen(t.id);
+  } catch (e) { $("#csPlaceMsg").textContent = e.message; }
+  finally { const b = $("#csPlaceSave"); if (b) b.disabled = !!(T.take && T.take.sample); }
 }
 // clips in the chosen order; i is the clip's number in the take (c1 = 1), shown on the row and in the editor
 function sortedClips(t) {
@@ -636,12 +777,13 @@ function clipRow(c, n, k) {
       ${placed.length ? `<p class="xs clip-placed" data-testid="clip-placed">${placed.map((p) => `${netMark(p.service)} ${esc(p.local)} · ${{ draft: "Buffer draft", scheduled: "scheduled in Buffer", queued: "in your Buffer queue", sent: "posted by Buffer" }[p.status] || "waiting for approval"}`).join("<br>")}</p>` : ""}
       ${failed.length ? `<p class="st err xs">${esc(failed[0].error)}</p>` : ""}
     </div>
-    <div class="clip-act">${c.url ? `<button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button>${T.take && !T.take.sample ? `<button type="button" class="btn2 sm" data-act="layout" data-clip="${esc(c.id)}" data-testid="clip-layout">${LAYOUT_IC}<span>Layout</span></button>` : ""}<a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>${T.take && !T.take.sample ? tkRate(c, n) : ""}` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
+    <div class="clip-act">${c.url ? `<button type="button" class="btn sm" data-act="studio" data-clip="${esc(c.id)}" data-testid="clip-studio-open" id="clip-${esc(c.id)}-studio">Edit in Clip studio</button><button type="button" class="btn2 sm" data-act="edit" data-clip="${esc(c.id)}" data-testid="clip-edit">${SCISSORS}<span>Trim &amp; caption</span></button>${T.take && !T.take.sample ? `<button type="button" class="btn2 sm" data-act="layout" data-clip="${esc(c.id)}" data-testid="clip-layout">${LAYOUT_IC}<span>Layout</span></button>` : ""}<a class="link xs" href="${escUrl(c.url)}" target="_blank" rel="noopener" data-testid="clip-open">Open video</a>${T.take && !T.take.sample ? tkRate(c, n) : ""}` : ""}${T.take && !T.take.sample ? `<button type="button" class="link xs danger" data-act="delete" data-clip="${esc(c.id)}" data-testid="clip-delete" aria-label="Delete clip ${n}">Delete</button>` : ""}</div>
   </li>`;
 }
 
 // ---------------------------------------------------------------- per-clip editor: Trim & caption (takeedit.js)
 function clipAct(act, id) {
+  if (act === "studio" && window.openClipStudio) window.openClipStudio(id);
   if (act === "edit" && window.openClipEditor) window.openClipEditor(id);
   if (act === "layout" && window.openClipLayout) window.openClipLayout(id);  // takelayout.js
   if (act === "delete") deleteClip(id);

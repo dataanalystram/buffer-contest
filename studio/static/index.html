@@ -31,6 +31,7 @@
 <link rel="stylesheet" href="/static/brandkit.css">
 <link rel="stylesheet" href="/static/ledger.css">
 <link rel="stylesheet" href="/static/onetake.css">
+<link rel="stylesheet" href="/static/clipstudio.css">
 <link rel="stylesheet" href="/static/chat.css">
 <link rel="stylesheet" href="/static/sidebars.css">
 <link rel="stylesheet" href="/static/loading.css">
@@ -89,6 +90,7 @@
         <div class="rail-more-head"><b>Menu</b><button type="button" class="btn2 sm" id="moreClose" data-testid="nav-more-close">Close</button></div>
         <button data-tab="library" data-testid="tab-library" style="order:2"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg><span>Library</span></button>
         <button data-tab="take" data-testid="tab-take" style="order:3"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M14 10l4-2.5v9L14 14"/><path d="M19.5 4.5v3M21 6h-3"/></svg><span>One take</span></button>
+        <button type="button" class="rail-studio" id="railStudio" data-testid="tab-studio" style="order:3"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg><span>Clip studio</span></button>
         <button data-tab="brand" data-testid="tab-brand" style="order:6"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.7 1.5-1.5 0-.9-.7-1.2-.7-2 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/></svg><span>Brand</span></button>
         <button data-tab="apps" data-testid="tab-apps" style="order:7"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></svg><span>AI apps</span></button>
         <button data-tab="activity" data-testid="tab-activity" class="rail-sep" style="order:8"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg><span>Activity</span></button>
@@ -381,7 +383,7 @@
           <div class="take-head" id="tkHead" data-testid="take-head"></div>
           <div class="seg tk-modes" role="tablist" aria-label="How to look at the clips" id="tkModes" hidden>
             <button type="button" role="tab" class="on" data-tkmode="list" id="tkModeList" data-testid="take-mode-list" aria-selected="true">All clips</button>
-            <button type="button" role="tab" data-tkmode="studio" id="tkModeStudio" data-testid="take-mode-studio" aria-selected="false">Clip studio</button>
+            <button type="button" role="tab" data-tkmode="studio" id="tkModeStudio" data-testid="take-mode-studio" aria-selected="false">Open Clip studio</button>
           </div>
           <section class="cs" id="tkStudio" data-testid="clip-studio" aria-label="Clip studio" hidden>
             <div class="cs-bar">
@@ -391,6 +393,7 @@
               <div class="cs-acts">
                 <button type="button" class="btn2 sm" id="csTrim" data-testid="cs-trim">Trim &amp; caption</button>
                 <button type="button" class="btn2 sm" id="csLayout" data-testid="cs-layout">Layout</button>
+                <button type="button" class="btn2 sm" id="csPlace" data-testid="cs-place" aria-pressed="false">Place elements</button>
                 <span id="csRate" class="cs-rate"></span>
                 <a class="link xs" id="csOpen" data-testid="cs-open" target="_blank" rel="noopener">Open video</a>
               </div>
@@ -398,7 +401,8 @@
             <div class="cs-grid">
               <aside class="cs-moments" aria-labelledby="csMomH"><h3 class="cs-h" id="csMomH">Moments</h3><ol id="csMoments" data-testid="cs-moments"></ol></aside>
               <div class="cs-stage">
-                <div class="cs-player"><video id="csVideo" data-testid="cs-video" playsinline controls preload="metadata"></video></div>
+                <div class="cs-player"><video id="csVideo" data-testid="cs-video" playsinline controls preload="metadata"></video>
+                  <div class="cs-ov" id="csOv" data-testid="cs-overlay" hidden aria-label="Elements on the frame: drag one, or focus it and use the arrow keys"></div></div>
                 <ul class="clip-applied cs-applied" id="csApplied" data-testid="cs-applied" aria-label="Edits applied to this clip"></ul>
               </div>
               <aside class="cs-side" aria-labelledby="csSideH">
@@ -407,6 +411,16 @@
                 <h3 class="cs-h">Checks</h3>
                 <ul class="cs-checks" id="csChecks" data-testid="cs-checks"></ul>
                 <div class="cs-needs" id="csNeeds" data-testid="cs-needs" hidden></div>
+                <section class="cs-els" id="csEls" data-testid="cs-elements" hidden aria-labelledby="csElsH">
+                  <h3 class="cs-h" id="csElsH">Elements</h3>
+                  <p class="muted xs" id="csElsNote" data-testid="cs-elements-note"></p>
+                  <div id="csElsList"></div>
+                  <div class="cs-els-foot">
+                    <button type="button" class="btn sm" id="csPlaceSave" data-testid="cs-place-save">Save and re-render</button>
+                    <button type="button" class="btn2 sm" id="csPlaceReset" data-testid="cs-place-reset">Back to automatic</button>
+                    <span class="muted xs" id="csPlaceMsg" data-testid="cs-place-msg" aria-live="polite"></span>
+                  </div>
+                </section>
               </aside>
             </div>
             <div class="cs-tl" data-testid="cs-timeline">
@@ -882,6 +896,97 @@
   <button type="button" class="btn2 sm" id="libPickClose" data-testid="library-picker-close">Close</button></span></div>
   <div class="lib-grid sm" id="libPickGrid" data-testid="library-picker-grid"></div>
 </dialog>
+
+<section id="cstudio" class="cst" data-testid="cstudio" aria-label="Clip studio" hidden>
+  <header class="cst-bar">
+    <button type="button" class="cst-ib" id="cstBack" data-testid="cst-back" aria-label="Back to the clips"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="cst-crumb"><span class="cst-mark">Clip studio</span><span class="cst-sep" aria-hidden="true">/</span><span id="cstTitle" data-testid="cst-title"></span></div>
+    <div class="cst-hist">
+      <button type="button" class="cst-ib" id="cstUndo" data-testid="cst-undo" aria-label="Undo" title="Undo (Ctrl+Z)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+      <button type="button" class="cst-ib" id="cstRedo" data-testid="cst-redo" aria-label="Redo" title="Redo (Ctrl+Shift+Z)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+      <span class="cst-state" id="cstState" data-testid="cst-state" aria-live="polite"></span>
+    </div>
+    <div class="cst-acts">
+      <button type="button" class="btn2 sm" id="cstDiscard" data-testid="cst-discard">Discard changes</button>
+      <button type="button" class="btn2 sm" id="cstSpread" data-testid="cst-spread">Send to Spread</button>
+      <button type="button" class="btn sm" id="cstRender" data-testid="cst-render">Render</button>
+    </div>
+  </header>
+  <div class="cst-body">
+    <aside class="cst-left" id="cstLeft" data-testid="cst-left">
+      <div class="cst-tabs" role="tablist" aria-label="Tools">
+        <button type="button" role="tab" data-ltab="clips" id="cstTabClips" data-testid="cst-tab-clips" aria-selected="true">Clips</button>
+        <button type="button" role="tab" data-ltab="script" id="cstTabScript" data-testid="cst-tab-script" aria-selected="false">Script</button>
+        <button type="button" role="tab" data-ltab="styles" id="cstTabStyles" data-testid="cst-tab-styles" aria-selected="false">Styles</button>
+        <button type="button" role="tab" data-ltab="brand" id="cstTabBrand" data-testid="cst-tab-brand" aria-selected="false">Brand</button>
+      </div>
+      <div class="cst-lp" data-lpane="clips"><ol class="cst-clips" id="cstClips" data-testid="cst-clips"></ol></div>
+      <div class="cst-lp" data-lpane="script" hidden><p class="cst-hint">Click a word to jump there. Shift-click or drag to select a phrase, then ask the director.</p><div class="cst-script" id="cstScript" data-testid="cst-script"></div></div>
+      <div class="cst-lp" data-lpane="styles" hidden><div class="cst-styles" id="cstStyles" data-testid="cst-styles"></div></div>
+      <div class="cst-lp" data-lpane="brand" hidden><div id="cstBrand" data-testid="cst-brand"></div></div>
+    </aside>
+    <div class="cst-split" id="cstSplitL" data-testid="cst-split-left" role="separator" aria-orientation="vertical" aria-label="Resize the tools panel" tabindex="0"></div>
+    <div class="cst-center">
+      <div class="cst-ctop">
+        <span class="cst-ratio" data-testid="cst-ratio">9:16</span>
+        <label class="cst-tog"><input type="checkbox" id="cstSafe" data-testid="cst-safe" checked> Safe zones</label>
+        <label class="cst-tog"><input type="checkbox" id="cstOutlines" data-testid="cst-outlines" checked> Elements</label>
+        <span class="cst-banner" id="cstBanner" data-testid="cst-banner" hidden>Preview of your draft. Render to burn it in.</span>
+      </div>
+      <div class="cst-stagewrap" id="cstStageWrap">
+        <div class="cst-stage" id="cstStage" data-testid="cst-stage">
+          <video id="cstVideo" data-testid="cst-video" playsinline preload="auto"></video>
+          <div class="cst-safe" id="cstSafeZ" aria-hidden="true"><span class="t"></span><span class="b"></span><span class="r"></span></div>
+          <div class="cst-layers" id="cstLayers" data-testid="cst-layers"></div>
+          <div class="cst-busy" id="cstBusy" data-testid="cst-busy" hidden><span class="spin" aria-hidden="true"></span><span>Rendering on the video worker…</span></div>
+        </div>
+      </div>
+      <div class="cst-transport">
+        <button type="button" class="cst-ib" id="cstFrameBack" data-testid="cst-frame-back" aria-label="Back one frame"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg></button>
+        <button type="button" class="cst-play" id="cstPlay" data-testid="cst-play" aria-label="Play"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg></button>
+        <button type="button" class="cst-ib" id="cstFrameFwd" data-testid="cst-frame-fwd" aria-label="Forward one frame"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg></button>
+        <span class="cst-time" id="cstTime" data-testid="cst-time">0:00.0 / 0:00.0</span>
+        <button type="button" class="cst-ib" id="cstMute" data-testid="cst-mute" aria-label="Mute" aria-pressed="false"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7"/></svg></button>
+      </div>
+    </div>
+    <div class="cst-split" id="cstSplitR" data-testid="cst-split-right" role="separator" aria-orientation="vertical" aria-label="Resize the director panel" tabindex="0"></div>
+    <aside class="cst-right" id="cstRight" data-testid="cst-right">
+      <div class="cst-tabs" role="tablist" aria-label="Director and inspector">
+        <button type="button" role="tab" data-rtab="director" id="cstTabDir" data-testid="cst-tab-director" aria-selected="true">Director</button>
+        <button type="button" role="tab" data-rtab="inspect" id="cstTabIns" data-testid="cst-tab-inspector" aria-selected="false">Inspector</button>
+        <button type="button" role="tab" data-rtab="review" id="cstTabRev" data-testid="cst-tab-review" aria-selected="false">Review</button>
+      </div>
+      <div class="cst-rp" data-rpane="director">
+        <ol class="cst-log" id="cstLog" data-testid="cst-log" aria-live="polite"></ol>
+        <form class="cst-ask" id="cstAsk" data-testid="cst-ask">
+          <div class="cst-selchip" id="cstSel" data-testid="cst-selection" hidden></div>
+          <div class="cst-sugg" id="cstSugg" data-testid="cst-suggestions"></div>
+          <div class="cst-askrow"><textarea id="cstAskIn" data-testid="cst-ask-input" rows="2" maxlength="500" placeholder="Tell the director what to change…" aria-label="Tell the director what to change"></textarea>
+          <button type="submit" class="btn sm" id="cstAskGo" data-testid="cst-ask-go">Apply</button></div>
+        </form>
+      </div>
+      <div class="cst-rp" data-rpane="inspect" hidden><div id="cstInspect" data-testid="cst-inspector"></div></div>
+      <div class="cst-rp" data-rpane="review" hidden><div id="cstReview" data-testid="cst-review"></div></div>
+    </aside>
+  </div>
+  <div class="cst-hsplit" id="cstSplitB" data-testid="cst-split-bottom" role="separator" aria-orientation="horizontal" aria-label="Resize the timeline" tabindex="0"></div>
+  <section class="cst-tl" id="cstTl" data-testid="cst-timeline" aria-label="Timeline">
+    <div class="cst-tlbar">
+      <span class="cst-h">Timeline</span>
+      <span class="cst-hint" id="cstTlHint"></span>
+      <label class="cst-zoom">Zoom <input type="range" id="cstZoom" data-testid="cst-zoom" min="8" max="160" step="1" value="24" aria-label="Timeline zoom"></label>
+      <button type="button" class="btn2 xs" id="cstFit" data-testid="cst-fit">Fit</button>
+    </div>
+    <div class="cst-tlscroll" id="cstTlScroll">
+      <div class="cst-tlin" id="cstTlIn">
+        <div class="cst-ruler" id="cstRuler" data-testid="cst-ruler"></div>
+        <div class="cst-tracks" id="cstTracks" data-testid="cst-tracks"></div>
+        <div class="cst-ph" id="cstPh" data-testid="cst-playhead" aria-hidden="true"></div>
+      </div>
+    </div>
+  </section>
+  <div class="cst-cursor" id="cstCursor" data-testid="cst-agent-cursor" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 3l16 7-7 2-2 7z"/></svg><span>Director</span></div>
+</section>
 </main>
 
 <footer class="foot"><div class="wrap foot-in">
@@ -915,6 +1020,7 @@
 <script src="/static/planner.js"></script>
 <script src="/static/take.js"></script>
 <script src="/static/takeedit.js"></script>
+<script src="/static/clipstudio.js"></script>
 <script src="/static/takelayout.js"></script>
 <script src="/static/tour.js"></script>
 <script src="/static/connect.js"></script>
