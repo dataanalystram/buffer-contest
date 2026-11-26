@@ -14,7 +14,8 @@ screen recording or a split (text would cover what's shown), closer than MIN_GAP
 no captions of ours (the source keeps its own). Each choice and each refusal carries a reason for the clip's meta.
 
 The effect replaces the caption line it covers (same words, same face-safe band), so nothing new can sit on a face.
-No new dependency: plain ASS override tags (``\\t``, ``\\fscx``, ``\\fad``) on the captions' own style.
+No new dependency: plain ASS override tags (``\\t``, ``\\fscx``, ``\\fad``) on the captions' own style. Each effect gets a
+quiet sound accent made by ffmpeg's own generators (``sfx_graph``), mixed well under the voice.
 """
 from __future__ import annotations
 
@@ -214,3 +215,31 @@ def events(fx: list[dict], y_at, W: int, accent_ass: str, text_ass: str, upper: 
             out.append(f"Dialogue: 1,{_time(f['s'])},{_time(f['e'])},Cap,,0,0,0,,{{\\an5\\pos({W // 2},{y})\\fad(60,200)"
                        f"\\fscx{big}\\fscy{big}}}{''.join(body)}")
     return out
+
+
+# ---------------------------------------------------------------- sound accents
+SFX_DB = -20.0          # under the voice: felt more than heard
+
+
+def sfx_graph(fx: list[dict], src: str, out: str) -> list[str]:
+    """ffmpeg filtergraph lines mixing a short accent under each motion moment into the audio `src` -> `out`. Made from
+    lavfi generators (our own sound, nothing downloaded or licensed): a stat gets a soft rising whoosh into a tick, a
+    kinetic line a low, short thump on its first word."""
+    parts, labels = [], []
+    g = 10 ** (SFX_DB / 20)
+    for i, f in enumerate(fx[:4]):
+        ms = max(0, int(float(f["s"]) * 1000))
+        if f.get("kind") == "stat":
+            parts.append(f"anoisesrc=d=0.32:c=pink:a=1,highpass=f=900,lowpass=f=6000,afade=t=in:d=0.24,afade=t=out:st=0.24:d=0.08,"
+                         f"aformat=sample_rates=44100:channel_layouts=stereo,volume={g * 4.5:.4f},adelay={max(0, ms - 240)}|{max(0, ms - 240)}[sx{i}a]")
+            parts.append(f"sine=f=1760:d=0.06,afade=t=out:d=0.06,aformat=sample_rates=44100:channel_layouts=stereo,"
+                         f"volume={g * 5.0:.4f},adelay={ms + 80}|{ms + 80}[sx{i}b]")
+            labels += [f"[sx{i}a]", f"[sx{i}b]"]
+        else:
+            parts.append(f"sine=f=70:d=0.22,afade=t=out:st=0.03:d=0.19,aformat=sample_rates=44100:channel_layouts=stereo,"
+                         f"volume={g * 9.0:.4f},adelay={ms}|{ms}[sx{i}a]")
+            labels.append(f"[sx{i}a]")
+    if not labels:
+        return [f"{src}anull{out}"]
+    parts.append(f"{src}{''.join(labels)}amix=inputs={1 + len(labels)}:duration=first:normalize=0{out}")
+    return parts

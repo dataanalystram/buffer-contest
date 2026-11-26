@@ -406,8 +406,9 @@ def pins_from(overrides) -> dict[int, dict]:
 # ---------------------------------------------------------------------- render
 def render_body_cmd(path: str, start: float, dur: float, shots: list[dict], src: tuple[int, int], ass_path: str | None,
                     logo_png: str | None, out: str, tmp: Path, accent: str, brand_bg: str, audio: str | None,
-                    cover: str | None = None, cover_s: float = 0.0, end: str | None = None, end_s: float = 0.0) -> list[str]:
-    """The ffmpeg arguments for [cover] + body + [end card] in one encode."""
+                    cover: str | None = None, cover_s: float = 0.0, end: str | None = None, end_s: float = 0.0,
+                    sfx: list[dict] | None = None) -> list[str]:
+    """The ffmpeg arguments for [cover] + body + [end card] in one encode. sfx: [{kind, s}] sound accents (body s)."""
     ins = []
     idx = 0
     if cover:
@@ -442,7 +443,12 @@ def render_body_cmd(path: str, start: float, dur: float, shots: list[dict], src:
         parts.append(f"{cur}[{li}:v]overlay=0:0,format=yuv420p[body2]")
         cur = "[body2]"
     parts.append(f"{cur}setsar=1[bodyv]")
-    parts.append(f"[{si}:a]{audio}[bodya]" if audio else f"anullsrc=r=44100:cl=stereo,atrim=0:{dur:.3f}[bodya]")
+    if audio and sfx:  # sound accents under the motion moments (studio/media/motion.sfx_graph): made here, no files
+        from .. import motion
+        parts.append(f"[{si}:a]{audio}[bodya0]")
+        parts += motion.sfx_graph(sfx, "[bodya0]", "[bodya]")
+    else:
+        parts.append(f"[{si}:a]{audio}[bodya]" if audio else f"anullsrc=r=44100:cl=stereo,atrim=0:{dur:.3f}[bodya]")
     seq = []
     if cover:
         parts.append(f"[{ci}:v]scale={OUT_W}:{OUT_H},setsar=1,fps=30,format=yuv420p[cv]")
@@ -492,7 +498,8 @@ def render(path: str, start: float, end: float, words: list[dict], src: dict, ou
         apply_punch(plan, words, start, src, punch_in, punch_emph)
         t1 = time.time()
         _ff(render_body_cmd(path, start, end - start, plan["shots"], (int(src.get("width") or 1920), int(src.get("height") or 1080)),
-                            ass_path, logo_png, out, tmp, accent, brand_bg, audio, cover, cover_s, end_card, end_s))
+                            ass_path, logo_png, out, tmp, accent, brand_bg, audio, cover, cover_s, end_card, end_s,
+                            sfx=[f for f in (plan.get("motion") or {}).get("fx") or [] if ass]))
         plan["timings"] = {**plan.get("timings", {}), "render": round(time.time() - t1, 2), "total": round(time.time() - t0, 2)}
         plan["ass"] = ass
         return plan

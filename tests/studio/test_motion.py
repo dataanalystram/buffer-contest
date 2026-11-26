@@ -43,3 +43,21 @@ def test_money_and_multipliers(monkeypatch):
     monkeypatch.setenv("HQ_MOTION", "1")
     assert motion.plan(W("It made $5 million last year.", 5), 0.0)["fx"][0]["text"] == "$5 MILLION"
     assert motion.plan(W("It is 10x faster now.", 5), 0.0)["fx"][0]["text"] == "10X"
+
+
+def test_sound_accents_are_made_by_ffmpeg_and_sit_well_under_the_voice(tmp_path):
+    import shutil
+    import subprocess
+    import pytest
+    if not shutil.which("ffmpeg"):
+        pytest.skip("needs FFmpeg")
+    g = ";".join(motion.sfx_graph([{"kind": "stat", "s": 0.5}, {"kind": "line", "s": 1.5}], "[0:a]", "[o]"))
+    out = tmp_path / "sfx.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo:d=2.5", "-filter_complex", g,
+                    "-map", "[o]", "-t", "2.5", str(out)], check=True)
+    for ss, t in (("0.2", "0.35"), ("1.5", "0.25")):
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", ss, "-t", t, "-i", str(out), "-af", "volumedetect", "-f", "null", "-"],
+                           capture_output=True, text=True)
+        peak = float(r.stderr.split("max_volume:")[1].split("dB")[0])
+        assert -30 < peak < -15            # there, and well under a voice normalised to -14 LUFS
+    assert motion.sfx_graph([], "[x]", "[y]") == ["[x]anull[y]"]
