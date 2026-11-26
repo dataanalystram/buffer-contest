@@ -108,6 +108,8 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         tg = place.get("tag") or {}
         if tg.get("on") is not False and tg.get("text"):
             stills.place_tag(ov, tg["text"], p, kit, tg)
+        if m.get("credit"):   # a video that isn't yours: the credit line stays on screen, small, under the top bar
+            stills.place_tag(ov, str(m["credit"]), p, kit, {"x": 0.5, "y": 0.062, "scale": 0.6}, limit=100)
         ov.save(tmp / "logo.png")
         preset = captions_ass.clean_preset(m.get("caption_preset")) or captions_ass.DEFAULT_PRESET
         out = tmp / "clip.mp4"
@@ -134,7 +136,7 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         modes = [s["layout"] for s in plan["shots"]]
         ys = [captions_ass.band_y(s, H) for s in plan["sidecar"]] if plan.get("ass") else []
         meta = {"type": "video", "width": W, "height": H, "duration": round(info["duration"], 2), "params": stills._pub(p),
-                "has_logo": True, "has_end_card": has_end, "headline": m.get("hook", ""), "credit": "own video",
+                "has_logo": True, "has_end_card": has_end, "headline": m.get("hook", ""), "credit": m.get("credit") or "own video",
                 "cover_offset_ms": int(take.COVER_SECS * 1000 / 2),
                 "layout": "track" if set(modes) == {"track"} else ("mixed" if len(set(modes)) > 1 else modes[0]),
                 "shots": [{"start": round(start + s["start"], 3), "end": round(start + s["end"], 3), "mode": s["layout"]} for s in plan["shots"]],

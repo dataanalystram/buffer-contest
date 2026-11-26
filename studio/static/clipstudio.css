@@ -2,7 +2,7 @@
    only; hairlines, no gradients or glass; the accent marks only what needs a person (Needs a look, Looks fine, use it).
    The agent's cursor and highlights use the focus blue so they never read as "a person must act". */
 body.cst-on{overflow:hidden}
-.cst{position:fixed;inset:0;z-index:60;background:var(--paper);color:var(--ink);display:grid;
+.cst{position:fixed;inset:0;z-index:300;background:var(--paper);color:var(--ink);display:grid;
   --cst-left:272px;--cst-right:340px;--cst-tl:clamp(170px,27vh,280px);
   grid-template-rows:48px minmax(0,1fr) 6px var(--cst-tl);grid-template-columns:minmax(0,1fr);font-size:13px;line-height:1.4}
 .cst *{box-sizing:border-box}
@@ -177,13 +177,13 @@ body.cst-on{overflow:hidden}
 .cst-ph{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--ink);z-index:3;pointer-events:none;margin-left:-1px}
 .cst-ph::before{content:"";position:absolute;top:0;left:-6px;border:5px solid transparent;border-top:7px solid var(--ink)}
 /* the agent */
-.cst-cursor{position:fixed;left:0;top:0;z-index:70;pointer-events:none;display:flex;align-items:flex-start;gap:2px;opacity:0;
+.cst-cursor{position:fixed;left:0;top:0;z-index:320;pointer-events:none;display:flex;align-items:flex-start;gap:2px;opacity:0;
   transition:transform 280ms cubic-bezier(.2,.7,.2,1),opacity 160ms}
 .cst-cursor.on{opacity:1}
 .cst-cursor svg{width:18px;height:18px;fill:var(--focus);stroke:#fff;stroke-width:1.5;margin:-2px 0 0 -2px}
 .cst-cursor span{font-size:11px;font-weight:700;color:#fff;background:var(--focus);border-radius:4px;padding:1px 6px;margin-top:12px}
 .cst-agent-hi{outline:2px solid var(--focus)!important;outline-offset:2px}
-.cst-flash{position:fixed;z-index:69;pointer-events:none;border:2px solid var(--focus);border-radius:4px;background:color-mix(in srgb,var(--focus) 14%,transparent);animation:cstFlash 900ms ease-out forwards}
+.cst-flash{position:fixed;z-index:310;pointer-events:none;border:2px solid var(--focus);border-radius:4px;background:color-mix(in srgb,var(--focus) 14%,transparent);animation:cstFlash 900ms ease-out forwards}
 @keyframes cstFlash{0%{opacity:0}20%{opacity:1}100%{opacity:0}}
 /* rail */
 .rail .rail-studio{display:flex}
@@ -192,14 +192,23 @@ body.cst-on{overflow:hidden}
 @media (max-width:1100px){.cst{--cst-left:0px}.cst-left{display:none}#cstSplitL{display:none}.cst-body{grid-template-columns:0 0 minmax(0,1fr) 6px var(--cst-right)}}
 /* phone and small tablet: preview first, then the panels, then the timeline; nothing shrinks to unreadable */
 @media (max-width:760px){
-  .cst{display:flex;flex-direction:column;overflow:auto}
+  .cst{display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
+  .cst>*{flex:none;min-width:0}
   .cst-bar{flex-wrap:wrap;height:auto;padding:6px 8px;gap:6px}
-  .cst-crumb{order:1;flex-basis:calc(100% - 44px)}.cst-hist{order:2}.cst-acts{order:3;width:100%}.cst-acts>*{flex:1}
+  .cst-crumb{order:1;flex:1 1 calc(100% - 40px);min-width:0}.cst-crumb #cstTitle{min-width:0}
+  .cst-mark{display:none}.cst-sep{display:none}
+  .cst-hist{order:2;width:100%}.cst-acts{order:3;width:100%}.cst-acts>*{flex:1 1 0;min-width:0;padding:0 6px}
   .cst-body{display:flex;flex-direction:column}
-  .cst-left{display:flex;max-height:none}.cst-split,.cst-hsplit{display:none}
-  .cst-center{order:-1}.cst-stagewrap{height:62vh;flex:none}
-  .cst-right{min-height:360px}
-  .cst-tl{min-height:240px}
+  .cst-body>*{flex:none;min-width:0}
+  .cst-split,.cst-hsplit{display:none}
+  .cst-center{order:-1}.cst-ctop{flex-wrap:wrap;height:auto;padding:6px 10px;gap:10px}.cst-banner{margin-left:0;flex-basis:100%}
+  .cst-stagewrap{height:min(64vh,560px);flex:none}
+  .cst-left{display:flex;order:1;max-height:340px}
+  .cst-right{order:2;min-height:420px}
+  .cst-tl{min-height:250px}
   .cst-clips{display:flex;overflow-x:auto;gap:6px}.cst-clips li{flex:0 0 72%}
+  .cst-zoom input{width:80px}
 }
 @media (prefers-reduced-motion:reduce){.cst-cursor{transition:opacity 80ms}.cst-flash{animation-duration:1ms}.cst-layer{transition:none}}
+body.cst-on #toast{z-index:330}
+.cst-askrow textarea{flex:1;min-width:0;width:auto}.cst-askrow .btn{flex:none}

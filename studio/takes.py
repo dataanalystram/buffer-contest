@@ -317,7 +317,10 @@ class Takes(TakeBin, TakeControl):
                 credit = f"Video: {host}"[:160]                  # person still confirms the rights in the Inbox
         if not owns and not credit:
             raise ActionError("Add a credit line for a video you didn't make (credit: 'Video: @handle on YouTube').")
-        style = "opus" if (platform_url or str(body.get("style") or "").lower() in ("opus", "opus_clip", "shorts")) else "take"
+        # A pasted video link gets the same One take pipeline as an upload (recipe, caption gallery, motion, cold open,
+        # headline, trims), with the credit line kept on every clip. The shorts-style renderer (hook box, one render per
+        # channel ratio) is still there on request: style "opus" / "shorts".
+        style = "opus" if str(body.get("style") or "").lower() in ("opus", "opus_clip", "shorts") else "take"
         trim_pauses = body.get("trim_pauses")
         if trim_pauses is not None and not isinstance(trim_pauses, bool):
             raise ActionError("trim_pauses is true or false.")
@@ -1804,6 +1807,9 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
         own = source_captions(src, c)
         if own:
             c["_source_captions"] = own
+        if spec.get("credit") and not (spec.get("source") or spec.get("source_upload") and not spec.get("platform_url")
+                                       and not spec.get("source_url")):
+            c["credit"] = str(spec["credit"])[:160]   # someone else's video: its credit stays on screen all clip long
         data, cover, meta = take.render_clip(src, c, c["words"], c["faces"], spec.get("scenes") or [], spec["src"],
                                              spec["kit"], spec["params"], logo=logo)
         meta["ocr"] = {k: seen.get(k) for k in ("ok", "version", "text", "readable", "watermarks", "ms", "skipped")}

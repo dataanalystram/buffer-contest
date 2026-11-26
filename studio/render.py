@@ -162,10 +162,10 @@ def place_logo(canvas: Image.Image, logo: Image.Image | None, p: dict, kit: dict
     return True
 
 
-def place_tag(canvas: Image.Image, text: str, p: dict, kit: dict, at: dict | None = None) -> tuple | None:
+def place_tag(canvas: Image.Image, text: str, p: dict, kit: dict, at: dict | None = None, limit: int = 40) -> tuple | None:
     """The brand tag (the edit room): the brand's own words (name, handle, tagline) in a pill in the brand's colours, where
     the person put it (x = centre, y = top, shares of the frame; default bottom centre above the platform UI)."""
-    text = " ".join(str(text or "").split())[:40]
+    text = " ".join(str(text or "").split())[:limit]
     if not text:
         return None
     at = at or {}

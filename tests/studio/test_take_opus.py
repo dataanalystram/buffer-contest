@@ -37,7 +37,7 @@ def test_a_platform_link_needs_rights_and_gets_a_credit(human, app, monkeypatch)
     sent = _github(app, monkeypatch)
     r = human.post("/api/takes", json={"url": YT})
     assert r.status_code == 400 and "rights_confirmed" in r.json()["error"]
-    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "split this into 5 shorts"}).json()
+    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "split this into 5 shorts", "style": "opus"}).json()
     assert t["style"] == "opus" and t["input"]["platform_url"] == YT and t["input"]["url"] == ""
     assert t["input"]["credit"] == "Video: Buffer on YouTube" and t["input"]["count"] == 5
     assert t["input"]["ratios"] == ["9:16"]                                     # ch_ig only takes video here -> Reel
@@ -97,7 +97,7 @@ def test_opus_take_renders_every_ratio_and_placement_uses_the_channels_ratio(hum
     house = app.state.house
     monkeypatch.setattr(house.takes, "_channels",
                         lambda a, ids: [c for c in house.studio.channels(a) if c["id"] in ("ch_ig", "ch_li")])
-    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "find the best moments"}).json()
+    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "find the best moments", "style": "opus"}).json()
     assert t["input"]["ratios"] == ["9:16", "4:5"]
     jid, _, _, jt = sent[0]
     w = TestClient(app, base_url="https://hq.test")
@@ -151,3 +151,11 @@ def test_ui_shows_why_each_moment_was_picked_and_asks_for_rights_inline():
     hj = (Path(takes.__file__).parent / "static" / "house.js").read_text()
     assert "agent-rights-yes" in hj and "rights_confirmed: true" in hj and "window.openTake" in hj
     assert "window.confirm" not in hj
+
+
+def test_a_platform_link_gets_the_full_one_take_pipeline_by_default(human, app, monkeypatch):
+    _hosts(monkeypatch)
+    _github(app, monkeypatch)
+    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "best moments"}).json()
+    assert t["style"] == "take" and t["input"]["platform_url"] == YT       # recipe, captions, motion, cold open apply
+    assert t["input"]["credit"] == "Video: Buffer on YouTube"              # the credit line is kept (drawn on every clip)

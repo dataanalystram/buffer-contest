@@ -13,7 +13,7 @@ def _landed(human, app, fake, monkeypatch, services=("ch_ig",)):
     monkeypatch.setattr(house.takes, "_channels", lambda a, ids: [c for c in house.studio.channels(a) if c["id"] in services])
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.delenv("SUBQ_API_KEY", raising=False)
-    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "best moments"}).json()
+    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "best moments", "style": "opus"}).json()
     jid, _, _, jt = sent[0]
     w = TestClient(app, base_url="https://hq.test")
     w.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt})
@@ -92,7 +92,7 @@ def test_a_flagged_4x5_version_flags_the_clip(human, app, fake, monkeypatch):
     sent = _github(app, monkeypatch)
     house = app.state.house
     monkeypatch.setattr(house.takes, "_channels", lambda a, ids: [c for c in house.studio.channels(a) if c["id"] in ("ch_ig", "ch_li")])
-    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "best moments"}).json()
+    t = human.post("/api/takes", json={"url": YT, "rights_confirmed": True, "rights_attested": True, "prompt": "best moments", "style": "opus"}).json()
     jid, _, _, jt = sent[0]
     w = TestClient(app, base_url="https://hq.test")
     w.get(f"/api/worker/jobs/{jid}", headers={"x-job-token": jt})
