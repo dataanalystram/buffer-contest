@@ -80,6 +80,10 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
         fs_place = facesafe.place_track_captions(plan["sidecar"], plan["shots"], sw, sh, m.get("_ocr_frames"),
                                                  crop_at=crop_at_fn(plan["shots"]), crop_x=crop_x_fn(plan["shots"]))
         moved = fs_place["moved_for_text"]
+        cap_at = ((m.get("place") or {}).get("captions") or {}) if isinstance(m.get("place"), dict) else {}
+        if cap_at.get("y") is not None:  # the person moved the caption band: their place wins (the face-safe QA still checks)
+            for seg in plan["sidecar"]:
+                seg["caption_y"] = int(round(float(cap_at["y"]) * captions_ass.REF_H))
         # cover: the sharpest early frame, framed like the shot it falls in
         ct = take.pick_cover_time(path, m, faces, tmp)
         shot = next((s for s in plan["shots"] if s["start"] <= ct - start < s["end"]), plan["shots"][0])
@@ -96,8 +100,14 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
             ec, _ = stills.end_card(kit, p, logo=logo, ratio="9:16")
             Image.open(io.BytesIO(ec)).convert("RGB").resize((W, H), Image.LANCZOS).save(tmp / "end.jpg", quality=92)
             end_jpg = str(tmp / "end.jpg")
+        place = m.get("place") if isinstance(m.get("place"), dict) else {}   # the edit room (take_layout.clean_place)
         ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        stills.place_logo(ov, stills.load_logo(logo), p, kit)
+        lp = place.get("logo") or {}
+        if lp.get("on") is not False:
+            stills.place_logo(ov, stills.load_logo(logo), {**p, "_logo_at": lp}, kit)
+        tg = place.get("tag") or {}
+        if tg.get("on") is not False and tg.get("text"):
+            stills.place_tag(ov, tg["text"], p, kit, tg)
         ov.save(tmp / "logo.png")
         preset = captions_ass.clean_preset(m.get("caption_preset")) or captions_ass.DEFAULT_PRESET
         out = tmp / "clip.mp4"
@@ -107,7 +117,9 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
                          end_s=take.END_SECS if has_end else 0.0, punch_in=m.get("punch_in", True) is not False,
                          punch_emph=m.get("_punch_emph"), captions=not m.get("_source_captions"),
                          headline=(m.get("hook") or None) if m.get("hook_fx") == "headline" else None,
-                         motion_ok=m.get("motion") is not False)
+                         motion_ok=m.get("motion") is not False,
+                         headline_at=((m.get("place") or {}).get("headline") if isinstance(m.get("place"), dict) else None),
+                         fx_picks=m.get("fx") if isinstance(m.get("fx"), list) else None)
         # no captions of ours (the source keeps its own): nothing of ours can cover the face, so the QA has no line to check
         fs_qa = facesafe.main_qa(str(out), plan["sidecar"] if plan.get("ass") else [],
                                  fs_place if plan.get("ass") else {**fs_place, "blocked": []}, offset=take.COVER_SECS)

@@ -202,6 +202,9 @@ from . import take_layout as _take_layout  # noqa: E402  get_clip_layout, set_cl
 
 TOOLS += _take_layout.TOOLS
 READ_ONLY |= _take_layout.READ_ONLY
+from . import clip_draft as _clip_draft  # noqa: E402  Clip Studio drafts + the AI director (get/edit/direct/render)
+TOOLS += _clip_draft.TOOLS
+READ_ONLY |= _clip_draft.READ_ONLY
 from . import thread_bin as _thread_bin  # noqa: E402  list_threads, get_thread, delete_thread, restore_thread, list/purge_thread_bin
 
 TOOLS += _thread_bin.TOOLS
@@ -427,6 +430,9 @@ def call_tool(studio: Studio, actor: Actor, name: str, args: dict) -> Any:
     if name == "get_limits":
         return {**studio.limits(actor), "plan": studio.plan(actor)}
     extra = _take_layout.call_tool(studio, actor, name, args)
+    if extra is not NotImplemented:
+        return extra
+    extra = _clip_draft.call_tool(studio, actor, name, args)
     if extra is not NotImplemented:
         return extra
     extra = _brand_routes.call_tool(studio, actor, name, args)

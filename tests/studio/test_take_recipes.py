@@ -216,3 +216,19 @@ def test_caption_styles_are_offered_with_a_real_preview_each():
     assert recipes.recommend_caption("auto", {"heading_font": "Playfair Display serif"}, "")["id"] == "cinematic"
     ass = captions_ass.build([{"w": "Hello", "s": 0.0, "e": 0.4}, {"w": "there", "s": 0.5, "e": 0.9}], 0.0, preset="typewriter")
     assert "\\alpha&HFF&\\t(500,580,\\alpha&H00&)" in ass   # typewriter: a word (and its outline) appears when said
+
+
+def test_edit_room_place_is_checked_and_moves_the_headline():
+    import pytest
+    from studio.actions import ActionError
+    from studio.media import captions_ass
+    from studio.take_layout import clean_place
+    assert clean_place({"headline": {"x": 0.3, "y": 0.0, "scale": 9}, "tag": {"text": " @huh  queue ", "on": True}}) == \
+        {"headline": {"x": 0.3, "y": 0.04, "scale": 2.0}, "tag": {"text": "@huh queue", "on": True}}
+    for bad in ({"sticker": {}}, {"captions": {"x": 0.5}}, {"logo": {"on": "yes"}}, {"tag": {"text": "x" * 41}}, []):
+        with pytest.raises(ActionError):
+            clean_place(bad)
+    pr = captions_ass.PRESETS[captions_ass.DEFAULT_PRESET]
+    ev = captions_ass.headline_events("We shipped it in two days", pr, captions_ass.DEFAULT_PRESET, 1080, 1920, {}, 1.0,
+                                      at={"x": 0.3, "y": 0.5})
+    assert "\\pos(324,960)" in ev[0]

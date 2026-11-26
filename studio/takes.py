@@ -801,6 +801,8 @@ class Takes(TakeBin, TakeControl):
                           "hook_mode": c.get("hook_mode"),
                           "hook_fx": c.get("hook_fx") or ("headline" if run["input"].get("headline") else "none"),
                           "hook_words": c.get("hook_words") or "",
+                          "fx": c.get("fx") if isinstance(c.get("fx"), list) else None,  # edit room picks (None: automatic)
+                          "place": c.get("place") or {},  # the edit room: where each element sits (take_layout.clean_place)
                           "smart_layout": take_layout.smart_layout_on(self.h, a),
                           "punch_in": run["input"].get("punch_in", True) is not False,  # takes made before the switch: on
                           "variant_ids": [f"{c['id']}@{r}" for r in ratios[1:]] if run["input"].get("style") == "opus" else [],
@@ -1811,7 +1813,8 @@ def render_spec_clip(src: str, spec: dict, c: dict, logo: bytes | None):
             from .media import behind
             if behind.enabled():
                 data, meta["hook_fx"] = behind.on_clip(data, c.get("hook") or "", c.get("hook_words"), spec.get("kit"),
-                                                       start=take.COVER_SECS, layout_plan=meta.get("layout_plan"))
+                                                       start=take.COVER_SECS, layout_plan=meta.get("layout_plan"),
+                                                       place=(c.get("place") or {}).get("behind"))
             else:
                 meta["hook_fx"] = {"on": False, "why": "Words behind you isn't switched on on this server (HQ_HOOK_BEHIND)."}
         yield c["id"], data, cover, meta

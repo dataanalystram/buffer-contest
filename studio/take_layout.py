@@ -24,6 +24,51 @@ STYLE_CHOICES = ("pip", "stack")
 HOOK_MODES = ("opener", "keep")
 HOOK_FX = ("none", "behind", "headline")  # headline: the hook line boxed over the first 2.8 s (any server)  # One take clips from your upload: "behind" = Words behind you (beta, HQ_HOOK_BEHIND=1)  # clips from a link: the hook + credit as a 3 s opener (default) or on screen all clip long
 MAX_SCENES = 200
+# Place (the edit room, owner ask 26 Nov 2026): where each element sits on the 1080x1920 frame, per clip. x/y are shares of
+# the frame (x = the element's centre, y = its top edge), scale multiplies its normal size. Only what's given changes; an
+# element left out keeps the automatic place. "tag" is the brand's own words (name, handle, tagline: the person types
+# them, nothing is quoted from the video); "ring" is the orbit ring around the speaker with Words behind you.
+PLACE_KEYS = {"headline": ("x", "y", "scale"), "behind": ("x", "y", "scale", "ring"), "captions": ("y",),
+              "logo": ("x", "y", "scale", "on"), "tag": ("x", "y", "scale", "text", "on")}
+PLACE_Y = (0.04, 0.92)   # the platform's top bar and bottom UI: nothing is placed outside this band
+TAG_MAX = 40
+
+
+def clean_place(raw) -> dict:
+    """A clip's place edits, checked: {element: {x, y, scale, ...}}. Raises ActionError with the reason."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ActionError("place must be an object: {headline|behind|captions|logo|tag: {x, y, scale, ...}}.")
+    out: dict = {}
+    for el, v in raw.items():
+        if el not in PLACE_KEYS:
+            raise ActionError(f"place has no element {str(el)[:20]}: use {', '.join(PLACE_KEYS)}.")
+        if v is None:
+            continue
+        if not isinstance(v, dict):
+            raise ActionError(f"place.{el} must be an object.")
+        e: dict = {}
+        for k, val in v.items():
+            if k not in PLACE_KEYS[el]:
+                raise ActionError(f"place.{el} takes {', '.join(PLACE_KEYS[el])}.")
+            if k in ("x", "y", "scale"):
+                if isinstance(val, bool) or not isinstance(val, (int, float)):
+                    raise ActionError(f"place.{el}.{k} must be a number.")
+                lo, hi = {"x": (0.05, 0.95), "y": PLACE_Y, "scale": (0.5, 2.0)}[k]
+                e[k] = round(min(hi, max(lo, float(val))), 4)
+            elif k in ("ring", "on"):
+                if not isinstance(val, bool):
+                    raise ActionError(f"place.{el}.{k} must be true or false.")
+                e[k] = val
+            elif k == "text":
+                t = " ".join(str(val or "").split())
+                if len(t) > TAG_MAX:
+                    raise ActionError(f"The brand tag is at most {TAG_MAX} characters.")
+                e[k] = t
+        if e:
+            out[el] = e
+    return out
 TOOLS = [
     {"name": "get_clip_layout", "description": "One take: a clip's layout plan, scene by scene ({scene, start, end, layout: "
      "track | fit | split | screen, rule, pinned}), its per-scene overrides, its caption preset and the choices for both.",
@@ -50,7 +95,13 @@ TOOLS = [
          "caption_preset": {"type": "string", "enum": ["bold_pop", "lower_third", "two_tone", "typewriter"]},
          "hook_mode": {"type": "string", "enum": list(HOOK_MODES)},
          "hook_fx": {"type": "string", "enum": list(HOOK_FX)},
-         "hook_words": {"type": "string", "maxLength": 40, "description": "1-3 words of the hook to put behind the speaker"}}}},
+         "hook_words": {"type": "string", "maxLength": 40, "description": "1-3 words of the hook to put behind the speaker"},
+         "place": {"type": ["object", "null"], "description": "One take clips from your upload: where each element sits on "
+                   "the 1080x1920 frame. {headline|behind|logo|tag: {x, y, scale}, captions: {y}}; x = the element's centre "
+                   "and y = its top edge, as shares of the frame (y 0.04-0.92), scale 0.5-2. behind.ring: the orbit ring "
+                   "around the speaker. logo.on / tag.on: show it; tag.text: the brand's own words (name, handle; at most 40 "
+                   "characters). Leave an element out to keep its automatic place; null clears every place edit.",
+                   "properties": {k: {"type": ["object", "null"]} for k in PLACE_KEYS}}}}},
 ]
 READ_ONLY = {"get_clip_layout"}
 NAMES = {t["name"] for t in TOOLS}
@@ -140,6 +191,7 @@ def view(takes, a: Actor, rid, clip_id) -> dict:
             or captions_ass.DEFAULT_PRESET, "caption_presets": captions_ass.presets(),
             "layouts": list(OPUS_LAYOUTS if run["input"].get("style") == "opus" else LAYOUT_CHOICES),
             "style": run["input"].get("style") or "take",
+            "place": clip.get("place") or {}, "place_keys": {k: list(v) for k, v in PLACE_KEYS.items()},
             **({"hook_mode": "keep" if clip.get("hook_mode") == "keep" else "opener", "hook_modes": list(HOOK_MODES)}
                if run["input"].get("style") == "opus" else {}),
             **({"hook": clip.get("hook") or "", "hook_fx": clip.get("hook_fx") or "none", "hook_fx_choices": list(HOOK_FX),
@@ -160,6 +212,7 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
     hook_mode = body.get("hook_mode")
     hook_fx, hook_words = body.get("hook_fx"), body.get("hook_words")
     scenes = body.get("scenes")
+    place = clean_place(body.get("place")) if "place" in body else None
     batch: dict[int, dict | str] = {}
     if scenes is not None:  # several scenes at once (the UI's Save): {"0": "track", "1": {"layout": "fit", "bg": "brand"}}
         if not isinstance(scenes, dict) or not scenes or len(scenes) > MAX_SCENES:
@@ -192,8 +245,10 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         raise ActionError("hook_fx must be behind, headline or none.")
     if hook_words is not None and (not isinstance(hook_words, str) or len(hook_words) > 40):
         raise ActionError("hook_words must be text (1-3 words of the hook).")
-    if lay is None and preset is None and not batch and hook_mode is None and hook_fx is None and hook_words is None:
-        raise ActionError("Nothing to change: give layout (with an optional scene), caption_preset, hook_mode and/or hook_fx.")
+    if lay is None and preset is None and not batch and hook_mode is None and hook_fx is None and hook_words is None \
+            and place is None:
+        raise ActionError("Nothing to change: give layout (with an optional scene), caption_preset, hook_mode, hook_fx "
+                          "and/or place.")
     takes.h.studio._guard_write(a, "adjust_clip")
     rid = _take_id(rid)
     with takes._take_lock(rid):
@@ -217,6 +272,8 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
                 behind.pick_words(clip.get("hook") or "", hook_words)
             except behind.BehindError as e:
                 raise ActionError(str(e)) from None
+        if place is not None and style != "take":
+            raise ActionError("Placing elements is for One take clips from your upload.", 409)
         if style == "opus":  # a pasted link: one framing for the whole clip, Follow face or Full frame
             if any(i != 0 for i in ([scene] if scene is not None else []) + list(batch)):
                 raise ActionError("Clips from a link have one layout for the whole clip: use scene 0, or no scene.")
@@ -260,11 +317,16 @@ def set_layout(takes, a: Actor, rid, clip_id, body: dict) -> dict:
             clip["hook_fx"] = hook_fx
         if hook_words is not None:
             clip["hook_words"] = hook_words.strip()
+        if place is not None:
+            if place:
+                clip["place"] = place
+            else:
+                clip.pop("place", None)
         clip["status"] = "rendering"
         takes._save(rid, run["steps"], res, "rendering")
         takes.store.audit(a.uid, a.label, "set_clip_layout", "write", {"take": rid, "clip": clip_id, "layout": lay, "scene": scene,
                                                                        "caption_preset": preset, "hook_mode": hook_mode,
-                                                                       "hook_fx": hook_fx})
+                                                                       "hook_fx": hook_fx, "place": place})
     takes._render(a, rid, [clip_id])
     out = view(takes, a, rid, clip_id)
     out["rerendering"] = True

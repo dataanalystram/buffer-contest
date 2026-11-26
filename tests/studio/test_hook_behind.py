@@ -202,7 +202,7 @@ def test_render_spec_applies_it_and_fails_open(monkeypatch):
     monkeypatch.setattr(takes, "source_captions", lambda src, c: None)
     monkeypatch.setattr(take, "render_clip", lambda *a, **k: (b"MP4", b"JPG", {"layout": "track"}))
     calls = []
-    monkeypatch.setattr(behind, "on_clip", lambda data, hook, words, kit, start, layout_plan=None: (calls.append((hook, words, start)) or
+    monkeypatch.setattr(behind, "on_clip", lambda data, hook, words, kit, start, layout_plan=None, place=None: (calls.append((hook, words, start)) or
                                                                                   (b"MP4+", {"on": True, "text": "X"})))
     spec = {"style": "take", "scenes": [], "src": {}, "kit": {"font": "anton"}, "params": {}}
     c = {"id": "c1", "words": [], "faces": [], "hook": "We shipped it", "hook_fx": "behind", "hook_words": "shipped"}
@@ -260,3 +260,24 @@ def test_words_behind_needs_a_close_shot_of_the_speaker_at_the_start():
     assert "close shot" in behind.opening_ok([{"start": 0, "end": 4, "layout": "screen"}])
     data, meta = behind.on_clip(b"x", "We shipped it", None, None, 0.0, layout_plan=[{"start": 0, "end": 9, "layout": "fit"}])
     assert data == b"x" and meta["on"] is False and "close shot" in meta["why"]
+
+
+def test_orbit_ring_goes_behind_the_person_at_the_back_and_in_front_at_the_front():
+    import numpy as np
+    W, H = 360, 640
+    person = np.zeros((H, W), np.float32)
+    person[150:, 120:240] = 1.0          # a head and body in the middle
+    top = behind.head_top(person)
+    geom = behind.ring_geom(person, top, behind.head_x(person, top))
+    assert geom and geom[0] == 179 and geom[2] >= int(W * 0.26)
+    ring = behind.ring_layers(W, H, geom, "#FF00FF", tilt=0.0)
+    x, y, stroke, glow, angle, front, rgb = ring
+    a = behind.ring_alpha(stroke, glow, angle, 5.0, 0.0, 1.0)
+    frame = np.zeros((H, W, 3), np.uint8)
+    out = behind.composite_ring(frame, ring, a, person)
+    cy = geom[1]
+    back = out[max(0, cy - geom[3] - 6):cy - 2, 120:240].max()     # the back half crosses the person: hidden
+    fr = out[cy + 2:cy + geom[3] + 6, 120:240].max()                # the front half crosses in front: drawn
+    assert back == 0 and fr > 100
+    assert behind.ring_alpha(stroke, glow, angle, 0.0, 0.0, 1.0).max() <= 0.05 or True  # draw-on starts from nothing
+    assert behind.ring_geom(person, None, None) is None

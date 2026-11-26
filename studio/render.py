@@ -147,12 +147,48 @@ def place_logo(canvas: Image.Image, logo: Image.Image | None, p: dict, kit: dict
         dd.rounded_rectangle((0, 0, lg.width - 1, ph - 1), ph // 2, fill=hex_to_rgb(p["colors"]["accent"]) + (255,))
         bb = _tbox(dd, (0, 0), name, font=f)
         _draw(dd, ((lg.width - tw) / 2, (ph - (bb[3] - bb[1])) / 2 - bb[1]), name, font=f, fill=hex_to_rgb(p["colors"]["primary"]))
+    at = p.get("_logo_at") if isinstance(p.get("_logo_at"), dict) else {}  # the edit room (take_layout.clean_place)
+    if at.get("scale"):
+        lg = lg.resize((max(1, int(lg.width * float(at["scale"]))), max(1, int(lg.height * float(at["scale"])))), Image.LANCZOS)
     pos = p.get("logo_position", "tr")
     x = m if pos in ("tl", "bl") else W - m - lg.width
     y = m if pos in ("tl", "tr") else H - m - lg.height
+    if at.get("x") is not None:
+        x = max(0, min(W - lg.width, int(W * float(at["x"]) - lg.width / 2)))
+    if at.get("y") is not None:
+        y = max(0, min(H - lg.height, int(H * float(at["y"]))))
     canvas.paste(lg, (x, y), lg)
     p["_logo_box"] = (x, y, lg.width, lg.height)
     return True
+
+
+def place_tag(canvas: Image.Image, text: str, p: dict, kit: dict, at: dict | None = None) -> tuple | None:
+    """The brand tag (the edit room): the brand's own words (name, handle, tagline) in a pill in the brand's colours, where
+    the person put it (x = centre, y = top, shares of the frame; default bottom centre above the platform UI)."""
+    text = " ".join(str(text or "").split())[:40]
+    if not text:
+        return None
+    at = at or {}
+    W, H = canvas.size
+    colors = p.get("colors") or kit.get("colors") or {}
+    f = font(FONTS.get(p.get("font"), "Inter-Bold.ttf"), max(18, int(W * 0.034 * float(at.get("scale") or 1.0))))
+    text = drawable(text, f).strip()
+    if not text:
+        return None
+    d0 = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+    tw = int(_tlen(d0, text, font=f))
+    ph = int(f.size * 1.75)
+    pill = Image.new("RGBA", (tw + ph, ph), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(pill)
+    dd.rounded_rectangle((0, 0, pill.width - 1, ph - 1), ph // 2, fill=hex_to_rgb(colors.get("primary") or "#111111") + (235,))
+    bb = _tbox(dd, (0, 0), text, font=f)
+    _draw(dd, ((pill.width - tw) / 2, (ph - (bb[3] - bb[1])) / 2 - bb[1]), text, font=f,
+          fill=hex_to_rgb(colors.get("text") or "#FFFFFF"))
+    x = int(W * float(at.get("x", 0.5)) - pill.width / 2)
+    y = int(H * float(at.get("y", 0.86)))
+    x, y = max(0, min(W - pill.width, x)), max(0, min(H - pill.height, y))
+    canvas.paste(pill, (x, y), pill)
+    return (x, y, pill.width, pill.height)
 
 
 def _gradient(canvas: Image.Image, color, start: float, strength: float) -> None:

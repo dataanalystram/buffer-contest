@@ -89,13 +89,16 @@ def head_x(mask, top: int | None, thr: float = 0.5) -> int | None:
     return int((cols[0] + cols[-1]) // 2) if len(cols) else None
 
 
-def place(W: int, H: int, top: int | None, text_w: int, text_h: int, cx: int | None = None) -> tuple[int, int]:
+def place_xy(W: int, H: int, top: int | None, text_w: int, text_h: int, cx: int | None = None) -> tuple[int, int]:
     """(x, y) of the word's box: over the head (centred on it, kept inside the frame), the head overlapping the lower
     part of the word (reel-kit's rule), never above the top UI. No head found: centred in the upper band at 18%."""
     x = (W - text_w) // 2 if cx is None else int(cx - text_w / 2)
     x = max(0, min(x, W - text_w)) if text_w <= W else (W - text_w) // 2
     y = int(H * 0.18) if top is None else int(top - text_h * 0.45)
     return x, max(int(H * TOP_SAFE), min(y, int(H * 0.45)))
+
+
+place = place_xy   # the name the tests and older callers use
 
 
 def hidden_share(layer_a, x: int, y: int, person) -> float:
@@ -179,6 +182,86 @@ def composite(frame, layer_rgb, layer_a, x: int, y: int, person, alpha: float):
     a = layer_a[ly0:ly0 + (y1 - y0), lx0:lx0 + (x1 - x0)] * alpha * (1.0 - person[y0:y1, x0:x1])
     a = a[..., None]
     out[y0:y1, x0:x1] = out[y0:y1, x0:x1] * (1 - a) + layer_rgb[ly0:ly0 + (y1 - y0), lx0:lx0 + (x1 - x0)] * a
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+
+
+RING_TILT = -10.0       # degrees: the orbit ring leans a little, like a planet's ring
+RING_SPIN = 1.6         # turns of the travelling highlight per second
+RING_DRAW = 0.45        # seconds for the ring to draw itself on
+
+
+def ring_geom(person, top: int | None, cx: int | None) -> tuple[int, int, int, int] | None:
+    """(cx, cy, rx, ry) of the orbit ring: around the speaker's head and shoulders, centred on the head, as wide as the
+    shoulders (kept inside the frame). None without a head."""
+    import numpy as np
+    if top is None or cx is None:
+        return None
+    H, W = person.shape[:2]
+    row = min(H - 1, top + int(H * 0.17))   # about the shoulders
+    cols = np.nonzero(person[row] > 0.5)[0]
+    span = (cols[-1] - cols[0]) if len(cols) else W * 0.5
+    rx = int(min(W * 0.47, max(W * 0.26, span * 0.62)))
+    return int(cx), int(top + H * 0.085), rx, int(rx * 0.26)
+
+
+def ring_layers(W: int, H: int, geom: tuple[int, int, int, int], color: str = "#FFFFFF", tilt: float = RING_TILT):
+    """The ring drawn once: (x0, y0, stroke HxW 0..1, glow HxW 0..1, angle HxW radians, front HxW bool, rgb). front is the
+    half nearer the viewer (drawn over the person); the other half passes behind them."""
+    import math
+
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFilter
+    cx, cy, rx, ry = geom
+    th = max(3, W // 240)
+    pad = th * 10
+    bw, bh = 2 * (rx + pad), 2 * (rx + pad)          # square box: the tilt can turn the ellipse a little
+    ss = 3
+    img = Image.new("L", (bw * ss, bh * ss), 0)
+    ImageDraw.Draw(img).ellipse(((bw // 2 - rx) * ss, (bh // 2 - ry) * ss, (bw // 2 + rx) * ss, (bh // 2 + ry) * ss),
+                                outline=255, width=th * ss)
+    img = img.rotate(tilt, resample=Image.BICUBIC).resize((bw, bh), Image.LANCZOS)
+    glow = img.filter(ImageFilter.GaussianBlur(th * 2.5))
+    stroke = np.asarray(img, dtype=np.float32) / 255.0
+    glow = np.clip(np.asarray(glow, dtype=np.float32) / 255.0 * 1.8, 0, 1)
+    yy, xx = np.mgrid[0:bh, 0:bw].astype(np.float32)
+    dx, dy = xx - bw / 2, yy - bh / 2
+    a = math.radians(tilt)                           # back into the ring's own frame (PIL turns counter-clockwise)
+    lx = dx * math.cos(a) - dy * math.sin(a)
+    ly = dx * math.sin(a) + dy * math.cos(a)
+    angle = np.arctan2(ly / max(1, ry), lx / max(1, rx))
+    front = ly > 0
+    h = color.lstrip("#")
+    rgb = np.array([int(h[i:i + 2], 16) for i in (0, 2, 4)] if len(h) == 6 else [255, 255, 255], dtype=np.float32)
+    return cx - bw // 2, cy - bh // 2, stroke, glow, angle, front, rgb
+
+
+def ring_alpha(stroke, glow, angle, t: float, start: float, alpha: float):
+    """The ring's opacity at clip time t: it draws itself on over RING_DRAW, a bright highlight travels around it."""
+    import math
+
+    import numpy as np
+    u = max(0.0, t - start)
+    sheen = 0.5 + 0.5 * np.cos(angle - 2 * math.pi * RING_SPIN * u)
+    a = np.clip(stroke * (0.55 + 0.45 * sheen ** 4) + glow * 0.45 * sheen ** 6, 0, 1) * alpha
+    if u < RING_DRAW:                                 # the draw-on: from the left, all the way round
+        a = a * ((angle + math.pi) / (2 * math.pi) <= u / RING_DRAW)
+    return a
+
+
+def composite_ring(frame, ring, a, person):
+    """frame with the ring: its back half under the person, its front half over them."""
+    import numpy as np
+    x, y, stroke, _, _, front, rgb = ring
+    H, W = frame.shape[:2]
+    h, w = stroke.shape
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + w), min(H, y + h)
+    if x1 <= x0 or y1 <= y0:
+        return frame
+    ly0, lx0 = y0 - y, x0 - x
+    sl = (slice(ly0, ly0 + y1 - y0), slice(lx0, lx0 + x1 - x0))
+    aa = a[sl] * np.where(front[sl], 1.0, 1.0 - person[y0:y1, x0:x1])
+    out = frame.astype(np.float32)
+    out[y0:y1, x0:x1] = out[y0:y1, x0:x1] * (1 - aa[..., None]) + rgb * aa[..., None]
     return np.clip(out + 0.5, 0, 255).astype(np.uint8)
 
 
@@ -273,7 +356,8 @@ def reach(src: str, seg, start: float, dur: float, W: int, H: int, fps: float, e
 
 
 def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S, kit_font: str | None = None,
-          color: str = "#FFFFFF", seg=None, crf: int = 20, timeout: int = 900) -> dict:
+          color: str = "#FFFFFF", seg=None, crf: int = 20, timeout: int = 900, place: dict | None = None,
+          ring_color: str | None = None) -> dict:
     """Writes `out`: `src` with `text` behind the person from `start` for `dur` seconds. Returns what was done."""
     import numpy as np
     t0 = time.time()
@@ -287,7 +371,8 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
     own = seg is None
     seg = seg or segmenter()
     font = _font(kit_font)
-    size = fit_size(font, text, W, H)
+    place = place if isinstance(place, dict) else {}   # the edit room: x = centre, y = top (shares), scale, ring
+    size = max(24, int(fit_size(font, text, W, H) * float(place.get("scale") or 1.0)))
     layer = text_layer(text, font, size, color)
     lrgb = np.asarray(layer.convert("RGB"), dtype=np.float32)
     la = np.asarray(layer.getchannel("A"), dtype=np.float32) / 255.0
@@ -298,7 +383,16 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
         if first is None or (first > 0.5).mean() < MIN_PERSON:
             raise BehindError("No person was found at the start of the clip, so there is nothing to go behind.")
         top = head_top(first)
-        pos, hid = settle(H, place(W, H, top, lw, lh, head_x(first, top)), la, np.clip(union, 0, 1))
+        hx = head_x(first, top)
+        if place.get("x") is not None or place.get("y") is not None:   # the person placed it: their place, said how much hides
+            auto = place_xy(W, H, top, lw, lh, hx)
+            pos = (int(W * float(place["x"]) - lw / 2) if place.get("x") is not None else auto[0],
+                   int(H * float(place["y"])) if place.get("y") is not None else auto[1])
+            hid = round(hidden_share(la, pos[0], pos[1], np.clip(union, 0, 1)), 3)
+        else:
+            pos, hid = settle(H, place_xy(W, H, top, lw, lh, hx), la, np.clip(union, 0, 1))
+        geom = ring_geom(first, top, hx) if place.get("ring") else None
+        ring = ring_layers(W, H, geom, ring_color or color) if geom else None
     except BaseException:
         if own:
             try:
@@ -328,6 +422,8 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
                 a = alpha_at(t, start, dur)
                 rise = int(H * RISE * (1 - min(1.0, (t - start) / FADE_IN)) ** 2) if FADE_IN else 0
                 frame = composite(frame, lrgb, la, pos[0], pos[1] + rise, np.clip(prev, 0, 1), a)
+                if ring:
+                    frame = composite_ring(frame, ring, ring_alpha(ring[2], ring[3], ring[4], t, start, a), np.clip(prev, 0, 1))
                 masked += 1
             enc.stdin.write(frame.tobytes())
             n += 1
@@ -349,7 +445,9 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
         raise BehindError("The clip ended before the words behind you could start.")
     return {"on": True, "text": text, "start": round(start, 3), "secs": round(dur, 3), "frames": masked,
             "font": Path(font).stem, "size": size, "xy": list(pos) if pos else None, "head_top": tops[0] if tops else None,
-            "hidden": hid,
+            "hidden": hid, "placed": bool(place.get("x") is not None or place.get("y") is not None),
+            "ring": ({"cx": ring and geom[0], "cy": geom[1], "rx": geom[2], "ry": geom[3]} if ring else
+                     ({"on": False, "why": "No head was found to put the ring around."} if place.get("ring") else None)),
             "mask": "mediapipe selfie_segmenter", "ms": int((time.time() - t0) * 1000)}
 
 
@@ -366,7 +464,7 @@ def opening_ok(layout_plan: list | None, window: float = WINDOW_S) -> str | None
 
 
 def on_clip(data: bytes, hook: str, words: str | None, kit: dict | None, start: float,
-            layout_plan: list | None = None) -> tuple[bytes, dict]:
+            layout_plan: list | None = None, place: dict | None = None) -> tuple[bytes, dict]:
     """The worker's entry point: the rendered clip's bytes in, (new bytes, meta) out. Fails open with the reason."""
     why = opening_ok(layout_plan) if layout_plan is not None else None
     if why:
@@ -378,7 +476,8 @@ def on_clip(data: bytes, hook: str, words: str | None, kit: dict | None, start: 
             a.write_bytes(data)
             kit = kit or {}
             meta = apply(str(a), str(b), text, start=start, kit_font=kit.get("font"),
-                         color=(kit.get("colors") or {}).get("text") or "#FFFFFF")
+                         color=(kit.get("colors") or {}).get("text") or "#FFFFFF", place=place,
+                         ring_color=(kit.get("colors") or {}).get("accent"))
             return b.read_bytes(), meta
     except BehindError as e:
         return data, {"on": False, "why": str(e)}

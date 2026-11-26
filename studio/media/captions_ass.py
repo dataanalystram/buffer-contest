@@ -233,7 +233,8 @@ def _keyword(t: str) -> bool:
 # ---------------------------------------------------------------------- the ASS file
 def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict | None = None, preset: str | None = None,
           sidecar: list[dict] | None = None, W: int = REF_W, H: int = REF_H, offset: float = 0.0,
-          bg_luma: float | None = None, fx: list[dict] | None = None, headline: str | None = None) -> str:
+          bg_luma: float | None = None, fx: list[dict] | None = None, headline: str | None = None,
+          headline_at: dict | None = None) -> str:
     """ASS for the clip's words (source seconds; the clip's first frame is clip_start - offset). bg_luma: the lightest
     background under the captions (0-1); a light one gets the heavy stroke and shadow (see the contrast note above).
     fx: motion moments (studio/media/motion.plan, clip seconds): each replaces the caption lines it overlaps."""
@@ -311,7 +312,7 @@ def build(words: list[dict], clip_start: float, kit: dict | None = None, p: dict
         intro = f"{{\\an5\\pos({W // 2},{y})\\fad({ENTER_MS},{EXIT_MS}){grow}}}"
         ev.append(f"Dialogue: 0,{_time(s)},{_time(e)},Cap,,0,0,0,,{intro}{' '.join(body)}")
     if headline:
-        ev += headline_events(headline, pr, pid, W, H, colors, k)
+        ev += headline_events(headline, pr, pid, W, H, colors, k, at=headline_at)
     if fx:
         from . import motion
 
@@ -329,14 +330,16 @@ HEADLINE_Y = 250      # its top edge at 1920 tall: above a tracked speaker's hea
 HEADLINE_SIZE = 76
 
 
-def headline_events(text: str, pr: dict, pid: str, W: int, H: int, colors: dict, k: float) -> list[str]:
+def headline_events(text: str, pr: dict, pid: str, W: int, H: int, colors: dict, k: float, at: dict | None = None) -> list[str]:
     """The hook as a boxed headline (the person's own hook line: verbatim, never a new claim), up to 3 lines that fit
     the frame, in the brand's colours, popping in and fading out over HEADLINE_S."""
     words = re.sub(r"\s+", " ", str(text or "")).strip().upper().split()
     if not words:
         return []
-    size = HEADLINE_SIZE * k
-    room = (W - 2 * SIDE * W / REF_W) * 0.86
+    at = at if isinstance(at, dict) else {}
+    zoom = float(at.get("scale") or 1.0)   # the edit room's size (take_layout.clean_place: 0.5-2)
+    size = HEADLINE_SIZE * k * zoom
+    room = (W - 2 * SIDE * W / REF_W) * 0.86 / zoom
     width = lambda t: text_width(t, pid, H, file=pr["file"], size=HEADLINE_SIZE) + 2 * 18 * k  # noqa: E731
     lines, cur = [], []
     for w in words:
@@ -360,7 +363,9 @@ def headline_events(text: str, pr: dict, pid: str, W: int, H: int, colors: dict,
     box = _color(colors.get("primary") or "#111111")
     txt = _color(colors.get("text") or "#FFFFFF")
     body = "\\N".join(_esc(" ".join(l)) for l in lines)
-    tag = (f"{{\\an8\\pos({W // 2},{int(HEADLINE_Y * k)})\\fad(120,220)\\fs{int(size)}\\fscx{int(scale * 0.94)}\\fscy{int(scale * 0.94)}"
+    px = int(W * float(at["x"])) if at.get("x") is not None else W // 2
+    py = int(H * float(at["y"])) if at.get("y") is not None else int(HEADLINE_Y * k)
+    tag = (f"{{\\an8\\pos({px},{py})\\fad(120,220)\\fs{int(size)}\\fscx{int(scale * 0.94)}\\fscy{int(scale * 0.94)}"
            f"\\t(0,160,\\fscx{scale}\\fscy{scale})\\bord{int(18 * k)}\\shad0\\1c{txt}\\3c{box}\\4c{box}}}")
     return [f"Dialogue: 2,{_time(0.0)},{_time(HEADLINE_S)},Head,,0,0,0,,{tag}{body}"]
 

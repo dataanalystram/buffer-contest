@@ -150,9 +150,55 @@ def _layout_at(sidecar: list[dict] | None, t: float) -> dict:
     return (sidecar or [{}])[-1] if sidecar else {}
 
 
+def _norm(w) -> str:
+    return re.sub(r"[^\w%$€£.']", "", str(w or "")).lower().strip(".")
+
+
+def find_phrase(words: list[dict], text: str, nth: int = 0) -> int | None:
+    """The index of the nth time the phrase `text` is said in `words` (word by word, punctuation ignored), or None."""
+    want = [_norm(t) for t in str(text or "").split() if _norm(t)]
+    if not want:
+        return None
+    toks = [_norm(w.get("w")) for w in words]
+    hits = [i for i in range(len(toks) - len(want) + 1) if toks[i:i + len(want)] == want]
+    return hits[nth] if 0 <= nth < len(hits) else (hits[-1] if hits else None)
+
+
+def chosen(words: list[dict], clip_start: float, picks: list[dict]) -> dict:
+    """The person's (or the director's) own picks, in place of the automatic plan (the edit room, 26 Nov 2026): each
+    {kind: stat | line, text: the words said, nth: which time they're said}. A stat pick on a phrase that isn't a number
+    becomes a kinetic line. Nothing is invented: a pick whose words aren't said in the clip is skipped, with why."""
+    ws = [w for w in words or [] if str(w.get("w", "")).strip()]
+    fx, skipped = [], []
+    for p in picks[:4]:
+        i = find_phrase(ws, p.get("text") or "", int(p.get("nth") or 0))
+        if i is None:
+            skipped.append(f"\"{str(p.get('text'))[:40]}\" isn't said in this clip any more, so it was left out.")
+            continue
+        n = max(1, len(str(p.get("text") or "").split()))
+        st = _stat_at(ws, i) if p.get("kind") == "stat" else None
+        t = float(ws[i]["s"]) - clip_start
+        if st:
+            label = _label(st)
+            fx.append({"kind": "stat", "s": round(t, 3), "e": round(t + STAT_S, 3), "text": label,
+                       **{k: st[k] for k in ("prefix", "value", "decimals", "suffix")}, "why": "Picked in the edit room.", "picked": True})
+        else:
+            sent = ws[i:i + n]
+            e = float(sent[-1]["e"]) - clip_start
+            fx.append({"kind": "line", "s": round(t, 3), "e": round(max(e, t + 0.6) + 0.35, 3), "text": " ".join(str(w["w"]).strip() for w in sent),
+                       "words": [{"w": str(w["w"]).strip(), "s": round(float(w["s"]) - clip_start, 3)} for w in sent],
+                       "why": "Picked in the edit room.", "picked": True})
+    if not picks:
+        skipped.append("No motion graphics on this clip (chosen in the edit room).")
+    return {"on": True, "fx": sorted(fx, key=lambda f: f["s"]), "skipped": skipped, "chosen": True}
+
+
 def plan(words: list[dict], clip_start: float, sidecar: list[dict] | None = None, shots: list[dict] | None = None,
-         captions: bool = True) -> dict:
-    """{"fx": [{kind, s, e (clip seconds), text, ...why}], "skipped": [why]} for one clip."""
+         captions: bool = True, picks: list[dict] | None = None) -> dict:
+    """{"fx": [{kind, s, e (clip seconds), text, ...why}], "skipped": [why]} for one clip. picks (a list, may be empty):
+    the edit room's own choice replaces the automatic one (see chosen)."""
+    if picks is not None and captions:
+        return chosen(words, clip_start, picks)
     fx, skipped = [], []
     if not enabled():
         return {"on": False, "fx": [], "skipped": ["Motion moments aren't switched on on this server (HQ_MOTION)."]}
