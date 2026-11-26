@@ -215,6 +215,8 @@ def needs_setup(sents: list[dict], a: int) -> str | None:
     if a > 0 and sents[a - 1]["text"].strip().endswith("?") and not sents[a]["text"].strip().endswith("?") \
             and sents[a]["s"] - sents[a - 1]["e"] < 3.0:
         return "answer"
+    if a > 0 and sents[a]["text"].strip()[:1].islower() and sents[a]["s"] - sents[a - 1]["e"] < 1.5:
+        return "continuation"   # starts mid-sentence (a long run-on split in two): the clip needs the first half
     if w[0] in REACTION:
         return "reaction"
     if w[0] in BACK_PRONOUN or (w[0] in ("that", "that's") and len(w) > 1 and w[1] in ("why", "how", "what", "because", "is", "was")):
@@ -244,7 +246,8 @@ def tidy_span(sents: list[dict], a: int, b: int, max_s: float = MAX_CLIP) -> tup
             break
         a -= 1
         notes.append({"answer": "starts at the question so the answer makes sense",
-                      "reaction": "keeps the line it reacts to"}.get(why, "keeps the setup it refers to"))
+                      "reaction": "keeps the line it reacts to", "continuation": "starts at the beginning of the sentence"}
+                     .get(why, "keeps the setup it refers to"))
     if sents[b]["text"].strip().endswith("?") and b + 1 < len(sents) and sents[b + 1]["e"] - sents[a]["s"] <= max_s \
             and sents[b + 1]["s"] - sents[b]["e"] < 3.0:
         b += 1
@@ -265,8 +268,14 @@ def clean_hook(t: str) -> str:
                 toks = toks[n:]
                 changed = True
                 break
+    # a long word the recogniser doubled mid-line ("my complaints complaints with") reads as a typo on the cover
+    toks = [x for i, x in enumerate(toks) if not (i and norm(x) == norm(toks[i - 1]) and len(norm(x)) >= 5
+                                                 and norm(x) not in HOOK_REPEATS and not toks[i - 1].endswith(","))]
     out = " ".join(toks)
     return out[:1].upper() + out[1:] if cap else out
+
+
+HOOK_REPEATS = {"really", "never", "please", "again", "faster", "harder", "better", "little", "sorry", "thank"}
 
 
 def line_strength(sent: dict) -> float:
@@ -295,7 +304,9 @@ def best_line(sents: list[dict], a: int, b: int, max_chars: int = 90) -> str:
     screen that nobody is saying yet (26 Nov Mac run: "SERIOUSLY" over "Here is the truth..."). Always verbatim, cut on
     a word boundary."""
     near = [i for i in range(a, b + 1) if i == a or sents[i]["s"] - sents[a]["s"] < HOOK_WINDOW]
-    best = max(near, key=lambda i: (line_strength(sents[i]) + (2 if i == a else 0), -i))
+    # a line that leans on what came before (a reply, "it ...", a sentence's second half) doesn't work alone on a cover
+    lean = lambda i: -8 if i > a and needs_setup(sents, i) in ("reaction", "reference", "back-reference", "continuation") else 0  # noqa: E731
+    best = max(near, key=lambda i: (line_strength(sents[i]) + (2 if i == a else 0) + lean(i), -i))
     t = clean_hook(sents[best]["text"].strip())
     if len(t) <= max_chars:
         return t
@@ -379,9 +390,7 @@ def validate_llm(data, sents: list[dict], n: int) -> list[dict]:
             continue
         text = span_text(sents, a, b)
         hook = str(m.get("hook") or "").strip().strip('"“”')
-        hook = clean_hook(hook)
-        if not verbatim(hook, text):
-            hook = best_line(sents, a, b)
+        hook = clean_hook(hook) if verbatim(hook, text) else best_line(sents, a, b)   # checked as said, then tidied
         try:
             score = float(m.get("score", 70))
         except (TypeError, ValueError):
@@ -405,6 +414,12 @@ def finalize(m: dict, sents: list[dict], silences: list[list[float]], scenes: li
     e2 = snap(e + 0.25, sil_starts + list(scenes or []), 0.6)
     s2 = max(0.0, min(s2, s - 0.02))
     e2 = min(duration or e + 1, max(e2, e + 0.05))
+    # the snap must not reach back over the word before (26 Nov Mac run: a stray "it." skipped by tidy_span came back
+    # because the start snapped to the pause before it) or on into the next sentence
+    if m["a"] > 0 and sents[m["a"] - 1]["e"] < s:
+        s2 = max(s2, min(s - 0.02, sents[m["a"] - 1]["e"] + 0.05))
+    if m["b"] + 1 < len(sents) and sents[m["b"] + 1]["s"] > e:
+        e2 = min(e2, max(e + 0.05, sents[m["b"] + 1]["s"] - 0.05))
     return {**m, "start": round(s2, 2), "end": round(e2, 2), "duration": round(e2 - s2, 2),
             "text": span_text(sents, m["a"], m["b"])}
 

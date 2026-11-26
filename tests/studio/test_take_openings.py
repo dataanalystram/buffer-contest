@@ -103,3 +103,22 @@ def test_reaching_back_for_setup_never_brings_the_stray_fragment_back():
     ss = sents(("it.", 0, 0.4), ("They kept every customer after that.", 0.6, 4), ("Not one left.", 4.3, 7))
     a, b, notes = take.tidy_span(ss, 0, 2)
     assert a == 1 and not ss[a]["text"].startswith("it.")
+
+
+def test_snapping_the_start_to_a_pause_never_brings_the_word_before_back():
+    ss = sents(("it.", 10.0, 10.3), ("They kept every customer after that outage.", 10.45, 14), ("Not one left.", 14.3, 16))
+    m = take.finalize({"a": 1, "b": 2}, ss, [[9.0, 9.95]], [], 60.0)   # a pause ends just before the stray "it."
+    assert m["start"] > 10.3
+
+
+def test_a_doubled_word_leaves_the_hook_but_a_meant_repeat_stays():
+    assert take.clean_hook("Most of my complaints complaints with it are small.") == "Most of my complaints with it are small."
+    assert take.clean_hook("It was really really good.") == "It was really really good."
+
+
+def test_a_clip_never_opens_halfway_through_a_sentence():
+    rows = [("So the question I always get from people at these shows is", 0, 4),
+            ("how do you keep a story going for 40 years?", 4.1, 7), ("You plan the ending first.", 7.5, 10)]
+    ss = [{"i": i, "s": s, "e": e, "text": t, "words": S(t, s, e)} for i, (t, s, e) in enumerate(rows)]  # a forced split
+    assert take.needs_setup(ss, 1) == "continuation"
+    assert take.tidy_span(ss, 1, 2)[:2] == (0, 2)
