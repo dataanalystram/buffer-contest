@@ -13,3 +13,15 @@ def test_split_asked_stacks_two_people_even_if_one_listens():
     assert decide.rule(sig(), (1920, 1080), {})["layout"] != "split"          # not asked: the old rules (one talker: track)
     short = decide.rule(sig(dur=1.0), (1920, 1080), {"split": True})
     assert short["layout"] == "fit" and "split" in short["why"].lower()      # and it says why when it can't
+
+
+def test_blurry_background_faces_do_not_make_a_shot_unsure_and_a_third_face_is_ignored():
+    s = sig()
+    s["faces"].append({"id": 3, "presence": 1.0, "cx": 0.5, "w": 0.04, "h": 0.1, "motion": 0.0, "score": 0.2})
+    for f in s["faces"][:2]:
+        f["score"] = 0.9
+    s["low_conf"] = True            # the old summary flag: min score over ALL faces
+    assert decide.rule(s, (1920, 1080), {"split": True})["layout"] == "split"
+    third = {"id": 4, "presence": 1.0, "cx": 0.9, "w": 0.1, "h": 0.25, "motion": 0.0, "score": 0.9}
+    s["faces"].append(third)
+    assert decide.rule(s, (1920, 1080), {"split": True})["layout"] == "split"

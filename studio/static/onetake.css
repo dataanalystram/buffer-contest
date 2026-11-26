@@ -300,7 +300,7 @@ dialog.ce-dialog::backdrop{background:rgba(11,12,13,.55)}
 .clip-applied{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px}
 .clip-applied li{font-size:11px;line-height:1;padding:4px 8px;border:1px solid var(--line);border-radius:999px;background:var(--raised)}
 .clip-applied li span{color:var(--muted)}
-.clip-applied li.skip{border-style:dashed;color:var(--muted)}
+.clip-applied li.skip{position:static;left:auto;top:auto;background:none;padding:0 8px;border-style:dashed;color:var(--muted);z-index:auto}
 .tk-rates{display:inline-flex;gap:2px}
 .tk-rate{display:inline-grid;place-items:center;width:30px;height:30px;border:1px solid transparent;border-radius:8px;background:none;color:var(--muted);cursor:pointer}
 .tk-rate .ic{width:16px;height:16px}

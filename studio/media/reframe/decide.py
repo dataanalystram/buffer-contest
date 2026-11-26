@@ -117,8 +117,11 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
         return {"layout": "screen", "rule": "R1", "style": "stack" if tall_px >= 240 else "pip", "face": cam["id"]}
     if screen and not people:
         return {"layout": "fit", "rule": "R2", "bg": bg}
-    if sig.get("low_conf"):
-        return {"layout": "fit", "rule": "R8", "bg": bg}
+    if prefs.get("split") and len(people) > 2:   # asked for Split: the two biggest faces are the speakers, the rest stand behind
+        people = sorted(people, key=lambda t: -t["h"])[:2]
+    # unsure only about the people who count (blurry faces in the background don't make a shot unsure: 26 Nov Mac run)
+    if len(people) >= 2 and min(t.get("score", 1.0) for t in people) < LOW_CONF:
+        return {"layout": "fit", "rule": "R8", "bg": bg, "why": "The faces in this shot are too unsure to crop"}
     if len(people) == 1:
         p = people[0]
         if p["h"] < FACE_MIN_H:
@@ -150,7 +153,7 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
         return {"layout": "fit", "rule": "R8", "bg": bg, "why": "Two people apart, but the shot is too short or a face too small to split" if prefs.get("split") else "Two people apart, not both talking"}
     if not faces and not screen:
         return {"layout": "fit", "rule": "R8-noface", "bg": bg}
-    return {"layout": "fit", "rule": "R8", "bg": bg}
+    return {"layout": "fit", "rule": "R8", "bg": bg, "why": f"{len(people)} people in the shot (the split needs two)"}
 
 
 def window_votes(sig: dict, src: tuple[int, int], prefs: dict | None, n_per_s: float) -> dict:
