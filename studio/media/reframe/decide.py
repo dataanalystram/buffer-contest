@@ -4,7 +4,8 @@ Rules, per shot, first match wins (a pinned layout from the person or their agen
 
   R1  screen content + a webcam face in a corner   -> screen (PiP: screen card, face circle; stacked when the webcam
                                                       is >= 240 px tall)
-  R2  screen content, no face                      -> fit (blurred or brand-colour background)
+  R2  screen content, no face (a small face that is part of the screen, such as a video thumbnail, doesn't count)
+                                                   -> fit (blurred or brand-colour background)
   R3  one face, height >= 10% of the frame         -> track (9:16 crop following the face)
   R4  one face, smaller (a wide stage)              -> fit
   R5  two faces that fit inside one 9:16 crop       -> track, centred on the pair
@@ -80,12 +81,15 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
     screen = (bool(sig.get("screen")) and float(sig.get("edge") or 0) >= EDGE_SCREEN
               and float(sig.get("content_width") or 0) >= CONTENT_MIN and not big_face)
     webcams = [t for t in faces if is_webcam(t)] if screen else []   # a corner face is a webcam only over a screen
-    people = [t for t in faces if t not in webcams]
+    # any other smallish face over a screen is part of what's shown (a video thumbnail, a profile picture, a clip preview
+    # in an app), not someone talking to camera: it never drives the crop (25 Nov baseline, the demo's c2)
+    shown = [t for t in faces if t not in webcams and t["h"] < BIG_FACE_H] if screen else []
+    people = [t for t in faces if t not in webcams and t not in shown]
     if screen and webcams and not people:
         cam = max(webcams, key=lambda t: t["h"])
         tall_px = cam["h"] * sh * 1.6  # the webcam box is ~1.6x the face height
         return {"layout": "screen", "rule": "R1", "style": "stack" if tall_px >= 240 else "pip", "face": cam["id"]}
-    if screen and not faces:
+    if screen and not people:
         return {"layout": "fit", "rule": "R2", "bg": bg}
     if sig.get("low_conf"):
         return {"layout": "fit", "rule": "R8", "bg": bg}

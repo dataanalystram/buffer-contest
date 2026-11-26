@@ -147,6 +147,15 @@ def test_rules():
     assert decide.rule(_sig([_face(0, 0.5, 0.12)]), (1280, 720))["rule"] == "R3-upscale"             # 720p, small face
 
 
+def test_a_face_inside_screen_content_is_not_a_speaker():
+    src = (1920, 1080)
+    thumb = _face(0, 0.5, 0.12, cy=0.45)                     # a clip preview's face in the middle of an app
+    assert decide.rule(_sig([thumb], True, 0.9, 0.2), src)["rule"] == "R2"
+    r1 = decide.rule(_sig([thumb, _face(1, 0.9, 0.08, cy=0.85)], True, 0.9, 0.2), src)
+    assert r1["layout"] == "screen" and r1["face"] == 1      # the corner webcam is still the speaker
+    assert decide.rule(_sig([_face(0, 0.5, 0.3)], True, 0.9, 0.2), src)["rule"] == "R3"   # a big face: a person on camera
+
+
 def test_split_needs_the_flag_and_both_mouths(monkeypatch):
     monkeypatch.setenv("HQ_LAYOUT_SPLIT", "1")
     duo = [_face(0, 0.15, 0.2, motion=9.0), _face(1, 0.85, 0.2, motion=8.0)]
