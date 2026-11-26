@@ -421,7 +421,7 @@ _DESC = {
     "POST /api/link/preview": "Preview a pasted link (title, site, picture) for From a link",
     "GET /api/prefs/appearance": "Light, dark or system appearance", "PUT /api/prefs/appearance": "Save light, dark or system appearance", "GET /api/onboarding": "Setup answers so far",
     "PUT /api/onboarding": "Save setup answers", "GET /api/recommendations": "Stories recommended for your brand",
-    "GET /api/takes": "Your One take runs", "POST /api/takes": "Start a One take: one long video into clips",
+    "GET /api/takes": "Your One take runs", "GET /api/takes/recipes": "One take recipes and clip lengths (the setup choices)", "POST /api/takes": "Start a One take: one long video into clips",
     "POST /api/takes/sample": "Run One take on the sample talk", "GET /api/takes/{rid}": "One take run with its clips",
     "PATCH /api/takes/{rid}/clips/{clip_id}": "Trim & caption one clip: in/out, transcript, cover hook, captions per network, music",
     "POST /api/takes/{rid}/clips/{clip_id}/rewrite": "An AI rewrite of one clip's caption for one network (not saved)", "POST /api/takes/{rid}/place": "Place the clips into your Buffer week",

@@ -174,7 +174,7 @@ def test_rest_sets_words_behind_and_rerenders(take_clip, app, monkeypatch):
     human, rid, cid, rendered = take_clip
     monkeypatch.setenv("HQ_HOOK_BEHIND", "1")
     v = human.get(f"/api/takes/{rid}/clips/{cid}/layout").json()
-    assert v["hook_fx"] == "none" and v["hook_fx_choices"] == ["none", "behind"] and v["hook"]
+    assert v["hook_fx"] == "none" and v["hook_fx_choices"] == ["none", "behind", "headline"] and v["hook"]
     assert human.post(f"/api/takes/{rid}/clips/{cid}/layout", json={"hook_fx": "glow"}).status_code == 400
     assert human.post(f"/api/takes/{rid}/clips/{cid}/layout", json={"hook_fx": "behind", "hook_words": "launch"}).status_code == 400
     assert rendered == []
