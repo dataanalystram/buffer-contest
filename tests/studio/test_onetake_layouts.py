@@ -672,3 +672,17 @@ def test_a_big_face_playing_inside_an_app_is_a_preview_not_a_person_on_camera():
     assert decide.rule(room, src)["rule"] == "R3"
     close = {**_sig([_face(0, 0.5, 0.5)], True, 0.9, 0.2), "flat": 0.6}
     assert decide.rule(close, src)["rule"] == "R3"           # a face filling half the frame is on camera anyway
+
+
+def test_a_crowd_behind_two_speakers_does_not_force_full_frame():
+    src = (1920, 1080)
+    a, b = _face(0, 0.3, 0.22, motion=6.0), _face(1, 0.62, 0.21, motion=1.0)
+    crowd = [_face(2 + k, 0.1 + 0.2 * k, 0.06, cy=0.3) for k in range(4)]    # a convention floor behind them
+    r = decide.rule(_sig([a, b, *crowd]), src)
+    assert r["rule"] != "R8" and r["layout"] in ("track", "split")
+
+
+def test_a_face_inside_a_web_page_is_not_a_webcam_bubble():
+    src = (1920, 1080)
+    page_face = _face(0, 0.7, 0.12, cy=0.33, motion=5.0)        # a video thumbnail on a page, away from the edges
+    assert decide.rule(_sig([page_face], True, 0.9, 0.2), src)["layout"] != "screen"

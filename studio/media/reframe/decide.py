@@ -35,6 +35,8 @@ MAX_CHANGES_PER_MIN = 3
 PRESENT = 0.6          # a track counts in a shot when it's in >= 60% of the shot's samples
 FACE_MIN_H = 0.10      # R3 / R4
 WEBCAM_MAX_H = 0.18
+WEBCAM_EDGE = 0.12     # a webcam bubble sits within this share of the frame from a side and from the top or bottom
+BACKGROUND_SHARE = 0.5  # a face under half the height of the biggest one is someone in the background (26 Nov Mac run)
 WEBCAM_TALK = 1.5      # a webcam face's mouth moves while the words are spoken; a face in an app thumbnail doesn't
 BIG_FACE_H = 0.25      # a face this large means a person on camera, not a screen ...
 HUGE_FACE_H = 0.45     # ... unless the frame around it is plainly an app; this large is a person on camera anyway
@@ -70,7 +72,10 @@ def is_webcam(t: dict) -> bool:
     """A small corner face over a screen whose mouth moves during the speech. A still face in a corner (a thumbnail or a
     profile picture in the app) is part of the screen (26 Nov Mac run: Screen + face put a Library thumbnail in the
     webcam circle). No mouth patches (fallback faces): position alone, as before."""
-    corner = t["h"] < WEBCAM_MAX_H and (t["cx"] < 0.35 or t["cx"] > 0.65) and (t["cy"] < 0.4 or t["cy"] > 0.6)
+    w = t.get("w") or t["h"] * 0.6
+    corner = (t["h"] < WEBCAM_MAX_H and (t["cx"] < 0.35 or t["cx"] > 0.65) and (t["cy"] < 0.4 or t["cy"] > 0.6)
+              # and near the frame's edges, where webcam bubbles sit: not a face somewhere inside a web page
+              and min(t["cx"] - w / 2, 1 - t["cx"] - w / 2) < WEBCAM_EDGE and min(t["cy"] - t["h"] / 2, 1 - t["cy"] - t["h"] / 2) < WEBCAM_EDGE)
     motion = t.get("motion")
     return corner and (motion is None or motion >= WEBCAM_TALK)
 
@@ -97,6 +102,9 @@ def rule(sig: dict, src: tuple[int, int], prefs: dict | None = None) -> dict:
     # in an app), not someone talking to camera: it never drives the crop (25 Nov baseline, the demo's c2)
     shown = [t for t in faces if t not in webcams and t["h"] < (HUGE_FACE_H if ui else BIG_FACE_H)] if screen else []
     people = [t for t in faces if t not in webcams and t not in shown]
+    if len(people) > 1:  # a crowd behind the speakers (a convention floor) is background, not more people to frame
+        top = max(t["h"] for t in people)
+        people = [t for t in people if t["h"] >= BACKGROUND_SHARE * top]
     if screen and webcams and not people:
         cam = max(webcams, key=lambda t: t["h"])
         tall_px = cam["h"] * sh * 1.6  # the webcam box is ~1.6x the face height
