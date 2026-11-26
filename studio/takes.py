@@ -1244,6 +1244,7 @@ class Takes(TakeBin, TakeControl):
             d["trim_min"], d["trim_max"] = lo, hi
             d["music"] = c.get("music")
             d["applied"] = applied_edits(m) if c.get("url") else []
+            d["tracks"] = clip_tracks(m) if c.get("url") else None  # the clip studio's Hook / Layout / Graphics lanes
             d["rating"] = (c.get("rating") or {}).get("v")
             d["rendered_at"] = c.get("rendered_at")
             d["post_captions"] = {ch["service"]: self.caption(a, c, ch["service"], kit, rules) for ch in run["input"]["channels"]}
@@ -1868,6 +1869,27 @@ def reframe_summary(ok: list[dict], layouts: list, nofaces: list, fb_note: str) 
 
 _SHOT_NAMES = {"track": "Follows the speaker", "split": "Split for two speakers", "screen": "Screen zoom", "pad": "Full frame",
                "fit": "Full frame", "center": "Centre crop"}
+
+
+def clip_tracks(meta):
+    """The clip studio's tracks, on the finished clip's own clock (the cover frame first): the shots the reframe used, the
+    motion graphics it drew, and the hook (cold open, headline). Read from the render meta, never from the settings; a render
+    that kept no shot list gives empty lists (the UI says "Not recorded", not "none")."""
+    m = meta if isinstance(meta, dict) else {}
+    cov = take.COVER_SECS
+    shots = [x for x in m.get("shots") or [] if isinstance(x, dict) and "start" in x and "end" in x]
+    org = float(shots[0]["start"]) if shots else 0.0
+    co = m.get("cold_open") if isinstance(m.get("cold_open"), dict) else {}
+    return {
+        "cover_s": cov,
+        "shots": [{"s": round(float(x["start"]) - org + cov, 2), "e": round(float(x["end"]) - org + cov, 2), "mode": x.get("mode")}
+                  for x in shots][:40],
+        "fx": [{"s": round(float(f.get("s", 0)) + cov, 2), "e": round(float(f.get("e", 0)) + cov, 2),
+                "kind": str(f.get("kind") or "")[:24], "text": str(f.get("text") or "")[:60]}
+               for f in ((m.get("motion") or {}).get("fx") or []) if isinstance(f, dict)][:20],
+        "headline": m.get("hook_fx") == "headline",
+        "cold_open_s": co.get("joined_s"),
+    }
 
 
 def applied_edits(meta: dict) -> list[dict]:

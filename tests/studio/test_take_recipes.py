@@ -154,6 +154,20 @@ def test_applied_receipt_reads_the_render_meta_not_the_settings():
     assert takes.applied_edits(None) == []
 
 
+def test_clip_studio_tracks_are_on_the_finished_clips_clock():
+    from studio import take, takes
+    meta = {"shots": [{"start": 10.0, "end": 14.0, "mode": "split"}, {"start": 14.0, "end": 20.5, "mode": "track"}],
+            "motion": {"fx": [{"s": 2.0, "e": 4.5, "kind": "counter", "text": "69%"}]}, "hook_fx": "headline",
+            "cold_open": {"joined_s": 3.2}}
+    tr = takes.clip_tracks(meta)
+    c = take.COVER_SECS
+    assert [(x["s"], x["e"], x["mode"]) for x in tr["shots"]] == [(round(c, 2), round(4 + c, 2), "split"), (round(4 + c, 2), round(10.5 + c, 2), "track")]
+    assert tr["fx"] == [{"s": round(2 + c, 2), "e": round(4.5 + c, 2), "kind": "counter", "text": "69%"}]
+    assert tr["headline"] is True and tr["cold_open_s"] == 3.2
+    empty = takes.clip_tracks(None)
+    assert empty["shots"] == [] and empty["fx"] == [] and empty["headline"] is False and empty["cold_open_s"] is None
+
+
 def test_thumbs_rating_on_a_clip_over_rest_and_mcp(human, app, fake, monkeypatch):
     from .conftest import agent_token, mcp_call
     from .test_spread_choices import _take_with_a_review_clip

@@ -379,7 +379,43 @@
           </div>
           <div id="tkRunErr" data-testid="take-run-err" hidden></div>
           <div class="take-head" id="tkHead" data-testid="take-head"></div>
-          <div class="take-grid">
+          <div class="seg tk-modes" role="tablist" aria-label="How to look at the clips" id="tkModes" hidden>
+            <button type="button" role="tab" class="on" data-tkmode="list" id="tkModeList" data-testid="take-mode-list" aria-selected="true">All clips</button>
+            <button type="button" role="tab" data-tkmode="studio" id="tkModeStudio" data-testid="take-mode-studio" aria-selected="false">Clip studio</button>
+          </div>
+          <section class="cs" id="tkStudio" data-testid="clip-studio" aria-label="Clip studio" hidden>
+            <div class="cs-bar">
+              <div class="cs-nav"><button type="button" class="btn2 sm cs-ib" id="csPrev" data-testid="cs-prev" aria-label="Previous clip"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
+                <span class="cs-pos" id="csPos" data-testid="cs-position" aria-live="polite"></span>
+                <button type="button" class="btn2 sm cs-ib" id="csNext" data-testid="cs-next" aria-label="Next clip"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg></button></div>
+              <div class="cs-acts">
+                <button type="button" class="btn2 sm" id="csTrim" data-testid="cs-trim">Trim &amp; caption</button>
+                <button type="button" class="btn2 sm" id="csLayout" data-testid="cs-layout">Layout</button>
+                <span id="csRate" class="cs-rate"></span>
+                <a class="link xs" id="csOpen" data-testid="cs-open" target="_blank" rel="noopener">Open video</a>
+              </div>
+            </div>
+            <div class="cs-grid">
+              <aside class="cs-moments" aria-labelledby="csMomH"><h3 class="cs-h" id="csMomH">Moments</h3><ol id="csMoments" data-testid="cs-moments"></ol></aside>
+              <div class="cs-stage">
+                <div class="cs-player"><video id="csVideo" data-testid="cs-video" playsinline controls preload="metadata"></video></div>
+                <ul class="clip-applied cs-applied" id="csApplied" data-testid="cs-applied" aria-label="Edits applied to this clip"></ul>
+              </div>
+              <aside class="cs-side" aria-labelledby="csSideH">
+                <h3 class="cs-h" id="csSideH">Why this clip</h3>
+                <p class="cs-why" id="csWhy" data-testid="cs-why"></p>
+                <h3 class="cs-h">Checks</h3>
+                <ul class="cs-checks" id="csChecks" data-testid="cs-checks"></ul>
+                <div class="cs-needs" id="csNeeds" data-testid="cs-needs" hidden></div>
+              </aside>
+            </div>
+            <div class="cs-tl" data-testid="cs-timeline">
+              <div class="cs-tl-head"><h3 class="cs-h">Script timeline</h3><span class="muted xs">The words are the timeline: tap a word to jump there.</span></div>
+              <div class="cs-words" id="csWords" data-testid="cs-words"></div>
+              <div class="cs-tracks" id="csTracks" data-testid="cs-tracks"></div>
+            </div>
+          </section>
+          <div class="take-grid" id="tkGridWrap">
             <ol class="timeline" id="tkTimeline" data-testid="take-timeline" aria-label="Progress"></ol>
             <div class="tk-clips">
               <div class="tk-clips-head"><h2 class="card-title" id="tkClipsH">Clips <span class="muted" id="tkClipsN" data-testid="clip-count"></span></h2>

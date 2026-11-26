@@ -418,6 +418,110 @@ function showTake(t) {
   const review = clips.filter((c) => c.status === "needs_review").length;
   $("#spreadCount").textContent = `${ready} clip${ready === 1 ? "" : "s"} ready` + (review ? ` · ${review} need${review === 1 ? "s" : ""} a look` : "");
   if (window.ceRefresh) window.ceRefresh(t);
+  csSync(t);
+}
+// ---------------------------------------------------------------- Clip studio: one clip at a time, the words as the timeline
+// Same data as the list (no new API): the player, the receipt of edits, why it was picked, its checks, and the script with
+// the tracks the render really used (takes.view clip.tracks). Only what was measured or saved is shown.
+T.mode = "list"; T.cs = 0;
+function csSync(t) {
+  const clips = (t.clips || []).filter((c) => c.url);
+  $("#tkModes").hidden = !clips.length;
+  const studio = T.mode === "studio" && clips.length;
+  $("#tkStudio").hidden = !studio; $("#tkGridWrap").hidden = !!studio;
+  document.querySelectorAll("#tkModes [data-tkmode]").forEach((b) => {
+    const on = b.dataset.tkmode === (studio ? "studio" : "list");
+    b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on));
+  });
+  if (studio) csShow(T.cs);
+}
+document.querySelectorAll("#tkModes [data-tkmode]").forEach((b) => (b.onclick = () => {
+  T.mode = b.dataset.tkmode; if (T.take) csSync(T.take);
+  if (T.mode === "studio") $("#tkStudio").scrollIntoView({ block: "nearest" });
+}));
+function csList() { return T.take ? sortedClips(T.take).filter(({ c }) => c.url) : []; }
+function csShow(k) {
+  const rows = csList(); if (!rows.length) return;
+  T.cs = Math.max(0, Math.min(rows.length - 1, k | 0));
+  const { c, i } = rows[T.cs];
+  const sample = !!(T.take && T.take.sample);
+  $("#csPos").textContent = `Clip ${i} · ${T.cs + 1} of ${rows.length}`;
+  $("#csPrev").disabled = T.cs === 0; $("#csNext").disabled = T.cs === rows.length - 1;
+  $("#csTrim").onclick = () => clipAct("edit", c.id);
+  $("#csLayout").hidden = sample; $("#csLayout").onclick = () => clipAct("layout", c.id);
+  $("#csOpen").href = c.url;
+  $("#csRate").innerHTML = sample ? "" : tkRate(c, i);
+  $("#csRate").querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => clipAct(b.dataset.act, b.dataset.clip)));
+  // moments: every clip with its score, length and the edits it got; the open one is marked
+  $("#csMoments").innerHTML = rows.map(({ c: m, i: n }, k2) => {
+    const s = tkScoreOf(m), tags = (m.applied || []).filter((x) => x && x.label && !x.skipped).slice(0, 3).map((x) => `<span>${esc(x.label)}</span>`).join("");
+    return `<li><button type="button" class="cs-mom${k2 === T.cs ? " on" : ""}" id="cs-moment-${esc(m.id)}" data-testid="cs-moment" data-k="${k2}" aria-current="${k2 === T.cs}">
+      <span class="cs-mom-top"><b>${n}</b><span class="cs-mom-s">${s == null ? "Not scored" : "Score " + (s / 10).toFixed(1)}</span><span class="muted">${((m.end || 0) - (m.start || 0)).toFixed(0)} s</span>${m.status === "needs_review" ? `<span class="cs-flag">Needs a look</span>` : ""}</span>
+      <span class="cs-mom-h">${esc(m.hook || "")}</span>${tags ? `<span class="cs-mom-tags">${tags}</span>` : ""}</button></li>`;
+  }).join("");
+  $("#csMoments").querySelectorAll("[data-k]").forEach((b) => (b.onclick = () => csShow(+b.dataset.k)));
+  const v = $("#csVideo"), src = c.url + (c.rendered_at ? "?v=" + Math.round(c.rendered_at) : "");
+  if (v.dataset.src !== src) { v.dataset.src = src; v.src = src; if (c.cover_url) v.poster = c.cover_url; }
+  $("#csApplied").innerHTML = (tkApplied(c).match(/<ul[^>]*>([\s\S]*)<\/ul>/) || [, ""])[1];
+  $("#csWhy").textContent = String(c.why || (c.reasons || []).join("; ") || "No reason saved for this clip.");
+  $("#csChecks").innerHTML = csChecks(c);
+  const needs = c.status === "needs_review";
+  $("#csNeeds").hidden = !needs;
+  $("#csNeeds").innerHTML = needs ? `<p><b>Needs your look</b> ${esc(c.review_reason || "Text may cover the speaker's face.")}</p>${sample ? "" : `<button type="button" class="btn sm" id="cs-review-ok" data-testid="cs-review-ok">Looks fine, use it</button>`} <button type="button" class="btn2 sm" id="cs-review-trim" data-testid="cs-review-trim">Change it</button>` : "";
+  if (needs) { const ok = $("#cs-review-ok"); if (ok) ok.onclick = () => reviewOk(c.id); $("#cs-review-trim").onclick = () => clipAct("edit", c.id); }
+  csTimeline(c);
+}
+$("#csPrev").onclick = () => csShow(T.cs - 1);
+$("#csNext").onclick = () => csShow(T.cs + 1);
+// the checks the server really ran, with their values; a check that didn't run says so (never shown as passed)
+function csChecks(c) {
+  const row = (st, what, val) => `<li class="s-${st}" data-testid="cs-check" data-status="${st}"><b aria-hidden="true">${PF_ICON[st] || ""}</b><span class="sr">${PF_WORD[st] || ""}: </span><span>${esc(what)}</span>${val ? `<small>${esc(val)}</small>` : ""}</li>`;
+  const out = [];
+  const fs = c.face_safe;
+  if (fs && fs.status) out.push(row(fs.status === "ok" ? "ok" : fs.status === "skipped" ? "warning" : "error", "Captions clear of faces",
+    fs.max_cover != null ? `most covered ${(fs.max_cover * 100).toFixed(0)}%` : fs.status));
+  else out.push(row("warning", "Captions clear of faces", "not measured"));
+  if (c.trim) out.push(row("ok", "Pauses and filler", c.trimmed_s > 0 ? `${(+c.trimmed_s).toFixed(1)} s cut` : "nothing to cut"));
+  const r = c.review;
+  if (r && ((r.issues || []).length || (r.works || []).length)) out.push(row((r.issues || []).length ? "warning" : "ok", "Editor's notes", (r.issues || []).length ? `${r.issues.length} to look at` : "looks good"));
+  const pf = Object.values(c.preflight || {});
+  if (pf.length) {  // one row for the channels; the ones that need a fix are named
+    const bad = pf.filter((p) => p.status !== "ok"), worst = pf.some((p) => p.status === "error") ? "error" : bad.length ? "warning" : "ok";
+    out.push(row(worst, "Channel preflight", bad.length ? `${bad.map((p) => netName(p.service || "")).join(", ")} need${bad.length === 1 ? "s" : ""} a fix` : `${pf.length} of ${pf.length} pass`));
+  }
+  return out.join("");
+}
+const CS_MODE = { face: "Speaker", speaker: "Speaker", split: "Split", screen: "Screen", wide: "Wide", fit: "Whole frame", content: "Screen" };
+function csTimeline(c) {
+  const dur = Math.max(1, +c.duration || ((c.end || 0) - (c.start || 0)));
+  const tr = c.tracks || { cover_s: 0.2, shots: [], fx: [] };
+  const pct = (x) => `${Math.max(0, Math.min(100, (x / dur) * 100)).toFixed(2)}%`;
+  const wid = (s, e) => `${Math.max(0.6, Math.min(100, ((e - s) / dur) * 100)).toFixed(2)}%`;
+  // a word's time in the finished clip: exact only when nothing was cut or put before it; otherwise the jump is approximate
+  const lead = (tr.cover_s || 0) + (tr.cold_open_s || 0);
+  const approx = (c.trimmed_s || 0) > 0 || !!tr.cold_open_s;
+  const words = (c.words || []).filter((w) => w.e > c.start && w.s < c.end);
+  $("#csWords").innerHTML = words.length ? words.map((w, k) => `<button type="button" class="cs-w" id="cs-word-${esc(c.id)}-${k}" data-testid="cs-word" data-t="${(lead + w.s - c.start).toFixed(2)}">${esc(w.w)}</button>`).join("")
+    + (approx ? `<p class="muted xs cs-approx">Pauses were cut${tr.cold_open_s ? " and a line opens the clip" : ""}, so a jump lands near the word.</p>` : "")
+    : `<p class="muted xs">No words saved for this clip.</p>`;
+  $("#csWords").querySelectorAll("[data-t]").forEach((b) => (b.onclick = () => { const v = $("#csVideo"); v.currentTime = Math.min(+b.dataset.t, dur); v.play().catch(() => {}); }));
+  const lane = (key, label, items, none) => `<div class="cs-lane" data-testid="cs-track-${key}"><span class="cs-lane-l">${label}</span><div class="cs-lane-b">${items || `<span class="cs-none">${none}</span>`}</div></div>`;
+  const saved = !!(tr.shots || []).length;  // older renders (and the sample) kept no shot list: say so, never "none"
+  const hook = [];
+  if (tr.cold_open_s) hook.push(`<span class="cs-blk hook" style="left:${pct(tr.cover_s || 0)};width:${wid(0, tr.cold_open_s)}" title="Cold open: ${esc((c.cold_open || {}).text || "")}">Cold open</span>`);
+  if (tr.headline) hook.push(`<span class="cs-blk hook" style="left:${pct(lead)};width:${wid(0, 2.8)}" title="Headline over the opening">Headline</span>`);
+  const shots = (tr.shots || []).map((x) => `<span class="cs-blk shot" style="left:${pct(x.s)};width:${wid(x.s, x.e)}" title="${esc(CS_MODE[x.mode] || x.mode || "Shot")} ${x.s.toFixed(1)}–${x.e.toFixed(1)} s">${esc(CS_MODE[x.mode] || x.mode || "Shot")}</span>`).join("");
+  const fx = (tr.fx || []).map((f) => `<span class="cs-blk fx" style="left:${pct(f.s)};width:${wid(f.s, f.e)}" title="${esc(f.kind)}${f.text ? ": " + esc(f.text) : ""}">${esc(f.text || f.kind)}</span>`).join("");
+  $("#csTracks").innerHTML = `<div class="cs-ruler" aria-hidden="true"><span>0 s</span><span>${(dur / 2).toFixed(0)} s</span><span>${dur.toFixed(0)} s</span></div>`
+    + lane("hook", "Hook", hook.join(""), saved ? "No cold open or headline" : "Not recorded for this render") + lane("layout", "Layout", shots, "Not recorded for this render") + lane("graphics", "Graphics", fx, saved ? "No motion graphics" : "Not recorded for this render")
+    + `<span class="cs-head" id="csHead" aria-hidden="true"></span>`;
+  const v = $("#csVideo"), head = $("#csHead");
+  v.ontimeupdate = () => {
+    head.style.left = `calc(var(--cs-l) + (100% - var(--cs-l)) * ${Math.min(1, v.currentTime / dur).toFixed(4)})`;
+    const t = v.currentTime - lead + c.start;
+    $("#csWords").querySelectorAll(".cs-w").forEach((b, k) => { const w = words[k]; const hit = !approx && w && t >= w.s && t < w.e; b.classList.toggle("now", hit); });
+  };
+  head.style.left = "var(--cs-l)";
 }
 // clips in the chosen order; i is the clip's number in the take (c1 = 1), shown on the row and in the editor
 function sortedClips(t) {
