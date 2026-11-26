@@ -156,6 +156,15 @@ def test_a_face_inside_screen_content_is_not_a_speaker():
     assert decide.rule(_sig([_face(0, 0.5, 0.3)], True, 0.9, 0.2), src)["rule"] == "R3"   # a big face: a person on camera
 
 
+def test_a_still_corner_face_over_a_screen_is_a_thumbnail_not_the_webcam():
+    src = (1920, 1080)
+    still = _face(0, 0.85, 0.1, cy=0.2, motion=0.3)          # a Library thumbnail near a corner of the app
+    assert decide.rule(_sig([still], True, 0.9, 0.2), src)["rule"] == "R2"
+    talking = _face(1, 0.9, 0.08, cy=0.85, motion=5.0)       # the presenter's webcam, mouth moving with the words
+    r1 = decide.rule(_sig([still, talking], True, 0.9, 0.2), src)
+    assert r1["layout"] == "screen" and r1["face"] == 1
+
+
 def test_split_needs_the_flag_and_both_mouths(monkeypatch):
     monkeypatch.setenv("HQ_LAYOUT_SPLIT", "1")
     duo = [_face(0, 0.15, 0.2, motion=9.0), _face(1, 0.85, 0.2, motion=8.0)]

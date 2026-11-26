@@ -61,9 +61,10 @@ def talk(out: Path, dur: float = DUR) -> Path:
 
 
 def screen(out: Path, dur: float = DUR) -> Path:
+    # the webcam's mouth "moves" (a still corner face is a thumbnail in the app, not the presenter)
     shot = screenshot(out.with_suffix(".png"))
     _ff(["-loop", "1", "-i", str(shot), "-loop", "1", "-i", str(MONA), "-f", "lavfi", "-i", f"sine=frequency=330:duration={dur}",
-         "-filter_complex", "[1:v]crop=200:200:70:60,scale=110:110[cam];[0:v][cam]overlay=x=1150:y=590,format=yuv420p[v]",
+         "-filter_complex", "[1:v]crop=200:200:70:60,scale=110:110,drawbox=x=33:y=46:w=22:h=7:color=0x1a0c08:t=fill:enable='lt(mod(n,4),2)'[cam];[0:v][cam]overlay=x=1150:y=590,format=yuv420p[v]",
          "-map", "[v]", "-map", "2:a", "-t", f"{dur}", *_enc(out)])
     return out
 

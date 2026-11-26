@@ -35,6 +35,7 @@ MAX_CHANGES_PER_MIN = 3
 PRESENT = 0.6          # a track counts in a shot when it's in >= 60% of the shot's samples
 FACE_MIN_H = 0.10      # R3 / R4
 WEBCAM_MAX_H = 0.18
+WEBCAM_TALK = 1.5      # a webcam face's mouth moves while the words are spoken; a face in an app thumbnail doesn't
 BIG_FACE_H = 0.25      # a face this large means a person on camera, not a screen
 CONTENT_MIN = 0.5      # screen content spans at least half the width
 EDGE_SCREEN = 0.04     # and is text/UI dense (edge density outside faces)
@@ -63,7 +64,12 @@ def summarize(tracks: list[dict], a: float, b: float, n_samples: int) -> list[di
 
 
 def is_webcam(t: dict) -> bool:
-    return t["h"] < WEBCAM_MAX_H and (t["cx"] < 0.35 or t["cx"] > 0.65) and (t["cy"] < 0.4 or t["cy"] > 0.6)
+    """A small corner face over a screen whose mouth moves during the speech. A still face in a corner (a thumbnail or a
+    profile picture in the app) is part of the screen (26 Nov Mac run: Screen + face put a Library thumbnail in the
+    webcam circle). No mouth patches (fallback faces): position alone, as before."""
+    corner = t["h"] < WEBCAM_MAX_H and (t["cx"] < 0.35 or t["cx"] > 0.65) and (t["cy"] < 0.4 or t["cy"] > 0.6)
+    motion = t.get("motion")
+    return corner and (motion is None or motion >= WEBCAM_TALK)
 
 
 def crop_scale(src_h: int, zoom: float = 1.0) -> float:
