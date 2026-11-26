@@ -153,3 +153,15 @@ def test_a_side_by_side_comparison_graphic_is_not_cropped_to_one_side():
         graphic.append(g)
     assert screen.focus_box(graphic, 1920, 1080) is None
     assert screen.focus_box(graphic, 1920, 1080, min_share=rr.PRODUCT_SHARE) is None
+
+
+def test_a_title_card_with_no_face_is_never_cut_but_a_product_in_a_room_still_zooms():
+    card = []
+    for _ in range(3):
+        g = np.full((180, 320), 12, np.uint8)
+        for k in range(8):                                    # "ONE TAKE": big letters across 70% of a flat backdrop
+            x = 50 + k * 28
+            g[70:120, x:x + 18] = 235
+            g[78:112, x + 5:x + 13] = 12
+        card.append(g)
+    assert screen.focus_box(card, 1920, 1080, min_share=rr.PRODUCT_SHARE) is None

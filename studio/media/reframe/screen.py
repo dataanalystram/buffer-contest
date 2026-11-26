@@ -23,7 +23,6 @@ FIT_READS = 1.4        # a screen the plain fit already shows at this scale read
 FOCUS_MAX_W = 0.85     # ... and a crop wider than this isn't worth it (the plain fit is kept)
 FOCUS_ASPECT = 1.0     # crop height / width (a square card leaves the caption band below it free)
 CUT_SHARE = 0.5        # text just past a crop edge at half the density inside means the crop cuts through it ...
-CUT_SHARE_OBJECT = 0.8  # (a product crop: the room behind may carry on, a graphic's rows of text may not)
 MOVE_SHARE = 0.6       # ... which is fine only when this share of what moves is inside the crop
 
 
@@ -109,7 +108,11 @@ def focus_box(thumbs: list, src_w: int, src_h: int, min_share: float = 0.0) -> t
         hold = (busy[0] / tw * src_w, (busy[-1] + 1) / tw * src_w)   # in source px, so rounding can't shave it
     if min_share and float(act[y0:y0 + nh, x0:x0 + nw].sum()) < min_share * float(act.sum()):
         return None   # the detail is spread over the frame (a landscape, a room): no single thing to zoom in on
-    if _cuts_content(edges, chg, x0, y0, nw, nh, CUT_SHARE_OBJECT if min_share else CUT_SHARE):
+    # a no-face shot on a flat backdrop is a title card ("ONE TAKE" came out "NE TAKE"): never cut its text; in a room
+    # (a phone held up) the crop cuts the room on purpose (26 Nov Mac run: the cut check had sent the phone back to full)
+    hist = np.histogram(thumbs[0], bins=16, range=(0, 256))[0].astype("float64")
+    card = float(np.sort(hist / max(1.0, hist.sum()))[-2:].sum()) >= FLAT_MIN
+    if (not min_share or card) and _cuts_content(edges, chg, x0, y0, nw, nh, CUT_SHARE):
         return None   # a title card or a line of big text runs past the crop ("AKE A PO"): the plain fit shows it whole
     x = int(min(src_w - cw, max(0, round(x0 / tw * src_w))))
     if hold and x + cw < hold[1]:
