@@ -451,6 +451,39 @@ def apply(src: str, out: str, text: str, *, start: float, dur: float = WINDOW_S,
             "mask": "mediapipe selfie_segmenter", "ms": int((time.time() - t0) * 1000)}
 
 
+def on_still(canvas, text: str, *, kit_font: str | None = None, color: str = "#FFFFFF", place: dict | None = None):
+    """A PIL RGB image with `text` behind the person (the cover frame: the thumbnail). Raises BehindError."""
+    import numpy as np
+    from PIL import Image
+    rgb = np.asarray(canvas.convert("RGB"), dtype=np.uint8)
+    H, W = rgb.shape[:2]
+    seg = segmenter()
+    try:
+        mask = person_mask(seg, rgb, 1000)
+    finally:
+        try:
+            seg.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if (mask > 0.5).mean() < MIN_PERSON:
+        raise BehindError("No person was found on the cover frame.")
+    font = _font(kit_font)
+    place = place if isinstance(place, dict) else {}
+    size = max(24, int(fit_size(font, text, W, H) * float(place.get("scale") or 1.0)))
+    layer = text_layer(text, font, size, color)
+    lrgb = np.asarray(layer.convert("RGB"), dtype=np.float32)
+    la = np.asarray(layer.getchannel("A"), dtype=np.float32) / 255.0
+    lh, lw = la.shape
+    top = head_top(mask)
+    hx = head_x(mask, top)
+    pos, hid = settle(H, place_xy(W, H, top, lw, lh, hx), la, np.clip(mask, 0, 1))
+    if place.get("x") is not None or place.get("y") is not None:
+        pos = (int(W * float(place["x"]) - lw / 2) if place.get("x") is not None else pos[0],
+               int(H * float(place["y"])) if place.get("y") is not None else pos[1])
+    out = composite(rgb, lrgb, la, pos[0], pos[1], np.clip(mask, 0, 1), 1.0)
+    return Image.fromarray(out)
+
+
 def opening_ok(layout_plan: list | None, window: float = WINDOW_S) -> str | None:
     """None when the clip's opening seconds are a close shot of the speaker (a tracked crop or a split), else why not:
     over a full-frame card or a screen the word lands on the blurred background or the content, not behind anyone

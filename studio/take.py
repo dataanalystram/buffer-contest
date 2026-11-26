@@ -1080,7 +1080,7 @@ def pick_cover_time(path: str, m: dict, faces: list[dict], tmp: Path) -> float:
 
 
 def cover_image(frame: bytes, plan: dict, src_w: int, hook: str, kit: dict, p: dict, logo: bytes | None, t_rel: float,
-                W: int = CLIP_W, H: int = CLIP_H) -> bytes:
+                W: int = CLIP_W, H: int = CLIP_H, behind_word: str | None = None, behind_place: dict | None = None) -> bytes:
     """The branded cover: the clip's best frame in 9:16, the hook (a line the speaker said) in the brand font."""
     from PIL import Image, ImageDraw, ImageFilter
 
@@ -1098,6 +1098,14 @@ def cover_image(frame: bytes, plan: dict, src_w: int, hook: str, kit: dict, p: d
         bg.paste(fg, ((W - fg.width) // 2, (H - fg.height) // 2))
         canvas = bg
     render._gradient(canvas, render.hex_to_rgb(p["colors"]["primary"]), 0.42, 0.85)
+    if behind_word:   # the thumbnail with the word BEHIND the person (same look as the clip's opening); fails open to the headline
+        try:
+            from .media import behind
+            canvas = behind.on_still(canvas, behind_word, kit_font=p.get("font"), place=behind_place)
+            render.place_logo(canvas, render.load_logo(logo), p, kit)
+            return render._jpeg(canvas)
+        except Exception as e:  # noqa: BLE001
+            print(f"cover: words behind skipped ({str(e)[:100]})", flush=True)
     d = ImageDraw.Draw(canvas)
     m = int(p.get("safe_margin", 64) * W / 1080) + 8
     from .brand import FONTS

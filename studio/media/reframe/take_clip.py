@@ -92,7 +92,16 @@ def render_take_clip(path: str, m: dict, words: list[dict], faces: list[dict], s
             x, _ = path_mod.at(shot["path"], ct - start - shot["start"])
             cplan = {"mode": "track", "crop_w": int(shot["path"]["crop_w"]), "keys": [(0.0, int(x))]}
         take.frame_at(path, ct, str(tmp / "cover_src.jpg"))
-        cover = take.cover_image((tmp / "cover_src.jpg").read_bytes(), cplan, sw, m.get("hook") or "", kit, p, logo, 0.0, W, H)
+        bw = None
+        if m.get("hook_fx") == "behind" and m.get("hook"):   # the thumbnail carries the same words behind the person
+            try:
+                from .. import behind as _bh
+                if _bh.enabled():
+                    bw = _bh.pick_words(m["hook"], m.get("hook_words"))
+            except Exception:  # noqa: BLE001
+                bw = None
+        cover = take.cover_image((tmp / "cover_src.jpg").read_bytes(), cplan, sw, m.get("hook") or "", kit, p, logo, 0.0, W, H,
+                                 behind_word=bw, behind_place=((m.get("place") or {}).get("behind") if isinstance(m.get("place"), dict) else None))
         (tmp / "cover.jpg").write_bytes(cover)
         has_end = bool(p.get("end_card", True))
         end_jpg = None

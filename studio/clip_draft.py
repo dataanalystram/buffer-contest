@@ -182,13 +182,13 @@ def _diff(d: dict, base: dict) -> dict:
     return {k: d[k] for k in FIELDS if d.get(k) != base.get(k)}
 
 
-def _log(clip: dict, a: Actor, by: str, what: str, ops: list | None = None) -> dict:
-    e = {"at": round(time.time(), 1), "by": by, "who": a.label[:60], "what": what[:300], "ops": (ops or [])[:8]}
+def _log(clip: dict, a: Actor, by: str, what: str, ops: list | None = None, reply: str = "") -> dict:
+    e = {"reply": reply[:500], "at": round(time.time(), 1), "by": by, "who": a.label[:60], "what": what[:300], "ops": (ops or [])[:8]}
     clip["draft_log"] = ((clip.get("draft_log") or []) + [e])[-LOG_MAX:]
     return e
 
 
-def _write(takes, a: Actor, rid: int, clip_id: str, change, by: str, what: str):
+def _write(takes, a: Actor, rid: int, clip_id: str, change, by: str, what: str, reply: str = ""):
     takes.h.studio._guard_write(a, "adjust_clip")
     with takes._take_lock(rid):
         run, res, clip = _clip(takes, a, rid, clip_id)
@@ -201,7 +201,7 @@ def _write(takes, a: Actor, rid: int, clip_id: str, change, by: str, what: str):
         clip["draft"] = {"edits": edits, "at": round(time.time(), 1)} if edits else None
         if not clip["draft"]:
             clip.pop("draft", None)
-        entry = _log(clip, a, by, what, ops)
+        entry = _log(clip, a, by, what, ops, reply)
         takes._save(rid, run["steps"], res)
         out = _state(clip, run)
         out["can_render"] = not res.get("sample") and takes._can_rerender(a, res)
@@ -331,6 +331,13 @@ def rules(instruction: str, d: dict, ws: list[dict], sel, behind_ok: bool) -> tu
         if k in t and label not in nope:
             nope.append(label)
     # make something pop / land / stand out: a graphic on the selected words, or on the clip's first number
+    # captions bigger / smaller: the nearest real edit is the caption style (sizes come with the style)
+    if re.search(r"\bcaptions?\b.{0,20}\b(bigger|larger|huge|bolder|louder|more readable|easier to read)\b|\b(bigger|larger|bolder)\b.{0,12}\b(captions?|subtitles?|text)\b", t) and "caption_preset" not in ch:
+        ch["caption_preset"] = "bold_pop"
+        ops.append({"what": "Captions: bold creator", "why": "Caption size comes with the style: this one is the biggest and boldest.", "focus": {"element": "captions"}})
+    elif re.search(r"\b(captions?|subtitles?|text)\b.{0,20}\b(smaller|subtle|quieter|less loud)\b|\b(smaller|quieter)\b.{0,12}\b(captions?|subtitles?)\b", t):
+        ch["caption_preset"] = "minimal"
+        ops.append({"what": "Captions: minimal", "why": "The smallest, quietest caption style.", "focus": {"element": "captions"}})
     # the pipeline's own switches, per clip: zoom, pauses, split, length
     if re.search(r"\b(no|stop|less|without|don'?t|do not|turn off|disable)\b.{0,14}\b(zoom\w*|punch[- ]?ins?)\b|\bkeep (it|the (screen|demo|product)) (readable|still|steady)\b", t):
         ch["punch_in"] = False
@@ -493,7 +500,7 @@ def rules(instruction: str, d: dict, ws: list[dict], sel, behind_ok: bool) -> tu
 
 
 AI_SYSTEM = ("You are the creative director in a video clip editor. Turn the person's request into edits on the clip's "
-             "draft. Answer JSON: {\"draft\": {only fields to change}, \"ops\": [{\"what\": short, \"why\": one sentence, "
+             "draft. Answer JSON: {\"reply\": one or two plain sentences to the person (answer questions about the clip; say what you did or why you did nothing), \"draft\": {only fields to change}, \"ops\": [{\"what\": short, \"why\": one sentence, "
              "\"focus\": {\"element\": headline|behind|captions|logo|tag} or {\"s\": sec, \"e\": sec}}], \"not_yet\": [things "
              "you can't do]}. Fields: hook (MUST be words said in the clip, copied exactly), hook_fx (none|headline|behind), "
              "hook_words (1-3 words of the hook), caption_preset (clean|minimal|bold_pop|cinematic|documentary|lower_third|"
@@ -532,6 +539,7 @@ def direct(takes, a: Actor, rid, clip_id, body: dict) -> dict:
     ws = _clip_words(res, clip, cur)
     ch, ops, nope, reply = rules(instruction, cur, ws, sel, _behind_on())
     read_by = "rules"
+    ai_reply = ""
     bch, bops, bnope = broll_rule(instruction, cur, ws, sel)
     if bops or bnope:
         ch = {**ch, **bch}
@@ -542,6 +550,7 @@ def direct(takes, a: Actor, rid, clip_id, body: dict) -> dict:
         seltext = " ".join(str(w["w"]) for w in ws[picked[0]:picked[0] + picked[1]]) if picked else ""
         got = _ai(takes, a, instruction, cur, ws, seltext)
         if got:
+            ai_reply = " ".join(str(got.get("reply") or "").split())[:500]
             try:
                 raw = {k: v for k, v in (got.get("draft") or {}).items() if k in FIELDS}
                 clean_draft(raw, clip, res, cur)   # checked here; applied below
@@ -553,17 +562,18 @@ def direct(takes, a: Actor, rid, clip_id, body: dict) -> dict:
                 read_by = "AI"
             except ActionError as e:
                 nope.append(f"The AI's idea didn't pass the checks ({e})")
+    final = (reply or "; ".join(o["what"] for o in ops) or ai_reply or "")
     if ch:
         def change(cur2, clip2, res2, run2):
             return clean_draft(ch, clip2, res2, cur2), ops
-        result = _write(takes, a, rid, clip_id, change, "agent", instruction)
+        result = _write(takes, a, rid, clip_id, change, "agent", instruction, ai_reply or final)
     else:
         result = get(takes, a, rid, clip_id)
     result.update(ops=ops, not_yet=nope, read_by=read_by,
-                  reply=(reply or "; ".join(o["what"] for o in ops) or
+                  reply=(reply or "; ".join(o["what"] for o in ops) or ai_reply or
                          ("Nothing changed: " + "; ".join(nope) if nope else
-                          "I didn't find an edit for that. Try: make a number pop, words behind my head, a stronger "
-                          "opening, cinematic captions, fewer effects, move the captions higher.")))
+                          "I can change this clip's opening, put words behind your head, make a number pop, switch caption "
+                          "styles, zoom, cut pauses, set the length, move things, or add B-roll. Say which.")))
     return result
 
 

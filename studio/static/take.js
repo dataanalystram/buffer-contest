@@ -408,11 +408,6 @@ function showTake(t) {
     if (window.HQ_MUSIC_NOBROKEN) window.HQ_MUSIC_NOBROKEN(grid);
   }
   takeTargets(t);
-  if (window.HQTakeChat) {
-    if (!T.chat) T.chat = HQTakeChat.mount($("#tkAgentHost"), { prefix: "tk", take: () => T.take, clip: () => null,
-      onDone: (out) => { if ((out.did || []).some((d) => (d.ops || []).some((x) => /Rendering/.test(x)))) watchTake(T.take.id); } });
-    T.chat.load();
-  }
   const ready = clips.filter((c) => c.status === "ready").length;
   $("#spreadBar").hidden = !(t.status === "ready" && ready);
   // the sample's clips only spread in the sample workspace (the server refuses them in a real account): say so up front
